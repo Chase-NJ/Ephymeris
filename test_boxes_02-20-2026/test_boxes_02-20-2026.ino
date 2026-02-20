@@ -38,7 +38,7 @@ const int Odors[] =
 
 // Rewards & N.O. VAC
 const int vac = 40;
-const int Rewards[] =
+const int Fluids[] =
 {
   42,   // Reward solenoid 1
   44,   // Reward solenoid 2
@@ -62,7 +62,7 @@ void setup() {
   }
     // Rewards:
   for (int i = 0; i < 4; i++) {
-    pinMode(Rewards[i], OUTPUT);
+    pinMode(Fluids[i], OUTPUT);
   }
     // Trial light & N.O. VAC
   pinMode(trialLightPin, OUTPUT);
@@ -73,7 +73,7 @@ void setup() {
     digitalWrite(Odors[odor], LOW);
   }
   for (int rwd = 0; rwd < 4; rwd++) {
-    digitalWrite(Rewards[rwd], LOW);
+    digitalWrite(Fluids[rwd], LOW);
   }
 
   while (digitalRead(odorPortPin)) {  // Wait for odor poke to start loop
@@ -83,6 +83,21 @@ void setup() {
 
 void loop() {
   testSensors();
+}
+
+// As of 02-20-2026, we are only using rewards 1 and 3. Some backflow gets into the
+// adjacent lines during the priming process, so a brief vac purge solves that.
+void primeFluids() {
+  flashLight(2000);
+  for (int rwd = 0; rwd < 4; rwd++) {
+    digitalWrite(Fluids[rwd], HIGH);
+    while(digitalRead(odorPortPin) == HIGH) {
+      delay(5);
+    }
+    digitalWrite(Fluids[rwd], LOW);
+    delay(500);
+  }
+  flashLight(2000);
 }
 
 // Function for testing the infrared sensors for odor port, left, and right fluid wells.
@@ -112,4 +127,44 @@ void testSensors() {
 
   digitalWrite(trialLightPin,LOW);
   delay(1000);
+}
+
+// Function for testing adequate fluid bolus delivery.
+void testFluids() {
+  delay(1000);
+
+    for (int fluidSolenoid = 0; fluidSolenoid < 5 ; fluidSolenoid++) {
+    delay(500);
+    digitalWrite(FluidPins[fluidSolenoid],HIGH); // drop 1
+    delay(FluidPinTimes[fluidSolenoid]);
+    digitalWrite(FluidPins[fluidSolenoid],LOW);
+    delay(2000);
+
+    digitalWrite(FluidPins[fluidSolenoid],HIGH); // drop 2
+    delay(FluidPinTimes[fluidSolenoid]);
+    digitalWrite(FluidPins[fluidSolenoid],LOW);
+    delay(2000);
+
+    digitalWrite(FluidPins[fluidSolenoid],HIGH); // drop 3
+    delay(FluidPinTimes[fluidSolenoid]);
+    digitalWrite(FluidPins[fluidSolenoid],LOW);
+    delay(2000);
+
+    digitalWrite(FluidPins[fluidSolenoid],HIGH); // drop 4
+    delay(FluidPinTimes[fluidSolenoid]);
+    digitalWrite(FluidPins[fluidSolenoid],LOW);
+    delay(2000);
+  }
+}
+
+// Flashes the trial light for a given duration (in ms)
+void flashLight(int duration) {
+  unsigned long start = millis();
+  while (millis() - start < duration) {
+    digitalWrite(trialLightPin, HIGH);
+    delay(500); // Turn on trial light for 500ms
+    digitalWrite(trialLightPin, LOW);
+    delay(500); // Turn off trial light for 500ms
+  }
+  digitalWrite(pin, LOW); // Ensure light is off at the end.
 }

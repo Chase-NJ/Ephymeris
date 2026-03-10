@@ -12,6 +12,7 @@ Purpose:
     6. PCB/LEDs functioning as expected
 */
 
+const int pollingRate = 5;  // Polling rate for infrared sensors
 // Pin mappings:
 
 // Infrared sensors
@@ -44,7 +45,7 @@ const int Fluids[] =
   44,   // Reward solenoid 2
   46,   // Reward solenoid 3
   48,   // Reward solenoid 4
-}
+};
 
 // Trial light
 const int trialLightPin = 36;
@@ -77,11 +78,37 @@ void setup() {
   }
 
   /* BEGIN YOUR CODE HERE */
-
+  while (digitalRead(odorPortPin) == HIGH) {
+    delay(pollingRate);
+  }
 }
 
 void loop() {
-  /* FILL IN MAIN LOOP */
+  testOdors();
+  cycleFluids();
+}
+
+void testOdors() {
+  flashLight(2000);
+  for (int i = 0; i < 12; i++) {
+    digitalWrite(Odors[i], HIGH);
+    digitalWrite(vac, HIGH);
+    delay(500);
+    digitalWrite(Odors[i], LOW);
+    digitalWrite(vac, LOW);
+    delay(500);
+  }
+  flashLight(2000);
+}
+
+void cycleFluids() {
+  flashLight(2000);
+  for (int i = 0; i < 4; i++) {
+    digitalWrite(Fluids[i], HIGH);
+    delay(500);
+    digitalWrite(Fluids[i], LOW);
+  }
+  flashLight(2000);
 }
 
 // As of 02-20-2026, we are only using rewards 1 and 3. Some backflow gets into the
@@ -134,24 +161,24 @@ void testFluids() {
 
     for (int fluidSolenoid = 0; fluidSolenoid < 5 ; fluidSolenoid++) {
     delay(500);
-    digitalWrite(FluidPins[fluidSolenoid],HIGH); // drop 1
-    delay(FluidPinTimes[fluidSolenoid]);
-    digitalWrite(FluidPins[fluidSolenoid],LOW);
+    digitalWrite(Fluids[fluidSolenoid],HIGH); // drop 1
+    // delay(FluidPinTimes[fluidSolenoid]);
+    digitalWrite(Fluids[fluidSolenoid],LOW);
     delay(2000);
 
-    digitalWrite(FluidPins[fluidSolenoid],HIGH); // drop 2
-    delay(FluidPinTimes[fluidSolenoid]);
-    digitalWrite(FluidPins[fluidSolenoid],LOW);
+    digitalWrite(Fluids[fluidSolenoid],HIGH); // drop 2
+    // delay(FluidPinTimes[fluidSolenoid]);
+    digitalWrite(Fluids[fluidSolenoid],LOW);
     delay(2000);
 
-    digitalWrite(FluidPins[fluidSolenoid],HIGH); // drop 3
-    delay(FluidPinTimes[fluidSolenoid]);
-    digitalWrite(FluidPins[fluidSolenoid],LOW);
+    digitalWrite(Fluids[fluidSolenoid],HIGH); // drop 3
+    // delay(FluidPinTimes[fluidSolenoid]);
+    digitalWrite(Fluids[fluidSolenoid],LOW);
     delay(2000);
 
-    digitalWrite(FluidPins[fluidSolenoid],HIGH); // drop 4
-    delay(FluidPinTimes[fluidSolenoid]);
-    digitalWrite(FluidPins[fluidSolenoid],LOW);
+    digitalWrite(Fluids[fluidSolenoid],HIGH); // drop 4
+    // delay(FluidPinTimes[fluidSolenoid]);
+    digitalWrite(Fluids[fluidSolenoid],LOW);
     delay(2000);
   }
 }
@@ -165,5 +192,5 @@ void flashLight(int duration) {
     digitalWrite(trialLightPin, LOW);
     delay(500); // Turn off trial light for 500ms
   }
-  digitalWrite(pin, LOW); // Ensure light is off at the end.
+  digitalWrite(trialLightPin, LOW); // Ensure light is off at the end.
 }

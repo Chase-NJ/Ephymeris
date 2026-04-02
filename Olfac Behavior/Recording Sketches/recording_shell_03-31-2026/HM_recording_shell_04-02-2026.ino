@@ -77,18 +77,11 @@ const int primingDelay         =  1000;   // Time odor is primed prior to trial 
 #define BF_FLUID_POKE_L_ITI 382       // Left Well
 #define BF_WATER_POKE_NONE 256        // After a No-Go
 
-/*=== TrialType Macros ===*/
-#define GO_R_1 0                      // Go-right trial odor 1
-#define GO_R_2 1                      // Go-right trial odor 2
-#define GO_L_1 2                      // Go-left trial odor 1
-#define GO_L_2 3                      // Go-left trial odor 2
-#define NO_GO_1 4                     // No-go trial odor 1
-#define NO_GO_2 5                     // No-go trial odor 2
-#define SENTINEL -1                   // Sentinel value, allows for useful checks...
-
 /*===================== Pin-mapping for Arduino =====================*/
 /* Intan Mark-out Input Pin */
 const int intanMarkOut  = 8;  // 5V Intan mark-out signal
+const int intanTimeSync = 9;  // Digital output signal for time synchronization with Intan
+
 /* IR Sensors */
 const int odorPort      = 2;  // Odor port
 const int rightWell     = 3;  // Right-well
@@ -125,22 +118,38 @@ const int Fluids[] =          // { left , left , right , right }
 /*===================================================================*/
 
 /*=== MAJOR REFACTOR: TrialType & TrialWeight structs ===*/                            // [CNJ: 03/10/2026]
+/* === TrialType Macros === */
+#define LEFT_WELL_FL_1 0              // Index into Fluids[] & FluidPinTimes[] for fluid sol 1
+#define LEFT_WELL_FL_2 1              // Index into Fluids[] & FluidPinTimes[] for fluid sol 2
+#define RIGHT_WELL_FL_1 2             // Index into Fluids[] & FluidPinTimes[] for fluid sol 3
+#define RIGHT_WELL_FL_2 3             // Index into Fluids[] & FluidPinTimes[] for fluid sol 4
+#define SENTINEL -1                   // Sentinel value. Enables implementation of no-go trials.
+
+/* Distinct Odor-ON Macros (Change these numbers to be whatever you want the actual codes to be) */
+#define BF_ODOR_1_ON 101
+#define BF_ODOR_2_ON 102
+#define BF_ODOR_3_ON 103
+#define BF_ODOR_4_ON 104
+#define BF_ODOR_5_ON 105
+#define BF_ODOR_6_ON 106
 
 /* A struct that defines the differences between trial types */
 struct TrialType {
-  bool isGo;
-  int odorPin;                // Odor solenoid pin
-  int correctWell;            // pin of correct well, or -1 for no-go
-  int rewardIndex;            // Index into Fluids[] AND FluidPinTimes[], or -1 for no-go
-  int fluidEventCode;         // MatLab code for fluid delivery
-  int stopFluidCode;          // MatLab code for fluid stop
+  const bool isGo;
+  const int odorPin;                // Odor solenoid pin
+  const int correctWell;            // pin of correct well, or -1 for no-go
+  const int rewardIndex;            // Index into Fluids[] AND FluidPinTimes[], or -1 for no-go
+  const int odorOnCode;             // MatLab code for Odor on (distinct between odors)
+  const int fluidEventCode;         // MatLab code for fluid delivery
+  const int stopFluidCode;          // MatLab code for fluid stop
 
   /* Constructor for a TrialType object */
-  TrialType(bool isGo, int odorPin, int correctWell, int rewardIndex, int fluidEventCode, int stopFluidCode)
+  TrialType(bool isGo, int odorPin, int correctWell, int rewardIndex, int odorOnCode, int fluidEventCode, int stopFluidCode)
     : isGo(isGo), 
     odorPin(odorPin), 
     correctWell(correctWell), 
-    rewardIndex(rewardIndex), 
+    rewardIndex(rewardIndex),
+    odorOnCode(odorOnCode), 
     fluidEventCode(fluidEventCode), 
     stopFluidCode(stopFluidCode) {}
 };
@@ -156,33 +165,64 @@ struct TrialWeight {
 };
 
 /* 
-  Here, we define our currently in-use trial types using the TrialTypes struct. 
-  Note that the constant "SENTINEL" value used during the definition of our 2 no-go
-  trial types acts as a placeholder (it's actual value is -1), since there is no
-  "correctWell" and thus, no rewardIndex, eventCode, etc. This is not a big deal since
-  I wrote this shell to use that behavior.
+  Below you will instantiate the trial types you will be using in today's experiment.
+  Example usage:
+
+  ->  const TrialType nameItWhatever( { 'true' OR 'false' } , Odors[{ 0-indexed odor pin }] , { 'leftWell' OR 'rightWell' } , { 0 OR 1 OR 2 OR 3 } , { BF_DELIVER_FLUID_G_R OR BF_DELIVER_FLUID_G_L OR SENTINEL for no-go trials } , { BF_STOP_FLUID_G_R OR BF_STOP_FLUID_G_L OR SENTINEL for no-go trials });
+
+  So, let's say I wanted to create a go-right odor 2 trial. I would instantiate it like so:
+
+  ->  const TrialType goRight2(true, Odors[1], rightWell, RIGHT_WELL_FL_1, BF_DELIVER_FLUID_G_R, BF_STOP_FLUID_G_R);
+
+    1. Is it a go trial? true OR false
+    2. I wanted odor 2, but the Odors[] array is 0-indexed, so, 2 - 1 = Odors[1]
+    3. Which is the correct response on a go right trial? rightWell
+    4. Index into Fluids. I used a preprocessor macro for readability, but behind the scenes it's just a 0, 1, 2, or 3, since we have 4 total reward solenoids currently.
+    5. MatLab fluid delivery code (just use the macros)
+    6. MatLab fluid stop code (just use the macros)
+
+  !!! REMEMBER: Once you CREATE a TrialType, you must also ADD IT TO THE TrialWeight POOL BELOW.
 */
-  // Go-Right:
-const TrialType goRight2(true, Odors[1], rightWell, 2, BF_DELIVER_FLUID_G_R, BF_STOP_FLUID_G_R);
-  // Go-Left:
-const TrialType goLeft2(true, Odors[3], leftWell, 0, BF_DELIVER_FLUID_G_L, BF_STOP_FLUID_G_L);
-  // No-Go:
-const TrialType noGo1(false, Odors[4], SENTINEL, SENTINEL, SENTINEL, SENTINEL);
-const TrialType noGo2(false, Odors[5], SENTINEL, SENTINEL, SENTINEL, SENTINEL);
+
+/* Go-Right: */
+const TrialType goRight2(true, Odors[1], rightWell, 2, BF_ODOR_2_ON, BF_DELIVER_FLUID_G_R, BF_STOP_FLUID_G_R);
+/* Go-Left:  */
+const TrialType goLeft2(true, Odors[3], leftWell, 0, BF_ODOR_4_ON, BF_DELIVER_FLUID_G_L, BF_STOP_FLUID_G_L);
 
 /* 
-  To adjust the trial proportions, simply adjust the ratio of
-  the integers (weights) associated with each trial type below.
-  For example:
-    1. 50%    Go-right, 50%   Go-left, 0%     No-go ->  1; 1; 1; 1; 0; 0
-    2. 33.3%  Go-right, 33.3% Go-left, 33.3%  No-go ->  1; 1; 1; 1; 1; 1
-    3. 66.6%  Go-right, 33.3% Go-left, 0%     No-go ->  2; 2; 1; 1; 0; 0
+  To adjust the trial proportions, simply adjust the ratio of the integers (weights) associated with each trial type below.
+  For example, if we have 6 total TrialTypes:
+    1. 50%    Go-right, 50%   Go-left, 0%     No-go:
+    ->  const TrialWeight pool[] = {
+          { goRight1, 1 },
+          { goRight2, 1 },
+          { goLeft1,  1 },
+          { goLeft2,  1 },
+          { noGo1,    0 },
+          { noGo2,    0 },
+        };
+    2. 33.3%  Go-right, 33.3% Go-left, 33.3%  No-go:
+    ->  const TrialWeight pool[] = {
+          { goRight1, 1 },
+          { goRight2, 1 },
+          { goLeft1,  1 },
+          { goLeft2,  1 },
+          { noGo1,    1 },
+          { noGo2,    1 },
+        };
+    3. 66.6%  Go-right, 33.3% Go-left, 0%     No-go:
+    ->  const TrialWeight pool[] = {
+          { goRight1, 2 },
+          { goRight2, 2 },
+          { goLeft1,  1 },
+          { goLeft2,  1 },
+          { noGo1,    0 },
+          { noGo2,    0 },
+        };
 */
 const TrialWeight pool[] = {  /* Pool of available trial types and their weights (proportions) */
   { goRight2, 1 },            // Go-right trial --  odor 2
   { goLeft2,  1 },            // Go-left trial  --  odor 4
-  { noGo1,    0 },            // No-go trial    --  odor 5
-  { noGo2,    0 },            // No-go trial    --  odor 6
 };
 
 /*=== Trial sequence parameters ===*/
@@ -205,6 +245,7 @@ void setup() {
     pinMode(Fluids[rwd], OUTPUT);
   }
   pinMode(intanMarkOut, INPUT);                   // Intan mark-out 5V signal
+  pinMode(intanTimeSync, OUTPUT);                 // 5V Digital output for time sync with Intan
   pinMode(odorPort, INPUT_PULLUP);                // IR Sensors
   pinMode(leftWell, INPUT_PULLUP);
   pinMode(rightWell, INPUT_PULLUP);
@@ -232,7 +273,6 @@ void setup() {
   Serial.begin(9600);                             // Initialize serial com
   RecStart = millis();
   recordEvent(BF_START_SESSION);                  // Mark start of session in MatLab
-
 }
 
 void loop() {
@@ -327,15 +367,16 @@ void flashLight(int duration) {
   unsigned long start = millis();
   while (millis() - start < duration) {
     digitalWrite(trialLight, HIGH);
-    delay(200);
+    delay(pollingRate);
     digitalWrite(trialLight, LOW);
-    delay(200);
+    delay(pollingRate);
   }
 }
 
 /*=== Trial Logic Functions ===*/
 bool odorSampling(TrialType trial) {
   digitalWrite(trial.odorPin, HIGH);              // 1. Prime the correct odor
+  recordEvent(trial.odorOnCode);
   delay(primingDelay);                            // 2. Wait for priming delay
   digitalWrite(trialLight, HIGH);                 // 3. Turn on the trial light
   recordEvent(BF_LIGHTS_ON);

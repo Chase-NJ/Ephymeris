@@ -1,14 +1,13 @@
 /*
 Author: Chase Johnston
-Date: March 31, 2026
+Date: April 3rd, 2026
 Purpose:
-  Modify the refactored behavior shell to begin behavior trials
-  according to a 5V mark-out signal from an Intan recording
-  controller.
-
-  Previously, you would odor poke to start the main loop. Now, the
-  main loop begins when you press "play" within the Intan recording
-  software.
+  1. Add digital pulse to intan digitalIn to recordEvent
+  2. Move recordEvent(trial.odorOnCode) to N.O.V. VAC close (odor directed to rat)
+  3. Took the "wait for mark" out of the setup, and incorporated it into the logic
+      of the main loop. In practice, behavior and Intan mark-out should be tied.
+      The use of the sessionComplete sentinel actually allows us to solve our extra
+      MatLab timestamps problem AND floating voltages starting our behavior.
 */
 
 /*=== Experiment Hyperparameters ===*/

@@ -232,6 +232,7 @@ bool sessionComplete           = false;   // If rat somehow completes 1000 trial
 unsigned long currentTS        = 0;       // Current time step
 unsigned long startTime        = 0;       // Session start time
 unsigned long RecStart         = 0;       // Recording start time
+const int baudRate             = 115200;  // Baud rate for communication with MatLab via serial port
 TrialType* trials[numTrials];             // Populated in setup() via seeded randomness
 /*=================================*/
 
@@ -265,7 +266,7 @@ void setup() {
   /* Populate trials array using seeded randomness */
   generateTrials(trials, numTrials, trialSeed, pool, sizeof(pool) / sizeof(pool[0]));
   sessionComplete = true;                         // This causes our main loop to wait for Intan mark out to run behavior
-  Serial.begin(9600);                             // Initialize serial com with baud rate 9600
+  Serial.begin(baudRate);                         // Initialize serial com with baud rate 115200 (MatLab default)
 }
 
 void loop() {
@@ -280,7 +281,7 @@ void loop() {
   /* Run our behavior! */
   if (odorSampling(*trials[currentTrial])) {
     currentTrial++;                                     // Advance only on successful trial
-    if (currentTrial >= numTrials) endCurrentSession();
+    if (currentTrial >= numTrials) endCurrentSession(); // If rat completes all trials
   } else {
     recordEvent(BF_INVALID_TRIAL);                      // Trial aborted!!
   }
@@ -337,28 +338,15 @@ void generateTrials(const TrialType* trials[], int numTrials, long seed,
    controller (if you have one connected).  
 */
 void recordEvent(int eventCode) {
-  digitalWrite(intanTimeSync, HIGH);
+  unsigned long timestamp = millis() - RecStart;
+  char buf[16];
+
+  digitalWrite(intanTimeSync, HIGH);              // Pulse Intan recording controller
   delay(pollingRate);
   digitalWrite(intanTimeSync, LOW);
-  if (eventCode < 0 || eventCode > 999) {         // Make sure it's not 4 digits
-    Serial.println("An invalid event ID was given!");
-    return;
-  }
-  if (eventCode >= 100) {                         // 3 digit code, we just print
-    Serial.print(eventCode);
-    Serial.print("\t");
-    Serial.println(millis() - RecStart);
-  } else if (eventCode >= 10) {                   // 2 digit code, prepend 1 zero.
-    Serial.print("0");
-    Serial.print(eventCode);
-    Serial.print("\t");
-    Serial.println(millis() - RecStart);
-  } else {                                        // must be 1 digit
-    Serial.print("00");
-    Serial.print(eventCode);
-    Serial.print("\t");
-    Serial.println(millis() - RecStart);
-  }
+
+  sprintf(buf, "%03d\t%lu", eventCode, timestamp);// Store print line to MatLab in a buffer
+  Serial.println(buf);                            // Print buffer to serial
 }
 
 /*  bool verifySensor(int pin, int duration) {...} ->

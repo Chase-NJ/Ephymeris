@@ -10,8 +10,9 @@ Purpose:
       MatLab timestamps problem AND floating voltages starting our behavior.
 */
 
-/*=== Experiment Hyperparameters ===*/
+/*============= Experiment Hyperparameters =============*/
 /* Trial timing parameters (in ms) */
+const int baudRate             =  115200; // Baud rate for communication with MatLab via serial port
 const int errorDelay           =  2000;   // Timeout for incorrect response.
 const int odorPortTimeout      =  8000;   // Window rat has to poke following light on.
 const int odorPokeHold         =  1000;   // Duration rat must hold poke before odor delivery AND during odor sampling.
@@ -30,7 +31,27 @@ const int FluidPinTimes[] = {
 };
 const int pollingRate          =  2;      // Polling rate for our IR sensors (in ms)
 const int primingDelay         =  1000;   // Time odor is primed prior to trial light on
-/*==================================*/
+/*======================================================*/
+
+/* Trial Timing */
+struct TrialClock {
+  unsigned long recStart       = 0;
+  unsigned long currentTS      = 0;
+
+  void beginSession() {
+    unsigned long ts = millis();
+    recStart = ts;
+    currentTS = ts;
+  }
+
+  unsigned long elapsed() {
+    unsigned long ts = millis();
+    currentTS = ts;                       // Update current timestep
+    return ts - recStart;                 // millis() - recStart 
+  }
+};
+
+TrialClock clock;                         // Encapsulates the logic for trial timestamps
 
 /*=== Preprocessor Macros (Trial events) ===*/
 #define BF_START_SESSION 221
@@ -224,17 +245,12 @@ const TrialWeight pool[] = {  /* Pool of available trial types and their weights
   { goLeft2,  1 },            // Go-left trial  --  odor 4
 };
 
-/*=== Trial sequence parameters ===*/
+/*======== Trial sequence parameters ========*/
 const int numTrials            = 1000;    // Number of trials to be run (size of trialCodes array)
 const long trialSeed           = 12345;   // Seed for reproducible trial sequence
 int currentTrial               = 0;       // Index in trials[]
 bool sessionComplete           = false;   // If rat somehow completes 1000 trials...
-unsigned long currentTS        = 0;       // Current time step
-unsigned long startTime        = 0;       // Session start time
-unsigned long RecStart         = 0;       // Recording start time
-const int baudRate             = 115200;  // Baud rate for communication with MatLab via serial port
 TrialType* trials[numTrials];             // Populated in setup() via seeded randomness
-/*=================================*/
 
 void setup() {
   /*=== Setup Arduino pins ===*/
@@ -293,7 +309,7 @@ void loop() {
 void beginNewSession() {
   sessionComplete = false;
   currentTrial = 0;                               // Start at beginning of Trials array
-  RecStart = millis();                            // Set our recording start timestamp to the current millis
+  clock.beginSession();
   recordEvent(BF_START_SESSION);                  // Mark start of session in MatLab
 }
 
@@ -338,7 +354,7 @@ void generateTrials(const TrialType* trials[], int numTrials, long seed,
    controller (if you have one connected).  
 */
 void recordEvent(int eventCode) {
-  unsigned long timestamp = millis() - RecStart;
+  unsigned long timestamp = clock.elapsed();
   char buf[16];
 
   digitalWrite(intanTimeSync, HIGH);              // Pulse Intan recording controller

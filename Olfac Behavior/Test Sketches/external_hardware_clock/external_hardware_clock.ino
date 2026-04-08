@@ -10,7 +10,7 @@ Purpose:
 #define BF_END_SESSION 246
 
 /* Constants */
-const int baudRate                  =  115200;  // Baud rate for communication with MatLab via serial port
+const int baudRate                  =  9600;    // Baud rate for communication with MatLab via serial port
 const int pollingRate               =  2;       // Polling rate for our IR sensors (in ms)
 
 /* Global Variables */
@@ -107,27 +107,17 @@ struct TrialClock {
     //   Together they form one continuous 32-bit tick count.
   }
 
-  // Convert a tick count to milliseconds.
-  // At 30 kHz, each tick = 1/30000 s = 0.03333... ms
-  // So: ms = ticks * 1000 / 30000 = ticks / 30
-  //
-  // We use integer division, which truncates. This gives ~0.033 ms
-  // resolution — well under 1 ms, so the result is the floor of
-  // the true millisecond value.
-  uint32_t ticksToMs(uint32_t ticks) {
-    return ticks / 30;
-  }
-
   void beginSession() {
     recStart = readTicks();
     currentTS = recStart;
   }
 
-  // Returns elapsed time in milliseconds since beginSession()
-  unsigned long elapsed() {
+  // Returns elapsed ticks since beginSession().
+  // Caller converts to ms with decimal precision (see recordEvent).
+  uint32_t elapsed() {
     uint32_t ticks = readTicks();
     currentTS = ticks;
-    return ticksToMs(ticks - recStart);
+    return ticks - recStart;
   }
 };
 
@@ -160,14 +150,16 @@ void endCurrentSession() {
    controller (if you have one connected).  
 */
 void recordEvent(int eventCode) {
-  unsigned long timestamp = trialClock.elapsed();
-  char buf[16];
+  uint32_t ticks = trialClock.elapsed();
+  uint32_t ms = ticks / 30;                       // Whole milliseconds
+  uint16_t frac = (uint16_t)((ticks % 30) * 100) / 30;  // Hundredths of a ms (0–99)
+  char buf[24];
 
   digitalWrite(intanTimeSync, HIGH);              // Pulse Intan recording controller
   delay(pollingRate);
   digitalWrite(intanTimeSync, LOW);
 
-  sprintf(buf, "%03d\t%lu", eventCode, timestamp);// Store print line to MatLab in a buffer
+  sprintf(buf, "%03d\t%lu.%02u", eventCode, ms, frac); // e.g. "221\t1234.56"
   Serial.println(buf);                            // Print buffer to serial
 }
 
@@ -175,7 +167,7 @@ void setup() {
   pinMode(intanMarkOut, INPUT);
   pinMode(intanTimeSync, OUTPUT);
   sessionComplete = true;                         // This causes our main loop to wait for Intan mark out to run behavior
-  Serial.begin(baudRate);                         // Initialize serial com with baud rate 115200 (MatLab default)
+  Serial.begin(baudRate);                         // Initialize serial com with baud rate
   trialClock.initHardware();
 }
 
@@ -185,7 +177,7 @@ void loop() {
    * for the first iteration of the main loop.
   */
   if (digitalRead(intanMarkOut) == HIGH && sessionComplete) beginNewSession();
-  if (digitalRead(intanMarkOut) == LOW) endCurrentSession();
+  if (digitalRead(intanMarkOut) == LOW && !sessionComplete) endCurrentSession();
   if (sessionComplete) return;
   recordEvent(BF_START_SESSION);
   delay(1000);

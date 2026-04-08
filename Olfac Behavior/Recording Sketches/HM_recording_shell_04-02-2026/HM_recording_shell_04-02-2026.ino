@@ -1,18 +1,20 @@
 /*
 Author: Chase Johnston
-Date: April 3rd, 2026
+Date: April 7th, 2026
 Purpose:
-  1. Add digital pulse to intan digitalIn to recordEvent
-  2. Move recordEvent(trial.odorOnCode) to N.O.V. VAC close (odor directed to rat)
-  3. Took the "wait for mark" out of the setup, and incorporated it into the logic
-      of the main loop. In practice, behavior and Intan mark-out should be tied.
-      The use of the sessionComplete sentinel actually allows us to solve our extra
-      MatLab timestamps problem AND floating voltages starting our behavior.
+  1. Update generateTrials function to ensure equal proportions across
+      blocks of 30 trials.
+  2. Added an Interrupt Service Routine (ISR) that constantly monitors
+      intan's "mark-out" signal for a falling edge. When it detects one,
+      we use a flag to mark that it happened, and check for it throughout
+      the trial. In this way, we abort the trial at the moment we stop
+      recording with Intan, ensuring the digitalIn and MatLab timestamps
+      arrays are always the same size!
 */
 
 /*============= Experiment Hyperparameters =============*/
 /* Trial timing parameters (in ms) */
-const int baudRate             =  115200; // Baud rate for communication with MatLab via serial port
+const int baudRate             =  9600;   // Baud rate for communication with MatLab via serial port
 const int errorDelay           =  2000;   // Timeout for incorrect response.
 const int odorPortTimeout      =  8000;   // Window rat has to poke following light on.
 const int odorPokeHold         =  1000;   // Duration rat must hold poke before odor delivery AND during odor sampling.
@@ -24,30 +26,36 @@ const int lazyRatDelay         =  4000;   // Timeout for failure to initiate tri
 const int noPokeHoldTimeout    =  4000;   // Timeout for failure to hold poke
 const int standardITI          =  1000;   // Intertrial interval on correct trials
 const int FluidPinTimes[] = { 
-                                  100,    // Left-well 1st fluid duration
-                                  100,    // Left-well 2nd fluid duration
-                                  100,    // Right-well 1st fluid duration
-                                  100     // Right-well 2nd fluid duration
+                                  100,    // Left-well  1
+                                  100,    // Left-well  2
+                                  100,    // Right-well 1
+                                  100     // Right-well 2
 };
+/*======================================================*/
+
+/* ======== Trial sequence parameters ======== */
 const int pollingRate          =  2;      // Polling rate for our IR sensors (in ms)
 const int primingDelay         =  1000;   // Time odor is primed prior to trial light on
-/*======================================================*/
+const int numTrials            =  1000;   // Number of trials to be run (size of trialCodes array)
+const int blockSize            =  30;     // Trials per block (proportions enforced within each block)
+const long trialSeed           =  12345;  // Seed for reproducible trial sequence
+int currentTrial               =  0;      // Index in trials[]
+bool sessionComplete           =  false;  // If rat somehow completes 1000 trials...
+volatile bool intanFell        =  false;  // Set by ISR on falling edge of intanMarkOut
 
 /* Trial Timing */
 struct TrialClock {
-  unsigned long recStart       = 0;
-  unsigned long currentTS      = 0;
+  unsigned long recStart       =  0;      // Timestamp at recording start
+  unsigned long currentTS      =  0;      // Current timestamp
 
   void beginSession() {
-    unsigned long ts = millis();
-    recStart = ts;
-    currentTS = ts;
+    currentTS = millis();
+    recStart = currentTS;
   }
 
   unsigned long elapsed() {
-    unsigned long ts = millis();
-    currentTS = ts;                       // Update current timestep
-    return ts - recStart;                 // millis() - recStart 
+    currentTS = millis();
+    return currentTS - recStart;          // millis() - recStart 
   }
 };
 
@@ -99,7 +107,7 @@ TrialClock clock;                         // Encapsulates the logic for trial ti
 
 /*===================== Pin-mapping for Arduino =====================*/
 /* Intan Mark-out Input Pin */
-const int intanMarkOut  = 8;  // 5V Intan mark-out signal
+const int intanMarkOut  = 18; // 5V Intan mark-out signal (interrupt-capable pin)
 const int intanTimeSync = 9;  // Digital output signal for time synchronization with Intan
 
 /* IR Sensors */
@@ -184,73 +192,55 @@ struct TrialWeight {
     : type(&type), weight(weight) {}
 };
 
-/* 
-  Below you will instantiate the trial types you will be using in today's experiment.
-  Example usage:
+/* ===== TRIAL TYPES ===== */
+// --> !!! REMEMBER: Once you CREATE a TrialType, you must also ADD IT TO THE TrialWeight POOL BELOW.
+// Go Trials:
+const TrialType goRight1(
+  true,                   // Is this a go trial?
+  Odors[0],               // Odor 1
+  rightWell,              // Correct response: right fluid well
+  RIGHT_WELL_FL_1,        // Index into Fluids[] & FluidPinTimes[]
+  BF_ODOR_1_ON,           // MatLab code for odor on
+  BF_DELIVER_FLUID_G_R,   // MatLab code for right fluid
+  BF_STOP_FLUID_G_R       // MatLab code for stop right fluid
+);
+const TrialType goRight2(
+  true, 
+  Odors[1],               // Odor 2
+  rightWell, 
+  RIGHT_WELL_FL_1, 
+  BF_ODOR_2_ON, 
+  BF_DELIVER_FLUID_G_R, 
+  BF_STOP_FLUID_G_R
+);
+const TrialType goLeft1(
+  true, 
+  Odors[2],               // Odor 3
+  leftWell, 
+  LEFT_WELL_FL_1, 
+  BF_ODOR_3_ON, 
+  BF_DELIVER_FLUID_G_L, 
+  BF_STOP_FLUID_G_L
+);
+const TrialType goLeft2(
+  true, 
+  Odors[3],               // Odor 4
+  leftWell, 
+  LEFT_WELL_FL_1, 
+  BF_ODOR_4_ON, 
+  BF_DELIVER_FLUID_G_L, 
+  BF_STOP_FLUID_G_L
+);
 
-  ->  const TrialType nameItWhatever( { 'true' OR 'false' } , Odors[{ 0-indexed odor pin }] , { 'leftWell' OR 'rightWell' } , { 0 OR 1 OR 2 OR 3 } , { BF_DELIVER_FLUID_G_R OR BF_DELIVER_FLUID_G_L OR SENTINEL for no-go trials } , { BF_STOP_FLUID_G_R OR BF_STOP_FLUID_G_L OR SENTINEL for no-go trials });
-
-  So, let's say I wanted to create a go-right odor 2 trial. I would instantiate it like so:
-
-  ->  const TrialType goRight2(true, Odors[1], rightWell, RIGHT_WELL_FL_1, BF_ODOR_1_ON, BF_DELIVER_FLUID_G_R, BF_STOP_FLUID_G_R);
-
-    1. Is it a go trial? true OR false
-    2. I wanted odor 2, but the Odors[] array is 0-indexed, so, 2 - 1 = Odors[1]
-    3. Which is the correct response on a go right trial? rightWell
-    4. Index into Fluids. I used a preprocessor macro for readability, but behind the scenes it's just a 0, 1, 2, or 3, since we have 4 total reward solenoids currently.
-    5. MatLab fluid delivery code (just use the macros)
-    6. MatLab fluid stop code (just use the macros)
-
-  !!! REMEMBER: Once you CREATE a TrialType, you must also ADD IT TO THE TrialWeight POOL BELOW.
-*/
-
-/* Go-Right: */
-const TrialType goRight2(true, Odors[1], rightWell, 2, BF_ODOR_2_ON, BF_DELIVER_FLUID_G_R, BF_STOP_FLUID_G_R);
-/* Go-Left:  */
-const TrialType goLeft2(true, Odors[3], leftWell, 0, BF_ODOR_4_ON, BF_DELIVER_FLUID_G_L, BF_STOP_FLUID_G_L);
-
-/* 
-  To adjust the trial proportions, simply adjust the ratio of the integers (weights) associated with each trial type below.
-  For example, if we have 6 total TrialTypes:
-    1. 50%    Go-right, 50%   Go-left, 0%     No-go:
-    ->  const TrialWeight pool[] = {
-          { goRight1, 1 },
-          { goRight2, 1 },
-          { goLeft1,  1 },
-          { goLeft2,  1 },
-          { noGo1,    0 },
-          { noGo2,    0 },
-        };
-    2. 33.3%  Go-right, 33.3% Go-left, 33.3%  No-go:
-    ->  const TrialWeight pool[] = {
-          { goRight1, 1 },
-          { goRight2, 1 },
-          { goLeft1,  1 },
-          { goLeft2,  1 },
-          { noGo1,    1 },
-          { noGo2,    1 },
-        };
-    3. 66.6%  Go-right, 33.3% Go-left, 0%     No-go:
-    ->  const TrialWeight pool[] = {
-          { goRight1, 2 },
-          { goRight2, 2 },
-          { goLeft1,  1 },
-          { goLeft2,  1 },
-          { noGo1,    0 },
-          { noGo2,    0 },
-        };
-*/
-const TrialWeight pool[] = {  /* Pool of available trial types and their weights (proportions) */
+/* Pool of available trials and their weights */
+const TrialWeight pool[] = {
+  { goRight1, 1 },            // Go-right trial --  odor 1
   { goRight2, 1 },            // Go-right trial --  odor 2
+  { goLeft1,  1 },            // Go-left trial  --  odor 3
   { goLeft2,  1 },            // Go-left trial  --  odor 4
 };
 
-/*======== Trial sequence parameters ========*/
-const int numTrials            = 1000;    // Number of trials to be run (size of trialCodes array)
-const long trialSeed           = 12345;   // Seed for reproducible trial sequence
-int currentTrial               = 0;       // Index in trials[]
-bool sessionComplete           = false;   // If rat somehow completes 1000 trials...
-TrialType* trials[numTrials];             // Populated in setup() via seeded randomness
+TrialType* trials[numTrials]; // Populated in setup() w/ seeded randomness
 
 void setup() {
   /*=== Setup Arduino pins ===*/
@@ -261,28 +251,22 @@ void setup() {
     pinMode(Fluids[rwd], OUTPUT);
   }
   pinMode(intanMarkOut, INPUT);                   // Intan mark-out 5V signal
+  attachInterrupt(digitalPinToInterrupt(intanMarkOut), intanFallingISR, FALLING);
+
   pinMode(intanTimeSync, OUTPUT);                 // 5V Digital output for time sync with Intan
   pinMode(odorPort, INPUT_PULLUP);                // IR Sensors
   pinMode(leftWell, INPUT_PULLUP);
   pinMode(rightWell, INPUT_PULLUP);
   pinMode(trialLight, OUTPUT);                    // Trial light
   pinMode(vac, OUTPUT);                           // N.O.V.
-  /*==========================*/
 
   /*=== Make sure everything's chill... ===*/
-  for (int odor = 0; odor < 12; odor++) {
-    digitalWrite(Odors[odor], LOW);
-  }
-  for (int rwd = 0; rwd < 4; rwd++) {
-    digitalWrite(Fluids[rwd], LOW);
-  }
-  digitalWrite(trialLight, LOW);
-  digitalWrite(vac, LOW);
+  shutdownHardware();
 
   /* Populate trials array using seeded randomness */
   generateTrials(trials, numTrials, trialSeed, pool, sizeof(pool) / sizeof(pool[0]));
   sessionComplete = true;                         // This causes our main loop to wait for Intan mark out to run behavior
-  Serial.begin(baudRate);                         // Initialize serial com with baud rate 115200 (MatLab default)
+  Serial.begin(baudRate);                         // Initialize serial com with baud rate
 }
 
 void loop() {
@@ -291,7 +275,7 @@ void loop() {
    * for the first iteration of the main loop.
   */
   if (digitalRead(intanMarkOut) == HIGH && sessionComplete) beginNewSession();
-  if (digitalRead(intanMarkOut) == LOW) endCurrentSession();
+  if (intanFell) { endCurrentSession(); return; }
   if (sessionComplete) return;
 
   /* Run our behavior! */
@@ -299,14 +283,39 @@ void loop() {
     currentTrial++;                                     // Advance only on successful trial
     if (currentTrial >= numTrials) endCurrentSession(); // If rat completes all trials
   } else {
-    recordEvent(BF_INVALID_TRIAL);                      // Trial aborted!!
+    if (!intanFell) recordEvent(BF_INVALID_TRIAL);      // Trial aborted (not by Intan)
   }
+  if (intanFell) endCurrentSession();
 }
 
 /* ===================================== Utility functions ===================================== */
 
+/* ISR for Intan mark-out falling edge */
+void intanFallingISR() {
+  intanFell = true;
+}
+
+/* Blanket turn-off of all outputs (safe to call at any time) */
+void shutdownHardware() {
+  for (int i = 0; i < 12; i++) digitalWrite(Odors[i], LOW);
+  for (int i = 0; i < 4; i++) digitalWrite(Fluids[i], LOW);
+  digitalWrite(trialLight, LOW);
+  digitalWrite(vac, LOW);
+}
+
+/* Interruptible delay — returns false if intanFell fires during the wait */
+bool checkedDelay(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    if (intanFell) return false;
+    delay(pollingRate);
+  }
+  return true;
+}
+
 /* Housekeeping for starting a new experiment session */
 void beginNewSession() {
+  intanFell = false;                              // Clear stale flag from previous session
   sessionComplete = false;
   currentTrial = 0;                               // Start at beginning of Trials array
   clock.beginSession();
@@ -315,6 +324,7 @@ void beginNewSession() {
 
 /* Housekeeping for ending the current experiment session */
 void endCurrentSession() {
+  shutdownHardware();
   sessionComplete = true;
   recordEvent(BF_END_SESSION);
 }
@@ -323,8 +333,10 @@ void endCurrentSession() {
   Given an empty trials array, our TrialWeight pool, and a seed, this
   function populates our trials array with the desired TrialTypes,
   according to the proportions defined by TrialWeight pool[].
-  This function uses seeded randomness for reproducability of the
-  trial sequence.
+
+  Trials are generated in blocks of blockSize. Within each block,
+  exact proportions are enforced (with any remainder slots assigned
+  via weighted random), and the block is then shuffled.
 */
 void generateTrials(const TrialType* trials[], int numTrials, long seed,
                            const TrialWeight pool[], int poolSize) {
@@ -332,15 +344,38 @@ void generateTrials(const TrialType* trials[], int numTrials, long seed,
   for (int i = 0; i < poolSize; i++) totalWeight += pool[i].weight;
 
   randomSeed(seed);                               // Seed our RNG
-  for (int i = 0; i < numTrials; i++) {           // Iterate through trials array
-    int roll = random(0, totalWeight);            // Roll a random number from 0 to { combined weight }
-    int cumulative = 0;                           // Running total of weights from TrialWeights
-    for (int j = 0; j < poolSize; j++) {          // Iterate through TrialWeights pool
-      cumulative += pool[j].weight;               // Add current weight to running total
-      if (roll < cumulative) {
-        trials[i] = pool[j].type;                 // If our roll > our current running total, insert trial
-        break;
+
+  for (int blockStart = 0; blockStart < numTrials; blockStart += blockSize) {
+    int curBlockSize = min(blockSize, numTrials - blockStart);
+    int filled = 0;
+
+    // 1. Fill block with exact proportional counts
+    for (int i = 0; i < poolSize; i++) {
+      int count = (long)curBlockSize * pool[i].weight / totalWeight;
+      for (int j = 0; j < count; j++) {
+        trials[blockStart + filled++] = pool[i].type;
       }
+    }
+
+    // 2. Distribute any remainder slots via weighted random
+    while (filled < curBlockSize) {
+      int roll = random(0, totalWeight);
+      int cumulative = 0;
+      for (int j = 0; j < poolSize; j++) {
+        cumulative += pool[j].weight;
+        if (roll < cumulative) {
+          trials[blockStart + filled++] = pool[j].type;
+          break;
+        }
+      }
+    }
+
+    // 3. Fisher-Yates shuffle the block
+    for (int i = curBlockSize - 1; i > 0; i--) {
+      int j = random(0, i + 1);
+      const TrialType* temp = trials[blockStart + i];
+      trials[blockStart + i] = trials[blockStart + j];
+      trials[blockStart + j] = temp;
     }
   }
 }
@@ -373,6 +408,7 @@ void recordEvent(int eventCode) {
 bool verifySensor(int pin, int duration) {
   unsigned long start = millis();
   while (millis() - start < duration) {
+    if (intanFell) return false;                  // Abort on Intan falling edge
     if (digitalRead(pin) == HIGH) {
       return false;                               // For Input Pullup, HIGH = rat unpoked
     }
@@ -399,18 +435,19 @@ void flashLight(int duration) {
 /*=== Trial Logic Functions ===*/
 bool odorSampling(TrialType trial) {
   digitalWrite(trial.odorPin, HIGH);              // 1. Prime the correct odor
-  delay(primingDelay);                            // 2. Wait for priming delay
+  if (!checkedDelay(primingDelay)) return false;  // 2. Wait for priming delay
   digitalWrite(trialLight, HIGH);                 // 3. Turn on the trial light
   recordEvent(BF_LIGHTS_ON);
 
   unsigned long waitStart = millis();
   while (digitalRead(odorPort) == HIGH) {         // 4. Await rat to poke odorPort
+    if (intanFell) return false;
     if (millis() - waitStart >= odorPortTimeout) {
       // Error 1: Rat failed to poke in time
       digitalWrite(trialLight, LOW);
       digitalWrite(trial.odorPin, LOW);
       recordEvent(BF_LAZY_RAT);
-      delay(lazyRatDelay);
+      checkedDelay(lazyRatDelay);
       return false;
     }
     delay(pollingRate);
@@ -421,8 +458,9 @@ bool odorSampling(TrialType trial) {
     // Error 2: Rat didn't hold poke before vac close
     digitalWrite(trialLight, LOW);
     digitalWrite(trial.odorPin, LOW);
+    if (intanFell) return false;
     recordEvent(BF_ODOR_UNPOKE_EARLY);
-    delay(noPokeHoldTimeout);
+    checkedDelay(noPokeHoldTimeout);
     return false;
   }
 
@@ -434,8 +472,9 @@ bool odorSampling(TrialType trial) {
     digitalWrite(trialLight, LOW);
     digitalWrite(trial.odorPin, LOW);
     digitalWrite(vac, LOW);
+    if (intanFell) return false;
     recordEvent(BF_ODOR_UNPOKE_EARLY);
-    delay(noPokeHoldTimeout);
+    checkedDelay(noPokeHoldTimeout);
     return false;
   }
 
@@ -444,6 +483,7 @@ bool odorSampling(TrialType trial) {
   recordEvent(BF_ODOR_OFF);
 
   while (digitalRead(odorPort) == LOW) {          // 9. Await unpoke
+    if (intanFell) return false;
     delay(pollingRate);
   }
   recordEvent(BF_ODOR_UNPOKE);
@@ -459,6 +499,7 @@ void checkResponse(TrialType trial) {
     int pokedWell = SENTINEL;
 
     while (millis() - pollStart < fluidWellPoll) {// 1. Poll both wells
+      if (intanFell) return;
       if (digitalRead(rightWell) == LOW) {
         pokedWell = rightWell;
         recordEvent(BF_WATER_POKE_R);
@@ -474,49 +515,52 @@ void checkResponse(TrialType trial) {
 
     if (pokedWell == SENTINEL) {
       // No response within timeout
-      delay(errorDelay);
+      checkedDelay(errorDelay);
       return;
     }
 
     if (pokedWell != trial.correctWell) {
       // Error 1: Wrong well
       recordEvent(pokedWell == rightWell ? BF_WATER_POKE_ERROR_R : BF_WATER_POKE_ERROR_L);
-      delay(errorDelay);
+      checkedDelay(errorDelay);
       return;
     }
 
     if (!verifySensor(pokedWell, fluidWellHold)) {// 3. Correct well — verify hold
       // Error 3: Didn't hold poke
+      if (intanFell) return;
       recordEvent(pokedWell == rightWell ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L);
-      delay(earlyWellUnpoke);
+      checkedDelay(earlyWellUnpoke);
       return;
     }
 
     giveReward(trial);                            // 4. Held — deliver reward
     while (digitalRead(pokedWell)) {              // Await well unpoke
+      if (intanFell) return;
       delay(pollingRate);
     }
-    delay(standardITI);                           // 5. Correct-response ITI
+    checkedDelay(standardITI);                    // 5. Correct-response ITI
 
   } else {
     unsigned long pollStart = millis();           // NO-GO TRIAL -> poll both wells for nogoWellPoll
     while (millis() - pollStart < nogoWellPoll) { // 1. Poll both wells
+      if (intanFell) return;
       if (digitalRead(rightWell) == LOW) {
         // Error 2: Rat responded on nogo
         recordEvent(BF_WATER_POKE_R);
-        delay(errorDelay);
+        checkedDelay(errorDelay);
         return;
       }
       if (digitalRead(leftWell) == LOW) {
         // Error 2: Rat responded on nogo
         recordEvent(BF_WATER_POKE_L);
-        delay(errorDelay);
+        checkedDelay(errorDelay);
         return;
       }
       delay(pollingRate);
     }
 
-    delay(standardITI);                           // 2. Correctly withheld response
+    checkedDelay(standardITI);                    // 2. Correctly withheld response
   }
 }
 
@@ -526,7 +570,7 @@ void giveReward(TrialType trial) {
 
   recordEvent(trial.fluidEventCode);              // Log fluid delivery
   digitalWrite(fluidPin, HIGH);                   // Open fluid solenoid
-  delay(fluidDuration);                           // Hold open for FluidPinTime
+  checkedDelay(fluidDuration);                    // Hold open for FluidPinTime
   digitalWrite(fluidPin, LOW);                    // Close fluid solenoid
   recordEvent(trial.stopFluidCode);               // Log fluid stop
 }

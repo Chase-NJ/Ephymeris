@@ -1,10 +1,8 @@
 /*
 Author: Chase Johnston
-Date: April 8th, 2026
+Date: April 9th, 2026
 Purpose:
-  - Modify ISR logic to only check if intanFell right before we're
-    about to record an event.
-  - Remove "checkedDelay", we don't want to be able to interrupt a delay.
+  - I hate interrupt service routines...
 */
 
 /*============= Experiment Hyperparameters =============*/
@@ -38,7 +36,6 @@ int currentTrial               =  0;      // Index in trials[]
 bool sessionComplete           =  false;  // If rat somehow completes 1000 trials...
 
 /* ======== Intan Recording Controller Constants ======== */
-volatile bool intanFell        =  false;  // Set by ISR on falling edge of intanMarkOut
 const int markOutDebounce      =  50;     // Duration (ms) mark-out must hold HIGH to confirm session start
 
 /* Trial Timing */
@@ -105,7 +102,7 @@ TrialClock clock;                         // Encapsulates the logic for trial ti
 
 /*===================== Pin-mapping for Arduino =====================*/
 /* Intan Mark-out Input Pin */
-const int intanMarkOut  = 18; // 5V Intan mark-out signal (interrupt-capable pin)
+const int intanMarkOut  = 8;  // 5V Intan mark-out signal (interrupt-capable pin)
 const int intanTimeSync = 9;  // Digital output signal for time synchronization with Intan
 
 /* IR Sensors */
@@ -248,21 +245,26 @@ void setup() {
   for (int rwd = 0; rwd < 4; rwd++) {             // Fluid solenoids
     pinMode(Fluids[rwd], OUTPUT);
   }
-  pinMode(intanMarkOut, INPUT);                   // Intan mark-out 5V signal
-  attachInterrupt(digitalPinToInterrupt(intanMarkOut), intanFallingISR, FALLING);
+  pinMode( intanMarkOut , INPUT );                // Intan mark-out 5V signal
+  pinMode( odorPort , INPUT_PULLUP );             // IR Sensors
+  pinMode( leftWell , INPUT_PULLUP );
+  pinMode( rightWell , INPUT_PULLUP );
 
-  pinMode(intanTimeSync, OUTPUT);                 // 5V Digital output for time sync with Intan
-  pinMode(odorPort, INPUT_PULLUP);                // IR Sensors
-  pinMode(leftWell, INPUT_PULLUP);
-  pinMode(rightWell, INPUT_PULLUP);
-  pinMode(trialLight, OUTPUT);                    // Trial light
-  pinMode(vac, OUTPUT);                           // N.O.V.
+  pinMode( intanTimeSync , OUTPUT );              // 5V Digital output for time sync with Intan
+  pinMode( trialLight , OUTPUT );                 // Trial light
+  pinMode( vac , OUTPUT );                        // N.O.V.
 
   /*=== Make sure everything's chill... ===*/
   shutdownHardware();
 
   /* Populate trials array using seeded randomness */
-  generateTrials(trials, numTrials, trialSeed, pool, sizeof(pool) / sizeof(pool[0]));
+  generateTrials(
+    trials,     // Empty trials array of size numTrials
+    numTrials,  // Cutoff number
+    trialSeed,  // Seed for reproducability
+    pool,       // Pool of available TrialTypes
+    sizeof(pool) / sizeof(pool[0])
+  );
   sessionComplete = true;                         // This causes our main loop to wait for Intan mark out to run behavior
   Serial.begin(baudRate);                         // Initialize serial com with baud rate
 }
@@ -273,24 +275,19 @@ void loop() {
    * for the first iteration of the main loop.
   */
   if (digitalRead(intanMarkOut) == HIGH && sessionComplete) beginNewSession();
-  if (intanFell) endCurrentSession();
+  if (digitalRead(intanMarkOut) == LOW && !sessionComplete) endCurrentSession();
   if (sessionComplete) return;
 
   /* Run our behavior! */
   if (odorSampling(*trials[currentTrial])) {
     currentTrial++;                                     // Advance only on successful trial
     if (currentTrial >= numTrials) endCurrentSession(); // If rat completes all trials
-  } else if (!intanFell) {
+  } else {
     recordEvent(BF_INVALID_TRIAL);                      // Trial aborted (not by Intan)
   }
 }
 
 /* ===================================== Utility functions ===================================== */
-
-/* ISR for Intan mark-out falling edge */
-void intanFallingISR() {
-  intanFell = true;
-}
 
 /* Blanket turn-off of all outputs (safe to call at any time) */
 void shutdownHardware() {
@@ -302,7 +299,6 @@ void shutdownHardware() {
 
 /* Housekeeping for starting a new experiment session */
 void beginNewSession() {
-  intanFell = false;                              // Clear stale flag from previous session
   clock.beginSession();                           // Initialize clock on rising edge
 
   /* Debounce: verify mark-out holds HIGH */
@@ -319,7 +315,6 @@ void beginNewSession() {
 
 /* Housekeeping for ending the current experiment session */
 void endCurrentSession() {
-  intanFell = false;                              // Clear flag so recordEvent can fire
   shutdownHardware();
   sessionComplete = true;
   recordEvent(BF_END_SESSION);
@@ -385,9 +380,10 @@ void generateTrials(const TrialType* trials[], int numTrials, long seed,
    controller (if you have one connected).  
 */
 void recordEvent(int eventCode) {
-  if (intanFell) return;                          // Don't send events after recording ends
   unsigned long timestamp = clock.elapsed();
   char buf[16];
+
+  if (digitalRead(intanMarkOut) == LOW) return;   // Don't send events after recording ends
 
   digitalWrite(intanTimeSync, HIGH);              // Pulse Intan recording controller
   delay(pollingRate);

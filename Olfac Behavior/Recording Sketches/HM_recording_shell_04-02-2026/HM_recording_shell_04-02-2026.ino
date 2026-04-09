@@ -1,15 +1,10 @@
 /*
 Author: Chase Johnston
-Date: April 7th, 2026
+Date: April 8th, 2026
 Purpose:
-  1. Update generateTrials function to ensure equal proportions across
-      blocks of 30 trials.
-  2. Added an Interrupt Service Routine (ISR) that constantly monitors
-      intan's "mark-out" signal for a falling edge. When it detects one,
-      we use a flag to mark that it happened, and check for it throughout
-      the trial. In this way, we abort the trial at the moment we stop
-      recording with Intan, ensuring the digitalIn and MatLab timestamps
-      arrays are always the same size!
+  - Modify ISR logic to only check if intanFell right before we're
+    about to record an event.
+  - Remove "checkedDelay", we don't want to be able to interrupt a delay.
 */
 
 /*============= Experiment Hyperparameters =============*/
@@ -41,7 +36,10 @@ const int blockSize            =  30;     // Trials per block (proportions enfor
 const long trialSeed           =  12345;  // Seed for reproducible trial sequence
 int currentTrial               =  0;      // Index in trials[]
 bool sessionComplete           =  false;  // If rat somehow completes 1000 trials...
+
+/* ======== Intan Recording Controller Constants ======== */
 volatile bool intanFell        =  false;  // Set by ISR on falling edge of intanMarkOut
+const int markOutDebounce      =  50;     // Duration (ms) mark-out must hold HIGH to confirm session start
 
 /* Trial Timing */
 struct TrialClock {
@@ -275,17 +273,16 @@ void loop() {
    * for the first iteration of the main loop.
   */
   if (digitalRead(intanMarkOut) == HIGH && sessionComplete) beginNewSession();
-  if (intanFell) { endCurrentSession(); return; }
+  if (intanFell) endCurrentSession();
   if (sessionComplete) return;
 
   /* Run our behavior! */
   if (odorSampling(*trials[currentTrial])) {
     currentTrial++;                                     // Advance only on successful trial
     if (currentTrial >= numTrials) endCurrentSession(); // If rat completes all trials
-  } else {
-    if (!intanFell) recordEvent(BF_INVALID_TRIAL);      // Trial aborted (not by Intan)
+  } else if (!intanFell) {
+    recordEvent(BF_INVALID_TRIAL);                      // Trial aborted (not by Intan)
   }
-  if (intanFell) endCurrentSession();
 }
 
 /* ===================================== Utility functions ===================================== */
@@ -303,27 +300,26 @@ void shutdownHardware() {
   digitalWrite(vac, LOW);
 }
 
-/* Interruptible delay — returns false if intanFell fires during the wait */
-bool checkedDelay(unsigned long ms) {
-  unsigned long start = millis();
-  while (millis() - start < ms) {
-    if (intanFell) return false;
-    delay(pollingRate);
-  }
-  return true;
-}
-
 /* Housekeeping for starting a new experiment session */
 void beginNewSession() {
   intanFell = false;                              // Clear stale flag from previous session
+  clock.beginSession();                           // Initialize clock on rising edge
+
+  /* Debounce: verify mark-out holds HIGH */
+  unsigned long start = millis();
+  while (millis() - start < markOutDebounce) {
+    if (digitalRead(intanMarkOut) == LOW) return; // Glitch — ignore and wait for next rising edge
+    delay(pollingRate);
+  }
+
   sessionComplete = false;
   currentTrial = 0;                               // Start at beginning of Trials array
-  clock.beginSession();
   recordEvent(BF_START_SESSION);                  // Mark start of session in MatLab
 }
 
 /* Housekeeping for ending the current experiment session */
 void endCurrentSession() {
+  intanFell = false;                              // Clear flag so recordEvent can fire
   shutdownHardware();
   sessionComplete = true;
   recordEvent(BF_END_SESSION);
@@ -389,6 +385,7 @@ void generateTrials(const TrialType* trials[], int numTrials, long seed,
    controller (if you have one connected).  
 */
 void recordEvent(int eventCode) {
+  if (intanFell) return;                          // Don't send events after recording ends
   unsigned long timestamp = clock.elapsed();
   char buf[16];
 
@@ -408,7 +405,6 @@ void recordEvent(int eventCode) {
 bool verifySensor(int pin, int duration) {
   unsigned long start = millis();
   while (millis() - start < duration) {
-    if (intanFell) return false;                  // Abort on Intan falling edge
     if (digitalRead(pin) == HIGH) {
       return false;                               // For Input Pullup, HIGH = rat unpoked
     }
@@ -435,19 +431,18 @@ void flashLight(int duration) {
 /*=== Trial Logic Functions ===*/
 bool odorSampling(TrialType trial) {
   digitalWrite(trial.odorPin, HIGH);              // 1. Prime the correct odor
-  if (!checkedDelay(primingDelay)) return false;  // 2. Wait for priming delay
+  delay(primingDelay);                             // 2. Wait for priming delay
   digitalWrite(trialLight, HIGH);                 // 3. Turn on the trial light
   recordEvent(BF_LIGHTS_ON);
 
   unsigned long waitStart = millis();
   while (digitalRead(odorPort) == HIGH) {         // 4. Await rat to poke odorPort
-    if (intanFell) return false;
     if (millis() - waitStart >= odorPortTimeout) {
       // Error 1: Rat failed to poke in time
       digitalWrite(trialLight, LOW);
       digitalWrite(trial.odorPin, LOW);
       recordEvent(BF_LAZY_RAT);
-      checkedDelay(lazyRatDelay);
+      delay(lazyRatDelay);
       return false;
     }
     delay(pollingRate);
@@ -458,9 +453,8 @@ bool odorSampling(TrialType trial) {
     // Error 2: Rat didn't hold poke before vac close
     digitalWrite(trialLight, LOW);
     digitalWrite(trial.odorPin, LOW);
-    if (intanFell) return false;
     recordEvent(BF_ODOR_UNPOKE_EARLY);
-    checkedDelay(noPokeHoldTimeout);
+    delay(noPokeHoldTimeout);
     return false;
   }
 
@@ -472,9 +466,8 @@ bool odorSampling(TrialType trial) {
     digitalWrite(trialLight, LOW);
     digitalWrite(trial.odorPin, LOW);
     digitalWrite(vac, LOW);
-    if (intanFell) return false;
     recordEvent(BF_ODOR_UNPOKE_EARLY);
-    checkedDelay(noPokeHoldTimeout);
+    delay(noPokeHoldTimeout);
     return false;
   }
 
@@ -483,7 +476,6 @@ bool odorSampling(TrialType trial) {
   recordEvent(BF_ODOR_OFF);
 
   while (digitalRead(odorPort) == LOW) {          // 9. Await unpoke
-    if (intanFell) return false;
     delay(pollingRate);
   }
   recordEvent(BF_ODOR_UNPOKE);
@@ -499,7 +491,6 @@ void checkResponse(TrialType trial) {
     int pokedWell = SENTINEL;
 
     while (millis() - pollStart < fluidWellPoll) {// 1. Poll both wells
-      if (intanFell) return;
       if (digitalRead(rightWell) == LOW) {
         pokedWell = rightWell;
         recordEvent(BF_WATER_POKE_R);
@@ -515,52 +506,49 @@ void checkResponse(TrialType trial) {
 
     if (pokedWell == SENTINEL) {
       // No response within timeout
-      checkedDelay(errorDelay);
+      delay(errorDelay);
       return;
     }
 
     if (pokedWell != trial.correctWell) {
       // Error 1: Wrong well
       recordEvent(pokedWell == rightWell ? BF_WATER_POKE_ERROR_R : BF_WATER_POKE_ERROR_L);
-      checkedDelay(errorDelay);
+      delay(errorDelay);
       return;
     }
 
     if (!verifySensor(pokedWell, fluidWellHold)) {// 3. Correct well — verify hold
       // Error 3: Didn't hold poke
-      if (intanFell) return;
       recordEvent(pokedWell == rightWell ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L);
-      checkedDelay(earlyWellUnpoke);
+      delay(earlyWellUnpoke);
       return;
     }
 
     giveReward(trial);                            // 4. Held — deliver reward
     while (digitalRead(pokedWell)) {              // Await well unpoke
-      if (intanFell) return;
       delay(pollingRate);
     }
-    checkedDelay(standardITI);                    // 5. Correct-response ITI
+    delay(standardITI);                           // 5. Correct-response ITI
 
   } else {
     unsigned long pollStart = millis();           // NO-GO TRIAL -> poll both wells for nogoWellPoll
     while (millis() - pollStart < nogoWellPoll) { // 1. Poll both wells
-      if (intanFell) return;
       if (digitalRead(rightWell) == LOW) {
         // Error 2: Rat responded on nogo
         recordEvent(BF_WATER_POKE_R);
-        checkedDelay(errorDelay);
+        delay(errorDelay);
         return;
       }
       if (digitalRead(leftWell) == LOW) {
         // Error 2: Rat responded on nogo
         recordEvent(BF_WATER_POKE_L);
-        checkedDelay(errorDelay);
+        delay(errorDelay);
         return;
       }
       delay(pollingRate);
     }
 
-    checkedDelay(standardITI);                    // 2. Correctly withheld response
+    delay(standardITI);                           // 2. Correctly withheld response
   }
 }
 
@@ -570,7 +558,7 @@ void giveReward(TrialType trial) {
 
   recordEvent(trial.fluidEventCode);              // Log fluid delivery
   digitalWrite(fluidPin, HIGH);                   // Open fluid solenoid
-  checkedDelay(fluidDuration);                    // Hold open for FluidPinTime
+  delay(fluidDuration);                           // Hold open for FluidPinTime
   digitalWrite(fluidPin, LOW);                    // Close fluid solenoid
   recordEvent(trial.stopFluidCode);               // Log fluid stop
 }

@@ -1,28 +1,24 @@
 /*
 Author: Chase Johnston
-Date: April 12th, 2026
+Date: April 13th, 2026
 Purpose:
-  Implement behavior shaping paradigm.
-  1. Increase value of odorPokeHold as experiment progresses.
-  2. Increase value of fluidWellHold as experiment progresses.
-  3. To accomplish #1 and #2, the odorPokeHold and fluidWellHold
-      constants were switched to variables.
-  - Removed unused trial event macros.
+  Implement correct shaping paradigm:
+  - Adjust odorPokeHold, fluidWellHold, fluidWellPoll, and odorPortTimeout as experiment progresses.
+  - We are shaping them on a goRight trial using 
 */
 
 /*============= Experiment Hyperparameters =============*/
 /* Trial timing parameters (in ms) */
 const int baudRate             =  9600;   // Baud rate for communication with MatLab via serial port
-const int errorDelay           =  4000;   // Timeout for incorrect response.
-const int odorPortTimeout      =  8000;   // Window rat has to poke following light on.
-int odorPokeHold               =  100;    // Duration rat must hold poke before odor delivery AND during odor sampling. (ms)
-int fluidWellHold              =  10;     // Duration rat must hold poke before fluid delivery (on correct trials). (ms)
-const int fluidWellPoll        =  10000;  // Window rat has to respond following successful odor sampling.
+const int errorDelay           =  20000;  // Timeout for incorrect response.
+int odorPortTimeout            =  8000;   // Window rat has to poke following light on.
+int odorPokeHold               =  50;     // Duration rat must hold poke before odor delivery AND during odor sampling. (ms)
+int fluidWellHold              =  100;    // Duration rat must hold poke before fluid delivery (on correct trials). (ms)
+int fluidWellPoll              =  10000;  // Window rat has to respond following successful odor sampling.
 const int nogoWellPoll         =  2000;   // Duration rat must withold response on NO-GO trials, following successful odor sampling.
-const int earlyWellUnpoke      =  1000;   // Timeout for early fluid-well unpoke (rat did not hold for fluidWellHold duration)
 const int lazyRatDelay         =  4000;   // Timeout for failure to initiate trial (poke once light on)
 const int noPokeHoldTimeout    =  4000;   // Timeout for failure to hold poke
-const int standardITI          =  1000;   // Intertrial interval on correct trials
+const int standardITI          =  4000;   // Intertrial interval on correct trials
 const int FluidPinTimes[] = { 
                                   100,    // Left-well  1
                                   100,    // Left-well  2
@@ -208,12 +204,12 @@ const TrialType goLeft2(
   BF_STOP_FLUID_G_L
 );
 
-/* Pool of available trials and their weights */
+/* Pool of available trials and their weights */                      // SHAPING: Shaping with 1 odor, a go-right trial
 const TrialWeight pool[] = {
   { goRight1, 1 },            // Go-right trial --  odor 1
-  { goRight2, 1 },            // Go-right trial --  odor 2
-  { goLeft1,  1 },            // Go-left trial  --  odor 3
-  { goLeft2,  1 },            // Go-left trial  --  odor 4
+  { goRight2, 0 },
+  { goLeft1,  0 },
+  { goLeft2,  0 }
 };
 
 TrialType* trials[numTrials]; // Populated in setup() w/ seeded randomness
@@ -251,9 +247,17 @@ void setup() {
   while (digitalRead(odorPort) == HIGH) {
     delay(pollingRate);
   }
-  beginNewSession();
+  while (digitalRead(odorPort) == LOW) {
+    digitalWrite(trialLight, HIGH);
+    delay(pollingRate);
+    digitalWrite(trialLight, LOW);
+    delay(pollingRate);
+  }
+
+  beginNewSession();                              // Start session!
 }
 
+// Stage 1: 100ms Total Time in Port (ttip), 100ms fluid well hold, 10sec fluid well poll
 void loop() {
   if (sessionComplete) return;
 
@@ -264,25 +268,19 @@ void loop() {
 
     /* Behavior shaping logic: */
     switch (currentTrial) {
-      case 25:  // Stage 1: 250ms odor hold, 25ms fluid hold
+      case 25:              // Stage 2: 250ms total time in port (ttip), 250ms fluid hold, 5sec fluid well poll
+        odorPokeHold = 125;
+        fluidWellHold = 250;
+        fluidWellPoll = 5000;
+        break;
+      case 50:              // Stage 3: 500ms ttip, 500ms fluid hold, odor port timeout = 4 secs., 2sec fluid well poll
         odorPokeHold = 250;
-        fluidWellHold = 25;
+        fluidWellHold = 500;
+        odorPortTimeout = 4000;
+        fluidWellPoll = 2000;
         break;
-      case 50:  // Stage 2: 500ms odor hold, 25ms fluid hold
+      case 100:             // Stage 4: 1 second ttip, 500ms fluid hold
         odorPokeHold = 500;
-        fluidWellHold = 25;
-        break;
-      case 75:  // Stage 3: 500ms odor hold, 50ms fluid hold
-        odorPokeHold = 500;
-        fluidWellHold = 50;
-        break;
-      case 100: // Stage 4: 750ms odor hold, 75ms fluid hold
-        odorPokeHold = 750;
-        fluidWellHold = 75;
-        break;
-      case 125: // Stage 5: 1000ms odor hold, 100ms fluid hold (FINAL)
-        odorPokeHold = 1000;
-        fluidWellHold = 100;
         break;
       default:
         // do nothing
@@ -510,8 +508,7 @@ bool checkResponse(TrialType trial) {
     if (!verifySensor(pokedWell, fluidWellHold)) {// 3. Correct well — verify hold
       // Error 2: Didn't hold poke
       recordEvent(pokedWell == rightWell ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L);
-      delay(earlyWellUnpoke);
-      return true;                                // Correct response, minor error
+      return false;
     }
 
     giveReward(trial);                            // 4. Held — deliver reward

@@ -180,5 +180,5 @@ void loop() {
   if (digitalRead(intanMarkOut) == LOW && !sessionComplete) endCurrentSession();
   if (sessionComplete) return;
   recordEvent(BF_START_SESSION);
-  delay(1000);
+  delayMicroseconds(1000);
 }

@@ -81,6 +81,21 @@ TrialClock clock;                         // Encapsulates the logic for trial ti
 #define BF_END_SESSION          246       // Sent at end of session (sessionComplete = true)
 #define BF_WATER_POKE_NONE      256       // After a correct response on a No-Go trial
 
+/* === TrialType Macros === */
+#define LEFT_WELL_FL_1 0              // Index into Fluids[] & FluidPinTimes[] for fluid sol 1
+#define LEFT_WELL_FL_2 1              // Index into Fluids[] & FluidPinTimes[] for fluid sol 2
+#define RIGHT_WELL_FL_1 2             // Index into Fluids[] & FluidPinTimes[] for fluid sol 3
+#define RIGHT_WELL_FL_2 3             // Index into Fluids[] & FluidPinTimes[] for fluid sol 4
+#define SENTINEL -1                   // Sentinel value. Enables implementation of no-go trials.
+
+/* Distinct Odor-ON Macros (Change these numbers to be whatever you want the actual codes to be) */
+#define BF_ODOR_1_ON 101
+#define BF_ODOR_2_ON 102
+#define BF_ODOR_3_ON 103
+#define BF_ODOR_4_ON 104
+#define BF_ODOR_5_ON 105
+#define BF_ODOR_6_ON 106
+
 /*===================== Pin-mapping for Arduino =====================*/
 /* IR Sensors */
 const int odorPort      = 2;  // Odor port
@@ -118,21 +133,6 @@ const int Fluids[] =          // { left , left , right , right }
 /*===================================================================*/
 
 /*=== MAJOR REFACTOR: TrialType & TrialWeight structs ===*/                            // [CNJ: 03/10/2026]
-/* === TrialType Macros === */
-#define LEFT_WELL_FL_1 0              // Index into Fluids[] & FluidPinTimes[] for fluid sol 1
-#define LEFT_WELL_FL_2 1              // Index into Fluids[] & FluidPinTimes[] for fluid sol 2
-#define RIGHT_WELL_FL_1 2             // Index into Fluids[] & FluidPinTimes[] for fluid sol 3
-#define RIGHT_WELL_FL_2 3             // Index into Fluids[] & FluidPinTimes[] for fluid sol 4
-#define SENTINEL -1                   // Sentinel value. Enables implementation of no-go trials.
-
-/* Distinct Odor-ON Macros (Change these numbers to be whatever you want the actual codes to be) */
-#define BF_ODOR_1_ON 101
-#define BF_ODOR_2_ON 102
-#define BF_ODOR_3_ON 103
-#define BF_ODOR_4_ON 104
-#define BF_ODOR_5_ON 105
-#define BF_ODOR_6_ON 106
-
 /* A struct that defines the differences between trial types */
 struct TrialType {
   const bool isGo;

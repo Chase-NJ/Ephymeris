@@ -4,7 +4,7 @@ Date: May 8th, 2026
 Purpose:
   Implement correct shaping paradigm:
   - Adjust odorPokeHold, fluidWellHold, fluidWellPoll, and odorPortTimeout as experiment progresses.
-  - We are shaping them on a goRight trial using 
+  - We are shaping them on a goLeft (Odor 3) trial using PURE ORANGE EXTRACT 
 */
 
 /*============= Experiment Hyperparameters =============*/

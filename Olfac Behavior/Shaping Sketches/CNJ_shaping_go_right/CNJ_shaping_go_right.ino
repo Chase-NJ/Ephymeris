@@ -1,23 +1,24 @@
 /*
 Author: Chase Johnston
-Date: April 9th, 2026
+Date: May 8th, 2026
 Purpose:
-  - I hate interrupt service routines...
+  Implement correct shaping paradigm:
+  - Adjust odorPokeHold, fluidWellHold, fluidWellPoll, and odorPortTimeout as experiment progresses.
+  - We are shaping them on a goRight trial using 
 */
 
 /*============= Experiment Hyperparameters =============*/
 /* Trial timing parameters (in ms) */
 const int baudRate             =  9600;   // Baud rate for communication with MatLab via serial port
-const int errorDelay           =  2000;   // Timeout for incorrect response.
-const int odorPortTimeout      =  8000;   // Window rat has to poke following light on.
-const int odorPokeHold         =  1000;   // Duration rat must hold poke before odor delivery AND during odor sampling.
-const int fluidWellHold        =  100;    // Duration rat must hold poke before fluid delivery (on correct trials).
-const int fluidWellPoll        =  10000;  // Window rat has to respond following successful odor sampling.
+const int errorDelay           =  20000;  // Timeout for incorrect response.
+int odorPortTimeout            =  8000;   // Window rat has to poke following light on.
+int odorPokeHold               =  50;     // Duration rat must hold poke before odor delivery AND during odor sampling. (ms)
+int fluidWellHold              =  100;    // Duration rat must hold poke before fluid delivery (on correct trials). (ms)
+int fluidWellPoll              =  10000;  // Window rat has to respond following successful odor sampling.
 const int nogoWellPoll         =  2000;   // Duration rat must withold response on NO-GO trials, following successful odor sampling.
-const int earlyWellUnpoke      =  1000;   // Timeout for early fluid-well unpoke (rat did not hold for fluidWellHold duration)
 const int lazyRatDelay         =  4000;   // Timeout for failure to initiate trial (poke once light on)
 const int noPokeHoldTimeout    =  4000;   // Timeout for failure to hold poke
-const int standardITI          =  1000;   // Intertrial interval on correct trials
+const int standardITI          =  4000;   // Intertrial interval on correct trials
 const int FluidPinTimes[] = { 
                                   100,    // Left-well  1
                                   100,    // Left-well  2
@@ -34,9 +35,6 @@ const int blockSize            =  30;     // Trials per block (proportions enfor
 const long trialSeed           =  12345;  // Seed for reproducible trial sequence
 int currentTrial               =  0;      // Index in trials[]
 bool sessionComplete           =  false;  // If rat somehow completes 1000 trials...
-
-/* ======== Intan Recording Controller Constants ======== */
-const int markOutDebounce      =  50;     // Duration (ms) mark-out must hold HIGH to confirm session start
 
 /* Trial Timing */
 struct TrialClock {
@@ -56,36 +54,32 @@ struct TrialClock {
 
 TrialClock clock;                         // Encapsulates the logic for trial timestamps
 
-/* === Preprocessor Macros (Trial events) === */
-#define BF_START_SESSION 221
-#define BF_LIGHTS_ON 222
-#define BF_LAZY_RAT 223
-#define BF_ODOR_POKE 224
-#define BF_ODOR_UNPOKE_EARLY 225
-#define BF_ODOR_UNPOKE 226
-#define BF_ODOR_OFF 247
-#define BF_WATER_POKE_L 248
-#define BF_WATER_POKE_R 249
-#define BF_WATER_UNPOKE_EARLY_L 250
-#define BF_WATER_UNPOKE_EARLY_R 251
-#define BF_WATER_UNPOKE_L 254
-#define BF_WATER_UNPOKE_R 255
-#define BF_WATER_POKE_ERROR_L 257
-#define BF_WATER_POKE_ERROR_R 258
-#define BF_LICKING 231
-#define BF_LIGHTS_OFF 233             // Trial light off
-#define BF_INVALID_TRIAL 234          // Early unpoke occurs that aborts the trial, or a no-go trial.
-#define BF_FLUID_L 366                // Delivered at start of first drop on left.
-#define BF_FLUID_R 229                // Delivered at start of first drop on right.
-#define BF_STOP_FLUID_G_R 357
-#define BF_STOP_FLUID_G_L 369
-#define BF_END_CORRECT_ITI 242
-#define BF_END_INCORRECT_ITI 243
-#define BF_END_SESSION 246            // User hit cntrl-N
-#define BF_ODOR_POKE_ITI 360
-#define BF_FLUID_POKE_ITI 361         // Right Well
-#define BF_FLUID_POKE_L_ITI 382       // Left Well
-#define BF_WATER_POKE_NONE 256        // After a No-Go
+/*=== Preprocessor Macros (Trial events) ===*/
+#define BF_START_SESSION        221       // Sent at recording start (timestamp 0)
+#define BF_LIGHTS_ON            222       // Sent when trialLight is written HIGH
+#define BF_LAZY_RAT             223       // Sent when rat fails to initiate trial
+#define BF_ODOR_POKE            224       // Sent when rat pokes odor port
+#define BF_ODOR_UNPOKE_EARLY    225       // Sent when rat fails to hold odor poke for odorPokeHold
+#define BF_ODOR_UNPOKE          226       // Sent after rat successfully samples odor
+#define BF_ODOR_OFF             247       // Sent when we close N.O.V. (directing odor AWAY from odor port)
+#define BF_WATER_POKE_L         248       // Sent when rat pokes left fluid well
+#define BF_WATER_POKE_R         249       // Sent when rat pokes right fluid well
+#define BF_WATER_UNPOKE_EARLY_L 250       // Sent when rat fails to hold for fluidWellHold
+#define BF_WATER_UNPOKE_EARLY_R 251       // Sent when rat fails to hold for fluidWellHold
+#define BF_WATER_UNPOKE_L       254       // Sent when rat unpokes left well
+#define BF_WATER_UNPOKE_R       255       // Sent when rat unpokes right well
+#define BF_WATER_POKE_ERROR_L   257       // Sent when rat incorrectly responds at left well
+#define BF_WATER_POKE_ERROR_R   258       // Sent when rat incorrectly responds at right well
+#define BF_LIGHTS_OFF           233       // Trial light off
+#define BF_INVALID_TRIAL        234       // Trial is aborted (either lazy rat or poke hold failure)
+#define BF_FLUID_L              252       // Delivered at start of first drop on left.
+#define BF_FLUID_R              253       // Delivered at start of first drop on right.
+#define BF_STOP_FLUID_G_R       357       // Sent when we stop right well fluid delivery
+#define BF_STOP_FLUID_G_L       369       // Sent when we stop left well fluid delivery
+#define BF_END_CORRECT_ITI      242       // Sent after correct response intertrial interval
+#define BF_END_INCORRECT_ITI    243       // Sent after errorDelay intertrial interval
+#define BF_END_SESSION          246       // Sent at end of session (sessionComplete = true)
+#define BF_WATER_POKE_NONE      256       // After a correct response on a No-Go trial
 
 /* === TrialType Macros === */
 #define LEFT_WELL_FL_1 0              // Index into Fluids[] & FluidPinTimes[] for fluid sol 1
@@ -99,12 +93,10 @@ TrialClock clock;                         // Encapsulates the logic for trial ti
 #define BF_ODOR_2_ON 102
 #define BF_ODOR_3_ON 103
 #define BF_ODOR_4_ON 104
+#define BF_ODOR_5_ON 105
+#define BF_ODOR_6_ON 106
 
 /*===================== Pin-mapping for Arduino =====================*/
-/* Intan Mark-out Input Pin */
-const int intanMarkOut  = 8;  // 5V Intan mark-out signal (interrupt-capable pin)
-const int intanTimeSync = 9;  // Digital output signal for time synchronization with Intan
-
 /* IR Sensors */
 const int odorPort      = 2;  // Odor port
 const int rightWell     = 3;  // Right-well
@@ -212,12 +204,12 @@ const TrialType goLeft2(
   BF_STOP_FLUID_G_L
 );
 
-/* Pool of available trials and their weights */
+/* Pool of available trials and their weights */                      // SHAPING: Shaping with 1 odor, a go-right trial
 const TrialWeight pool[] = {
   { goRight1, 1 },            // Go-right trial --  odor 1
-  { goRight2, 1 },            // Go-right trial --  odor 2
-  { goLeft1,  1 },            // Go-left trial  --  odor 3
-  { goLeft2,  1 },            // Go-left trial  --  odor 4
+  { goRight2, 0 },
+  { goLeft1,  0 },
+  { goLeft2,  0 }
 };
 
 TrialType* trials[numTrials]; // Populated in setup() w/ seeded randomness
@@ -230,12 +222,10 @@ void setup() {
   for (int rwd = 0; rwd < 4; rwd++) {             // Fluid solenoids
     pinMode(Fluids[rwd], OUTPUT);
   }
-  pinMode( intanMarkOut , INPUT );                // Intan mark-out 5V signal
   pinMode( odorPort , INPUT_PULLUP );             // IR Sensors
   pinMode( leftWell , INPUT_PULLUP );
   pinMode( rightWell , INPUT_PULLUP );
 
-  pinMode( intanTimeSync , OUTPUT );              // 5V Digital output for time sync with Intan
   pinMode( trialLight , OUTPUT );                 // Trial light
   pinMode( vac , OUTPUT );                        // N.O.V.
 
@@ -252,23 +242,52 @@ void setup() {
   );
   sessionComplete = true;                         // This causes our main loop to wait for Intan mark out to run behavior
   Serial.begin(baudRate);                         // Initialize serial com with baud rate
+
+  /* Wait for odor poke to begin */
+  while (digitalRead(odorPort) == HIGH) {
+    delay(pollingRate);
+  }
+  while (digitalRead(odorPort) == LOW) {
+    digitalWrite(trialLight, HIGH);
+    delay(pollingRate);
+    digitalWrite(trialLight, LOW);
+    delay(pollingRate);
+  }
+
+  beginNewSession();                              // Start session!
 }
 
+// Stage 1: 100ms Total Time in Port (ttip), 100ms fluid well hold, 10sec fluid well poll
 void loop() {
-  /* Wait for Intan mark-out to start session!
-   * We set sessionComplete = true in the setup() to satisfy this conditional
-   * for the first iteration of the main loop.
-  */
-  if (digitalRead(intanMarkOut) == HIGH && sessionComplete) beginNewSession();
-  if (digitalRead(intanMarkOut) == LOW && !sessionComplete) endCurrentSession();
   if (sessionComplete) return;
 
   /* Run our behavior! */
   if (odorSampling(*trials[currentTrial])) {
     currentTrial++;                                     // Advance only on successful trial
     if (currentTrial >= numTrials) endCurrentSession(); // If rat completes all trials
+
+    /* Behavior shaping logic: */
+    switch (currentTrial) {
+      case 25:              // Stage 2: 250ms total time in port (ttip), 250ms fluid hold, 5sec fluid well poll
+        odorPokeHold = 125;
+        fluidWellHold = 250;
+        fluidWellPoll = 5000;
+        break;
+      case 50:              // Stage 3: 500ms ttip, 500ms fluid hold, odor port timeout = 4 secs., 2sec fluid well poll
+        odorPokeHold = 250;
+        fluidWellHold = 500;
+        odorPortTimeout = 4000;
+        fluidWellPoll = 2000;
+        break;
+      case 100:             // Stage 4: 1 second ttip, 500ms fluid hold
+        odorPokeHold = 500;
+        break;
+      default:
+        // do nothing
+        break;
+    }
   } else {
-    recordEvent(BF_INVALID_TRIAL);                      // Trial aborted (not by Intan)
+    recordEvent(BF_INVALID_TRIAL);                      // Trial aborted
   }
 }
 
@@ -285,13 +304,6 @@ void shutdownHardware() {
 /* Housekeeping for starting a new experiment session */
 void beginNewSession() {
   clock.beginSession();                           // Initialize clock on rising edge
-
-  /* Debounce: verify mark-out holds HIGH */
-  unsigned long start = millis();
-  while (millis() - start < markOutDebounce) {
-    if (digitalRead(intanMarkOut) == LOW) return; // Glitch — ignore and wait for next rising edge
-    delay(pollingRate);
-  }
 
   sessionComplete = false;
   currentTrial = 0;                               // Start at beginning of Trials array
@@ -360,19 +372,10 @@ void generateTrials(const TrialType* trials[], int numTrials, long seed,
   Given an eventCode (an int), outputs the code in a standardized 3-digit format.
 
   Handles sending eventCode and a timestamp to MatLab.
-  
-  Also handles sending a short digital 5V pulse to a recording                         // [CNJ: 04/03/2026]
-   controller (if you have one connected).  
 */
 void recordEvent(int eventCode) {
   unsigned long timestamp = clock.elapsed();
   char buf[16];
-
-  if (digitalRead(intanMarkOut) == LOW) return;   // Don't send events after recording ends
-
-  digitalWrite(intanTimeSync, HIGH);              // Pulse Intan recording controller
-  delay(pollingRate);
-  digitalWrite(intanTimeSync, LOW);
 
   sprintf(buf, "%03d\t%lu", eventCode, timestamp);// Store print line to MatLab in a buffer
   Serial.println(buf);                            // Print buffer to serial
@@ -412,7 +415,7 @@ void flashLight(int duration) {
 /*=== Trial Logic Functions ===*/
 bool odorSampling(TrialType trial) {
   digitalWrite(trial.odorPin, HIGH);              // 1. Prime the correct odor
-  delay(primingDelay);                             // 2. Wait for priming delay
+  delay(primingDelay);                            // 2. Wait for priming delay
   digitalWrite(trialLight, HIGH);                 // 3. Turn on the trial light
   recordEvent(BF_LIGHTS_ON);
 
@@ -462,11 +465,17 @@ bool odorSampling(TrialType trial) {
   recordEvent(BF_ODOR_UNPOKE);
 
   digitalWrite(trialLight, LOW);
-  checkResponse(trial);                           // 10. Successful odor sampling — call checkResponse
+  if (checkResponse(trial)) {                     // 10. Successful odor sampling — call checkResponse
+    delay(standardITI);                           // Correct response ITI
+    recordEvent(BF_END_CORRECT_ITI);
+  } else {
+    delay(errorDelay);
+    recordEvent(BF_END_INCORRECT_ITI);
+  }
   return true;
 }
 
-void checkResponse(TrialType trial) {
+bool checkResponse(TrialType trial) {
   if (trial.isGo) {                               // GO TRIAL -> poll both wells for fluidWellPoll
     unsigned long pollStart = millis();
     int pokedWell = SENTINEL;
@@ -487,50 +496,45 @@ void checkResponse(TrialType trial) {
 
     if (pokedWell == SENTINEL) {
       // No response within timeout
-      delay(errorDelay);
-      return;
+      return false;
     }
 
     if (pokedWell != trial.correctWell) {
       // Error 1: Wrong well
       recordEvent(pokedWell == rightWell ? BF_WATER_POKE_ERROR_R : BF_WATER_POKE_ERROR_L);
-      delay(errorDelay);
-      return;
+      return false;
     }
 
     if (!verifySensor(pokedWell, fluidWellHold)) {// 3. Correct well — verify hold
-      // Error 3: Didn't hold poke
+      // Error 2: Didn't hold poke
       recordEvent(pokedWell == rightWell ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L);
-      delay(earlyWellUnpoke);
-      return;
+      return false;
     }
 
     giveReward(trial);                            // 4. Held — deliver reward
     while (digitalRead(pokedWell)) {              // Await well unpoke
       delay(pollingRate);
     }
-    delay(standardITI);                           // 5. Correct-response ITI
 
   } else {
     unsigned long pollStart = millis();           // NO-GO TRIAL -> poll both wells for nogoWellPoll
     while (millis() - pollStart < nogoWellPoll) { // 1. Poll both wells
       if (digitalRead(rightWell) == LOW) {
-        // Error 2: Rat responded on nogo
+        // Error 3: Rat responded on nogo
         recordEvent(BF_WATER_POKE_R);
-        delay(errorDelay);
-        return;
+        return false;
       }
       if (digitalRead(leftWell) == LOW) {
-        // Error 2: Rat responded on nogo
+        // Error 3: Rat responded on nogo
         recordEvent(BF_WATER_POKE_L);
-        delay(errorDelay);
-        return;
+        return false;
       }
       delay(pollingRate);
     }
-
-    delay(standardITI);                           // 2. Correctly withheld response
+    recordEvent(BF_WATER_POKE_NONE);              // No-go trial! :)
   }
+
+  return true;                                    // Rat responded correctly
 }
 
 void giveReward(TrialType trial) {

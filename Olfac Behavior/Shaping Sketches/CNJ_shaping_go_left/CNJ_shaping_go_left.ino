@@ -1,6 +1,6 @@
 /*
 Author: Chase Johnston
-Date: April 13th, 2026
+Date: May 8th, 2026
 Purpose:
   Implement correct shaping paradigm:
   - Adjust odorPokeHold, fluidWellHold, fluidWellPoll, and odorPortTimeout as experiment progresses.
@@ -204,11 +204,11 @@ const TrialType goLeft2(
   BF_STOP_FLUID_G_L
 );
 
-/* Pool of available trials and their weights */                      // SHAPING: Shaping with 1 odor, a go-right trial
+/* Pool of available trials and their weights */                      // SHAPING: Shaping with 1 odor, a go-left.
 const TrialWeight pool[] = {
-  { goRight1, 1 },            // Go-right trial --  odor 1
+  { goRight1, 0 },            // Go-right trial --  odor 1
   { goRight2, 0 },
-  { goLeft1,  0 },
+  { goLeft1,  1 },            // Go-left trial --   odor 3
   { goLeft2,  0 }
 };
 

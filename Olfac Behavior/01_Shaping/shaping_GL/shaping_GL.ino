@@ -12,8 +12,8 @@ Purpose:
 const int baudRate             =  9600;   // Baud rate for communication with MatLab via serial port
 const int errorDelay           =  20000;  // Timeout for incorrect response.
 int odorPortTimeout            =  8000;   // Window rat has to poke following light on.
-int odorPokeHold               =  50;     // Duration rat must hold poke before odor delivery AND during odor sampling. (ms)
-int fluidWellHold              =  100;    // Duration rat must hold poke before fluid delivery (on correct trials). (ms)
+int odorPokeHold               =  10;     // Duration rat must hold poke before odor delivery AND during odor sampling. (ms)
+int fluidWellHold              =  10;     // Duration rat must hold poke before fluid delivery (on correct trials). (ms)
 int fluidWellPoll              =  10000;  // Window rat has to respond following successful odor sampling.
 const int nogoWellPoll         =  2000;   // Duration rat must withold response on NO-GO trials, following successful odor sampling.
 const int lazyRatDelay         =  4000;   // Timeout for failure to initiate trial (poke once light on)
@@ -244,16 +244,14 @@ void setup() {
   Serial.begin(baudRate);                         // Initialize serial com with baud rate
 
   /* Wait for odor poke to begin */
+  digitalWrite(trialLight, HIGH);
   while (digitalRead(odorPort) == HIGH) {
     delay(pollingRate);
   }
   while (digitalRead(odorPort) == LOW) {
-    digitalWrite(trialLight, HIGH);
-    delay(pollingRate);
-    digitalWrite(trialLight, LOW);
     delay(pollingRate);
   }
-
+  digitalWrite(trialLight, LOW);
   beginNewSession();                              // Start session!
 }
 
@@ -268,6 +266,10 @@ void loop() {
 
     /* Behavior shaping logic: */
     switch (currentTrial) {
+      case 20:
+        odorPokeHold = 100;
+        fluidWellHold = 50;
+        break;
       case 25:              // Stage 2: 250ms total time in port (ttip), 250ms fluid hold, 5sec fluid well poll
         odorPokeHold = 125;
         fluidWellHold = 250;

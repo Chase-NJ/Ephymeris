@@ -230,14 +230,14 @@ void setup() {
   Serial.begin(baudRate);                         // Initialize serial com with baud rate
 
   /* Wait for odor poke to begin */
+  digitalWrite(trialLight, HIGH);
   while (digitalRead(odorPort) == HIGH) {
-    digitalWrite(trialLight, HIGH);
-    delay(444);
-    digitalWrite(trialLight, LOW);
+    delay(pollingRate);
   }
   while (digitalRead(odorPort) == LOW) {
     delay(pollingRate);
   }
+  digitalWrite(trialLight, LOW);
   beginNewSession();                              // Start session!
 }
 
@@ -431,11 +431,12 @@ bool odorSampling(TrialType trial) {
   if (checkResponse(trial)) {                     // 10. Successful odor sampling — call checkResponse
     delay(standardITI);                           // Correct response ITI
     recordEvent(BF_END_CORRECT_ITI);
+    return true;
   } else {
     delay(errorDelay);
     recordEvent(BF_END_INCORRECT_ITI);
+    return false;
   }
-  return true;
 }
 
 bool checkResponse(TrialType trial) {

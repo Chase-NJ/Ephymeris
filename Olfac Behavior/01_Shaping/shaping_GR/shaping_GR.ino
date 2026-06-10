@@ -243,21 +243,38 @@ void setup() {
   sessionComplete = true;                         // This causes our main loop to wait for Intan mark out to run behavior
   Serial.begin(baudRate);                         // Initialize serial com with baud rate
 
-  /* Wait for odor poke to begin */
-  digitalWrite(trialLight, HIGH);
-  while (digitalRead(odorPort) == HIGH) {
-    delay(pollingRate);
+  /* Wait for the START token from the Python GUI.
+     1. The host opens the port (which resets the Mega via DTR).
+     2. We land here, announce READY so the GUI can arm its START button.
+     3. Block until we receive the exact "START" line. */
+  digitalWrite(trialLight, HIGH);                 // Light on == armed, waiting for GO
+  delay(50);                                      // Let the post-reset serial settle
+  Serial.println("READY");                        // Tell the GUI we're ready to begin
+
+  char cmd[8];
+  while (true) {
+    if (readLineInto(cmd, sizeof(cmd)) && strcmp(cmd, "START") == 0) {
+      break;                                      // START received -- begin session
+    }
   }
-  while (digitalRead(odorPort) == LOW) {
-    delay(pollingRate);
-  }
+
   digitalWrite(trialLight, LOW);
-  beginNewSession();                              // Start session!
+  beginNewSession();                              // Start session! (stamps t=0, fires BF_START_SESSION)
 }
 
 // Stage 1: 100ms Total Time in Port (ttip), 100ms fluid well hold, 10sec fluid well poll
 void loop() {
   if (sessionComplete) return;
+
+  /* Honor a remote STOP from the host GUI. Checked once per trial
+     boundary (not mid-trial), so a stop never truncates a trial --
+     this keeps the strobe stream's triplet structure intact for
+     downstream analysis. If a STOP is seen we end cleanly here and
+     fall through; the sessionComplete guard above idles us next pass. */
+  if (checkForStop()) {
+    endCurrentSession();
+    return;
+  }
 
   /* Run our behavior! */
   if (odorSampling(*trials[currentTrial])) {
@@ -293,6 +310,65 @@ void loop() {
 }
 
 /* ===================================== Utility functions ===================================== */
+/*  bool checkForStop() {...} ->
+  Non-blocking poll for a "STOP" line from the host GUI, called once
+  per trial boundary in loop(). Unlike readLineInto (which blocks and
+  is only safe in setup), this consumes ONLY bytes already sitting in
+  the serial buffer and returns immediately if none are present, so it
+  never stalls the behavior loop. A partial line is held in a static
+  buffer across calls and completed on a later pass. Returns true once
+  a full "STOP" line has been received. Any other complete line is
+  discarded (we only recognize STOP while running). */
+bool checkForStop() {
+  static char buf[8];
+  static size_t len = 0;
+
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\r' || c == '\n') {
+      bool isStop = (len > 0 && strcmp(buf, "STOP") == 0);
+      len = 0;                                        // reset for next line
+      if (isStop) return true;
+    } else {
+      if (len < sizeof(buf) - 1) {
+        buf[len++] = c;
+        buf[len] = '\0';                             // keep null-terminated for strcmp
+      }
+      // else: overflow byte -- drop it, line can't be "STOP" anyway
+    }
+  }
+  return false;
+}
+
+/*  bool readLineInto(char* dst, size_t cap) {...} ->
+  Reads one line from Serial into dst, terminating on CR or LF and
+  tolerating a trailing CR+LF pair (the host's println may send either).
+  Null-terminates dst and strips the line ending. Returns true once a
+  complete, non-empty line has been read; returns false on an empty line
+  (e.g. a lone terminator) so the caller simply tries again. Lines longer
+  than cap-1 are truncated; the overflow tail is drained so it can't leak
+  into the next read.
+*/
+bool readLineInto(char* dst, size_t cap) {
+  size_t len = 0;
+  while (true) {
+    while (Serial.available() == 0) {
+      delay(pollingRate);                         // idle politely until a byte arrives
+    }
+    char c = (char)Serial.read();
+    if (c == '\r' || c == '\n') {
+      if (len == 0) {
+        return false;                             // lone terminator -- nothing to report yet
+      }
+      dst[len] = '\0';
+      return true;
+    }
+    if (len < cap - 1) {
+      dst[len++] = c;                             // accumulate
+    }
+    // else: token longer than expected -- drop the overflow byte
+  }
+}
 
 /* Blanket turn-off of all outputs (safe to call at any time) */
 void shutdownHardware() {

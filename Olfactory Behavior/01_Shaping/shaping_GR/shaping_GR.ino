@@ -1,13 +1,15 @@
 /*
 Author: Chase Johnston
-Date: June 10th, 2026
+Date: May 8th, 2026
 Purpose:
   Implement correct shaping paradigm:
   - Adjust odorPokeHold, fluidWellHold, fluidWellPoll, and odorPortTimeout as experiment progresses.
-  - We are shaping them on a goLeft (Odor 3) trial using PURE ORANGE EXTRACT
+  - We are shaping them on a goRight (odor 1) trial using SANDALWOOD
 
   This update:
-  - Integration with Python GUI
+  - Per-outcome response timeouts: checkResponse returns the delay to administer
+    (standardITI = correct, noPokeHoldTimeout = failed to hold correct well,
+    errorDelay = wrong well / no response). noPokeHoldTimeout bumped to 5000ms.
 */
 
 /*============= Experiment Hyperparameters =============*/
@@ -20,7 +22,7 @@ int fluidWellHold              =  10;     // Duration rat must hold poke before 
 int fluidWellPoll              =  10000;  // Window rat has to respond following successful odor sampling.
 const int nogoWellPoll         =  2000;   // Duration rat must withold response on NO-GO trials, following successful odor sampling.
 const int lazyRatDelay         =  4000;   // Timeout for failure to initiate trial (poke once light on)
-const int noPokeHoldTimeout    =  4000;   // Timeout for failure to hold poke
+const int noPokeHoldTimeout    =  5000;   // Timeout for failure to hold poke
 const int standardITI          =  4000;   // Intertrial interval on correct trials
 const int FluidPinTimes[] = { 
                                   100,    // Left-well  1
@@ -207,11 +209,11 @@ const TrialType goLeft2(
   BF_STOP_FLUID_G_L
 );
 
-/* Pool of available trials and their weights */                      // SHAPING: Shaping with 1 odor, a go-left.
+/* Pool of available trials and their weights */                      // SHAPING: Shaping with 1 odor, a go-right trial
 const TrialWeight pool[] = {
-  { goRight1, 0 },            // Go-right trial --  odor 1
+  { goRight1, 1 },            // Go-right trial --  odor 1
   { goRight2, 0 },
-  { goLeft1,  1 },            // Go-left trial --   odor 3
+  { goLeft1,  0 },
   { goLeft2,  0 }
 };
 
@@ -249,14 +251,17 @@ void setup() {
   /* Wait for the START token from the Python GUI.
      1. The host opens the port (which resets the Mega via DTR).
      2. We land here, announce READY so the GUI can arm its START button.
-     3. Block until we receive the exact "START" line. */
+     3. Block until we receive a "START" line. The GUI may append a
+        correction-trial count (e.g. "START 10"); shaping always advances
+        on a completed trial, so we accept the token and ignore the count. */
   digitalWrite(trialLight, HIGH);                 // Light on == armed, waiting for GO
   delay(50);                                      // Let the post-reset serial settle
   Serial.println("READY");                        // Tell the GUI we're ready to begin
 
-  char cmd[8];
+  char cmd[16];
   while (true) {
-    if (readLineInto(cmd, sizeof(cmd)) && strcmp(cmd, "START") == 0) {
+    if (readLineInto(cmd, sizeof(cmd)) && strncmp(cmd, "START", 5) == 0
+        && (cmd[5] == '\0' || cmd[5] == ' ')) {
       break;                                      // START received -- begin session
     }
   }
@@ -289,7 +294,6 @@ void loop() {
       case 20:
         odorPokeHold = 100;
         fluidWellHold = 50;
-        break;
       case 25:              // Stage 2: 250ms total time in port (ttip), 250ms fluid hold, 5sec fluid well poll
         odorPokeHold = 125;
         fluidWellHold = 250;
@@ -546,17 +550,24 @@ bool odorSampling(TrialType trial) {
   recordEvent(BF_ODOR_UNPOKE);
 
   digitalWrite(trialLight, LOW);
-  if (checkResponse(trial)) {                     // 10. Successful odor sampling — call checkResponse
-    delay(standardITI);                           // Correct response ITI
-    recordEvent(BF_END_CORRECT_ITI);
+  int responseDelay = checkResponse(trial);       // 10. Successful odor sampling — delay (ms) for this outcome
+  delay(responseDelay);                           // Administer the outcome-specific delay
+  if (responseDelay == standardITI) {
+    recordEvent(BF_END_CORRECT_ITI);              // Correct response
   } else {
-    delay(errorDelay);
-    recordEvent(BF_END_INCORRECT_ITI);
+    recordEvent(BF_END_INCORRECT_ITI);            // Incorrect response (hold failure or wrong well)
   }
-  return true;
+  return true;                                    // Shaping advances on any completed trial
 }
 
-bool checkResponse(TrialType trial) {
+/*  int checkResponse(TrialType trial) {...} ->
+  Polls the fluid wells after successful odor sampling and returns the
+  intertrial delay (ms) to administer for the resulting outcome:
+    standardITI       -> correct (held the correct well, or correctly withheld on no-go)
+    noPokeHoldTimeout -> poked the correct well but failed to hold it
+    errorDelay        -> poked the wrong well, gave no response, or responded on a no-go
+*/
+int checkResponse(TrialType trial) {
   if (trial.isGo) {                               // GO TRIAL -> poll both wells for fluidWellPoll
     unsigned long pollStart = millis();
     int pokedWell = SENTINEL;
@@ -577,19 +588,19 @@ bool checkResponse(TrialType trial) {
 
     if (pokedWell == SENTINEL) {
       // No response within timeout
-      return false;
+      return errorDelay;
     }
 
     if (pokedWell != trial.correctWell) {
       // Error 1: Wrong well
       recordEvent(pokedWell == rightWell ? BF_WATER_POKE_ERROR_R : BF_WATER_POKE_ERROR_L);
-      return false;
+      return errorDelay;
     }
 
     if (!verifySensor(pokedWell, fluidWellHold)) {// 3. Correct well — verify hold
       // Error 2: Didn't hold poke
       recordEvent(pokedWell == rightWell ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L);
-      return false;
+      return noPokeHoldTimeout;
     }
 
     giveReward(trial);                            // 4. Held — deliver reward
@@ -603,19 +614,19 @@ bool checkResponse(TrialType trial) {
       if (digitalRead(rightWell) == LOW) {
         // Error 3: Rat responded on nogo
         recordEvent(BF_WATER_POKE_R);
-        return false;
+        return errorDelay;
       }
       if (digitalRead(leftWell) == LOW) {
         // Error 3: Rat responded on nogo
         recordEvent(BF_WATER_POKE_L);
-        return false;
+        return errorDelay;
       }
       delay(pollingRate);
     }
     recordEvent(BF_WATER_POKE_NONE);              // No-go trial! :)
   }
 
-  return true;                                    // Rat responded correctly
+  return standardITI;                             // Rat responded correctly
 }
 
 void giveReward(TrialType trial) {

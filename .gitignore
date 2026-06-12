@@ -1,1 +1,4 @@
-*.DS_Store
+".DS_Store"
+"Utility/.DS_Store"
+"Olfactory Behavior/.DS_Store"
+"fMRI/.DS_Store"

@@ -2,38 +2,45 @@
 GRGL_Sim.ino — serial simulator for the GRGL 2-odor task.
 Author: Chase Johnston
 
-Emits the exact strobe stream the real GRGL_2-Odor sketch would, over the
-same serial protocol (announce "READY", wait for a "START" line, then send
-tab-separated "CODE<TAB>MS" lines), so dashboard.py / read_arduino.py can be
-exercised end-to-end without an Arduino wired to the rig. No pins are driven
-— this only talks serial, so it runs on any board.
+Emits the strobe stream the real GRGL_2-Odor sketch would, over the same
+serial protocol (announce "READY", wait for a "START" line, emit a
+"SEED<TAB>value" line, then send tab-separated "CODE<TAB>MS" lines), so
+dashboard.py / read_arduino.py can be exercised end-to-end without an Arduino
+wired to the rig. No pins are driven — this only talks serial, so it runs on
+any board.
 
-This "rich" build is also NON-STATIONARY, so the dashboard's live tile trends
-actually move: each trial's outcome is generated on the fly, with
-  - a LEARNING ramp -- reward probability climbs from ~25% to ~90% over the
-    first stretch, so the rolling per-odor accuracy lines bend upward (Odor 3
-    / go-left lags, so the GR/GL gap shows side bias); and
-  - SATIATION/FATIGUE -- lazy/abort trials cluster in the last ~20%, so the
-    engagement dot flips from green to red live.
-MOVEMENT TIMES are still drawn per trial (correct choices faster/tighter,
-errors slower/wider, a mild go-left slowness) so the pop-out RT histogram's
-four GR/GL x correct/error distributions stay distinct. Tune NUM_TRIALS,
-RAMP_FRAC, and FATIGUE_FRAC below to reshape the run.
+This build mirrors the firmware's three confound-closing changes so they can
+be validated off-rig:
+  - SEED line: emitted right after START (seed = micros()), so the host's
+    seed-capture / JSON+MAT logging path is exercised.
+  - Adaptive anti-bias selection: the SAME selectNextTrial() logic as the
+    firmware chooses each trial's correct side against the rat's recent
+    expressed bias. A configurable SIM_POLICY models the rat — the default
+    POLICY_ALWAYS_RIGHT lets you watch the debias push the correct side toward
+    LEFT while the right-biased rat's reward rate falls.
+  - Dummy clicks: a randomized subset of dummy-click strobes (110..113) is
+    emitted before each trial's LIGHTS_ON, so the host's dummy-code
+    registration is exercised.
+
+It also stays NON-STATIONARY for the dashboard's live trends: reward depends
+on the simulated rat's policy (POLICY_ODOR ramps accuracy as learning), and
+lazy/abort trials cluster late (satiation/fatigue) so the engagement dot flips
+green -> red. MOVEMENT TIMES are drawn per trial (correct faster/tighter,
+errors slower/wider, go-left a touch slower) so the RT histogram's four
+GR/GL x correct/error distributions stay distinct.
 
 Outcomes covered, with the strobe sequence each emits (mirrors the real
 sketch's control flow in odorSampling()/checkResponse()):
 
-  Administered Go trial = LIGHTS_ON, ODOR_POKE, ODOR_x_ON, ODOR_OFF,
-                          ODOR_UNPOKE, then one well outcome:
+  Administered Go trial = [dummy clicks], LIGHTS_ON, ODOR_POKE, ODOR_x_ON,
+                          ODOR_OFF, ODOR_UNPOKE, then one well outcome:
     reward        -> WATER_POKE(side), FLUID(side), STOP_FLUID(side),
                      END_CORRECT_ITI
     wrong well    -> WATER_POKE(other), WATER_POKE_ERROR(other),
                      END_INCORRECT_ITI
-    early well    -> WATER_POKE(side), WATER_UNPOKE_EARLY(side),
-                     END_INCORRECT_ITI
-    no response   -> (no well poke) END_INCORRECT_ITI
 
-  Aborted trial (no ODOR_UNPOKE; firmware strobes INVALID_TRIAL too):
+  Aborted trial ([dummy clicks] then no ODOR_UNPOKE; firmware strobes
+  INVALID_TRIAL too):
     lazy rat            -> LIGHTS_ON, LAZY_RAT, INVALID_TRIAL
     early odor (pre-vac)-> LIGHTS_ON, ODOR_POKE, ODOR_UNPOKE_EARLY,
                            INVALID_TRIAL                 (no odor-on code)
@@ -45,10 +52,38 @@ const int  baudRate   = 9600;   // must match read_arduino.py
 const int  STROBE_GAP = 100;    // ms between strobes within a trial
 const int  TRIAL_GAP  = 300;    // ms between trials
 
-/* Session shape (non-stationary trial generation). */
+/* Session shape. */
 const int   NUM_TRIALS   = 60;    // total trials in the run
-const float RAMP_FRAC    = 0.60;  // reward prob ramps over the first 60%
+const float RAMP_FRAC    = 0.60;  // POLICY_ODOR accuracy ramps over the first 60%
 const float FATIGUE_FRAC = 0.78;  // aborts cluster from the last ~22% on
+
+/* Simulated-rat policy -- how the rat picks a well given the correct side. */
+#define POLICY_ALWAYS_RIGHT 0   // ignores odor, always goes right (shows anti-bias at work)
+#define POLICY_RANDOM       1   // ignores odor, 50/50
+#define POLICY_ODOR         2   // uses odor: picks correct side with ramping accuracy
+const int SIM_POLICY = POLICY_ALWAYS_RIGHT;
+
+/* ===== Anti-bias selector (mirrors GRGL_2-Odor.ino) ===== */
+const int   biasWindow         =  20;
+const float debiasStrength     =  0.5;
+const float pSideMin           =  0.10;
+const float pSideMax           =  0.90;
+const int   maxConsecutiveSide =  3;
+
+int  choiceRing[biasWindow];
+int  choiceRingLen = 0;
+int  choiceRingIdx = 0;
+int  rightInWindow = 0;
+
+#define SIDE_NONE  -1
+#define SIDE_LEFT   0
+#define SIDE_RIGHT  1
+int  lastSelectedSide = SIDE_NONE;
+int  selectedSideRun  = 0;
+
+/* ===== Dummy-click masking ===== */
+#define NUM_DUMMY 4
+#define BF_DUMMY_CLICK_BASE 110
 
 /* Strobe codes (subset of GRGL_2-Odor.ino) */
 #define BF_START_SESSION        221
@@ -88,6 +123,81 @@ void emit(int code, int gap = STROBE_GAP) {
   delay(gap);
 }
 
+/* Uniform random float in [0, 1). */
+float frand() {
+  return random(0, 10000) / 10000.0;
+}
+
+/* ----- Anti-bias selector, identical logic to the firmware ----- */
+void recordChoice(bool wentRight) {
+  if (choiceRingLen == biasWindow) {
+    rightInWindow -= choiceRing[choiceRingIdx];
+  } else {
+    choiceRingLen++;
+  }
+  choiceRing[choiceRingIdx] = wentRight ? 1 : 0;
+  rightInWindow += choiceRing[choiceRingIdx];
+  choiceRingIdx = (choiceRingIdx + 1) % biasWindow;
+}
+
+/* Returns true if the next trial's CORRECT side is right. */
+bool selectNextGoRight() {
+  float pRight = 0.5;
+  if (choiceRingLen > 0) {
+    float bias = (2.0 * rightInWindow - choiceRingLen) / (float)choiceRingLen;
+    pRight = 0.5 - debiasStrength * bias;
+    if (pRight < pSideMin) pRight = pSideMin;
+    if (pRight > pSideMax) pRight = pSideMax;
+  }
+
+  bool chooseRight = frand() < pRight;
+  int  candidateSide = chooseRight ? SIDE_RIGHT : SIDE_LEFT;
+
+  if (candidateSide == lastSelectedSide && selectedSideRun >= maxConsecutiveSide) {
+    chooseRight = !chooseRight;
+    candidateSide = chooseRight ? SIDE_RIGHT : SIDE_LEFT;
+  }
+
+  if (candidateSide == lastSelectedSide) {
+    selectedSideRun++;
+  } else {
+    lastSelectedSide = candidateSide;
+    selectedSideRun = 1;
+  }
+  return chooseRight;
+}
+
+/* Emit a randomized subset of dummy-click strobes (>= 1), mirroring the
+   firmware's fireDummyClicks() acoustic masking. Sound only -- no odor. */
+void emitDummyClicks() {
+  bool firedAny = false;
+  for (int i = 0; i < NUM_DUMMY; i++) {
+    bool fire = (random(0, 2) == 0);
+    if (i == NUM_DUMMY - 1 && !firedAny) fire = true;   // guarantee >= 1
+    if (fire) {
+      emit(BF_DUMMY_CLICK_BASE + i, 20);
+      firedAny = true;
+    }
+  }
+}
+
+/* Simulated rat: returns true if the rat pokes the RIGHT well this trial.
+   correctIsRight = the trial's correct side; i = trial index (for the ramp). */
+bool ratGoesRight(bool correctIsRight, int i) {
+  switch (SIM_POLICY) {
+    case POLICY_ALWAYS_RIGHT:
+      return true;
+    case POLICY_ODOR: {
+      float p = rewardProb(i);                  // accuracy ramps with learning
+      bool correctPick = frand() < p;
+      return correctPick ? correctIsRight : !correctIsRight;
+    }
+    case POLICY_RANDOM:
+    default:
+      return frand() < 0.5;
+  }
+}
+
 /* Draw a plausible movement time (ms): correct choices are faster and
    tighter, errors slower and more variable; Go-Left a touch slower so the
    two directions separate. Clamped to the response window. */
@@ -101,11 +211,9 @@ int movementTime(bool goRight, bool correct) {
   return m;
 }
 
-/* Well outcomes for an administered Go trial (rat sampled the odor fully). */
+/* Well outcomes for an administered Go trial. */
 #define OUT_REWARD      0   // correct well, held       -> reward
 #define OUT_WRONG_WELL  1   // wrong well               -> error
-#define OUT_EARLY_WELL  2   // correct well, released early
-#define OUT_NO_RESPONSE 3   // never poked a fluid well
 
 /* One administered Go trial: odor sampled to completion, then a well outcome.
    goRight -> odor 1 / right well is correct; else odor 3 / left well. */
@@ -114,11 +222,8 @@ void goTrial(bool goRight, int outcome) {
   emit(BF_ODOR_POKE);
   emit(goRight ? BF_ODOR_1_ON : BF_ODOR_3_ON);
   emit(BF_ODOR_OFF);
-  // The delay after ODOR_UNPOKE is the movement time to the first well poke.
-  // No-response trials have no poke, so use a normal strobe gap there.
-  bool hasPoke = (outcome != OUT_NO_RESPONSE);
-  bool correct = (outcome != OUT_WRONG_WELL);   // early-well is still a correct choice
-  emit(BF_ODOR_UNPOKE, hasPoke ? movementTime(goRight, correct) : STROBE_GAP);
+  bool correct = (outcome != OUT_WRONG_WELL);
+  emit(BF_ODOR_UNPOKE, movementTime(goRight, correct));
   switch (outcome) {
     case OUT_REWARD:
       emit(goRight ? BF_WATER_POKE_R : BF_WATER_POKE_L);
@@ -129,14 +234,6 @@ void goTrial(bool goRight, int outcome) {
     case OUT_WRONG_WELL:                 // poke the OTHER well, then its error
       emit(goRight ? BF_WATER_POKE_L : BF_WATER_POKE_R);
       emit(goRight ? BF_WATER_POKE_ERROR_L : BF_WATER_POKE_ERROR_R);
-      emit(BF_END_INCORRECT_ITI);
-      break;
-    case OUT_EARLY_WELL:                 // correct well, released before hold
-      emit(goRight ? BF_WATER_POKE_R : BF_WATER_POKE_L);
-      emit(goRight ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L);
-      emit(BF_END_INCORRECT_ITI);
-      break;
-    case OUT_NO_RESPONSE:                // no well poke at all
       emit(BF_END_INCORRECT_ITI);
       break;
   }
@@ -168,14 +265,8 @@ void earlyOdorSampling(bool goRight) {
   emit(BF_INVALID_TRIAL);
 }
 
-/* Uniform random float in [0, 1). */
-float frand() {
-  return random(0, 10000) / 10000.0;
-}
-
-/* Reward probability for trial i: a learning ramp from 25% up to 90% over
-   the first RAMP_FRAC of the session, then a plateau. (Go-Left's bias is
-   applied at the call site.) */
+/* Accuracy ramp for POLICY_ODOR: from 25% up to 90% over the first RAMP_FRAC
+   of the session, then a plateau. */
 float rewardProb(int i) {
   int rampEnd = (int)(RAMP_FRAC * NUM_TRIALS);
   if (rampEnd < 1 || i >= rampEnd) return 0.90;
@@ -206,37 +297,40 @@ void setup() {
   delay(50);                 // let the post-reset serial settle
   waitForStart();
 
-  randomSeed(micros());      // vary the draws per run
+  // Seed and report it, exactly as the firmware does on START.
+  unsigned long sessionSeed = micros();
+  randomSeed(sessionSeed);
+  Serial.print("SEED\t");
+  Serial.println(sessionSeed);
+
   sessionStart = millis();
   emit(BF_START_SESSION);
 
-  // Generate each trial on the fly so the session is non-stationary: reward
-  // probability ramps up early (learning), and aborts cluster late
-  // (satiation/fatigue). Direction is ~50/50; Go-Left (Odor 3) lags so the
-  // per-odor lines separate into a visible bias.
   int fatigueStart = (int)(FATIGUE_FRAC * NUM_TRIALS);
   for (int i = 0; i < NUM_TRIALS; i++) {
-    bool goRight = frand() < 0.5;
-    float abortProb = (i >= fatigueStart) ? 0.65 : 0.06;
+    // 1. The anti-bias selector picks this trial's correct side.
+    bool goRight = selectNextGoRight();
 
+    // 2. Dummy clicks precede LIGHTS_ON on every trial (administered or abort).
+    emitDummyClicks();
+
+    // 3. Disengagement ramps up late (satiation/fatigue).
+    float abortProb = (i >= fatigueStart) ? 0.65 : 0.06;
     if (frand() < abortProb) {
-      // Disengagement: mostly lazy, with the odd early-odor abort.
       float a = frand();
-      if (a < 0.70)      lazyTrial();
+      if (a < 0.70)      lazyTrial();          // no expressed choice -> bias unchanged
       else if (a < 0.85) earlyOdorPreVac();
       else               earlyOdorSampling(goRight);
-    } else {
-      float p = rewardProb(i);
-      if (!goRight) p -= 0.18;            // Odor 3 (go-left) lags -> bias
-      if (frand() < p) {
-        goTrial(goRight, OUT_REWARD);
-      } else {
-        float e = frand();               // an unrewarded administered trial
-        if (e < 0.70)      goTrial(goRight, OUT_WRONG_WELL);
-        else if (e < 0.90) goTrial(goRight, OUT_EARLY_WELL);
-        else               goTrial(goRight, OUT_NO_RESPONSE);
-      }
+      delay(TRIAL_GAP);
+      continue;
     }
+
+    // 4. Administered trial: the simulated rat picks a well per its policy.
+    bool ratRight = ratGoesRight(goRight, i);
+    bool correct  = (ratRight == goRight);
+    goTrial(goRight, correct ? OUT_REWARD : OUT_WRONG_WELL);
+    recordChoice(ratRight);                    // feed the rat's expressed side into the anti-bias estimate
+
     delay(TRIAL_GAP);
   }
 

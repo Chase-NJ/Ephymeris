@@ -3,17 +3,42 @@ Author: Chase Johnston
 Date: June 11th, 2026
 Purpose:
   A binary odor discrimination task.
-    Odor 1 - Go-right - SANDALWOOD      ->  50% of trials
-    Odor 3 - Go-left  - ORANGE EXTRACT  ->  50% of trials
+    Odor 1 - Go-right - SANDALWOOD      ->  ~50% of trials
+    Odor 3 - Go-left  - ORANGE EXTRACT  ->  ~50% of trials
 
-  This update:
-  - Per-outcome response timeouts: checkResponse returns the delay to administer
-    (standardITI = correct, noPokeHoldTimeout = failed to hold correct well,
-    errorDelay = wrong well / no response).
-  - Correction trials: the Python GUI sends the number of leading correction
-    trials with the START token ("START 10"). While currentTrial is within that
-    block, an incorrect response repeats the same trial (we only advance on a
-    correct response). Past the block, we advance regardless of correctness.
+  This update closes three non-odor routes to reward, so the rat is
+  pushed onto the odor as the only reliable predictor of the rewarded side:
+
+  - Per-session random seed: the RNG is seeded from micros() captured the
+    instant START is received (entropy from the operator's click), so the
+    trial stream differs every session. The seed is emitted on its own
+    "SEED\t<value>" line so the host can log it for reconstruction. Set
+    USE_FIXED_SEED to fall back to the reproducible trialSeed instead.
+
+  - Adaptive anti-bias selection: trials are chosen live (selectNextTrial)
+    rather than from a fixed pre-generated array. The next trial's correct
+    side is drawn with a probability nudged AGAINST the rat's recent
+    expressed side preference (clamped so it never becomes deterministic
+    alternation), with a hard cap on consecutive identical correct sides.
+    A persistent fixed-side strategy is therefore unprofitable.
+
+  - Dummy-click masking: with one solenoid per odor, the odor valve's click
+    can predict side. During priming we fire a randomized subset of the four
+    spare valves (Odors[8..11]) at randomized offsets, so the acoustic scene
+    is decorrelated from the rewarded side. NOTE: cannot perfectly hide which
+    real valve fired, a shared final-valve manifold is the only guarantee.
+
+  Also: well polling order is randomized per trial so a near-simultaneous
+  L/R double-break no longer always resolves to the right well.
+
+  Per-outcome response timeouts: checkResponse returns the delay to administer
+  (standardITI = correct, noPokeHoldTimeout = failed to hold correct well,
+  errorDelay = wrong well / no response).
+
+  Correction trials: the Python GUI sends the number of leading correction
+  trials with the START token ("START 10"). While currentTrial is within that
+  block, an incorrect response repeats the same trial (we only advance on a
+  correct response). Past the block, we advance regardless of correctness.
 */
 
 /*============= Experiment Hyperparameters =============*/
@@ -39,12 +64,25 @@ const int FluidPinTimes[] = {
 /* ======== Trial sequence parameters ======== */
 const int pollingRate          =  2;      // Polling rate for our IR sensors (in ms)
 const int primingDelay         =  1000;   // Time odor is primed prior to trial light on
-const int numTrials            =  1000;   // Number of trials to be run (size of trialCodes array)
-const int blockSize            =  30;     // Trials per block (proportions enforced within each block)
-const long trialSeed           =  12345;  // Seed for reproducible trial sequence
-int currentTrial               =  0;      // Index in trials[]
+const int primingJitter        =  200;    // +/- ms jitter on primingDelay (breaks click->light latency cue)
+const int numTrials            =  1000;   // Number of trials to be run (session cap)
+const long trialSeed           =  12345;  // Reproducible-mode seed (used only when USE_FIXED_SEED)
+#define USE_FIXED_SEED 0                   // 1 -> seed from trialSeed; 0 -> seed from micros() at START
+int currentTrial               =  0;      // # of trials advanced this session
 int numCorrectionTrials        =  0;      // # of leading correction trials (set by GUI via START)
-bool sessionComplete           =  false;  // If rat somehow completes 1000 trials...
+bool sessionComplete           =  false;  // If rat somehow completes numTrials...
+
+/* ===== Adaptive anti-bias selection ===== */
+const int   biasWindow         =  20;     // sliding window of recent expressed choices
+const float debiasStrength     =  0.5;    // how hard to push the correct side against the rat's bias
+const float pSideMin           =  0.10;   // clamp on P(correct side) so selection never goes deterministic
+const float pSideMax           =  0.90;
+const int   maxConsecutiveSide =  3;      // hard cap on consecutive identical correct sides
+
+/* ===== Dummy-click masking ===== */
+const int DUMMY_OFFSET         =  8;      // Odors[8..11] are spare, unodorized dummy-click valves
+const int NUM_DUMMY            =  4;      // number of dummy valves
+const int dummyPulseMs         =  20;     // brief energize -> audible click, no meaningful flow
 
 /* Trial Timing */
 struct TrialClock {
@@ -106,6 +144,9 @@ TrialClock clock;                         // Encapsulates the logic for trial ti
 #define BF_ODOR_5_ON 105
 #define BF_ODOR_6_ON 106
 
+/* Dummy-click strobes: dummy valve i (Odors[DUMMY_OFFSET + i]) -> BF_DUMMY_CLICK_BASE + i */
+#define BF_DUMMY_CLICK_BASE 110           // 110, 111, 112, 113 for the four spare valves
+
 /*===================== Pin-mapping for Arduino =====================*/
 /* IR Sensors */
 const int odorPort      = 2;  // Odor port
@@ -142,7 +183,7 @@ const int Fluids[] =          // { left , left , right , right }
 };
 /*===================================================================*/
 
-/*=== MAJOR REFACTOR: TrialType & TrialWeight structs ===*/                            // [CNJ: 03/10/2026]
+/*=== TrialType struct ===*/                                                          // [CNJ: 03/10/2026]
 /* A struct that defines the differences between trial types */
 struct TrialType {
   const bool isGo;
@@ -164,18 +205,9 @@ struct TrialType {
     stopFluidCode(stopFluidCode) {}
 };
 
-/* A struct that allows us to manipulate the proportion of trial types we administer */
-struct TrialWeight {
-  const TrialType* type;
-  int weight;
-
-  /* Constructor for a TrialWeight object */
-  TrialWeight(const TrialType& type, int weight)
-    : type(&type), weight(weight) {}
-};
-
 /* ===== TRIAL TYPES ===== */
-// --> !!! REMEMBER: Once you CREATE a TrialType, you must also ADD IT TO THE TrialWeight POOL BELOW.
+// Two go trials -- one per side. selectNextTrial() (below) picks between
+// these live, using the adaptive anti-bias logic, rather than a fixed pool.
 // Go Trials:
 const TrialType goRight1(
   true,                   // Is this a go trial?
@@ -196,13 +228,19 @@ const TrialType goLeft1(
   BF_STOP_FLUID_G_L
 );
 
-/* Pool of available trials and their weights */                      // GRGL_2-Odor -> 1 GR and 1 GL trial types.
-const TrialWeight pool[] = {
-  { goRight1, 1 },            // Go-right trial --  odor 1
-  { goLeft1,  1 },            // Go-left trial --   odor 3
-};
+/* ===== Anti-bias selector state =====
+   Tracks the rat's recent EXPRESSED side preference (which well it poked,
+   correct or wrong) in a ring buffer, so selectNextTrial() can push the
+   next correct side against any developing bias. */
+int  choiceRing[biasWindow];       // 1 = went right, 0 = went left
+int  choiceRingLen = 0;            // # of valid entries (<= biasWindow)
+int  choiceRingIdx = 0;            // next write position
+int  rightInWindow = 0;            // running count of rights in the ring
 
-TrialType* trials[numTrials]; // Populated in setup() w/ seeded randomness
+int  lastSelectedSide = SENTINEL;  // rightWell / leftWell of the last fresh selection
+int  selectedSideRun  = 0;         // consecutive fresh selections on lastSelectedSide
+
+const TrialType* currentTrialPtr = nullptr;  // current trial; re-selected only when we advance
 
 void setup() {
   /*=== Setup Arduino pins ===*/
@@ -222,14 +260,6 @@ void setup() {
   /*=== Make sure everything's chill... ===*/
   shutdownHardware();
 
-  /* Populate trials array using seeded randomness */
-  generateTrials(
-    trials,     // Empty trials array of size numTrials
-    numTrials,  // Cutoff number
-    trialSeed,  // Seed for reproducability
-    pool,       // Pool of available TrialTypes
-    sizeof(pool) / sizeof(pool[0])
-  );
   sessionComplete = true;                         // session start / end guard
   Serial.begin(baudRate);                         // Initialize serial com with baud rate
 
@@ -251,6 +281,14 @@ void setup() {
     }
   }
 
+  /* Seed the RNG the instant START arrives -- the entropy is the operator's
+     click timing, so every session draws a fresh trial stream. Emit the seed
+     on its own line so the host can log it and reconstruct the session. */
+  unsigned long sessionSeed = USE_FIXED_SEED ? (unsigned long)trialSeed : micros();
+  randomSeed(sessionSeed);
+  Serial.print("SEED\t");
+  Serial.println(sessionSeed);
+
   digitalWrite(trialLight, LOW);
   beginNewSession();                              // Start session! (stamps t=0, fires BF_START_SESSION)
 }
@@ -269,12 +307,21 @@ void loop() {
     return;
   }
 
+  /* Pick the next trial live. We only re-select when the previous trial
+     ADVANCED; a trial that returns false (an abort, or an in-block
+     correction error) keeps currentTrialPtr so the SAME side is re-presented
+     -- preserving the original repeat-the-same-trial semantics. */
+  if (currentTrialPtr == nullptr) {
+    currentTrialPtr = selectNextTrial();
+  }
+
   /* Run our behavior! */
-  if (odorSampling(*trials[currentTrial])) {
-    currentTrial++;                                     // Advance only on successful trial
+  if (odorSampling(*currentTrialPtr)) {
+    currentTrial++;                                     // Advance only on a completed/advancing trial
+    currentTrialPtr = nullptr;                          // force a fresh selection next loop
     if (currentTrial >= numTrials) endCurrentSession(); // If rat completes all trials
   } else {
-    recordEvent(BF_INVALID_TRIAL);                      // Trial aborted
+    recordEvent(BF_INVALID_TRIAL);                      // Trial aborted -- repeat the same side
   }
 }
 
@@ -363,53 +410,96 @@ void endCurrentSession() {
   recordEvent(BF_END_SESSION);
 }
 
-/*  void generateTrials(...) {...} ->
-  Given an empty trials array, our TrialWeight pool, and a seed, this
-  function populates our trials array with the desired TrialTypes,
-  according to the proportions defined by TrialWeight pool[].
+/*  float frand() {...} ->
+  Uniform random float in [0, 1), built on Arduino's random(). */
+float frand() {
+  return random(0, 10000) / 10000.0;
+}
 
-  Trials are generated in blocks of blockSize. Within each block,
-  exact proportions are enforced (with any remainder slots assigned
-  via weighted random), and the block is then shuffled.
-*/
-void generateTrials(const TrialType* trials[], int numTrials, long seed,
-                           const TrialWeight pool[], int poolSize) {
-  int totalWeight = 0;
-  for (int i = 0; i < poolSize; i++) totalWeight += pool[i].weight;
+/*  void recordChoice(bool wentRight) {...} ->
+  Push the rat's expressed side choice into the sliding-window ring buffer,
+  evicting the oldest entry once the window is full and keeping rightInWindow
+  in sync. Called from checkResponse whenever the rat pokes a fluid well
+  (correct OR wrong) -- i.e. on every administered trial where a choice was
+  actually expressed. No-response trials don't call this, so they don't move
+  the bias estimate. */
+void recordChoice(bool wentRight) {
+  if (choiceRingLen == biasWindow) {
+    rightInWindow -= choiceRing[choiceRingIdx];   // evict oldest before overwrite
+  } else {
+    choiceRingLen++;
+  }
+  choiceRing[choiceRingIdx] = wentRight ? 1 : 0;
+  rightInWindow += choiceRing[choiceRingIdx];
+  choiceRingIdx = (choiceRingIdx + 1) % biasWindow;
+}
 
-  randomSeed(seed);                               // Seed our RNG
+/*  const TrialType* selectNextTrial() {...} ->
+  Adaptive anti-bias trial selection. Draws the next trial's correct side
+  from a probability nudged AGAINST the rat's recent expressed side bias:
+  if the rat has been over-choosing right, P(correct side = right) drops, so
+  more left trials are presented and a fixed-side strategy stops paying. The
+  probability is CLAMPED to [pSideMin, pSideMax] so selection never collapses
+  into deterministic alternation (which would itself be a non-odor cue). A
+  hard cap (maxConsecutiveSide) prevents long same-side runs from the draw. */
+const TrialType* selectNextTrial() {
+  float pRight = 0.5;
+  if (choiceRingLen > 0) {
+    // bias in [-1, 1]: +1 = always right, -1 = always left.
+    float bias = (2.0 * rightInWindow - choiceRingLen) / (float)choiceRingLen;
+    pRight = 0.5 - debiasStrength * bias;
+    if (pRight < pSideMin) pRight = pSideMin;
+    if (pRight > pSideMax) pRight = pSideMax;
+  }
 
-  for (int blockStart = 0; blockStart < numTrials; blockStart += blockSize) {
-    int curBlockSize = min(blockSize, numTrials - blockStart);
-    int filled = 0;
+  bool chooseRight = frand() < pRight;
+  int  candidateSide = chooseRight ? rightWell : leftWell;
 
-    // 1. Fill block with exact proportional counts
-    for (int i = 0; i < poolSize; i++) {
-      int count = (long)curBlockSize * pool[i].weight / totalWeight;
-      for (int j = 0; j < count; j++) {
-        trials[blockStart + filled++] = pool[i].type;
-      }
+  // Hard cap: if this would extend a same-side run past the cap, flip it.
+  if (candidateSide == lastSelectedSide && selectedSideRun >= maxConsecutiveSide) {
+    chooseRight = !chooseRight;
+    candidateSide = chooseRight ? rightWell : leftWell;
+  }
+
+  if (candidateSide == lastSelectedSide) {
+    selectedSideRun++;
+  } else {
+    lastSelectedSide = candidateSide;
+    selectedSideRun = 1;
+  }
+
+  return chooseRight ? &goRight1 : &goLeft1;
+}
+
+/*  void fireDummyClicks(int windowMs) {...} ->
+  Spread a randomized set of dummy valve clicks across the priming window so
+  the odor valve's own click can't single out the rewarded side. The window
+  is split into NUM_DUMMY slots; each spare valve fires with ~50% probability
+  at a random offset within its slot (with at least one click guaranteed), and
+  each fire is strobed (BF_DUMMY_CLICK_BASE + i) for offline verification.
+  These valves are unodorized and never open the NOV path, so they emit only
+  sound. Consumes ~windowMs total, replacing the plain priming delay. */
+void fireDummyClicks(int windowMs) {
+  int slot = windowMs / NUM_DUMMY;
+  if (slot < dummyPulseMs + 2) slot = dummyPulseMs + 2;   // floor so a pulse fits
+  bool firedAny = false;
+
+  for (int i = 0; i < NUM_DUMMY; i++) {
+    unsigned long slotStart = millis();
+    bool fire = (random(0, 2) == 0);
+    if (i == NUM_DUMMY - 1 && !firedAny) fire = true;      // guarantee >= 1 click
+
+    if (fire) {
+      int pre = random(0, slot - dummyPulseMs);            // random offset within the slot
+      delay(pre);
+      digitalWrite(Odors[DUMMY_OFFSET + i], HIGH);
+      recordEvent(BF_DUMMY_CLICK_BASE + i);
+      delay(dummyPulseMs);
+      digitalWrite(Odors[DUMMY_OFFSET + i], LOW);
+      firedAny = true;
     }
-
-    // 2. Distribute any remainder slots via weighted random
-    while (filled < curBlockSize) {
-      int roll = random(0, totalWeight);
-      int cumulative = 0;
-      for (int j = 0; j < poolSize; j++) {
-        cumulative += pool[j].weight;
-        if (roll < cumulative) {
-          trials[blockStart + filled++] = pool[j].type;
-          break;
-        }
-      }
-    }
-
-    // 3. Fisher-Yates shuffle the block
-    for (int i = curBlockSize - 1; i > 0; i--) {
-      int j = random(0, i + 1);
-      const TrialType* temp = trials[blockStart + i];
-      trials[blockStart + i] = trials[blockStart + j];
-      trials[blockStart + j] = temp;
+    while (millis() - slotStart < (unsigned long)slot) {   // pad out the slot
+      delay(1);
     }
   }
 }
@@ -460,8 +550,9 @@ void flashLight(int duration) {
 
 /*=== Trial Logic Functions ===*/
 bool odorSampling(TrialType trial) {
-  digitalWrite(trial.odorPin, HIGH);              // 1. Prime the correct odor
-  delay(primingDelay);                            // 2. Wait for priming delay
+  digitalWrite(trial.odorPin, HIGH);              // 1. Prime the correct odor (this valve also clicks)
+  int thisPriming = primingDelay + (int)random(-primingJitter, primingJitter + 1);
+  fireDummyClicks(thisPriming);                   // 2. Mask that click with randomized dummy clicks across priming
   digitalWrite(trialLight, HIGH);                 // 3. Turn on the trial light
   recordEvent(BF_LIGHTS_ON);
 
@@ -537,16 +628,21 @@ int checkResponse(TrialType trial) {
   if (trial.isGo) {                               // GO TRIAL -> poll both wells for fluidWellPoll
     unsigned long pollStart = millis();
     int pokedWell = SENTINEL;
+    bool rightFirst = (random(0, 2) == 0);        // randomize order: a simultaneous L/R break no longer always -> right
 
-    while (millis() - pollStart < fluidWellPoll) {// 1. Poll both wells
-      if (digitalRead(rightWell) == LOW) {
+    while (millis() - pollStart < fluidWellPoll) {// 1. Poll both wells (tie broken by random order)
+      int rRead = digitalRead(rightWell);
+      int lRead = digitalRead(leftWell);
+      if (rRead == LOW && lRead == LOW) {
+        pokedWell = rightFirst ? rightWell : leftWell;
+      } else if (rRead == LOW) {
         pokedWell = rightWell;
-        recordEvent(BF_WATER_POKE_R);
-        break;
-      }
-      if (digitalRead(leftWell) == LOW) {
+      } else if (lRead == LOW) {
         pokedWell = leftWell;
-        recordEvent(BF_WATER_POKE_L);
+      }
+      if (pokedWell != SENTINEL) {
+        recordEvent(pokedWell == rightWell ? BF_WATER_POKE_R : BF_WATER_POKE_L);
+        recordChoice(pokedWell == rightWell);     // feed the rat's expressed side into the anti-bias estimate
         break;
       }
       delay(pollingRate);

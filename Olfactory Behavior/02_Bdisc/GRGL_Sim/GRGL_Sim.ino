@@ -9,38 +9,37 @@ dashboard.py / read_arduino.py can be exercised end-to-end without an Arduino
 wired to the rig. No pins are driven — this only talks serial, so it runs on
 any board.
 
-This build mirrors the firmware's three confound-closing changes so they can
+This build mirrors the firmware's two confound-closing changes so they can
 be validated off-rig:
   - SEED line: emitted right after START (seed = micros()), so the host's
     seed-capture / JSON+MAT logging path is exercised.
   - Adaptive anti-bias selection: the SAME selectNextTrial() logic as the
     firmware chooses each trial's correct side against the rat's recent
     expressed bias. A configurable SIM_POLICY models the rat — the default
-    POLICY_ALWAYS_RIGHT lets you watch the debias push the correct side toward
-    LEFT while the right-biased rat's reward rate falls.
-  - Dummy clicks: a randomized subset of dummy-click strobes (110..113) is
-    emitted before each trial's LIGHTS_ON, so the host's dummy-code
-    registration is exercised.
+    POLICY_ODOR models a rat that LEARNS the odor->side mapping over the
+    session (accuracy ramps from ~10% to ~80%); switch to POLICY_ALWAYS_RIGHT
+    to instead watch the debias push the correct side toward LEFT while a
+    right-biased rat's reward rate falls.
 
 It also stays NON-STATIONARY for the dashboard's live trends: reward depends
-on the simulated rat's policy (POLICY_ODOR ramps accuracy as learning), and
-lazy/abort trials cluster late (satiation/fatigue) so the engagement dot flips
-green -> red. MOVEMENT TIMES are drawn per trial (correct faster/tighter,
+on the simulated rat's policy (the default POLICY_ODOR ramps accuracy from
+~10% to ~80% across the session as the rat learns), and lazy/abort trials
+cluster mildly late (satiation/fatigue) so the engagement dot dips. MOVEMENT
+TIMES are drawn per trial (correct faster/tighter,
 errors slower/wider, go-left a touch slower) so the RT histogram's four
 GR/GL x correct/error distributions stay distinct.
 
 Outcomes covered, with the strobe sequence each emits (mirrors the real
 sketch's control flow in odorSampling()/checkResponse()):
 
-  Administered Go trial = [dummy clicks], LIGHTS_ON, ODOR_POKE, ODOR_x_ON,
+  Administered Go trial = LIGHTS_ON, ODOR_POKE, ODOR_x_ON,
                           ODOR_OFF, ODOR_UNPOKE, then one well outcome:
     reward        -> WATER_POKE(side), FLUID(side), STOP_FLUID(side),
                      END_CORRECT_ITI
     wrong well    -> WATER_POKE(other), WATER_POKE_ERROR(other),
                      END_INCORRECT_ITI
 
-  Aborted trial ([dummy clicks] then no ODOR_UNPOKE; firmware strobes
-  INVALID_TRIAL too):
+  Aborted trial (no ODOR_UNPOKE; firmware strobes INVALID_TRIAL too):
     lazy rat            -> LIGHTS_ON, LAZY_RAT, INVALID_TRIAL
     early odor (pre-vac)-> LIGHTS_ON, ODOR_POKE, ODOR_UNPOKE_EARLY,
                            INVALID_TRIAL                 (no odor-on code)
@@ -53,15 +52,16 @@ const int  STROBE_GAP = 100;    // ms between strobes within a trial
 const int  TRIAL_GAP  = 300;    // ms between trials
 
 /* Session shape. */
-const int   NUM_TRIALS   = 60;    // total trials in the run
-const float RAMP_FRAC    = 0.60;  // POLICY_ODOR accuracy ramps over the first 60%
-const float FATIGUE_FRAC = 0.78;  // aborts cluster from the last ~22% on
+const int   NUM_TRIALS    = 200;   // total trials in the run
+const float SIM_START_ACC = 0.10;  // POLICY_ODOR accuracy at trial 0 (struggling, within 0-20%)
+const float SIM_END_ACC   = 0.80;  // POLICY_ODOR accuracy by the last trial (~80%)
+const float FATIGUE_FRAC  = 0.85;  // aborts cluster from the last ~15% on
 
 /* Simulated-rat policy -- how the rat picks a well given the correct side. */
 #define POLICY_ALWAYS_RIGHT 0   // ignores odor, always goes right (shows anti-bias at work)
 #define POLICY_RANDOM       1   // ignores odor, 50/50
 #define POLICY_ODOR         2   // uses odor: picks correct side with ramping accuracy
-const int SIM_POLICY = POLICY_ALWAYS_RIGHT;
+const int SIM_POLICY = POLICY_ODOR;
 
 /* ===== Anti-bias selector (mirrors GRGL_2-Odor.ino) ===== */
 const int   biasWindow         =  20;
@@ -80,10 +80,6 @@ int  rightInWindow = 0;
 #define SIDE_RIGHT  1
 int  lastSelectedSide = SIDE_NONE;
 int  selectedSideRun  = 0;
-
-/* ===== Dummy-click masking ===== */
-#define NUM_DUMMY 4
-#define BF_DUMMY_CLICK_BASE 110
 
 /* Strobe codes (subset of GRGL_2-Odor.ino) */
 #define BF_START_SESSION        221
@@ -165,20 +161,6 @@ bool selectNextGoRight() {
     selectedSideRun = 1;
   }
   return chooseRight;
-}
-
-/* Emit a randomized subset of dummy-click strobes (>= 1), mirroring the
-   firmware's fireDummyClicks() acoustic masking. Sound only -- no odor. */
-void emitDummyClicks() {
-  bool firedAny = false;
-  for (int i = 0; i < NUM_DUMMY; i++) {
-    bool fire = (random(0, 2) == 0);
-    if (i == NUM_DUMMY - 1 && !firedAny) fire = true;   // guarantee >= 1
-    if (fire) {
-      emit(BF_DUMMY_CLICK_BASE + i, 20);
-      firedAny = true;
-    }
-  }
 }
 
 /* Simulated rat: returns true if the rat pokes the RIGHT well this trial.
@@ -265,12 +247,18 @@ void earlyOdorSampling(bool goRight) {
   emit(BF_INVALID_TRIAL);
 }
 
-/* Accuracy ramp for POLICY_ODOR: from 25% up to 90% over the first RAMP_FRAC
-   of the session, then a plateau. */
+/* Accuracy "learning curve" for POLICY_ODOR: a cubic smoothstep S-curve from
+   SIM_START_ACC up to SIM_END_ACC across the WHOLE session. Smoothstep stays
+   low early (the rat struggles for the first chunk of trials), accelerates
+   through chance mid-session, and plateaus near SIM_END_ACC by the end -- a
+   realistic within-session learning trajectory. */
 float rewardProb(int i) {
-  int rampEnd = (int)(RAMP_FRAC * NUM_TRIALS);
-  if (rampEnd < 1 || i >= rampEnd) return 0.90;
-  return 0.25 + 0.65 * ((float)i / rampEnd);
+  if (NUM_TRIALS <= 1) return SIM_END_ACC;
+  float frac = (float)i / (NUM_TRIALS - 1);     // 0 .. 1 across the session
+  if (frac < 0) frac = 0;
+  if (frac > 1) frac = 1;
+  float s = frac * frac * (3.0 - 2.0 * frac);   // smoothstep (slow-fast-slow S)
+  return SIM_START_ACC + (SIM_END_ACC - SIM_START_ACC) * s;
 }
 
 /* Mirror the real handshake: announce READY, block until a "START" line
@@ -311,11 +299,10 @@ void setup() {
     // 1. The anti-bias selector picks this trial's correct side.
     bool goRight = selectNextGoRight();
 
-    // 2. Dummy clicks precede LIGHTS_ON on every trial (administered or abort).
-    emitDummyClicks();
-
-    // 3. Disengagement ramps up late (satiation/fatigue).
-    float abortProb = (i >= fatigueStart) ? 0.65 : 0.06;
+    // 2. Disengagement ramps up late (satiation/fatigue). Kept gentle so the
+    //    end of the session still has plenty of administered trials to show
+    //    the rat's learned ~80% accuracy.
+    float abortProb = (i >= fatigueStart) ? 0.20 : 0.05;
     if (frand() < abortProb) {
       float a = frand();
       if (a < 0.70)      lazyTrial();          // no expressed choice -> bias unchanged
@@ -325,7 +312,7 @@ void setup() {
       continue;
     }
 
-    // 4. Administered trial: the simulated rat picks a well per its policy.
+    // 3. Administered trial: the simulated rat picks a well per its policy.
     bool ratRight = ratGoesRight(goRight, i);
     bool correct  = (ratRight == goRight);
     goTrial(goRight, correct ? OUT_REWARD : OUT_WRONG_WELL);

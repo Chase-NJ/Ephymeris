@@ -1,25 +1,31 @@
 /*
 Author: Chase Johnston
-Date: June 23rd, 2026
+Date: June 24th, 2026
 Purpose:
-  A binary odor discrimination task.
-    Odor 1 - Go-right - SANDALWOOD      ->  ~50% of trials (assuming no per-rat bias)
-    Odor 3 - Go-left  - ORANGE EXTRACT  ->  ~50% of trials (assuming no per-rat bias)
+  GRGL_2-Odor_EZ -- an EASED-IN variant of the binary odor discrimination task,
+  for transitioning a struggling rat (remy3) onto the full 2-odor task.
+    Odor 1 - Go-right - SANDALWOOD      ->  ~50% of trials
+    Odor 3 - Go-left  - ORANGE EXTRACT  ->  ~50% of trials
 
-  This update fixes gaming our task by a particularly clever rat (Remy 2...).
-  1. Escalating lazyRatDelay now only resets on completed correct trials.
-  2. Early unpokes now contribute to the bias estimator.
-  3. Tightened the clamp on our side-floor to severely punish a single-side strategy.
+  WHAT DIFFERS FROM GRGL_2-Odor:
+  This variant RAMPS the four hold/timing parameters (odorPokeHold,
+  fluidWellHold, fluidWellPoll, odorPortTimeout) from very forgiving values
+  up to the full-task values over the first ~100 completed trials, mirroring
+  the staged shaping in shaping_GL.ino.
 */
 
 /*============= Experiment Hyperparameters =============*/
 /* Trial timing parameters (in ms) */
 const int baudRate = 9600;           // Baud rate for communication with MatLab via serial port
 const int errorDelay = 20000;        // Timeout for incorrect response.
-const int odorPortTimeout = 4000;    // Window rat has to poke following light on.
-const int odorPokeHold = 500;        // Duration rat must hold poke before odor delivery AND during odor sampling. (ms)
-const int fluidWellHold = 500;       // Duration rat must hold poke before fluid delivery (on correct trials). (ms)
-const int fluidWellPoll = 2000;      // Window rat has to respond following successful odor sampling.
+// --- RAMPED PARAMETERS (EZ variant) -------------------------------------
+// These four are mutable and start FORGIVING, then ramp toward the full-task
+// values in applyShapingRamp() below. Full-task targets are 4000 / 500 / 500 / 2000.
+int odorPortTimeout = 8000;          // [ramps 8000 -> 4000] Window rat has to poke following light on.
+int odorPokeHold = 10;               // [ramps 10 -> 500]   Hold before odor + during odor sampling. (ms)
+int fluidWellHold = 10;              // [ramps 10 -> 500]   Hold at fluid well before reward. (ms)
+int fluidWellPoll = 10000;           // [ramps 10000 -> 2000] Window to respond after odor sampling.
+// ------------------------------------------------------------------------
 const int nogoWellPoll = 2000;       // Duration rat must withold response on NO-GO trials, following successful odor sampling.
 const int lazyRatDelay = 6000;       // Base timeout for failure to initiate trial. Now >= standardITI so
                                      // not-playing is never cheaper than playing-and-winning.
@@ -45,13 +51,15 @@ int currentTrial = 0;          // # of trials advanced this session
 int numCorrectionTrials = 0;   // # of leading correction trials (set by GUI via START)
 bool sessionComplete = false;  // If rat somehow completes numTrials...
 int consecutiveLazy = 0;       // # of back-to-back lazy/abort trials, for penalty escalation
+int advanceCount = 0;          // # of COMPLETED (advancing) trials -- drives the shaping ramp
+bool lazyRampActive = false;   // escalating lazy penalty is suppressed until the holds ramp in
 
 /* ===== Adaptive anti-bias selection ===== */
 const int biasWindow = 20;        // sliding window of recent expressed choices
 const float debiasStrength = 0.5; // how hard to push the correct side against the rat's bias
-const float pSideMin = 0.02;      // clamp on P(correct side); near-0 lets a fixed-side rat be starved hard,
-const float pSideMax = 0.98;      // while still never going fully deterministic (which would itself be a cue)
-const int maxConsecutiveSide = 10; // hard cap on consecutive identical correct sides. Raised so the anti-bias
+const float pSideMin = 0.05;      // clamp on P(correct side); near-0 lets a fixed-side rat be starved hard,
+const float pSideMax = 0.95;      // while still never going fully deterministic (which would itself be a cue)
+const int maxConsecutiveSide = 6; // hard cap on consecutive identical correct sides. Raised so the anti-bias
                                   // draw isn't forced to hand a fixed-side rat a "free" opposite-side trial
                                   // every 3rd trial -- that floor was ~1/3 of remy2's entire reward income.
 
@@ -298,6 +306,8 @@ void loop()
   if (odorSampling(*currentTrialPtr))
   {
     currentTrial++;            // Advance only on a completed/advancing trial
+    advanceCount++;            // EZ: count completed trials to drive the shaping ramp
+    applyShapingRamp();        // EZ: update hold/timing params for the new advanceCount
     currentTrialPtr = nullptr; // force a fresh selection next loop
     if (currentTrial >= numTrials)
       endCurrentSession(); // If rat completes all trials
@@ -308,7 +318,69 @@ void loop()
   }
 }
 
+/*  void applyShapingRamp() {...} ->
+  EZ-variant shaping. Called once per COMPLETED trial (advanceCount just
+  incremented). Steps the four ramped hold/timing parameters from forgiving
+  starting values toward the full-task values, mirroring the staged structure
+  of shaping_GL.ino but adapted to this task's two-odor, anti-bias loop.
+
+  Ramp is keyed off advanceCount (completed trials), NOT currentTrial, so a
+  rat that aborts a lot still advances stages at the pace of its real
+  successes -- it can't be rushed into a hard stage by burning trials.
+
+  Stage map (completed-trial thresholds):
+    < 15  Stage 0  ttip=10   wellHold=10   pollWin=10s  portTO=8s   (just touch-and-go)
+    15    Stage 1  ttip=100  wellHold=50   pollWin=10s  portTO=8s
+    30    Stage 2  ttip=200  wellHold=200  pollWin=5s   portTO=6s
+    50    Stage 3  ttip=350  wellHold=350  pollWin=3s   portTO=4s
+    80    Stage 4  ttip=500  wellHold=500  pollWin=2s   portTO=4s   (== full task)
+
+  Once Stage 4 (full task) is reached the escalating lazy penalty is switched
+  ON (lazyRampActive); before that, abstention is penalized only at the flat
+  base rate (see odorSampling) so a rat that genuinely can't hold yet isn't
+  buried in escalating timeouts.
+
+  Thresholds use >= with descending order so a resumed/oversized advanceCount
+  always lands on the correct stage (idempotent -- safe to call every trial). */
+void applyShapingRamp()
+{
+  if (advanceCount >= 80)
+  { // Stage 4 -- full task
+    odorPokeHold = 500;
+    fluidWellHold = 500;
+    fluidWellPoll = 2000;
+    odorPortTimeout = 4000;
+    lazyRampActive = true;
+  }
+  else if (advanceCount >= 50)
+  { // Stage 3
+    odorPokeHold = 350;
+    fluidWellHold = 350;
+    fluidWellPoll = 3000;
+    odorPortTimeout = 4000;
+    lazyRampActive = false;
+  }
+  else if (advanceCount >= 30)
+  { // Stage 2
+    odorPokeHold = 200;
+    fluidWellHold = 200;
+    fluidWellPoll = 5000;
+    odorPortTimeout = 6000;
+    lazyRampActive = false;
+  }
+  else if (advanceCount >= 15)
+  { // Stage 1
+    odorPokeHold = 100;
+    fluidWellHold = 50;
+    fluidWellPoll = 10000;
+    odorPortTimeout = 8000;
+    lazyRampActive = false;
+  }
+  // else: Stage 0 -- keep the forgiving initial values set at declaration.
+}
+
 /* ===================================== Utility functions ===================================== */
+
 /*  bool checkForStop() {...} ->
   Non-blocking poll for a "STOP" line from the host GUI, called once
   per trial boundary in loop(). Unlike readLineInto (which blocks and
@@ -567,19 +639,24 @@ bool odorSampling(TrialType trial)
       digitalWrite(trial.odorPin, LOW);
       recordEvent(BF_LAZY_RAT);
       recordAbstention(trial.correctWell == rightWell); // abstention feeds the bias estimate
-      long lazyDelay = (long)lazyRatDelay + (long)consecutiveLazy * lazyEscalateStep;
-      if (lazyDelay > lazyDelayMax)
-        lazyDelay = lazyDelayMax;
-      consecutiveLazy++; // escalate the NEXT consecutive abstention
+      // EZ: only escalate once the holds have ramped in (lazyRampActive). During
+      // the early stages a rat that can't yet hold the poke gets the flat base
+      // penalty, not a compounding one.
+      long lazyDelay = lazyRatDelay;
+      if (lazyRampActive)
+      {
+        lazyDelay = (long)lazyRatDelay + (long)consecutiveLazy * lazyEscalateStep;
+        if (lazyDelay > lazyDelayMax)
+          lazyDelay = lazyDelayMax;
+        consecutiveLazy++; // escalate the NEXT consecutive abstention
+      }
       delay(lazyDelay);
       return false;
     }
     delay(pollingRate);
   }
   recordEvent(BF_ODOR_POKE);
-  // NOTE: escalator is NOT reset here. A bare odor-poke (or poke-and-bail) must
-  // not defuse the lazy penalty -- only a completed CORRECT trial clears it
-  // (see standardITI branch below). This closes the poke-to-reset loophole.
+  consecutiveLazy = 0; // rat engaged -- reset the abstention escalator
 
   if (!verifySensor(odorPort, odorPokeHold))
   { // 5. Verify rat holds poke (pre-odor hold)
@@ -587,7 +664,6 @@ bool odorSampling(TrialType trial)
     digitalWrite(trialLight, LOW);
     digitalWrite(trial.odorPin, LOW);
     recordEvent(BF_ODOR_UNPOKE_EARLY);
-    recordAbstention(trial.correctWell == rightWell); // poke-and-bail still counts as not-engaging
     delay(noPokeHoldTimeout);
     return false;
   }
@@ -602,7 +678,6 @@ bool odorSampling(TrialType trial)
     digitalWrite(trial.odorPin, LOW);
     digitalWrite(vac, LOW);
     recordEvent(BF_ODOR_UNPOKE_EARLY);
-    recordAbstention(trial.correctWell == rightWell); // poke-and-bail still counts as not-engaging
     delay(noPokeHoldTimeout);
     return false;
   }
@@ -623,7 +698,6 @@ bool odorSampling(TrialType trial)
   if (responseDelay == standardITI)
   {
     recordEvent(BF_END_CORRECT_ITI); // Correct response
-    consecutiveLazy = 0;             // only a COMPLETED CORRECT trial clears the escalator
     return true;                     // Advance to next trial
   }
   else

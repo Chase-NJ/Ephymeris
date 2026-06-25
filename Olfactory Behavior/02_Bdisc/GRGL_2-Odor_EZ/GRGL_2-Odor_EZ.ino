@@ -1,18 +1,32 @@
 /*
 Author: Chase Johnston
-Date: June 24th, 2026
+Date: June 25th, 2026
 Purpose:
   GRGL_2-Odor_EZ -- an EASED-IN variant of the binary odor discrimination task,
   for transitioning a struggling rat (remy3) onto the full 2-odor task.
     Odor 1 - Go-right - SANDALWOOD      ->  ~50% of trials
     Odor 3 - Go-left  - ORANGE EXTRACT  ->  ~50% of trials
 
+  Notable Features:
+  - Anti-bias selection
+  - Integration with Python GUI
+  - Per-side correction trials
+  - Togglable lazy rat delay escalation
+
   WHAT DIFFERS FROM GRGL_2-Odor:
   This variant RAMPS the four hold/timing parameters (odorPokeHold,
   fluidWellHold, fluidWellPoll, odorPortTimeout) from very forgiving values
   up to the full-task values over the first ~100 completed trials, mirroring
   the staged shaping in shaping_GL.ino.
+
+  Runtime config arrives from the GUI in the START command (see protocol.py /
+  GRGLSession.h): START CL=<int> CR=<int> LAZY=<0|1>  -- per-side correction
+  budgets + the escalating-lazy-penalty toggle. Bare START = CL=0 CR=0 LAZY=1.
+  Here the LAZY toggle COMPOSES with the shaping stage gate (lazyRampActive):
+  escalation needs both the toggle on AND the holds ramped in.
 */
+
+#include <GRGLSession.h> // shared session logic (one source for both sketches)
 
 /*============= Experiment Hyperparameters =============*/
 /* Trial timing parameters (in ms) */
@@ -48,11 +62,11 @@ const int numTrials = 1000;    // Number of trials to be run (session cap)
 const long trialSeed = 12345;  // Reproducible-mode seed (used only when USE_FIXED_SEED)
 #define USE_FIXED_SEED 0       // 1 -> seed from trialSeed; 0 -> seed from micros() at START
 int currentTrial = 0;          // # of trials advanced this session
-int numCorrectionTrials = 0;   // # of leading correction trials (set by GUI via START)
 bool sessionComplete = false;  // If rat somehow completes numTrials...
-int consecutiveLazy = 0;       // # of back-to-back lazy/abort trials, for penalty escalation
 int advanceCount = 0;          // # of COMPLETED (advancing) trials -- drives the shaping ramp
 bool lazyRampActive = false;   // escalating lazy penalty is suppressed until the holds ramp in
+// Correction budgets + lazy-penalty escalation now live in CorrectionPolicy /
+// AbstentionPenalty (GRGLSession.h), configured from the START command.
 
 /* ===== Adaptive anti-bias selection ===== */
 const int biasWindow = 20;        // sliding window of recent expressed choices
@@ -63,25 +77,7 @@ const int maxConsecutiveSide = 6; // hard cap on consecutive identical correct s
                                   // draw isn't forced to hand a fixed-side rat a "free" opposite-side trial
                                   // every 3rd trial -- that floor was ~1/3 of remy2's entire reward income.
 
-/* Trial Timing */
-struct TrialClock
-{
-  unsigned long recStart = 0;  // Timestamp at recording start
-  unsigned long currentTS = 0; // Current timestamp
-
-  void beginSession()
-  {
-    currentTS = millis();
-    recStart = currentTS;
-  }
-
-  unsigned long elapsed()
-  {
-    currentTS = millis();
-    return currentTS - recStart; // millis() - recStart
-  }
-};
-
+/* Trial Timing -- TrialClock now lives in GRGLSession.h (shared). */
 TrialClock clock; // Encapsulates the logic for trial timestamps
 
 /*=== Preprocessor Macros (Trial events) ===*/
@@ -162,32 +158,13 @@ const int Fluids[] = // { left , left , right , right }
 };
 /*===================================================================*/
 
-/*=== TrialType struct ===*/ // [CNJ: 03/10/2026]
-/* A struct that defines the differences between trial types */
-struct TrialType
-{
-  const bool isGo;
-  const int odorPin;        // Odor solenoid pin
-  const int correctWell;    // pin of correct well, or -1 for no-go
-  const int rewardIndex;    // Index into Fluids[] AND FluidPinTimes[], or -1 for no-go
-  const int odorOnCode;     // MatLab code for Odor on (distinct between odors)
-  const int fluidEventCode; // MatLab code for fluid delivery
-  const int stopFluidCode;  // MatLab code for fluid stop
-
-  /* Constructor for a TrialType object */
-  TrialType(bool isGo, int odorPin, int correctWell, int rewardIndex, int odorOnCode, int fluidEventCode, int stopFluidCode)
-      : isGo(isGo),
-        odorPin(odorPin),
-        correctWell(correctWell),
-        rewardIndex(rewardIndex),
-        odorOnCode(odorOnCode),
-        fluidEventCode(fluidEventCode),
-        stopFluidCode(stopFluidCode) {}
-};
+/* TrialType struct now lives in GRGLSession.h (shared by both sketches). The
+   concrete go-trial instances below stay here -- they reference this sketch's
+   pins and strobe codes. */
 
 /* ===== TRIAL TYPES ===== */
-// Two go trials -- one per side. selectNextTrial() (below) picks between
-// these live, using the adaptive anti-bias logic, rather than a fixed pool.
+// Two go trials -- one per side. The AntiBiasSelector (selector.selectNext())
+// picks between these live, using the adaptive anti-bias logic, not a fixed pool.
 // Go Trials:
 const TrialType goRight1(
     true,             // Is this a go trial?
@@ -207,17 +184,17 @@ const TrialType goLeft1(
     BF_FLUID_L,
     BF_STOP_FLUID_G_L);
 
-/* ===== Anti-bias selector state =====
-   Tracks the rat's recent EXPRESSED side preference (which well it poked,
-   correct or wrong) in a ring buffer, so selectNextTrial() can push the
-   next correct side against any developing bias. */
-int choiceRing[biasWindow]; // 1 = went right, 0 = went left
-int choiceRingLen = 0;      // # of valid entries (<= biasWindow)
-int choiceRingIdx = 0;      // next write position
-int rightInWindow = 0;      // running count of rights in the ring
-
-int lastSelectedSide = SENTINEL; // rightWell / leftWell of the last fresh selection
-int selectedSideRun = 0;         // consecutive fresh selections on lastSelectedSide
+/* ===== Session objects (GRGLSession.h) =====
+   The anti-bias ring buffer + selection, the lazy-penalty escalator, the
+   per-side correction budgets, and the START-parsed config are each owned by a
+   small class now, so adding the next policy/toggle is a localized change. The
+   anti-bias tuning constants above (which differ between the two sketches) are
+   passed in here. */
+SessionConfig sessionCfg; // populated from START in setup()
+AntiBiasSelector selector(&goRight1, &goLeft1, biasWindow, debiasStrength,
+                          pSideMin, pSideMax, maxConsecutiveSide);
+AbstentionPenalty abstention(lazyRatDelay, lazyEscalateStep, lazyDelayMax);
+CorrectionPolicy correction;
 
 const TrialType *currentTrialPtr = nullptr; // current trial; re-selected only when we advance
 
@@ -248,19 +225,24 @@ void setup()
   /* Wait for the START token from the Python GUI.
      1. The host opens the port (which resets the Mega via DTR).
      2. We land here, announce READY so the GUI can arm its START button.
-     3. Block until we receive a "START" line, optionally carrying the
-        correction-trial count (e.g. "START 10"; a bare "START" means 0). */
+     3. Block until we receive a "START" line, optionally carrying runtime
+        config: "START CL=<int> CR=<int> LAZY=<0|1>" (per-side correction
+        budgets + lazy-escalation toggle). A bare "START" uses the defaults
+        (CL=0 CR=0 LAZY=1) -- the legacy behavior. parseStartCommand() mirrors
+        protocol.build_start_command in the Python package. */
   digitalWrite(trialLight, HIGH); // Light on == armed, waiting for GO
   delay(50);                      // Let the post-reset serial settle
   Serial.println("READY");        // Tell the GUI we're ready to begin
 
-  char cmd[16];
+  char cmd[48]; // big enough for the key=value token form
   while (true)
   {
     if (readLineInto(cmd, sizeof(cmd)) && strncmp(cmd, "START", 5) == 0 && (cmd[5] == '\0' || cmd[5] == ' '))
     {
-      numCorrectionTrials = atoi(cmd + 5); // optional count after START; 0 if absent
-      break;                               // START received -- begin session
+      parseStartCommand(cmd, sessionCfg); // fill sessionCfg (defaults preserved)
+      correction.configure(sessionCfg.correctionLeft, sessionCfg.correctionRight);
+      abstention.setEnabled(sessionCfg.lazyEscalationEnabled);
+      break; // START received -- begin session
     }
   }
 
@@ -299,15 +281,19 @@ void loop()
      -- preserving the original repeat-the-same-trial semantics. */
   if (currentTrialPtr == nullptr)
   {
-    currentTrialPtr = selectNextTrial();
+    currentTrialPtr = selector.selectNext();
   }
 
   /* Run our behavior! */
   if (odorSampling(*currentTrialPtr))
   {
-    currentTrial++;            // Advance only on a completed/advancing trial
-    advanceCount++;            // EZ: count completed trials to drive the shaping ramp
-    applyShapingRamp();        // EZ: update hold/timing params for the new advanceCount
+    currentTrial++;     // Advance only on a completed/advancing trial
+    advanceCount++;     // EZ: count completed trials to drive the shaping ramp
+    applyShapingRamp(); // EZ: update hold/timing params for the new advanceCount
+    // Consume this side's leading correction budget (a correct trial, or an
+    // already-past-budget advance). A correction REPEAT returns false above and
+    // never reaches here, so it doesn't consume budget.
+    correction.onAdvance(currentTrialPtr->correctWell == rightWell);
     currentTrialPtr = nullptr; // force a fresh selection next loop
     if (currentTrial >= numTrials)
       endCurrentSession(); // If rat completes all trials
@@ -483,93 +469,10 @@ void endCurrentSession()
   recordEvent(BF_END_SESSION);
 }
 
-/*  float frand() {...} ->
-  Uniform random float in [0, 1), built on Arduino's random(). */
-float frand()
-{
-  return random(0, 10000) / 10000.0;
-}
-
-/*  void recordChoice(bool wentRight) {...} ->
-  Push the rat's expressed side choice into the sliding-window ring buffer,
-  evicting the oldest entry once the window is full and keeping rightInWindow
-  in sync. Called from checkResponse whenever the rat pokes a fluid well
-  (correct OR wrong) -- i.e. on every administered trial where a choice was
-  actually expressed. No-response trials don't call this, so they don't move
-  the bias estimate. */
-void recordChoice(bool wentRight)
-{
-  if (choiceRingLen == biasWindow)
-  {
-    rightInWindow -= choiceRing[choiceRingIdx]; // evict oldest before overwrite
-  }
-  else
-  {
-    choiceRingLen++;
-  }
-  choiceRing[choiceRingIdx] = wentRight ? 1 : 0;
-  rightInWindow += choiceRing[choiceRingIdx];
-  choiceRingIdx = (choiceRingIdx + 1) % biasWindow;
-}
-
-/*  void recordAbstention(bool presentedRight) {...} ->
-  A lazy/no-poke trial expresses no side, but it must not be invisible to the
-  anti-bias estimator -- otherwise a rat can wait out unfavorable trials and
-  reset the bias read by simply not playing. We log the abstention as a weak
-  vote AGAINST having engaged the presented side: push the same side value the
-  trial was presented on into the ring. Net effect: declining right-trials
-  keeps the estimator believing he "wants" left, so it keeps serving right.
-  Kept as a thin wrapper (rather than inlined) so the call site stays legible
-  and abstention weighting can be tuned in exactly one place later. */
-void recordAbstention(bool presentedRight)
-{
-  recordChoice(presentedRight);
-}
-
-/*  const TrialType* selectNextTrial() {...} ->
-  Adaptive anti-bias trial selection. Draws the next trial's correct side
-  from a probability nudged AGAINST the rat's recent expressed side bias:
-  if the rat has been over-choosing right, P(correct side = right) drops, so
-  more left trials are presented and a fixed-side strategy stops paying. The
-  probability is CLAMPED to [pSideMin, pSideMax] so selection never collapses
-  into deterministic alternation (which would itself be a non-odor cue). A
-  hard cap (maxConsecutiveSide) prevents long same-side runs from the draw. */
-const TrialType *selectNextTrial()
-{
-  float pRight = 0.5;
-  if (choiceRingLen > 0)
-  {
-    // bias in [-1, 1]: +1 = always right, -1 = always left.
-    float bias = (2.0 * rightInWindow - choiceRingLen) / (float)choiceRingLen;
-    pRight = 0.5 - debiasStrength * bias;
-    if (pRight < pSideMin)
-      pRight = pSideMin;
-    if (pRight > pSideMax)
-      pRight = pSideMax;
-  }
-
-  bool chooseRight = frand() < pRight;
-  int candidateSide = chooseRight ? rightWell : leftWell;
-
-  // Hard cap: if this would extend a same-side run past the cap, flip it.
-  if (candidateSide == lastSelectedSide && selectedSideRun >= maxConsecutiveSide)
-  {
-    chooseRight = !chooseRight;
-    candidateSide = chooseRight ? rightWell : leftWell;
-  }
-
-  if (candidateSide == lastSelectedSide)
-  {
-    selectedSideRun++;
-  }
-  else
-  {
-    lastSelectedSide = candidateSide;
-    selectedSideRun = 1;
-  }
-
-  return chooseRight ? &goRight1 : &goLeft1;
-}
+/* frand(), recordChoice(), recordAbstention(), and selectNextTrial() now live
+   in GRGLSession.h: grglFrand() and the AntiBiasSelector class (the `selector`
+   instance above). Call sites use selector.recordChoice / recordAbstention /
+   selectNext. */
 
 /*  void recordEvent(int eventCode) {...} ->
   Given an eventCode (an int), outputs the code in a standardized 3-digit format.
@@ -638,25 +541,20 @@ bool odorSampling(TrialType trial)
       digitalWrite(trialLight, LOW);
       digitalWrite(trial.odorPin, LOW);
       recordEvent(BF_LAZY_RAT);
-      recordAbstention(trial.correctWell == rightWell); // abstention feeds the bias estimate
-      // EZ: only escalate once the holds have ramped in (lazyRampActive). During
-      // the early stages a rat that can't yet hold the poke gets the flat base
-      // penalty, not a compounding one.
-      long lazyDelay = lazyRatDelay;
-      if (lazyRampActive)
-      {
-        lazyDelay = (long)lazyRatDelay + (long)consecutiveLazy * lazyEscalateStep;
-        if (lazyDelay > lazyDelayMax)
-          lazyDelay = lazyDelayMax;
-        consecutiveLazy++; // escalate the NEXT consecutive abstention
-      }
-      delay(lazyDelay);
+      selector.recordAbstention(trial.correctWell == rightWell); // abstention feeds the bias estimate
+      // EZ: escalation is only stage-allowed once the holds have ramped in
+      // (lazyRampActive) -- so an early-stage rat that can't hold yet gets the
+      // flat base penalty. The LAZY toggle composes with that gate: nextDelay
+      // escalates only if BOTH the toggle is on AND lazyRampActive. OFF, or a
+      // pre-ramp stage -> flat lazyRatDelay, no consecutiveLazy growth.
+      delay(abstention.nextDelay(lazyRampActive));
       return false;
     }
     delay(pollingRate);
   }
   recordEvent(BF_ODOR_POKE);
-  consecutiveLazy = 0; // rat engaged -- reset the abstention escalator
+  abstention.reset(); // EZ: rat engaged -- reset the abstention escalator on poke
+                      // (the full task instead resets only on a completed correct trial)
 
   if (!verifySensor(odorPort, odorPokeHold))
   { // 5. Verify rat holds poke (pre-odor hold)
@@ -703,11 +601,11 @@ bool odorSampling(TrialType trial)
   else
   {
     recordEvent(BF_END_INCORRECT_ITI); // Incorrect response (hold failure or wrong well)
-    // Correction trials: while currentTrial is within the leading
-    // numCorrectionTrials, an incorrect response repeats the same trial
-    // (return false -> loop() logs BF_INVALID_TRIAL and holds currentTrial).
-    // Past the correction block, advance regardless of correctness.
-    return (currentTrial >= numCorrectionTrials);
+    // Per-side correction: while THIS side is still under its leading budget,
+    // an incorrect response repeats the same trial (return false -> loop() logs
+    // BF_INVALID_TRIAL and holds currentTrialPtr, re-presenting the same side).
+    // Past that side's budget, advance regardless of correctness.
+    return !correction.shouldRepeat(trial.correctWell == rightWell);
   }
 }
 
@@ -745,7 +643,7 @@ int checkResponse(TrialType trial)
       if (pokedWell != SENTINEL)
       {
         recordEvent(pokedWell == rightWell ? BF_WATER_POKE_R : BF_WATER_POKE_L);
-        recordChoice(pokedWell == rightWell); // feed the rat's expressed side into the anti-bias estimate
+        selector.recordChoice(pokedWell == rightWell); // feed the rat's expressed side into the anti-bias estimate
         break;
       }
       delay(pollingRate);

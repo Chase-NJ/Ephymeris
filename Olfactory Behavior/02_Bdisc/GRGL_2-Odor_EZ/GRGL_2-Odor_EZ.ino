@@ -333,7 +333,7 @@ void applyShapingRamp()
   if (advanceCount >= 80)
   { // Stage 4 -- full task
     odorPokeHold = 500;
-    fluidWellHold = 500;
+    fluidWellHold = 350;
     fluidWellPoll = 2000;
     odorPortTimeout = 4000;
     lazyRampActive = true;

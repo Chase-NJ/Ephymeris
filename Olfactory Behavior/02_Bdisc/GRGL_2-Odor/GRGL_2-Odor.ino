@@ -25,7 +25,7 @@ const int baudRate = 9600;           // Baud rate for communication with MatLab 
 const int errorDelay = 20000;        // Timeout for incorrect response.
 const int odorPortTimeout = 4000;    // Window rat has to poke following light on.
 const int odorPokeHold = 500;        // Duration rat must hold poke before odor delivery AND during odor sampling. (ms)
-const int fluidWellHold = 500;       // Duration rat must hold poke before fluid delivery (on correct trials). (ms)
+const int fluidWellHold = 200;       // Duration rat must hold poke before fluid delivery (on correct trials). (ms)
 const int fluidWellPoll = 2000;      // Window rat has to respond following successful odor sampling.
 const int nogoWellPoll = 2000;       // Duration rat must withold response on NO-GO trials, following successful odor sampling.
 const int lazyRatDelay = 6000;       // Base timeout for failure to initiate trial. Now >= standardITI so

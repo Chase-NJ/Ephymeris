@@ -23,6 +23,24 @@ header sits at the library root, so a sketch includes it with angle brackets:
 flash path finds it automatically. No per-machine install.
 
 ### Compiling in the Arduino IDE (optional, for editing/checking)
-The IDE won't see this folder by default. Either add
-`02_Bdisc/libraries` to the IDE's library search path, or compile via
-`arduino-cli` as above.
+The IDE won't see this folder by default, and there is no "extra library
+path" setting to point at it — IDE 2.x scans exactly one user library
+folder, `<sketchbook>/libraries`. Our sketchbook is the repo root
+(`.../05_Behavior/Arduino`), so the fix is a symlink from there to this
+folder. From the repo root:
+
+```bash
+mkdir -p libraries && ln -sfn "../Olfactory Behavior/02_Bdisc/libraries/GRGLSession" libraries/GRGLSession
+```
+
+Restart the IDE afterwards so it rescans libraries. The symlink is
+relative, so it keeps working wherever the repo is checked out, as long as
+the IDE's sketchbook is set to the repo root (File > Preferences >
+Sketchbook location).
+
+If you'd rather not touch the IDE, compile from the repo root with the
+library path passed explicitly:
+
+```bash
+arduino-cli compile --fqbn arduino:avr:mega --libraries "Olfactory Behavior/02_Bdisc/libraries" "Olfactory Behavior/02_Bdisc/GRGL_2-Odor"
+```

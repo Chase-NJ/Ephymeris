@@ -43,7 +43,7 @@ const int FluidPinTimes[] = {
 /*======================================================*/
 
 /* ======== Trial sequence parameters ======== */
-const int pollingRate = 2;     // Polling rate for our IR sensors (in ms)
+const int pollingRate = 5;     // Polling rate for our IR sensors (in ms)
 const int primingDelay = 1000; // Time odor is primed prior to trial light on (fixed, controlled latency)
 const int numTrials = 1000;    // Number of trials to be run (session cap)
 const long trialSeed = 12345;  // Reproducible-mode seed (used only when USE_FIXED_SEED)

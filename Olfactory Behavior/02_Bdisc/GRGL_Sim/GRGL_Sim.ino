@@ -70,6 +70,8 @@ sketch's control flow in odorSampling()/checkResponse()):
                            ODOR_UNPOKE_EARLY, INVALID_TRIAL
 */
 
+#include <BehaviorBox.h> // shared strobe vocabulary (the BF_* codes); the sim keeps its own self-contained rat model
+
 const int  baudRate   = 9600;   // must match read_arduino.py
 
 /* ===== 4x-faster-than-real timing model =====
@@ -142,30 +144,8 @@ int  rightInWindow = 0;
 int  lastSelectedSide = SIDE_NONE;
 int  selectedSideRun  = 0;
 
-/* Strobe codes (subset of GRGL_2-Odor.ino) */
-#define BF_START_SESSION        221
-#define BF_LIGHTS_ON            222
-#define BF_LAZY_RAT             223
-#define BF_ODOR_POKE            224
-#define BF_ODOR_UNPOKE_EARLY    225
-#define BF_ODOR_UNPOKE          226
-#define BF_INVALID_TRIAL        234
-#define BF_END_CORRECT_ITI      242
-#define BF_END_INCORRECT_ITI    243
-#define BF_END_SESSION          246
-#define BF_ODOR_OFF             247
-#define BF_WATER_POKE_L         248
-#define BF_WATER_POKE_R         249
-#define BF_WATER_UNPOKE_EARLY_L 250
-#define BF_WATER_UNPOKE_EARLY_R 251
-#define BF_FLUID_L              252
-#define BF_FLUID_R              253
-#define BF_WATER_POKE_ERROR_L   257
-#define BF_WATER_POKE_ERROR_R   258
-#define BF_STOP_FLUID_G_R       357
-#define BF_STOP_FLUID_G_L       369
-#define BF_ODOR_1_ON            101
-#define BF_ODOR_3_ON            103
+/* Strobe codes (BF_*) come from BehaviorBox.h now -- the sim emits the exact
+   same vocabulary as the real GRGL_2-Odor firmware, from one source. */
 
 unsigned long sessionStart = 0;
 

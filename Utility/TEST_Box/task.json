@@ -1,0 +1,21 @@
+{
+  "taskName": "Box Self-Test",
+  "kind": "utility",
+  "controls": [
+    { "id": "test_odors",   "label": "Test odors",   "type": "button", "command": "TEST ODORS" },
+    { "id": "test_fluids",  "label": "Test fluids",  "type": "button", "command": "TEST FLUIDS" },
+    { "id": "test_light",   "label": "Test light",   "type": "button", "command": "TEST LIGHT" },
+    { "id": "test_sensors", "label": "Test sensors", "type": "button", "command": "TEST SENSORS" },
+    { "id": "stop",         "label": "Stop",         "type": "button", "command": "STOP" }
+  ],
+  "telemetry": {
+    "match": "STATUS",
+    "fields": [
+      { "key": "test",  "label": "Test" },
+      { "key": "step",  "label": "Step" },
+      { "key": "odor",  "label": "Odor beam" },
+      { "key": "left",  "label": "Left beam" },
+      { "key": "right", "label": "Right beam" }
+    ]
+  }
+}

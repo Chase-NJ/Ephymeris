@@ -1,75 +1,68 @@
 /*==================================
-PRIME Lines (well-triggered latch):
-1. Upload, board resets, setup runs. Trial light turns ON  = ready to prime.
-2. Odor poke once to start. Trial light flashes off/on ONCE, stays on.
-   -> You are now priming fluid set 1 (Left reward 1 + Right reward 1).
-3. Break the LEFT  well IR beam  -> LATCH the Left  solenoid OPEN.
-   Break it again                -> latch it CLOSED.
-   Break the RIGHT well IR beam  -> LATCH the Right solenoid OPEN, again -> CLOSED.
-   Each side latches independently; re-clear the beam between toggles.
-4. Odor poke again to "shift gears" to fluid set 2 (Left reward 2 + Right reward 2).
-   Trial light flashes off/on TWICE, stays on. SHIFTING GEARS CLOSES ANY OPEN
-   LINE so fluid is never left running across a set change.
-5. Keep odor poking to toggle between set 1 (one flash) and set 2 (two flashes).
-   To end, reset / power-cycle the Arduino.
+PRIME Lines (well-triggered latch) -- now also app-controllable.
+
+MANUAL (unchanged):
+1. Upload; trial light turns ON = ready to prime.
+2. Odor poke once to start (fluid set 1); poke again to shift to set 2, etc.
+   1 blink = set 1, 2 blinks = set 2. Shifting gears CLOSES any open line.
+3. Break the LEFT/RIGHT well IR beam to LATCH that side's line open; break again
+   to latch it closed. Each side latches independently.
+
+APP CONTROL (Ephymeris Debug Mode / PASSTHROUGH):
+  The app drives the same actions over serial (task.json `controls`):
+    SET GEAR=1 | SET GEAR=2   -> select fluid set (closes any open line first)
+    TOGGLE L   | TOGGLE R     -> latch that side's active line open/closed
+    ALLOFF                    -> close both lines
+  and reads a non-persisted status line (task.json `telemetry`) after every
+  change + a ~1 s heartbeat:
+    STATUS gear=<0|1|2> left=<open|closed> right=<open|closed>
+  (gear=0 = not started yet). Nothing here is saved -- it's live display only.
 ==================================*/
-const int pollingRate   = 2;  // Polling rate for IR sensors (in ms)
 
-/*===================== Pin-mapping for Arduino =====================*/
-/* IR Sensors */
-const int odorPort      = 2;  // Odor port
-const int rightWell     = 3;  // Right-well
-const int leftWell      = 4;  // Left-well
+#include <BehaviorBox.h> // shared pinout + CommandReader (serial control) + emitStatus (telemetry)
 
-/* Trial light & normally open vacuum */
-const int trialLight    = 36; // Trial light
-const int vac           = 40; // N.O.V.
+const int pollingRate = 2;      // IR sensor polling (ms)
+const unsigned long STATUS_HEARTBEAT_MS = 1000; // re-report status at least this often
 
-/* Odor solenoids */
-const int Odors[] = {
-  22,                         // Odor 1
-  24,                         // Odor 2
-  26,                         // Odor 3
-  28,                         // Odor 4
-  30,                         // Odor 5
-  32,                         // Odor 6
-  23,                         // Odor 7
-  25,                         // Odor 8
-  27,                         // Odor 9
-  29,                         // Odor 10
-  31,                         // Odor 11
-  33                          // Odor 12
-};
+int gear = 0;          // 0 = fluid set 1, 1 = fluid set 2
+bool started = false;  // becomes true after the first gear select (poke or SET GEAR)
+bool leftOpen = false; // latch state of the active left  line
+bool rightOpen = false;// latch state of the active right line
 
-/* Fluid Solenoids */
-const int Fluids[] =          // { left , left , right , right }
+// Previous sensor states for edge-detection (HIGH = beam intact / unpoked)
+int prevOdor = HIGH;
+int prevLeft = HIGH;
+int prevRight = HIGH;
+
+CommandReader commands;                 // non-blocking serial command reader
+unsigned long lastStatus = 0;           // last time we emitted STATUS
+
+/* Emit the current state as a non-persisted STATUS line for the app. */
+void reportStatus()
 {
-  42,                         // [0]: Left-well reward 1
-  44,                         // [1]: Left-well reward 2
-  46,                         // [2]: Right-well reward 1
-  48,                         // [3]: Right-well reward 2
-};
-/*===================================================================*/
-
-/*=== Utility functions ===*/
-
-/*  void closeAllFluids() {...} ->
-  Closes every fluid solenoid. Used on startup and on every gear shift so
-  no line is ever left latched open when the active fluid set changes.
-*/
-void closeAllFluids() {
-  for (int rwd = 0; rwd < 4; rwd++) {
-    digitalWrite(Fluids[rwd], LOW);
-  }
+  char buf[48];
+  snprintf(buf, sizeof(buf), "gear=%d left=%s right=%s",
+           started ? gear + 1 : 0,
+           leftOpen ? "open" : "closed",
+           rightOpen ? "open" : "closed");
+  emitStatus(buf);
+  lastStatus = millis();
 }
 
-/*  void flashGear(int times) {...} ->
-  With the trial light starting ON, blinks it off-then-on `times` times
-  and leaves it ON. Used to indicate which fluid set ("gear") is active:
-  1 blink = set 1, 2 blinks = set 2.
-*/
-void flashGear(int times) {
-  for (int i = 0; i < times; i++) {
+/* Close every fluid line and clear the latch state. */
+void closeAllFluids()
+{
+  for (int rwd = 0; rwd < NUM_FLUIDS; rwd++)
+    digitalWrite(Fluids[rwd], LOW);
+  leftOpen = false;
+  rightOpen = false;
+}
+
+/* Blink the trial light off/on `times`, leaving it ON (gear indicator). */
+void flashGear(int times)
+{
+  for (int i = 0; i < times; i++)
+  {
     digitalWrite(trialLight, LOW);
     delay(200);
     digitalWrite(trialLight, HIGH);
@@ -77,77 +70,101 @@ void flashGear(int times) {
   }
 }
 
-void setup() {
-  /*=== Setup Arduino pins ===*/
-  for (int odor = 0; odor < 12; odor++) {         // Odor solenoids
-    pinMode(Odors[odor], OUTPUT);
-  }
-  for (int rwd = 0; rwd < 4; rwd++) {             // Fluid solenoids
-    pinMode(Fluids[rwd], OUTPUT);
-  }
-  pinMode(odorPort, INPUT_PULLUP);                // IR Sensors
-  pinMode(leftWell, INPUT_PULLUP);
-  pinMode(rightWell, INPUT_PULLUP);
-  pinMode(trialLight, OUTPUT);                    // Trial light
-  pinMode(vac, OUTPUT);                           // N.O.V.
-  /*==========================*/
-
-  /*=== Make sure everything's chill... ===*/
-  for (int odor = 0; odor < 12; odor++) {
-    digitalWrite(Odors[odor], LOW);
-  }
+/* Select a fluid set (0 or 1). Closes any open line first so fluid is never left
+   running across a set change, flashes the indicator, and reports status. Shared
+   by the manual odor poke and the SET GEAR command. */
+void applyGear(int g)
+{
   closeAllFluids();
-  digitalWrite(vac, LOW);
-  /*=======================================*/
-
-  digitalWrite(trialLight, HIGH);                 // Light ON = ready to prime
+  gear = g;
+  started = true;
+  flashGear(gear + 1); // 1 blink = set 1, 2 blinks = set 2
+  reportStatus();
 }
 
-int  gear        = 0;       // 0 = fluid set 1, 1 = fluid set 2
-bool started     = false;   // becomes true after the first odor poke
-bool leftOpen    = false;   // latch state of the active left  line
-bool rightOpen   = false;   // latch state of the active right line
+/* Latch the active set's left/right line open or closed. Shared by the manual
+   well break and the TOGGLE command. */
+void toggleLeft()
+{
+  if (!started)
+    return;
+  leftOpen = !leftOpen;
+  digitalWrite(Fluids[gear], leftOpen ? HIGH : LOW); // [0] set1, [1] set2
+  reportStatus();
+}
+void toggleRight()
+{
+  if (!started)
+    return;
+  rightOpen = !rightOpen;
+  digitalWrite(Fluids[2 + gear], rightOpen ? HIGH : LOW); // [2] set1, [3] set2
+  reportStatus();
+}
 
-// Previous sensor states for edge-detection (HIGH = beam intact / unpoked)
-int prevOdor  = HIGH;
-int prevLeft  = HIGH;
-int prevRight = HIGH;
+/* Handle one whole-line command from the app. Unknown lines are ignored. */
+void handleCommand(const char *line)
+{
+  if (strcmp(line, "ALLOFF") == 0)
+  {
+    closeAllFluids();
+    reportStatus();
+  }
+  else if (strncmp(line, "SET GEAR=", 9) == 0)
+  {
+    int g = atoi(line + 9); // 1 or 2 on the wire
+    if (g == 1 || g == 2)
+      applyGear(g - 1);
+  }
+  else if (strcmp(line, "TOGGLE L") == 0)
+    toggleLeft();
+  else if (strcmp(line, "TOGGLE R") == 0)
+    toggleRight();
+  else if (strcmp(line, "STATUS?") == 0)
+    reportStatus(); // let the app request a fresh snapshot
+}
 
-void loop() {
-  int odor  = digitalRead(odorPort);
-  int left  = digitalRead(leftWell);
+void setup()
+{
+  initBoxHardware();              // configure every box pin + land all outputs LOW
+  digitalWrite(trialLight, HIGH); // Light ON = ready to prime
+  Serial.begin(9600);
+  reportStatus(); // announce initial state so a connected app populates immediately
+}
+
+void loop()
+{
+  /* 1. App commands (non-blocking). */
+  if (commands.poll())
+    handleCommand(commands.line());
+
+  /* 2. Manual triggers (unchanged behavior). */
+  int odor = digitalRead(odorPort);
+  int left = digitalRead(leftWell);
   int right = digitalRead(rightWell);
 
-  /* Odor poke (falling edge): start, then toggle fluid set / "gear" */
-  if (odor == LOW && prevOdor == HIGH) {
-    if (!started) {
-      started = true;
-      gear = 0;                       // first poke -> fluid set 1
-    } else {
-      gear = (gear == 0) ? 1 : 0;     // subsequent pokes toggle the set
-      closeAllFluids();               // never leave a line open across a shift
-      leftOpen  = false;
-      rightOpen = false;
-    }
-    flashGear(gear + 1);              // 1 blink = set 1, 2 blinks = set 2
+  if (odor == LOW && prevOdor == HIGH)
+  { // Odor poke (falling edge): start, then toggle fluid set
+    if (!started)
+      applyGear(0); // first poke -> fluid set 1
+    else
+      applyGear(gear == 0 ? 1 : 0); // subsequent pokes toggle the set
   }
 
-  if (started) {
-    /* Left well break (falling edge) -> latch this set's left line on/off */
-    if (left == LOW && prevLeft == HIGH) {
-      leftOpen = !leftOpen;
-      digitalWrite(Fluids[gear], leftOpen ? HIGH : LOW);     // [0] set1, [1] set2
-    }
-    /* Right well break (falling edge) -> latch this set's right line on/off */
-    if (right == LOW && prevRight == HIGH) {
-      rightOpen = !rightOpen;
-      digitalWrite(Fluids[2 + gear], rightOpen ? HIGH : LOW); // [2] set1, [3] set2
-    }
+  if (started)
+  {
+    if (left == LOW && prevLeft == HIGH)
+      toggleLeft(); // left well break -> latch active left line
+    if (right == LOW && prevRight == HIGH)
+      toggleRight(); // right well break -> latch active right line
   }
 
-  prevOdor  = odor;
-  prevLeft  = left;
+  prevOdor = odor;
+  prevLeft = left;
   prevRight = right;
+
+  /* 3. Status heartbeat so a late-connecting app still learns the state. */
+  if (millis() - lastStatus >= STATUS_HEARTBEAT_MS)
+    reportStatus();
 
   delay(pollingRate);
 }

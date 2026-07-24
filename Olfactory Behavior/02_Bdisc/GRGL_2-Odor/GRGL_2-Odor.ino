@@ -12,12 +12,12 @@ Purpose:
   - Per-side correction trials
   - Togglable lazy rat delay escalation
 
-  Runtime config arrives from the GUI in the START command (see protocol.py /
-  GRGLSession.h): START CL=<int> CR=<int> LAZY=<0|1>  -- per-side correction
+  Runtime config arrives from the GUI in the START command (see BehaviorBox.h /
+  the app's start-command builder): START CL=<int> CR=<int> LAZY=<0|1>  -- per-side correction
   budgets + the escalating-lazy-penalty toggle. Bare START = CL=0 CR=0 LAZY=1.
 */
 
-#include <GRGLSession.h> // shared session logic (one source for both sketches)
+#include <BehaviorBox.h> // the single shared header for every sketch (pins, strobes, session policy)
 
 /*============= Experiment Hyperparameters =============*/
 /* Trial timing parameters (in ms) */
@@ -51,7 +51,7 @@ const long trialSeed = 12345;  // Reproducible-mode seed (used only when USE_FIX
 int currentTrial = 0;          // # of trials advanced this session
 bool sessionComplete = false;  // If rat somehow completes numTrials...
 // Correction budgets + lazy-penalty escalation now live in CorrectionPolicy /
-// AbstentionPenalty (GRGLSession.h), configured from the START command.
+// AbstentionPenalty (BehaviorBox.h), configured from the START command.
 
 /* ===== Adaptive anti-bias selection ===== */
 const int biasWindow = 20;        // sliding window of recent expressed choices
@@ -62,90 +62,14 @@ const int maxConsecutiveSide = 10; // hard cap on consecutive identical correct 
                                   // draw isn't forced to hand a fixed-side rat a "free" opposite-side trial
                                   // every 3rd trial -- that floor was ~1/3 of remy2's entire reward income.
 
-/* Trial Timing -- TrialClock now lives in GRGLSession.h (shared). */
+/* Trial Timing -- TrialClock lives in BehaviorBox.h (shared). */
 TrialClock clock; // Encapsulates the logic for trial timestamps
 
-/*=== Preprocessor Macros (Trial events) ===*/
-#define BF_START_SESSION 221        // Sent at recording start (timestamp 0)
-#define BF_LIGHTS_ON 222            // Sent when trialLight is written HIGH
-#define BF_LAZY_RAT 223             // Sent when rat fails to initiate trial
-#define BF_ODOR_POKE 224            // Sent when rat pokes odor port
-#define BF_ODOR_UNPOKE_EARLY 225    // Sent when rat fails to hold odor poke for odorPokeHold
-#define BF_ODOR_UNPOKE 226          // Sent after rat successfully samples odor
-#define BF_ODOR_OFF 247             // Sent when we close N.O.V. (directing odor AWAY from odor port)
-#define BF_WATER_POKE_L 248         // Sent when rat pokes left fluid well
-#define BF_WATER_POKE_R 249         // Sent when rat pokes right fluid well
-#define BF_WATER_UNPOKE_EARLY_L 250 // Sent when rat fails to hold for fluidWellHold
-#define BF_WATER_UNPOKE_EARLY_R 251 // Sent when rat fails to hold for fluidWellHold
-#define BF_WATER_UNPOKE_L 254       // Sent when rat unpokes left well
-#define BF_WATER_UNPOKE_R 255       // Sent when rat unpokes right well
-#define BF_WATER_POKE_ERROR_L 257   // Sent when rat incorrectly responds at left well
-#define BF_WATER_POKE_ERROR_R 258   // Sent when rat incorrectly responds at right well
-#define BF_LIGHTS_OFF 233           // Trial light off
-#define BF_INVALID_TRIAL 234        // Trial is aborted (either lazy rat or poke hold failure)
-#define BF_FLUID_L 252              // Delivered at start of first drop on left.
-#define BF_FLUID_R 253              // Delivered at start of first drop on right.
-#define BF_STOP_FLUID_G_R 357       // Sent when we stop right well fluid delivery
-#define BF_STOP_FLUID_G_L 369       // Sent when we stop left well fluid delivery
-#define BF_END_CORRECT_ITI 242      // Sent after correct response intertrial interval
-#define BF_END_INCORRECT_ITI 243    // Sent after errorDelay intertrial interval
-#define BF_END_SESSION 246          // Sent at end of session (sessionComplete = true)
-#define BF_WATER_POKE_NONE 256      // After a correct response on a No-Go trial
-
-/* === TrialType Macros === */
-#define LEFT_WELL_FL_1 0  // Index into Fluids[] & FluidPinTimes[] for fluid sol 1
-#define LEFT_WELL_FL_2 1  // Index into Fluids[] & FluidPinTimes[] for fluid sol 2
-#define RIGHT_WELL_FL_1 2 // Index into Fluids[] & FluidPinTimes[] for fluid sol 3
-#define RIGHT_WELL_FL_2 3 // Index into Fluids[] & FluidPinTimes[] for fluid sol 4
-#define SENTINEL -1       // Sentinel value. Enables implementation of no-go trials.
-
-/* Distinct Odor-ON Macros */
-#define BF_ODOR_1_ON 101
-#define BF_ODOR_2_ON 102
-#define BF_ODOR_3_ON 103
-#define BF_ODOR_4_ON 104
-#define BF_ODOR_5_ON 105
-#define BF_ODOR_6_ON 106
-
-/*===================== Pin-mapping for Arduino =====================*/
-/* IR Sensors */
-const int odorPort = 2;  // Odor port
-const int rightWell = 3; // Right-well
-const int leftWell = 4;  // Left-well
-
-/* Trial light & normally open vacuum */
-const int trialLight = 36; // Trial light
-const int vac = 40;        // N.O.V.
-
-/* Odor solenoids */
-const int Odors[] = {
-    22, // Odor 1
-    24, // Odor 2
-    26, // Odor 3
-    28, // Odor 4
-    30, // Odor 5
-    32, // Odor 6
-    23, // Odor 7
-    25, // Odor 8
-    27, // Odor 9
-    29, // Odor 10
-    31, // Odor 11
-    33  // Odor 12
-};
-
-/* Fluid Solenoids */
-const int Fluids[] = // { left , left , right , right }
-    {
-        42, // [0]: Left-well reward 1
-        44, // [1]: Left-well reward 2
-        46, // [2]: Right-well reward 1
-        48, // [3]: Right-well reward 2
-};
-/*===================================================================*/
-
-/* TrialType struct now lives in GRGLSession.h (shared by both sketches). The
-   concrete go-trial instances below stay here -- they reference this sketch's
-   pins and strobe codes. */
+/* The box pinout (odorPort/rightWell/leftWell/trialLight/vac/Odors[]/Fluids[]),
+   the BF_* strobe codes, the Fluids[] index macros (LEFT_WELL_FL_1 ... SENTINEL),
+   and the distinct BF_ODOR_n_ON codes all live in BehaviorBox.h now. The concrete
+   go-trial instances below stay here -- they wire this sketch's odor/strobe
+   choices into the shared TrialType. */
 
 /* ===== TRIAL TYPES ===== */
 // Two go trials -- one per side. The AntiBiasSelector (selector.selectNext())
@@ -169,7 +93,7 @@ const TrialType goLeft1(
     BF_FLUID_L,
     BF_STOP_FLUID_G_L);
 
-/* ===== Session objects (GRGLSession.h) =====
+/* ===== Session objects (BehaviorBox.h) =====
    The anti-bias ring buffer + selection, the lazy-penalty escalator, the
    per-side correction budgets, and the START-parsed config are each owned by a
    small class now, so adding the next policy/toggle is a localized change. The
@@ -185,24 +109,7 @@ const TrialType *currentTrialPtr = nullptr; // current trial; re-selected only w
 
 void setup()
 {
-  /*=== Setup Arduino pins ===*/
-  for (int odor = 0; odor < 12; odor++)
-  { // Odor solenoids
-    pinMode(Odors[odor], OUTPUT);
-  }
-  for (int rwd = 0; rwd < 4; rwd++)
-  { // Fluid solenoids
-    pinMode(Fluids[rwd], OUTPUT);
-  }
-  pinMode(odorPort, INPUT_PULLUP); // IR Sensors
-  pinMode(leftWell, INPUT_PULLUP);
-  pinMode(rightWell, INPUT_PULLUP);
-
-  pinMode(trialLight, OUTPUT); // Trial light
-  pinMode(vac, OUTPUT);        // N.O.V.
-
-  /*=== Make sure everything's chill... ===*/
-  shutdownHardware();
+  initBoxHardware(); // configure every box pin + land all outputs LOW (BehaviorBox.h)
 
   sessionComplete = true; // session start / end guard
   Serial.begin(baudRate); // Initialize serial com with baud rate
@@ -288,89 +195,8 @@ void loop()
 }
 
 /* ===================================== Utility functions ===================================== */
-/*  bool checkForStop() {...} ->
-  Non-blocking poll for a "STOP" line from the host GUI, called once
-  per trial boundary in loop(). Unlike readLineInto (which blocks and
-  is only safe in setup), this consumes ONLY bytes already sitting in
-  the serial buffer and returns immediately if none are present, so it
-  never stalls the behavior loop. A partial line is held in a static
-  buffer across calls and completed on a later pass. Returns true once
-  a full "STOP" line has been received. Any other complete line is
-  discarded (we only recognize STOP while running). */
-bool checkForStop()
-{
-  static char buf[8];
-  static size_t len = 0;
-
-  while (Serial.available() > 0)
-  {
-    char c = (char)Serial.read();
-    if (c == '\r' || c == '\n')
-    {
-      bool isStop = (len > 0 && strcmp(buf, "STOP") == 0);
-      len = 0; // reset for next line
-      if (isStop)
-        return true;
-    }
-    else
-    {
-      if (len < sizeof(buf) - 1)
-      {
-        buf[len++] = c;
-        buf[len] = '\0'; // keep null-terminated for strcmp
-      }
-      // else: overflow byte -- drop it, line can't be "STOP" anyway
-    }
-  }
-  return false;
-}
-
-/*  bool readLineInto(char* dst, size_t cap) {...} ->
-  Reads one line from Serial into dst, terminating on CR or LF and
-  tolerating a trailing CR+LF pair (the host's println may send either).
-  Null-terminates dst and strips the line ending. Returns true once a
-  complete, non-empty line has been read; returns false on an empty line
-  (e.g. a lone terminator) so the caller simply tries again. Lines longer
-  than cap-1 are truncated; the overflow tail is drained so it can't leak
-  into the next read.
-*/
-bool readLineInto(char *dst, size_t cap)
-{
-  size_t len = 0;
-  while (true)
-  {
-    while (Serial.available() == 0)
-    {
-      delay(pollingRate); // idle politely until a byte arrives
-    }
-    char c = (char)Serial.read();
-    if (c == '\r' || c == '\n')
-    {
-      if (len == 0)
-      {
-        return false; // lone terminator -- nothing to report yet
-      }
-      dst[len] = '\0';
-      return true;
-    }
-    if (len < cap - 1)
-    {
-      dst[len++] = c; // accumulate
-    }
-    // else: token longer than expected -- drop the overflow byte
-  }
-}
-
-/* Blanket turn-off of all outputs (safe to call at any time) */
-void shutdownHardware()
-{
-  for (int i = 0; i < 12; i++)
-    digitalWrite(Odors[i], LOW);
-  for (int i = 0; i < 4; i++)
-    digitalWrite(Fluids[i], LOW);
-  digitalWrite(trialLight, LOW);
-  digitalWrite(vac, LOW);
-}
+/* checkForStop(), readLineInto(), shutdownHardware(), verifySensor(), and
+   flashLight() now live in BehaviorBox.h (shared by every sketch). */
 
 /* Housekeeping for starting a new experiment session */
 void beginNewSession()
@@ -390,58 +216,13 @@ void endCurrentSession()
   recordEvent(BF_END_SESSION);
 }
 
-/* frand(), recordChoice(), recordAbstention(), and selectNextTrial() now live
-   in GRGLSession.h: grglFrand() and the AntiBiasSelector class (the `selector`
-   instance above). Call sites use selector.recordChoice / recordAbstention /
-   selectNext. */
+/* grglFrand(), the anti-bias ring buffer + selection, verifySensor(), and
+   flashLight() now live in BehaviorBox.h. Call sites use the `selector` instance
+   and the shared helpers (verifySensor is called with this sketch's pollingRate). */
 
-/*  void recordEvent(int eventCode) {...} ->
-  Given an eventCode (an int), outputs the code in a standardized 3-digit format.
-
-  Handles sending eventCode and a timestamp to MatLab.
-*/
-void recordEvent(int eventCode)
-{
-  unsigned long timestamp = clock.elapsed();
-  char buf[16];
-
-  sprintf(buf, "%03d\t%lu", eventCode, timestamp); // Store print line to MatLab in a buffer
-  Serial.println(buf);                             // Print buffer to serial
-}
-
-/*  bool verifySensor(int pin, int duration) {...} ->
-  Takes a pin (IR sensor) and a duration (ms).
-  Returns FALSE if sensor is interrupted.
-  Returns TRUE if sensor is uninterrupted.
-*/
-bool verifySensor(int pin, int duration)
-{
-  unsigned long start = millis();
-  while (millis() - start < duration)
-  {
-    if (digitalRead(pin) == HIGH)
-    {
-      return false; // For Input Pullup, HIGH = rat unpoked
-    }
-    delay(pollingRate); // polling rate = 2ms
-  }
-  return true;
-}
-
-/*  void flashLight(int duration) {...} ->
-  Flashes the trial light every 200ms, given a duration in ms.
-*/
-void flashLight(int duration)
-{
-  unsigned long start = millis();
-  while (millis() - start < duration)
-  {
-    digitalWrite(trialLight, HIGH);
-    delay(pollingRate);
-    digitalWrite(trialLight, LOW);
-    delay(pollingRate);
-  }
-}
+/* recordEvent -> emitStrobe (BehaviorBox.h) bound to this sketch's clock, so
+   every call site below stays unchanged. */
+void recordEvent(int eventCode) { emitStrobe(clock, eventCode); }
 
 /*===============================================================================================*/
 
@@ -478,7 +259,7 @@ bool odorSampling(TrialType trial)
   // closes the poke-to-reset loophole. (The EZ variant deliberately differs:
   // it resets on poke, since its shaping stages reward engagement.)
 
-  if (!verifySensor(odorPort, odorPokeHold))
+  if (!verifySensor(odorPort, odorPokeHold, pollingRate))
   { // 5. Verify rat holds poke (pre-odor hold)
     // Error 2: Rat didn't hold poke before vac close
     digitalWrite(trialLight, LOW);
@@ -492,7 +273,7 @@ bool odorSampling(TrialType trial)
   recordEvent(trial.odorOnCode); // Send code to MatLab for trial-specific odor
   digitalWrite(vac, HIGH);       // 6. Close vac (N.O.V.), directing odor to rat
 
-  if (!verifySensor(odorPort, odorPokeHold))
+  if (!verifySensor(odorPort, odorPokeHold, pollingRate))
   { // 7. Verify rat samples odor for odorPokeHold
     // Error 3: Rat didn't sample odor long enough
     digitalWrite(trialLight, LOW);
@@ -587,7 +368,7 @@ int checkResponse(TrialType trial)
       return errorDelay;
     }
 
-    if (!verifySensor(pokedWell, fluidWellHold))
+    if (!verifySensor(pokedWell, fluidWellHold, pollingRate))
     { // 3. Correct well — verify hold
       // Error 2: Didn't hold poke
       recordEvent(pokedWell == rightWell ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L);

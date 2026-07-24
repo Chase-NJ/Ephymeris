@@ -1,4 +1,14 @@
-".DS_Store"
-"Utility/.DS_Store"
-"Olfactory Behavior/.DS_Store"
-"fMRI/.DS_Store"
+# macOS Finder metadata (the old quoted patterns never actually matched)
+.DS_Store
+**/.DS_Store
+
+# Arduino build artifacts
+build/
+*.hex
+*.elf
+
+# Host compile-check binary (libraries/BehaviorBox/extras/host_test/run.sh)
+libraries/**/extras/host_test/test
+
+# NOTE: the shared library at libraries/BehaviorBox/ IS tracked on purpose --
+# every sketch depends on it, and it is what arduino-cli --libraries points at.

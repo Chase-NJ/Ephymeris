@@ -2,7 +2,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
-#include "GRGLSession.h"
+#include "BehaviorBox.h"
 
 int main() {
   // --- parseStartCommand: defaults, full, order-independent, tolerant ---
@@ -56,6 +56,14 @@ int main() {
     for(int i=0;i<20;i++) s.recordChoice(true);
     int left=0; for(int i=0;i<200;i++){ if(s.selectNext()==&goL) left++; }
     assert(left > 120); }   // strong (not absolute) push to the under-chosen side
+
+  // --- generateTrials: honors weights, fills exactly numTrials ---
+  { TrialWeight pool[] = { {goR, 3}, {goL, 1} };
+    const int N = 120; const TrialType* trials[N];
+    generateTrials(trials, N, 30, 42, pool, 2);
+    int r=0,l=0; for(int i=0;i<N;i++){ if(trials[i]==&goR) r++; else if(trials[i]==&goL) l++; }
+    assert(r+l==N);                 // every slot filled
+    assert(r > l); }                // 3:1 weighting favors right
 
   printf("ALL HEADER LOGIC TESTS PASSED\n");
   return 0;

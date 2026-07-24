@@ -1,0 +1,21 @@
+{
+  "taskName": "Shaping — Go-Left (Odor 3)",
+  "kind": "behavior",
+  "config": [],
+  "strobes": {
+    "101": "ODOR_1_ON", "102": "ODOR_2_ON", "103": "ODOR_3_ON",
+    "104": "ODOR_4_ON", "105": "ODOR_5_ON", "106": "ODOR_6_ON",
+    "221": "START_SESSION", "222": "LIGHTS_ON", "223": "LAZY_RAT",
+    "224": "ODOR_POKE", "225": "ODOR_UNPOKE_EARLY", "226": "ODOR_UNPOKE",
+    "233": "LIGHTS_OFF", "234": "INVALID_TRIAL", "242": "END_CORRECT_ITI",
+    "243": "END_INCORRECT_ITI", "246": "END_SESSION", "247": "ODOR_OFF",
+    "248": "WATER_POKE_L", "249": "WATER_POKE_R", "250": "WATER_UNPOKE_EARLY_L",
+    "251": "WATER_UNPOKE_EARLY_R", "252": "FLUID_L", "253": "FLUID_R",
+    "254": "WATER_UNPOKE_L", "255": "WATER_UNPOKE_R", "256": "WATER_POKE_NONE",
+    "257": "WATER_POKE_ERROR_L", "258": "WATER_POKE_ERROR_R",
+    "357": "STOP_FLUID_G_R", "369": "STOP_FLUID_G_L"
+  },
+  "liveMetrics": [
+    { "id": "p_l_odor3", "label": "P(L | Odor 3)", "triggerCode": 103, "successCode": 248, "alternateCode": 249, "windowSize": 20 }
+  ]
+}

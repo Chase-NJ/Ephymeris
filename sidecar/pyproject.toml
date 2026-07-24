@@ -1,0 +1,29 @@
+[project]
+name = "ephymeris-sidecar"
+version = "0.1.0"
+description = "Ephymeris backend sidecar — owns serial I/O, arduino-cli, storage, and analytics"
+requires-python = ">=3.12"
+dependencies = [
+    "pyserial>=3.5",
+    "websockets>=14",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+ephymeris-sidecar = "ephymeris_sidecar.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ephymeris_sidecar*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

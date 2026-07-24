@@ -1,0 +1,150 @@
+import { motion } from "framer-motion";
+import { CircleAlert, Settings as SettingsIcon } from "lucide-react";
+
+import { Select, TextInput, Toggle } from "@/components/common/controls";
+import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
+import { DirectoryField } from "@/components/settings/DirectoryField";
+import { DirectoryStatusNote } from "@/components/settings/DirectoryStatusNote";
+import { SettingGroup, SettingRow } from "@/components/settings/SettingRow";
+import { springPanel } from "@/lib/motion";
+import { useSettings } from "@/lib/settings/context";
+import { BAUD_RATES } from "@/lib/settings/schema";
+import { useSidecar } from "@/lib/ws/context";
+
+/**
+ * Settings (ephymeris_v1.0.md §4.5).
+ *
+ * Deliberately usable while the sidecar is down — that's the whole reason
+ * settings are shell-owned. Nothing on this screen is gated on the WebSocket;
+ * only the sidecar-derived readouts (directory scan) go quiet.
+ */
+export function Settings() {
+  const { settings, update, discovery, refreshSketches, loaded, saveError } = useSettings();
+  const { status } = useSidecar();
+  const connected = status === "connected";
+
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={springPanel}
+      className="mx-auto max-w-3xl px-10 py-9"
+    >
+      <div className="flex items-center gap-3">
+        <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
+          <SettingsIcon size={18} strokeWidth={1.75} className="text-pulsar" />
+        </span>
+        <h1 className="font-display text-[22px] text-starlight">Settings</h1>
+      </div>
+
+      {saveError && (
+        <div
+          className="mt-4 flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
+          style={{ color: "var(--color-status-error)" }}
+        >
+          <CircleAlert size={14} strokeWidth={1.75} />
+          {saveError}
+        </div>
+      )}
+
+      <fieldset disabled={!loaded} className="contents">
+        <SettingGroup title="Hardware">
+          <div className="border-b border-halo px-4 py-3.5">
+            <div className="flex items-start justify-between gap-8">
+              <div className="min-w-0 pt-0.5">
+                <div className="text-[13px] font-medium text-starlight">Arduino Directory</div>
+                <p className="mt-0.5 text-[12px] leading-relaxed text-static">
+                  Root folder holding your sketch categories and a shared{" "}
+                  <code className="font-mono">libraries/</code> folder. Each machine
+                  configures its own.
+                </p>
+              </div>
+              <DirectoryField
+                value={settings.arduinoDirectory}
+                onChange={(next) => void update({ arduinoDirectory: next })}
+                title="Choose the Arduino Directory"
+              />
+            </div>
+            <DirectoryStatusNote
+              discovery={discovery}
+              onRefresh={() => void refreshSketches()}
+              canRefresh={connected}
+            />
+          </div>
+
+          <SettingRow
+            label="Default baud rate"
+            description="Starting value for each console. Debug Mode allows a per-box override."
+          >
+            <Select
+              label="Default baud rate"
+              value={settings.defaultBaud}
+              options={BAUD_RATES.map((b) => ({ value: b, label: String(b) }))}
+              onChange={(defaultBaud) => void update({ defaultBaud })}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="arduino-cli path"
+            description="Leave empty to use the bundled binary. Override only if you need a specific install."
+          >
+            <TextInput
+              label="arduino-cli path override"
+              mono
+              value={settings.arduinoCliPath ?? ""}
+              placeholder="bundled"
+              onChange={(v) => void update({ arduinoCliPath: v.trim() === "" ? null : v })}
+              className="w-[280px]"
+            />
+          </SettingRow>
+        </SettingGroup>
+
+        <SettingGroup title="Boxes">
+          <BoxBindingsTable
+            boxes={settings.boxes}
+            onChange={(boxes) => void update({ boxes })}
+          />
+        </SettingGroup>
+
+        <SettingGroup title="Storage">
+          <SettingRow
+            label="Data directory"
+            description="Where session data is written."
+          >
+            <DirectoryField
+              value={settings.dataDirectory}
+              onChange={(next) => void update({ dataDirectory: next })}
+              title="Choose the data directory"
+            />
+          </SettingRow>
+
+          <SettingRow label="Backup directory" description="Secondary copy of session data.">
+            <DirectoryField
+              value={settings.backupDirectory}
+              onChange={(next) => void update({ backupDirectory: next })}
+              title="Choose the backup directory"
+            />
+          </SettingRow>
+        </SettingGroup>
+
+        <SettingGroup title="Interface">
+          <SettingRow
+            label="Reduce motion"
+            description="Stops the ambient starfield and shortens transitions. Your system setting is always respected; this forces it on regardless."
+          >
+            <Toggle
+              label="Reduce motion"
+              checked={settings.reducedMotion}
+              onChange={(reducedMotion) => void update({ reducedMotion })}
+            />
+          </SettingRow>
+        </SettingGroup>
+      </fieldset>
+
+      <p className="mt-6 px-1 text-[11px] leading-relaxed text-static/70">
+        Settings are stored by the app shell and pushed to the backend whenever
+        they change, so this screen keeps working even when the backend doesn't.
+      </p>
+    </motion.section>
+  );
+}

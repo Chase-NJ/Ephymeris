@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Theme tokens — ephymeris_v1.0.md §2.
+   Values here are deliberate design calls, not defaults. In particular the
+   palette is MATTE: no gradients on Pulsar, no glow, saturation held around
+   30–35% so the purple reads as a material rather than a light source (§2.2).
+   --------------------------------------------------------------------------- */
+@theme {
+  /* §2.2 Color palette */
+  --color-void: #0b0b10; /* base app background */
+  --color-nebula: #16151f; /* elevated surfaces: cards, sidebar, panels */
+  --color-halo: #2c2a3a; /* hairline borders, dividers, idle indicators */
+  --color-pulsar: #8b7ec8; /* primary accent */
+  --color-ion: #7cc98f; /* success / connected / nominal — sparingly */
+  --color-starlight: #edebf6; /* primary text */
+  --color-static: #948fa8; /* secondary / muted text */
+
+  /* §2.2 Semantic status — state only, never decorative */
+  --color-status-ok: #7cc98f;
+  --color-status-warning: #d9a15c;
+  --color-status-error: #c96c6c;
+
+  /* §2.3 Typography — three roles, kept strictly separate.
+     Space Grotesk never leaves headers or it dilutes into "just another sans". */
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+
+  /* §2.4 Radius scale — sm/md/lg/xl. No ad hoc radii anywhere. */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden; /* the shell owns scrolling, per-region */
+    background-color: var(--color-void);
+    color: var(--color-starlight);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Nothing in a desktop shell should be text-selectable by default; opt in
+     where reading and copying is the point (console scrollback, IDs). */
+  body {
+    user-select: none;
+    cursor: default;
+  }
+
+  code,
+  pre,
+  input,
+  textarea,
+  [data-selectable] {
+    user-select: text;
+  }
+
+  /* Interactive controls advertise themselves. The body default above is
+     `default` so the app doesn't feel like a web page, but that also means a
+     button gets no pointer from the UA stylesheet — controls have to opt in,
+     or nothing in the app ever signals that it can be clicked. */
+  button:not(:disabled),
+  select:not(:disabled),
+  a[href],
+  [role="switch"]:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  select:disabled {
+    cursor: not-allowed;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+
+  /* §2.2 Pulsar is the focus ring colour. */
+  :focus-visible {
+    outline: 2px solid var(--color-pulsar);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-halo);
+    border-radius: var(--radius-sm);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3a3750;
+  }
+}
+
+@layer components {
+  /* §2.4 Elevation: 1px Halo hairline + a subtle shadow. Flat and matte beats
+     skeuomorphic depth for this theme. */
+  .surface {
+    background-color: var(--color-nebula);
+    border: 1px solid var(--color-halo);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  }
+
+  /* §2.4 Vibrancy: translucent Nebula + backdrop blur. Persistent chrome
+     (sidebar) and transient overlays (modals) ONLY — never primary content
+     cards. Applying this to cards is the failure mode to guard against. */
+  .vibrancy {
+    background-color: color-mix(in srgb, var(--color-nebula) 72%, transparent);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  /* §2.4 The squircle nod, spent exactly once: the app mark. Not buttons,
+     not cards. Referenced as an objectBoundingBox clipPath (see <SvgDefs>) so
+     the shape scales with the element instead of being pinned to one pixel
+     size the way an inline `path()` would be. */
+  .squircle {
+    clip-path: url(#ephymeris-squircle);
+  }
+}
+
+/* §2.5 Ambient motion must never compete with live data collection. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

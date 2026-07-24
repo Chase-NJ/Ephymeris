@@ -1,8 +1,8 @@
 # Ephymeris — Tech Stack & Dashboard Design
 
-**Status:** Living document. Covers overall tech stack, dashboard/landing window IA, and app theme.
-**Companion document:** `hardware-interaction.md` (serial/Arduino hardware layer full spec), `arduino-directory.md` (sketch/library discovery).
-**Not yet covered (future sections):** session-setup flow, cohort CRUD spec, analytics view spec, full settings schema, WebSocket/IPC message schema.
+**Status:** Living document. Covers overall tech stack, dashboard/landing window IA, and app theme. **v1 scope (§4) is implemented** — dashboard shell + full theme, Debug Mode and Settings wired end-to-end, the other three sections as placeholders.
+**Companion document:** `hardware-interaction.md` (serial/Arduino hardware layer full spec), `arduino-directory.md` (sketch/library discovery), `websocket-protocol.md` (frontend ↔ sidecar message schema), `cohorts.md` (cohort/animal/group model and the Cohorts tab).
+**Not yet covered (future sections):** session-setup flow, analytics view spec, full settings schema.
 
 ---
 
@@ -11,7 +11,7 @@
 - **Shell / desktop runtime:** Tauri
 - **Frontend:** React (TypeScript), styled with Tailwind, animated with Framer Motion
 - **Backend:** Python sidecar process (owns all serial I/O, `arduino-cli` interaction, storage, and analytics)
-- **Frontend ↔ sidecar communication:** local WebSocket (message schema TBD in a future section)
+- **Frontend ↔ sidecar communication:** local WebSocket — see `websocket-protocol.md`
 - **Target platforms:** developed on macOS (Apple Silicon); shipped/run on Windows 11 (both lab machines)
 
 *(Same stack as `hardware-interaction.md` §0 — restated here since this doc stands alone as the UI/theme reference.)*
@@ -77,6 +77,7 @@ Space Grotesk and Inter should not otherwise mix within the same block of text �
 
 - Framer Motion **spring physics** (not duration/easing curves) for nav selection, panel transitions, and modal open/close — the closest web equivalent to the springy feel of UIKit/SwiftUI transitions.
 - Ambient motion is restrained and functional, not decorative filler: a slow (60s+ loop), very low-opacity drifting starfield sits behind dashboard content as groundwork for the signature element below. It must respect `prefers-reduced-motion` and pause when the window loses focus — this app is often watched during live data collection, so ambient effects can't compete for attention.
+- **One acknowledged exception to the spring rule:** the 3D constellation's zoom-to-star camera move (`starting-a-session.md` §6.3) uses cubic easing, because a camera flythrough should read as cinematic rather than mechanical and a spring fights that. It is the only eased move in the app; everything else, including the panel that opens on arrival, stays on springs.
 
 ### 2.6 Iconography
 
@@ -84,7 +85,14 @@ Lucide (already available in this environment's component library) as the practi
 
 ### 2.7 Signature Element
 
-The 6-box hardware status indicator — present in the sidebar per `hardware-interaction.md` §7's out-of-band polling — renders as a small **constellation map** instead of a plain row of status dots: six nodes in a fixed abstract layout, thin `Pulsar` lines connecting adjacent nodes when both boxes are connected and nominal. A line dims or breaks on disconnect; a node turns `Error` red on fault. This is the one place the astronomy metaphor is spent deliberately — it's not decoration, it's the actual at-a-glance system-health readout, doing real work.
+The hardware status indicator — present in the sidebar per `hardware-interaction.md` §7's out-of-band polling — renders as a small **constellation map** instead of a plain row of status dots: nodes in a fixed abstract layout, thin `Pulsar` lines connecting adjacent nodes when both boxes are connected and nominal. A line dims or breaks on disconnect; a node turns `Error` red on fault. This is the one place the astronomy metaphor is spent deliberately — it's not decoration, it's the actual at-a-glance system-health readout, doing real work.
+
+**Amendment (was: always six nodes).** Boxes are user-configured (§4.5), so the map shows **only boxes bound to a board** — the same rule that decides which boxes get a console panel in Debug Mode (§4.3). A rig running two boxes shows two nodes, not two nodes and four permanently grey ones implying four boards are missing. The caption reads `N/M boxes` against the configured count, or `no boxes configured` when empty. Consequences of the amendment:
+
+- **Node positions stay pinned per box number** — box 4 always sits where box 4 sits. Positions are what make the map glanceable, so they must not reflow as health changes.
+- **The frame reflows, not the layout.** The viewBox is fitted to whichever boxes exist (keeping a constant aspect so the sidebar never jumps), so a small rig fills the space instead of huddling in a corner. Framing changes only when boxes are added or removed — a deliberate configuration act, never something that happens mid-session.
+- **Marks keep a constant apparent size.** Node radius and line width scale with the frame, so zooming spreads the *spacing* rather than inflating the dots; a one-box rig renders one normal dot, not one enormous one.
+- **An edge is drawn only when both its endpoints are configured.** A sparse selection (say boxes 1 and 6) can therefore show unconnected nodes — honest, since there is no adjacency to report.
 
 ---
 
@@ -113,6 +121,8 @@ The 6-box hardware status indicator — present in the sidebar per `hardware-int
 
 Two-region layout: a persistent left sidebar (frosted glass, `Nebula` translucent) and a main content area. No top menu bar beyond the custom titlebar — all navigation lives in the sidebar, consistent with the macOS System Settings/Music-style pattern.
 
+The titlebar is app-drawn on **both** platforms (see §5): native window decorations are disabled, and minimize/maximize/close are rendered by the app. The bar itself is a drag region.
+
 ### 3.2 Sidebar
 
 - App mark + wordmark at top (placeholder glyph shown above; actual icon design is a future item).
@@ -132,25 +142,26 @@ Note: **Start a Session** is deliberately *not* a sidebar nav item. It's the app
 
 Per your instruction, only **Debug Mode** and **Settings** get real wiring for v1. The other three get a shared placeholder pattern rather than dead, inert buttons — clicking them should still feel like the app responded, just with an honest "not yet" rather than nothing happening.
 
-### 4.1 Start a Session — *stub, with real gating logic*
+### 4.1 Start a Session — *wired* (was: stub, with real gating logic)
 
 - Starting a session **requires an existing cohort.** This is the one piece of actual conditional logic among the three stub sections.
 - Convenient consequence of build order: since Cohorts (§4.2) has no real data in v1, the cohort count is always zero — so the hero CTA can honestly render its **empty-state** every time, with no need to fake or hardcode anything. The gating logic is real; it just always resolves the same way until Cohorts is wired.
 - Empty-state behavior: hero card shows "Create a cohort to get started" in place of the normal CTA label, and clicking it routes to `/cohorts` instead of `/session/new`.
-- Once Cohorts is wired (future work), this becomes a live check against real cohort count rather than a hardcoded always-zero — noted in §6.
-- No sidecar calls, no state writes for v1.
+- **Now a live check** against the real cohort count (Cohorts is wired — §4.2). Still deliberately an *existence* check: "ready to run" is now defined (`starting-a-session.md` §1) but is a property of one cohort, and the CTA isn't scoped to a cohort — Step 1 is where a cohort gets picked, so that's where the readiness check lives and warns.
+- **`/session/new` is no longer a `<PlaceholderView>`.** It opens the two-step setup flow specified in `starting-a-session.md` — configuration, then animal→box mapping and the sequential flash — handing off to Mission Control at `/session/:id/control`, with the 3D constellation as its centerpiece. Sessions write to disk per `data-saving.md`.
 
-### 4.2 Cohorts — *stub*
+### 4.2 Cohorts — *wired* (was: stub)
 
 - Sidebar item + dashboard tile → route `/cohorts`.
-- Same `<PlaceholderView>` pattern.
+- **No longer a `<PlaceholderView>`.** Fully specified and implemented in `cohorts.md`: card grid with the procedural constellation icon, create/edit editor at `/cohorts/new` and `/cohorts/:id`, Auto-Balance grouping, and archive/permanent-delete. Cohort data lives in the sidecar's SQLite database.
+- The dashboard's "N active" tile stat is consequently real rather than placeholder text.
 
 ### 4.3 Debug Mode — *wired*
 
 - Sidebar item + dashboard tile → route `/debug`.
-- Renders the 6-box console grid exactly as specified in `hardware-interaction.md` §6 (per-box panels, read/send, line-ending selector, state badges).
-- On mount: opens the WebSocket connection to the Python sidecar.
-- This is the first real end-to-end data path in the app: **sidecar → WebSocket → React state**, feeding both the full Debug Mode view *and* the sidebar's constellation status widget from the same out-of-band polling channel. Building this wires up the signature element for free.
+- Renders the 6-box console grid exactly as specified in `hardware-interaction.md` §6 (per-box panels, read/send, line-ending selector, state badges), plus the flashing dialog and reset control from §4–§5. A box flashed with a `"kind": "utility"` sketch also gets profile-driven **controls + a live status strip** (`data-saving.md` §6.6), so priming/self-test sketches are driven from the app rather than by hand at the box.
+- The WebSocket connection is **app-level, not per-view** (a deliberate amendment to this section's original "opens on mount"): the constellation widget must reflect box health from every screen, so the connection, the state replay, and the shared hardware store live at the app root. What Debug Mode *does* trigger on mount is a sketch rescan (`arduino-directory.md` §4).
+- This is the first real end-to-end data path in the app: **sidecar → WebSocket → React state**, feeding both the full Debug Mode view *and* the sidebar's constellation status widget from the same out-of-band polling channel. Building this wired up the signature element for free, as predicted.
 
 ### 4.4 Analytics — *stub*
 
@@ -166,6 +177,7 @@ Per your instruction, only **Debug Mode** and **Settings** get real wiring for v
   - **Arduino Directory** — root folder for sketches/libraries; see `arduino-directory.md` for structure, detection, and error handling
   - Default baud rate
   - Per-box COM port labels/nicknames
+  - **Box→board bindings** — a `box_number → hardware_id` map, editable, so a box keeps its identity across reboots and Windows COM renumbering (see §5)
   - `arduino-cli` / core path override
   - Reduced-motion toggle
 - **Ownership: Tauri-side store** (`tauri-plugin-store`, JSON on disk in the app data dir), not the Python sidecar. Reasoning:
@@ -187,6 +199,13 @@ One reusable component covers §4.1, §4.2, and §4.4 — a title, a short expla
 | Settings ownership | **Tauri-side store**, pushed to sidecar on connect/change (§4.5) |
 | Start-a-Session gating | **Requires an existing cohort** (§4.1) |
 | Light mode | **Out of scope for v1**, no placeholder toggle (§2.2) |
+| Box→board binding | **By `hardware_id`** (the board's USB serial number), stored in Settings and editable. Port addresses are not stable — Windows renumbers COM ports across reboots and re-enumeration, which would silently re-point a box at the wrong physical board. Box number 1–6 is therefore the stable key throughout the app and on the wire (`websocket-protocol.md` §5.1) |
+| `arduino-cli` integration | **Subprocess + `--format json`** behind a `BoardTool` interface for v1; gRPC daemon is a committed migration scheduled after flashing works end-to-end (`hardware-interaction.md` §2, §8) |
+| Box list | **User-managed, starts empty** — Settings offers add/remove rather than six fixed rows, since a rig may run two boxes or six. Box *numbers* remain 1–6 and stay the stable protocol key (`websocket-protocol.md` §5.1); only which of them exist is configurable (§4.5) |
+| Debug Mode panels | **One per bound box.** "Bound" means *configured with a board*, not *currently detected* — an unplugged box keeps its panel, since that's where its scrollback and any `ERROR` state must stay visible (§4.3) |
+| Constellation scope | **Only bound boxes get a node** (§2.7), amending the original always-six layout |
+| Window chrome | **Custom controls on both platforms** — native decorations off, app-drawn `[_][□][X]` per the §3.1 sketch. macOS does not keep its traffic lights, so the titlebar is identical on the dev machine and the lab PCs and there is no platform-specific chrome to reason about |
+| 3D dependencies | `three` + `@react-three/fiber` + `@react-three/drei` added for `starting-a-session.md` §6. Frontend-only — the **sidecar's** runtime dependencies remain just `pyserial` and `websockets`, which is where install fragility actually costs the lab something |
 
 No open questions remaining as of this revision.
 
@@ -194,10 +213,13 @@ No open questions remaining as of this revision.
 
 ## 6. Open Items / TBD
 
-- [ ] Session-setup flow spec
-- [ ] Cohort CRUD spec (create/edit/delete/group management)
-- [ ] Once Cohorts is wired: replace Start-a-Session's hardcoded always-empty gating (§4.1) with a live cohort-count check
+- [x] ~~Session-setup flow spec~~ — resolved in `starting-a-session.md` (configuration → mapping → flash → Mission Control → 3D constellation) and `data-saving.md` (what the run writes to disk); both are built
+- [x] ~~Cohort CRUD spec (create/edit/delete/group management)~~ — resolved in `cohorts.md`
+- [x] ~~Once Cohorts is wired: replace Start-a-Session's hardcoded always-empty gating (§4.1) with a live cohort-count check~~ — done; existence check only, with readiness deferred to the Starting a Session doc
 - [ ] Analytics view spec (within-session, across-session, per-cohort)
 - [ ] Full Settings schema (fields listed in §4.5 are a starting point, not final)
-- [ ] WebSocket/IPC message schema (shared with `hardware-interaction.md`), including the settings-push message shape
-- [ ] App icon / wordmark design for Ephymeris
+- [x] ~~WebSocket/IPC message schema (shared with `hardware-interaction.md`), including the settings-push message shape~~ — resolved in `websocket-protocol.md`
+- [ ] App icon / wordmark design for Ephymeris. The titlebar currently carries a placeholder mark — a six-point star knocked out of a Pulsar squircle
+- [ ] Constellation adjacency (§2.7): the spec says lines connect *adjacent* nodes but doesn't enumerate which pairs. Implementation uses `1–2, 2–3, 4–5, 5–6, 1–4, 3–6`, forming one closed shape so no node is ever orphaned. Confirm this matches the intended physical box arrangement in the rig — if boxes are laid out differently on the bench, the map should mirror that. Now that only bound boxes render, a sparse selection can leave nodes with no edges at all, which makes the pair list more visible than it was
+- [ ] **Backup Directory does nothing yet.** The setting is collected and pushed to the sidecar, but `data-saving.md` §8's mirroring — session files, the `.tsv` while running, and `ephymeris.db` — is unbuilt. The setting reads as a promise the app doesn't keep, so either build it or hide the field
+- [ ] **Windows packaging** — deliberately deferred while v1 was developed on macOS. Covers: freezing/shipping the Python sidecar (dev builds run it from `sidecar/.venv`), bundling `arduino-cli` + the `arduino:avr` core with the installer per `hardware-interaction.md` §2 (currently uses the machine's own install), Tauri Windows bundling/signing, and a Windows CI build. None of it is started

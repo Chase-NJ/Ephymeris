@@ -96,12 +96,19 @@ export function Select<T extends string | number>({
   onChange,
   label,
   disabled = false,
+  attention = false,
+  className = "",
 }: {
   value: T;
   options: ReadonlyArray<{ value: T; label: string }>;
   onChange: (next: T) => void;
   label: string;
   disabled?: boolean;
+  /** Pulses the border until the user acts — for the one control a guided
+      flow is waiting on. */
+  attention?: boolean;
+  /** Layout-only additions (widths, flex) — visual identity stays here. */
+  className?: string;
 }) {
   return (
     <select
@@ -112,7 +119,9 @@ export function Select<T extends string | number>({
         const next = options.find((o) => String(o.value) === e.target.value);
         if (next) onChange(next.value);
       }}
-      className="rounded-sm border border-halo bg-nebula px-2.5 py-1.5 font-mono text-[12px] text-starlight disabled:cursor-not-allowed disabled:opacity-40"
+      className={`rounded-sm border border-halo bg-nebula px-2.5 py-1.5 font-mono text-[12px] text-starlight disabled:cursor-not-allowed disabled:opacity-40 ${
+        attention ? "attention-border" : ""
+      } ${className}`}
     >
       {options.map((o) => (
         <option key={String(o.value)} value={String(o.value)}>

@@ -83,11 +83,14 @@ class SessionRepository:
 
         Degrades to `None` for a prefix with no numeric history yet — the UI
         shows no suggestion rather than a wrong one. Session numbers are free
-        text (§10), so non-numeric values are simply ignored here.
+        text (§10), so non-numeric values are simply ignored here. Aborted
+        sessions never wrote data, so they don't claim their number.
         """
         with self._db.lock:
             rows = self._db.conn.execute(
-                "SELECT session_number FROM sessions WHERE prefix_id = ?", (prefix_id,)
+                "SELECT session_number FROM sessions"
+                " WHERE prefix_id = ? AND status != 'aborted'",
+                (prefix_id,),
             ).fetchall()
         highest: int | None = None
         for row in rows:
@@ -102,11 +105,14 @@ class SessionRepository:
 
         Feeds the *soft* same-day warning only. Reusing a number is legal
         (`data-saving.md` §1) — appending to an existing folder is a supported
-        way to resume an interrupted run — so this never blocks.
+        way to resume an interrupted run — so this never blocks. Aborted
+        sessions are excluded: they wrote nothing, so there is no folder the
+        warning could truthfully be about.
         """
         with self._db.lock:
             rows = self._db.conn.execute(
-                "SELECT session_number FROM sessions WHERE prefix_id = ? AND date = ?",
+                "SELECT session_number FROM sessions"
+                " WHERE prefix_id = ? AND date = ? AND status != 'aborted'",
                 (prefix_id, date),
             ).fetchall()
         return [str(row["session_number"]) for row in rows]

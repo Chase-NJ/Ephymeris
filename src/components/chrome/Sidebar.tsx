@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { ChartLine, Orbit, Settings, Terminal, Users } from "lucide-react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation } from "react-router";
 import type { LucideIcon } from "lucide-react";
 
 import { LiveConstellation } from "./ConstellationStatus";

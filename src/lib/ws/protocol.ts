@@ -43,6 +43,7 @@ export const CMD = {
   TASKS_GET_PROFILE: "tasks.getProfile",
   SESSIONS_SUGGEST_NUMBER: "sessions.suggestNumber",
   SESSIONS_CREATE: "sessions.create",
+  SESSIONS_ABANDON: "sessions.abandon",
   SESSIONS_CONFIRM_MAPPING: "sessions.confirmMapping",
   SESSIONS_STATUS: "sessions.status",
   SESSIONS_START_ALL: "sessions.startAll",

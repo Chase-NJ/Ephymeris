@@ -83,6 +83,11 @@ export class SessionStore {
     return this.ended.get(box) ?? null;
   }
 
+  /** How many boxes have finished their run this group. */
+  getEndedCount(): number {
+    return this.ended.size;
+  }
+
   /** One metric's recent values for a box, oldest first. */
   getHistory(box: number, metricId: string): number[] {
     return this.history.get(box)?.get(metricId) ?? NO_HISTORY;
@@ -104,7 +109,7 @@ export class SessionStore {
     }
   }
 
-  /** Clear per-run state when a new session's boxes start. */
+  /** Clear per-run state when a new group's boxes are confirmed. */
   resetRun(): void {
     this.telemetry.clear();
     this.history.clear();
@@ -112,6 +117,21 @@ export class SessionStore {
     for (const key of this.subs.keys()) {
       if (key.startsWith("telemetry:") || key.startsWith("ended")) this.notify(key);
     }
+  }
+
+  /** Forget one box's finished run when it starts again mid-group. */
+  resetBox(box: number): void {
+    this.telemetry.delete(box);
+    this.history.delete(box);
+    this.ended.delete(box);
+    this.notify(`telemetry:${box}`);
+    this.notify(`ended:${box}`);
+    this.notify("ended");
+  }
+
+  /** Reset every box that has a finished run on record. */
+  resetFinishedBoxes(): void {
+    for (const box of [...this.ended.keys()]) this.resetBox(box);
   }
 
   // --- subscriptions ----------------------------------------------------

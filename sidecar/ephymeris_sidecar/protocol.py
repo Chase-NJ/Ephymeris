@@ -54,6 +54,7 @@ class Cmd:
     TASKS_GET_PROFILE: Final = "tasks.getProfile"
     SESSIONS_SUGGEST_NUMBER: Final = "sessions.suggestNumber"
     SESSIONS_CREATE: Final = "sessions.create"
+    SESSIONS_ABANDON: Final = "sessions.abandon"
     SESSIONS_CONFIRM_MAPPING: Final = "sessions.confirmMapping"
     SESSIONS_STATUS: Final = "sessions.status"
     SESSIONS_START_ALL: Final = "sessions.startAll"

@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { motion } from "framer-motion";
 import { Archive, ArrowLeft, Check, Circle, CircleAlert, FolderOpen, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 
 import { Button, TextInput } from "@/components/common/controls";
 import { SettingGroup } from "@/components/settings/SettingRow";

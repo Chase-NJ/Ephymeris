@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { Settings as SettingsIcon, Terminal } from "lucide-react";
 import { useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { ConsolePanel } from "@/components/debug/ConsolePanel";

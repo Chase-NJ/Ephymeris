@@ -1,19 +1,13 @@
 import { motion } from "framer-motion";
 import { ArrowLeft, Play, RotateCcw, Square } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/common/controls";
-import { MetricChart } from "@/components/sessions/MetricChart";
 import { useBoxOutput, usePortStatus } from "@/lib/hardware/context";
-import { springPanel } from "@/lib/motion";
+import { springPanel, springSnappy } from "@/lib/motion";
 import { getTaskProfile } from "@/lib/sessions/commands";
-import { useBoxEnded, useBoxTelemetry, useMetricHistory } from "@/lib/sessions/context";
-import type {
-  LiveMetric,
-  SessionBox,
-  TaskProfile,
-  TelemetryMetric,
-} from "@/lib/sessions/types";
+import { useBoxEnded } from "@/lib/sessions/context";
+import type { SessionBox, TaskProfile } from "@/lib/sessions/types";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -22,6 +16,10 @@ import { useSidecar } from "@/lib/ws/context";
  * Docked and translucent over the still-rendering scene rather than replacing
  * it — arrival means the camera is close to that star with an instrument panel
  * open, not a cut to a different screen (§6.3).
+ *
+ * Live-metric charts are deliberately out of this panel for now; in their
+ * place, a fixed five-row feed of the box's most recent strobes, decoded via
+ * the sketch's Task Profile strobe map when it has one.
  */
 export function StarPanel({
   box,
@@ -40,7 +38,6 @@ export function StarPanel({
 }) {
   const { client } = useSidecar();
   const port = usePortStatus(box.box);
-  const metrics = useBoxTelemetry(box.box);
   const ended = useBoxEnded(box.box);
   const [profile, setProfile] = useState<TaskProfile | null>(null);
 
@@ -97,64 +94,104 @@ export function StarPanel({
       )}
 
       <div className="mt-4 border-t border-halo pt-3">
-        {profile && profile.liveMetrics.length > 0 ? (
-          <div className="flex flex-col gap-4">
-            {profile.liveMetrics.map((metric) => (
-              <LiveChart
-                key={metric.id}
-                box={box.box}
-                metric={metric}
-                current={metrics.find((m) => m.id === metric.id) ?? null}
-              />
-            ))}
-          </div>
-        ) : (
-          // §6.4 — a sketch with no Task Profile degrades to the raw strobe
-          // log, exactly as the pre-flight config form does (§3).
-          <StrobeLog box={box.box} />
-        )}
+        <StrobeFeed box={box.box} strobeNames={profile?.strobes ?? {}} />
       </div>
     </motion.aside>
   );
 }
 
-/** Subscribes to one metric's history — a hook can't be called inside a map. */
-function LiveChart({
+/** How many strobes the feed holds — a fixed frame, not a growing log. */
+const FEED_ROWS = 5;
+
+/** Newest row full strength, older ones receding. */
+const ROW_OPACITY = [1, 0.8, 0.62, 0.48, 0.36];
+
+const STROBE_LINE = /^(\d{1,3})\t(\d+)$/;
+
+/**
+ * The five most recent strobes from this box, newest first, decoded to the
+ * profile's human names (`data-saving.md` §6.4); a sketch with no profile
+ * gets the raw code labeled as such. Rows arrive from the top with the
+ * app's snappy spring and dim as they age down the frame.
+ */
+function StrobeFeed({
   box,
-  metric,
-  current,
+  strobeNames,
 }: {
   box: number;
-  metric: LiveMetric;
-  current: TelemetryMetric | null;
+  strobeNames: Record<string, string>;
 }) {
+  const lines = useBoxOutput(box);
+
+  const recent = useMemo(() => {
+    const out: Array<{ id: number; code: string; at: number }> = [];
+    for (let i = lines.length - 1; i >= 0 && out.length < FEED_ROWS; i--) {
+      const line = lines[i];
+      if (!line || line.dir !== "rx") continue;
+      const match = STROBE_LINE.exec(line.text);
+      if (!match) continue;
+      out.push({ id: line.id, code: match[1]!, at: Number(match[2]) });
+    }
+    return out;
+  }, [lines]);
+
   return (
-    <MetricChart
-      metric={metric}
-      current={current}
-      history={useMetricHistory(box, metric.id)}
-    />
+    <div>
+      <div className="font-mono text-[10px] uppercase tracking-wider text-static">
+        Recent strobes
+      </div>
+      <ul className="mt-2 flex flex-col gap-1">
+        {Array.from({ length: FEED_ROWS }, (_, slot) => {
+          const strobe = recent[slot];
+          if (!strobe) {
+            return (
+              <li
+                key={`empty-${slot}`}
+                className="rounded-sm border border-dashed border-halo/50 px-2 py-1.5 font-mono text-[10px] text-static/40"
+                aria-hidden
+              >
+                —
+              </li>
+            );
+          }
+          return (
+            <motion.li
+              key={strobe.id}
+              layout
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: ROW_OPACITY[slot] ?? 0.36, y: 0 }}
+              transition={springSnappy}
+              className="flex items-center gap-2 rounded-sm border border-halo/70 bg-void/40 px-2 py-1.5"
+            >
+              <span className="w-8 shrink-0 rounded-sm border border-halo px-1 text-center font-mono text-[10px] text-pulsar">
+                {strobe.code}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[12px] text-starlight">
+                {strobeNames[strobe.code] ?? `Strobe ${strobe.code}`}
+              </span>
+              <span className="shrink-0 font-mono text-[10px] tabular-nums text-static">
+                {formatBoardTime(strobe.at)}
+              </span>
+            </motion.li>
+          );
+        })}
+      </ul>
+      {recent.length === 0 && (
+        <p className="mt-2 text-[11px] text-static">
+          Strobes will appear here as the box reports them.
+        </p>
+      )}
+    </div>
   );
 }
 
-function StrobeLog({ box }: { box: number }) {
-  const lines = useBoxOutput(box);
-  const tail = lines.slice(-80);
-
-  return (
-    <>
-      <div className="text-[11px] text-static">
-        No Task Profile for this sketch — raw strobes instead.
-      </div>
-      <div className="mt-2 flex max-h-[320px] flex-col-reverse overflow-y-auto rounded-sm border border-halo bg-void/60 p-2 font-mono text-[10px] text-static">
-        <div>
-          {tail.map((line) => (
-            <div key={line.id} className={line.dir === "tx" ? "text-pulsar" : ""}>
-              {line.text}
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
-  );
+/** Board `millis()` → `m:ss.t` (hours prefixed only once a run gets there). */
+function formatBoardTime(ms: number): string {
+  const tenths = Math.floor((ms % 1000) / 100);
+  const totalSeconds = Math.floor(ms / 1000);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  const mmss = `${minutes}:${String(seconds).padStart(2, "0")}.${tenths}`;
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}` : mmss;
 }

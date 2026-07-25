@@ -96,6 +96,7 @@ class Application:
 
         self.server.register(Cmd.SESSIONS_SUGGEST_NUMBER, self._sessions_suggest_number)
         self.server.register(Cmd.SESSIONS_CREATE, self._sessions_create)
+        self.server.register(Cmd.SESSIONS_ABANDON, self._sessions_abandon)
         self.server.register(Cmd.SESSIONS_CONFIRM_MAPPING, self._sessions_confirm_mapping)
         self.server.register(Cmd.SESSIONS_STATUS, self._sessions_status)
         self.server.register(Cmd.SESSIONS_START_ALL, self._sessions_start_all)
@@ -553,6 +554,27 @@ class Application:
             when.date().isoformat(),
             str(folder),
         )
+        return {"session": session.to_json()}
+
+    async def _sessions_abandon(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        session_id = _str_arg(args, "sessionId")
+        try:
+            session = await asyncio.to_thread(self.sessions.get_session, session_id)
+        except SessionNotFound as exc:
+            raise CommandError(ErrCode.SESSION_INVALID, str(exc)) from exc
+        # Once a group has run the record holds real history; only a session
+        # still in Step 2 limbo may be discarded.
+        if session.status != "configuring":
+            raise CommandError(
+                ErrCode.SESSION_INVALID,
+                f"session is {session.status}; only a configuring session can be abandoned",
+            )
+        # A confirmed-but-unstarted mapping may already sit in the runner —
+        # drop it so the next session can't inherit this one's boxes.
+        if self._running_session_id == session_id:
+            self._require_runner().clear()
+            self._running_session_id = None
+        session = await asyncio.to_thread(self.sessions.set_status, session_id, "aborted")
         return {"session": session.to_json()}
 
     async def _sessions_confirm_mapping(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001

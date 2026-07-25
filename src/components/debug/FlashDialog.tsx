@@ -1,6 +1,6 @@
 import { Check, CircleAlert, FolderOpen, RefreshCw, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";

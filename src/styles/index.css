@@ -139,6 +139,22 @@
   .squircle {
     clip-path: url(#ephymeris-squircle);
   }
+
+  /* Draws the eye to the one control a guided flow is waiting on. A border
+     colour swell only — stays matte, no glow (§2.2). */
+  .attention-border {
+    animation: attention-border 1.8s ease-in-out infinite;
+  }
+}
+
+@keyframes attention-border {
+  0%,
+  100% {
+    border-color: var(--color-halo);
+  }
+  50% {
+    border-color: var(--color-pulsar);
+  }
 }
 
 /* §2.5 Ambient motion must never compete with live data collection. */
@@ -149,5 +165,10 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* The pulse dies with the rule above; keep the cue as a steady accent. */
+  .attention-border {
+    border-color: var(--color-pulsar);
   }
 }

@@ -43,6 +43,13 @@ export function useMetricHistory(box: number, metricId: string): number[] {
   return useSyncExternalStore(subscribe, () => store.getHistory(box, metricId));
 }
 
+/** Count of boxes whose run has ended this group — drives flow guidance. */
+export function useEndedCount(): number {
+  const store = useSessionStore();
+  const subscribe = useCallback((cb: () => void) => store.subscribe("ended", cb), [store]);
+  return useSyncExternalStore(subscribe, () => store.getEndedCount());
+}
+
 /** The finished run for one box, once `session.animalEnded` arrives. */
 export function useBoxEnded(box: number): AnimalEnded | null {
   const store = useSessionStore();

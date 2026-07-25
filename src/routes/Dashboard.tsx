@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { ArrowRight, ChartLine, Terminal, Users } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import type { LucideIcon } from "lucide-react";
 
 import { springPanel, springSnappy } from "@/lib/motion";

@@ -71,6 +71,17 @@ export async function createSession(
   return r.session;
 }
 
+/**
+ * Discard a session still in `configuring` (Step 2's Back) — marks it
+ * `aborted` instead of stranding the record. Rejected once a group has run.
+ */
+export async function abandonSession(
+  client: SidecarClient,
+  sessionId: string,
+): Promise<void> {
+  await client.call(CMD.SESSIONS_ABANDON, { sessionId });
+}
+
 export async function confirmMapping(
   client: SidecarClient,
   sessionId: string,

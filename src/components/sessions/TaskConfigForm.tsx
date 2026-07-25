@@ -83,14 +83,17 @@ export function SketchPicker({
   value,
   onChange,
   label,
+  className = "",
 }: {
   sketches: Array<{ category: string; name: string; path: string }>;
   value: string | null;
   onChange: (path: string | null) => void;
   label: string;
+  /** Layout-only — forwarded to the underlying Select. */
+  className?: string;
 }) {
   const options = [
-    { value: "", label: "— choose a sketch —" },
+    { value: "", label: "— select a sketch —" },
     ...sketches.map((s) => ({ value: s.path, label: `${s.category} / ${s.name}` })),
   ];
   return (
@@ -99,6 +102,9 @@ export function SketchPicker({
       value={value ?? ""}
       options={options}
       onChange={(v) => onChange(v === "" ? null : String(v))}
+      // The flow is waiting on exactly this control until a sketch is picked.
+      attention={value === null}
+      className={className}
     />
   );
 }

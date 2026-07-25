@@ -50,6 +50,8 @@ Configured **per box, independently** — two boxes running the same sketch don'
 
 The user can adjust the standing `boxNumber` mapping here too (it's a confirmation step, not just a readout) — changes here are **session-local only**. They never write back to the cohort's stored mapping; permanent changes go through Cohort management (`cohorts.md` §6) instead. Keeps this step's purpose singular — confirm and configure *this run* — rather than doubling as an editor for stored cohort data.
 
+**Leaving the step:** what "back" means depends on whether the session has run yet. On first entry (session still `configuring`), Back returns to Step 1 and abandons the session record via `sessions.abandon` — the record is marked `aborted` rather than left stranded in `configuring`, and Step 1 creates a fresh session on the next Continue. On re-entry via Switch Group the session already holds recorded group runs, so Back would be a lie — the step instead offers **End session** (`sessions.end`), landing on Analytics like any other session end.
+
 ---
 
 ## 4. Step 2b — Flashing Sequence
@@ -107,8 +109,22 @@ The 3D scene **stays rendering in the background** once arrived — the data pan
 - Animal name.
 - Running sketch (name, and its category from `arduino-directory.md` if useful context).
 - Start / Stop / Reset for that box (§5.3, same actions, just reachable from here too).
-- **Live metric visualization** — for each `liveMetrics` entry in that sketch's Task Profile (`data-saving.md` §6.5), a rolling line chart: x-axis = counted (hit-or-miss) trial index, y-axis = rolling P(hit) over the last `windowSize` trials. For GRGL_2-Odor specifically, two such charts render side by side: P(R | Odor 1) and P(L | Odor 3). A sketch with no Task Profile shows a raw scrolling strobe log instead (same degrade-gracefully behavior as the pre-flight config form, §3).
+- **Recent strobes** — a fixed five-row feed of the box's most recent strobes, newest first: code chip, the profile's decoded strobe name (`data-saving.md` §6.4; a profile-less sketch shows `Strobe <code>`), and the board-side timestamp. Rows land with the app's snappy spring and dim as they age down the frame; empty slots hold the frame's shape. *Interim design:* the rolling live-metric charts originally specified here (P(hit) over `windowSize`, per `liveMetrics` entry) are deliberately out of the zoomed view for now — the general view's per-box metric strip still shows them — and are expected to return once the zoomed view's layout settles.
 - **Back to overview** — reverses the camera move (same eased eached-move convention, §6.3), returns to the pulled-back constellation view.
+
+### 6.5 Guided-Flow Chrome (spans §2–§6)
+
+Three implemented pieces that guide an operator through the flow. Grouped here because they are all visual scaffolding rather than steps of their own; they appear across Steps 1–2 and Mission Control.
+
+**The journey rail** (`SessionJourney`) — a four-step progress indicator, **Configure → Boxes → Run → Finish**, rendered as constellation stars joined by a thin `Pulsar` path: completed stars are filled, the current one pulses in `Starlight` behind a flat expanding ring, upcoming ones are `Halo` outlines. No blur anywhere, so the palette's no-glow rule (`ephymeris_v1.0.md` §2.2) holds even on the pulsing element.
+
+Beneath it sits a single crossfading hint line — the only text direction in the flow — which always names the next action, plus the running group's position (`group 2/3 · Group B`) when a cohort has more than one populated group. It is deliberately always on and deliberately subtle: the flow is run by lab members who may use it infrequently, so the next action should never have to be inferred, but it also can't compete with live data for attention.
+
+**The placement banner** (`RatPlacementBanner`, Step 2 only) — the box-placement instruction drawn rather than written: a lab member lifts an animal from its home cage and places it through the front door of an operant chamber, looping over the boxes actually mapped on the cards below, with the chamber's number lighting `Ion` once the animal is inside.
+
+**Deliberately off-theme in style, not in palette.** The rest of the app is schematic and flat; this one illustration is filled, rounded, and drawn in 3/4 perspective on purpose — it is the only moment in the flow about *handling an animal* rather than reading data, and it should feel warm. Every fill still comes from the six tokens (white rat = `Starlight`, gloves = `Pulsar`, equipment = `Nebula`/`Halo`, depth = `Void`, success = `Ion`), stays flat and matte, and takes its depth from face shading and a travelling ground shadow — never a gradient or a glow. Under `prefers-reduced-motion` the scene renders as a still of the finished placement.
+
+**The session-end landing** — End Session navigates to `/analytics` carrying the ended session's name, and that view acknowledges the session closed and its data files were written before showing its usual placeholder. This is what makes "Finish" a real destination rather than the flow simply stopping. It stays honest about Analytics being a stub (`ephymeris_v1.0.md` §4.4) while still closing the loop the rail promises.
 
 ---
 

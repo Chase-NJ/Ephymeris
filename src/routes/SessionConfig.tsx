@@ -1,10 +1,12 @@
 import { motion } from "framer-motion";
 import { ArrowRight, CircleAlert, Minus, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import { Button, Select, TextInput } from "@/components/common/controls";
+import { Modal } from "@/components/common/Modal";
 import { CohortIcon } from "@/components/cohorts/CohortIcon";
+import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { SettingGroup } from "@/components/settings/SettingRow";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { useActiveCohorts } from "@/lib/cohorts/context";
@@ -40,6 +42,7 @@ export function SessionConfig() {
   const [sessionNumber, setSessionNumber] = useState("");
   const [sameDayNumbers, setSameDayNumbers] = useState<string[]>([]);
   const [newPrefix, setNewPrefix] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -97,6 +100,23 @@ export function SessionConfig() {
     }
   }
 
+  // The rail's one-line direction — always the single next action.
+  const hint = !connected
+    ? "Waiting for the hardware service…"
+    : cohorts.length === 0
+      ? "Create a cohort first — sessions run against one."
+      : !cohort
+        ? "Pick the cohort you're running."
+        : !ready
+          ? "This cohort needs box assignments — set them in Cohorts."
+          : prefixes.length === 0
+            ? "Add a prefix — it names this task's data files."
+            : sessionNumber.trim() === ""
+              ? "Number the session — the next one is suggested."
+              : sameDayReuse
+                ? "That number already ran today — continue only to append."
+                : "Ready — continue to box mapping.";
+
   async function continueToMapping() {
     if (!cohort || !firstGroup) return;
     await run(async () => {
@@ -114,8 +134,8 @@ export function SessionConfig() {
       transition={springPanel}
       className="mx-auto max-w-4xl px-8 py-8"
     >
+      <SessionJourney step="configure" hint={hint} />
       <h1 className="font-display text-[22px] text-starlight">Start a Session</h1>
-      <p className="mt-1 text-[12px] text-static">Step 1 of 2 — configuration</p>
 
       {error && (
         <div
@@ -196,7 +216,7 @@ export function SessionConfig() {
             <Button
               variant="outline"
               shape="icon"
-              onClick={() => void run(() => deletePrefix(client, prefixId))}
+              onClick={() => setConfirmingDelete(true)}
               disabled={!prefixId || busy}
               title="Remove this prefix (files already written are untouched)"
             >
@@ -279,6 +299,42 @@ export function SessionConfig() {
           Cancel
         </Button>
       </div>
+
+      <Modal
+        open={confirmingDelete}
+        onClose={() => setConfirmingDelete(false)}
+        title="Remove prefix"
+      >
+        <p className="text-[13px] leading-relaxed text-static">
+          Remove{" "}
+          <span className="font-mono text-starlight">
+            {prefixes.find((p) => p.id === prefixId)?.name ?? "this prefix"}
+          </span>{" "}
+          from the list? Folders and files already written under it stay on
+          disk, but its numbering history will no longer be suggested here.
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setConfirmingDelete(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                await deletePrefix(client, prefixId);
+                // Fall back to the first remaining prefix (the effect above
+                // re-picks); a stale number would carry no meaning across it.
+                setPrefixId("");
+                setSessionNumber("");
+                setConfirmingDelete(false);
+              })
+            }
+          >
+            Remove
+          </Button>
+        </div>
+      </Modal>
     </motion.section>
   );
 }

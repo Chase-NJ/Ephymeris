@@ -1,10 +1,11 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { CircleAlert, Play, RotateCcw, Square, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { Constellation3D } from "@/components/sessions/Constellation3D";
+import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { MetricStrip } from "@/components/sessions/MetricStrip";
 import { StarPanel } from "@/components/sessions/StarPanel";
 import { errorMessage, getCohort } from "@/lib/cohorts/commands";
@@ -19,7 +20,12 @@ import {
   stopBox,
   switchGroup,
 } from "@/lib/sessions/commands";
-import { useBoxEnded, useBoxTelemetry } from "@/lib/sessions/context";
+import {
+  useBoxEnded,
+  useBoxTelemetry,
+  useEndedCount,
+  useSessionStore,
+} from "@/lib/sessions/context";
 import { populatedGroups, type SessionBox, type SessionSnapshot } from "@/lib/sessions/types";
 import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
@@ -38,6 +44,7 @@ export function MissionControl() {
   const cohortId = params.get("cohort") ?? "";
   const navigate = useNavigate();
   const { client, status } = useSidecar();
+  const sessionStore = useSessionStore();
 
   const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
   const [cohort, setCohort] = useState<Cohort | null>(null);
@@ -95,6 +102,43 @@ export function MissionControl() {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const focusedBox = boxes.find((b) => b.animalId === focusedId) ?? null;
 
+  // --- guided-flow state ---------------------------------------------------
+
+  const endedCount = useEndedCount();
+  const runningCount = boxes.filter(
+    (b) => portStates[b.box]?.state === "IN_SESSION",
+  ).length;
+  const allRunning = boxes.length > 0 && runningCount === boxes.length;
+  const groupDone =
+    boxes.length > 0 && runningCount === 0 && endedCount >= boxes.length;
+
+  const groupInfo = useMemo(() => {
+    if (!cohort || !snapshot) return null;
+    const groups = populatedGroups(cohort);
+    const i = groups.findIndex((g) => g.id === snapshot.groupId);
+    const found = groups[i];
+    if (!found || groups.length < 2) return null;
+    return { index: i + 1, count: groups.length, name: found.name };
+  }, [cohort, snapshot]);
+
+  const lastGroup = groupInfo === null || groupInfo.index === groupInfo.count;
+  const journeyStep = groupDone && lastGroup ? ("finish" as const) : ("run" as const);
+  const hint = !connected
+    ? "Waiting for the hardware service…"
+    : boxes.length === 0
+      ? "No boxes in this group — switch group or end the session."
+      : groupDone
+        ? lastGroup
+          ? "All boxes finished — End Session saves and wraps up."
+          : "Group finished — Switch Group runs the next one."
+        : runningCount > 0
+          ? "Recording — Stop takes effect at the next trial boundary."
+          : endedCount === 0
+            ? "Animals in their boxes? Start All begins recording."
+            : "Start the remaining boxes, or switch group.";
+
+  const sessionName = session ? `${session.prefixName}_${session.sessionNumber}` : null;
+
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
@@ -108,6 +152,14 @@ export function MissionControl() {
     }
   }
 
+  // Restarting a finished box begins a new run — its old stop message and
+  // telemetry must not linger over the fresh one. Cleared only after the
+  // start command succeeds, so a rejected start keeps the message.
+  async function startOne(box: number) {
+    await startBox(client, box);
+    sessionStore.resetBox(box);
+  }
+
   return (
     <motion.section
       initial={{ opacity: 0, y: 8 }}
@@ -115,10 +167,12 @@ export function MissionControl() {
       transition={springPanel}
       className="mx-auto max-w-5xl px-8 py-8"
     >
+      <SessionJourney step={journeyStep} hint={hint} group={groupInfo} />
       <Header
-        name={session ? `${session.prefixName}_${session.sessionNumber}` : "—"}
+        name={sessionName ?? "—"}
         date={session?.date ?? ""}
         startedAt={session?.startedAt ?? null}
+        groupName={groupInfo?.name ?? null}
       />
 
       {error && (
@@ -134,8 +188,13 @@ export function MissionControl() {
       <div className="mt-5 flex items-center gap-2">
         <Button
           variant="primary"
-          disabled={busy || !connected || boxes.length === 0}
-          onClick={() => void run(() => startAll(client, sessionId!))}
+          disabled={busy || !connected || boxes.length === 0 || allRunning}
+          onClick={() =>
+            void run(async () => {
+              await startAll(client, sessionId!);
+              sessionStore.resetFinishedBoxes();
+            })
+          }
         >
           <Play size={13} strokeWidth={2} />
           Start All
@@ -147,8 +206,10 @@ export function MissionControl() {
             onClick={() =>
               void run(async () => {
                 const next = await switchGroup(client, sessionId!);
+                // No group left to run means the session is over — land on
+                // Analytics, same as an explicit End Session.
                 if (next === null) {
-                  navigate("/");
+                  navigate("/analytics", { state: { endedSession: sessionName } });
                   return;
                 }
                 navigate(
@@ -167,7 +228,7 @@ export function MissionControl() {
           onClick={() =>
             void run(async () => {
               await endSession(client, sessionId!);
-              navigate("/");
+              navigate("/analytics", { state: { endedSession: sessionName } });
             })
           }
         >
@@ -196,7 +257,7 @@ export function MissionControl() {
                   key={focusedBox.box}
                   box={focusedBox}
                   busy={busy || !connected}
-                  onStart={() => void run(() => startBox(client, focusedBox.box))}
+                  onStart={() => void run(() => startOne(focusedBox.box))}
                   onStop={() => void run(() => stopBox(client, focusedBox.box))}
                   onReset={() =>
                     void run(() => client.call(CMD.PORT_RESET, { box: focusedBox.box }))
@@ -213,7 +274,7 @@ export function MissionControl() {
                 key={box.box}
                 box={box}
                 busy={busy || !connected}
-                onStart={() => void run(() => startBox(client, box.box))}
+                onStart={() => void run(() => startOne(box.box))}
                 onStop={() => void run(() => stopBox(client, box.box))}
                 onReset={() => void run(() => client.call(CMD.PORT_RESET, { box: box.box }))}
               />
@@ -230,10 +291,12 @@ function Header({
   name,
   date,
   startedAt,
+  groupName,
 }: {
   name: string;
   date: string;
   startedAt: string | null;
+  groupName: string | null;
 }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -248,6 +311,7 @@ function Header({
         <p className="mt-1 font-mono text-[11px] text-static">
           {date}
           {startedAt && ` · started ${clock24(new Date(startedAt))}`}
+          {groupName && ` · ${groupName}`}
         </p>
       </div>
       <div className="font-mono text-[26px] tabular-nums text-starlight">

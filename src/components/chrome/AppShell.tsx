@@ -1,5 +1,5 @@
 import { MotionConfig } from "framer-motion";
-import { Outlet } from "react-router-dom";
+import { Outlet } from "react-router";
 
 import { Sidebar } from "./Sidebar";
 import { Starfield } from "./Starfield";

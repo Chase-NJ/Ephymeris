@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { Archive, RotateCcw, Trash2, Users } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import { Button, Select, TextInput, Toggle } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";

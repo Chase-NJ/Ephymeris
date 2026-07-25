@@ -88,6 +88,17 @@ def test_suggestion_degrades_when_history_is_all_non_numeric(db, repo) -> None:
     assert repo.suggest_session_number(p.id) is None
 
 
+def test_aborted_sessions_do_not_claim_their_number(db, repo) -> None:
+    """An abandoned session wrote nothing, so its number stays claimable."""
+    cohort = CohortRepository(db).create("C", "/tmp/c")
+    p = repo.create_prefix("2O-Bdisc")
+    kept = repo.create_session(cohort.id, p, "25", "2026-07-22", "/tmp/f")
+    backed_out = repo.create_session(cohort.id, p, "26", "2026-07-22", "/tmp/f")
+    repo.set_status(backed_out.id, "aborted")
+    assert repo.suggest_session_number(p.id) == "26"
+    assert repo.session_numbers_on(p.id, "2026-07-22") == [kept.session_number]
+
+
 def test_same_day_numbers_are_scoped_to_prefix_and_date(db, repo) -> None:
     cohort = CohortRepository(db).create("C", "/tmp/c")
     p = repo.create_prefix("2O-Bdisc")

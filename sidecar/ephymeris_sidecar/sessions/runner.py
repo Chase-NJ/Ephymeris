@@ -100,6 +100,15 @@ class SessionRunner:
         self._group_id = group_id
         self._configs = {c.box: c for c in box_configs}
 
+    def clear(self) -> None:
+        """Forget a confirmed mapping that never ran (`sessions.abandon`)."""
+        if self._active:
+            raise RuntimeError("cannot clear a runner with active runs")
+        self._configs = {}
+        self._session_folder = None
+        self._session_id_label = ""
+        self._group_id = ""
+
     @property
     def group_id(self) -> str:
         """The group whose mapping is currently loaded (§5.2)."""

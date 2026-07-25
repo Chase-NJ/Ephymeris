@@ -1,7 +1,7 @@
 """Subprocess helper for the write-ahead-log kill test.
 
 Opens an `AnimalWriter`, writes a fixed number of fsync'd strobe lines, touches a
-"ready" sentinel, then blocks forever — so the parent can SIGKILL it at a known
+"ready" sentinel, then blocks forever — so the parent can hard-kill it at a known
 point and prove the `.tsv` survived intact. Never finalizes, so no footer and no
 `.json`/`.mat` should exist afterward.
 

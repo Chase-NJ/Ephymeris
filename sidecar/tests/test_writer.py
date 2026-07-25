@@ -1,13 +1,11 @@
 """Per-animal session writer — `data-saving.md` §5, §7.
 
-Includes the crash-durability kill test §7.3 asks for: SIGKILL a live writer
+Includes the crash-durability kill test §7.3 asks for: hard-kill a live writer
 mid-session and prove the `.tsv` is intact up to the last flushed line.
 """
 
 from __future__ import annotations
 
-import os
-import signal
 import subprocess
 import sys
 import time
@@ -141,12 +139,17 @@ def test_a_write_to_a_bad_path_raises_writeerror(tmp_path: Path) -> None:
 # --- §7.3 crash durability: the kill test ---------------------------------
 
 
-def test_tsv_survives_a_mid_session_sigkill(tmp_path: Path) -> None:
-    """SIGKILL a live writer; the .tsv must hold every flushed line, no footer.
+def test_tsv_survives_a_mid_session_hard_kill(tmp_path: Path) -> None:
+    """Hard-kill a live writer; the .tsv must hold every flushed line, no footer.
 
     This is the guarantee `data-saving.md` §7 exists to make real: if the lab PC
     loses power mid-session, everything up through the last completed line is
     already on disk.
+
+    The kill must stay uncatchable so nothing gets a chance to flush on the way
+    out — `Popen.kill()` is SIGKILL on POSIX and `TerminateProcess` on Windows.
+    Both matter here: the lab machines are Windows, so a POSIX-only signal would
+    leave this guarantee untested on the platform that actually ships.
     """
     tsv = tmp_path / "behavior.tsv" / "remy1.tsv"
     json_path = tmp_path / "behavior.json" / "remy1.json"
@@ -173,7 +176,7 @@ def test_tsv_survives_a_mid_session_sigkill(tmp_path: Path) -> None:
         assert ready.exists(), "child never signalled ready"
 
         # Kill it hard — no cleanup, no finalize, simulating power loss.
-        os.kill(child.pid, signal.SIGKILL)
+        child.kill()
         child.wait(timeout=5)
     finally:
         if child.poll() is None:

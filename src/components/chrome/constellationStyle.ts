@@ -49,3 +49,20 @@ export const GL = {
   ion: "#7cc98f",
   starlight: "#edebf6",
 } as const;
+
+/**
+ * Box health as a WebGL colour — the 3D counterpart of `NODE_FILL`, and the
+ * reason Debug Mode's constellation does *not* borrow Mission Control's
+ * temperature ramp. In a session view a star's colour is the animal's
+ * accuracy; in Debug it is the box's own status, which is the only thing that
+ * view exists to report. Two meanings for one channel is exactly why each view
+ * supplies its own star body rather than sharing one.
+ *
+ * Keys match `BoxHealth`; values must track `NODE_FILL`'s tokens.
+ */
+export const GL_HEALTH = {
+  nominal: GL.ion,
+  idle: GL.pulsar,
+  absent: GL.halo,
+  fault: "#c96c6c", // --color-status-error's literal, matte
+} as const;

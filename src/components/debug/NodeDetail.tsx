@@ -14,7 +14,6 @@ import { useBoxHealth } from "@/components/chrome/ConstellationStatus";
 import { Button, Select } from "@/components/common/controls";
 import { FlashDialog } from "./FlashDialog";
 import { DEFAULT_STATUS_MATCH, Scrollback, isStatusLine } from "./Scrollback";
-import { Star3D } from "./Star3D";
 import { StateBadge } from "./StateBadge";
 import { UtilityControls } from "./UtilityControls";
 import {
@@ -32,12 +31,20 @@ import { CMD } from "@/lib/ws/protocol";
 import type { TaskProfile } from "@/lib/sessions/types";
 
 /**
- * One box, up close (ephymeris_v1.0.md §4.3): the animated 3D star on the
- * left, identity beside it, and every debugging utility below, grouped by what
- * the user is trying to do — **Connection** (open/close, baud, reset,
- * acknowledge), **Sketch** (flash, utility controls), **Console** (scrollback,
- * send, copy). The old ConsolePanel packed all of this into one header row;
- * the groups are the same capabilities, organized instead of compressed.
+ * One box, up close (ephymeris_v1.0.md §4.3).
+ *
+ * Docked and translucent over the still-rendering constellation rather than
+ * replacing it, exactly as Mission Control's `StarPanel` is: arrival means the
+ * camera is now close to that box's star with an instrument panel open, not a
+ * cut to a different screen. That is also why the panel no longer carries a 3D
+ * star of its own — the real one is right there behind it, in the box's own
+ * health colour, still turning.
+ *
+ * Every debugging utility is here, grouped by what the user is trying to do —
+ * identity, **Connection** (open/close, baud, reset, acknowledge), **Sketch**
+ * (flash, utility controls), **Console** (scrollback, send, copy). The old
+ * ConsolePanel packed all of this into one header row; the groups are the same
+ * capabilities, organized instead of compressed.
  *
  * The console itself is two tabs. A utility sketch emits a `STATUS` line on
  * every state change *and* a ~1 s heartbeat, which interleaved buries the
@@ -165,7 +172,16 @@ export function NodeDetail({ box, onBack }: { box: number; onBack: () => void })
     connected && board !== null && (port.state === "IDLE" || port.state === "PASSTHROUGH");
 
   return (
-    <div>
+    <motion.aside
+      initial={{ opacity: 0, x: 24 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 24 }}
+      transition={springPanel}
+      // Above the nameplates, which drei renders as DOM at z-index <= 10. A
+      // crisp plate drifting over a control would be worse than the star it
+      // labels being hidden.
+      className="pointer-events-auto absolute top-4 right-4 bottom-4 z-20 w-[420px] overflow-y-auto rounded-lg border border-halo bg-nebula/80 p-4 backdrop-blur-xl"
+    >
       <div className="flex items-center gap-3">
         <Button variant="ghost" onClick={onBack} title="Back to the constellation (Esc)">
           <ArrowLeft size={13} strokeWidth={1.75} />
@@ -173,48 +189,39 @@ export function NodeDetail({ box, onBack }: { box: number; onBack: () => void })
         </Button>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,7fr)_minmax(0,10fr)]">
-        {/* Left: the star, identity beneath it. */}
-        <div className="flex flex-col gap-3">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.92 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={springPanel}
-            className="overflow-hidden rounded-md border border-halo"
-          >
-            <div className="h-[300px]">
-              <Star3D health={health} />
-            </div>
-          </motion.div>
+      <h2 className="mt-3 font-display text-[18px] text-starlight">
+        {binding?.label ?? `Box ${box}`}
+      </h2>
+      {/* The health word is the legend for the star's colour behind the panel;
+          the Connection group below reports the port state it derives from. */}
+      <p className="font-mono text-[11px] text-static">
+        box {box} · {health}
+      </p>
 
-          <section className="surface rounded-md">
-            <IdentityRow label="Box" value={String(box)} mono />
-            <IdentityRow label="Nickname" value={binding?.label ?? `Box ${box}`} />
-            <IdentityRow
-              label="Board"
-              value={binding?.hardwareId ?? "not bound"}
-              mono
-              dim={!binding?.hardwareId}
-            />
-            <IdentityRow
-              label="Port"
-              value={board ? board.address : "not detected"}
-              mono
-              dim={!board}
-            />
-            <IdentityRow
-              label="Sketch"
-              value={flashed ? flashed.name : "none flashed this session"}
-              mono={!!flashed}
-              dim={!flashed}
-              last
-            />
-          </section>
-        </div>
+      <div className="mt-3 flex flex-col gap-3">
+        <section className="surface rounded-md">
+          <IdentityRow
+            label="Board"
+            value={binding?.hardwareId ?? "not bound"}
+            mono
+            dim={!binding?.hardwareId}
+          />
+          <IdentityRow
+            label="Port"
+            value={board ? board.address : "not detected"}
+            mono
+            dim={!board}
+          />
+          <IdentityRow
+            label="Sketch"
+            value={flashed ? flashed.name : "none flashed this session"}
+            mono={!!flashed}
+            dim={!flashed}
+            last
+          />
+        </section>
 
-        {/* Right: the utilities, grouped by intent. */}
-        <div className="flex flex-col gap-3">
-          <Group title="Connection">
+        <Group title="Connection">
             <div className="flex flex-wrap items-center gap-1.5 px-3 py-2.5">
               <StateBadge state={port.state} detected={board !== null} />
 
@@ -375,12 +382,11 @@ export function NodeDetail({ box, onBack }: { box: number; onBack: () => void })
                 <Send size={13} strokeWidth={1.75} />
               </Button>
             </div>
-          </section>
-        </div>
+        </section>
       </div>
 
       <FlashDialog box={box} open={flashOpen} onClose={() => setFlashOpen(false)} />
-    </div>
+    </motion.aside>
   );
 }
 

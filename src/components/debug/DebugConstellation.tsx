@@ -1,252 +1,216 @@
-import { motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useFrame } from "@react-three/fiber";
+import { useMemo, useRef } from "react";
+import * as THREE from "three";
 
 import {
-  NODE_FILL,
-  frameFor,
-  isLinkLive,
   resolveLayout,
   useBoxHealth,
   type BoxHealth,
 } from "@/components/chrome/ConstellationStatus";
+import { GL, GL_HEALTH } from "@/components/chrome/constellationStyle";
 import {
-  LINK_OPACITY_DIM,
-  LINK_OPACITY_LIVE,
-  LINK_STROKE,
-  LINK_WIDTH,
-  NODE_RADIUS,
-} from "@/components/chrome/constellationStyle";
-import { mulberry32 } from "@/lib/prng";
-import { springSnappy } from "@/lib/motion";
+  ConstellationScene,
+  type SceneLink,
+  type SceneNode,
+} from "@/components/constellation3d/Scene";
+import { buildSky } from "@/lib/sessions/stars";
 import { useBoundBoxes, useSettings } from "@/lib/settings/context";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * The Debug landing constellation (ephymeris_v1.0.md §4.3): the user's chosen
- * zodiac layout as the mode's front door. Each configured box is a clickable
- * node at its assigned star, nicknamed; selecting one opens the node detail
- * view.
+ * The Debug landing constellation (`ephymeris_v1.0.md` §4.3).
  *
- * Ambient animation follows the Starfield's rules, not Framer's: continuous
- * motion is plain CSS (a spring is a transition, not an orbit), it pauses when
- * the window blurs — this app is watched during live data collection — and
- * reduced motion stills everything. What moves says something true:
+ * The same 3D browser as Mission Control — same camera, same orbit/pan/zoom,
+ * same hover reticle, nameplates and arrival flight, all from
+ * `constellation3d/Scene` — pointed at the rig instead of at a cohort. Every
+ * bound box is a star at its assigned slot, nicknamed; selecting one flies the
+ * camera in and docks the box's detail panel over the still-running scene.
+ *
+ * **Colour here is status, not performance.** Mission Control tints a star by
+ * the animal's rolling accuracy; that would be meaningless on a box, and this
+ * view exists to answer "is this box alive and what is it doing". So the core
+ * takes `GL_HEALTH`, and the motion says the rest — the same grammar the 2D
+ * widget established, lifted into three dimensions:
  *
  *  - a detected box has a mote in orbit (it's alive on the bus);
  *  - an *open* box (passthrough / in session) adds a slow dashed ring — the
  *    instrument-HUD read, never a glow (§2.2);
  *  - a configured-but-undetected box sits still in Halo, and a faulted box
  *    still in Error red — stillness is the status.
+ *
+ * Unlike Mission Control there is no seeded fallback: `resolveLayout` answers
+ * with the pre-zodiac `legacyLayout` when no constellation has been chosen, and
+ * that already pins a position per box number.
  */
-
-const TWINKLE_SEED = 0xdeb06;
-
-export function DebugConstellation({ onSelect }: { onSelect: (box: number) => void }) {
+export function DebugConstellation({
+  selected,
+  onSelect,
+}: {
+  selected: number | null;
+  onSelect: (box: number | null) => void;
+}) {
   const { settings } = useSettings();
   const bound = useBoundBoxes();
   const health = useBoxHealth();
-  const reduceMotion = useReduceMotion();
-  const focused = useWindowFocused();
-  const [hovered, setHovered] = useState<number | null>(null);
 
   const layout = useMemo(
     () => resolveLayout(settings.constellation, settings.constellationSlots, bound),
     [settings.constellation, settings.constellationSlots, bound],
   );
+
+  // Boxes are their own occupants here — a star *is* a box, so the two ids are
+  // the same fact. Keyed on the bound set alone: health arrives from the
+  // presence poll and the port state machine and must never move a star.
+  const boundKey = bound.join(",");
+  const sky = useMemo(
+    () =>
+      buildSky(
+        "debug",
+        bound.map((box) => ({ occupantId: String(box), box })),
+        layout,
+        settings.constellation ?? "legacy",
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [boundKey, layout, settings.constellation],
+  );
+
   const labels = useMemo(
-    () => Object.fromEntries(settings.boxes.map((b) => [b.box, b.label])),
+    () => new Map(settings.boxes.map((b) => [b.box, b.label])),
     [settings.boxes],
   );
 
-  const at = (box: number): BoxHealth => health[box] ?? "absent";
-  const starAt = useMemo(() => {
-    const map = new Map<number, { x: number; y: number; box: number | null }>();
-    for (const s of layout.emptyStars) map.set(s.star, { x: s.x, y: s.y, box: null });
-    for (const n of layout.nodes) map.set(n.star, { x: n.x, y: n.y, box: n.box });
-    return map;
-  }, [layout]);
+  const nodes: SceneNode[] = sky.points.map((point, index) => {
+    if (point.occupantId === null) {
+      return {
+        id: `star-${point.star ?? index}`,
+        position: point.position,
+        radius: point.radius,
+        active: false,
+        body: <EmptyStar radius={point.radius} />,
+      };
+    }
+    const box = Number(point.occupantId);
+    const state = health[box] ?? "absent";
+    return {
+      id: point.occupantId,
+      position: point.position,
+      radius: point.radius,
+      // Every bound box is inspectable, however sick — an absent or faulted box
+      // is precisely the one you came here to open. This is the deliberate
+      // difference from Mission Control, where an unlit star has no live view
+      // to show and is inert by construction.
+      active: true,
+      name: labels.get(box) ?? `Box ${box}`,
+      badge: box,
+      body: <BoxStar radius={point.radius} health={state} />,
+    };
+  });
 
-  const allPoints = [...layout.nodes, ...layout.emptyStars];
-  const { viewBox, scale } = frameFor(allPoints);
-  const frameCenterX = useMemo(() => {
-    const xs = allPoints.map((p) => p.x);
-    return (Math.min(...xs) + Math.max(...xs)) / 2;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewBox]);
-
-  // Deterministic twinkle phases, so the sky doesn't reshuffle on re-render.
-  const twinklePhase = useMemo(() => {
-    const rand = mulberry32(TWINKLE_SEED);
-    return layout.emptyStars.map(() => rand() * 6);
-  }, [layout.emptyStars]);
-
-  const playState = focused && !reduceMotion ? "running" : "paused";
+  const links: SceneLink[] = sky.links.map(([a, b]) => ({
+    a,
+    b,
+    live: isLive(nodes[a], health) && isLive(nodes[b], health),
+  }));
 
   return (
-    <div className="mx-auto w-full max-w-3xl">
-      <style>{`
-        @keyframes ephy-orbit {
-          from { transform: rotate(0deg); }
-          to   { transform: rotate(360deg); }
-        }
-        @keyframes ephy-twinkle {
-          0%, 100% { opacity: 0.22; }
-          50%      { opacity: 0.55; }
-        }
-      `}</style>
-
-      <svg
-        viewBox={viewBox}
-        className="w-full overflow-visible"
-        preserveAspectRatio="xMidYMid meet"
-        role="list"
-        aria-label="Configured boxes"
-      >
-        {layout.edges.map(([a, b]) => {
-          const from = starAt.get(a);
-          const to = starAt.get(b);
-          if (!from || !to) return null;
-          const live =
-            from.box !== null && to.box !== null && isLinkLive(at(from.box), at(to.box));
-          return (
-            <motion.line
-              key={`${a}-${b}`}
-              x1={from.x}
-              y1={from.y}
-              x2={to.x}
-              y2={to.y}
-              stroke={LINK_STROKE}
-              strokeWidth={LINK_WIDTH * scale * 0.8}
-              animate={{ opacity: live ? LINK_OPACITY_LIVE : LINK_OPACITY_DIM }}
-              transition={springSnappy}
-            />
-          );
-        })}
-
-        {/* Unclaimed stars twinkle gently — scenery, not status. */}
-        {layout.emptyStars.map((s, index) => (
-          <circle
-            key={`empty-${s.star}`}
-            cx={s.x}
-            cy={s.y}
-            r={NODE_RADIUS * 0.5 * scale}
-            fill="var(--color-starlight)"
-            style={{
-              animation: reduceMotion
-                ? undefined
-                : `ephy-twinkle ${5 + (index % 3)}s ease-in-out infinite`,
-              animationDelay: `${twinklePhase[index] ?? 0}s`,
-              animationPlayState: playState,
-              opacity: 0.3,
-            }}
-          />
-        ))}
-
-        {layout.nodes.map((n) => {
-          const h = at(n.box);
-          const detected = h === "nominal" || h === "idle";
-          const open = h === "nominal";
-          const isHovered = hovered === n.box;
-          const labelRight = n.x <= frameCenterX;
-          const r = NODE_RADIUS * scale;
-
-          return (
-            <g
-              key={n.box}
-              transform={`translate(${n.x} ${n.y})`}
-              role="listitem"
-              aria-label={`${labels[n.box] ?? `Box ${n.box}`} — ${h}`}
-              className="cursor-pointer"
-              onClick={() => onSelect(n.box)}
-              onPointerEnter={() => setHovered(n.box)}
-              onPointerLeave={() => setHovered(null)}
-            >
-              {/* Generous invisible hit area. */}
-              <circle r={r * 3.2} fill="transparent" />
-
-              {/* Open box: slow dashed instrument ring. */}
-              {open && (
-                <g
-                  style={{
-                    animation: "ephy-orbit 24s linear infinite",
-                    animationPlayState: playState,
-                  }}
-                >
-                  <circle
-                    r={r * 2.1}
-                    fill="none"
-                    stroke={LINK_STROKE}
-                    strokeWidth={LINK_WIDTH * scale * 0.6}
-                    strokeDasharray={`${r * 0.9} ${r * 0.7}`}
-                    opacity={0.45}
-                  />
-                </g>
-              )}
-
-              {/* Detected box: a mote in orbit — alive on the bus. */}
-              {detected && (
-                <g
-                  style={{
-                    animation: `ephy-orbit ${open ? 6 : 11}s linear infinite`,
-                    animationPlayState: playState,
-                  }}
-                >
-                  <circle
-                    cx={r * 2.6}
-                    r={r * 0.28}
-                    fill="var(--color-starlight)"
-                    opacity={0.85}
-                  />
-                </g>
-              )}
-
-              <motion.circle
-                r={r}
-                animate={{ fill: NODE_FILL[h], scale: isHovered ? 1.25 : 1 }}
-                transition={springSnappy}
-              />
-
-              {/* Nickname, set in the data face (§2.3), on the roomy side. */}
-              <text
-                x={labelRight ? r * 3.9 : -r * 3.9}
-                textAnchor={labelRight ? "start" : "end"}
-                dominantBaseline="middle"
-                pointerEvents="none"
-                className="font-mono"
-                style={{
-                  fontSize: 3.1 * scale,
-                  fill: isHovered ? "var(--color-starlight)" : "var(--color-static)",
-                  transition: "fill 150ms",
-                }}
-              >
-                {labels[n.box] ?? `Box ${n.box}`}
-              </text>
-              <line
-                x1={labelRight ? r * 1.6 : -r * 1.6}
-                x2={labelRight ? r * 3.4 : -r * 3.4}
-                stroke="var(--color-halo)"
-                strokeWidth={LINK_WIDTH * scale * 0.5}
-                opacity={0.8}
-              />
-            </g>
-          );
-        })}
-      </svg>
-    </div>
+    <ConstellationScene
+      nodes={nodes}
+      links={links}
+      focusedId={selected === null ? null : String(selected)}
+      onFocus={(id) => onSelect(id === null ? null : Number(id))}
+    />
   );
 }
 
-function useWindowFocused(): boolean {
-  const [focused, setFocused] = useState(true);
-  useEffect(() => {
-    const onFocus = () => setFocused(true);
-    const onBlur = () => setFocused(false);
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, []);
-  return focused;
+/** A link is live only when both endpoints are boxes that are present and
+ *  healthy — the same rule the 2D widget's `isLinkLive` applies. */
+function isLive(
+  node: SceneNode | undefined,
+  health: Partial<Record<number, BoxHealth>>,
+): boolean {
+  if (!node || node.badge === null || node.badge === undefined) return false;
+  const state = health[node.badge];
+  return state === "nominal" || state === "idle";
+}
+
+/**
+ * One box, as a star. Matte and faceted — flat triangles catch nothing, which
+ * is exactly right under §2.2's no-glow rule — with the motion carrying what
+ * the colour alone can't.
+ */
+function BoxStar({ radius, health }: { radius: number; health: BoxHealth }) {
+  const reduceMotion = useReduceMotion();
+  const core = useRef<THREE.Group>(null);
+  const mote = useRef<THREE.Group>(null);
+  const ring = useRef<THREE.Group>(null);
+
+  const detected = health === "nominal" || health === "idle";
+  const open = health === "nominal";
+
+  useFrame((_state, delta) => {
+    if (reduceMotion) return;
+    // A slow turn, so the facets read as a solid rather than a disc. Stillness
+    // is the status for an absent or faulted box, so neither turns.
+    if (core.current && detected) core.current.rotation.y += delta * 0.35;
+    if (mote.current) mote.current.rotation.y += delta * (open ? 0.9 : 0.45);
+    if (ring.current) ring.current.rotation.z += delta * 0.26;
+  });
+
+  return (
+    <group>
+      <group ref={core}>
+        <mesh>
+          <icosahedronGeometry args={[radius, 1]} />
+          <meshBasicMaterial color={GL_HEALTH[health]} />
+        </mesh>
+      </group>
+
+      {/* Open box: the slow dashed instrument ring. Built from short arc
+          segments rather than a dashed material, which needs line distances
+          computed per geometry and reads inconsistently across drivers. */}
+      {open && (
+        <group ref={ring} rotation={[Math.PI / 2.4, 0, 0]}>
+          {[0, 1, 2, 3, 4, 5].map((segment) => (
+            <mesh key={segment} rotation={[0, 0, (segment * Math.PI) / 3]}>
+              <ringGeometry
+                args={[radius * 2.2, radius * 2.2 + 0.02, 16, 1, 0, Math.PI / 4.6]}
+              />
+              <meshBasicMaterial
+                color={GL.pulsar}
+                transparent
+                opacity={0.45}
+                side={THREE.DoubleSide}
+              />
+            </mesh>
+          ))}
+        </group>
+      )}
+
+      {/* Detected box: a mote in orbit — alive on the bus.
+          Sized as a compromise between two distances that pull opposite ways:
+          the mote does its work at overview range, where anything much smaller
+          disappears, but the camera also arrives within a few units of it, and
+          at that range a large one reads as a second star rather than an
+          annotation. */}
+      {detected && (
+        <group ref={mote} rotation={[0.4, 0, 0.15]}>
+          <mesh position={[radius * 2.5, 0, 0]}>
+            <sphereGeometry args={[radius * 0.2, 10, 10]} />
+            <meshBasicMaterial color={GL.starlight} transparent opacity={0.85} />
+          </mesh>
+        </group>
+      )}
+    </group>
+  );
+}
+
+/** An unclaimed star of the asterism — scenery, so the chosen constellation
+ *  still reads on a rig that binds two boxes out of twelve stars. */
+function EmptyStar({ radius }: { radius: number }) {
+  return (
+    <mesh>
+      <sphereGeometry args={[radius, 12, 12]} />
+      <meshBasicMaterial color={GL.halo} transparent opacity={0.55} />
+    </mesh>
+  );
 }

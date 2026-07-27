@@ -74,7 +74,7 @@ export function StarPanel({
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 24, opacity: 0 }}
       transition={springPanel}
-      className="pointer-events-auto absolute right-4 top-4 bottom-4 w-[380px] overflow-y-auto rounded-lg border border-halo bg-nebula/80 p-4 backdrop-blur-xl"
+      className="pointer-events-auto absolute top-4 right-4 bottom-4 z-20 w-[380px] overflow-y-auto rounded-lg border border-halo bg-nebula/80 p-4 backdrop-blur-xl"
     >
       <Button variant="ghost" onClick={onBack}>
         <ArrowLeft size={13} strokeWidth={2} />

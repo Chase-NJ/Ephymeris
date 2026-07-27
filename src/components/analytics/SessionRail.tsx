@@ -275,6 +275,12 @@ interface Tick {
   labelled: boolean;
 }
 
+/** What an empty archive lays out to. Not merely defensive: the caller's
+ *  `useMemo` runs before its own empty-state return, because hook order can't
+ *  be conditional — so this branch is reached on every cohort that has no
+ *  sessions yet, which every cohort is on the day it is created. */
+const EMPTY_LAYOUT = { marks: [], ticks: [], width: PAD * 2, days: 0, showNumbers: true };
+
 /**
  * Pixel positions for every mark and date tick, plus the scroll width they
  * need. Sessions arrive oldest-first (`sessions.list` orders by date), which
@@ -287,6 +293,8 @@ function layOut(sessions: SessionListItem[]): {
   days: number;
   showNumbers: boolean;
 } {
+  if (sessions.length === 0) return EMPTY_LAYOUT;
+
   const first = sessions[0]!;
   const last = sessions[sessions.length - 1]!;
   const days = Math.max(0, daysBetween(first.date, last.date));

@@ -15,15 +15,16 @@ import { useSidecar } from "@/lib/ws/context";
 /**
  * Debug (`hardware-interaction.md` §6.6, ephymeris_v1.0.md §4.3).
  *
- * Two views under one route. The landing is the user's chosen constellation —
- * every bound box a nicknamed, clickable node whose animation *is* its status.
- * Selecting a node zooms into the detail view: the animated 3D star with the
- * box's identity beside it and every debugging utility beneath, grouped by
- * intent. Escape (or Back, or clicking through) returns to the sky.
+ * One continuous scene, not two views. The landing is the user's chosen
+ * constellation in 3D — every bound box a nicknamed star whose colour is its
+ * health and whose animation *is* its status — browsed with the same camera,
+ * controls and grammar as Mission Control's session view. Selecting a star
+ * flies the camera to it and docks that box's utilities over the still-running
+ * scene; Escape, Back, or clicking empty space flies back out.
  *
- * Selection is deliberately route-local state, not a URL segment: the zoom
- * transition is one continuous scene, and a reload landing on the overview is
- * the right recovery anyway.
+ * Selection is deliberately route-local state, not a URL segment: the flight is
+ * one continuous move, and a reload landing on the overview is the right
+ * recovery anyway.
  *
  * Mounting triggers a sketch rescan per `arduino-directory.md` §4, so newly
  * added sketches show up without an explicit refresh.
@@ -69,38 +70,30 @@ export function DebugMode() {
       {boundBoxes.length === 0 ? (
         <NoBoundBoxes configuredCount={settings.boxes.length} />
       ) : (
-        <AnimatePresence mode="wait" initial={false}>
-          {selected === null ? (
-            <motion.div
-              key="sky"
-              // The return leg of the zoom: the sky scales back down from
-              // where the node view left it.
-              initial={{ opacity: 0, scale: 1.06 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 1.06 }}
-              transition={springPanel}
-              className="mt-8"
-            >
-              <DebugConstellation onSelect={setSelected} />
-              <p className="mt-4 text-center text-[11px] text-static">
-                Select a box to inspect it.
-              </p>
-            </motion.div>
-          ) : (
-            <motion.div
-              key={`node-${selected}`}
-              // Arriving from the zoom: the detail scene settles in from
-              // slightly small, as if the star grew into frame.
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={springPanel}
-              className="mt-4"
-            >
-              <NodeDetail box={selected} onBack={() => setSelected(null)} />
-            </motion.div>
+        <>
+          {/* Sized like Mission Control's, and for the same reason: the
+              constellation is the view's subject rather than a thumbnail above
+              the real controls. Viewport-relative so a large lab monitor gets a
+              genuinely cinematic scene, with a floor that keeps it usable on a
+              laptop. */}
+          <div className="relative mt-5 h-[min(70vh,760px)] min-h-[480px] overflow-hidden rounded-lg border border-halo">
+            <DebugConstellation selected={selected} onSelect={setSelected} />
+            <AnimatePresence>
+              {selected !== null && (
+                <NodeDetail
+                  key={selected}
+                  box={selected}
+                  onBack={() => setSelected(null)}
+                />
+              )}
+            </AnimatePresence>
+          </div>
+          {selected === null && (
+            <p className="mt-3 text-[11px] text-static">
+              Select a box to inspect it.
+            </p>
           )}
-        </AnimatePresence>
+        </>
       )}
     </motion.section>
   );

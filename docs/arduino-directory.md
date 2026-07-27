@@ -1,7 +1,16 @@
-# Arduino Directory — Full Spec
+# Arduino Directory
 
-**Status:** Living document. Covers the configured Arduino Directory: location, detection, structure, and error handling. **Fully implemented for v1** — discovery, all four §6 states, the categorized picker, and `--libraries` resolution are live and verified against real compiles.
-**Companion documents:** `hardware-interaction.md` (flashing/reset/passthrough layer — consumes sketches discovered here), `ephymeris_v1.0.md` (tech stack, dashboard, Settings), `websocket-protocol.md` (`sketches.refresh` / `sketches.updated` payload shapes).
+> **Status** · Living spec — **Built and verified against real compiles.** Discovery, all four states in §6, the categorized picker, and `--libraries` resolution are live.
+>
+> **Owns** · Where flashable sketches come from: the configured root folder, its required structure, how it is scanned, and what each failure looks like.
+>
+> **Read with** · [hardware-interaction.md](hardware-interaction.md) (consumes the sketches discovered here) · [websocket-protocol.md](websocket-protocol.md) (the `sketches.refresh` / `sketches.updated` payloads)
+>
+> **Still open** · Whether a live filesystem watcher is ever worth adding
+
+**Contents** — [1. Purpose](#1-purpose) · [2. Location](#2-location--configuration) · [3. Required Structure](#3-required-directory-structure) · [4. Discovery](#4-sketch-discovery) · [5. Presentation](#5-gui-presentation) · [6. Error & Empty States](#6-error--empty-states) · [7. Resolved Decisions](#7-resolved-decisions) · [8. Open Items](#8-open-items--tbd)
+
+> **The rule that causes the most confusion, stated once up front:** a folder is a valid sketch **only if it contains a `.ino` whose filename matches the folder's own name** — `clean_flush/clean_flush.ino`, never `clean_flush/main.ino`. This is arduino-cli's requirement, not ours, and it is far and away the most common reason a sketch a user just wrote fails to appear in the picker. Folders that fail it are **skipped and reported**, never silently dropped.
 
 ---
 
@@ -76,6 +85,18 @@ No live filesystem watcher for v1 (e.g. no `watchdog`-style continuous monitorin
 5. Result: a flat list of `{category, sketch_name, path}` sent to the frontend, naturally groupable by category for display.
 6. Enumerate the root `libraries/` subfolders separately; that path is passed to `arduino-cli compile` via its `--libraries <path>` flag, so every sketch gets access to all shared libraries with no per-sketch configuration.
 
+**Bounds and safety.** The scan descends at most **5 levels**, so pointing the app at an unexpectedly large tree cannot crawl. Symlinks are followed, but every directory is resolved and recorded, so a symlink loop terminates and a directory reachable by two paths is only reported once.
+
+**The three reported skip reasons**, all surfaced with their path so the problem is inspectable rather than mysterious:
+
+| Reason | Meaning |
+|---|---|
+| `no <name>.ino matching the folder name` | The folder holds some `.ino`, just not the one arduino-cli needs |
+| `sketch folders belong inside a category folder` | A valid sketch sitting directly at the root, with no category to file it under |
+| `couldn't be read: <error>` | Permissions or an I/O failure on that directory |
+
+Hidden folders and any `libraries/` are skipped **silently** — they are not mistakes, and reporting `.git/objects` as unreadable would bury the genuine problems in noise. A folder holding no `.ino` at all is plain organisation, not a broken sketch, and is likewise not reported.
+
 ---
 
 ## 5. GUI Presentation
@@ -116,4 +137,9 @@ No open questions remaining as of this revision.
 ## 8. Open Items / TBD
 
 - [x] ~~Confirm real-world `arduino-cli --libraries` behavior against the `libraries/` folder layout in §3~~ — **confirmed** (arduino-cli 1.5.1): a sketch `#include <EphymerisStrobe.h>` compiled against a plain `libraries/EphymerisStrobe/` folder holding matching `.h`/`.cpp` files with no `library.properties`; the compile result's `used_libraries` reported the library resolved from that exact path. The §3 lightweight layout stands as specified
-- [ ] Decide if a live filesystem watcher is worth adding later, or if scan-on-trigger remains sufficient
+- [ ] Decide if a live filesystem watcher is worth adding later, or if scan-on-trigger remains sufficient. Judged sufficient so far — revisit only if that assumption proves wrong in practice
+
+---
+
+**Next:** [cohorts.md](cohorts.md) → [starting-a-session.md](starting-a-session.md) → [data-saving.md](data-saving.md) — three interdependent documents, in dependency order.
+[Documentation index](README.md) · [Open items register](TODO.md)

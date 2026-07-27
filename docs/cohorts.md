@@ -1,7 +1,16 @@
-# Cohorts — Full Spec
+# Cohorts
 
-**Status:** Living document. **Implemented and verified** — data model, SQLite persistence, browser UI, procedural icons, create/edit flow, Auto-Balance, data-folder resolution, and archive/delete are all live. First of three interdependent docs (Cohorts → Starting a Session → Data Saving); the other two consume the data model defined here.
-**Companion documents:** `ephymeris_v1.0.md` (theme tokens, Settings' `dataDirectory`, the `/cohorts` dashboard stub this doc replaces), `websocket-protocol.md` (box-numbering convention this doc must stay consistent with, message envelope pattern extended in §10), `hardware-interaction.md` (box concept — cohorts assign animals to abstract box slots, independent of live hardware state), `starting-a-session.md` (consumes cohorts + groups to actually run boxes; defines "ready to run"), `data-saving.md` (per-session `.json`/`.mat`/`.tsv` output and backups — distinct from this doc's cohort *metadata* storage).
+> **Status** · Living spec — **Built and verified.** Data model, SQLite persistence, browser UI, procedural icons, the create/edit flow, Auto-Balance, data-folder resolution, and archive/delete are all live.
+>
+> **Owns** · The Cohort → Animal → Group data model, its persistence, the Cohorts tab, and the procedural cohort icon.
+>
+> **Read with** · [starting-a-session.md](starting-a-session.md) (runs boxes against this model) · [data-saving.md](data-saving.md) (writes beneath the `dataFolder` resolved here) · [websocket-protocol.md](websocket-protocol.md) (canonical for the commands §10 proposed)
+>
+> **Still open** · `ephymeris.db` backup · three small editor rough edges (§12)
+
+**Contents** — [1. Data Model](#1-data-model) · [2. Validation](#2-validation-rules) · [3. Persistence](#3-persistence) · [4. Browser UI](#4-cohort-browser-ui) · [5. Procedural Icon](#5-procedural-icon-generation) · [6. Create / Edit](#6-create--edit--manage-flow) · [7. Auto-Balance](#7-auto-balance--group-suggestion-tooling) · [8. Data Folder](#8-data-folder-resolution) · [9. Archive / Delete](#9-archive--delete-semantics) · [10. Wire Messages](#10-wire-messages-proposed) · [11. Resolved Decisions](#11-resolved-decisions) · [12. Open Items](#12-open-items--tbd)
+
+**First of three interdependent documents** — Cohorts → Starting a Session → Data Saving. The other two consume the model defined here.
 
 ---
 
@@ -227,3 +236,8 @@ No open questions remaining as of this revision.
 - [ ] **Animals added before a cohort's first save** are written in a follow-up `cohorts.update`, since they need the group id the sidecar mints at creation. Works, but means creation isn't a single atomic call — worth revisiting if `cohorts.create` ever accepts an initial roster
 - [ ] **Groups can only be added from the editor once a cohort exists**, because §6 hides the groups panel while only the implicit default group is present. A brand-new cohort therefore can't be split until after its first save. Fine in practice (Auto-Balance is the normal path to multiple groups) but worth confirming it matches expectations
 - [ ] **No confirmation on archive.** §9 makes archive the reversible everyday action and gates only permanent delete, so archiving is one click. Revisit if it proves too easy to trigger accidentally on a large cohort
+
+---
+
+**Next:** [starting-a-session.md](starting-a-session.md) — what happens when you actually run this cohort.
+[Documentation index](README.md) · [Open items register](TODO.md)

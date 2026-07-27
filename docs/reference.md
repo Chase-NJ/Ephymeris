@@ -1,10 +1,12 @@
-# Ephymeris — Engineering Reference
+# Engineering Reference
 
-**Status:** Consolidated reference, derived from the seven specification documents and the codebase as it stands. Where a spec and this document disagree on *behavior*, the spec wins; this document is authoritative on *where things live* and *what is actually built*.
+> **Status** · Derived view, maintained alongside the seven specs. Where a spec and this document disagree on *behaviour*, the spec wins. This document is authoritative on **where things live** and **what is actually built**.
+>
+> **Purpose** · The specs describe behaviour and rationale but never map to files. This one does. Read it after [ephymeris_v1.0.md](ephymeris_v1.0.md) and before touching code.
+>
+> **Verified** · Against the working tree at commit `878cb0c`, on 2026-07-26. `tsc --noEmit` clean · **332** sidecar tests passing · **2** Rust tests passing.
 
-**Purpose:** the specs describe behavior and rationale but never map to files. This document does. It is the orientation layer — read it after `ephymeris_v1.0.md` and before touching code.
-
-Verified against the working tree on 2026-07-25: `tsc --noEmit` clean, 332 sidecar tests passing, 2 Rust tests passing.
+**Contents** — [1. Architecture](#1-system-architecture) · [2. Module Map](#2-module-map) · [3. Wire Surface](#3-wire-surface-at-a-glance) · [4. Core Behaviours](#4-core-domain-behaviours) · [5. Implementation Status](#5-implementation-status) · [6. Development](#6-development) · [7. Known Rough Edges](#7-known-rough-edges-in-the-code) · [8. Glossary](#8-glossary)
 
 ---
 
@@ -53,11 +55,11 @@ EPHYMERIS_WS_PORT=<port> EPHYMERIS_WS_TOKEN=<token>
 
 Everything else it logs goes to stderr and is forwarded into the Tauri log. Rust parses that line and emits `sidecar://ready`, or `sidecar://down` if stdout closes.
 
-**Orphan protection is load-bearing.** Tauri holds the sidecar's stdin open for the app's lifetime; the sidecar exits on stdin EOF, and Rust also kills the child on exit. A sidecar that outlived its parent would keep serial ports open and lock out the next launch.
+> **Orphan protection is load-bearing, not a nicety.** Tauri holds the sidecar's stdin open for the app's lifetime; the sidecar exits on stdin EOF, and Rust also kills the child on exit. A sidecar that outlived its parent would keep serial ports open and lock out the next launch.
 
-**There is no auto-respawn.** A crashed sidecar surfaces `sidecar://down` and the user restarts the app. A silent respawn would resurrect the process without the port ownership or session state it had.
+> **There is no auto-respawn.** A crashed sidecar surfaces `sidecar://down` and the user restarts the app. A silent respawn would resurrect the process without the port ownership or session state it had.
 
-Full detail: `websocket-protocol.md` §1.
+Full detail: [`websocket-protocol.md` §1](websocket-protocol.md#1-transport--lifecycle).
 
 ---
 
@@ -70,15 +72,15 @@ Owns everything stateful. Runtime dependencies are deliberately just `pyserial` 
 | Module | Responsibility | Spec |
 |---|---|---|
 | `__main__.py` | CLI entry, `--data-dir`/`--token`/`--no-parent-watch`, stdin-EOF orphan watch | protocol §1 |
-| `app.py` | Wires everything together; registers all 30 command handlers. The largest module (~896 lines) and the place to look first for any command's behavior | protocol §3 |
-| `server.py` | WebSocket server, auth handshake, command dispatch, event fan-out | protocol §1.1 |
+| `app.py` | Wires everything together; registers **32** command handlers. The largest module (~775 lines) and the place to look first for any command's behaviour | protocol §3 |
+| `server.py` | WebSocket server, auth handshake, command dispatch, event fan-out. Handles `auth` itself, before dispatch | protocol §1.1 |
 | `settings.py` | Receives the shell's settings push. Deliberately lenient — an unknown key is a non-event, a malformed value degrades to a default rather than killing the process that owns the ports | v1.0 §4.5 |
 | `discovery.py` | Arduino Directory validation and sketch/library scanning, including the skipped-but-reported rule | arduino-directory §3–§6 |
 | `protocol.py` | Hand-maintained mirror of the wire schema — commands, events, error codes, envelope builders | protocol (all) |
 | **`ports/`** | | |
 | `ports/states.py` | The state machine transition table and `assert_transition`. Small, and the authority on what is legal | hardware §3 |
-| `ports/handler.py` | Per-port owner: read loop, write path, ring buffer, line splitting, strobe parsing | hardware §6 |
-| `ports/manager.py` | Owns the six handlers, the binding map, the out-of-band presence poll, and the 20 Hz output flush | hardware §7 |
+| `ports/handler.py` | Per-port owner: read loop, write path, ring buffer, line splitting, the three-phase session handshake, strobe parsing | hardware §6 |
+| `ports/manager.py` | Owns the six handlers, the binding map, the 1.5 s presence poll, and the 20 Hz output flush | hardware §7 |
 | **`boards/`** | | |
 | `boards/tool.py` | The `BoardTool` interface — the seam the gRPC migration will slot into | hardware §2 |
 | `boards/cli_tool.py` | Current backend: `arduino-cli` subprocess with `--format json` | hardware §2, §4 |
@@ -86,7 +88,7 @@ Owns everything stateful. Runtime dependencies are deliberately just `pyserial` 
 | `cohorts/db.py` | SQLite connection and schema | cohorts §3 |
 | `cohorts/models.py` | Cohort/Animal/Group dataclasses | cohorts §1 |
 | `cohorts/repository.py` | CRUD, validation, archive/delete semantics | cohorts §2, §9 |
-| `cohorts/folders.py` | Data folder resolution, sanitization, collision suffixing | cohorts §8 |
+| `cohorts/folders.py` | Data folder resolution, name sanitization, collision suffixing | cohorts §8 |
 | `cohorts/grouping.py` | Auto-Balance balanced round-robin | cohorts §7.3 |
 | **`sessions/`** | | |
 | `sessions/models.py` | `Session` and `SessionAnimalRun` records | data-saving §4 |
@@ -106,19 +108,20 @@ Talks to the sidecar over the WebSocket only.
 
 | Path | Responsibility |
 |---|---|
-| `lib/ws/client.ts` | Connection lifecycle, auth, reconnect with backoff (250 ms → 8 s), request/reply correlation, event fan-out |
+| `lib/ws/client.ts` | Connection lifecycle, auth, reconnect with backoff (250 ms → 8 s, six steps then held), request/reply correlation, event fan-out |
 | `lib/ws/protocol.ts` | The second hand-maintained mirror of the wire schema |
 | `lib/ws/SidecarProvider.tsx` | Mounts the client at the app root |
 | `lib/{hardware,cohorts,sessions,settings}/` | One Provider + store per domain, each wrapping the shared client |
 | `lib/settings/schema.ts` | The settings shape and its normalizer, tolerant of older stored shapes |
-| `lib/sessions/stars.ts` | Deterministic star placement seeded from `(cohortId, animalId)` |
+| `lib/sessions/stars.ts` | Deterministic star placement seeded from `(cohortId, animalId)`, plus the nearest-neighbour link pass |
 | `lib/prng.ts` | The `mulberry32`-style seeded generator behind every procedural visual |
 | `lib/motion.ts`, `lib/useReduceMotion.ts` | Shared spring definitions and the reduced-motion hook |
+| `styles/index.css` | **The theme.** Tailwind v4 `@theme` block — every colour, font, and radius token lives here. There is no `tailwind.config.js` |
 | `routes/` | One component per top-level view, wired in `App.tsx` under a shared `AppShell` |
 | `components/chrome/` | Persistent shell: sidebar, titlebar, starfield, constellation status widget |
 | `components/cohorts/` | Cohort grid, editor panels, procedural icon, Auto-Balance |
 | `components/debug/` | Console panels, flash dialog, state badges, utility controls |
-| `components/sessions/` | Mission Control surfaces — 3D constellation, metric charts, star panel, task config form, journey rail, placement banner |
+| `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, task config form, journey rail, placement banner |
 
 **`HardwareProvider` is mounted at the app root, not per-view**, because the sidebar's constellation status widget needs box health on every screen — not only in Debug Mode.
 
@@ -134,7 +137,7 @@ Talks to the sidecar over the WebSocket only.
 | `/session/:id/control` | Mission Control + 3D constellation | Wired |
 | `/settings` | Settings | Wired |
 | `/analytics` | Analytics | **Stub** — also serves as the session-end landing |
-| `*` | Falls back to the dashboard rather than a blank pane | — |
+| `*` | Falls back to the dashboard rather than a blank pane or a 404 | — |
 
 ### 2.3 Rust shell — `src-tauri/src/`
 
@@ -150,11 +153,11 @@ The interpreter resolves to `sidecar/.venv` unless `EPHYMERIS_SIDECAR_PYTHON` ov
 
 ## 3. Wire Surface at a Glance
 
-`websocket-protocol.md` is canonical and carries every argument, result, and payload shape. This is the index.
+[`websocket-protocol.md`](websocket-protocol.md) is canonical and carries every argument, result, and payload shape. This is the index.
 
-The surface is 33 commands, 11 events, and 21 error codes. All 32 non-`auth` commands are registered in `app.py`; `auth` is handled in `server.py` as the connection's mandatory first message.
+The surface is **33 commands, 11 events, 21 error codes**. 32 commands are registered in `app.py`; `auth` is handled in `server.py` as the connection's mandatory first message and never reaches the dispatch table.
 
-**Envelope.** JSON over loopback. Client→server is always a command carrying a client-generated `id`. Server→client is either a correlated reply (`corr`, exactly one per command) or an unsolicited event. Protocol version mismatches are rejected, not best-effort parsed.
+**Envelope.** JSON over loopback. Client→server is always a command carrying a client-generated `id`. Server→client is either a correlated reply (`corr`, exactly one per command) or an unsolicited event. Protocol version mismatches are rejected, not best-effort parsed. `PROTOCOL_VERSION` is `1`.
 
 ### Commands (33 including `auth`)
 
@@ -173,11 +176,13 @@ The surface is 33 commands, 11 events, and 21 error codes. All 32 non-`auth` com
 
 `server.hello` · `port.state` · `port.output` · `boards.presence` · `flash.progress` · `sketches.updated` · `cohorts.updated` · `prefixes.updated` · `session.telemetry` · `session.animalEnded` · `sidecar.error`
 
-`sidecar.error` is defined and mirrored but nothing emits it yet — it is reserved for failures with no command to attribute them to, such as a mid-session `.tsv` write failure.
+All eleven are emitted. `sidecar.error` fires on a mid-session `.tsv` write failure — the failure with no command to attribute it to, and the one a user most needs to hear about immediately.
 
 ### Error codes (21)
 
 `BAD_MESSAGE` · `UNKNOWN_COMMAND` · `UNAUTHORIZED` · `PROTOCOL_VERSION_MISMATCH` · `ILLEGAL_TRANSITION` · `SEND_NOT_PASSTHROUGH` · `PORT_NOT_BOUND` · `PORT_OPEN_FAILED` · `FLASH_FAILED` · `SKETCH_UNKNOWN` · `COHORT_NOT_FOUND` · `COHORT_NAME_TAKEN` · `COHORT_INVALID` · `COHORT_NOT_ARCHIVED` · `DATA_FOLDER_INVALID` · `PREFIX_NAME_TAKEN` · `SESSION_INVALID` · `SESSION_NOT_READY` · `TASK_PROFILE_INVALID` · `DIR_INVALID` · `INTERNAL`
+
+`DIR_INVALID` is defined in both mirrors but **never raised** — directory problems surface as a `DirectoryStatus` payload instead. See the note in `websocket-protocol.md` §6.
 
 ### Changing the wire — the required order
 
@@ -186,68 +191,72 @@ There is no codegen. The surface is small enough that a build step would cost mo
 1. Update `docs/websocket-protocol.md` (the source of truth).
 2. Update `sidecar/ephymeris_sidecar/protocol.py`.
 3. Update `src/lib/ws/protocol.ts`.
-4. Run `pytest tests/test_protocol_contract.py` — 69 tests that fail the build if the mirrors drift.
+4. Run `pytest tests/test_protocol_contract.py` — **69 cases** that fail the build if the mirrors drift.
 
-### Behaviors worth knowing before you debug
+That test compares **names and the protocol version** across all three files. It does not check payload shapes, and it does not verify that a command has a handler.
 
-- **State replay on connect.** After a successful `auth` the server replays current state to that client alone: one `port.state` per box, one `boards.presence`, one `sketches.updated`, one `cohorts.updated`. Without this, a client connecting during a quiet period would have to guess — which the protocol forbids.
+### Behaviours worth knowing before you debug
+
+- **State replay on connect.** After a successful `auth` the server unicasts current state to that client alone: one `port.state` per box, then `boards.presence`, `sketches.updated`, `cohorts.updated`, and `prefixes.updated`. **Live session state is not replayed** — a client reconnecting mid-session must call `sessions.status` to learn what is running.
 - **Settings re-push on every auth**, including reconnects. This is the wire-level implementation of the one-directional Tauri→sidecar sync.
 - **`port.output` is batched at ~20 Hz**, not one message per line. Six chatty boxes would otherwise flood the UI.
 - **Client-side timeouts don't cancel sidecar work.** Default 15 s; `port.flash` gets 300 s and `sketches.refresh` 60 s. The sidecar remains the authority on what actually happened.
 
 ---
 
-## 4. Core Domain Behaviors
+## 4. Core Domain Behaviours
 
 Condensed; each links to the spec that owns it.
 
-### 4.1 Per-port state machine — `hardware-interaction.md` §3
+### 4.1 Per-port state machine — [`hardware-interaction.md` §3](hardware-interaction.md#3-per-port-state-machine)
 
 Six states: `IDLE`, `PASSTHROUGH`, `FLASHING`, `RESETTING`, `IN_SESSION`, `ERROR`. Each of the six ports runs its own independent machine, enforced in `ports/states.py`.
 
-```
-IDLE ────────► PASSTHROUGH ────────► IDLE
-IDLE ────────► FLASHING ───────────► IDLE  (or auto-resume PASSTHROUGH)
-IDLE ────────► RESETTING ──────────► IDLE  (or auto-resume PASSTHROUGH)
-IDLE ────────► IN_SESSION ─────────► IDLE
-PASSTHROUGH ─► FLASHING | RESETTING       (force-releases the port first)
-any state ───► ERROR                      (on failure)
-ERROR ───────► IDLE                       (manual ack only)
-```
+| From | May go to |
+|---|---|
+| `IDLE` | `PASSTHROUGH` · `FLASHING` · `RESETTING` · `IN_SESSION` · `ERROR` |
+| `PASSTHROUGH` | `IDLE` · `FLASHING` · `RESETTING` · `ERROR` |
+| `FLASHING` | `IDLE` · `PASSTHROUGH` · `ERROR` |
+| `RESETTING` | `IDLE` · `PASSTHROUGH` · `ERROR` |
+| `IN_SESSION` | `IDLE` · `ERROR` |
+| `ERROR` | `IDLE` only, by manual ack |
 
-The deliberate absences matter: nothing enters `IN_SESSION` except from `IDLE`, and `IN_SESSION` leads only to `IDLE` or `ERROR`.
+The deliberate absences matter: nothing enters `IN_SESSION` except from `IDLE` — `PASSTHROUGH → IN_SESSION` is illegal — and `IN_SESSION` leads only to `IDLE` or `ERROR`.
 
 **The auto-resume exception.** Flash and reset normally resume `PASSTHROUGH` if that was the pre-operation state. The session flash sequence passes `suppressPassthroughResume: true` so boxes land in `IDLE` for the runner to claim.
 
-**Board presence is out-of-band.** Polled via `arduino-cli board list` every 1–2 s, never opening a port, so it never contends for ownership. A box reports "connected" and "flashing" as two independent facts.
+**Board presence is out-of-band.** Polled via `arduino-cli board list` every 1.5 s, never opening a port, so it never contends for ownership. A box reports "connected" and "flashing" as two independent facts.
 
-### 4.2 Session data path — `starting-a-session.md` §7, `data-saving.md` §7
+### 4.2 Session data path — [`starting-a-session.md` §7](starting-a-session.md#7-in_session--resolving-the-hardware-layer-tbd), [`data-saving.md` §7](data-saving.md#7-write-strategy--crash-safety)
 
 Per box, on Start:
 
 1. `IDLE → IN_SESSION` (refused from any other state).
 2. Open the port — which itself triggers the Mega's DTR auto-reset.
-3. Wait for the board's `READY` line.
+3. Wait for the board's `READY` line, up to 10 s, then `ERROR`.
 4. Send the built `START …` command.
-5. Briefly watch for an optional `SEED\t<value>` line; proceed either way.
-6. Enter strict strobe parsing: a data line is exactly `^\d{1,3}\t\d+$`, read as `[code, timestamp]`. Anything else is logged to scrollback but never treated as data.
+5. Watch 1.5 s for an optional `SEED\t<value>` line; proceed either way.
+6. Enter strict strobe parsing: a data line is exactly `^\d{1,3}\t\d+$`, read as `[code, timestamp]`. Anything else goes to scrollback but is never treated as data.
 7. Every parsed strobe is appended to that animal's `.tsv` and `flush()`+`fsync()`'d **immediately**, and updates any matching rolling live metric.
 
-**Clean exit:** the board's own end-of-session strobe → finalize → `IN_SESSION → IDLE`.
+**Clean exit:** the board's own end-of-session strobe → finalize → `IN_SESSION → IDLE`. That strobe is found by *name* — the first entry in the profile's `strobes` map containing `END_SESSION` — not by a fixed code.
+
 **Board drop:** always a hard stop into `ERROR` with `stop_reason: "board disconnected"`, cleared by manual `port.error.ack`. No auto-recovery, by design — the write-ahead log already made every strobe durable, so the hard-stop policy costs nothing in data.
 
-**Why `.tsv` is not a third export format.** It is the write-ahead log that makes the durability guarantee real. `.json` and `.mat` are built once, at clean finalization, from the same in-memory buffer. Per-line `fsync` is affordable because real sessions average well under one event per second.
+**Why `.tsv` is not a third export format.** It is the write-ahead log that makes the durability guarantee real. `.json` and `.mat` are built once, at clean finalization, from the same in-memory buffer, and a failure to write them is logged rather than raised. Per-line `fsync` is affordable because real sessions average well under one event per second.
 
-### 4.3 Task Profiles — `data-saving.md` §6
+### 4.3 Task Profiles — [`data-saving.md` §6](data-saving.md#6-task-profiles)
 
 A sketch may ship a `task.json` sibling to its `.ino`. This is what lets the app render a config form and live charts without hardcoding any one task.
 
 - `kind: "behavior"` (the default) declares `config`, `strobes`, and `liveMetrics` — a scored `IN_SESSION` task.
 - `kind: "utility"` declares `controls` and `telemetry` instead — a `PASSTHROUGH` tool (priming, self-test) driven from Debug Mode. These ride existing passthrough primitives; nothing new on the wire, nothing persisted.
 
+`kind` is a **convention, not a schema gate** — the parser accepts every field from every profile regardless of kind.
+
 A sketch with no `task.json` is fully supported: bare `START`, and a raw scrolling strobe log instead of charts. **Never special-case a particular sketch (e.g. GRGL) in app code** — drive everything off the profile.
 
-### 4.4 Cohorts — `cohorts.md`
+### 4.4 Cohorts — [`cohorts.md`](cohorts.md)
 
 Cohort → Animals → Groups, in SQLite in the app data directory (*not* in the user's `dataDirectory`, which is for browsable session output).
 
@@ -257,9 +266,9 @@ Cohort → Animals → Groups, in SQLite in the app data directory (*not* in the
 - Groups always exist, implicitly if the user never makes one, so grouped and ungrouped cohorts share one code path.
 - Archive is the everyday reversible delete; permanent delete is available only *from* the archived view and never touches the data folder on disk.
 
-### 4.5 Arduino Directory — `arduino-directory.md`
+### 4.5 Arduino Directory — [`arduino-directory.md`](arduino-directory.md)
 
-A configured root folder is the only source of flashable sketches; there is no arbitrary-file fallback. Any top-level folder other than the reserved `libraries/` is a category, categories may nest, and a sketch's category is the folder directly containing it.
+A configured root folder is the only source of flashable sketches; there is no arbitrary-file fallback. Any top-level folder other than the reserved `libraries/` is a category, categories may nest up to five levels, and a sketch's category is the folder directly containing it.
 
 **A folder is a valid sketch only if it holds a `.ino` matching the folder's own name.** This is arduino-cli's requirement, and it is the single most common reason a sketch silently fails to appear. Folders that fail it are skipped **and reported**, never silently dropped.
 
@@ -274,17 +283,17 @@ Only the **root** `libraries/` is passed to `arduino-cli --libraries`, so every 
 | Per-port state machine | **Done** | Verified against real Mega2560 hardware |
 | Passthrough read/send | **Done** | Including the CR/LF/CRLF split-line handling |
 | Flashing + DTR reset | **Done** | Sequential; session sequence halts at first failure |
-| Board presence polling | **Done** | Out-of-band, never opens a port |
+| Board presence polling | **Done** | Out-of-band at 1.5 s, never opens a port |
 | Arduino Directory discovery | **Done** | All four states; `--libraries` confirmed against arduino-cli 1.5.1 |
-| WebSocket protocol | **Done** | Every command and event implemented except `sidecar.error`, which nothing emits yet |
+| WebSocket protocol | **Done** | All 33 commands and 11 events implemented and emitted |
 | Cohorts (model, UI, Auto-Balance) | **Done** | |
 | Settings | **Done** | Except that `backupDirectory` is collected but unused |
 | Session flow (config → mapping → flash) | **Done** | |
-| Mission Control + 3D constellation | **Done** | Zoomed star view currently shows a recent-strobe feed; live-metric charts live in the general view's metric strip |
+| Mission Control + 3D constellation | **Done** | Zoomed star view currently shows a recent-strobe feed; live-metric sparklines live in the per-box cards |
 | `IN_SESSION` runner + file writing | **Done** | `.tsv` write-ahead log, `.json`/`.mat` at finalization |
 | Task Profiles (behavior + utility) | **Done** | |
 | **Analytics** | **Stub** | `<PlaceholderView>`; also the session-end landing |
-| **Backup Directory** | **Not built** | Setting exists and is pushed; nothing writes to it |
+| **Backup Directory** | **Not built** | Setting exists and is pushed; nothing in the sidecar reads it |
 | **Windows packaging** | **Not started** | Sidecar freezing, `arduino-cli` bundling, signing, CI |
 | **arduino-cli gRPC daemon** | **Deferred** | Committed migration behind the `BoardTool` seam |
 | **Crash recovery utility** | **Not built** | Backfill `.json`/`.mat` from an orphaned `.tsv` |
@@ -318,7 +327,7 @@ The Tauri shell expects the sidecar interpreter at `sidecar/.venv`; override wit
 
 ### Test map
 
-332 sidecar tests, 2 Rust tests, no frontend test runner.
+**332 sidecar tests · 2 Rust tests · no frontend test runner.**
 
 | Test file | Tests | Covers |
 |---|---:|---|
@@ -350,23 +359,41 @@ Don't add a sidecar runtime dependency without strong justification.
 
 ### Theme constraints
 
-Dark mode only for v1 — no light mode, not even a placeholder toggle. Six tokens: Void, Nebula, Halo, Pulsar, Ion, Starlight. **Pulsar is deliberately matte** — no gradients, no glow. That is the explicit guard against scope creep.
+Dark mode only for v1 — no light mode, not even a placeholder toggle. Six palette tokens: **Void, Nebula, Halo, Pulsar, Ion, Starlight**, plus `Static` for muted text and three `status-*` values for state. All of them are declared in one place, `src/styles/index.css`, as a Tailwind v4 `@theme` block — **there is no `tailwind.config.js`.**
+
+**Pulsar is deliberately matte** — no gradients, no glow. That is the explicit guard against scope creep.
 
 Three faces with fixed roles: Space Grotesk for headers only, Inter for UI text, JetBrains Mono for all data, timestamps, and IDs. Motion is spring-physics everywhere except the 3D camera's zoom-to-star move, which is the one deliberate cubic-easing exception.
 
 ---
 
-## 7. Glossary
+## 7. Known rough edges in the code
+
+Small things that are true today and will confuse a reader who assumes otherwise. None are bugs; all are tracked in [TODO.md](TODO.md) where they need a decision.
+
+- **`MetricChart.tsx` is dead code.** It implements exactly the rolling live-metric chart that `starting-a-session.md` §6.4 describes as deferred — correctly, with its chance line — and nothing imports it. Re-landing that feature is a wiring job.
+- **`PlaceholderView` claims three callers, has one.** Its doc comment describes "the three unwired sections" and it exposes a `preview` prop nobody passes. Only Analytics uses it now.
+- **`RatPlacementBanner.tsx` is ~780 lines**, by a wide margin the largest file in `src/`. That is not complexity to be refactored away: it is a hand-authored isometric SVG animation — six pose tables across nine choreography phases, an articulated hand, a rat drawn as bezier paths. It contains no data logic at all.
+- **The "six-token palette" is seven `@theme` colours** once `Static` is counted, plus three status values. Several code comments say six. The six named in `ephymeris_v1.0.md` §2.2 are the ones that carry the theme's identity; `Static` is a text weight.
+- **`.tsv` files are opened in truncating write mode.** The `HHMMSS` in the filename makes collision practically unreachable, so this has never bitten — but it is the durable file.
+
+---
+
+## 8. Glossary
 
 | Term | Meaning |
 |---|---|
 | **Box** | One of up to six Arduino Mega2560 R3 behavior chambers. Identified by box number 1–6 — the stable key everywhere |
 | **Binding** | The `box_number → hardware_id` map in Settings. `hardware_id` is the board's USB serial number, stable across COM renumbering |
 | **Strobe** | One event line from the board: `<code>\t<timestamp_ms>`, elapsed since that animal's own session start |
-| **Passthrough** | Raw bidirectional serial monitoring. Opaque text, ephemeral, never persisted beyond a ~2000-line ring buffer |
+| **Passthrough** | Raw bidirectional serial monitoring. Opaque text, ephemeral, never persisted beyond a 2000-line ring buffer |
 | **Task Profile** | A sketch's optional `task.json`, declaring its config fields, strobe names, and live metrics |
 | **Prefix** | A global task/paradigm name (e.g. `2O-Bdisc`) used in session folder naming. Shared across all cohorts |
 | **Group** | A subset of a cohort's animals that run together. Groups run consecutively, which is why a box number may repeat across them |
 | **Session** | One invocation of the session flow, possibly spanning several consecutive group runs |
 | **Write-ahead log** | The per-animal `.tsv`, fsync'd per line. The mechanism behind the crash-durability guarantee |
-| **Constellation** | The astronomy motif used in three places: the sidebar status widget, the procedural cohort icon, and Mission Control's 3D view |
+| **Constellation** | The astronomy motif, used in three places with three different link rules: the sidebar status widget (fixed adjacency), the procedural cohort icon (seeded nearest-neighbour), and Mission Control's 3D view (seeded nearest-neighbour, per animal) |
+
+---
+
+[Documentation index](README.md) · [Open items register](TODO.md)

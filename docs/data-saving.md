@@ -1,10 +1,18 @@
-# Data Saving — Full Spec
+# Data Saving
 
-**Status:** Living document. **Implemented** as of this revision — §§1–7 and §9 are built and verified against real hardware. Two exceptions, both called out in place: §5.1's `.mat` writer deviates from `scipy` (see below), and **§8's Backup Directory mirroring is not built** — the setting exists, nothing writes to it yet. Written alongside `starting-a-session.md`; the two depend on each other and should be read together — this doc defines what gets written and where, that one defines what triggers the writing.
-**Companion documents:** `cohorts.md` (the `dataFolder`/`Settings.dataDirectory` this doc writes beneath), `hardware-interaction.md` (the `IN_SESSION` state this doc's writes are sourced from), `arduino-directory.md` (sketch identity — `sketch` metadata is the exact discovered sketch name), `websocket-protocol.md` (wire schema, extended in §9), `ephymeris_v1.0.md` (Settings' `dataDirectory`/backup directory).
-**Not yet covered:** analytics queries over saved session data (a future doc, once Analytics moves past its stub).
+> **Status** · Living spec — **Built and verified against real hardware**, for §§1–7 and §9. Two exceptions, both called out in place: §5.1's `.mat` writer deviates from the originally-named `scipy`, and **§8's Backup Directory mirroring is not built at all.**
+>
+> **Owns** · The on-disk layout, the per-animal file schema, the Task Profile mechanism, and the crash-safety strategy.
+>
+> **Read with** · [starting-a-session.md](starting-a-session.md) (what triggers these writes — the two were written together) · [cohorts.md](cohorts.md) (the `dataFolder` written beneath) · [websocket-protocol.md](websocket-protocol.md) (canonical for the commands §9 proposed)
+>
+> **Still open** · Backup Directory mirroring · the crash-recovery backfill utility
 
-Built directly against a real session file (`remy1_2O-Bdisc_25_07_22_26_113123.json`) and the current GRGL firmware (`GRGL_2-Odor.ino`, `GRGLSession.h`), rather than an invented schema — the structure below is what that file actually contains.
+**Contents** — [1. Directory Structure](#1-directory-structure) · [2. Naming](#2-naming-conventions) · [3. Session Prefix](#3-session-prefix) · [4. Session Entity](#4-session-entity) · [5. File Schema](#5-per-animal-session-file-schema) · [6. Task Profiles](#6-task-profiles) · [7. Crash Safety](#7-write-strategy--crash-safety) · [8. Backup](#8-backup-strategy) · [9. Wire Messages](#9-wire-messages-merged) · [10. Resolved Decisions](#10-resolved-decisions) · [11. Open Items](#11-open-items--tbd)
+
+> **`.tsv` is not an export format.** It is the **write-ahead log** — the mechanism that makes the crash-durability guarantee real. Every strobe is `flush()`+`fsync()`'d to it the instant it arrives. `.json` and `.mat` are built once, at clean finalization, from the same in-memory buffer. Read §7 before treating `.tsv` as redundant with the other two.
+
+Built directly against a real session file (`remy1_2O-Bdisc_25_07_22_26_113123.json`) and the current GRGL firmware (`GRGL_2-Odor.ino`, `GRGLSession.h`) rather than an invented schema — the structure below is what that file actually contains.
 
 ---
 
@@ -182,7 +190,9 @@ A sketch with **no `task.json`** is fully supported — no config form appears b
 }
 ```
 
-- **`kind`** is `"behavior"` (the default when omitted) or `"utility"`. A **behavior** profile is a scored `IN_SESSION` task, described by the three fields below. A **utility** profile is a `PASSTHROUGH` tool (priming, box self-test) described instead by `controls` + `telemetry` (§6.6); it has no `config`/`strobes`/`liveMetrics` since it isn't a scored run. This keeps every profile-less-but-now-declared utility sketch first-class without special-casing it in app code.
+- **`kind`** is `"behavior"` (the default when omitted) or `"utility"`. A **behavior** profile is a scored `IN_SESSION` task, described by the three fields below. A **utility** profile is a `PASSTHROUGH` tool (priming, box self-test) described instead by `controls` + `telemetry` (§6.6), since it isn't a scored run. This keeps a utility sketch first-class without special-casing it in app code.
+
+  > **`kind` is a convention, not a schema gate.** The parser reads `config`, `strobes`, `liveMetrics`, `controls`, and `telemetry` from *every* profile regardless of `kind`, and unknown top-level keys are ignored silently. So a `utility` profile carrying `liveMetrics` is accepted and simply never scored, and a malformed `kind` is the only thing that will actually be rejected. Write profiles to the convention — nothing will enforce it for you.
 - **`config`** drives three things from one declaration: the pre-flight config form (`starting-a-session.md` §3), the `START` command built from it (§6.3), and the metadata fields written into the session file (§5) — `metadataKey` is the JSON/`.mat` field name, `wireKey` is the `START` command token.
 - **`strobes`** is a human-readable code→name map for debugging/display; not required for `liveMetrics` to compute (those reference raw codes directly), but worth having so a raw strobe log or an error message can show a name instead of a bare `249`.
 - **`liveMetrics`** are rolling-window response-probability metrics — the general form of "P(R | Odor 1)." `windowSize: 20` deliberately matches the sketch's own anti-bias `biasWindow` default, not picked arbitrarily.
@@ -203,7 +213,14 @@ Getting this exactly right matters — it's the actual scientific output, not ju
 - `alternateCode` found first → counts as a **miss** (still counts toward the denominator — this is "did they go to the other side," not "did they fail to respond").
 - Neither found before the scan stops (lazy/invalid/no-response trial) → **excluded entirely**, from both numerator and denominator.
 
-This directly implements "the probability the animal responded at [a well] following [an odor] — does not mean only rewarded trials": it's response-conditional (excludes true non-responses) but reward-unconditional (a response that was detected but then failed the hold-verification, or that inherently didn't need a hold, still counts — `hardware-interaction.md`'s Mega firmware fires `WATER_POKE_L`/`R` the instant a poke is *detected*, before any hold check). The rolling window is the last `windowSize` *counted* (hit-or-miss) trials, not the last `windowSize` strobe events.
+This directly implements "the probability the animal responded at [a well] following [an odor] — does not mean only rewarded trials": it's response-conditional (excludes true non-responses) but reward-unconditional (a response that was detected but then failed the hold-verification, or that inherently didn't need a hold, still counts — `hardware-interaction.md`'s Mega firmware fires `WATER_POKE_L`/`R` the instant a poke is *detected*, before any hold check). The rolling window is the last `windowSize` *counted* (hit-or-miss) trials, not the last `windowSize` strobe events. `windowSize` defaults to **20** when a profile omits it.
+
+Two consequences fall out of that definition and are worth stating so nobody reads them as bugs:
+
+- **A `successCode` or `alternateCode` arriving with no trial open is ignored entirely.** It is not counted as anything. Only a strobe following a `triggerCode` can score.
+- **`n` legitimately lags the true trial count**, because excluded trials never enter the window. A metric reading `n=14` after 20 triggers means six trials had no response — which is information, not a defect.
+
+Every metric's `triggerCode` acts as a trial boundary for *every other* metric in the profile, so an unanswered trial is closed rather than left open to be scored by a later, unrelated strobe.
 
 ### 6.6 Utility Profiles — Controls & Telemetry
 
@@ -249,11 +266,13 @@ Every parsed strobe (`starting-a-session.md` §7 step 7) is appended to that ani
 
 A short header, written once immediately after `START`/`SEED` resolve (before the first strobe arrives, since everything needed is already known by then): `rat`, `serial_port`, `session_id`, `sketch`, and any Task Profile config fields, each as a `# key: value` comment line. Raw strobe lines follow below it. `stop_reason` and `n_events` aren't knowable yet at that point, so they're **appended as a footer** at clean finalization (§7.3) — a `.tsv` recovered mid-session is missing only that footer, nothing else.
 
-**If the write itself fails** (disk full, permissions) mid-session, that's surfaced via `sidecar.error` (`websocket-protocol.md` §4) — there's no user command to attribute it to, same reasoning that error hook already exists for.
+**If the write itself fails** (disk full, permissions) mid-session, that's surfaced via `sidecar.error` (`websocket-protocol.md` §4) — there's no user command to attribute it to, which is the exact reason that error hook exists. **This is built:** the runner catches the write failure, logs it, and broadcasts `sidecar.error` naming the box. The strobe is dropped rather than retried, and the run continues — the operator is told immediately that data is no longer being saved, and can decide what to do about it.
 
 ### 7.2 `.json`/`.mat` are built once, at the end
 
 Structured formats aren't append-friendly, and — this is the point — they don't need to be, because `.tsv` already carries the real-time durability guarantee. Rewriting `.json`/`.mat` throughout a session would just be extra I/O for no additional safety. The sidecar keeps the same in-memory event list it's simultaneously flushing to `.tsv`, and serializes it into both structured formats once, when the animal's run cleanly ends (`stop_reason`/`n_events` now known) — exactly the process described in §5.1 for `.mat`, unchanged for `.json`.
+
+Finalization is **idempotent** (the first `stop_reason` wins, so a double-stop can't rewrite history) and the two structured writes are **best-effort**: an `OSError` writing `.json` or `.mat` is logged, not raised. That ordering is deliberate — the `.tsv` is already closed and durable by then, so a failure to produce the convenience formats must never be allowed to look like a failure to save the data.
 
 ### 7.3 Recovery scope — data durability, not session resumption
 
@@ -317,3 +336,8 @@ Session lifecycle commands/events (`session.start`, per-animal telemetry, etc.) 
 - [ ] Small recovery utility to backfill `.json`/`.mat` from an orphaned `.tsv` after a crash, with `stop_reason: "recovered after crash"` — cheap given §7's design, deliberately out of scope for this pass (§7.3)
 - [ ] Exact backup mirroring interval for `.tsv` beyond "every ~5–10s" (§8) — blocked on the above being built at all
 - [ ] Exact backup trigger cadence for `ephymeris.db` beyond "app start + every cohort-affecting write" (§8) — may need a periodic timer too if the app runs unattended for long stretches
+- [ ] `.tsv` files are opened in truncating write mode. The `HHMMSS` in the filename (§2) makes a collision practically unreachable, so this has never bitten — but the durable file's open mode is the one place where "practically unreachable" is worth a second look
+
+---
+
+**You've reached the end of the reading order.** Back to the [documentation index](README.md) · [Open items register](TODO.md) · [Engineering reference](reference.md)

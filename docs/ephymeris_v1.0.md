@@ -1,18 +1,29 @@
-# Ephymeris — Tech Stack & Dashboard Design
+# Tech Stack & Dashboard Design
 
-**Status:** Living document. Covers overall tech stack, dashboard/landing window IA, and app theme. **v1 scope (§4) is implemented** — dashboard shell + full theme, Debug Mode and Settings wired end-to-end, the other three sections as placeholders.
-**Companion document:** `hardware-interaction.md` (serial/Arduino hardware layer full spec), `arduino-directory.md` (sketch/library discovery), `websocket-protocol.md` (frontend ↔ sidecar message schema), `cohorts.md` (cohort/animal/group model and the Cohorts tab).
-**Not yet covered (future sections):** session-setup flow, analytics view spec, full settings schema.
+> **Status** · Living spec — **Built.** Dashboard shell, the full theme, Cohorts, Debug Mode, Settings, and the session flow are all wired end to end. Analytics alone is still a placeholder.
+>
+> **Owns** · Tech stack, app identity, theme tokens, dashboard information architecture, and Settings ownership.
+>
+> **Read with** · [hardware-interaction.md](hardware-interaction.md) (the serial layer) · [cohorts.md](cohorts.md) (the Cohorts tab) · [websocket-protocol.md](websocket-protocol.md) (the wire schema) · [arduino-directory.md](arduino-directory.md) (sketch discovery)
+>
+> **Still open** · Analytics view spec · the full Settings schema · app icon design · Windows packaging
+
+**Contents** — [0. Tech Stack](#0-tech-stack) · [1. App Identity](#1-app-identity) · [2. Theme](#2-theme-astronomy--linux) · [3. Dashboard IA](#3-dashboard--landing-window--information-architecture) · [4. Section Wiring](#4-section-by-section-breakdown--wiring) · [5. Resolved Decisions](#5-resolved-decisions) · [6. Open Items](#6-open-items--tbd)
 
 ---
 
 ## 0. Tech Stack
 
-- **Shell / desktop runtime:** Tauri
-- **Frontend:** React (TypeScript), styled with Tailwind, animated with Framer Motion
-- **Backend:** Python sidecar process (owns all serial I/O, `arduino-cli` interaction, storage, and analytics)
-- **Frontend ↔ sidecar communication:** local WebSocket — see `websocket-protocol.md`
-- **Target platforms:** developed on macOS (Apple Silicon); shipped/run on Windows 11 (both lab machines)
+| Layer | Choice |
+|---|---|
+| **Shell / desktop runtime** | Tauri 2 (Rust) |
+| **Frontend** | React 19 + TypeScript, Vite, Tailwind v4, Framer Motion |
+| **3D** | `three` + `@react-three/fiber` + `@react-three/drei` |
+| **Backend** | Python sidecar process — owns all serial I/O, `arduino-cli` interaction, storage, and analytics |
+| **Frontend ↔ sidecar** | Local WebSocket — see [websocket-protocol.md](websocket-protocol.md) |
+| **Target platforms** | Developed on macOS (Apple Silicon); shipped and run on Windows 11 (both lab machines) |
+
+Tailwind v4 is wired through `@tailwindcss/vite` with **no `tailwind.config.js`** — the design tokens in §2 are declared as an `@theme` block in `src/styles/index.css`, which is therefore the one file that decides what the palette, type scale, and radius scale actually are.
 
 *(Same stack as `hardware-interaction.md` §0 — restated here since this doc stands alone as the UI/theme reference.)*
 
@@ -43,16 +54,17 @@ Dark mode is the default and, for v1, the only mode — light mode is out of sco
 | **Ion** | `#7CC98F` | Secondary accent — muted terminal green. "Connected / nominal / success" status only, used sparingly |
 | **Starlight** | `#EDEBF6` | Primary text |
 
-Secondary/muted text: `Static` `#948FA8` (not a full token, but used consistently enough to name).
+A seventh value, **`Static` `#948FA8`**, carries secondary and muted text. It began as "not a full token, just a value used consistently enough to name," but it is now declared alongside the six in `src/styles/index.css` as `--color-static`. When this project says *the six-token palette*, it means the six above — the six that carry the theme's identity. `Static` is real, and it is deliberately not one of them: it is a text weight, not a colour decision.
 
-**Deliberately matte:** no gradients on the primary accent, no glossy highlights or glow effects on `Pulsar`. Saturation stays low (~30–35%) so the purple reads as a material, not a glow — this is the core stylistic bet of the theme and the thing to protect against scope-creep-by-gradient later.
+> **The core stylistic bet — protect this one.** No gradients on the primary accent. No glossy highlights, no glow effects on `Pulsar`. Saturation stays low (~30–35%) so the purple reads as a *material*, not a light source. This is the thing to defend against scope-creep-by-gradient later.
 
-**Semantic status colors** (derived, used only for state — never decorative):
-| State | Hex | Notes |
-|---|---|---|
-| Connected / Success | `Ion` `#7CC98F` | |
-| Warning | `#D9A15C` | Muted amber |
-| Error | `#C96C6C` | Muted red — matte, not alarm-red |
+**Semantic status colours** — derived, used only for state, never decorative. All three are declared in the same `@theme` block as `--color-status-*`:
+
+| State | Token | Hex | Notes |
+|---|---|---|---|
+| Connected / Success | `--color-status-ok` | `#7CC98F` | The same value as `Ion`, named separately so status usage reads as status |
+| Warning | `--color-status-warning` | `#D9A15C` | Muted amber |
+| Error | `--color-status-error` | `#C96C6C` | Muted red — matte, not alarm-red |
 
 ### 2.3 Typography
 
@@ -93,6 +105,8 @@ The hardware status indicator — present in the sidebar per `hardware-interacti
 - **The frame reflows, not the layout.** The viewBox is fitted to whichever boxes exist (keeping a constant aspect so the sidebar never jumps), so a small rig fills the space instead of huddling in a corner. Framing changes only when boxes are added or removed — a deliberate configuration act, never something that happens mid-session.
 - **Marks keep a constant apparent size.** Node radius and line width scale with the frame, so zooming spreads the *spacing* rather than inflating the dots; a one-box rig renders one normal dot, not one enormous one.
 - **An edge is drawn only when both its endpoints are configured.** A sparse selection (say boxes 1 and 6) can therefore show unconnected nodes — honest, since there is no adjacency to report.
+
+> **Two constellations, two different linking rules — don't conflate them.** This widget (`components/chrome/ConstellationStatus.tsx`) draws a **fixed** adjacency map: six pinned node positions and a hand-authored edge list, because a status readout has to be glanceable and must not reflow. Mission Control's 3D constellation (`starting-a-session.md` §6) is a different object entirely — one star per *animal*, seeded positions, links computed by nearest-neighbour in `lib/sessions/stars.ts`. They share a visual family and nothing else. The open item in §6 is about *this* widget's fixed pair list only.
 
 ---
 
@@ -140,7 +154,17 @@ Note: **Start a Session** is deliberately *not* a sidebar nav item. It's the app
 
 ## 4. Section-by-Section Breakdown & Wiring
 
-Per your instruction, only **Debug Mode** and **Settings** get real wiring for v1. The other three get a shared placeholder pattern rather than dead, inert buttons — clicking them should still feel like the app responded, just with an honest "not yet" rather than nothing happening.
+**Originally:** only Debug Mode and Settings were to get real wiring for v1, with the other three sharing a placeholder pattern rather than dead, inert buttons — clicking should still feel like the app responded, just with an honest "not yet."
+
+**As built:** four of the five are wired. Start a Session, Cohorts, Debug Mode, and Settings are all real; **Analytics is the only remaining placeholder.** The subsections below record each one's journey, since the original reasoning explains why the app is shaped the way it is.
+
+| Section | Route | State |
+|---|---|---|
+| Start a Session | `/session/new` → `/session/:id/mapping` → `/session/:id/control` | **Built** |
+| Cohorts | `/cohorts`, `/cohorts/new`, `/cohorts/:id` | **Built** |
+| Debug Mode | `/debug` | **Built** |
+| Analytics | `/analytics` | **Placeholder** |
+| Settings | `/settings` | **Built** |
 
 ### 4.1 Start a Session — *wired* (was: stub, with real gating logic)
 
@@ -187,7 +211,9 @@ Per your instruction, only **Debug Mode** and **Settings** get real wiring for v
 
 ### Shared: `<PlaceholderView>`
 
-One reusable component covers §4.1, §4.2, and §4.4 — a title, a short explanatory line in the interface's own voice, and (optionally) a disabled preview of what the real view will eventually contain. Building this once effectively "wires" three of the five sections.
+One reusable component — a title, a short explanatory line in the interface's own voice, and optionally a disabled preview of what the real view will eventually contain. It was built to cover §4.1, §4.2, and §4.4 at once, effectively wiring three of the five sections for the price of one.
+
+**It now has exactly one caller: Analytics.** The other two grew into real views. The component's own doc comment still says "the three unwired sections" and its `preview` prop is unused — harmless, but it is the last trace of the original plan, and it will read as confusing to the next person who opens it.
 
 ---
 
@@ -220,6 +246,11 @@ No open questions remaining as of this revision.
 - [ ] Full Settings schema (fields listed in §4.5 are a starting point, not final)
 - [x] ~~WebSocket/IPC message schema (shared with `hardware-interaction.md`), including the settings-push message shape~~ — resolved in `websocket-protocol.md`
 - [ ] App icon / wordmark design for Ephymeris. The titlebar currently carries a placeholder mark — a six-point star knocked out of a Pulsar squircle
-- [ ] Constellation adjacency (§2.7): the spec says lines connect *adjacent* nodes but doesn't enumerate which pairs. Implementation uses `1–2, 2–3, 4–5, 5–6, 1–4, 3–6`, forming one closed shape so no node is ever orphaned. Confirm this matches the intended physical box arrangement in the rig — if boxes are laid out differently on the bench, the map should mirror that. Now that only bound boxes render, a sparse selection can leave nodes with no edges at all, which makes the pair list more visible than it was
+- [ ] **Constellation adjacency (§2.7).** The spec says lines connect *adjacent* nodes but never enumerates which pairs. `components/chrome/ConstellationStatus.tsx` uses `1–2, 2–3, 4–5, 5–6, 1–4, 3–6` — one closed shape, so no node is ever orphaned — over node positions pinned in a 100×54 viewBox. **Confirm this matches the physical box arrangement on the bench;** if the rig is laid out differently, the map should mirror it. Now that only bound boxes render, a sparse selection can leave nodes with no edges at all, which makes the pair list more visible than it used to be. Applies to the sidebar widget only — Mission Control's 3D constellation computes its own links and is unaffected
 - [ ] **Backup Directory does nothing yet.** The setting is collected and pushed to the sidecar, but `data-saving.md` §8's mirroring — session files, the `.tsv` while running, and `ephymeris.db` — is unbuilt. The setting reads as a promise the app doesn't keep, so either build it or hide the field
 - [ ] **Windows packaging** — deliberately deferred while v1 was developed on macOS. Covers: freezing/shipping the Python sidecar (dev builds run it from `sidecar/.venv`), bundling `arduino-cli` + the `arduino:avr` core with the installer per `hardware-interaction.md` §2 (currently uses the machine's own install), Tauri Windows bundling/signing, and a Windows CI build. None of it is started
+
+---
+
+**Next:** [reference.md](reference.md) — the architecture and module map, so the names above map to files.
+[Documentation index](README.md) · [Open items register](TODO.md)

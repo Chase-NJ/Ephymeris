@@ -1,12 +1,25 @@
-# WebSocket / IPC Message Schema — Full Spec
+# WebSocket / IPC Message Schema
 
-**Status:** Living document. Covers the message schema between the React frontend and the Python sidecar. **Every v1 command and event below is implemented** (the one exception: `sidecar.error` is defined and mirrored but nothing emits it yet — reserved for failures with no command to attribute them to).
-**Companion documents:** `hardware-interaction.md` (the hardware layer these messages drive), `arduino-directory.md` (sketch discovery payloads), `ephymeris_v1.0.md` (tech stack, Settings ownership).
-**Not yet covered (future sections):** analytics queries.
+> **Status** · Living spec — **Built.** Every command and event below is implemented and emitted. The surface is **33 commands, 11 events, 21 error codes**.
+>
+> **Owns** · The complete wire schema between the React frontend and the Python sidecar. This document is **canonical** — where any other spec describes a message differently, this one wins.
+>
+> **Read with** · [hardware-interaction.md](hardware-interaction.md) (the hardware layer these messages drive) · [arduino-directory.md](arduino-directory.md) (sketch discovery payloads) · [ephymeris_v1.0.md](ephymeris_v1.0.md) (Settings ownership)
+>
+> **Still open** · Analytics query messages · Debug Mode batch flash · `port.output` back-pressure policy
+
+**Contents** — [1. Transport & Lifecycle](#1-transport--lifecycle) · [2. Envelope](#2-envelope) · [3. Commands](#3-commands-client--server) · [4. Events](#4-events-server--client) · [5. Invariants](#5-invariants) · [6. Error Codes](#6-error-codes) · [7. Versioning](#7-versioning) · [8. Resolved Decisions](#8-resolved-decisions) · [9. Open Items](#9-open-items--tbd)
 
 This document resolves the "WebSocket/IPC message schema" item listed as TBD in `hardware-interaction.md` §8 and `ephymeris_v1.0.md` §6.
 
-**Source of truth:** this file. `sidecar/ephymeris_sidecar/protocol.py` and `src/lib/ws/protocol.ts` are hand-maintained mirrors of it; `sidecar/tests/test_protocol_contract.py` fails the build if the two mirrors drift apart. There is no codegen step — the surface is small enough that a build step would cost more than it saves.
+> **Changing the wire — the required order.** This file is the source of truth. `sidecar/ephymeris_sidecar/protocol.py` and `src/lib/ws/protocol.ts` are **hand-maintained mirrors**, and there is no codegen — the surface is small enough that a build step would cost more than it saves. So drift is prevented by a test instead:
+>
+> 1. Update **this document**.
+> 2. Update `sidecar/ephymeris_sidecar/protocol.py`.
+> 3. Update `src/lib/ws/protocol.ts`.
+> 4. Run `pytest tests/test_protocol_contract.py` — 69 cases that fail the build if any of the three drift.
+>
+> The contract test checks *names and the protocol version*, in all three places. It does **not** check payload shapes, and it does not verify that a command has a handler. Those remain on you.
 
 ---
 
@@ -38,14 +51,19 @@ The token travels in a message body rather than a URL query string, so it never 
 
 ### 1.2 State replay on connect
 
-Immediately after a successful `auth`, the server replays current state to that
-client alone: one `port.state` per box (with `prev` equal to `state` and reason
-`"initial state"`), one `boards.presence`, one `sketches.updated`, and one
-`cohorts.updated`.
+Immediately after a successful `auth`, the server replays current state **to that client alone** (unicast, not a broadcast), in this order:
 
-Events are otherwise emitted only when something changes, so a client that
-connects during a quiet period would have nothing to render and would have to
-guess. Guessing is exactly what §5.2 forbids.
+1. One `port.state` per box — with `prev` deliberately equal to `state`, and reason `"initial state"`.
+2. One `boards.presence`.
+3. One `sketches.updated`.
+4. One `cohorts.updated`.
+5. One `prefixes.updated`.
+
+Events are otherwise emitted only when something changes, so a client connecting during a quiet period would have nothing to render and would have to guess. Guessing is exactly what §5.2 forbids.
+
+> **Live session state is *not* replayed.** No runner snapshot, no `groupId`, no in-flight telemetry. A client that reconnects mid-session gets correct port, board, and cohort state, then must call `sessions.status` to recover what is actually running. This is deliberate — the runner is the authority on the confirmed mapping, and asking it beats replaying a snapshot that could already be stale by the time it arrives.
+
+A replay callback that raises is logged and swallowed rather than dropping the connection.
 
 ### 1.3 Reconnection
 
@@ -95,6 +113,8 @@ Timing out client-side does **not** cancel the sidecar's work. The sidecar remai
 ## 3. Commands (client → server)
 
 `box` is always a **box number, 1–6** — never a port address. See §5.1.
+
+Of the 33 commands, 32 are registered in the sidecar's dispatch table. **`auth` is the exception:** it is consumed by the server's authentication step before dispatch begins and never reaches a handler, because it must be the connection's literal first frame (§1.1).
 
 | Command | Args | Result | Notes |
 |---|---|---|---|
@@ -166,7 +186,7 @@ command — see `data-saving.md` §7.
 | `prefixes.updated` | `{prefixes: [Prefix]}` | Push-on-change for the prefix list, same pattern as `cohorts.updated` |
 | `session.telemetry` | `{box, animalId, metrics: [<TelemetryMetric>]}` | Pushed on every strobe that updates a rolling live metric (`starting-a-session.md` §7 step 7) — **not** batched at `port.output`'s 20Hz, since metric updates are far lower-frequency than raw strobes |
 | `session.animalEnded` | `{box, animalId, stopReason, filePath}` | One animal's run finalized (`starting-a-session.md` §8's `stopReason` set) |
-| `sidecar.error` | `{code, message, detail}` | Failures with no command to attribute them to — includes a `.tsv` write failure mid-session (`data-saving.md` §7.1) |
+| `sidecar.error` | `{code, message, detail}` | Failures with no command to attribute them to. **Emitted** by the session runner when a mid-session `.tsv` write raises (disk full, permissions) — `data-saving.md` §7.1. Carries `code: "INTERNAL"`, a message naming the box, and `detail: {box}` |
 
 ### Shared payload shapes
 
@@ -356,7 +376,9 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | `SESSION_NOT_READY` | `sessions.create` against a cohort with no group holding a box-assigned animal (`starting-a-session.md` §1) |
 | `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed. `detail` carries the parse error; the sketch is otherwise treated as profile-less |
 | `DIR_INVALID` | Arduino Directory missing, not a directory, or unreadable |
-| `INTERNAL` | Unhandled sidecar exception |
+| `INTERNAL` | Unhandled sidecar exception. Also the code carried by `sidecar.error` on a mid-session write failure |
+
+> **`DIR_INVALID` is defined but never raised.** Directory problems surface as a `DirectoryStatus` payload on the `settings.push` reply (§3) rather than as a command error, because the caller wants to *render* the four states from §6 of `arduino-directory.md`, not catch a failure. The code is kept because that reasoning could reverse — but as of today nothing in the sidecar emits it, and a client should not wait for it.
 
 ---
 
@@ -386,6 +408,13 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 - [x] ~~Session-runner messages: `IN_SESSION` start/stop/abort, and the strobe-parsed data stream shape~~ — merged into §3.2/§4 from `data-saving.md` §9 and `starting-a-session.md` §9
 - [x] ~~Whether a crashed sidecar should be auto-respawned by the shell~~ — resolved: **no auto-respawn** (§8)
 - [x] ~~Storage/export message shapes (`.json`/`.mat`/`.tsv`)~~ — the write path is sidecar-side, not a wire message (`data-saving.md` §7); telemetry and finalization are `session.telemetry`/`session.animalEnded` (§4)
+- [x] ~~`sidecar.error` is defined and mirrored but nothing emits it~~ — **resolved.** The session runner now emits it on a mid-session `.tsv` write failure, which was always its intended first use (§4)
 - [ ] Analytics query messages
 - [ ] Multi-port batching (e.g. "flash all 6") — shared with `hardware-interaction.md` §8; whether that is one command with six progress streams or six independent commands
-- [ ] Back-pressure policy if the frontend cannot keep up with `port.output` at 20Hz × 6 boxes (currently: unbounded send, relying on the ring buffer cap)
+- [ ] Back-pressure policy if the frontend cannot keep up with `port.output` at 20 Hz × 6 boxes (currently: unbounded send, relying on the ring buffer cap)
+- [ ] The contract test guards *names*, not *shapes*. A payload field can be added on one side and silently missing on the other. Worth deciding whether that gap is acceptable or wants a second test
+
+---
+
+**Next:** [arduino-directory.md](arduino-directory.md) — short, and flashing depends on it.
+[Documentation index](README.md) · [Open items register](TODO.md)

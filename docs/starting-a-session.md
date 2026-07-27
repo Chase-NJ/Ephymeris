@@ -1,7 +1,34 @@
-# Starting a Session — Full Spec
+# Starting a Session
 
-**Status:** Living document. **Implemented** as of this revision — the full path from the dashboard CTA through configuration, mapping, flashing, `IN_SESSION`, Mission Control and the 3D constellation is built, and was verified end to end against a real Mega running firmware that speaks §7's protocol. Written alongside `data-saving.md`; read together. This doc also resolves several long-standing TBD items: `hardware-interaction.md`'s stubbed `IN_SESSION` state, `websocket-protocol.md` §9's session-runner messages, and `cohorts.md` §12's "what does 'ready to run' mean."
-**Companion documents:** `data-saving.md` (file writing, Task Profiles this doc's config form and live view are driven by), `cohorts.md` (the cohort/animal/group model this doc runs against), `hardware-interaction.md` (per-port state machine — `IN_SESSION` entry/exit is specified here), `arduino-directory.md` (sketch selection), `websocket-protocol.md` (wire schema, extended in §9), `ephymeris_v1.0.md` (the `/session/new` stub this doc replaces, motion conventions).
+> **Status** · Living spec — **Built and verified end to end** against a real Mega running firmware that speaks §7's protocol. The full path from the dashboard CTA through configuration, mapping, flashing, `IN_SESSION`, Mission Control, and the 3D constellation is live.
+>
+> **Owns** · Everything between the "Start a Session" button and a running box: the two setup steps, the flash sequence, `IN_SESSION` entry and exit, and Mission Control.
+>
+> **Read with** · [data-saving.md](data-saving.md) (what the run writes — these two were written together and should be read together) · [cohorts.md](cohorts.md) (the model this runs against) · [hardware-interaction.md](hardware-interaction.md) (the state machine `IN_SESSION` lives in)
+>
+> **Still open** · Switch Group's second lap is untested on hardware · session resumption is out of scope by decision
+
+**Contents** — [1. "Ready to Run"](#1-ready-to-run--resolving-cohortsmd-12) · [2. Step 1 — Configuration](#2-step-1--configuration-menu) · [3. Step 2 — Mapping](#3-step-2--animal--box-mapping-confirmation) · [4. Step 2b — Flashing](#4-step-2b--flashing-sequence) · [5. Mission Control](#5-mission-control--overview) · [6. The 3D Constellation](#6-the-3d-constellation) · [7. `IN_SESSION`](#7-in_session--resolving-the-hardware-layer-tbd) · [8. `stop_reason`](#8-stop_reason-values) · [9. Wire Messages](#9-wire-messages-merged) · [10. Resolved Decisions](#10-resolved-decisions) · [11. Open Items](#11-open-items--tbd)
+
+**The flow at a glance:**
+
+```
+Dashboard CTA
+   │
+   ▼
+Step 1  /session/new          cohort · prefix · session number
+   │
+   ▼
+Step 2  /session/:id/mapping  animal→box · sketch · per-box task config
+   │                          then: sequential flash, halting on first failure
+   ▼
+        /session/:id/control  Mission Control + 3D constellation
+   │                          Start All · Switch Group ⤴ (back to Step 2) · End Session
+   ▼
+        /analytics            session-end landing
+```
+
+This document also resolves three long-standing TBD items: `hardware-interaction.md`'s stubbed `IN_SESSION` state, `websocket-protocol.md` §9's session-runner messages, and `cohorts.md` §12's "what does 'ready to run' mean."
 
 ---
 
@@ -60,7 +87,7 @@ Once the user confirms, each box's sketch is flashed **in sequence**, not in par
 
 **Animated, on-theme progress indicator:** each box's card icon transitions through the same states its Debug Mode badge would (`hardware-interaction.md` §3.4), but rendered here as part of the star motif already established — a box mid-flash shows its star "flaring" (brief animated pulse) rather than a generic spinner, so the visual language stays consistent with the rest of the app rather than switching to a plain loading indicator for this one step.
 
-**Important protocol wrinkle:** `hardware-interaction.md` §3.3 normally auto-resumes `PASSTHROUGH` after a successful flash if that was the pre-flash state. This flow needs the opposite — every box must land in `IDLE` afterward so the session runner can claim it (§5.1's `IN_SESSION` entry requires `IDLE`, same as every other port operation). **Proposed protocol change:** `port.flash` gains a `suppressPassthroughResume: bool` arg (default `false`, preserving existing Debug Mode behavior); this flow sets it `true`. Flagged for `websocket-protocol.md` in §9.
+> **The protocol wrinkle this flow forced.** `hardware-interaction.md` §3.3 normally auto-resumes `PASSTHROUGH` after a successful flash if that was the pre-flash state. This flow needs the opposite — every box must land in `IDLE` afterward so the session runner can claim it, since `IN_SESSION` can only be entered from `IDLE`. So `port.flash` carries a `suppressPassthroughResume: bool` argument, default `false` to preserve Debug Mode's behaviour; this flow sets it `true`. **Built and merged into `websocket-protocol.md` §3.**
 
 On completion, the user lands in Mission Control.
 
@@ -109,7 +136,11 @@ The 3D scene **stays rendering in the background** once arrived — the data pan
 - Animal name.
 - Running sketch (name, and its category from `arduino-directory.md` if useful context).
 - Start / Stop / Reset for that box (§5.3, same actions, just reachable from here too).
-- **Recent strobes** — a fixed five-row feed of the box's most recent strobes, newest first: code chip, the profile's decoded strobe name (`data-saving.md` §6.4; a profile-less sketch shows `Strobe <code>`), and the board-side timestamp. Rows land with the app's snappy spring and dim as they age down the frame; empty slots hold the frame's shape. *Interim design:* the rolling live-metric charts originally specified here (P(hit) over `windowSize`, per `liveMetrics` entry) are deliberately out of the zoomed view for now — the general view's per-box metric strip still shows them — and are expected to return once the zoomed view's layout settles.
+- **Recent strobes** — a fixed five-row feed of the box's most recent strobes, newest first: code chip, the profile's decoded strobe name (`data-saving.md` §6.4; a profile-less sketch shows `Strobe <code>`), and the board-side timestamp. Rows land with the app's snappy spring and dim as they age down the frame; empty slots hold the frame's shape.
+
+> **Interim design.** The rolling live-metric charts originally specified here — P(hit) over `windowSize`, one per `liveMetrics` entry — are deliberately out of the zoomed view for now. The general view's per-box metric strip still shows them as sparklines, so nothing is lost, and they are expected to return once the zoomed view's layout settles.
+>
+> The chart component for this already exists and works: `components/sessions/MetricChart.tsx` renders exactly the specified rolling line with its 0.5 chance line. **It is currently imported by nothing.** Whoever picks this item up is wiring up an existing component, not writing one — but until then it is dead code, and a reader who finds it will reasonably assume it is live.
 - **Back to overview** — reverses the camera move (same eased eached-move convention, §6.3), returns to the pulled-back constellation view.
 
 ### 6.5 Guided-Flow Chrome (spans §2–§6)
@@ -134,13 +165,17 @@ Beneath it sits a single crossfading hint line — the only text direction in th
 
 1. Port transitions `IDLE → IN_SESSION` (refused if not currently `IDLE`, same enforcement rule as every other transition, `hardware-interaction.md` §3.3).
 2. Sidecar opens the port — this itself triggers the Mega's DTR auto-reset (`hardware-interaction.md` §5's existing reset mechanism, not a new one), rebooting the board into `setup()`.
-3. Sidecar waits for the board's `READY` line.
+3. Sidecar waits for the board's `READY` line. **If it never arrives within 10 seconds, the box drops to `ERROR`** with "board never reported READY" — a board that isn't speaking the protocol fails loudly rather than hanging the operator.
 4. Sidecar sends the built `START ...` command (`data-saving.md` §6.3).
-5. Sidecar watches for an optional `SEED\t<value>` line for a brief window (`data-saving.md` §6.4); captures it if present, proceeds either way.
-6. Sidecar enters strobe-parsing mode: unlike `PASSTHROUGH`'s opaque-text handling (`hardware-interaction.md` §6.2), `IN_SESSION` parsing expects lines matching `^\d{1,3}\t\d+$` as `[code, timestamp]` strobe pairs; anything else is logged but not treated as data.
-7. Each parsed strobe both (a) appends to `data-saving.md` §7's in-memory buffer/checkpoint path, and (b) — if its code matches a `liveMetrics` `triggerCode`/`successCode`/`alternateCode` in that sketch's Task Profile — updates the rolling metric pushed to the frontend (§9's telemetry event).
+5. Sidecar watches for an optional `SEED\t<value>` line for a **1.5-second** window (`data-saving.md` §6.4); captures it if present, proceeds either way. A strobe arriving before the window closes also ends it — a board that goes straight to work isn't penalised with a wait.
+6. Sidecar enters strobe-parsing mode: unlike `PASSTHROUGH`'s opaque-text handling (`hardware-interaction.md` §6.2), `IN_SESSION` parsing expects lines matching `^\d{1,3}\t\d+$` as `[code, timestamp]` strobe pairs; anything else is logged to scrollback but never treated as data.
+7. Each parsed strobe both (a) appends to that animal's `.tsv` write-ahead log (`data-saving.md` §7) and its in-memory buffer, and (b) — if its code matches a `liveMetrics` `triggerCode`/`successCode`/`alternateCode` in that sketch's Task Profile — updates the rolling metric pushed to the frontend as `session.telemetry`.
 
-**Exit** (clean): `STOP` sent → board finishes its current trial boundary → emits `BF_END_SESSION` (or whatever the sketch's own end-of-session code is, per its Task Profile's `strobes` map) → sidecar finalizes the file (`data-saving.md` §7) → port transitions `IN_SESSION → IDLE`.
+**Exit** (clean): `STOP` sent → board finishes its current trial boundary → emits its end-of-session strobe → sidecar finalizes the file (`data-saving.md` §7) → port transitions `IN_SESSION → IDLE`, with `stop_reason: "BF_END_SESSION received"`.
+
+> **How the end-of-session strobe is identified.** Not by a fixed code — the sidecar scans the Task Profile's `strobes` map for the **first entry whose name contains `END_SESSION`** and watches for that code. A sketch that names its terminal strobe something else entirely, or ships no profile at all, therefore has no end code, and its run ends only when the operator stops it or the board drops. Worth knowing before writing a new task's `task.json`.
+
+`STOP` is a nudge, not a command with authority: it is written to the port, and nothing else. It does not force a state transition. Only the board's own end strobe does that — or, when the operator ends the whole session, a forced finalization a beat later for any box that didn't answer.
 
 **Exit** (board drop mid-session): **always a hard stop, no auto-recovery attempt.** Reuses `hardware-interaction.md`'s existing machinery rather than inventing new recovery logic — a dropped board during `IN_SESSION` is exactly the failure case that state machine's `ERROR` state already exists for (§3.1: "Port failed to open, board disconnected unexpectedly"), so the port transitions `IN_SESSION → ERROR` the same as any other unexpected failure, and clears via the existing manual `port.error.ack` (§3.2) — the operator acknowledges, then can press Start again on that box to begin a fresh run if they want to resume that animal. The file is finalized immediately at drop, `stop_reason: "board disconnected"` (§8), using whatever was durably captured in `data-saving.md` §7's `.tsv` write-ahead log up to that exact moment — the hard-stop policy costs nothing in data, since real-time durability was already the point of that design.
 
@@ -215,3 +250,9 @@ All of the above now live in `websocket-protocol.md`, same convention as `cohort
 - [x] ~~Whether `SessionAnimalRun` should be written incrementally or only at finalization~~ — **finalization only** (`data-saving.md` §10). Incremental writes only pay off for crash resumption, which is deliberately out of scope
 - [ ] **Switch Group's second lap is untested end to end.** The group-run bookkeeping that makes it advance rather than cycle is verified (the first group is recorded and skipped), but a full two-group session — switch, re-map, re-flash, run, end — hasn't been driven on hardware
 - [ ] Session resumption after an app or sidecar restart remains unsupported and unbuilt, by decision rather than omission. Mission Control recovers a *reload* fine via `sessions.status`, because the sidecar kept running; if the sidecar dies, the run is over and the `.tsv` is the record
+- [ ] **`MetricChart.tsx` is built but unwired** (§6.4). Re-landing the zoomed view's live charts is a wiring job, not a build job
+
+---
+
+**Next:** [data-saving.md](data-saving.md) — what this run actually writes to disk.
+[Documentation index](README.md) · [Open items register](TODO.md)

@@ -5,6 +5,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { useBackupStatus } from "@/lib/backup/useBackupStatus";
+import { RatPlacementBanner } from "@/components/sessions/RatPlacementBanner";
 import { Constellation3D } from "@/components/sessions/Constellation3D";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { MetricStrip } from "@/components/sessions/MetricStrip";
@@ -28,6 +29,7 @@ import {
   useSessionStore,
 } from "@/lib/sessions/context";
 import { populatedGroups, type SessionBox, type SessionSnapshot } from "@/lib/sessions/types";
+import { useBoxAccuracies } from "@/lib/sessions/useBoxAccuracies";
 import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
@@ -39,6 +41,11 @@ import { useSidecar } from "@/lib/ws/context";
  * isn't running yet has to be reachable somewhere, and §6.4 describes the
  * panel's controls as the same actions "just reachable from here too".
  */
+
+/** Trials the star temperatures average over — matches `StarPanel`'s readout
+ *  and the task profiles' own live-metric window, so they never disagree. */
+const ACCURACY_WINDOW = 20;
+
 export function MissionControl() {
   const { id: sessionId } = useParams<{ id: string }>();
   const [params] = useSearchParams();
@@ -88,6 +95,10 @@ export function MissionControl() {
   // actually IN_SESSION are lit and interactive. An animal in a group that
   // isn't running, or with no box at all, is present but inert.
   const portStates = useAllPortStatuses();
+  // A lit star's colour is its temperature, and its temperature is this
+  // animal's pooled rolling accuracy (§6.2) — so the overview answers "who is
+  // doing well" without opening a panel.
+  const accuracies = useBoxAccuracies(boxes, ACCURACY_WINDOW);
   const constellationAnimals = useMemo(() => {
     const boxOf = new Map(boxes.map((b) => [b.animalId, b.box]));
     return (cohort?.animals ?? []).map((animal) => {
@@ -96,9 +107,11 @@ export function MissionControl() {
         animalId: animal.id,
         name: animal.name,
         lit: box !== undefined && portStates[box]?.state === "IN_SESSION",
+        accuracy: accuracies[animal.id] ?? null,
+        box: box ?? null,
       };
     });
-  }, [cohort, boxes, portStates]);
+  }, [cohort, boxes, portStates, accuracies]);
 
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const focusedBox = boxes.find((b) => b.animalId === focusedId) ?? null;
@@ -161,12 +174,34 @@ export function MissionControl() {
     sessionStore.resetBox(box);
   }
 
+  // Shared by the header button and the group-swap prompt (§5.5).
+  function doSwitchGroup() {
+    void run(async () => {
+      const next = await switchGroup(client, sessionId!);
+      // No group left to run means the session is over — land on
+      // Analytics, same as an explicit End Session.
+      if (next === null) {
+        // Carry the cohort and session so Analytics opens on the run
+        // just finished rather than an empty picker (§2.5).
+        navigate("/analytics", {
+          state: {
+            endedSession: sessionName,
+            cohortId: session?.cohortId,
+            sessionId,
+          },
+        });
+        return;
+      }
+      navigate(`/session/${sessionId}/mapping?cohort=${cohortId}&group=${next}`);
+    });
+  }
+
   return (
     <motion.section
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={springPanel}
-      className="mx-auto max-w-5xl px-8 py-8"
+      className="mx-auto max-w-6xl px-8 py-8"
     >
       <SessionJourney step={journeyStep} hint={hint} group={groupInfo} />
       <Header
@@ -204,20 +239,7 @@ export function MissionControl() {
           <Button
             disabled={busy || !connected}
             title="Ends this group's runs, then returns to box confirmation for the next group"
-            onClick={() =>
-              void run(async () => {
-                const next = await switchGroup(client, sessionId!);
-                // No group left to run means the session is over — land on
-                // Analytics, same as an explicit End Session.
-                if (next === null) {
-                  navigate("/analytics", { state: { endedSession: sessionName } });
-                  return;
-                }
-                navigate(
-                  `/session/${sessionId}/mapping?cohort=${cohortId}&group=${next}`,
-                );
-              })
-            }
+            onClick={doSwitchGroup}
           >
             <Users size={13} strokeWidth={1.75} />
             Switch Group
@@ -229,7 +251,13 @@ export function MissionControl() {
           onClick={() =>
             void run(async () => {
               await endSession(client, sessionId!);
-              navigate("/analytics", { state: { endedSession: sessionName } });
+              navigate("/analytics", {
+                state: {
+                  endedSession: sessionName,
+                  cohortId: session?.cohortId,
+                  sessionId,
+                },
+              });
             })
           }
         >
@@ -237,13 +265,49 @@ export function MissionControl() {
         </Button>
       </div>
 
+      {/* §5.5 — the group-swap prompt: every box in this group has finished
+          and another group is waiting, so the operator's next physical act is
+          returning animals to their cages. The placement scene walked
+          backwards says so better than a sentence would. */}
+      <AnimatePresence>
+        {groupDone && !lastGroup && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={springPanel}
+          >
+            <RatPlacementBanner
+              mode="return"
+              boxes={boxes.map((b) => b.box)}
+              caption="All boxes finished — return each animal to its home cage, then switch groups."
+              footer={
+                <Button
+                  variant="primary"
+                  disabled={busy || !connected}
+                  onClick={doSwitchGroup}
+                >
+                  <Users size={13} strokeWidth={1.75} />
+                  Switch Group
+                </Button>
+              }
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {boxes.length === 0 ? (
         <p className="mt-6 text-[13px] text-static">
           No boxes are configured for this session yet.
         </p>
       ) : (
         <>
-          <div className="relative mt-5 h-[440px] overflow-hidden rounded-lg border border-halo">
+          {/* The centrepiece (§6), and sized like one: the constellation is
+              the view's subject, not a thumbnail above the real controls. It
+              takes the viewport's height rather than a fixed pixel box so a
+              large lab monitor gets a genuinely cinematic scene, with a floor
+              that keeps it usable on a laptop. */}
+          <div className="relative mt-5 h-[min(64vh,720px)] min-h-[460px] overflow-hidden rounded-lg border border-halo">
             {cohort && (
               <Constellation3D
                 cohortId={cohort.id}
@@ -275,6 +339,7 @@ export function MissionControl() {
                 key={box.box}
                 box={box}
                 busy={busy || !connected}
+                durationMinutes={session?.durationMinutes ?? null}
                 onStart={() => void run(() => startOne(box.box))}
                 onStop={() => void run(() => stopBox(client, box.box))}
                 onReset={() => void run(() => client.call(CMD.PORT_RESET, { box: box.box }))}
@@ -305,6 +370,12 @@ function Header({
     return () => window.clearInterval(timer);
   }, []);
 
+  // Whole-session elapsed, from the record's startedAt — a different clock
+  // than the per-box ones below, which run from each box's own start.
+  const sessionElapsed = startedAt
+    ? Math.max(0, Math.floor((now.getTime() - new Date(startedAt).getTime()) / 1000))
+    : null;
+
   return (
     <div className="flex flex-wrap items-baseline justify-between gap-4">
       <div>
@@ -317,8 +388,15 @@ function Header({
       </div>
       <div className="flex items-baseline gap-4">
         <BackupPill />
-        <div className="font-mono text-[26px] tabular-nums text-starlight">
-          {clock24(now)}
+        <div className="text-right">
+          <div className="font-mono text-[26px] tabular-nums text-starlight">
+            {clock24(now)}
+          </div>
+          {sessionElapsed !== null && (
+            <div className="mt-0.5 font-mono text-[11px] tabular-nums text-static">
+              {clockSpan(sessionElapsed)} elapsed
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -362,12 +440,14 @@ function clock24(when: Date): string {
 function BoxCard({
   box,
   busy,
+  durationMinutes,
   onStart,
   onStop,
   onReset,
 }: {
   box: SessionBox;
   busy: boolean;
+  durationMinutes: number | null;
   onStart: () => void;
   onStop: () => void;
   onReset: () => void;
@@ -387,6 +467,11 @@ function BoxCard({
           <div className="truncate font-mono text-[11px] text-static">
             {box.sketchName}
           </div>
+          <ElapsedClock
+            startedAt={box.startedAt}
+            live={live}
+            durationMinutes={durationMinutes}
+          />
         </div>
         <StateChip state={port.state} reason={port.reason} />
       </div>
@@ -417,6 +502,56 @@ function BoxCard({
       )}
     </div>
   );
+}
+
+/**
+ * One box's run clock (§5.4): elapsed since *this box's* start, against the
+ * session's optional time limit. Driven by the snapshot's `startedAt` rather
+ * than a client-side stopwatch, so a reloaded window resumes mid-count. Once
+ * time is up the sidecar has already sent STOP — the line says so instead of
+ * counting on, because the run now ends at the board's next trial boundary.
+ */
+function ElapsedClock({
+  startedAt,
+  live,
+  durationMinutes,
+}: {
+  startedAt: string | null;
+  live: boolean;
+  durationMinutes: number | null;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live || !startedAt) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [live, startedAt]);
+
+  if (!live || !startedAt) return null;
+  const elapsed = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 1000));
+  const limit = durationMinutes !== null ? durationMinutes * 60 : null;
+  const timeUp = limit !== null && elapsed >= limit;
+
+  return (
+    <div
+      className="mt-1 font-mono text-[11px] tabular-nums text-static"
+      style={timeUp ? { color: "var(--color-status-warning)" } : undefined}
+    >
+      {clockSpan(elapsed)}
+      {limit !== null && ` / ${clockSpan(limit)}`}
+      {timeUp && " · time up — stopping at the next trial boundary"}
+    </div>
+  );
+}
+
+/** Seconds as m:ss, growing to h:mm:ss for long sessions. */
+function clockSpan(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
 }
 
 function StateChip({ state, reason }: { state: string; reason: string }) {

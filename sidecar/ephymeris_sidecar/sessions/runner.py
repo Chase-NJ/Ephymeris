@@ -62,6 +62,9 @@ class ActiveRun:
     resolved: bool = False
     files: AnimalFilePaths | None = None
     seed: int | None = None
+    #: The scheduled auto-STOP when the session has a time limit (§2.4);
+    #: cancelled on finalize so a box stopped early never gets a ghost STOP.
+    deadline: asyncio.TimerHandle | None = None
     #: Guards writer.record against finalize running concurrently.
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -93,6 +96,7 @@ class SessionRunner:
         self._session_folder: Path | None = None
         self._session_id_label: str = ""
         self._group_id: str = ""
+        self._duration_s: float | None = None
 
     # --- configuration ----------------------------------------------------
 
@@ -102,12 +106,20 @@ class SessionRunner:
         session_id_label: str,
         group_id: str,
         box_configs: list[BoxConfig],
+        duration_s: float | None = None,
     ) -> None:
-        """Store the confirmed mapping for the group about to run (§3)."""
+        """Store the confirmed mapping for the group about to run (§3).
+
+        `duration_s` is the optional per-box time limit: each box gets an
+        auto-STOP scheduled from *its own* start, not from Start All — boxes
+        are started individually, and each animal's run should be the same
+        length.
+        """
         self._session_folder = session_folder
         self._session_id_label = session_id_label
         self._group_id = group_id
         self._configs = {c.box: c for c in box_configs}
+        self._duration_s = duration_s
 
     def clear(self) -> None:
         """Forget a confirmed mapping that never ran (`sessions.abandon`)."""
@@ -117,6 +129,7 @@ class SessionRunner:
         self._session_folder = None
         self._session_id_label = ""
         self._group_id = ""
+        self._duration_s = None
 
     @property
     def group_id(self) -> str:
@@ -137,6 +150,8 @@ class SessionRunner:
                 "sketchName": config.sketch_name,
                 "sketchPath": config.sketch_path,
                 "running": box in self._active,
+                # What lets a reloaded Mission Control resume its elapsed clocks.
+                "startedAt": run.started_at if (run := self._active.get(box)) else None,
             }
             for box, config in sorted(self._configs.items())
         ]
@@ -168,6 +183,13 @@ class SessionRunner:
             end_code=config.profile.end_code if config.profile else None,
         )
         self._active[box] = run
+        # The time limit counts from this box's own start (§2.4). STOP is
+        # still only a request the firmware honours at a trial boundary, so
+        # the deadline sends it and the board's end strobe does the ending.
+        if self._duration_s is not None:
+            run.deadline = self._loop.call_later(
+                self._duration_s, self._on_deadline, box
+            )
 
         self._ports.start_session(
             box,
@@ -259,6 +281,21 @@ class SessionRunner:
         if box in self._active:
             self._ports.stop_session(box)
 
+    def _on_deadline(self, box: int) -> None:
+        """The time limit elapsed for one box — runs on the loop.
+
+        Sends the same STOP an operator would; the board finishes its current
+        trial and emits its end strobe, which finalizes the run through the
+        normal path. A box that already ended cancelled this timer, so getting
+        here means the run is still live.
+        """
+        run = self._active.get(box)
+        if run is None:
+            return
+        run.deadline = None
+        log.info("box %d: session time limit reached; sending STOP", box)
+        self.stop_box(box)
+
     async def finalize_box(self, box: int, reason: str, clean: bool) -> None:
         """Finalize one animal's run and free the box.
 
@@ -270,6 +307,9 @@ class SessionRunner:
             return
         run.resolved = True
         self._active.pop(box, None)
+        if run.deadline is not None:
+            run.deadline.cancel()
+            run.deadline = None
 
         if run.writer is not None:
             await asyncio.to_thread(run.writer.finalize, reason)

@@ -1,7 +1,13 @@
 import { createContext, useCallback, useContext, useSyncExternalStore } from "react";
 
 import type { SessionStore } from "./store";
-import type { AnimalEnded, Prefix, TelemetryMetric } from "./types";
+import type {
+  ActiveSessions,
+  AnimalEnded,
+  Prefix,
+  SessionSnapshot,
+  TelemetryMetric,
+} from "./types";
 
 export const SessionContext = createContext<SessionStore | null>(null);
 
@@ -21,6 +27,27 @@ export function usePrefixesLoaded(): boolean {
   const store = useSessionStore();
   const subscribe = useCallback((cb: () => void) => store.subscribe("prefixes", cb), [store]);
   return useSyncExternalStore(subscribe, () => store.prefixesAreLoaded());
+}
+
+/** The global "what is running?" answer — null until the first load. */
+export function useActiveSessions(): ActiveSessions | null {
+  const store = useSessionStore();
+  const subscribe = useCallback((cb: () => void) => store.subscribe("active", cb), [store]);
+  return useSyncExternalStore(subscribe, () => store.getActive());
+}
+
+/** Distinguishes "nothing is running" from "haven't heard back yet". */
+export function useActiveLoaded(): boolean {
+  const store = useSessionStore();
+  const subscribe = useCallback((cb: () => void) => store.subscribe("active", cb), [store]);
+  return useSyncExternalStore(subscribe, () => store.activeIsLoaded());
+}
+
+/** The runner-held session, or null — what the sidebar dot and hero CTA read. */
+export function useRunningSession(): SessionSnapshot | null {
+  const store = useSessionStore();
+  const subscribe = useCallback((cb: () => void) => store.subscribe("active", cb), [store]);
+  return useSyncExternalStore(subscribe, () => store.getActive()?.running ?? null);
 }
 
 /** One box's latest rolling live metrics (`session.telemetry`). */

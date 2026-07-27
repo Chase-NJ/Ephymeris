@@ -1,5 +1,5 @@
 import { motion, type Variants } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
@@ -10,6 +10,12 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * actually mapped below. The chamber's number lights Ion once the animal is
  * inside.
  *
+ * `mode="return"` plays the same scene backwards — the group-swap prompt in
+ * Mission Control (§5.5): the animal is lifted back *out* of the chamber and
+ * carried home to its cage, because that is literally the operator's next
+ * physical act before the next group runs. Same scenery, same performers;
+ * only the choreography and which lid opens are mirrored.
+ *
  * **Deliberately off-theme in style, not in palette.** The rest of the app is
  * schematic and flat; this one illustration is filled, rounded and drawn in
  * 3/4 perspective on purpose — it's the only moment in the flow about
@@ -19,7 +25,8 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * flat and matte — depth comes from face shading and a travelling ground
  * shadow, never from gradients or glow (`ephymeris_v1.0.md` §2.2).
  *
- * Under reduced motion the scene is a still of the finished placement.
+ * Under reduced motion the scene is a still of the finished move — placed in
+ * the chamber, or home in the cage, by mode.
  */
 
 /** One beat of the loop, with how long it holds before the next. */
@@ -61,7 +68,19 @@ function sideFace(x: number, y1: number, y2: number): string {
   return `M ${x} ${y1} L ${x + DEPTH.x} ${y1 + DEPTH.y} L ${x + DEPTH.x} ${y2 + DEPTH.y} L ${x} ${y2} Z`;
 }
 
-export function RatPlacementBanner({ boxes }: { boxes: number[] }) {
+export function RatPlacementBanner({
+  boxes,
+  mode = "place",
+  caption,
+  footer,
+}: {
+  boxes: number[];
+  /** `place` walks cage → chamber (mapping step); `return` walks it back. */
+  mode?: "place" | "return";
+  caption?: string;
+  /** Rendered under the caption — the prompt's call to action, when one fits. */
+  footer?: ReactNode;
+}) {
   const reduceMotion = useReduceMotion();
   const order = useMemo(() => [...new Set(boxes)].sort((a, b) => a - b), [boxes]);
   const [step, setStep] = useState(0);
@@ -82,11 +101,23 @@ export function RatPlacementBanner({ boxes }: { boxes: number[] }) {
 
   if (order.length === 0) return null;
 
+  const returning = mode === "return";
   const phase: Phase = reduceMotion ? "still" : (SEQUENCE[step]?.phase ?? "rest");
   const boxNumber = order[trip % order.length] ?? 1;
-  const inside = phase === "settled" || phase === "still";
-  const lidOpen = ["reach", "grab", "lift", "carry"].includes(phase);
-  const doorOpen = ["carry", "insert", "release"].includes(phase);
+  // Mirrored choreography: the same beats walk the opposite direction, so the
+  // source's lid opens where the destination's did and the chamber is lit
+  // while the animal is still inside it rather than once it arrives.
+  const travel = returning ? TRAVEL_RETURN : TRAVEL;
+  const shadow = returning ? SHADOW_RETURN : SHADOW;
+  const inside = returning
+    ? ["rest", "reach", "grab"].includes(phase)
+    : phase === "settled" || phase === "still";
+  const lidOpen = (
+    returning ? ["carry", "insert", "release"] : ["reach", "grab", "lift", "carry"]
+  ).includes(phase);
+  const doorOpen = (
+    returning ? ["reach", "grab", "lift", "carry"] : ["carry", "insert", "release"]
+  ).includes(phase);
 
   return (
     <div className="surface mt-5 rounded-md px-4 pb-2.5 pt-2">
@@ -100,7 +131,12 @@ export function RatPlacementBanner({ boxes }: { boxes: number[] }) {
             lid lives back here too: it hinges along the cage's far edge, so
             an animal rising out of the opening passes in front of it. */}
         <CageBody lidOpen={lidOpen} />
-        <ChamberBody number={boxNumber} lit={inside} celebrateKey={trip} />
+        <ChamberBody
+          number={boxNumber}
+          lit={inside}
+          // The flourish celebrates an arrival; leaving deserves none.
+          celebrateKey={returning ? null : trip}
+        />
 
         {/* The ground shadow keeps the travel readable in depth. Two stacked
             ellipses — a wide faint penumbra under a tight dark core — read as
@@ -108,7 +144,7 @@ export function RatPlacementBanner({ boxes }: { boxes: number[] }) {
         <motion.g
           initial={false}
           animate={phase}
-          variants={SHADOW}
+          variants={shadow}
           style={{ transformBox: "fill-box", transformOrigin: "50% 50%" }}
         >
           <ellipse cx={0} cy={99} rx={24} ry={5.5} fill={DEEP} opacity={0.55} />
@@ -123,7 +159,7 @@ export function RatPlacementBanner({ boxes }: { boxes: number[] }) {
           drawn forward, out of the box and toward the viewer. Both groups run
           the same variants off the same phase, so they never drift apart.
         */}
-        <motion.g initial={false} animate={phase} variants={TRAVEL}>
+        <motion.g initial={false} animate={phase} variants={travel}>
           <motion.g initial={false} animate={phase} variants={RAT_STATE}>
             {/* Held at the scruff, so every reaction pivots there. */}
             <motion.g
@@ -139,7 +175,7 @@ export function RatPlacementBanner({ boxes }: { boxes: number[] }) {
 
         <CageFront />
 
-        <motion.g initial={false} animate={phase} variants={TRAVEL}>
+        <motion.g initial={false} animate={phase} variants={travel}>
           <motion.g initial={false} animate={phase} variants={HAND_STATE}>
             <Hand />
           </motion.g>
@@ -149,8 +185,12 @@ export function RatPlacementBanner({ boxes }: { boxes: number[] }) {
         <ChamberFront doorOpen={doorOpen} />
       </svg>
       <p className="text-center text-[11px] text-static">
-        Lift each animal into the box shown on its card, then confirm and flash.
+        {caption ??
+          (returning
+            ? "Return each animal to its home cage before the next group runs."
+            : "Lift each animal into the box shown on its card, then confirm and flash.")}
       </p>
+      {footer && <div className="flex justify-center pb-1.5 pt-2.5">{footer}</div>}
     </div>
   );
 }
@@ -168,6 +208,19 @@ const TRAVEL: Variants = {
   release: { x: 512, y: 0, transition: { duration: 0.2 } },
   settled: { x: 512, y: 0, transition: { duration: 0 } },
   still: { x: 512, y: 0, transition: { duration: 0 } },
+};
+
+/** The same journey walked backwards — chamber to home cage (`mode="return"`). */
+const TRAVEL_RETURN: Variants = {
+  rest: { x: 512, y: 0, transition: { duration: 0 } },
+  reach: { x: 512, y: 0, transition: { duration: 0.2 } },
+  grab: { x: 512, y: 0, transition: { duration: 0.2 } },
+  lift: { x: 512, y: -70, transition: { duration: 0.7, ease: "easeOut" } },
+  carry: { x: 40, y: -70, transition: { duration: 1.45, ease: "easeInOut" } },
+  insert: { x: 40, y: 0, transition: { duration: 0.75, ease: "easeInOut" } },
+  release: { x: 40, y: 0, transition: { duration: 0.2 } },
+  settled: { x: 40, y: 0, transition: { duration: 0 } },
+  still: { x: 40, y: 0, transition: { duration: 0 } },
 };
 
 /**
@@ -245,6 +298,25 @@ const SHADOW: Variants = {
   release: { x: 532, scaleX: 0.95, scaleY: 0.95, opacity: 0.4 },
   settled: { x: 532, scaleX: 0.95, scaleY: 0.95, opacity: 0.4 },
   still: { x: 532, scaleX: 0.95, scaleY: 0.95, opacity: 0.4, transition: { duration: 0 } },
+};
+
+/** `SHADOW` mirrored for the walk home. */
+const SHADOW_RETURN: Variants = {
+  rest: { x: 532, scaleX: 0.95, scaleY: 0.95, opacity: [0, 0.4], transition: { duration: 0.35 } },
+  reach: { x: 532, scaleX: 0.95, scaleY: 0.95, opacity: 0.4 },
+  grab: { x: 532, scaleX: 0.95, scaleY: 0.95, opacity: 0.4 },
+  lift: { x: 532, scaleX: 0.6, scaleY: 0.6, opacity: 0.2, transition: { duration: 0.7 } },
+  carry: {
+    x: 60,
+    scaleX: 0.6,
+    scaleY: 0.6,
+    opacity: 0.2,
+    transition: { duration: 1.45, ease: "easeInOut" },
+  },
+  insert: { x: 60, scaleX: 1, scaleY: 1, opacity: 0.45, transition: { duration: 0.75 } },
+  release: { x: 60, scaleX: 1, scaleY: 1, opacity: 0.45 },
+  settled: { x: 60, scaleX: 1, scaleY: 1, opacity: 0.45 },
+  still: { x: 60, scaleX: 1, scaleY: 1, opacity: 0.45, transition: { duration: 0 } },
 };
 
 /** The hand reaches in, holds through the carry, then withdraws. */
@@ -372,7 +444,8 @@ function ChamberBody({
 }: {
   number: number;
   lit: boolean;
-  celebrateKey: number;
+  /** Null suppresses the arrival flourish (the return walk celebrates nothing). */
+  celebrateKey: number | null;
 }) {
   return (
     <g>
@@ -416,7 +489,7 @@ function ChamberBody({
       </motion.text>
 
       {/* a small flourish the moment the animal is in */}
-      {lit && (
+      {lit && celebrateKey !== null && (
         <g key={celebrateKey}>
           {[
             [520, 34, 0],

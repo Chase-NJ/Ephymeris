@@ -2,11 +2,26 @@
  * Settings schema (ephymeris_v1.0.md §4.5).
  *
  * The shell owns settings and is the source of truth; the sidecar receives a
- * push and reads only the keys it needs. The full schema is still an open item
- * in §6 — these are the starting fields, so `normalizeSettings` is written to
- * tolerate both older stored shapes and unknown extra keys rather than assuming
- * whatever is on disk matches this file exactly.
+ * push and reads only the keys it needs. The wire shapes themselves live in
+ * the generated protocol module (`protocol/schema.py` is their authority) and
+ * are re-exported here so callers keep one import site. The full schema is
+ * still an open item in §6, so `normalizeSettings` is written to tolerate both
+ * older stored shapes and unknown extra keys rather than assuming whatever is
+ * on disk matches the schema exactly.
  */
+
+import { zodiacById } from "@/lib/constellations/zodiac";
+import type { BoxBinding, EphymerisSettings, SketchDiscovery } from "@/lib/ws/protocol";
+
+export type {
+  BoxBinding,
+  EphymerisSettings,
+  DirectoryState,
+  DirectoryStatus,
+  SketchEntry,
+  SkippedEntry,
+  SketchDiscovery,
+} from "@/lib/ws/protocol";
 
 /** Hardware ceiling: six Mega2560s (`hardware-interaction.md` §1). */
 export const BOX_COUNT = 6;
@@ -14,23 +29,6 @@ export const DEFAULT_BAUD = 115200;
 
 /** Offered in the picker; Debug Mode also allows a per-box override (§6.4). */
 export const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 250000] as const;
-
-export interface BoxBinding {
-  box: number;
-  /** The board's USB serial number — stable across COM renumbering (§5). */
-  hardwareId: string | null;
-  label: string;
-}
-
-export interface EphymerisSettings {
-  dataDirectory: string | null;
-  backupDirectory: string | null;
-  arduinoDirectory: string | null;
-  arduinoCliPath: string | null;
-  defaultBaud: number;
-  boxes: BoxBinding[];
-  reducedMotion: boolean;
-}
 
 /**
  * Boxes are user-managed: the rig might run two boxes or six, so Settings
@@ -62,6 +60,10 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
   // No boxes until the user adds them.
   boxes: [],
   reducedMotion: false,
+  // Null = the legacy fixed layout, until the user picks a zodiac (§4.6).
+  constellation: null,
+  constellationSlots: {},
+  boxSetupComplete: false,
 };
 
 function optString(value: unknown): string | null {
@@ -89,11 +91,30 @@ function normalizeBoxes(value: unknown): BoxBinding[] {
   return [...byNumber.values()].sort((a, b) => a.box - b.box);
 }
 
+function normalizeSlots(value: unknown): Record<string, number> {
+  if (typeof value !== "object" || value === null) return {};
+  const slots: Record<string, number> = {};
+  const taken = new Set<number>();
+  // Box-number order, so duplicate star claims dedupe deterministically
+  // (first-wins) — the same rule `reconcileSlots` applies.
+  for (let box = 1; box <= BOX_COUNT; box += 1) {
+    const star = (value as Record<string, unknown>)[String(box)];
+    if (typeof star !== "number" || !Number.isInteger(star) || star < 0) continue;
+    if (taken.has(star)) continue;
+    slots[String(box)] = star;
+    taken.add(star);
+  }
+  // Star-index range depends on the chosen constellation, which this function
+  // deliberately doesn't know — `reconcileSlots` owns that half.
+  return slots;
+}
+
 export function normalizeSettings(raw: unknown): EphymerisSettings {
   if (typeof raw !== "object" || raw === null) return { ...DEFAULT_SETTINGS };
   const value = raw as Record<string, unknown>;
 
   const baud = value["defaultBaud"];
+  const constellation = value["constellation"];
   return {
     dataDirectory: optString(value["dataDirectory"]),
     backupDirectory: optString(value["backupDirectory"]),
@@ -102,36 +123,15 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
     defaultBaud: typeof baud === "number" && baud > 0 ? baud : DEFAULT_BAUD,
     boxes: normalizeBoxes(value["boxes"]),
     reducedMotion: value["reducedMotion"] === true,
+    // Validated against the catalogue so a corrupt store can never select a
+    // nonexistent map — it degrades to the legacy layout instead.
+    constellation:
+      typeof constellation === "string" && zodiacById(constellation)
+        ? constellation
+        : null,
+    constellationSlots: normalizeSlots(value["constellationSlots"]),
+    boxSetupComplete: value["boxSetupComplete"] === true,
   };
-}
-
-/** The four Arduino Directory states from `arduino-directory.md` §6. */
-export type DirectoryState = "not_configured" | "invalid" | "empty" | "ok";
-
-export interface DirectoryStatus {
-  state: DirectoryState;
-  path: string | null;
-  message: string | null;
-}
-
-export interface SketchEntry {
-  category: string;
-  name: string;
-  path: string;
-}
-
-export interface SkippedEntry {
-  path: string;
-  reason: string;
-}
-
-export interface SketchDiscovery {
-  directory: DirectoryStatus;
-  sketches: SketchEntry[];
-  skipped: SkippedEntry[];
-  skippedCount: number;
-  libraries: string[];
-  librariesPath: string | null;
 }
 
 export const EMPTY_DISCOVERY: SketchDiscovery = {

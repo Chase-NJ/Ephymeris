@@ -1,25 +1,24 @@
 # WebSocket / IPC Message Schema
 
-> **Status** · Living spec — **Built.** Every command and event below is implemented and emitted. The surface is **33 commands, 11 events, 21 error codes**.
+> **Status** · Living spec — **Built.** Every command and event below is implemented and emitted. The surface is **38 commands, 13 events, 22 error codes**.
 >
 > **Owns** · The complete wire schema between the React frontend and the Python sidecar. This document is **canonical** — where any other spec describes a message differently, this one wins.
 >
 > **Read with** · [hardware-interaction.md](hardware-interaction.md) (the hardware layer these messages drive) · [arduino-directory.md](arduino-directory.md) (sketch discovery payloads) · [ephymeris_v1.0.md](ephymeris_v1.0.md) (Settings ownership)
 >
-> **Still open** · Analytics query messages · Debug Mode batch flash · `port.output` back-pressure policy
+> **Still open** · Debug Mode batch flash · `port.output` back-pressure policy
 
 **Contents** — [1. Transport & Lifecycle](#1-transport--lifecycle) · [2. Envelope](#2-envelope) · [3. Commands](#3-commands-client--server) · [4. Events](#4-events-server--client) · [5. Invariants](#5-invariants) · [6. Error Codes](#6-error-codes) · [7. Versioning](#7-versioning) · [8. Resolved Decisions](#8-resolved-decisions) · [9. Open Items](#9-open-items--tbd)
 
 This document resolves the "WebSocket/IPC message schema" item listed as TBD in `hardware-interaction.md` §8 and `ephymeris_v1.0.md` §6.
 
-> **Changing the wire — the required order.** This file is the source of truth. `sidecar/ephymeris_sidecar/protocol.py` and `src/lib/ws/protocol.ts` are **hand-maintained mirrors**, and there is no codegen — the surface is small enough that a build step would cost more than it saves. So drift is prevented by a test instead:
+> **Changing the wire — the required order.** This document is the **prose** authority (rationale, lifecycle, invariants); `protocol/schema.py` at the repo root is the **shape** authority. `sidecar/ephymeris_sidecar/protocol.py` and `src/lib/ws/protocol.ts` are **generated** from the schema — never edit them by hand:
 >
-> 1. Update **this document**.
-> 2. Update `sidecar/ephymeris_sidecar/protocol.py`.
-> 3. Update `src/lib/ws/protocol.ts`.
-> 4. Run `pytest tests/test_protocol_contract.py` — 69 cases that fail the build if any of the three drift.
+> 1. Update `protocol/schema.py` **and this document** together.
+> 2. Run `npm run gen:protocol` (or `python protocol/generate.py`) and commit the regenerated mirrors. `npm run build` and `npm run dev` regenerate automatically.
+> 3. Run `pytest tests/test_protocol_contract.py` — it regenerates in a subprocess and fails if a committed mirror is stale or hand-edited, and still requires every wire name to appear in this document.
 >
-> The contract test checks *names and the protocol version*, in all three places. It does **not** check payload shapes, and it does not verify that a command has a handler. Those remain on you.
+> Because both mirrors come from one schema, they cannot drift from each other — including **payload shapes**, which the old hand-maintained mirrors never guarded. On the TypeScript side the generated `CommandArgsMap`/`CommandResultMap`/`EventDataMap` make `client.call` fully typed, so a frontend use of a stale shape fails `npm run typecheck`. On the Python side the generated specs power a runtime validator: with `EPHYMERIS_WIRE_VALIDATE=1` (the test suite sets it; production leaves it off) every `event()` payload and every dispatched reply is checked against the schema, and `tests/test_wire_shapes.py` pins the real emitters to it. What remains unverified is only that a command *has* a handler.
 
 ---
 
@@ -61,7 +60,7 @@ Immediately after a successful `auth`, the server replays current state **to tha
 
 Events are otherwise emitted only when something changes, so a client connecting during a quiet period would have nothing to render and would have to guess. Guessing is exactly what §5.2 forbids.
 
-> **Live session state is *not* replayed.** No runner snapshot, no `groupId`, no in-flight telemetry. A client that reconnects mid-session gets correct port, board, and cohort state, then must call `sessions.status` to recover what is actually running. This is deliberate — the runner is the authority on the confirmed mapping, and asking it beats replaying a snapshot that could already be stale by the time it arrives.
+> **Live session state is *not* replayed.** No runner snapshot, no `groupId`, no in-flight telemetry. A client that reconnects mid-session gets correct port, board, and cohort state, then must **ask**: `sessions.active` for global discovery (which session is running, with no prior knowledge of ids — what the Launch page and a fresh window need), or `sessions.status` for a session it already knows. This is deliberate — the runner is the authority on the confirmed mapping, and asking it beats replaying a snapshot that could already be stale by the time it arrives. After that first ask, `session.lifecycle` broadcasts keep the answer current without polling.
 
 A replay callback that raises is logged and swallowed rather than dropping the connection.
 
@@ -114,7 +113,7 @@ Timing out client-side does **not** cancel the sidecar's work. The sidecar remai
 
 `box` is always a **box number, 1–6** — never a port address. See §5.1.
 
-Of the 33 commands, 32 are registered in the sidecar's dispatch table. **`auth` is the exception:** it is consumed by the server's authentication step before dispatch begins and never reaches a handler, because it must be the connection's literal first frame (§1.1).
+Of the 38 commands, 37 are registered in the sidecar's dispatch table. **`auth` is the exception:** it is consumed by the server's authentication step before dispatch begins and never reaches a handler, because it must be the connection's literal first frame (§1.1).
 
 | Command | Args | Result | Notes |
 |---|---|---|---|
@@ -143,7 +142,7 @@ All cohort state lives in the sidecar's SQLite database (`cohorts.md` §3).
 | `cohorts.archive` | `{id}` | `{cohort: <Cohort>}` | Soft-delete; record and `dataFolder` stay intact (§9) |
 | `cohorts.restore` | `{id}` | `{cohort: <Cohort>}` | Rejected with `COHORT_NAME_TAKEN` if an active cohort has since claimed the name |
 | `cohorts.delete` | `{id, confirm: true}` | `{deleted: true}` | Rejected with `COHORT_NOT_ARCHIVED` unless already archived. **Never touches `dataFolder` on disk** (§9) |
-| `cohorts.setDataFolder` | `{id, path, moveExisting}` | `{cohort: <Cohort>}` | The explicit relocate of §8 — distinct from renaming. Refuses with `DATA_FOLDER_INVALID` rather than overwriting a non-empty destination |
+| `cohorts.setDataFolder` | `{id, path, moveExisting}` | `{cohort: <Cohort>}` | The explicit relocate of `cohorts.md` §8 — distinct from renaming. **`moveExisting` selects between two intents:** `true` moves the cohort's data and refuses with `DATA_FOLDER_INVALID` if the destination isn't empty; `false` writes nothing and simply re-points the cohort, so a full destination is expected — that is how a cohort attaches to a pre-existing archive |
 | `cohorts.suggestGroups` | `{id, groupCount?, maxGroupSize?, balanceBySex?}` | `<GroupProposal>` | **Non-mutating.** Computes §7.3's balanced round-robin for preview; the user applies via `cohorts.update` |
 
 ### 3.2 Sessions & Prefixes
@@ -160,13 +159,14 @@ command — see `data-saving.md` §7.
 | `prefixes.delete` | `{id}` | `{deleted: true}` | Non-destructive — never touches folders already written under the name (`data-saving.md` §3) |
 | `tasks.getProfile` | `{sketchPath}` | `<TaskProfile>` \| `{profile: null}` | Reads the `task.json` sibling to the sketch's `.ino` (`data-saving.md` §6.1). A sketch with none returns `{profile: null}` — fully supported |
 | `sessions.suggestNumber` | `{prefixId}` | `{suggestion, sameDayNumbers: [string]}` | Step 1's pre-fill (`starting-a-session.md` §2.2). `suggestion` is the highest numeric session number for the prefix +1, or `null` where there's no numeric history. `sameDayNumbers` are the numbers already used for this prefix *today*, driving the **soft** reuse warning — reuse is legal, never blocked. Aborted sessions count toward neither: they never wrote data, so their numbers stay claimable |
-| `sessions.create` | `{cohortId, prefixId, sessionNumber}` | `{session: <Session>}` | Status `configuring`. Rejected with `SESSION_NOT_READY` if the cohort has no group with a box-assigned animal (`starting-a-session.md` §1) |
+| `sessions.create` | `{cohortId, prefixId, sessionNumber, durationMinutes?}` | `{session: <Session>}` | Status `configuring`. Rejected with `SESSION_NOT_READY` if the cohort has no group with a box-assigned animal (`starting-a-session.md` §1). `durationMinutes` is the optional per-box time limit (`starting-a-session.md` §2.4): the sidecar sends `STOP` to each box that long after *that box's* start — measured per box, not from Start All, because boxes are started individually. `STOP` remains a request the firmware honours at a trial boundary, so the recorded `stop_reason` is still the board's own clean end |
 | `sessions.abandon` | `{sessionId}` | `{session: <Session>}` | Discards a session still in `configuring` — Step 2's Back button (`starting-a-session.md` §3). Marks it `aborted` and clears any confirmed-but-unstarted mapping from the runner. Rejected with `SESSION_INVALID` once a group has started running; abandoned sessions never wrote data, so nothing on disk is touched |
 | `sessions.confirmMapping` | `{sessionId, groupId, boxes: [{box, animalId, sketchPath, config}]}` | `{ok: true}` | Session-local mapping + per-box Task Profile config; feeds §4's flash sequence. `config` is a `{metadataKey: value}` map |
-| `sessions.status` | `{sessionId}` | `{session: <Session>, groupId, boxes: [{box, animalId, animalName, sketchName, sketchPath, running}]}` | What Mission Control renders (`starting-a-session.md` §5). The runner is the authority on the confirmed mapping and which boxes are live, so reopening the window mid-session shows the truth rather than a stale client copy |
+| `sessions.status` | `{sessionId}` | `{session: <Session>, groupId, boxes: [{box, animalId, animalName, sketchName, sketchPath, running, startedAt}]}` | What Mission Control renders (`starting-a-session.md` §5). The runner is the authority on the confirmed mapping and which boxes are live, so reopening the window mid-session shows the truth rather than a stale client copy. `startedAt` (null unless running) is what lets a reloaded window resume its per-box elapsed clocks |
 | `sessions.startAll` | `{sessionId}` | `{session: <Session>}` | Enters `IN_SESSION` on every box in the current group not already running (`starting-a-session.md` §5.2) |
-| `sessions.switchGroup` | `{sessionId}` | `{nextGroupId}` | Ends current runs, advances to the next populated group by `order`; the client re-enters Step 2 |
+| `sessions.switchGroup` | `{sessionId}` | `{nextGroupId}` | Ends current runs, advances to the next populated group by `order`; the client re-enters Step 2. A `null` `nextGroupId` means every populated group has run — the sidecar then finalizes exactly as `sessions.end` would (marks `completed`, releases the runner), so the client never has to follow up with a second command |
 | `sessions.end` | `{sessionId}` | `{session: <Session>}` | Gracefully stops all boxes, finalizes files, marks `completed` |
+| `sessions.active` | — | `<ActiveSessions>` | The global "what is running?" query — deliberately argument-free, so a client with no prior knowledge of ids (the Launch page, a reconnecting window) can discover the running session. The `running` slot is keyed off the **live runner**, never a bare DB status query: a `running` row with no live runner is a crash orphan and lands in `stale` instead, surfaced for honesty but never offered for resume (session resumption after a restart is out of scope by decision). `configuring` rows are setups never finished — legitimately resumable into Step 2 |
 | `port.startSession` | `{box, startCommand}` | `{state}` | Per-box `IN_SESSION` entry: open → DTR reset → await `READY` → send `startCommand` → optional `SEED` (`starting-a-session.md` §7) |
 | `port.stopSession` | `{box}` | `{state}` | Sends the literal `STOP` line. Does **not** force the transition — the board's own end-of-session strobe does (`starting-a-session.md` §5.3) |
 
@@ -177,6 +177,19 @@ Mirroring itself takes no commands — it runs off `Settings.backupDirectory`, p
 | Command | Args | Result | Notes |
 |---|---|---|---|
 | `backup.syncNow` | — | `{copied, skipped, failed, errors: [string], directory}` | Walks every cohort data folder and mirrors anything missing or stale, then backs up `ephymeris.db`. Setting a backup directory deliberately does **not** backfill on its own — that could mean an unannounced multi-gigabyte copy to a network share the moment a folder is picked — so this is the explicit version, and doubles as the way to prove a target works before trusting it. Rejected with `BACKUP_UNAVAILABLE` when no directory is set or a sync is already running. Long-running: the client should raise its reply timeout for this command |
+
+### 3.4 Analytics
+
+Designed in [analytics.md](analytics.md) §9, which carries the rationale. Implemented and in both mirrors.
+
+| Command | Args | Result | Notes |
+|---|---|---|---|
+| `sessions.list` | `{cohortId, includeAborted?}` | `{sessions: [SessionListItem]}` | Belongs to the `sessions.*` family rather than `analytics.*` because session history is independently useful. **Must never touch the filesystem**, so selectors populate instantly. Returns a chronological `ordinal` derived from `(date, startedAt)` — never from `sessionNumber`, which is free text. `SessionListItem` is the trimmed listing form of `Session` (no `prefixId`/`groupRuns`, plus `ordinal` and `runCount`) and is the same shape `analytics.summary` embeds — one emitter serves both |
+| `analytics.summary` | `{cohortId, sessionIds?, animalIds?, minCountedTrials?}` | cohort table — sessions, animals, run summaries, profile groups, counts, warnings | One call per cohort; every session and animal selection filters it client-side. The heatmap and the strategy space are the same data, so they share one command. Run summaries are a **flat list, not a matrix** — a matrix has nowhere to put two runs for one animal and session, which really happens |
+| `analytics.series` | `{runIds: [], mode?, metricIds?}` | `{series: [RunSeries], warnings}` | Learning-curve data. **Plural** so "all six animals in this session" is one call; the list is capped server-side. The x-axis is the counted-trial index and is implicit |
+| `analytics.rescan` | `{cohortId, adoptOrphans?}` | `{scanned, adopted, orphans: [RescanOrphan], cohortId}` | The explicit archive walk, for files no run record points at. Same pattern as `sketches.refresh` and `backup.syncNow`: expensive reconciliation is a deliberate user action, never a side effect of opening a view |
+
+A corrupt or missing file is **data, not an error** — it yields a run with a non-ok status plus a warning, and the command still succeeds. One unreadable `.json` must never blank a year of history.
 
 ---
 
@@ -194,7 +207,9 @@ Mirroring itself takes no commands — it runs off `Settings.backupDirectory`, p
 | `prefixes.updated` | `{prefixes: [Prefix]}` | Push-on-change for the prefix list, same pattern as `cohorts.updated` |
 | `session.telemetry` | `{box, animalId, metrics: [<TelemetryMetric>]}` | Pushed on every strobe that updates a rolling live metric (`starting-a-session.md` §7 step 7) — **not** batched at `port.output`'s 20Hz, since metric updates are far lower-frequency than raw strobes |
 | `session.animalEnded` | `{box, animalId, stopReason, filePath}` | One animal's run finalized (`starting-a-session.md` §8's `stopReason` set) |
+| `session.lifecycle` | `<ActiveSessions>` | Broadcast whenever session **identity or status** changes — create, abandon, confirmMapping, startAll, switchGroup, end. A full snapshot, not a delta: a second window learns "ended" by seeing `running: null` with zero merge logic, and snapshots cannot be mis-merged. Per-box liveness is deliberately **not** re-broadcast here — `port.state` remains that channel, and `boxes[].running` inside the snapshot is point-in-time |
 | `backup.status` | `<BackupStatus>` | The state of Backup Directory mirroring (`data-saving.md` §8). Sent on client connect, on every settings push that changes the directory, and whenever the mirror's state changes or it actually copies something — deliberately **not** every quiet 10s tick, so six idle boxes don't generate an event stream |
+| `analytics.progress` | `{cohortId, phase, done, total}` | Earns its place against the client's 15 s default reply timeout: the first summary after upgrading is a cold index of every historical run, and on a network-mounted data directory this is the difference between "working" and "hung". Published on phase change and every N files, following `backup.status`'s discipline — never per file |
 | `sidecar.error` | `{code, message, detail}` | Failures with no command to attribute them to. **Emitted** by the session runner when a mid-session `.tsv` write raises (disk full, permissions) — `data-saving.md` §7.1. Carries `code: "INTERNAL"`, a message naming the box, and `detail: {box}` |
 
 ### Shared payload shapes
@@ -327,14 +342,15 @@ ISO-8601 strings.
 
 // Session (data-saving.md §4)
 {
-  "id": "…", "cohortId": "…", "prefixId": "…",
+  "id": "…", "cohortId": "…", "prefixId": "…", "prefixName": "2O-Bdisc",
   "sessionNumber": "25",            // free text, not strictly numeric (§10)
   "date": "2026-07-22",
   "startedAt": "…", "endedAt": null,
   "status": "configuring" | "running" | "completed" | "aborted",
   "folderPath": "/…/2O-Bdisc/2O-Bdisc_25_07_22_26",
-  "groupRuns": [ { "groupId": "…", "order": 0, "startedAt": "…", "endedAt": null } ]
-}
+  "groupRuns": [ { "groupId": "…", "order": 0, "startedAt": "…", "endedAt": null } ],
+  "durationMinutes": 60 | null      // per-box time limit; the sidecar STOPs a box
+}                                   // this long after that box's own start
 
 // SessionAnimalRun (data-saving.md §4) — written at finalization
 {
@@ -347,11 +363,27 @@ ISO-8601 strings.
 
 // TelemetryMetric — one rolling live-metric value (session.telemetry)
 { "id": "p_r_odor1", "value": 0.85, "n": 20 }   // value = P(hit); n = counted trials in window
+
+// RunnerSession — the runner-held session, identical to a sessions.status reply
+{
+  "session": { /* <Session> */ },
+  "groupId": "…" | null,            // null only before any mapping was confirmed
+  "boxes": [ { "box": 1, "animalId": "…", "animalName": "remy1",
+               "sketchName": "GRGL_2-Odor", "sketchPath": "/…", "running": true } ]
+}
+
+// ActiveSessions — sessions.active result AND session.lifecycle payload.
+// One shape, one emitter: the command and the event can never drift apart.
+{
+  "running": { /* <RunnerSession> */ } | null,  // keyed off the live runner, never bare DB status
+  "configuring": [ /* <Session> */ ],           // setup never finished — resumable into Step 2
+  "stale": [ /* <Session> */ ]                  // 'running' rows with no live runner — crash orphans,
+}                                               // surfaced for honesty, never offered for resume
 ```
 
 ### `settings.push` payload
 
-The payload mirrors the Tauri-side store, which is the source of truth (`ephymeris_v1.0.md` §4.5). The full settings schema is still an open item there, so this document does **not** restate it as fixed — the sidecar reads the keys it needs (`arduinoDirectory`, `arduinoCliPath`, `defaultBaud`, `boxBindings`, `dataDirectory`) and ignores the rest. Adding a setting the sidecar doesn't consume is deliberately a non-event.
+The payload mirrors the Tauri-side store, which is the source of truth (`ephymeris_v1.0.md` §4.5). The full settings schema is still an open item there, so this document does **not** restate it as fixed — the sidecar reads the keys it needs (`arduinoDirectory`, `arduinoCliPath`, `defaultBaud`, `boxes`, `dataDirectory`, `backupDirectory`) and ignores the rest. Adding a setting the sidecar doesn't consume is deliberately a non-event — the Config view's `constellation`, `constellationSlots`, and `boxSetupComplete` (`ephymeris_v1.0.md` §4.6) ride the same payload and are ignored by the sidecar entirely.
 
 ---
 
@@ -397,7 +429,7 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | `COHORT_NAME_TAKEN` | Name already used by an **active** cohort. Archived cohorts don't reserve names (`cohorts.md` §2), so this can also reject a `cohorts.restore` whose name was claimed while it was away |
 | `COHORT_INVALID` | A `cohorts.md` §2 validation failure. `detail` carries per-field errors so the editor can surface them inline rather than as a toast (§6) |
 | `COHORT_NOT_ARCHIVED` | `cohorts.delete` on a cohort that hasn't been archived first — the deliberate two-step guard of §9 |
-| `DATA_FOLDER_INVALID` | A data folder couldn't be created, or a `cohorts.setDataFolder` destination isn't empty. Refuses rather than overwriting (§8) |
+| `DATA_FOLDER_INVALID` | A data folder couldn't be created, or a `cohorts.setDataFolder` destination isn't empty **while `moveExisting` is true**. Refuses rather than overwriting (`cohorts.md` §8). A non-empty destination with `moveExisting: false` is legal and expected |
 | `PREFIX_NAME_TAKEN` | A prefix with that name already exists (`data-saving.md` §3) |
 | `SESSION_INVALID` | Malformed session command — unknown cohort/prefix/group, or a mapping referencing a box/animal that doesn't belong to the session |
 | `SESSION_NOT_READY` | `sessions.create` against a cohort with no group holding a box-assigned animal (`starting-a-session.md` §1) |
@@ -425,7 +457,7 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | Auth | Random per-launch token, sent as the first message body (never in a URL) |
 | Message pattern | Correlated request/reply **plus** unsolicited server events — not a pure event stream |
 | Per-port key | **Box number 1–6**, resolved to a port address inside the sidecar (§5.1) |
-| Schema sharing | Hand-maintained mirrors + a contract test, no codegen |
+| Schema sharing | **Generated mirrors** from `protocol/schema.py` (build-time codegen, stdlib-only generator) + a contract test that fails on a stale mirror. Reversed 2026-07-27 — the original "no codegen" call was made when the surface was a dozen names; at 38 commands with payload shapes, hand-maintenance was the costlier side, and shapes had already drifted (`analytics.rescan`'s documented result never matched the implementation) |
 | Orphan protection | Sidecar exits on stdin EOF; shell also kills the child on exit |
 | Crashed sidecar | **No auto-respawn.** `sidecar://down` is surfaced and the app must be restarted. A silent respawn mid-session would resurrect the process without the port ownership or session state it had, which is worse than an honest failure the user can see |
 
@@ -437,10 +469,10 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 - [x] ~~Whether a crashed sidecar should be auto-respawned by the shell~~ — resolved: **no auto-respawn** (§8)
 - [x] ~~Storage/export message shapes (`.json`/`.mat`/`.tsv`)~~ — the write path is sidecar-side, not a wire message (`data-saving.md` §7); telemetry and finalization are `session.telemetry`/`session.animalEnded` (§4)
 - [x] ~~`sidecar.error` is defined and mirrored but nothing emits it~~ — **resolved.** The session runner now emits it on a mid-session `.tsv` write failure, which was always its intended first use (§4)
-- [ ] Analytics query messages
+- [x] ~~Analytics query messages~~ — **designed** in `analytics.md` §9 and documented in §3.4/§4 as proposed. Four commands, one event, no new error codes. Not implemented, and deliberately absent from both mirrors until they are
+- [x] ~~The contract test guards *names*, not *shapes*~~ — **resolved** by switching to build-time codegen: both mirrors are generated from `protocol/schema.py`, TypeScript callers are typed against the generated payload maps, and the sidecar validates payloads against the schema under `EPHYMERIS_WIRE_VALIDATE=1` (on in the test suite). See the "Changing the wire" callout above
 - [ ] Multi-port batching (e.g. "flash all 6") — shared with `hardware-interaction.md` §8; whether that is one command with six progress streams or six independent commands
 - [ ] Back-pressure policy if the frontend cannot keep up with `port.output` at 20 Hz × 6 boxes (currently: unbounded send, relying on the ring buffer cap)
-- [ ] The contract test guards *names*, not *shapes*. A payload field can be added on one side and silently missing on the other. Worth deciding whether that gap is acceptable or wants a second test
 
 ---
 

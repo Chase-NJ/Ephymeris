@@ -1,0 +1,189 @@
+/**
+ * The house chart primitive — a 0–1 × 0–1 domain in unit space.
+ *
+ * Generalises the idiom the metric sparklines established: `viewBox="0 0 100 H"`
+ * with `preserveAspectRatio="none"` so the chart stretches to its container
+ * without measuring it, `vectorEffect="non-scaling-stroke"` so that stretch
+ * never distorts line weight, and y flipped manually as `(1 - v) * H`.
+ *
+ * **No text goes inside this SVG.** `preserveAspectRatio="none"` scales
+ * non-uniformly, which is fine for strokes and ruinous for glyphs — labels
+ * belong in the HTML beside it, which is what `ChartFrame` is for.
+ */
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export interface BandPoint {
+  x: number;
+  low: number;
+  high: number;
+}
+
+export interface Segment {
+  points: Point[];
+  /** Drawn dashed to mark a discontinuity rather than interpolating it. */
+  dashed?: boolean;
+}
+
+export interface Series {
+  segments: Segment[];
+  stroke: string;
+  strokeWidth?: number;
+  opacity?: number;
+}
+
+export interface Mark {
+  x: number;
+  y: number;
+  r: number;
+  fill: string;
+  /** Hollow marks carry a low-confidence value — present, but not to be read
+   *  as firmly as a filled one. */
+  hollow?: boolean;
+  opacity?: number;
+}
+
+export interface Reference {
+  /** A horizontal rule at this y, or an explicit two-point line. */
+  y?: number;
+  from?: Point;
+  to?: Point;
+}
+
+export function UnitChart({
+  height = 46,
+  references = [],
+  bands = [],
+  series = [],
+  marks = [],
+  className,
+}: {
+  height?: number;
+  references?: Reference[];
+  bands?: Array<{ points: BandPoint[]; fill: string; opacity?: number }>;
+  series?: Series[];
+  marks?: Mark[];
+  className?: string;
+}) {
+  const X = (x: number) => (x * 100).toFixed(2);
+  const Y = (y: number) => ((1 - y) * height).toFixed(2);
+
+  return (
+    <svg
+      viewBox={`0 0 100 ${height}`}
+      className={className ?? "w-full"}
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      {references.map((reference, index) => {
+        const from = reference.from ?? { x: 0, y: reference.y ?? 0.5 };
+        const to = reference.to ?? { x: 1, y: reference.y ?? 0.5 };
+        return (
+          <line
+            key={`ref-${index}`}
+            x1={X(from.x)}
+            y1={Y(from.y)}
+            x2={X(to.x)}
+            y2={Y(to.y)}
+            stroke="var(--color-halo)"
+            strokeWidth={0.5}
+            strokeDasharray="2 2"
+            opacity={0.35}
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+
+      {/* Bands before lines: SVG paints in document order and has no z-index,
+          so this is what puts a confidence ribbon behind its own curve. */}
+      {bands.map((band, index) =>
+        band.points.length < 2 ? null : (
+          <polygon
+            key={`band-${index}`}
+            points={ribbon(band.points, X, Y)}
+            fill={band.fill}
+            fillOpacity={band.opacity ?? 0.12}
+            stroke="none"
+          />
+        ),
+      )}
+
+      {series.map((line, lineIndex) =>
+        line.segments.map((segment, index) =>
+          segment.points.length < 2 ? null : (
+            <polyline
+              key={`line-${lineIndex}-${index}`}
+              points={segment.points.map((p) => `${X(p.x)},${Y(p.y)}`).join(" ")}
+              fill="none"
+              stroke={line.stroke}
+              strokeWidth={line.strokeWidth ?? 1.5}
+              strokeLinejoin="round"
+              strokeDasharray={segment.dashed ? "2 2" : undefined}
+              opacity={line.opacity ?? 1}
+              vectorEffect="non-scaling-stroke"
+            />
+          ),
+        ),
+      )}
+
+      {marks.map((mark, index) => (
+        <circle
+          key={`mark-${index}`}
+          cx={X(mark.x)}
+          cy={Y(mark.y)}
+          r={mark.r}
+          fill={mark.hollow ? "none" : mark.fill}
+          stroke={mark.hollow ? mark.fill : "none"}
+          strokeWidth={mark.hollow ? 1 : 0}
+          opacity={mark.opacity ?? 1}
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+    </svg>
+  );
+}
+
+/** Forward along the low edge, back along the high edge, closing the ribbon. */
+function ribbon(
+  points: BandPoint[],
+  X: (x: number) => string,
+  Y: (y: number) => string,
+): string {
+  const low = points.map((p) => `${X(p.x)},${Y(p.low)}`);
+  const high = [...points].reverse().map((p) => `${X(p.x)},${Y(p.high)}`);
+  return [...low, ...high].join(" ");
+}
+
+/**
+ * Split a value list into solid runs, marking a dashed bridge wherever a gap
+ * was skipped — so a session that scored nothing shows as a discontinuity
+ * rather than a line interpolated through nothing (`analytics.md` §3.6).
+ */
+export function segmentsWithGaps(points: Array<Point | null>): Segment[] {
+  const segments: Segment[] = [];
+  let current: Point[] = [];
+  let lastReal: Point | null = null;
+  let gapPending = false;
+
+  for (const point of points) {
+    if (point === null) {
+      if (current.length > 0) {
+        segments.push({ points: current });
+        lastReal = current[current.length - 1]!;
+        current = [];
+      }
+      gapPending = true;
+      continue;
+    }
+    if (gapPending && lastReal) {
+      segments.push({ points: [lastReal, point], dashed: true });
+      gapPending = false;
+    }
+    current.push(point);
+  }
+  if (current.length > 0) segments.push({ points: current });
+  return segments;
+}

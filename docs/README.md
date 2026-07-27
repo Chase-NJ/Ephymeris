@@ -1,8 +1,10 @@
 # Ephymeris Documentation
 
-Ten documents. This page tells you which one to open.
+Eleven documents. This page tells you which one to open.
 
-**Seven are living specs** — kept current with the implementation and more authoritative than inferring behaviour from code. Each carries a **Resolved Decisions** table (what is settled and why) and an **Open Items / TBD** table (what is still in flux). Those two tables are the fastest way to check the status of anything before you change it.
+**Eight are living specs** — kept current with the implementation and more authoritative than inferring behaviour from code. Each carries a **Resolved Decisions** table (what is settled and why) and an **Open Items / TBD** table (what is still in flux). Those two tables are the fastest way to check the status of anything before you change it.
+
+Seven of the eight describe built behaviour. **[analytics.md](analytics.md) is the exception** — it specifies a feature that does not exist yet, and says so in its status header. It is a spec in the original sense: written before the code, to be built against.
 
 **Three are derived views**, maintained alongside the specs:
 
@@ -25,6 +27,7 @@ Ten documents. This page tells you which one to open.
 | The Cohort/Animal/Group data model, cohort UI, or Auto-Balance grouping | [cohorts.md](cohorts.md) |
 | What happens between the "Start a Session" button and a running box | [starting-a-session.md](starting-a-session.md) |
 | What gets written to disk, in what format, and what survives a crash | [data-saving.md](data-saving.md) |
+| How recorded sessions are read back, scored, and visualized — and the metric definitions that produces | [analytics.md](analytics.md) |
 
 ## Reading order for a new engineer
 
@@ -36,6 +39,7 @@ The specs have real dependencies. This order avoids forward references, and each
 4. **[websocket-protocol.md](websocket-protocol.md)** — how the frontend and sidecar actually talk.
 5. **[arduino-directory.md](arduino-directory.md)** — short, and flashing depends on it.
 6. **[cohorts.md](cohorts.md) → [starting-a-session.md](starting-a-session.md) → [data-saving.md](data-saving.md)** — three interdependent documents in dependency order. The last two were written together and should be read together.
+7. **[analytics.md](analytics.md)** — last, because it reads back everything the previous three write. Its metric definitions extend `data-saving.md` §6.5 and assume you have read it.
 
 ## Which document is canonical when two disagree
 
@@ -46,10 +50,12 @@ Overlap between specs is deliberate — each document restates enough context to
 | The wire schema | **[websocket-protocol.md](websocket-protocol.md)**, always |
 | Port state transitions | **[hardware-interaction.md](hardware-interaction.md) §3** |
 | On-disk layout and file schema | **[data-saving.md](data-saving.md) §1–§2, §5** |
+| Live in-session metric definitions | **[data-saving.md](data-saving.md) §6.5** |
+| Metrics derived from *recorded* sessions | **[analytics.md](analytics.md) §3** |
 | Theme tokens, type roles, and motion | **[ephymeris_v1.0.md](ephymeris_v1.0.md) §2** |
 | Where code lives, and what is actually built | **[reference.md](reference.md)** and **[TODO.md](TODO.md)** |
 
-On the wire specifically: `cohorts.md` §10, `starting-a-session.md` §9, and `data-saving.md` §9 all originally proposed commands that have since been merged into `websocket-protocol.md`. Those sections are retained for design rationale only and are **explicitly not canonical**.
+On the wire specifically: `cohorts.md` §10, `starting-a-session.md` §9, and `data-saving.md` §9 all originally proposed commands that have since been merged into `websocket-protocol.md`. Those sections are retained for design rationale only and are **explicitly not canonical**. `analytics.md` §9 is the same kind of section, at the earlier stage — its commands are proposed and not yet implemented.
 
 A spec's own status header describes that document's subject area and can lag a working-tree change by a commit or two; `reference.md` and `TODO.md` carry the reconciliation date.
 

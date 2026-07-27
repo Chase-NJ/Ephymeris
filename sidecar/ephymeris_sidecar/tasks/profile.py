@@ -18,6 +18,7 @@ Two sketch *kinds* share this file (§6.2):
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,7 +33,7 @@ CONFIG_TYPES = {"int", "float", "bool", "string"}
 PROFILE_KINDS = {"behavior", "utility"}
 
 #: Control widget types a utility profile can declare (§6.6).
-CONTROL_TYPES = {"button", "select"}
+CONTROL_TYPES = {"button", "select", "grid"}
 
 
 class TaskProfileError(Exception):
@@ -89,24 +90,49 @@ class ControlOption:
 
 
 @dataclass(frozen=True)
+class ControlChannel:
+    """One row of a ``grid`` control (§6.6) — a named output with its own
+    commands and its own live state key."""
+
+    label: str
+    state: str | None = None
+    toggle: str | None = None
+    pulse: str | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"label": self.label}
+        if self.state is not None:
+            out["state"] = self.state
+        if self.toggle is not None:
+            out["toggle"] = self.toggle
+        if self.pulse is not None:
+            out["pulse"] = self.pulse
+        return out
+
+
+@dataclass(frozen=True)
 class Control:
     """A utility control the app renders in Debug Mode (§6.6).
 
     ``button`` carries a single ``command``; ``select`` carries ``options`` (each
-    with its own command). Both send over the existing ``port.send`` primitive
-    while the port is in ``PASSTHROUGH``.
+    with its own command); ``grid`` carries ``channels`` — a row per piece of
+    hardware, each with a toggle, a pulse, and a state key. All three send over
+    the existing ``port.send`` primitive while the port is in ``PASSTHROUGH``.
     """
 
     id: str
     label: str
-    type: str  # "button" | "select"
+    type: str  # "button" | "select" | "grid"
     command: str | None = None
     options: list[ControlOption] = field(default_factory=list)
+    channels: list[ControlChannel] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"id": self.id, "label": self.label, "type": self.type}
         if self.type == "button":
             out["command"] = self.command
+        elif self.type == "grid":
+            out["channels"] = [c.to_json() for c in self.channels]
         else:
             out["options"] = [o.to_json() for o in self.options]
         return out
@@ -147,6 +173,13 @@ class TaskProfile:
     live_metrics: list[LiveMetric] = field(default_factory=list)
     controls: list[Control] = field(default_factory=list)
     telemetry: Telemetry | None = None
+    #: Names older software wrote into a run document's `sketch` field for this
+    #: same task (`data-saving.md` §6.7). Only the archive walk reads these, to
+    #: decode historical runs whose recorded name isn't a folder name. Declared
+    #: rather than inferred on purpose: matching "Shape - L" to `shaping_GL`
+    #: by resemblance would be a guess, and a wrong guess decodes real data
+    #: with the wrong strobe map.
+    legacy_names: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -158,6 +191,7 @@ class TaskProfile:
             "strobes": {str(code): name for code, name in self.strobes.items()},
             "liveMetrics": [m.to_json() for m in self.live_metrics],
             "controls": [c.to_json() for c in self.controls],
+            "legacyNames": list(self.legacy_names),
         }
         if self.telemetry is not None:
             out["telemetry"] = self.telemetry.to_json()
@@ -175,6 +209,21 @@ class TaskProfile:
             if "END_SESSION" in name.upper():
                 return code
         return None
+
+
+def profile_hash(profile: TaskProfile) -> str:
+    """A stable content address for a profile (`analytics.md` §8.2).
+
+    Hashes the canonical JSON with sorted keys, so two profiles that mean the
+    same thing hash the same regardless of authoring order. Used to snapshot
+    which profile decoded a run, and to test whether two runs are comparable
+    at all — an equality check on this string rather than a blob comparison.
+
+    Hashing the *serialized* form is deliberate: `TaskProfile` is `frozen` but
+    holds a `dict` and lists, so the object itself is unhashable.
+    """
+    canonical = json.dumps(profile.to_json(), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def profile_path(sketch_dir: str | Path) -> Path:
@@ -212,7 +261,17 @@ def parse_profile(raw: Any) -> TaskProfile:
         live_metrics=_parse_metrics(raw.get("liveMetrics")),
         controls=_parse_controls(raw.get("controls")),
         telemetry=_parse_telemetry(raw.get("telemetry")),
+        legacy_names=_parse_legacy_names(raw.get("legacyNames")),
     )
+
+
+def _parse_legacy_names(raw: Any) -> list[str]:
+    """The `legacyNames` list (§6.7) — absent is the norm, not an error."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(n, str) for n in raw):
+        raise TaskProfileError("legacyNames must be a list of strings")
+    return [n for n in (n.strip() for n in raw) if n]
 
 
 def _parse_kind(raw: Any) -> str:
@@ -317,12 +376,48 @@ def _parse_controls(raw: Any) -> list[Control]:
             if not isinstance(command, str) or not command:
                 raise TaskProfileError(f"button control {control_id} missing command")
             controls.append(Control(id=control_id, label=label, type="button", command=command))
+        elif control_type == "grid":
+            channels = _parse_control_channels(control_id, entry.get("channels"))
+            controls.append(
+                Control(id=control_id, label=label, type="grid", channels=channels)
+            )
         else:  # select
             options = _parse_control_options(control_id, entry.get("options"))
             controls.append(
                 Control(id=control_id, label=label, type="select", options=options)
             )
     return controls
+
+
+def _parse_control_channels(control_id: str, raw: Any) -> list[ControlChannel]:
+    """Rows of a `grid` control. A row needs a label and at least one thing it
+    can do — a row with neither command is inert decoration, which is a
+    profile bug worth naming rather than silently rendering."""
+    if not isinstance(raw, list) or not raw:
+        raise TaskProfileError(f"grid control {control_id} needs a non-empty channels array")
+    channels: list[ControlChannel] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise TaskProfileError(f"each {control_id} channel must be an object")
+        label = entry.get("label")
+        if not isinstance(label, str) or not label:
+            raise TaskProfileError(f"a {control_id} channel is missing its label")
+        toggle = entry.get("toggle")
+        pulse = entry.get("pulse")
+        if not isinstance(toggle, str) and not isinstance(pulse, str):
+            raise TaskProfileError(
+                f"{control_id} channel {label!r} needs a toggle or a pulse command"
+            )
+        state = entry.get("state")
+        channels.append(
+            ControlChannel(
+                label=label,
+                state=state if isinstance(state, str) and state else None,
+                toggle=toggle if isinstance(toggle, str) and toggle else None,
+                pulse=pulse if isinstance(pulse, str) and pulse else None,
+            )
+        )
+    return channels
 
 
 def _parse_control_options(control_id: str, raw: Any) -> list[ControlOption]:

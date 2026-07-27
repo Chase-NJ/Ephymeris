@@ -55,7 +55,23 @@ class FakePorts:
         self.ended.append((box, reason))
 
 
-def make_runner(tmp_path: Path, profile_json=GRGL):
+async def wait_until(predicate, *, timeout: float = 5.0) -> None:
+    """Yield to the loop until `predicate()` holds.
+
+    Finalization is scheduled on the loop and does its file I/O in a worker
+    thread, so how long it takes depends on machine load rather than on
+    anything the test controls. A fixed number of short sleeps therefore
+    passes alone and fails under a full suite — wait on the condition, with a
+    generous ceiling that only trips on a genuine hang.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    while not predicate():
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError("timed out waiting for the runner to settle")
+        await asyncio.sleep(0.005)
+
+
+def make_runner(tmp_path: Path, profile_json=GRGL, duration_s=None):
     events: list[dict] = []
     ended: list[tuple] = []
 
@@ -89,6 +105,7 @@ def make_runner(tmp_path: Path, profile_json=GRGL):
                 profile=profile,
             )
         ],
+        duration_s=duration_s,
     )
     return runner, ports, events, ended
 
@@ -145,8 +162,7 @@ async def test_the_end_code_finalizes_the_run_cleanly(tmp_path: Path) -> None:
     ports.on_strobe(246, 3523555)  # END_SESSION per the profile's strobes map
 
     # The finalize is scheduled on the loop; let it run.
-    for _ in range(10):
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: bool(ended))
 
     assert ended, "expected the run to finalize"
     _run, reason = ended[-1]
@@ -162,6 +178,51 @@ async def test_the_end_code_finalizes_the_run_cleanly(tmp_path: Path) -> None:
     assert next((tmp_path / "behavior.mat").glob("*.mat")).is_file()
 
 
+async def test_the_time_limit_sends_stop_and_the_board_ends_the_run(tmp_path: Path) -> None:
+    """§2.3 — at the deadline the runner sends the same STOP an operator
+    would; the board's own end strobe still does the ending."""
+    runner, ports, _events, ended = make_runner(tmp_path, duration_s=0.05)
+    runner.start_box(1)
+    ports.on_ready(None)
+    ports.on_strobe(101, 0)
+
+    # The deadline fires on the loop and only sends STOP — nothing finalizes yet.
+    await wait_until(lambda: ports.stopped == [1])
+    assert not ended, "STOP alone must not finalize; the trial boundary does"
+
+    # The board honours STOP at its trial boundary and emits its end strobe.
+    ports.on_strobe(246, 3000)
+    await wait_until(lambda: bool(ended))
+    _run, reason = ended[-1]
+    assert reason == CLEAN_STOP_REASON
+
+
+async def test_an_early_end_cancels_the_deadline(tmp_path: Path) -> None:
+    """A box that finished before its time limit must never get a ghost STOP —
+    by then the port is free and could belong to something else."""
+    runner, ports, _events, ended = make_runner(tmp_path, duration_s=0.08)
+    runner.start_box(1)
+    ports.on_ready(None)
+    ports.on_strobe(246, 100)  # clean end well before the deadline
+
+    await wait_until(lambda: bool(ended))
+    await asyncio.sleep(0.15)  # ride past where the deadline would have fired
+    assert ports.stopped == [], "the cancelled deadline still sent STOP"
+
+
+async def test_snapshot_carries_started_at_only_while_running(tmp_path: Path) -> None:
+    runner, ports, _events, ended = make_runner(tmp_path)
+    assert runner.snapshot()[0]["startedAt"] is None
+
+    runner.start_box(1)
+    ports.on_ready(None)
+    assert runner.snapshot()[0]["startedAt"] is not None
+
+    ports.on_strobe(246, 100)
+    await wait_until(lambda: bool(ended))
+    assert runner.snapshot()[0]["startedAt"] is None
+
+
 async def test_a_board_drop_finalizes_with_whatever_was_captured(tmp_path: Path) -> None:
     """§10 — the hard stop costs no data; the WAL already has it."""
     runner, ports, _events, ended = make_runner(tmp_path)
@@ -171,8 +232,7 @@ async def test_a_board_drop_finalizes_with_whatever_was_captured(tmp_path: Path)
     ports.on_strobe(249, 100)
 
     runner.board_dropped(1)
-    for _ in range(10):
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: bool(ended))
 
     assert ended
     _run, reason = ended[-1]
@@ -228,6 +288,7 @@ async def test_the_snapshot_reports_the_mapping_and_what_is_live(tmp_path: Path)
             "sketchName": "GRGL_2-Odor",
             "sketchPath": "/sk/GRGL_2-Odor",
             "running": False,
+            "startedAt": None,
         }
     ]
 
@@ -236,6 +297,5 @@ async def test_the_snapshot_reports_the_mapping_and_what_is_live(tmp_path: Path)
 
     ports.on_ready(None)
     ports.on_strobe(246, 10)
-    for _ in range(10):  # finalize is scheduled on the loop
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: runner.snapshot()[0]["running"] is False)
     assert runner.snapshot()[0]["running"] is False

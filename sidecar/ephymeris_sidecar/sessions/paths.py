@@ -90,6 +90,62 @@ def parse_name_date(name: str) -> date | None:
     return None
 
 
+@dataclass(frozen=True)
+class ParsedSessionFolder:
+    """What a session folder's *name* alone can tell you (§2).
+
+    The archive walk is the only consumer — everything the app recorded itself
+    is answered by the database, which also knows things a name cannot carry
+    (animal ids, boxes, stop reasons).
+    """
+
+    prefix: str
+    session_number: str
+    date: date | None
+
+
+def parse_session_folder(name: str) -> ParsedSessionFolder:
+    """Split `<prefix>_<number>_<date>` back into its parts, either date spelling.
+
+    Degrades honestly rather than guessing: a name with no recognizable date
+    tail comes back whole as the prefix with an empty session number, because
+    inventing a split would attribute data to a session that never existed.
+    """
+    for pattern in (_ISO_TAIL, _LEGACY_TAIL):
+        match = pattern.search(name)
+        if match is None:
+            continue
+        parsed = parse_date_stamp(match.group(1))
+        if parsed is None:
+            continue
+        head = name[: match.start()]
+        if "_" in head:
+            prefix, number = head.rsplit("_", 1)
+        else:
+            prefix, number = head, ""
+        return ParsedSessionFolder(prefix=prefix, session_number=number, date=parsed)
+    return ParsedSessionFolder(prefix=name, session_number="", date=None)
+
+
+def parse_name_time(name: str) -> str | None:
+    """The `HHMMSS` tail of a per-animal file stem, as `HH:MM:SS` — or None.
+
+    Session folders don't carry one; per-animal files do (§2). Same
+    anchored-tail discipline as `parse_name_date`.
+    """
+    stem = Path(name).stem if Path(name).suffix else name
+    for pattern in (_ISO_TAIL, _LEGACY_TAIL):
+        match = pattern.search(stem)
+        if match is not None and match.group(2) is not None:
+            raw = match.group(2)
+            try:
+                datetime.strptime(raw, "%H%M%S")
+            except ValueError:
+                return None
+            return f"{raw[0:2]}:{raw[2:4]}:{raw[4:6]}"
+    return None
+
+
 def session_folder_name(prefix: str, session_number: str, when: datetime) -> str:
     """`<prefix>_<sessionNumber>_<YYYY-MM-DD>` (§2)."""
     return f"{sanitize_name(prefix)}_{sanitize_name(session_number)}_{date_stamp(when)}"

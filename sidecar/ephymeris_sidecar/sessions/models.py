@@ -59,6 +59,9 @@ class Session:
     folder_path: str
     ended_at: str | None = None
     group_runs: list[GroupRun] = field(default_factory=list)
+    #: Per-box time limit in whole minutes (`starting-a-session.md` §2.4);
+    #: None means the session runs until stopped by the operator or board.
+    duration_minutes: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -73,7 +76,32 @@ class Session:
             "status": self.status,
             "folderPath": self.folder_path,
             "groupRuns": [g.to_json() for g in self.group_runs],
+            "durationMinutes": self.duration_minutes,
         }
+
+    def to_list_item(self, ordinal: int, run_count: int | None = None) -> dict[str, Any]:
+        """The `SessionListItem` wire shape — the one listing form shared by
+        `sessions.list` and `analytics.summary`.
+
+        `ordinal` is the 1-based chronological position from (date, startedAt)
+        — never from `session_number`, which is free text and would sort "10"
+        before "9".
+        """
+        item = {
+            "id": self.id,
+            "cohortId": self.cohort_id,
+            "prefixName": self.prefix_name,
+            "sessionNumber": self.session_number,
+            "date": self.date,
+            "startedAt": self.started_at,
+            "endedAt": self.ended_at,
+            "status": self.status,
+            "folderPath": self.folder_path,
+            "ordinal": ordinal,
+        }
+        if run_count is not None:
+            item["runCount"] = run_count
+        return item
 
 
 @dataclass
@@ -87,6 +115,11 @@ class SessionAnimalRun:
     file_path: str | None = None
     ended_at: str | None = None
     stop_reason: str | None = None
+    #: The Task Profile this run actually used (`analytics.md` §8.2). `None`
+    #: for runs recorded before snapshotting existed — which is exactly the
+    #: flag Analytics needs to mark them decoded with a possibly-changed
+    #: profile, so it is meaningful rather than merely absent.
+    profile_hash: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -99,6 +132,7 @@ class SessionAnimalRun:
             "startedAt": self.started_at,
             "endedAt": self.ended_at,
             "stopReason": self.stop_reason,
+            "profileHash": self.profile_hash,
         }
 
 

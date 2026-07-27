@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { HashRouter } from "react-router";
 
 import App from "./App";
+import { AnalyticsProvider } from "./lib/analytics/AnalyticsProvider";
 import { CohortsProvider } from "./lib/cohorts/CohortsProvider";
 import { HardwareProvider } from "./lib/hardware/HardwareProvider";
 import { SessionsProvider } from "./lib/sessions/SessionsProvider";
@@ -28,7 +29,11 @@ createRoot(container).render(
               {/* App-level so telemetry keeps accumulating even if the user
                   navigates away from Mission Control mid-run. */}
               <SessionsProvider>
-                <App />
+                {/* App-level too: a cold summary can index an entire archive,
+                    and navigating away and back shouldn't pay that twice. */}
+                <AnalyticsProvider>
+                  <App />
+                </AnalyticsProvider>
               </SessionsProvider>
             </CohortsProvider>
           </HardwareProvider>

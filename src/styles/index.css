@@ -27,6 +27,37 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
 
+  /* §2.2.1 Data-visualization ramps — analytics.md §7. Added for Analytics;
+     nothing above changes. Pulsar is still the primary accent and the
+     no-gradient/no-glow rule still holds.
+
+     Series: six categorical colours anchored on Pulsar, for per-animal
+     identity across three linked panels. Worst-case separation is ΔE ≈ 10
+     under normal, deuteranopic AND protanopic vision — do NOT "fix" the
+     lightness spread to make them equal weight, that collapses two pairs to
+     ΔE 0.9 for red-green colour blindness. Chroma held ≤ 0.125 so they read
+     as matte beside Pulsar's 0.110. */
+  --color-series-1: #8b7ec8; /* oklch(0.635 0.110 291.0) — Pulsar */
+  --color-series-2: #229582; /* oklch(0.604 0.102 178.6) */
+  --color-series-3: #52b79d; /* oklch(0.713 0.103 173.8) */
+  --color-series-4: #9e9ff6; /* oklch(0.737 0.125 282.0) */
+  --color-series-5: #cba23e; /* oklch(0.731 0.125  85.8) */
+  --color-series-6: #be7031; /* oklch(0.619 0.125  56.0) */
+
+  /* Diverging heatmap ramp, centred on chance so below-chance reads as a
+     different *kind* of result rather than a smaller one. Quantized into seven
+     bins, not continuous: a continuous ramp passes through a mid-lightness
+     band where an in-cell label fails contrast against both Starlight and
+     Void. Every bin below clears WCAG AA. The top bin IS Ion, and the centre
+     sits just above Halo so chance reads as "nothing happening". */
+  --color-heat-1: #d4716f; /* < 0.20   oklch(0.660 0.125  22.0) */
+  --color-heat-2: #854a49; /* 0.20–35  oklch(0.480 0.080  22.0) */
+  --color-heat-3: #5a3e3d; /* 0.35–45  oklch(0.395 0.040  22.0) */
+  --color-heat-4: #3d3c44; /* 0.45–55  oklch(0.360 0.014 290.0) — chance */
+  --color-heat-5: #3e5743; /* 0.55–65  oklch(0.430 0.045 151.0) */
+  --color-heat-6: #447250; /* 0.65–85  oklch(0.510 0.075 151.0) */
+  --color-heat-7: #7cc98f; /* ≥ 0.85   oklch(0.770 0.113 151.0) — Ion */
+
   /* §2.4 Radius scale — sm/md/lg/xl. No ad hoc radii anywhere. */
   --radius-sm: 6px;
   --radius-md: 10px;

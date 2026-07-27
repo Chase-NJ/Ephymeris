@@ -33,10 +33,9 @@ Today, `hardware-interaction.md` §4 describes flashing as the user browsing to 
 ```
 <ArduinoDirectory>/
 ├── Utility/                     ← a category
-│   ├── PRIME_Lines/
-│   │   └── PRIME_Lines.ino
-│   └── TEST_Box/
-│       └── TEST_Box.ino
+│   └── BOX_Utility/
+│       ├── BOX_Utility.ino
+│       └── task.json            ← optional; makes it app-drivable (data-saving.md §6)
 ├── Olfactory Behavior/          ← a category holding sub-categories
 │   ├── 01_Shaping/              ← a sub-category
 │   │   ├── shaping_GL/

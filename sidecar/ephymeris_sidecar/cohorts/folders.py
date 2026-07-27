@@ -82,8 +82,21 @@ def _is_empty(path: Path) -> bool:
 def relocate(current: str | Path, destination: str | Path, move_existing: bool) -> Path:
     """The explicit "Change data folder…" action (§8).
 
-    Fails safely: a destination that already holds files is refused outright
-    rather than merged into or overwritten.
+    Two different intents share this one command, and they have opposite
+    requirements for the destination:
+
+    * **Move my data there** (`move_existing=True`) — the destination must be
+      empty, because merging two archives into one folder can silently collide
+      filenames and there is no safe way to reconcile that automatically.
+    * **Point this cohort at data that is already there** (`move_existing=False`)
+      — the destination is *expected* to be full. This is how a cohort attaches
+      to an archive written before this app existed, which is the entire reason
+      orphan adoption exists (`analytics.md` §8.1).
+
+    Refusing a non-empty destination in both cases made the second intent
+    impossible to express: the only control for it rejected exactly the folders
+    it was meant to accept. Nothing is written to the destination when not
+    moving, so there is nothing there to protect.
     """
     source = Path(current).expanduser()
     target = Path(destination).expanduser()
@@ -93,10 +106,12 @@ def relocate(current: str | Path, destination: str | Path, move_existing: bool) 
 
     if target.exists() and not target.is_dir():
         raise DataFolderError(f"{target} exists but isn't a folder.")
-    if target.exists() and not _is_empty(target):
+    if move_existing and target.exists() and not _is_empty(target):
         raise DataFolderError(
-            f"{target} isn't empty. Choose an empty folder — Ephymeris won't "
-            f"merge into or overwrite existing data."
+            f"{target} isn't empty. Choose an empty folder to move this "
+            f"cohort's data into — Ephymeris won't merge into or overwrite "
+            f"existing data. To use the data already in {target.name}, "
+            f"change the folder without moving."
         )
 
     if move_existing and source.exists():

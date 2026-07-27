@@ -9,6 +9,7 @@ import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { SketchPicker, TaskConfigForm } from "@/components/sessions/TaskConfigForm";
 import { errorMessage, getCohort } from "@/lib/cohorts/commands";
 import type { Cohort } from "@/lib/cohorts/types";
+import { useAllPortStatuses } from "@/lib/hardware/context";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
 import {
@@ -28,6 +29,7 @@ import {
   type Session,
   type TaskProfile,
 } from "@/lib/sessions/types";
+import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 import { NODE_ACCENT, NODE_PRIMARY } from "@/components/chrome/constellationStyle";
 
@@ -61,6 +63,7 @@ export function SessionMapping() {
 
   const connected = status === "connected";
   const sketches = discovery.sketches;
+  const portStates = useAllPortStatuses();
 
   // Seed the mapping from the cohort's standing box assignments.
   useEffect(() => {
@@ -185,6 +188,27 @@ export function SessionMapping() {
     mappings.every((m) => m.sketchPath !== null) &&
     duplicateBox === null;
 
+  // A failed flash leaves its box in `ERROR`, and `ERROR → FLASHING` is
+  // refused (`hardware-interaction.md` §3) — so without an ack here, the most
+  // likely place to *hit* a flash failure was also the one place you couldn't
+  // recover from it without a detour through Debug Mode.
+  const erroredBoxes = useMemo(
+    () => mappings.filter((m) => portStates[m.box]?.state === "ERROR").map((m) => m.box),
+    [mappings, portStates],
+  );
+
+  async function acknowledge(box: number) {
+    setError(null);
+    try {
+      await client.call(CMD.PORT_ERROR_ACK, { box });
+      // The star stays red on a cleared fault otherwise — the card would
+      // still read "failed" for a box that is now ready to flash.
+      setFlashStates((s) => ({ ...s, [box]: "idle" }));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   // Which group this is, for the rail's chip — only meaningful multi-group.
   const groupInfo = useMemo(() => {
     if (!cohort) return null;
@@ -197,11 +221,13 @@ export function SessionMapping() {
 
   const hint = busy
     ? "Flashing each box in turn — keep the boards plugged in."
-    : duplicateBox !== null
-      ? `Two animals share box ${duplicateBox} — move one first.`
-      : !allChosen
-        ? "Pick a sketch for every box, then confirm."
-        : "Confirm and flash, then place the animals.";
+    : erroredBoxes.length > 0
+      ? `Box ${erroredBoxes.join(", ")} needs acknowledging before it can flash.`
+      : duplicateBox !== null
+        ? `Two animals share box ${duplicateBox} — move one first.`
+        : !allChosen
+          ? "Pick a sketch for every box, then confirm."
+          : "Confirm and flash, then place the animals.";
 
   async function confirmAndFlash() {
     if (!sessionId || !allChosen) return;
@@ -332,6 +358,32 @@ export function SessionMapping() {
                   />
                 </div>
 
+                {/* Recovery in place: a box left in `ERROR` (usually by the
+                    flash that just failed) can't be flashed again until the
+                    fault is acknowledged, so the ack lives on the card that
+                    is stuck rather than only in Debug Mode. Same shape as
+                    `NodeDetail`'s row. */}
+                {portStates[mapping.box]?.state === "ERROR" && (
+                  <div
+                    className="mt-3 flex items-center gap-2 rounded-sm border border-halo px-2.5 py-2 text-[11px]"
+                    style={{ color: "var(--color-status-error)" }}
+                  >
+                    <CircleAlert size={13} strokeWidth={1.75} className="shrink-0" />
+                    <span
+                      className="min-w-0 flex-1 truncate"
+                      title={faultReason(portStates[mapping.box]?.reason)}
+                    >
+                      {faultReason(portStates[mapping.box]?.reason)}
+                    </span>
+                    <Button
+                      disabled={busy || !connected}
+                      onClick={() => void acknowledge(mapping.box)}
+                    >
+                      Acknowledge
+                    </Button>
+                  </div>
+                )}
+
                 {/* Per-run parameters slide the tile open with the app's
                     snappy spring; only a chosen sketch with a profile has
                     any — an unchosen tile never expands. */}
@@ -379,7 +431,10 @@ export function SessionMapping() {
         <Button
           variant="primary"
           onClick={() => void confirmAndFlash()}
-          disabled={!allChosen || busy || !connected}
+          disabled={!allChosen || busy || !connected || erroredBoxes.length > 0}
+          {...(erroredBoxes.length > 0
+            ? { title: "Acknowledge the box error first — a box in ERROR can't be flashed" }
+            : {})}
         >
           <Zap size={13} strokeWidth={1.75} />
           {busy ? "Flashing…" : "Confirm and flash"}
@@ -397,6 +452,21 @@ export function SessionMapping() {
       </div>
     </motion.section>
   );
+}
+
+/**
+ * What put this box in `ERROR`, in words the operator can act on.
+ *
+ * A fault that happened in this window carries the real cause ("flash failed:
+ * …"). One inherited from before a reload carries only the replay placeholder
+ * (`websocket-protocol.md` §1.2 sends `reason: "initial state"`), which
+ * explains nothing — so that case gets a sentence instead of a shrug.
+ */
+function faultReason(reason: string | undefined): string {
+  if (!reason || reason === "initial state") {
+    return "This box is in an error state from an earlier operation.";
+  }
+  return reason;
 }
 
 /**

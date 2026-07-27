@@ -27,6 +27,21 @@ from .models import (
 log = logging.getLogger(__name__)
 
 
+def _hydrate_run(row: sqlite3.Row) -> SessionAnimalRun:
+    return SessionAnimalRun(
+        id=row["id"],
+        session_id=row["session_id"],
+        animal_id=row["animal_id"],
+        box_number=row["box_number"],
+        sketch_path=row["sketch_path"],
+        file_path=row["file_path"],
+        started_at=row["started_at"],
+        ended_at=row["ended_at"],
+        stop_reason=row["stop_reason"],
+        profile_hash=row["profile_hash"],
+    )
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -126,6 +141,7 @@ class SessionRepository:
         session_number: str,
         date: str,
         folder_path: str,
+        duration_minutes: int | None = None,
     ) -> Session:
         session = Session(
             id=_new_id(),
@@ -137,13 +153,15 @@ class SessionRepository:
             started_at=_now(),
             status="configuring",
             folder_path=folder_path,
+            duration_minutes=duration_minutes,
         )
         with self._db.lock:
             self._db.conn.execute(
                 "INSERT INTO sessions"
                 " (id, cohort_id, prefix_id, prefix_name, session_number, date,"
-                "  started_at, ended_at, status, folder_path, group_runs)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  started_at, ended_at, status, folder_path, group_runs,"
+                "  duration_minutes)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session.id,
                     session.cohort_id,
@@ -156,6 +174,7 @@ class SessionRepository:
                     session.status,
                     session.folder_path,
                     "[]",
+                    session.duration_minutes,
                 ),
             )
             self._db.conn.commit()
@@ -197,8 +216,8 @@ class SessionRepository:
             self._db.conn.execute(
                 "INSERT OR REPLACE INTO session_animal_runs"
                 " (id, session_id, animal_id, box_number, sketch_path, file_path,"
-                "  started_at, ended_at, stop_reason)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  started_at, ended_at, stop_reason, profile_hash)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.id,
                     run.session_id,
@@ -209,6 +228,7 @@ class SessionRepository:
                     run.started_at,
                     run.ended_at,
                     run.stop_reason,
+                    run.profile_hash,
                 ),
             )
             self._db.conn.commit()
@@ -219,20 +239,70 @@ class SessionRepository:
                 "SELECT * FROM session_animal_runs WHERE session_id = ? ORDER BY started_at",
                 (session_id,),
             ).fetchall()
-        return [
-            SessionAnimalRun(
-                id=r["id"],
-                session_id=r["session_id"],
-                animal_id=r["animal_id"],
-                box_number=r["box_number"],
-                sketch_path=r["sketch_path"],
-                file_path=r["file_path"],
-                started_at=r["started_at"],
-                ended_at=r["ended_at"],
-                stop_reason=r["stop_reason"],
-            )
-            for r in rows
-        ]
+        return [_hydrate_run(r) for r in rows]
+
+    def runs_for_cohort(self, cohort_id: str) -> list[SessionAnimalRun]:
+        """Every run across every session of one cohort (`analytics.md` §9).
+
+        One join rather than a query per session: the whole cohort table is a
+        single `analytics.summary` payload, and per-session calls would mean a
+        round trip per heatmap column.
+        """
+        with self._db.lock:
+            rows = self._db.conn.execute(
+                "SELECT r.* FROM session_animal_runs r"
+                " JOIN sessions s ON s.id = r.session_id"
+                " WHERE s.cohort_id = ?"
+                " ORDER BY s.date, s.started_at, r.started_at",
+                (cohort_id,),
+            ).fetchall()
+        return [_hydrate_run(r) for r in rows]
+
+    # --- listing (analytics.md §9) ----------------------------------------
+
+    def list_sessions(
+        self, cohort_id: str, *, include_aborted: bool = False
+    ) -> list[Session]:
+        """A cohort's sessions, oldest first. **Never touches the filesystem.**
+
+        Ordering is `(date, started_at)` — never `session_number`, which is
+        free text (§10) and would sort "10" before "9".
+
+        Aborted sessions are excluded by default: one never wrote data, so
+        including it produces an empty heatmap column that reads as a session
+        where every animal failed.
+        """
+        clause = "" if include_aborted else " AND status != 'aborted'"
+        with self._db.lock:
+            rows = self._db.conn.execute(
+                f"SELECT * FROM sessions WHERE cohort_id = ?{clause}"
+                " ORDER BY date, started_at",
+                (cohort_id,),
+            ).fetchall()
+        return [self._hydrate(row) for row in rows]
+
+    def list_unfinished(self) -> list[Session]:
+        """Every session still open — `configuring` or `running` — across all
+        cohorts, oldest first. Feeds `sessions.active`; deliberately global,
+        unlike `list_sessions`, because the caller by definition doesn't know
+        a cohort id yet.
+        """
+        with self._db.lock:
+            rows = self._db.conn.execute(
+                "SELECT * FROM sessions WHERE status IN ('configuring', 'running')"
+                " ORDER BY date, started_at"
+            ).fetchall()
+        return [self._hydrate(row) for row in rows]
+
+    def run_counts_by_session(self, cohort_id: str) -> dict[str, int]:
+        with self._db.lock:
+            rows = self._db.conn.execute(
+                "SELECT r.session_id AS sid, COUNT(*) AS n FROM session_animal_runs r"
+                " JOIN sessions s ON s.id = r.session_id"
+                " WHERE s.cohort_id = ? GROUP BY r.session_id",
+                (cohort_id,),
+            ).fetchall()
+        return {row["sid"]: row["n"] for row in rows}
 
     # --- internals --------------------------------------------------------
 
@@ -251,4 +321,5 @@ class SessionRepository:
             status=row["status"],
             folder_path=row["folder_path"],
             group_runs=[GroupRun.from_json(r) for r in raw_runs],
+            duration_minutes=row["duration_minutes"],
         )

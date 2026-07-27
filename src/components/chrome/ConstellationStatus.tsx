@@ -11,18 +11,22 @@ import {
   NODE_PRIMARY,
   NODE_RADIUS,
 } from "./constellationStyle";
+import { layoutFor, type ConstellationLayout } from "@/lib/constellations/slots";
+import { zodiacById } from "@/lib/constellations/zodiac";
 import { useAllPortStatuses, useBoardPresence } from "@/lib/hardware/context";
-import { useBoundBoxes } from "@/lib/settings/context";
+import { useBoundBoxes, useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 import { BOX_IDS, type PortStateName } from "@/lib/hardware/store";
 
 /**
  * The signature element (ephymeris_v1.0.md §2.7).
  *
- * Six nodes in a fixed abstract layout with thin Pulsar lines between adjacent
- * boxes. A line dims when either endpoint is not connected-and-nominal; a node
- * goes Error red on fault. This is the at-a-glance system-health readout, not
- * decoration — which is why it lives at the bottom of the sidebar and is
+ * Box-status nodes joined by thin Pulsar lines. The layout is the user's
+ * chosen zodiac constellation (§4.6) — boxes occupy stars, unoccupied stars
+ * render as faint markers — or the legacy fixed six-node shape until one is
+ * chosen. A line dims when either endpoint is not connected-and-nominal; a
+ * node goes Error red on fault. This is the at-a-glance system-health readout,
+ * not decoration — which is why it lives at the bottom of the sidebar and is
  * visible from every section (§3.2).
  *
  * `<LiveConstellation>` below feeds it from the same two independent inputs
@@ -47,17 +51,13 @@ export function healthFor(detected: boolean, state: PortStateName): BoxHealth {
   return "idle";
 }
 
-/** The sidebar's live instance, fed from the shared hardware store. */
-export function LiveConstellation() {
+/** Live health for every box, from the shared hardware store. */
+export function useBoxHealth(): Partial<Record<number, BoxHealth>> {
   const { status } = useSidecar();
   const boards = useBoardPresence();
   const ports = useAllPortStatuses();
 
-  // A box earns a node once it's bound to a board — the same rule that decides
-  // whether it gets a console panel in Debug Mode.
-  const configured = useBoundBoxes();
-
-  const health = useMemo(() => {
+  return useMemo(() => {
     // With the sidecar gone we don't *know* anything — showing stale green
     // would be a lie exactly where trust matters most. Everything reads absent.
     if (status !== "connected") return {};
@@ -68,15 +68,40 @@ export function LiveConstellation() {
     }
     return map;
   }, [status, boards, ports]);
+}
 
-  return <ConstellationStatus health={health} boxes={configured} />;
+/** The sidebar's live instance. */
+export function LiveConstellation() {
+  const { settings } = useSettings();
+  // A box earns a node once it's bound to a board — the same rule that decides
+  // whether it gets a console panel in Debug Mode.
+  const configured = useBoundBoxes();
+  const health = useBoxHealth();
+
+  const layout = useMemo(
+    () => resolveLayout(settings.constellation, settings.constellationSlots, configured),
+    [settings.constellation, settings.constellationSlots, configured],
+  );
+
+  return <ConstellationStatus health={health} layout={layout} />;
+}
+
+/** The chosen zodiac layout, or the legacy fixed shape when none is chosen. */
+export function resolveLayout(
+  constellationId: string | null,
+  slots: Record<string, number>,
+  boxes: number[],
+): ConstellationLayout {
+  const constellation = zodiacById(constellationId);
+  return constellation ? layoutFor(constellation, slots, boxes) : legacyLayout(boxes);
 }
 
 /**
- * Fixed node positions in a 100×54 viewBox. Deliberately irregular rather than
- * a strict grid so it reads as a constellation.
+ * The pre-zodiac fixed layout — positions pinned per box number, in a 100×54
+ * frame, deliberately irregular so it reads as a constellation. Kept as the
+ * fallback so an install that never ran box setup looks exactly as it did.
  */
-const NODES: ReadonlyArray<{ box: number; x: number; y: number }> = [
+const LEGACY_NODES: ReadonlyArray<{ box: number; x: number; y: number }> = [
   { box: 1, x: 12, y: 14 },
   { box: 2, x: 47, y: 8 },
   { box: 3, x: 86, y: 18 },
@@ -85,12 +110,8 @@ const NODES: ReadonlyArray<{ box: number; x: number; y: number }> = [
   { box: 6, x: 88, y: 47 },
 ];
 
-/**
- * Which pairs count as "adjacent". The spec says adjacent nodes are linked but
- * doesn't enumerate the pairs; this forms one closed constellation so no node
- * is ever orphaned. Logged as an open item.
- */
-const EDGES: ReadonlyArray<readonly [number, number]> = [
+/** Legacy adjacency — one closed shape so no node is ever orphaned. */
+const LEGACY_EDGES: ReadonlyArray<readonly [number, number]> = [
   [1, 2],
   [2, 3],
   [4, 5],
@@ -99,7 +120,23 @@ const EDGES: ReadonlyArray<readonly [number, number]> = [
   [3, 6],
 ];
 
-const NODE_FILL: Record<BoxHealth, string> = {
+export function legacyLayout(boxes: number[]): ConstellationLayout {
+  const shown = new Set(boxes);
+  const nodes = LEGACY_NODES.filter((n) => shown.has(n.box)).map((n) => ({
+    box: n.box,
+    star: n.box - 1,
+    x: n.x,
+    y: n.y,
+  }));
+  // Edges between unconfigured boxes are dropped entirely (not dimmed): in the
+  // legacy shape an unclaimed slot isn't missing hardware, so nothing marks it.
+  const edges = LEGACY_EDGES.filter(([a, b]) => shown.has(a) && shown.has(b)).map(
+    ([a, b]) => [a - 1, b - 1] as const,
+  );
+  return { nodes, edges, emptyStars: [] };
+}
+
+export const NODE_FILL: Record<BoxHealth, string> = {
   nominal: NODE_ACCENT,
   idle: NODE_PRIMARY,
   absent: "var(--color-halo)",
@@ -107,7 +144,7 @@ const NODE_FILL: Record<BoxHealth, string> = {
 };
 
 /** A link is live only when both endpoints are present and healthy. */
-function isLinkLive(a: BoxHealth | undefined, b: BoxHealth | undefined): boolean {
+export function isLinkLive(a: BoxHealth | undefined, b: BoxHealth | undefined): boolean {
   const ok = (h: BoxHealth | undefined) => h === "nominal" || h === "idle";
   return ok(a) && ok(b);
 }
@@ -117,20 +154,23 @@ const VIEW_ASPECT = 100 / 54;
 const VIEW_PADDING = 9;
 
 /**
- * Frame the view around whichever boxes exist.
+ * Frame the view around the given points.
  *
- * Node positions are pinned per box number — box 4 always sits where box 4
- * sits — so the picture is stable while you're watching it. Only the framing
- * changes, and only when boxes are added or removed, which is a deliberate
- * configuration act rather than something that happens mid-session.
+ * In zodiac mode this runs over **all** stars, occupied or not — the asterism
+ * is the point of the feature and must not warp as boxes come and go. In the
+ * legacy layout it frames only configured boxes, as it always has. Either way
+ * the framing changes only on configuration acts, never mid-session.
  */
-function frameFor(nodes: typeof NODES): { viewBox: string; scale: number } {
-  if (nodes.length === 0) return { viewBox: "0 0 100 54", scale: 1 };
+export function frameFor(points: ReadonlyArray<{ x: number; y: number }>): {
+  viewBox: string;
+  scale: number;
+} {
+  if (points.length === 0) return { viewBox: "0 0 100 54", scale: 1 };
 
-  let minX = Math.min(...nodes.map((n) => n.x)) - VIEW_PADDING;
-  let maxX = Math.max(...nodes.map((n) => n.x)) + VIEW_PADDING;
-  let minY = Math.min(...nodes.map((n) => n.y)) - VIEW_PADDING;
-  let maxY = Math.max(...nodes.map((n) => n.y)) + VIEW_PADDING;
+  let minX = Math.min(...points.map((n) => n.x)) - VIEW_PADDING;
+  let maxX = Math.max(...points.map((n) => n.x)) + VIEW_PADDING;
+  let minY = Math.min(...points.map((n) => n.y)) - VIEW_PADDING;
+  let maxY = Math.max(...points.map((n) => n.y)) + VIEW_PADDING;
 
   // Grow the short side to hold the aspect, so one box doesn't render as a
   // single enormous dot and the sidebar height never jumps.
@@ -156,23 +196,23 @@ function frameFor(nodes: typeof NODES): { viewBox: string; scale: number } {
 
 export function ConstellationStatus({
   health = {},
-  boxes = null,
+  layout,
 }: {
   health?: Partial<Record<number, BoxHealth>>;
-  /** Configured box numbers. Null shows all six (the design-time default). */
-  boxes?: number[] | null;
+  layout: ConstellationLayout;
 }) {
   const at = (box: number): BoxHealth => health[box] ?? "absent";
+  const { nodes, edges, emptyStars } = layout;
 
-  // Only configured boxes get a node; an unclaimed slot isn't missing hardware.
-  const nodes = boxes === null ? NODES : NODES.filter((n) => boxes.includes(n.box));
-  const shown = new Set(nodes.map((n) => n.box));
-  const edges = EDGES.filter(([a, b]) => shown.has(a) && shown.has(b));
+  // Star index → position + occupant, for edge endpoints.
+  const starAt = new Map<number, { x: number; y: number; box: number | null }>();
+  for (const s of emptyStars) starAt.set(s.star, { x: s.x, y: s.y, box: null });
+  for (const n of nodes) starAt.set(n.star, { x: n.x, y: n.y, box: n.box });
 
   const connected = nodes.filter((n) => at(n.box) !== "absent").length;
   const caption =
     nodes.length === 0 ? "no boxes configured" : `${connected}/${nodes.length} boxes`;
-  const { viewBox, scale } = frameFor(nodes);
+  const { viewBox, scale } = frameFor([...nodes, ...emptyStars]);
 
   return (
     <div className="px-2 pb-1">
@@ -185,10 +225,15 @@ export function ConstellationStatus({
         aria-hidden
       >
         {edges.map(([a, b]) => {
-          const from = NODES.find((n) => n.box === a);
-          const to = NODES.find((n) => n.box === b);
+          const from = starAt.get(a);
+          const to = starAt.get(b);
           if (!from || !to) return null;
-          const live = isLinkLive(at(a), at(b));
+          // An edge is live only when both endpoint stars are occupied by
+          // healthy boxes; one touching an empty star draws dim.
+          const live =
+            from.box !== null &&
+            to.box !== null &&
+            isLinkLive(at(from.box), at(to.box));
           return (
             <motion.line
               key={`${a}-${b}`}
@@ -203,6 +248,19 @@ export function ConstellationStatus({
             />
           );
         })}
+
+        {/* Unoccupied stars: faint markers, distinct from an `absent` box
+            (which keeps full radius). No stroke, no glow (§2.2). */}
+        {emptyStars.map((s) => (
+          <circle
+            key={`empty-${s.star}`}
+            cx={s.x}
+            cy={s.y}
+            r={NODE_RADIUS * 0.55 * scale}
+            fill="var(--color-halo)"
+            opacity={0.4}
+          />
+        ))}
 
         {nodes.map((n) => (
           <motion.circle

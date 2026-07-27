@@ -158,6 +158,68 @@ def test_select_control_requires_non_empty_options() -> None:
                        "controls": [{"id": "g", "type": "select", "options": []}]})
 
 
+# --- grid controls (§6.6) --------------------------------------------------
+
+GRID_PROFILE = {
+    "taskName": "Box Utility",
+    "kind": "utility",
+    "controls": [
+        {
+            "id": "fluids",
+            "label": "Fluid lines",
+            "type": "grid",
+            "channels": [
+                {"label": "Left 1", "state": "f1", "toggle": "TOGGLE F1", "pulse": "PULSE F1"},
+                {"label": "Right 1", "state": "f3", "toggle": "TOGGLE F3"},
+            ],
+        }
+    ],
+}
+
+
+def test_grid_control_round_trips_to_json() -> None:
+    profile = parse_profile(GRID_PROFILE)
+    control = profile.controls[0]
+    assert control.type == "grid"
+    assert [c.label for c in control.channels] == ["Left 1", "Right 1"]
+    assert control.channels[0].pulse == "PULSE F1"
+    # A channel that declares no pulse omits the key rather than sending null.
+    out = profile.to_json()["controls"][0]
+    assert out["channels"][0] == {
+        "label": "Left 1",
+        "state": "f1",
+        "toggle": "TOGGLE F1",
+        "pulse": "PULSE F1",
+    }
+    assert "pulse" not in out["channels"][1]
+    # Re-parsing the emitted JSON reproduces it exactly — the shape the sidecar
+    # snapshots for a run is the shape it can decode again years later.
+    assert parse_profile(profile.to_json()).to_json() == profile.to_json()
+
+
+def test_grid_control_requires_channels() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({"taskName": "X", "kind": "utility",
+                       "controls": [{"id": "g", "type": "grid", "channels": []}]})
+
+
+def test_a_grid_channel_needs_something_to_do() -> None:
+    """A row with neither command is inert decoration — a profile bug worth
+    naming rather than silently rendering."""
+    with pytest.raises(TaskProfileError) as exc:
+        parse_profile({"taskName": "X", "kind": "utility",
+                       "controls": [{"id": "g", "type": "grid",
+                                     "channels": [{"label": "Left 1", "state": "f1"}]}]})
+    assert "Left 1" in str(exc.value)
+
+
+def test_a_grid_channel_needs_a_label() -> None:
+    with pytest.raises(TaskProfileError):
+        parse_profile({"taskName": "X", "kind": "utility",
+                       "controls": [{"id": "g", "type": "grid",
+                                     "channels": [{"toggle": "TOGGLE F1"}]}]})
+
+
 def test_unknown_control_type_is_rejected() -> None:
     with pytest.raises(TaskProfileError):
         parse_profile({"taskName": "X", "kind": "utility",

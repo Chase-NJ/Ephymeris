@@ -13,8 +13,9 @@
 **The flow at a glance:**
 
 ```
-Dashboard CTA
-   │
+Launch  /launch               sidebar tab + dashboard hero CTA both land here:
+   │                          start fresh, resume the running session, end it,
+   │                          or resume/discard a set-up left mid-flow
    ▼
 Step 1  /session/new          cohort · prefix · session number
    │
@@ -34,7 +35,7 @@ This document also resolves three long-standing TBD items: `hardware-interaction
 
 ## 0. Scope
 
-Defines the full path from the dashboard's "Start a Session" CTA to a running Mission Control dashboard: the configuration step, the animal→box mapping and flashing sequence, and the live session UI (3D constellation, per-box controls, the zoomed-in per-animal view). Consumes `data-saving.md`'s Task Profiles and file schema; doesn't redefine them.
+Defines the full path from the Launch page (`/launch` — the sidebar tab the dashboard's hero CTA also lands on) to a running Mission Control dashboard: the configuration step, the animal→box mapping and flashing sequence, and the live session UI (3D constellation, per-box controls, the zoomed-in per-animal view). Launch is also the way *back*: it renders `sessions.active`'s answer — the running session with an Open Mission Control action, set-ups still in `configuring` with Resume-setup/Discard, and crash-orphaned `stale` rows shown read-only (View in Analytics / Close out — never Resume, per §11). Consumes `data-saving.md`'s Task Profiles and file schema; doesn't redefine them.
 
 ---
 
@@ -62,6 +63,14 @@ Selected from the same card-grid pattern as the Cohorts tab (`cohorts.md` §4) �
 
 Not a manual choice in this step — the session begins with the cohort's lowest-`order` group that has at least one box-assigned animal (§1). This is what `Group.order` was reserved for in `cohorts.md` §1; asking the user to also pick a starting group here would be redundant with data they already set up. Switching to the next group later is a live-session action (§5.2), not a config-time one.
 
+### 2.4 Time Limit
+
+An optional **minutes** field. Empty means no limit — the session runs until the operator or the board ends it, exactly as before the field existed.
+
+When set, it is a **per-box** limit measured from **each box's own start**, not from Start All: boxes are started individually (a box can be restarted mid-group, a straggler started late), and the point of a time limit is that every *animal* runs for the same duration. The value is stored on the `Session` record (`durationMinutes`, `data-saving.md` §4), so every group in a multi-group session runs under the same limit and a reloaded window still knows it.
+
+Enforcement is sidecar-side, never client-side: the runner schedules an auto-`STOP` per box at start (§5.4). A closed or crashed frontend changes nothing about when boxes stop.
+
 ---
 
 ## 3. Step 2 — Animal → Box Mapping Confirmation
@@ -87,6 +96,8 @@ Once the user confirms, each box's sketch is flashed **in sequence**, not in par
 
 **Animated, on-theme progress indicator:** each box's card icon transitions through the same states its Debug Mode badge would (`hardware-interaction.md` §3.4), but rendered here as part of the star motif already established — a box mid-flash shows its star "flaring" (brief animated pulse) rather than a generic spinner, so the visual language stays consistent with the rest of the app rather than switching to a plain loading indicator for this one step.
 
+**Recovering from a failed flash, in place.** A failed flash leaves its box in `ERROR` (`hardware-interaction.md` §3), and `ERROR → FLASHING` is refused — so a retry is rejected until the fault is acknowledged. The acknowledgement therefore lives on the card that is stuck: a box in `ERROR` shows its reason and an **Acknowledge** button (`port.error.ack`, the same command Debug Mode's panel sends), and Confirm-and-flash stays disabled while any mapped box is faulted, since the sequence would only halt on it again. Without this, the step most likely to *produce* a flash failure — a bad sketch is discovered here, not in Debug Mode — was the one place it couldn't be cleared. A fault inherited from before a reload carries only the replay placeholder reason (`websocket-protocol.md` §1.2's `"initial state"`), so the card states plainly that the box is in an error state rather than repeating a word that explains nothing.
+
 > **The protocol wrinkle this flow forced.** `hardware-interaction.md` §3.3 normally auto-resumes `PASSTHROUGH` after a successful flash if that was the pre-flash state. This flow needs the opposite — every box must land in `IDLE` afterward so the session runner can claim it, since `IN_SESSION` can only be entered from `IDLE`. So `port.flash` carries a `suppressPassthroughResume: bool` argument, default `false` to preserve Debug Mode's behaviour; this flow sets it `true`. **Built and merged into `websocket-protocol.md` §3.**
 
 On completion, the user lands in Mission Control.
@@ -111,6 +122,20 @@ Always visible: session name (`<prefix>_<sessionNumber>`), date, current time, a
 - **Stop** — sends the literal `STOP` line over that box's serial connection. The firmware checks for it once per trial boundary (`GRGL_2-Odor.ino`'s own `checkForStop()`), so a trial in progress always completes before the board honors it — this is firmware behavior this doc relies on, not something the app enforces itself.
 - **Reset** — the existing DTR-toggle reset (`hardware-interaction.md` §5), unchanged. Rebooting mid-session returns that box to `IDLE`/waiting-at-`READY`; the operator presses Start again to resume.
 
+### 5.4 Per-Box Run Clocks & the Time-Limit Auto-Stop
+
+Each live box's card shows an elapsed clock — `m:ss` since *that box's* start, shown as `elapsed / limit` when the session carries a time limit (§2.4). The clock is driven by the runner's per-box `startedAt` (carried in `sessions.status`'s `boxes`), never by a client-side stopwatch, so a reloaded window resumes mid-count instead of restarting from zero.
+
+At the deadline the **sidecar** sends the same `STOP` an operator's press would — the auto-stop is exactly §5.3's Stop with a scheduler behind it. Everything downstream is unchanged: the board finishes its trial, emits its end strobe, and the run finalizes through the normal path with the normal `stop_reason` (§8) — the time limit decides *when* the request is sent, not *how* the run ends. Once time is up the card's clock stops counting and reads "time up — stopping at the next trial boundary", because that is the true state: the request is in, and the board owns the timing of the end. A box that ends early (its own end strobe, an operator stop, a board drop) cancels its scheduled auto-stop — a freed port must never receive a ghost `STOP`.
+
+A sketch with no Task Profile declares no end strobe, so `STOP` alone cannot finalize it (§7) — for those, the time limit sends the request but the operator still closes the run out, same as a manual stop today.
+
+### 5.5 The Group-Swap Prompt
+
+When every box in the current group has finalized **and** another populated group is waiting, Mission Control prompts with the placement scene played backwards (§3's `RatPlacementBanner`, `mode="return"`): the handler lifts the animal back out of the chamber and carries it home to its cage — literally the operator's next physical act — with a **Switch Group** button beneath it. Same scenery, same performers, mirrored choreography; the arrival flourish is omitted because leaving celebrates nothing.
+
+The prompt appears whether the group ended by time limit, by operator stop, or by every board's own end strobe — "everyone is done and more animals are waiting" is the trigger, not how it came to be true. On the last group no swap is offered; the journey rail's existing End Session guidance stands.
+
 ---
 
 ## 6. The 3D Constellation
@@ -123,7 +148,29 @@ Extends `cohorts.md` §5's procedural generation rather than replacing it — sa
 
 ### 6.2 General (Orbit) View
 
-Camera starts pulled back, the full constellation visible, orbit/pan via click-drag (standard `OrbitControls`-equivalent). Stars for animals currently `IN_SESSION` are **illuminated**; everyone else in the constellation is present but dim/unlit — including animals in a group that isn't running right now (§5.2), and animals with no box assigned at all. Only illuminated stars are interactive (hover indicator, clickable) — an unlit star has no live view to show.
+Camera starts pulled back, the full constellation visible, orbit/pan via click-drag (standard `OrbitControls`-equivalent). Stars for animals currently `IN_SESSION` are **illuminated**; everyone else in the constellation is present but dim/unlit — including animals in a group that isn't running right now (§5.2), and animals with no box assigned at all. Only illuminated stars are interactive (hover reticle, nameplate, clickable) — an unlit star has no live view to show, and gets neither treatment.
+
+**A lit star's colour is its temperature, and its temperature is that animal's pooled rolling accuracy** (`components/sessions/starSurface.ts`). It renders as an actual stellar surface — granulated convection cells from a noise fBm, limb darkening so the disc reads as a sphere, and a rim-only chromosphere — climbing the real stellar sequence as the animal works:
+
+| Pooled rolling accuracy | Reads as | Class |
+|---|---|---|
+| ≤ chance (0.5) | deep red | M |
+| ~0.6 | orange | K |
+| ~0.7 | yellow, sun-like | G |
+| ~0.85 | white | F/A |
+| → 1.0 | blue-white | B |
+
+Three decisions worth not relitigating:
+
+- **Pooled, not per-condition.** A single-condition figure cannot tell learning from a side bias — an animal that always pokes right scores ~1.0 on the go-right odor and ~0.0 on the other, and either alone tells a story the data doesn't support. Pooled, that animal sits at chance, which is the truth (`analytics.md` §3.7).
+- **Chance is the floor, not zero.** Below chance an animal isn't "colder", it's doing something other than the task; stretching the ramp to zero would spend half the visible range on a distinction nobody reads. An animal that has scored nothing yet shows at the cool end rather than warm, because it hasn't demonstrated anything.
+- **This is a deliberate, bounded exception to §2.2's flat-matte rule** (`ephymeris_v1.0.md`). It buys real information — the overview answers "who is working" without opening a panel — and it is confined to this 3D scene. An *unlit* star stays a flat matte dot: it has no performance to report, and giving it a surface would imply it were running. Nothing in the 2D chrome gains a gradient or a glow.
+
+The colour eases toward its target rather than snapping, so a run of good trials warms a star visibly instead of flickering between classes trial by trial. Reduced motion stills the granulation; the temperature still reads.
+
+**Hover** swells a lit star and draws a billboarded targeting reticle — four short `Pulsar` arcs at the quadrants that sweep inward as they appear, the way an instrument marks the thing it is tracking. Both the swell and the reticle are eased with a frame-rate-independent approach rather than snapped: the pointer crosses a hit sphere four times the star's radius, so an instant jump would fire often and read as a glitch. The reticle is deliberately *not* another concentric ring — §6.3's arrival already owns that idiom, and two ring treatments moments apart read as one confused animation. Billboarding is what keeps it facing the camera from any orbit angle, which a ring fixed in the XY plane does not.
+
+**Every lit star carries a persistent nameplate**: box number and animal name on a small matte plate, hung under the star on a short leader. Persistent rather than hover-only, because "which star is which" is a question the overview should never make you hover to answer — but only for *lit* stars, since a plate on every animal in the cohort would bury the running ones. It is DOM rather than in-scene text, so it stays crisp and uses the app's own type (JetBrains Mono — an animal name is an identifier, `ephymeris_v1.0.md` §2.3), and it carries **no `distanceFactor`**: a plate that scaled with camera distance would be enormous on arrival at a star. Constant screen size is also what makes it read as a HUD annotation rather than an object floating in the scene. The plate never takes the pointer, so the star's hit sphere behind it stays clickable; hovering the star brightens its plate's border and leader to `Pulsar`.
 
 ### 6.3 Zoom-to-Star ("Arrival")
 
@@ -136,11 +183,22 @@ The 3D scene **stays rendering in the background** once arrived — the data pan
 - Animal name.
 - Running sketch (name, and its category from `arduino-directory.md` if useful context).
 - Start / Stop / Reset for that box (§5.3, same actions, just reachable from here too).
-- **Recent strobes** — a fixed five-row feed of the box's most recent strobes, newest first: code chip, the profile's decoded strobe name (`data-saving.md` §6.4; a profile-less sketch shows `Strobe <code>`), and the board-side timestamp. Rows land with the app's snappy spring and dim as they age down the frame; empty slots hold the frame's shape.
+- **Rolling accuracy** — the pooled figure the star's temperature encodes (§6.2), stated as a number beside the trial count. A colour ramp nobody can read precisely still needs its value written somewhere.
+- **Live panels** (`components/sessions/LivePanels.tsx`) — three charts, rebuilding what the lab's previous software showed per animal, in this app's own chart primitives (`components/charts/`) so they inherit its axis idiom and palette rather than becoming a second charting dialect:
 
-> **Interim design.** The rolling live-metric charts originally specified here — P(hit) over `windowSize`, one per `liveMetrics` entry — are deliberately out of the zoomed view for now. The general view's per-box metric strip still shows them as sparklines, so nothing is lost, and they are expected to return once the zoomed view's layout settles.
->
-> The chart component for this already exists and works: `components/sessions/MetricChart.tsx` renders exactly the specified rolling line with its 0.5 chance line. **It is currently imported by nothing.** Whoever picks this item up is wiring up an existing component, not writing one — but until then it is dead code, and a reader who finds it will reasonably assume it is live.
+  | Panel | Shows | Reads |
+  |---|---|---|
+  | **P(right \| odor)** | one rolling curve per odor the task presented, over a 20-trial window, against the 0.5 chance line | separation between the curves is discrimination; both near 0.5 is chance; both near the same extreme is a side bias |
+  | **Outcome mix** | cumulative stacked proportions — earned / hold-fail / wrong well / abstained | how the session is going overall; the bands settle as trials accumulate |
+  | **Well hold** | every well poke as a mark at its hold duration, filled where the hold was met and hollow where released early, coloured by side, against the inferred hold threshold | early releases cluster below the rule; a side that only ever appears hollow is a physical problem, not a learning one |
+
+  All three are views of **one trial record** (`lib/sessions/liveTrials.ts`), so they cannot disagree about what happened. That record is derived by **strobe name, never by raw code** — `BehaviorBox.h` defines one shared `BF_*` vocabulary and every `task.json` mirrors it by name, so resolving `WATER_POKE_L` → whatever code *this* sketch assigned keeps the app free of per-sketch knowledge. A sketch declaring none of those names shows the console alone and says so.
+
+  The hold threshold is **inferred, not declared**: a held trial fires its fluid strobe the instant the hold is satisfied, so the shortest held duration *is* the threshold. Nothing is drawn until at least one trial has been held, because a reference line that later moves is worse than none.
+
+- **Console** — the five-row strobe feed, now **collapsed by default**. It is how you check the box is still talking, which matters exactly when something looks wrong and is noise the rest of the time; the panels above are what a run is actually watched for. Newest first: code chip, the profile's decoded strobe name (`data-saving.md` §6.4; a profile-less sketch shows `Strobe <code>`), and the board-side timestamp.
+
+> **Where the trial record comes from.** The session store keeps its own decoded strobe log per box, separate from `HardwareStore`'s console ring. That ring is capped at ~2000 lines and trimmed oldest-first — correct for scrollback, wrong here: a real session emits several thousand strobes (2,711 in the reference archive run), so deriving from it would silently drop the early trials, which is exactly the part of a learning curve you want. The log holds decoded `{code, at}` pairs, is capped an order of magnitude higher, and is folded incrementally so a long session stays cheap.
 - **Back to overview** — reverses the camera move (same eased eached-move convention, §6.3), returns to the pulled-back constellation view.
 
 ### 6.5 Guided-Flow Chrome (spans §2–§6)
@@ -249,8 +307,8 @@ All of the above now live in `websocket-protocol.md`, same convention as `cohort
 - [x] ~~Exact camera-motion parameters (easing curve, duration) for §6.3~~ — cubic ease-out over 1.5 s, recorded in §10
 - [x] ~~Whether `SessionAnimalRun` should be written incrementally or only at finalization~~ — **finalization only** (`data-saving.md` §10). Incremental writes only pay off for crash resumption, which is deliberately out of scope
 - [ ] **Switch Group's second lap is untested end to end.** The group-run bookkeeping that makes it advance rather than cycle is verified (the first group is recorded and skipped), but a full two-group session — switch, re-map, re-flash, run, end — hasn't been driven on hardware
-- [ ] Session resumption after an app or sidecar restart remains unsupported and unbuilt, by decision rather than omission. Mission Control recovers a *reload* fine via `sessions.status`, because the sidecar kept running; if the sidecar dies, the run is over and the `.tsv` is the record
-- [ ] **`MetricChart.tsx` is built but unwired** (§6.4). Re-landing the zoomed view's live charts is a wiring job, not a build job
+- [ ] Session resumption after an app or sidecar restart remains unsupported and unbuilt, by decision rather than omission. Mission Control recovers a *reload* fine via `sessions.status`, because the sidecar kept running; if the sidecar dies, the run is over and the `.tsv` is the record. The Launch page now *surfaces* such crash-orphaned rows (`sessions.active`'s `stale` list) with View-in-Analytics and Close-out actions — visibility changed, the no-resumption decision did not
+- [x] ~~**`MetricChart.tsx` is built but unwired** (§6.4)~~ — **closed.** The zoomed view now has real live panels (§6.4), built on the shared `components/charts/` primitives; `MetricChart.tsx` is deleted rather than wired, since `UnitChart` had already generalised its idiom
 
 ---
 

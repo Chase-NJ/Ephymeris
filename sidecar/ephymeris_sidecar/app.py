@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, discovery
+from .analytics import AnalyticsBusy, AnalyticsService
+from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager, BackupNotConfigured
 from .boards.cli_tool import ArduinoCliTool
 from .boards.tool import FlashFailed
@@ -52,6 +54,46 @@ from .settings import SidecarSettings
 log = logging.getLogger(__name__)
 
 
+def build_active_payload(
+    running_id: str | None,
+    runner: SessionRunner | None,
+    unfinished: list[Session],
+) -> dict[str, Any]:
+    """The `ActiveSessions` shape — reconcile live app state against the DB.
+
+    The running slot is keyed off `running_id` (the runner-held session), never
+    a bare DB status query: a runner-held session can still read `configuring`
+    (post-confirmMapping, pre-startAll) and belongs in `running`, while a
+    `running` DB row nobody holds is a crash orphan and lands in `stale` —
+    surfaced for honesty, never offered for resume.
+    """
+    running = None
+    if running_id is not None and runner is not None:
+        held = next((s for s in unfinished if s.id == running_id), None)
+        if held is not None:
+            running = {
+                "session": held.to_json(),
+                "groupId": runner.group_id or None,
+                "boxes": runner.snapshot(),
+            }
+    # Only a session that actually made it into the running slot is excluded
+    # from the lists — a held id with no runner behind it proves nothing.
+    held_id = running_id if running is not None else None
+    return {
+        "running": running,
+        "configuring": [
+            s.to_json()
+            for s in unfinished
+            if s.status == "configuring" and s.id != held_id
+        ],
+        "stale": [
+            s.to_json()
+            for s in unfinished
+            if s.status == "running" and s.id != held_id
+        ],
+    }
+
+
 class Application:
     def __init__(self, server: SidecarServer, data_dir: Path) -> None:
         self.server = server
@@ -67,6 +109,8 @@ class Application:
         self.sessions = SessionRepository(self.db)
         self.runner: SessionRunner | None = None
         self.backup: BackupManager | None = None
+        self.analytics: AnalyticsService | None = None
+        self.profiles = AnalyticsRepository(self.db)
         self._running_session_id: str | None = None
 
     # --- lifecycle --------------------------------------------------------
@@ -104,9 +148,15 @@ class Application:
         self.server.register(Cmd.SESSIONS_START_ALL, self._sessions_start_all)
         self.server.register(Cmd.SESSIONS_SWITCH_GROUP, self._sessions_switch_group)
         self.server.register(Cmd.SESSIONS_END, self._sessions_end)
+        self.server.register(Cmd.SESSIONS_ACTIVE, self._sessions_active)
         self.server.register(Cmd.PORT_START_SESSION, self._port_start_session)
         self.server.register(Cmd.PORT_STOP_SESSION, self._port_stop_session)
         self.server.register(Cmd.BACKUP_SYNC_NOW, self._backup_sync_now)
+
+        self.server.register(Cmd.SESSIONS_LIST, self._sessions_list)
+        self.server.register(Cmd.ANALYTICS_SUMMARY, self._analytics_summary)
+        self.server.register(Cmd.ANALYTICS_SERIES, self._analytics_series)
+        self.server.register(Cmd.ANALYTICS_RESCAN, self._analytics_rescan)
 
         self.server.on_client_ready(self._replay_state)
 
@@ -124,6 +174,13 @@ class Application:
         # a cohort edit (`data-saving.md` §8).
         self.db.on_commit(self.backup.mark_db_dirty)
         self.backup.start()
+        self.analytics = AnalyticsService(
+            db=self.db,
+            cohorts=self.cohorts,
+            sessions=self.sessions,
+            broadcast=self.server.broadcast,
+            sketch_lookup=self._sketch_path_for_name,
+        )
         self.ports = PortManager(
             loop=loop,
             tool=self.tool,
@@ -542,6 +599,104 @@ class Application:
         except BackupNotConfigured as exc:
             raise CommandError(ErrCode.BACKUP_UNAVAILABLE, str(exc)) from exc
 
+    # --- analytics (analytics.md §9) --------------------------------------
+
+    def _require_analytics(self) -> AnalyticsService:
+        if self.analytics is None:
+            raise CommandError(ErrCode.INTERNAL, "analytics isn't running")
+        return self.analytics
+
+    def _sketch_path_for_name(self, name: str) -> str | None:
+        """A document's `sketch` field resolved against the current Arduino
+        Directory — how an adopted orphan finds a `task.json` to decode with
+        (`analytics.md` §8.1). Name collisions across categories are possible
+        in principle; first discovery-order match wins, same as the picker.
+
+        Falls back to profiles that *declare* the name in `legacyNames`
+        (`data-saving.md` §6.7), which is how a run recorded by older software
+        under a human label ("Shape - L") reaches the sketch that can decode it.
+        Declared, never inferred: resemblance is not evidence, and decoding
+        real data with the wrong strobe map is worse than not decoding it.
+        """
+        match = next((s for s in self.discovery.sketches if s.name == name), None)
+        if match is not None:
+            return match.path
+
+        for sketch in self.discovery.sketches:
+            try:
+                profile = task_profile.load_profile(sketch.path)
+            except task_profile.TaskProfileError:
+                continue
+            if profile is not None and name in profile.legacy_names:
+                return sketch.path
+        return None
+
+    async def _sessions_list(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """A cohort's sessions, chronologically. **Never touches the filesystem.**
+
+        Deliberately cheap so the dashboard's selectors populate instantly
+        while `analytics.summary` is still reading files.
+        """
+        cohort_id = _str_arg(args, "cohortId")
+        include_aborted = args.get("includeAborted") is True
+        sessions = await asyncio.to_thread(
+            self.sessions.list_sessions, cohort_id, include_aborted=include_aborted
+        )
+        counts = await asyncio.to_thread(self.sessions.run_counts_by_session, cohort_id)
+        # Adopted orphans (analytics.md §8.1) appear as payload-only synthetic
+        # sessions so the Analytics selectors cover the whole archive. Both
+        # sources are database reads — the no-filesystem rule holds.
+        synthetic, synthetic_counts = await asyncio.to_thread(
+            self._require_analytics().adopted_session_entries, cohort_id
+        )
+        merged = sorted(
+            [*sessions, *synthetic], key=lambda s: (s.date, s.started_at, s.id)
+        )
+        return {
+            "sessions": [
+                session.to_list_item(
+                    index + 1,
+                    run_count=counts.get(
+                        session.id, synthetic_counts.get(session.id, 0)
+                    ),
+                )
+                for index, session in enumerate(merged)
+            ]
+        }
+
+    async def _analytics_summary(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        cohort_id = _str_arg(args, "cohortId")
+        with _cohort_errors():
+            return await self._require_analytics().summary(
+                cohort_id,
+                session_ids=_opt_str_list(args.get("sessionIds")),
+                animal_ids=_opt_str_list(args.get("animalIds")),
+                min_counted=_opt_int(args.get("minCountedTrials")),
+            )
+
+    async def _analytics_series(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        run_ids = _opt_str_list(args.get("runIds")) or []
+        if not run_ids:
+            raise CommandError(ErrCode.BAD_MESSAGE, "`runIds` must be a non-empty list")
+        mode = args.get("mode") if args.get("mode") in ("rolling", "cumulative") else "rolling"
+        try:
+            return await self._require_analytics().series(
+                run_ids, mode=mode, metric_ids=_opt_str_list(args.get("metricIds"))
+            )
+        except ValueError as exc:
+            raise CommandError(ErrCode.BAD_MESSAGE, str(exc)) from exc
+
+    async def _analytics_rescan(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """The explicit archive walk (§8.1) — never a side effect of opening a view."""
+        cohort_id = _str_arg(args, "cohortId")
+        with _cohort_errors():
+            try:
+                return await self._require_analytics().rescan(
+                    cohort_id, adopt_orphans=args.get("adoptOrphans") is not False
+                )
+            except AnalyticsBusy as exc:
+                raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
+
     # --- sessions (starting-a-session.md §9) ------------------------------
 
     def _require_runner(self) -> SessionRunner:
@@ -565,6 +720,14 @@ class Application:
         session_number = str(args.get("sessionNumber") or "").strip()
         if not session_number:
             raise CommandError(ErrCode.SESSION_INVALID, "A session number is required.")
+        duration = args.get("durationMinutes")
+        if duration is not None and (
+            isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0
+        ):
+            raise CommandError(
+                ErrCode.SESSION_INVALID,
+                "durationMinutes must be a positive whole number of minutes.",
+            )
 
         try:
             cohort = await asyncio.to_thread(self.cohorts.get, cohort_id)
@@ -600,7 +763,9 @@ class Application:
             session_number,
             when.date().isoformat(),
             str(folder),
+            duration,
         )
+        await self._broadcast_lifecycle()
         return {"session": session.to_json()}
 
     async def _sessions_abandon(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -622,6 +787,7 @@ class Application:
             self._require_runner().clear()
             self._running_session_id = None
         session = await asyncio.to_thread(self.sessions.set_status, session_id, "aborted")
+        await self._broadcast_lifecycle()
         return {"session": session.to_json()}
 
     async def _sessions_confirm_mapping(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -671,9 +837,18 @@ class Application:
             )
 
         self._require_runner().configure(
-            Path(session.folder_path), label, group_id, box_configs
+            Path(session.folder_path),
+            label,
+            group_id,
+            box_configs,
+            duration_s=(
+                session.duration_minutes * 60.0
+                if session.duration_minutes is not None
+                else None
+            ),
         )
         self._running_session_id = session_id
+        await self._broadcast_lifecycle()
         return {"ok": True}
 
     async def _sessions_status(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -689,6 +864,24 @@ class Application:
             "boxes": runner.snapshot(),
         }
 
+    async def _sessions_active(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        unfinished = await asyncio.to_thread(self.sessions.list_unfinished)
+        return build_active_payload(self._running_session_id, self.runner, unfinished)
+
+    async def _broadcast_lifecycle(self) -> None:
+        """Push the fresh `ActiveSessions` snapshot to every client.
+
+        Called from each handler that changes session identity or status —
+        never from per-box transitions, which stay on `port.state`.
+        """
+        unfinished = await asyncio.to_thread(self.sessions.list_unfinished)
+        await self.server.broadcast(
+            event(
+                Evt.SESSION_LIFECYCLE,
+                build_active_payload(self._running_session_id, self.runner, unfinished),
+            )
+        )
+
     async def _sessions_start_all(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         session_id = _str_arg(args, "sessionId")
         runner = self._require_runner()
@@ -698,6 +891,7 @@ class Application:
                 runner.start_box(box)
         await asyncio.to_thread(self._open_group_run, session_id, runner.group_id)
         session = await asyncio.to_thread(self.sessions.set_status, session_id, "running")
+        await self._broadcast_lifecycle()
         return {"session": session.to_json()}
 
     async def _sessions_switch_group(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -709,6 +903,13 @@ class Application:
         # Next populated group after those already run, by order (§5.2).
         run_group_ids = {g.group_id for g in session.group_runs}
         next_group = _next_populated_group(cohort, run_group_ids)
+        if next_group is None:
+            # Every populated group has run — finalize exactly as sessions.end
+            # would, so no client has to follow up with a second command and
+            # the session can't linger as 'running' forever.
+            await asyncio.to_thread(self.sessions.set_status, session_id, "completed")
+            self._running_session_id = None
+        await self._broadcast_lifecycle()
         return {"nextGroupId": next_group}
 
     async def _sessions_end(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -717,6 +918,7 @@ class Application:
         await asyncio.to_thread(self._close_group_run, session_id)
         session = await asyncio.to_thread(self.sessions.set_status, session_id, "completed")
         self._running_session_id = None
+        await self._broadcast_lifecycle()
         return {"session": session.to_json()}
 
     def _open_group_run(self, session_id: str, group_id: str) -> None:
@@ -756,6 +958,18 @@ class Application:
     async def _on_animal_ended(self, run: ActiveRun, reason: str) -> None:
         """Record the run and tell the frontend (`session.animalEnded`)."""
         if self._running_session_id is not None:
+            # Snapshot the profile that actually decoded this run (§8.2). A
+            # `task.json` lives beside its sketch and can be edited or deleted
+            # long after a session, so without this the run would silently be
+            # re-interpreted years later with whatever codes are current.
+            profile_hash = None
+            if run.config.profile is not None:
+                try:
+                    profile_hash = await asyncio.to_thread(
+                        self.profiles.remember_profile, run.config.profile
+                    )
+                except Exception:  # noqa: BLE001 - never fail a finalization over this
+                    log.exception("couldn't snapshot the task profile for box %d", run.box)
             await asyncio.to_thread(
                 self.sessions.record_animal_run,
                 SessionAnimalRun(
@@ -768,6 +982,7 @@ class Application:
                     started_at=run.started_at,
                     ended_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     stop_reason=reason,
+                    profile_hash=profile_hash,
                 ),
             )
         await self.server.broadcast(
@@ -861,6 +1076,13 @@ def _opt_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
+
+
+def _opt_str_list(value: Any) -> list[str] | None:
+    """A list of strings, or `None` for absent. An empty list is not absent."""
+    if not isinstance(value, list):
+        return None
+    return [item for item in value if isinstance(item, str)]
 
 
 class _cohort_errors:

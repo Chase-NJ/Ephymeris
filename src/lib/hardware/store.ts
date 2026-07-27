@@ -12,35 +12,21 @@
  */
 
 import type { SidecarClient } from "../ws/client";
-import { EVT } from "../ws/protocol";
+import { EVT, type DetectedBoard, type OutputLine, type PortStateName } from "../ws/protocol";
 
-export type PortStateName =
-  | "IDLE"
-  | "PASSTHROUGH"
-  | "FLASHING"
-  | "RESETTING"
-  | "IN_SESSION"
-  | "ERROR";
+export type { DetectedBoard, PortStateName } from "../ws/protocol";
 
+/** One box's state as last reported — `port.state` minus the `box` key. */
 export interface PortStatus {
   state: PortStateName;
   prev: PortStateName;
   reason: string;
 }
 
-export interface ConsoleLine {
-  /** Monotonic id assigned on arrival — stable React key in a trimmed list. */
+/** A wire `OutputLine` plus a monotonic id assigned on arrival — the stable
+ *  React key in a trimmed list. */
+export interface ConsoleLine extends OutputLine {
   id: number;
-  dir: "rx" | "tx";
-  text: string;
-  ts: number;
-}
-
-export interface DetectedBoard {
-  hardwareId: string;
-  address: string;
-  fqbn: string | null;
-  boxId: number | null;
 }
 
 /** The sketch most recently flashed to a box this session (client-tracked). */

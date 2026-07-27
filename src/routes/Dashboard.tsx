@@ -1,10 +1,11 @@
 import { motion } from "framer-motion";
-import { ArrowRight, ChartLine, Terminal, Users } from "lucide-react";
+import { ArrowRight, ChartLine, Rocket, Terminal, Users } from "lucide-react";
 import { useNavigate } from "react-router";
 import type { LucideIcon } from "lucide-react";
 
 import { springPanel, springSnappy } from "@/lib/motion";
 import { useCohortCount } from "@/lib/cohorts/context";
+import { useRunningSession } from "@/lib/sessions/context";
 import { useBoundBoxes } from "@/lib/settings/context";
 
 /**
@@ -18,14 +19,15 @@ export function Dashboard() {
   const navigate = useNavigate();
   const cohortCount = useCohortCount();
   const boundBoxes = useBoundBoxes();
+  const running = useRunningSession();
 
   // §4.1: starting a session requires an existing cohort — now a live check
   // against the real cohort count rather than a hardcoded always-zero.
   //
   // Deliberately still only an *existence* check. "Ready to run" is now defined
-  // (`starting-a-session.md` §1) but is a per-cohort property, and the CTA isn't
-  // scoped to a cohort yet — Step 1 is where a cohort gets picked, so that's
-  // where the readiness check belongs and where it lives.
+  // (`starting-a-session.md` §1) but is a per-cohort property, and the CTA
+  // routes through Launch, whose Step 1 is where a cohort gets picked — so
+  // that's where the readiness check belongs and where it lives.
   const hasCohorts = cohortCount > 0;
 
   return (
@@ -42,17 +44,27 @@ export function Dashboard() {
         whileHover={{ y: -2 }}
         whileTap={{ scale: 0.995 }}
         transition={springSnappy}
-        onClick={() => navigate(hasCohorts ? "/session/new" : "/cohorts")}
+        onClick={() => navigate(hasCohorts || running ? "/launch" : "/cohorts")}
         className="mt-6 flex w-full items-center justify-between rounded-lg bg-pulsar px-6 py-5 text-left"
       >
-        <span>
-          <span className="block font-display text-lg font-semibold text-void">
-            {hasCohorts ? "Start a Session" : "Create a cohort to get started"}
-          </span>
-          <span className="mt-0.5 block text-[12px] text-void/70">
-            {hasCohorts
-              ? "Configure boxes and begin data collection"
-              : "Sessions run against a cohort — you'll need one first"}
+        <span className="flex items-center gap-4">
+          {/* The Launch tab's own icon — the hero and the tab are the same door. */}
+          <Rocket size={22} strokeWidth={1.75} className="shrink-0 text-void" />
+          <span>
+            <span className="block font-display text-lg font-semibold text-void">
+              {running
+                ? "Resume Session"
+                : hasCohorts
+                  ? "Start a Session"
+                  : "Create a cohort to get started"}
+            </span>
+            <span className="mt-0.5 block text-[12px] text-void/70">
+              {running
+                ? "A session is running — open Launch to get back to it"
+                : hasCohorts
+                  ? "Configure boxes and begin data collection"
+                  : "Sessions run against a cohort — you'll need one first"}
+            </span>
           </span>
         </span>
         <ArrowRight size={20} strokeWidth={2} className="shrink-0 text-void" />

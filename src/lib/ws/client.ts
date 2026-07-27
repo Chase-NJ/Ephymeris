@@ -16,6 +16,9 @@ import {
   SidecarCommandError,
   isEvent,
   isReply,
+  type CommandArgsMap,
+  type CommandName,
+  type CommandResultMap,
   type EventMessage,
   type ServerMessage,
 } from "./protocol";
@@ -63,6 +66,10 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   [CMD.SKETCHES_REFRESH]: 60_000,
   // A first sync can be an entire archive copied to a network share.
   [CMD.BACKUP_SYNC_NOW]: 600_000,
+  // A cold first index reads every historical session file, and every one of
+  // them takes the slow fallback-decode path (`analytics.md` §9).
+  [CMD.ANALYTICS_SUMMARY]: 120_000,
+  [CMD.ANALYTICS_RESCAN]: 300_000,
 };
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
@@ -226,10 +233,21 @@ export class SidecarClient {
   /**
    * Send a command and resolve with its result.
    *
+   * Typed against the generated `CommandArgsMap`/`CommandResultMap`, so a call
+   * whose args or result use drifts from `protocol/schema.py` fails
+   * `npm run typecheck` rather than a lab session. The args parameter is only
+   * omittable for commands that take none.
+   *
    * Rejects with {@link SidecarCommandError} when the sidecar refuses — which
    * is the normal path for illegal state transitions, since the sidecar is the
    * authority on port state, not this frontend.
    */
+  call<C extends CommandName>(
+    cmd: C,
+    ...rest: Record<string, never> extends CommandArgsMap[C]
+      ? [args?: CommandArgsMap[C], options?: { timeoutMs?: number }]
+      : [args: CommandArgsMap[C], options?: { timeoutMs?: number }]
+  ): Promise<CommandResultMap[C]>;
   call(
     cmd: string,
     args: Record<string, unknown> = {},

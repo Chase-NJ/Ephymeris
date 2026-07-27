@@ -10,10 +10,13 @@
   },
   "license": "ISC",
   "scripts": {
+    "predev": "node scripts/gen-protocol.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/gen-protocol.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "gen:protocol": "node scripts/gen-protocol.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev"
   },

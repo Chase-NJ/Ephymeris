@@ -73,7 +73,11 @@ Groups exist to split a cohort larger than the available box count into consecut
 
 Cohort/Animal/Group data lives in **SQLite**, owned by the Python sidecar — consistent with the storage layer being sidecar-owned throughout this project. Three tables (`cohorts`, `animals`, `groups`), foreign-keyed as the model above implies.
 
-The database file lives in the **app's own data directory** (e.g. `~/Library/Application Support/Ephymeris/ephymeris.db` on macOS, `%APPDATA%/Ephymeris/ephymeris.db` on Windows) — **not** inside the user-configured `dataDirectory` setting from `ephymeris_v1.0.md` §4.5. That setting is where behavioral session output lives and gets browsed by lab members; mixing an opaque `.db` file into it would be confusing and it's not a `.json`/`.mat`/`.tsv` session artifact. This database still needs to be part of the eventual backup strategy — flagged forward to the Data Saving doc (§12).
+The database file lives in the **app's own data directory** (e.g. `~/Library/Application Support/Ephymeris/ephymeris.db` on macOS, `%APPDATA%/Ephymeris/ephymeris.db` on Windows) — **not** inside the user-configured `dataDirectory` setting from `ephymeris_v1.0.md` §4.5. That setting is where behavioral session output lives and gets browsed by lab members; mixing an opaque `.db` file into it would be confusing and it's not a `.json`/`.mat`/`.tsv` session artifact. Backup of this file is built and specified in `data-saving.md` §8.3 (§12).
+
+The schema has grown past these three tables: `prefixes`, `sessions`, and `session_animal_runs` were added for `data-saving.md` §3–§4, and `analytics.md` §10.2 added two more (`task_profiles`, `run_metrics_cache`) plus a nullable `session_animal_runs.profile_hash` at schema v3. `sidecar/ephymeris_sidecar/cohorts/db.py` holds the whole schema regardless of which document motivated each table.
+
+> **Read this before changing the schema.** Adding a *table* needs nothing but a `CREATE TABLE IF NOT EXISTS` in `SCHEMA` — it covers the fresh and the existing case alike. Adding a **column** does not work that way: the same statement leaves an existing table untouched, so the column would appear only on databases created after the change. `db.py` carries a migration branch for exactly this (`analytics.md` §10.1) — bump `SCHEMA_VERSION`, update `SCHEMA` to the final shape, **and** add a `MIGRATIONS` entry. Either half alone leaves one class of database wrong.
 
 ---
 
@@ -167,7 +171,14 @@ A balanced round-robin, not an optimization search — simple, deterministic, an
 - **On creation**, if the user doesn't override it: `dataFolder = <Settings.dataDirectory>/<sanitized cohort name>`. If that path already exists on disk, a numeric suffix is appended (`-2`, `-3`, …) until unique.
 - **The resolved path is persisted verbatim** — it is computed once, not re-derived from the current name on every read.
 - **Renaming a cohort does not move its data folder.** Name and `dataFolder` are deliberately decoupled after creation — an automatic move-on-rename is exactly the kind of implicit file operation this project has avoided elsewhere (e.g. `hardware-interaction.md`'s explicit-confirmation stance on destructive actions). The cohort detail view surfaces the real `dataFolder` path plainly at all times so there's never ambiguity about where the data actually lives.
-- **Relocating is a separate, explicit action** ("Change data folder…" in the edit view) — distinct from renaming, and when invoked, offers to move existing contents to the new location rather than leaving that manual. Fails safely (refuses, doesn't overwrite) if the destination isn't empty.
+- **Relocating is a separate, explicit action** ("Change data folder…" in the edit view) — distinct from renaming. It carries **two intents**, chosen by the "Move existing contents" toggle, and they have opposite requirements for the destination:
+
+  | Toggle | Meaning | Destination |
+  |---|---|---|
+  | **On** | Move this cohort's data to the new folder | **Must be empty.** Refuses rather than merging into or overwriting |
+  | **Off** | Point this cohort at data that is already there | **Expected to be full.** Nothing is moved or written; only the recorded path changes |
+
+  The "off" case is how a cohort attaches to an archive written before this app existed, which is the whole reason orphan adoption exists (`analytics.md` §8.1). Enforcing the empty-destination rule in *both* cases made that intent impossible to express — the only control for it rejected exactly the folders it was meant to accept, and because the field then re-rendered the unchanged path, it read as the setting silently reverting. The rule protects against merge collisions, and there are none when nothing is being written.
 
 ---
 
@@ -182,9 +193,9 @@ Two distinct actions, not one:
 
 ## 10. Wire Messages (proposed)
 
-`websocket-protocol.md` states it is the single source of truth for the wire schema ("hand-maintained mirrors + a contract test"). These were proposed for merge into that document rather than treated as canonical here.
+`websocket-protocol.md` is the single source of truth for the wire schema (with `protocol/schema.py` as the machine-readable shape authority the code mirrors are generated from). These were proposed for merge into that document rather than treated as canonical here.
 
-> **Merged.** These now live in `websocket-protocol.md` §3.1 (commands), §4 (the `cohorts.updated` event and the `CohortSummary`/`Cohort`/`Animal`/`Group`/`GroupProposal` payload shapes), and §6 (error codes). That document is canonical; the tables below are retained as the design rationale for *why* each command exists. The contract test enforces that the two mirrors and the spec never drift.
+> **Merged.** These now live in `websocket-protocol.md` §3.1 (commands), §4 (the `cohorts.updated` event and the `CohortSummary`/`Cohort`/`Animal`/`Group`/`GroupProposal` payload shapes), and §6 (error codes). That document is canonical; the tables below are retained as the design rationale for *why* each command exists. The contract test enforces that the generated mirrors and the spec never drift.
 
 **Commands:**
 

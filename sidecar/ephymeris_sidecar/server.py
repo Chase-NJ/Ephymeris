@@ -22,7 +22,18 @@ import websockets
 from websockets.asyncio.server import ServerConnection, serve
 
 from . import __version__
-from .protocol import PROTOCOL_VERSION, Cmd, ErrCode, Evt, event, reply_err, reply_ok
+from .protocol import (
+    PROTOCOL_VERSION,
+    Cmd,
+    ErrCode,
+    Evt,
+    WireShapeError,
+    event,
+    reply_err,
+    reply_ok,
+    validate_command_result,
+    wire_validation_enabled,
+)
 
 log = logging.getLogger(__name__)
 
@@ -204,6 +215,15 @@ class SidecarServer:
 
         try:
             result = await handler(self, conn, msg.get("args") or {}, corr)
+            # Opt-in (tests, dev): fail a reply whose shape drifted from
+            # protocol/schema.py, instead of shipping the drift to the UI.
+            if wire_validation_enabled():
+                problems = validate_command_result(cmd, result)
+                if problems:
+                    raise WireShapeError(
+                        f"`{cmd}` reply violates protocol/schema.py:\n  "
+                        + "\n  ".join(problems)
+                    )
         except CommandError as exc:
             await self._send(conn, reply_err(corr, exc.code, exc.message, exc.detail))
         except Exception as exc:  # noqa: BLE001 - never let one command kill the loop

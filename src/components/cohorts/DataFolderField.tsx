@@ -107,9 +107,24 @@ export function DataFolderField({
             </span>
           </label>
 
+          {/* Two different intents, with opposite requirements for the
+              destination. Saying only the "must be empty" half made attaching a
+              cohort to an archive it didn't write look impossible. */}
           <p className="rounded-sm border border-halo bg-void/40 px-3 py-2 text-[12px] leading-relaxed text-static">
-            The destination must be empty — Ephymeris refuses rather than merging
-            into or overwriting existing data.
+            {moveExisting ? (
+              <>
+                This cohort&rsquo;s data will be <strong>moved</strong> to the new
+                folder, which must be empty — Ephymeris refuses rather than
+                merging into or overwriting existing data.
+              </>
+            ) : (
+              <>
+                Nothing is moved or written. The cohort simply points at the new
+                folder from now on — use this to attach it to data that is{" "}
+                <strong>already there</strong>, then run Rescan in Analytics to
+                index it.
+              </>
+            )}
           </p>
 
           <div className="flex justify-end gap-2">

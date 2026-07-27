@@ -1,12 +1,12 @@
 # Tech Stack & Dashboard Design
 
-> **Status** · Living spec — **Built.** Dashboard shell, the full theme, Cohorts, Debug Mode, Settings, and the session flow are all wired end to end. Analytics alone is still a placeholder.
+> **Status** · Living spec — **Built.** Dashboard shell, the full theme, Cohorts, Debug Mode, Settings, and the session flow are all wired end to end. Analytics is built to its own spec.
 >
 > **Owns** · Tech stack, app identity, theme tokens, dashboard information architecture, and Settings ownership.
 >
 > **Read with** · [hardware-interaction.md](hardware-interaction.md) (the serial layer) · [cohorts.md](cohorts.md) (the Cohorts tab) · [websocket-protocol.md](websocket-protocol.md) (the wire schema) · [arduino-directory.md](arduino-directory.md) (sketch discovery)
 >
-> **Still open** · Analytics view spec · the full Settings schema · app icon design · Windows packaging
+> **Still open** · the full Settings schema · app icon design · Windows packaging
 
 **Contents** — [0. Tech Stack](#0-tech-stack) · [1. App Identity](#1-app-identity) · [2. Theme](#2-theme-astronomy--linux) · [3. Dashboard IA](#3-dashboard--landing-window--information-architecture) · [4. Section Wiring](#4-section-by-section-breakdown--wiring) · [5. Resolved Decisions](#5-resolved-decisions) · [6. Open Items](#6-open-items--tbd)
 
@@ -66,6 +66,31 @@ A seventh value, **`Static` `#948FA8`**, carries secondary and muted text. It be
 | Warning | `--color-status-warning` | `#D9A15C` | Muted amber |
 | Error | `--color-status-error` | `#C96C6C` | Muted red — matte, not alarm-red |
 
+**A structural property of the palette, worth knowing before adding to it:** Void, Nebula, Halo, Static and Starlight all sit at **OKLCH hue 285–295** — the entire neutral stack is tinted toward Pulsar's 291. That is why the app reads as one coherent thing rather than a dark theme with a purple accent bolted on, and it is the rule any new neutral should respect.
+
+#### 2.2.1 Data-visualization ramps
+
+Added for Analytics. **Neither ramp changes anything above** — Pulsar remains the primary accent, and the no-gradient, no-glow rule holds in full. `analytics.md` §7 carries the derivation and the measurements; this is the token list.
+
+The six-token palette has no categorical ramp, which is correct for chrome and insufficient for data: six animals cannot be six colours, and Analytics cross-filters three linked panels where a reader must identify a mark without a legend lookup (`analytics.md` §2.1).
+
+**Series ramp** — `--color-series-1` … `--color-series-6`, categorical, anchored on Pulsar:
+
+| Token | Hex | OKLCH |
+|---|---|---|
+| `--color-series-1` | `#8B7EC8` | `oklch(0.635 0.110 291.0)` — Pulsar |
+| `--color-series-2` | `#229582` | `oklch(0.604 0.102 178.6)` |
+| `--color-series-3` | `#52B79D` | `oklch(0.713 0.103 173.8)` |
+| `--color-series-4` | `#9E9FF6` | `oklch(0.737 0.125 282.0)` |
+| `--color-series-5` | `#CBA23E` | `oklch(0.731 0.125 85.8)` |
+| `--color-series-6` | `#BE7031` | `oklch(0.619 0.125 56.0)` |
+
+Chroma stays ≤ 0.125 against Pulsar's 0.110, so the ramp reads matte. Hues avoid the error red and warning amber so a series is never mistaken for a state. Worst-case pairwise separation is ΔE ≈ 10 under normal, deuteranopic **and** protanopic vision.
+
+> **Don't flatten the lightness spread.** The obvious improvement — six hues at identical lightness, for perfectly equal visual weight — was built and measured, and two of its pairs collapse to ΔE 0.9 under deuteranopia. Lightness is the only channel that survives dichromacy, so an iso-lightness categorical ramp is inherently colour-blind-hostile. The 5.2–8.2:1 contrast spread is the deliberate price. See `analytics.md` §7.1.
+
+**Diverging ramp** — `--color-diverging-1` … `--color-diverging-7`, for the Analytics heatmap. Seven quantized bins centred on chance, so below-chance reads as a different *kind* of result rather than a smaller one. Quantized rather than continuous because a continuous ramp passes through a mid-lightness band where an in-cell label fails contrast against both Starlight and Void; every bin here clears WCAG AA. The top bin **is** Ion, and the centre bin sits just above Halo's lightness so chance reads as "nothing happening." Values in `analytics.md` §7.2.
+
 ### 2.3 Typography
 
 Three roles, per the frontend-design convention of a characterful display face used with restraint, a neutral body face, and a utility/data face:
@@ -102,11 +127,18 @@ The hardware status indicator — present in the sidebar per `hardware-interacti
 **Amendment (was: always six nodes).** Boxes are user-configured (§4.5), so the map shows **only boxes bound to a board** — the same rule that decides which boxes get a console panel in Debug Mode (§4.3). A rig running two boxes shows two nodes, not two nodes and four permanently grey ones implying four boards are missing. The caption reads `N/M boxes` against the configured count, or `no boxes configured` when empty. Consequences of the amendment:
 
 - **Node positions stay pinned per box number** — box 4 always sits where box 4 sits. Positions are what make the map glanceable, so they must not reflow as health changes.
-- **The frame reflows, not the layout.** The viewBox is fitted to whichever boxes exist (keeping a constant aspect so the sidebar never jumps), so a small rig fills the space instead of huddling in a corner. Framing changes only when boxes are added or removed — a deliberate configuration act, never something that happens mid-session.
+- **The frame reflows, not the layout.** The viewBox is fitted to a constant aspect so the sidebar never jumps; a small rig fills the space instead of huddling in a corner. Framing changes only on configuration acts, never mid-session.
 - **Marks keep a constant apparent size.** Node radius and line width scale with the frame, so zooming spreads the *spacing* rather than inflating the dots; a one-box rig renders one normal dot, not one enormous one.
 - **An edge is drawn only when both its endpoints are configured.** A sparse selection (say boxes 1 and 6) can therefore show unconnected nodes — honest, since there is no adjacency to report.
 
-> **Two constellations, two different linking rules — don't conflate them.** This widget (`components/chrome/ConstellationStatus.tsx`) draws a **fixed** adjacency map: six pinned node positions and a hand-authored edge list, because a status readout has to be glanceable and must not reflow. Mission Control's 3D constellation (`starting-a-session.md` §6) is a different object entirely — one star per *animal*, seeded positions, links computed by nearest-neighbour in `lib/sessions/stars.ts`. They share a visual family and nothing else. The open item in §6 is about *this* widget's fixed pair list only.
+**Second amendment (zodiac layouts, §4.6).** The layout itself is now the user's choice: box setup lets them pick one of the twelve **zodiac constellations** as the map, with boxes occupying stars (`lib/constellations/zodiac.ts` holds the hand-authored asterisms; `settings.constellation` + `settings.constellationSlots` persist the choice). This refines the rules above rather than replacing them:
+
+- **"Pinned per box number" becomes "pinned per assigned star."** A box sits on its star until the user drags it elsewhere in Config — still never a reflow the app initiates.
+- **In zodiac mode the frame fits the whole asterism**, occupied stars and empty alike — the recognizable shape is the point, and it must not warp as boxes come and go. The occupied-only framing above now applies only to the fallback layout.
+- **Unoccupied stars render as faint markers** (Halo fill, reduced radius) — visibly different from an `absent` box, which keeps full radius. An edge touching an empty star draws dim, never live.
+- **The old fixed layout survives as the fallback** for installs that never chose a constellation (`constellation: null`) — they look exactly as they always did, hand-authored pair list and all.
+
+> **Two constellations, two different linking rules — don't conflate them.** This widget (`components/chrome/ConstellationStatus.tsx`) draws a **declared** adjacency map — the chosen zodiac's stick figure (or the legacy fixed shape) — because a status readout has to be glanceable and must not reflow. Mission Control's 3D constellation (`starting-a-session.md` §6) is a different object entirely — one star per *animal*, seeded positions, links computed by nearest-neighbour in `lib/sessions/stars.ts`. They share a visual family and nothing else.
 
 ---
 
@@ -140,14 +172,14 @@ The titlebar is app-drawn on **both** platforms (see §5): native window decorat
 ### 3.2 Sidebar
 
 - App mark + wordmark at top (placeholder glyph shown above; actual icon design is a future item).
-- Nav list: **Dashboard** (home, default selected) · **Cohorts** · **Debug Mode** · **Analytics** · **Settings**. Selected item gets a `Pulsar`-tinted rounded-rect highlight at reduced opacity, matching the macOS sidebar selection convention.
-- Bottom of sidebar: the constellation status widget (§2.7) — always visible regardless of which section is active, since box connectivity is something the user should never have to navigate to check.
+- Nav list, two groups: **Dashboard** (home, default selected) · **Launch** · **Cohorts** · **Debug** · **Analytics** at the top, and the configuration pair **Config** · **Settings** pinned to the bottom just above the constellation widget — setup lives at the edge of the list, not among the daily destinations. Selected item gets a `Pulsar`-tinted rounded-rect highlight at reduced opacity, matching the macOS sidebar selection convention; the highlight is one shared `layoutId`, so it glides between the groups as readily as within one.
+- Very bottom of sidebar: the constellation status widget (§2.7) — always visible regardless of which section is active, since box connectivity is something the user should never have to navigate to check.
 
-Note: **Start a Session** is deliberately *not* a sidebar nav item. It's the app's single primary action, so it gets the hero CTA position in the main content area instead of competing for space in a list of five equally-weighted destinations. Settings is sidebar-only and not duplicated as a dashboard tile, following the Apple convention that Settings lives in one fixed, always-reachable place rather than as browsable "content."
+Note: the original decision here was that **Start a Session** would deliberately *not* be a sidebar nav item — the app's single primary action getting the hero CTA position instead of competing in a list of equally-weighted destinations. That call was **reversed** (recorded, not erased): once a session can outlive the screen that started it, a *running* session needs a stable, always-visible way back, and the hero CTA only ever started one. **Launch** (`/launch`) is that nav item now: it starts a new session, shows the running one's status with a way back into Mission Control, ends it, and surfaces set-ups that never finished. Its active state covers the whole `/session/*` flow, and a small matte `status-ok` dot marks the row while a session is running. The hero CTA remains, re-pointed at `/launch`. Config and Settings are sidebar-only and not duplicated as dashboard tiles, following the Apple convention that configuration lives in one fixed, always-reachable place rather than as browsable "content."
 
 ### 3.3 Main Content — Dashboard/Home View
 
-- **Hero card:** "Start a Session," full-width, primary `Pulsar`-filled. The single most prominent element on the screen, reflecting that running sessions is the core workflow of the app.
+- **Hero card:** "Start a Session," full-width, primary `Pulsar`-filled. The single most prominent element on the screen, reflecting that running sessions is the core workflow of the app. Navigates to `/launch` (which knows whether to start fresh or resume); while a session is running the card reads "Resume Session" instead.
 - **Secondary tile row:** three compact cards — Cohorts, Analytics, Debug Mode — each with an icon, label, and a one-line placeholder status (e.g. "4 active," "6 boxes"). Clicking a tile navigates to the same destination as its sidebar item; the tiles exist for at-a-glance summary and faster access from the home view, not as a separate IA branch.
 
 ---
@@ -156,14 +188,15 @@ Note: **Start a Session** is deliberately *not* a sidebar nav item. It's the app
 
 **Originally:** only Debug Mode and Settings were to get real wiring for v1, with the other three sharing a placeholder pattern rather than dead, inert buttons — clicking should still feel like the app responded, just with an honest "not yet."
 
-**As built:** four of the five are wired. Start a Session, Cohorts, Debug Mode, and Settings are all real; **Analytics is the only remaining placeholder.** The subsections below record each one's journey, since the original reasoning explains why the app is shaped the way it is.
+**As built:** all sections are wired. The subsections below record each one's journey, since the original reasoning explains why the app is shaped the way it is.
 
 | Section | Route | State |
 |---|---|---|
 | Start a Session | `/session/new` → `/session/:id/mapping` → `/session/:id/control` | **Built** |
 | Cohorts | `/cohorts`, `/cohorts/new`, `/cohorts/:id` | **Built** |
 | Debug Mode | `/debug` | **Built** |
-| Analytics | `/analytics` | **Placeholder** |
+| Analytics | `/analytics` | **Wired** |
+| Config | `/config` | **Built** |
 | Settings | `/settings` | **Built** |
 
 ### 4.1 Start a Session — *wired* (was: stub, with real gating logic)
@@ -180,34 +213,58 @@ Note: **Start a Session** is deliberately *not* a sidebar nav item. It's the app
 - **No longer a `<PlaceholderView>`.** Fully specified and implemented in `cohorts.md`: card grid with the procedural constellation icon, create/edit editor at `/cohorts/new` and `/cohorts/:id`, Auto-Balance grouping, and archive/permanent-delete. Cohort data lives in the sidecar's SQLite database.
 - The dashboard's "N active" tile stat is consequently real rather than placeholder text.
 
-### 4.3 Debug Mode — *wired*
+### 4.3 Debug — *wired* (overhauled 2026-07-27: constellation landing + node detail)
 
-- Sidebar item + dashboard tile → route `/debug`.
-- Renders the 6-box console grid exactly as specified in `hardware-interaction.md` §6 (per-box panels, read/send, line-ending selector, state badges), plus the flashing dialog and reset control from §4–§5. A box flashed with a `"kind": "utility"` sketch also gets profile-driven **controls + a live status strip** (`data-saving.md` §6.6), so priming/self-test sketches are driven from the app rather than by hand at the box.
+- Sidebar item + dashboard tile → route `/debug`. Two views under the one route, selection held as route-local state — the zoom between them is one continuous scene, and a reload landing on the overview is the right recovery anyway.
+- **Landing: the constellation** (`components/debug/DebugConstellation.tsx`). The user's chosen zodiac layout (§4.6) rendered large — every bound box a clickable node at its assigned star, nicknamed in the data face with a thin Halo leader line, on whichever side of the frame has room. **What animates says something true**, following the Starfield's rules (continuous motion is plain CSS, pauses on window blur, stilled by reduced motion): a *detected* box has a mote in orbit; an *open* box (passthrough / in session) adds a slow dashed instrument ring; a configured-but-undetected box sits still in Halo and a faulted box still in Error red — stillness is the status. Unclaimed stars twinkle gently as scenery. No glow, no gradients (§2.2).
+- **Node detail** (`components/debug/NodeDetail.tsx` + `Star3D.tsx`). Selecting a node spring-zooms (exit scale-up on the sky, settle-in on the detail) into a react-three-fiber scene: a matte faceted star tinted by the box's health, a low-opacity wireframe shell that makes its slow rotation legible, §6.3-style instrument rings, and the same orbiting-mote grammar as the landing — beside an identity card (box, nickname, hardware id in mono, port, flashed sketch). Every previous debugging utility sits beneath, grouped by intent rather than compressed into one header row: **Connection** (state badge, baud, open/close, reset, error acknowledge, rejection surface), **Sketch** (flash dialog, utility controls + telemetry strip for `"kind": "utility"` profiles per `data-saving.md` §6.6), **Console** (scrollback, send with line-ending selector, copy log). Escape or Back returns to the sky.
+
+  The console is **two tabs, Console and Status**. A utility sketch emits a telemetry line on every state change *plus* a ~1 s heartbeat (`data-saving.md` §6.6), so interleaved they bury the command echoes, boot banner, and self-test confirmations the console exists to show — on `BOX_Utility` they outnumber everything else several to one. The split is by the profile's `telemetry.match` (default `STATUS`) and applies only to **received** lines: a sent `STATUS?` is a command echo and belongs beside what it caused. Each tab carries its own line count, and Copy copies whichever tab is open. The Status tab is the *history*; the utility strip above it is the current parsed values, and they answer different questions.
+
+  > This splits what is *displayed*, not what is *kept*: both tabs read the one capped ring buffer (~2000 lines/box, `websocket-protocol.md` §5.4). A 1 Hz heartbeat therefore still consumes that budget — roughly half an hour of scrollback on a chatty utility sketch — so a long priming session can age out earlier console lines even though the Console tab looks quiet. Worth knowing before trusting it as a long-run log; the copy-log affordance is the escape hatch. The old one-panel-per-box `ConsolePanel` is retired; `Scrollback` was extracted from it and everything else was reorganized into the groups, not re-invented.
 - The WebSocket connection is **app-level, not per-view** (a deliberate amendment to this section's original "opens on mount"): the constellation widget must reflect box health from every screen, so the connection, the state replay, and the shared hardware store live at the app root. What Debug Mode *does* trigger on mount is a sketch rescan (`arduino-directory.md` §4).
 - This is the first real end-to-end data path in the app: **sidecar → WebSocket → React state**, feeding both the full Debug Mode view *and* the sidebar's constellation status widget from the same out-of-band polling channel. Building this wired up the signature element for free, as predicted.
 
-### 4.4 Analytics — *stub*
+### 4.4 Analytics — *wired*
 
 - Sidebar item + dashboard tile → route `/analytics`.
-- Same `<PlaceholderView>` pattern.
+- **Built to [analytics.md](analytics.md)**, which is canonical for this section: a single-route dashboard with persistent cohort/session/animal selectors, three linked visualizations (strategy space, learning curves, cohort heatmap), the metric definitions derived from recorded sessions, and the query surface behind them.
+- Also the session-end landing, now preselecting the run just finished.
 
-### 4.5 Settings — *wired*
+### 4.5 Settings — *wired* (now: storage & interface only)
 
 - Sidebar item → route `/settings`.
-- Needs a real, if minimal, persisted config even at this stage. Proposed fields to start:
-  - Default data save directory
-  - Backup directory — a second copy on a different drive or share; see `data-saving.md` §8 for what is mirrored and when
-  - **Arduino Directory** — root folder for sketches/libraries; see `arduino-directory.md` for structure, detection, and error handling
-  - Default baud rate
-  - Per-box COM port labels/nicknames
-  - **Box→board bindings** — a `box_number → hardware_id` map, editable, so a box keeps its identity across reboots and Windows COM renumbering (see §5)
-  - `arduino-cli` / core path override
-  - Reduced-motion toggle
+- **Editing surface split (2026-07-27):** everything hardware-shaped — box→board bindings, per-box nicknames, default baud, the Arduino Directory, and the `arduino-cli` override — moved to **Config** (§4.6). Settings keeps the data directory, the backup directory, and the reduced-motion toggle. **Ownership did not move**: the settings *store* still holds every field in one place; only where each field is edited changed.
+- The persisted schema, all shell-owned:
+  - Default data save directory *(edited here)*
+  - Backup directory *(edited here)* — see `data-saving.md` §8 for what is mirrored and when
+  - Reduced-motion toggle *(edited here)*
+  - **Arduino Directory** *(edited in Config)* — see `arduino-directory.md`
+  - Default baud rate *(edited in Config)*
+  - **Box→board bindings** with per-box nicknames *(edited in Config)* — a `box_number → hardware_id` map so a box keeps its identity across reboots and Windows COM renumbering (see §5)
+  - `arduino-cli` / core path override *(edited in Config)*
+  - `constellation`, `constellationSlots`, `boxSetupComplete` *(edited in Config; shell-only — the sidecar ignores them)* — the §4.6 zodiac layout and first-run flag
 - **Ownership: Tauri-side store** (`tauri-plugin-store`, JSON on disk in the app data dir), not the Python sidecar. Reasoning:
   - Most of these fields (save paths, baud rate, `arduino-cli` path) are exactly the values most likely to be *wrong* when something is misconfigured — and a wrong `arduino-cli` path or bad save directory is a plausible cause of the sidecar failing to start. If the sidecar owned settings, a bad config could lock the user out of the one screen that fixes it. Settings needs to work even when the sidecar doesn't.
   - The Tauri store plugin is simple, well-supported, and gives native OS directory pickers for free from the shell layer — no need for the sidecar to implement its own config persistence/schema/migrations on top of everything else it owns.
   - The sidecar still needs these values at runtime, so the shell **pushes the full settings payload to the sidecar on every WebSocket connect/reconnect, and again on every change** — a one-directional sync (Tauri → sidecar) rather than the sidecar being the source of truth. Simpler failure mode: worst case, the sidecar is briefly running on stale values until the next push, rather than being unreachable entirely.
+
+### 4.6 Config — *built*
+
+- Sidebar item → route `/config` (`routes/Config.tsx`). Everything box-related in one place: the constellation layout, box→board bindings, the handshake test, default baud, the Arduino Directory, and the `arduino-cli` override.
+- **First-run setup wizard** (`components/config/SetupWizard.tsx`): opens instead of the normal view until `boxSetupComplete` is set. Five linear steps — map hardware (the same `BoxBindingsTable` as the normal view, write-through), nickname boxes, per-box handshake test, pick a zodiac constellation, done. In-route rather than a modal (a multi-minute guided flow is not "transient", and vibrancy stays reserved for the sidebar and true modals — §2.4). **Never traps:** Back always works, "Skip setup" is always visible and just sets the flag, and a failed handshake never blocks advancing — the hardware may simply be off. The constellation choice is local until Finish, so an abandoned run leaves no half-chosen layout; the gate renders nothing until settings are `loaded`, or the wizard would flash for every configured user on every launch. "Run setup again" re-opens it without clearing the flag.
+- **Zodiac layouts** (`lib/constellations/zodiac.ts`): twelve hand-authored, simplified asterisms — data, not generated, because they must be recognizable. Star counts are honest (Aries has four) and the picker **disables any constellation with fewer stars than configured boxes** rather than distorting the shape. Slot semantics (`lib/constellations/slots.ts`): **slots follow boxes** — deleting a box frees its star, a new box takes the lowest free star, switching constellations keeps star indices that still exist; `reconcileSlots` is the single authority and `layoutFor` runs it defensively so a stale persisted map can never render a node off the chart. Keys in `constellationSlots` are strings (JSON on the wire).
+- **Drag is snap-to-star** (`components/config/ConstellationBoard.tsx`): raw pointer events with viewBox-space hit-testing, a ghost node while dragging, snap to the nearest star within radius or revert, **swap** when the target is occupied. One settings write per completed drag, never per pointer move.
+- **Handshake test** (`lib/hardware/useHandshakeTest.ts`) — composed from existing wire primitives, deliberately **no new command**: `port.passthrough.open` asserts DTR on open, which resets the Mega and captures its boot output into `port.output`; listen ≤ 10 s (the sidecar's own READY budget); always close in a `finally`, including on unmount. `port.reset` is unsuitable — its DTR pulse uses an unread throwaway handle, so its own boot output is unobservable, and it would double-reset. Tiered result:
+
+  | Tier | Meaning | Colour |
+  |---|---|---|
+  | `ready` | `READY` line seen — speaks the Ephymeris protocol | Ion |
+  | `output` | Some output — wiring and port good, not an Ephymeris task sketch | Pulsar |
+  | `silent` | Port opened, nothing heard — wrong baud or a mute sketch | status-warning |
+  | `failed` | Port never opened — unbound box, missing/busy port | status-error |
+
+  A box already in `PASSTHROUGH` is closed before the test (re-opening is what causes the observable reset) — which also honours the hardware rule that **a stale handler must never survive a rebind**: close before rebinding, or rebind only while `IDLE`.
 
 ### Shared: `<PlaceholderView>`
 
@@ -242,11 +299,11 @@ No open questions remaining as of this revision.
 - [x] ~~Session-setup flow spec~~ — resolved in `starting-a-session.md` (configuration → mapping → flash → Mission Control → 3D constellation) and `data-saving.md` (what the run writes to disk); both are built
 - [x] ~~Cohort CRUD spec (create/edit/delete/group management)~~ — resolved in `cohorts.md`
 - [x] ~~Once Cohorts is wired: replace Start-a-Session's hardcoded always-empty gating (§4.1) with a live cohort-count check~~ — done; existence check only, with readiness deferred to the Starting a Session doc
-- [ ] Analytics view spec (within-session, across-session, per-cohort)
-- [ ] Full Settings schema (fields listed in §4.5 are a starting point, not final)
+- [x] ~~Analytics view spec (within-session, across-session, per-cohort)~~ — **written**, as [analytics.md](analytics.md), the eighth living spec. All three views are specified, along with the derived-metric definitions and the query surface — and now built to it (§4.4)
+- [ ] Full Settings schema (fields listed in §4.5 are a starting point, not final — grown to ten with §4.6's three shell-only keys)
 - [x] ~~WebSocket/IPC message schema (shared with `hardware-interaction.md`), including the settings-push message shape~~ — resolved in `websocket-protocol.md`
 - [ ] App icon / wordmark design for Ephymeris. The titlebar currently carries a placeholder mark — a six-point star knocked out of a Pulsar squircle
-- [ ] **Constellation adjacency (§2.7).** The spec says lines connect *adjacent* nodes but never enumerates which pairs. `components/chrome/ConstellationStatus.tsx` uses `1–2, 2–3, 4–5, 5–6, 1–4, 3–6` — one closed shape, so no node is ever orphaned — over node positions pinned in a 100×54 viewBox. **Confirm this matches the physical box arrangement on the bench;** if the rig is laid out differently, the map should mirror it. Now that only bound boxes render, a sparse selection can leave nodes with no edges at all, which makes the pair list more visible than it used to be. Applies to the sidebar widget only — Mission Control's 3D constellation computes its own links and is unaffected
+- [x] ~~**Constellation adjacency (§2.7).**~~ — **superseded by §4.6's zodiac layouts.** The layout is now the user's chosen constellation, so there is no fixed pair list to confirm against the bench; the hand-authored `1–2, 2–3, 4–5, 5–6, 1–4, 3–6` shape survives only as the fallback for installs that never ran box setup
 - [x] ~~**Backup Directory does nothing yet.**~~ — **built.** `data-saving.md` §8's mirroring now covers all three: session files at finalization (queued, never blocking teardown), the `.tsv` while running (10 s, self-paced), and `ephymeris.db` (every commit, debounced, with dated daily snapshots). Settings shows live mirroring state and an explicit sync control beside the field, and Mission Control carries a compact indicator — because a backup that silently stops working would be the same broken promise this item was about
 - [ ] **Windows packaging** — deliberately deferred while v1 was developed on macOS. Covers: freezing/shipping the Python sidecar (dev builds run it from `sidecar/.venv`), bundling `arduino-cli` + the `arduino:avr` core with the installer per `hardware-interaction.md` §2 (currently uses the machine's own install), Tauri Windows bundling/signing, and a Windows CI build. None of it is started
 

@@ -173,11 +173,16 @@ Serves two use cases with a single implementation:
 
 ### 6.6 UI Shape
 
-6-box grid of collapsible console panels (independently toggleable), each showing:
-- Connection/state badge (per §3.4)
+**Amendment (2026-07-27, was: 6-box grid of collapsible console panels).** Debug is now a constellation landing plus a per-box detail view (`ephymeris_v1.0.md` §4.3): the chosen zodiac layout with one clickable node per bound box, and selecting a node opens that box's full toolset. The *capabilities* below are unchanged — only their arrangement moved, from one packed panel per box to intent-grouped sections for the selected box:
+
+- Connection/state badge (per §3.4), baud, open/close, reset, error acknowledge
 - Scrollback (throttled/batched output, sent commands interleaved)
 - Single-line input + line-ending selector + send button (Enter-to-send)
-- **Utility controls + status** when the box's flashed sketch has a `"kind": "utility"` Task Profile (`data-saving.md` §6.6): the profile's `controls` render as buttons/selects that send serial commands over the same `port.send` path (gated to `PASSTHROUGH`), and a status strip parses the sketch's non-persisted `STATUS` lines out of the scrollback per the profile's `telemetry`. This rides the passthrough primitives — no new commands, nothing persisted — so a cleaning/self-test sketch is driven and monitored without leaving Debug Mode.
+- **Utility controls + status** when the box's flashed sketch has a `"kind": "utility"` Task Profile (`data-saving.md` §6.6): the profile's `controls` render as buttons/selects that send serial commands over the same `port.send` path (gated to `PASSTHROUGH`), and a status strip parses the sketch's non-persisted `STATUS` lines out of the scrollback per the profile's `telemetry`. This rides the passthrough primitives — no new commands, nothing persisted — so a cleaning/self-test sketch is driven and monitored without leaving Debug.
+
+### 6.7 The Config Handshake Test — Another Passthrough Composition
+
+Config's per-box handshake test (`ephymeris_v1.0.md` §4.6) is a third rider on these same primitives, again deliberately without a new wire command: open passthrough (the open asserts DTR, which resets the Mega — §5 — and its boot output lands in `port.output` because the reader thread is attached by then), listen up to 10 s for a `READY` line or any output at all, close. **`port.reset` is unsuitable for this** and the test must never use it: its DTR pulse opens a throwaway handle that is never read, so the boot output it provokes is unobservable — and from `PASSTHROUGH` it would reset the board twice.
 
 ---
 
@@ -197,8 +202,8 @@ Serves two use cases with a single implementation:
 - [x] ~~Session-runner interaction with this layer (start/stop/abort semantics on `IN_SESSION`)~~ — resolved in `starting-a-session.md` §7 and summarised in §3.5. Entry is `IDLE`-only (open → DTR auto-reset → `READY` → `START` → optional `SEED` → strobe parsing); clean exit is the board's own end-of-session strobe; `STOP` is sent but never forces the transition, since the firmware honours it at its next trial boundary
 - [x] ~~Error recovery/retry policy for `ERROR` state — what should happen when a board drops mid-`IN_SESSION`~~ — resolved in `starting-a-session.md` §10: **always a hard stop, no auto-recovery.** A drop is exactly the failure `ERROR` already exists for, so the port goes `IN_SESSION → ERROR` like any other unexpected failure and clears through the existing manual `port.error.ack` — no new recovery logic. The file is finalized immediately with `stop_reason: "board disconnected"`, which costs nothing in data because `data-saving.md` §7's write-ahead log already made every strobe durable. v1 therefore ships manual acknowledgment only, by design rather than by omission
 - [ ] Multi-port operation batching (e.g. "flash all 6" workflows) — sequential vs. parallel, and how partial failures are surfaced. **Partly answered:** the session flash sequence (`starting-a-session.md` §4) is strictly sequential and halts at the first failure, and that's built. What's still open is whether Debug Mode wants a batch flash at all, and whether it would share this policy
-- [ ] Box→board binding UI depth: how a board that is physically swapped (new `hardware_id`, same cage) gets re-bound without hunting through Settings
-- [ ] §6.5's "save debug log" as a file: v1 ships copy-to-clipboard only (`ConsolePanel.tsx`'s `copyLog()` → `navigator.clipboard.writeText`). Saving to disk needs a write path the shell doesn't currently have — either `tauri-plugin-fs` plus a save dialog, or a sidecar-side export command. **Decide which owns it**
+- [ ] Box→board binding UI depth: how a board that is physically swapped (new `hardware_id`, same cage) gets re-bound. **Partially addressed** — bindings now live in Config (`ephymeris_v1.0.md` §4.6) with a re-runnable setup wizard and a handshake test to confirm the swap took; proactive "new board detected, bind it?" surfacing is the part still open
+- [ ] §6.5's "save debug log" as a file: v1 ships copy-to-clipboard only (`NodeDetail.tsx`'s `copyLog()` → `navigator.clipboard.writeText`). Saving to disk needs a write path the shell doesn't currently have — either `tauri-plugin-fs` plus a save dialog, or a sidecar-side export command. **Decide which owns it**
 
 ---
 

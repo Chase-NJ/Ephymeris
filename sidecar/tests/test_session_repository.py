@@ -118,6 +118,17 @@ def test_a_new_session_starts_configuring(db, repo) -> None:
     p = repo.create_prefix("2O-Bdisc")
     session = repo.create_session(cohort.id, p, "25", "2026-07-22", "/tmp/f")
     assert session.status == "configuring"
+    assert session.duration_minutes is None
+
+
+def test_a_session_duration_round_trips(db, repo) -> None:
+    """The per-box time limit (§2.3) survives the write and read back."""
+    cohort = CohortRepository(db).create("C", "/tmp/c")
+    p = repo.create_prefix("2O-Bdisc")
+    session = repo.create_session(
+        cohort.id, p, "25", "2026-07-22", "/tmp/f", duration_minutes=45
+    )
+    assert repo.get_session(session.id).duration_minutes == 45
     assert session.ended_at is None
     # The prefix name is snapshotted so a later prefix delete doesn't blank it.
     assert session.prefix_name == "2O-Bdisc"
@@ -185,6 +196,27 @@ def test_animal_runs_are_recorded_and_read_back(db, repo) -> None:
     assert len(runs) == 1
     assert runs[0].box_number == 3
     assert runs[0].stop_reason == "BF_END_SESSION received"
+
+
+def test_list_unfinished_is_global_and_excludes_closed_sessions(db, repo) -> None:
+    """Feeds `sessions.active` — the caller by definition knows no cohort id,
+    so the query spans all cohorts and keeps only still-open statuses."""
+    cohorts = CohortRepository(db)
+    a = cohorts.create("A", "/tmp/a")
+    b = cohorts.create("B", "/tmp/b")
+    p = repo.create_prefix("2O-Bdisc")
+    older = repo.create_session(a.id, p, "1", "2026-07-20", "/tmp/f")
+    newer = repo.create_session(b.id, p, "2", "2026-07-22", "/tmp/f")
+    repo.set_status(newer.id, "running")
+    done = repo.create_session(a.id, p, "3", "2026-07-21", "/tmp/f")
+    repo.set_status(done.id, "completed")
+    backed_out = repo.create_session(a.id, p, "4", "2026-07-21", "/tmp/f")
+    repo.set_status(backed_out.id, "aborted")
+
+    unfinished = repo.list_unfinished()
+    # Oldest first by (date, started_at) — never by free-text session number.
+    assert [s.id for s in unfinished] == [older.id, newer.id]
+    assert {s.status for s in unfinished} == {"configuring", "running"}
 
 
 def test_deleting_a_cohort_cascades_to_its_sessions(db, repo) -> None:

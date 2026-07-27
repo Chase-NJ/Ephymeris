@@ -26,8 +26,8 @@ export async function createCohort(
   name: string,
   dataFolder?: string,
 ): Promise<Cohort> {
-  const args: Record<string, unknown> = { name };
-  if (dataFolder) args["dataFolder"] = dataFolder;
+  const args: { name: string; dataFolder?: string } = { name };
+  if (dataFolder) args.dataFolder = dataFolder;
   const result = (await client.call(CMD.COHORTS_CREATE, args)) as { cohort: Cohort };
   return result.cohort;
 }

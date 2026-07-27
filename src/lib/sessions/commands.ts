@@ -6,6 +6,7 @@
 import type { SidecarClient } from "../ws/client";
 import { CMD } from "../ws/protocol";
 import type {
+  ActiveSessions,
   BoxMapping,
   Prefix,
   Session,
@@ -62,11 +63,14 @@ export async function createSession(
   cohortId: string,
   prefixId: string,
   sessionNumber: string,
+  durationMinutes?: number,
 ): Promise<Session> {
   const r = (await client.call(CMD.SESSIONS_CREATE, {
     cohortId,
     prefixId,
     sessionNumber,
+    // Optional on the wire — omitted entirely means "no time limit".
+    ...(durationMinutes !== undefined ? { durationMinutes } : {}),
   })) as { session: Session };
   return r.session;
 }
@@ -94,7 +98,9 @@ export async function confirmMapping(
     boxes: boxes.map((b) => ({
       box: b.box,
       animalId: b.animalId,
-      sketchPath: b.sketchPath,
+      // The flow only enables Confirm once every box has a sketch; an empty
+      // string still draws the same SESSION_INVALID rejection a null did.
+      sketchPath: b.sketchPath ?? "",
       config: b.config,
     })),
   });
@@ -110,6 +116,16 @@ export async function sessionStatus(
   sessionId: string,
 ): Promise<SessionSnapshot> {
   return (await client.call(CMD.SESSIONS_STATUS, { sessionId })) as SessionSnapshot;
+}
+
+/**
+ * The global "what is running?" query — no arguments, so a client with no
+ * prior knowledge of ids (the Launch page, a reconnect) can discover the
+ * running session. The store calls this on every connect; `session.lifecycle`
+ * keeps the answer current thereafter.
+ */
+export async function activeSessions(client: SidecarClient): Promise<ActiveSessions> {
+  return (await client.call(CMD.SESSIONS_ACTIVE)) as ActiveSessions;
 }
 
 export async function startAll(client: SidecarClient, sessionId: string): Promise<Session> {

@@ -1,152 +1,45 @@
 /**
- * Session and prefix types — mirrors `data-saving.md` §3–§6 and the payload
- * shapes in `websocket-protocol.md` §4.
+ * Session and prefix types — `data-saving.md` §3–§6.
+ *
+ * The wire shapes live in the generated protocol module (`protocol/schema.py`
+ * is their authority) and are re-exported here so callers keep one import
+ * site; this file adds the client-side staging types and helpers.
  */
 
 import type { Animal, Cohort, Group } from "@/lib/cohorts/types";
+import type { CommandResultMap, TaskProfile } from "@/lib/ws/protocol";
 
-export interface Prefix {
-  id: string;
-  name: string;
-}
-
-export type SessionStatus = "configuring" | "running" | "completed" | "aborted";
-
-export interface GroupRun {
-  groupId: string;
-  order: number;
-  startedAt: string;
-  endedAt: string | null;
-}
-
-export interface Session {
-  id: string;
-  cohortId: string;
-  prefixId: string;
-  prefixName: string;
-  sessionNumber: string;
-  date: string;
-  startedAt: string;
-  endedAt: string | null;
-  status: SessionStatus;
-  folderPath: string;
-  groupRuns: GroupRun[];
-}
-
-// --- Task Profiles (data-saving.md §6) ------------------------------------
-
-export type ConfigFieldType = "int" | "float" | "bool" | "string";
-
-export interface ConfigField {
-  /** The `.json`/`.mat` field name, and the key the form collects under. */
-  metadataKey: string;
-  /** The `START` command token (§6.3). */
-  wireKey: string;
-  label: string;
-  type: ConfigFieldType;
-  default: unknown;
-}
-
-export interface LiveMetric {
-  id: string;
-  label: string;
-  triggerCode: number;
-  successCode: number;
-  alternateCode: number;
-  windowSize: number;
-}
-
-/** Sketch kind (§6.2): a scored IN_SESSION task, or a PASSTHROUGH tool. */
-export type ProfileKind = "behavior" | "utility";
-
-/** One choice in a `select` control — a label + the serial command it sends. */
-export interface ControlOption {
-  label: string;
-  command: string;
-}
-
-/**
- * A utility control the app renders in Debug Mode (§6.6). `button` carries a
- * single `command`; `select` carries `options`. Both send over `port.send`.
- */
-export interface Control {
-  id: string;
-  label: string;
-  type: "button" | "select";
-  command?: string;
-  options?: ControlOption[];
-}
-
-export interface TelemetryField {
-  key: string;
-  label: string;
-}
-
-/**
- * How to parse a utility sketch's non-persisted `STATUS` lines out of
- * `port.output` (§6.6). A line beginning with `match` carries space-separated
- * `key=value` pairs; `fields` names the ones worth labelling. Parsed client-side
- * — nothing here is stored.
- */
-export interface TelemetrySpec {
-  match: string;
-  fields: TelemetryField[];
-}
-
-export interface TaskProfile {
-  taskName: string;
-  /** Defaults to "behavior" when a profile omits it. */
-  kind?: ProfileKind;
-  config: ConfigField[];
-  /** code → human name; display/debug only, metrics use raw codes. */
-  strobes: Record<string, string>;
-  liveMetrics: LiveMetric[];
-  /** Utility profiles only — the Debug-Mode controls (§6.6). */
-  controls?: Control[];
-  /** Utility profiles only — how to parse `STATUS` telemetry (§6.6). */
-  telemetry?: TelemetrySpec;
-}
-
-// --- Live telemetry -------------------------------------------------------
-
-export interface TelemetryMetric {
-  id: string;
-  /** P(hit) over the rolling window; null until a trial counts. */
-  value: number | null;
-  /** Counted (hit-or-miss) trials in the window. */
-  n: number;
-}
-
-export interface BoxTelemetry {
-  box: number;
-  animalId: string;
-  metrics: TelemetryMetric[];
-}
-
-export interface AnimalEnded {
-  box: number;
-  animalId: string;
-  stopReason: string;
-  filePath: string | null;
-}
-
-/** One box as the runner sees it — the source Mission Control renders (§5). */
-export interface SessionBox {
-  box: number;
-  animalId: string;
-  animalName: string;
-  sketchName: string;
-  sketchPath: string;
-  running: boolean;
-}
+export type {
+  Prefix,
+  SessionStatus,
+  GroupRun,
+  Session,
+  ConfigFieldType,
+  ConfigField,
+  LiveMetric,
+  ProfileKind,
+  ControlOption,
+  Control,
+  TelemetryField,
+  TelemetrySpec,
+  TaskProfile,
+  TelemetryMetric,
+  BoxTelemetry,
+  AnimalEnded,
+  SessionBox,
+} from "@/lib/ws/protocol";
 
 /** `sessions.status` — named for the snapshot it is, since `SessionStatus`
- *  above is already the record's lifecycle state. */
-export interface SessionSnapshot {
-  session: Session;
-  groupId: string;
-  boxes: SessionBox[];
-}
+ *  is already the record's lifecycle state. */
+export type SessionSnapshot = CommandResultMap["sessions.status"];
+
+/**
+ * `sessions.active` result and `session.lifecycle` payload — the global
+ * "what is running?" answer. `running` is the wire's `RunnerSession`, which is
+ * structurally the `sessions.status` result, so the existing snapshot type
+ * serves both; split only if the shapes ever diverge.
+ */
+export type ActiveSessions = CommandResultMap["sessions.active"];
 
 // --- Configuration flow ---------------------------------------------------
 

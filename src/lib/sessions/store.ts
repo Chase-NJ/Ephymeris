@@ -1,23 +1,48 @@
 /**
  * Client-side mirror of prefix and live-session state.
  *
- * Two independent slices with keyed subscriptions, same shape as
+ * Independent slices with keyed subscriptions, same shape as
  * `HardwareStore`: the prefix list (fed by `prefixes.updated`, replayed on
- * connect) and per-box live telemetry (fed by `session.telemetry`, which is
+ * connect), per-box live telemetry (fed by `session.telemetry`, which is
  * pushed per metric update rather than batched — far lower frequency than raw
- * strobes, per `websocket-protocol.md` §4).
+ * strobes, per `websocket-protocol.md` §4), and the active-session answer
+ * (queried via `sessions.active` on connect, kept live by `session.lifecycle`).
  */
 
 import type { SidecarClient } from "../ws/client";
-import { EVT } from "../ws/protocol";
-import type { AnimalEnded, BoxTelemetry, Prefix, TelemetryMetric } from "./types";
+import { CMD, EVT } from "../ws/protocol";
+import type {
+  ActiveSessions,
+  AnimalEnded,
+  BoxTelemetry,
+  Prefix,
+  TelemetryMetric,
+} from "./types";
 
 const NO_PREFIXES: Prefix[] = [];
 const NO_METRICS: TelemetryMetric[] = [];
 const NO_HISTORY: number[] = [];
+const NO_STROBES: StrobeEvent[] = [];
 
 /** Enough points for a legible trace over a long session, not unbounded. */
 const HISTORY_LIMIT = 240;
+
+/**
+ * How many strobes to keep per box. A real session emits a few thousand
+ * (2,711 in the reference archive run), so this holds a whole session with
+ * room to spare while staying bounded — the point being that the live panels
+ * must not lose their early trials the way the sidecar's capped passthrough
+ * ring (~2000 lines) would make them.
+ */
+const STROBE_LIMIT = 20000;
+
+const STROBE_LINE = /^(\d{1,3})\t(\d+)$/;
+
+/** One decoded strobe: the code the board sent and its session-relative ms. */
+export interface StrobeEvent {
+  code: string;
+  at: number;
+}
 
 export class SessionStore {
   private prefixes: Prefix[] = NO_PREFIXES;
@@ -33,10 +58,53 @@ export class SessionStore {
   private history = new Map<number, Map<string, number[]>>();
   /** Finished runs this session, per box. */
   private ended = new Map<number, AnimalEnded>();
+  /**
+   * Every strobe this box has emitted, in order.
+   *
+   * Deliberately a second consumer of `port.output` alongside `HardwareStore`:
+   * that store keeps a *console* (capped at 2000 lines, trimmed oldest-first),
+   * which is right for scrollback and wrong for a session-long derivation.
+   * Kept as decoded `{code, at}` pairs rather than lines so a full session
+   * costs little, and mutated in place with a version counter rather than
+   * copied per 20 Hz batch.
+   */
+  private strobes = new Map<number, StrobeEvent[]>();
+  private strobeVersion = 0;
+  /**
+   * The global "what is running?" answer — queried on every connect (the
+   * §1.2 ask-don't-replay pattern) and replaced wholesale by each
+   * `session.lifecycle` broadcast. Note `running.boxes[].running` inside it
+   * is point-in-time; live per-box state comes from `port.state`.
+   */
+  private active: ActiveSessions | null = null;
+  private activeLoaded = false;
   private subs = new Map<string, Set<() => void>>();
 
   attach(client: SidecarClient): () => void {
+    let detached = false;
     const offs = [
+      client.on(EVT.SESSION_LIFECYCLE, (data) => {
+        this.active = data as ActiveSessions;
+        this.activeLoaded = true;
+        this.notify("active");
+      }),
+
+      client.onStatus((status) => {
+        if (status !== "connected") return;
+        client
+          .call(CMD.SESSIONS_ACTIVE)
+          .then((result) => {
+            if (detached) return;
+            this.active = result as ActiveSessions;
+            this.activeLoaded = true;
+            this.notify("active");
+          })
+          .catch(() => {
+            // A failed discovery just leaves activeLoaded false; the next
+            // reconnect or lifecycle broadcast will fill it in.
+          });
+      }),
+
       client.on(EVT.PREFIXES_UPDATED, (data) => {
         const payload = data as { prefixes?: Prefix[] } | null;
         this.prefixes = payload?.prefixes ?? NO_PREFIXES;
@@ -52,6 +120,29 @@ export class SessionStore {
         this.notify(`telemetry:${d.box}`);
       }),
 
+      client.on(EVT.PORT_OUTPUT, (data) => {
+        const d = data as { box: number; lines: Array<{ dir: string; text: string }> };
+        if (typeof d?.box !== "number" || !d.lines?.length) return;
+        let log = this.strobes.get(d.box);
+        let added = false;
+        for (const line of d.lines) {
+          if (line.dir !== "rx") continue;
+          const match = STROBE_LINE.exec(line.text.trim());
+          if (!match) continue;
+          if (!log) {
+            log = [];
+            this.strobes.set(d.box, log);
+          }
+          log.push({ code: match[1]!, at: Number(match[2]) });
+          added = true;
+        }
+        if (!added || !log) return;
+        if (log.length > STROBE_LIMIT) log.splice(0, log.length - STROBE_LIMIT);
+        this.strobeVersion += 1;
+        this.notify(`strobes:${d.box}`);
+        this.notify("strobes");
+      }),
+
       client.on(EVT.SESSION_ANIMAL_ENDED, (data) => {
         const d = data as AnimalEnded;
         if (typeof d?.box !== "number") return;
@@ -60,7 +151,20 @@ export class SessionStore {
         this.notify("ended");
       }),
     ];
-    return () => offs.forEach((off) => off());
+    return () => {
+      detached = true;
+      offs.forEach((off) => off());
+    };
+  }
+
+  // --- active session ---------------------------------------------------
+
+  getActive(): ActiveSessions | null {
+    return this.active;
+  }
+
+  activeIsLoaded(): boolean {
+    return this.activeLoaded;
   }
 
   // --- prefixes ---------------------------------------------------------
@@ -93,6 +197,22 @@ export class SessionStore {
     return this.history.get(box)?.get(metricId) ?? NO_HISTORY;
   }
 
+  /**
+   * A box's strobes so far. The array is **mutated in place** as more arrive —
+   * subscribe to `strobes:<box>` (or `strobes`) and read `getStrobeVersion()`
+   * as the snapshot, then read this inside the render that version triggers.
+   * Returning a fresh copy per 20 Hz batch would mean copying thousands of
+   * entries several times a second for no benefit.
+   */
+  getStrobes(box: number): StrobeEvent[] {
+    return this.strobes.get(box) ?? NO_STROBES;
+  }
+
+  /** Bumped whenever any box's strobe log grows — the render trigger. */
+  getStrobeVersion(): number {
+    return this.strobeVersion;
+  }
+
   private appendHistory(box: number, metrics: TelemetryMetric[]): void {
     let perMetric = this.history.get(box);
     if (!perMetric) {
@@ -114,6 +234,9 @@ export class SessionStore {
     this.telemetry.clear();
     this.history.clear();
     this.ended.clear();
+    this.strobes.clear();
+    this.strobeVersion += 1;
+    this.notify("strobes");
     for (const key of this.subs.keys()) {
       if (key.startsWith("telemetry:") || key.startsWith("ended")) this.notify(key);
     }
@@ -124,6 +247,10 @@ export class SessionStore {
     this.telemetry.delete(box);
     this.history.delete(box);
     this.ended.delete(box);
+    this.strobes.delete(box);
+    this.strobeVersion += 1;
+    this.notify(`strobes:${box}`);
+    this.notify("strobes");
     this.notify(`telemetry:${box}`);
     this.notify(`ended:${box}`);
     this.notify("ended");

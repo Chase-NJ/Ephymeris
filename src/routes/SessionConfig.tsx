@@ -40,6 +40,7 @@ export function SessionConfig() {
   const [cohort, setCohort] = useState<Cohort | null>(null);
   const [prefixId, setPrefixId] = useState<string>("");
   const [sessionNumber, setSessionNumber] = useState("");
+  const [durationText, setDurationText] = useState("");
   const [sameDayNumbers, setSameDayNumbers] = useState<string[]>([]);
   const [newPrefix, setNewPrefix] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -84,8 +85,17 @@ export function SessionConfig() {
 
   const ready = cohort ? isReadyToRun(cohort) : false;
   const firstGroup = useMemo(() => (cohort ? firstGroupToRun(cohort) : null), [cohort]);
+  // Empty = no limit; otherwise a positive whole number of minutes.
+  const durationTrim = durationText.trim();
+  const durationMinutes = /^\d+$/.test(durationTrim) ? Number(durationTrim) : null;
+  const durationValid = durationTrim === "" || (durationMinutes !== null && durationMinutes > 0);
   const canContinue =
-    connected && cohort !== null && ready && prefixId !== "" && sessionNumber.trim() !== "";
+    connected &&
+    cohort !== null &&
+    ready &&
+    prefixId !== "" &&
+    sessionNumber.trim() !== "" &&
+    durationValid;
   const sameDayReuse = sameDayNumbers.includes(sessionNumber.trim());
 
   async function run(action: () => Promise<unknown>) {
@@ -120,7 +130,13 @@ export function SessionConfig() {
   async function continueToMapping() {
     if (!cohort || !firstGroup) return;
     await run(async () => {
-      const session = await createSession(client, cohort.id, prefixId, sessionNumber.trim());
+      const session = await createSession(
+        client,
+        cohort.id,
+        prefixId,
+        sessionNumber.trim(),
+        durationTrim === "" ? undefined : (durationMinutes ?? undefined),
+      );
       navigate(
         `/session/${session.id}/mapping?cohort=${cohort.id}&group=${firstGroup.id}`,
       );
@@ -269,6 +285,40 @@ export function SessionConfig() {
             className="w-[120px]"
           />
         </div>
+
+        <div className="flex items-start justify-between gap-8 px-4 py-3.5">
+          <div className="min-w-0 pt-0.5">
+            <div className="text-[13px] font-medium text-starlight">Time limit</div>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-static">
+              Minutes per box, counted from each box&apos;s own start. The box is
+              stopped at its next trial boundary once time is up. Leave empty
+              for no limit.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 pt-0.5">
+            <TextInput
+              label="Time limit in minutes"
+              mono
+              value={durationText}
+              placeholder="—"
+              onChange={setDurationText}
+              className="w-[80px]"
+            />
+            <span className="text-[12px] text-static">min</span>
+          </div>
+        </div>
+
+        {!durationValid && (
+          <div className="px-4 pb-3.5">
+            <p
+              className="text-[12px] leading-relaxed"
+              style={{ color: "var(--color-status-warning)" }}
+            >
+              The time limit must be a whole number of minutes, or empty for
+              none.
+            </p>
+          </div>
+        )}
 
         {/* §2.2 — soft warning only. Reusing a number is legal (data-saving.md
             §1): it appends into the same folder, which is how an interrupted

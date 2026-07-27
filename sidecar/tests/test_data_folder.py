@@ -120,6 +120,25 @@ def test_relocate_refuses_a_non_empty_destination(tmp_path: Path) -> None:
     assert (source / "a.txt").exists()
 
 
+def test_relocate_attaches_to_an_archive_that_is_already_full(tmp_path: Path) -> None:
+    """§8 — the *other* intent: point a cohort at data that is already there.
+
+    This is how a cohort adopts an archive written before this app existed
+    (`analytics.md` §8.1), so the destination is *expected* to be full.
+    Refusing a non-empty destination here made that impossible to express: the
+    only control for it rejected exactly the folders it was meant to accept.
+    """
+    source = tmp_path / "D_drive" / "The Remy's"  # the old path, long gone
+    destination = tmp_path / "K_drive" / "Remy"
+    (destination / "01_2O-Bdisc").mkdir(parents=True)
+    (destination / "01_2O-Bdisc" / "run.json").write_text("{}", encoding="utf-8")
+
+    assert relocate(source, destination, move_existing=False) == destination
+    # Nothing was written, moved, or cleared — only a path was chosen.
+    assert (destination / "01_2O-Bdisc" / "run.json").read_text() == "{}"
+    assert not source.exists()
+
+
 def test_relocate_into_an_existing_empty_folder_does_not_nest(tmp_path: Path) -> None:
     """shutil.move would otherwise put `old/` *inside* `new/`."""
     source = tmp_path / "old"

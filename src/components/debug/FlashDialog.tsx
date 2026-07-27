@@ -174,7 +174,8 @@ export function FlashDialog({
               message={discovery.directory.message}
               onSettings={() => {
                 onClose();
-                navigate("/settings");
+                // The Arduino Directory setting lives in Config now.
+                navigate("/config");
               }}
               onRefresh={() => void refreshSketches()}
             />
@@ -253,7 +254,7 @@ function DirectoryProblem({
         {state !== "empty" ? (
           <Button onClick={onSettings}>
             <FolderOpen size={13} strokeWidth={1.75} />
-            Open Settings
+            Open Config
           </Button>
         ) : (
           <Button onClick={onRefresh}>

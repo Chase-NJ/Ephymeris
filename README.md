@@ -4,7 +4,7 @@ A lab desktop app for running rodent behavior sessions on up to six Arduino Mega
 
 Built for two Windows 11 lab machines; developed on macOS and Windows.
 
-**Status: v1.0 in progress.** Cohorts, Debug Mode, Settings, and the complete session flow (config → mapping → flash → Mission Control → 3D constellation) are implemented and verified against real hardware. Analytics is a stub and Windows packaging is unstarted. See [docs/TODO.md](docs/TODO.md) for the full register.
+**Status: v1.0 in progress.** Cohorts, Debug Mode, Settings, and the complete session flow (config → mapping → flash → Mission Control → 3D constellation) are implemented and verified against real hardware. Analytics is built and decodes the lab's real archive end to end. Windows packaging is unstarted. See [docs/TODO.md](docs/TODO.md) for the full register.
 
 ---
 
@@ -84,7 +84,7 @@ Start at the **[documentation index](docs/README.md)**, which says which documen
 - **[docs/reference.md](docs/reference.md)** — the consolidated engineering reference: architecture, module map, the complete wire surface, and per-area implementation status.
 - **[docs/TODO.md](docs/TODO.md)** — every known gap and open decision in one prioritized register.
 
-The seven documents under `docs/` are living specifications, kept current with the implementation, and are more authoritative than inferring behavior from code. `docs/websocket-protocol.md` in particular is the canonical source for the wire schema; the two code mirrors are hand-maintained against it.
+The eight documents under `docs/` are living specifications and are more authoritative than inferring behavior from code.  For the wire schema, `docs/websocket-protocol.md` carries the prose and `protocol/schema.py` is the machine-readable shape authority; the two code mirrors are generated from it.
 
 ## Contributing
 
@@ -92,6 +92,6 @@ Read [CLAUDE.md](CLAUDE.md) first — it captures the invariants that are load-b
 
 The three that bite hardest:
 
-1. **The wire protocol has no codegen.** Update `docs/websocket-protocol.md`, then `sidecar/ephymeris_sidecar/protocol.py`, then `src/lib/ws/protocol.ts`, in that order, and run the contract test.
+1. **The wire protocol mirrors are generated — never edit them by hand.** Update `protocol/schema.py` and `docs/websocket-protocol.md` together, run `npm run gen:protocol`, commit the regenerated mirrors, and run the contract test.
 2. **Box number 1–6 is the key everywhere**, never a COM port address.
 3. **The sidecar enforces state transitions**, not the UI. Disabled buttons are a courtesy.

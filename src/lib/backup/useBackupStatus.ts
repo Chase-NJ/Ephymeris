@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { CMD, EVT } from "@/lib/ws/protocol";
+import { CMD, EVT, type BackupState, type BackupStatus, type SyncResult } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -13,28 +13,7 @@ import { useSidecar } from "@/lib/ws/context";
  * having to ask.
  */
 
-export type BackupState = "disabled" | "pending" | "ok" | "failed";
-
-export interface BackupStatus {
-  configured: boolean;
-  directory: string | null;
-  state: BackupState;
-  pending: number;
-  tracking: number;
-  mirroredFiles: number;
-  lastSuccessAt: string | null;
-  lastError: string | null;
-  syncing: boolean;
-  intervalSeconds: number;
-}
-
-export interface SyncResult {
-  copied: number;
-  skipped: number;
-  failed: number;
-  errors: string[];
-  directory: string;
-}
+export type { BackupState, BackupStatus, SyncResult } from "@/lib/ws/protocol";
 
 const UNKNOWN: BackupStatus = {
   configured: false,
@@ -95,7 +74,7 @@ export function useBackupStatus() {
     try {
       // The long reply timeout this needs lives in the client's per-command
       // override table, alongside flashing's.
-      setLastSync((await client.call(CMD.BACKUP_SYNC_NOW)) as SyncResult);
+      setLastSync(await client.call(CMD.BACKUP_SYNC_NOW));
     } catch (error) {
       setSyncError(error instanceof Error ? error.message : String(error));
       setStatus((s) => ({ ...s, syncing: false }));

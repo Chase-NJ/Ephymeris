@@ -111,7 +111,8 @@ Session {
   groupRuns: [
     { groupId: uuid, order: int, startedAt: timestamp, endedAt: timestamp | null }
   ]
-}
+  durationMinutes: int | null    // optional per-box time limit (starting-a-session.md §2.4);
+}                                // null = no limit. One value for every group in the session.
 
 SessionAnimalRun {
   id: uuid
@@ -123,8 +124,11 @@ SessionAnimalRun {
   startedAt: timestamp
   endedAt: timestamp | null
   stopReason: string | null       // §5
+  profileHash: string | null      // the Task Profile this run actually used — see below
 }
 ```
+
+**`profileHash` records which Task Profile decoded this run**, content-addressed so identical profiles store once (`analytics.md` §8.2). A `task.json` lives beside its sketch, outside the data directory, and can be edited, renamed, or deleted long after a session — so without a snapshot, a run recorded a year ago would be silently re-interpreted with today's strobe codes and metric definitions. `null` means the run predates snapshotting, and is exactly the flag Analytics needs to mark it as decoded with a possibly-changed profile.
 
 `SessionAnimalRun` is forward-looking infrastructure for the eventual Analytics doc more than something the live Mission Control needs — Mission Control can run off in-memory state and wire events without querying it mid-session — but it costs little to write now and a lot to reconstruct later from files alone.
 
@@ -216,6 +220,7 @@ A sketch with **no `task.json`** is fully supported — no config form appears b
 - **`config`** drives three things from one declaration: the pre-flight config form (`starting-a-session.md` §3), the `START` command built from it (§6.3), and the metadata fields written into the session file (§5) — `metadataKey` is the JSON/`.mat` field name, `wireKey` is the `START` command token.
 - **`strobes`** is a human-readable code→name map for debugging/display; not required for `liveMetrics` to compute (those reference raw codes directly), but worth having so a raw strobe log or an error message can show a name instead of a bare `249`.
 - **`liveMetrics`** are rolling-window response-probability metrics — the general form of "P(R | Odor 1)." `windowSize: 20` deliberately matches the sketch's own anti-bias `biasWindow` default, not picked arbitrarily.
+- **`legacyNames`** (optional, default `[]`) lists names *older software* wrote into a run document's `sketch` field for this same task — see §6.7.
 
 ### 6.3 Building the `START` Command
 
@@ -269,10 +274,44 @@ A `"kind": "utility"` profile makes a cleaning/priming/self-test sketch first-cl
 }
 ```
 
-- **`controls`** — the widgets the console panel renders for the box (once its flashed sketch is known). Each `button` sends its `command`; each `select` sends the chosen option's `command`. The app sends them verbatim over `port.send` (LF-terminated), and they're gated to `PASSTHROUGH` exactly like the manual console input. The sketch parses these whole-line commands non-blockingly (`BehaviorBox.h`'s `CommandReader`) alongside its manual hardware triggers, so both drive the same state.
-- **`telemetry`** — how to read the sketch's live state back. The sketch emits `STATUS <key>=<value> …` lines (`BehaviorBox.h`'s `emitStatus`); the app scans `port.output` for the newest line beginning with `match` (default `"STATUS"`), parses the space-separated `key=value` pairs, and shows the declared `fields`. This is **display-only**: parsed client-side off the capped passthrough ring, never persisted. A `STATUS` line is deliberately shaped so it can never be mistaken for a strobe (`^\d{1,3}\t\d+$`), and the strict strobe parser doesn't run in `PASSTHROUGH` anyway.
+- **`controls`** — the widgets Debug Mode renders for the box (once its flashed sketch is known). Three types, all sent verbatim over `port.send` (LF-terminated) and gated to `PASSTHROUGH` exactly like the manual console input:
 
-The sketch↔app contract is thus fully declared in `task.json`: the app needs no per-sketch knowledge to drive `PRIME_Lines` vs `PRIME_Bolus` vs `TEST_Box`.
+  | Type | Renders as | Sends |
+  |---|---|---|
+  | `button` | one button | its `command` |
+  | `select` | a dropdown | the chosen option's `command` |
+  | `grid` | a labelled row per `channels[]` entry, each with a live state lamp | that row's `toggle` or `pulse` |
+
+  The sketch parses these whole-line commands non-blockingly (`BehaviorBox.h`'s `CommandReader`) alongside its manual hardware triggers, so both drive the same state.
+
+  **Why `grid` exists.** A behavior box has 18 controllable outputs (12 odor solenoids, 4 fluid lines, vacuum, trial light). As flat buttons that is 36 controls in a wrapped row with no indication of which are *open* — and for solenoids on a fluid rig, "what is energized right now" is a safety readout, not a convenience. A grid row carries `label`, an optional `state` (a telemetry key whose `1`/`open`/`true` lights the lamp), and at least one of `toggle`/`pulse`. A row with neither command is rejected at parse time rather than rendered inert. An absent `state` key leaves the lamp neutral rather than claiming "closed" — not-reported and closed are different facts.
+
+- **`telemetry`** — how to read the sketch's live state back. The sketch emits `STATUS <key>=<value> …` lines (`BehaviorBox.h`'s `emitStatus`); the app scans `port.output` for the newest line beginning with `match` (default `"STATUS"`), parses the space-separated `key=value` pairs, and shows the declared `fields` — and, for a `grid`, lights each row from its own `state` key. This is **display-only**: parsed client-side off the capped passthrough ring, never persisted. A `STATUS` line is deliberately shaped so it can never be mistaken for a strobe (`^\d{1,3}\t\d+$`), and the strict strobe parser doesn't run in `PASSTHROUGH` anyway.
+
+  > **STATUS values cannot contain spaces** — the parser splits on whitespace. So a sketch's *prose* (a self-test's running commentary, its pass/fail confirmations) belongs in ordinary `Serial.println` lines, which land in the console pane where a human reads them. `STATUS` carries the structured state for the strip. `BOX_Utility` uses exactly this split.
+
+The sketch↔app contract is thus fully declared in `task.json`: the app needs no per-sketch knowledge to drive one. **`Utility/BOX_Utility`** is the worked example — one sketch consolidating what were three (`PRIME_Lines` latch, `PRIME_Bolus` pulse, `TEST_Box` self-test), because priming a line and pulsing it were never different programs, only the same solenoid with a different open time, and re-flashing between them cost more than it saved. It declares three grids (fluids, vacuum+light, odors), a pulse-width select, and self-test/stop/all-off buttons; it addresses every output through channel tokens (`O1`–`O12`, `F1`–`F4`, `VAC`, `LIGHT`) so `TOGGLE`/`PULSE`/`ON`/`OFF` are written once rather than per class of hardware. The three sketches it replaces are named in its `legacyNames` (§6.7) so historical runs still decode.
+
+---
+
+### 6.7 `legacyNames` — decoding an archive older than this app
+
+A finalized run document records `sketch` as a **name**, and the archive walk (`analytics.md` §8.1) resolves that name against the Arduino Directory to find the `task.json` that can score the run. For anything this app wrote, the name is the sketch folder's name and resolution is exact.
+
+Data written by whatever the lab used before is not so lucky. The real Remy archive records `"Shape - L"` and `"Shape - R"` — human labels — where the directory holds `shaping_GL` and `shaping_GR`. Those runs are perfectly decodable; the name is simply not the folder's.
+
+```jsonc
+{
+  "taskName": "Shaping — Go-Left (Odor 3)",
+  "kind": "behavior",
+  "legacyNames": ["Shape - L"],   // what older software called this same task
+  /* … */
+}
+```
+
+**Declared, never inferred.** Matching `"Shape - L"` to `shaping_GL` by resemblance is exactly the kind of guess §8.1 forbids for animal names, and for the same reason: a wrong match decodes real data with the wrong strobe map and produces confident, wrong numbers. Resemblance is not evidence. So the mapping is a one-line assertion by the person who knows, sitting in the profile it belongs to — which also means it travels with the sketch and is reviewable in a diff.
+
+Only the archive walk reads this. It is never used to pick a sketch to flash, never shown in the picker, and has no effect on a live session. An unresolvable name is not an error: the run decodes to `no-metrics` and its `detail` **names the sketch it wanted**, so the fix is visible rather than something to go hunting for.
 
 ---
 
@@ -412,9 +451,12 @@ Session lifecycle commands/events (`session.start`, per-animal telemetry, etc.) 
 - [x] ~~Exact backup mirroring interval for `.tsv` beyond "every ~5–10s"~~ — **10 s, self-paced** (§8.2)
 - [x] ~~Exact backup trigger cadence for `ephymeris.db` beyond "app start + every cohort-affecting write"~~ — **every commit, debounced 5 s, no timer** (§8.3). The original wording was also too narrow: `session_animal_runs` is written unattended and isn't a cohort edit
 - [x] ~~`.tsv` files are opened in truncating write mode~~ — **exclusive create** (§7.1). A collision now fails the box with the offending path named, instead of truncating
-- [ ] Small recovery utility to backfill `.json`/`.mat` from an orphaned `.tsv` after a crash, with `stop_reason: "recovered after crash"` — cheap given §7's design, deliberately out of scope for this pass (§7.3). Note it must use §2.1's `parse_name_date` rather than assuming either date spelling
+- [ ] Small recovery utility to backfill `.json`/`.mat` from an orphaned `.tsv` after a crash, with `stop_reason: "recovered after crash"` — cheap given §7's design, deliberately out of scope for this pass (§7.3). Note it must use §2.1's `parse_name_date` rather than assuming either date spelling, and that it needs the **same archive walker** as `analytics.md` §8.1 — build them to share one, whichever lands first
+- [x] ~~`profileHash` on `SessionAnimalRun` (§4) is specified but not built~~ — **built.** Every run finalized from now on records the profile that decoded it. Runs recorded before this keep `null` and fall back to the current `task.json`, flagged in the UI (`analytics.md` §8.2)
 - [ ] §8's mirroring is unit-tested but has not yet run a full session against a **real network share** — the slow-target behaviour it's designed around is the one thing a local-filesystem test can't exercise
 
 ---
 
-**You've reached the end of the reading order.** Back to the [documentation index](README.md) · [Open items register](TODO.md) · [Engineering reference](reference.md)
+**Next:** [analytics.md](analytics.md) — how everything written here is read back, scored, and visualized. Its §3 extends §6.5's metric definitions to recorded sessions.
+
+Or jump to the [documentation index](README.md) · [Open items register](TODO.md) · [Engineering reference](reference.md)

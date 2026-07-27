@@ -1,12 +1,15 @@
-import { motion } from "framer-motion";
-import { ArrowLeft, Play, RotateCcw, Square } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ArrowLeft, ChevronDown, Play, RotateCcw, Square } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/common/controls";
+import { LivePanels } from "./LivePanels";
 import { useBoxOutput, usePortStatus } from "@/lib/hardware/context";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { getTaskProfile } from "@/lib/sessions/commands";
 import { useBoxEnded } from "@/lib/sessions/context";
+import { rollingAccuracy } from "@/lib/sessions/liveTrials";
+import { useLiveTrials } from "@/lib/sessions/useLiveTrials";
 import type { SessionBox, TaskProfile } from "@/lib/sessions/types";
 import { useSidecar } from "@/lib/ws/context";
 
@@ -17,10 +20,16 @@ import { useSidecar } from "@/lib/ws/context";
  * it — arrival means the camera is close to that star with an instrument panel
  * open, not a cut to a different screen (§6.3).
  *
- * Live-metric charts are deliberately out of this panel for now; in their
- * place, a fixed five-row feed of the box's most recent strobes, decoded via
- * the sketch's Task Profile strobe map when it has one.
+ * The panel leads with the **live per-animal charts** — response curves,
+ * outcome mix, well holds — because those are what an operator watches a run
+ * for. The strobe feed remains underneath as a collapsible console: it is how
+ * you check that the box is still talking, which matters exactly when
+ * something looks wrong, and is noise the rest of the time.
  */
+
+/** Trials the star's temperature averages over — the same window the task's
+ *  own live metrics use, so the two readouts agree. */
+const ACCURACY_WINDOW = 20;
 export function StarPanel({
   box,
   onStart,
@@ -40,8 +49,14 @@ export function StarPanel({
   const port = usePortStatus(box.box);
   const ended = useBoxEnded(box.box);
   const [profile, setProfile] = useState<TaskProfile | null>(null);
+  const [consoleOpen, setConsoleOpen] = useState(false);
 
   const live = port.state === "IN_SESSION";
+  const { state: trials, usable } = useLiveTrials(box.box, profile?.strobes);
+  const accuracy = useMemo(
+    () => rollingAccuracy(trials.trials, ACCURACY_WINDOW),
+    [trials.trials],
+  );
 
   useEffect(() => {
     let active = true;
@@ -59,7 +74,7 @@ export function StarPanel({
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 24, opacity: 0 }}
       transition={springPanel}
-      className="pointer-events-auto absolute right-4 top-4 bottom-4 w-[340px] overflow-y-auto rounded-lg border border-halo bg-nebula/80 p-4 backdrop-blur-xl"
+      className="pointer-events-auto absolute right-4 top-4 bottom-4 w-[380px] overflow-y-auto rounded-lg border border-halo bg-nebula/80 p-4 backdrop-blur-xl"
     >
       <Button variant="ghost" onClick={onBack}>
         <ArrowLeft size={13} strokeWidth={2} />
@@ -93,8 +108,66 @@ export function StarPanel({
         </p>
       )}
 
-      <div className="mt-4 border-t border-halo pt-3">
-        <StrobeFeed box={box.box} strobeNames={profile?.strobes ?? {}} />
+      {/* The star's own temperature, stated in words — the constellation
+          encodes it as colour, and a colour scale nobody can read precisely
+          still needs its number somewhere. */}
+      <div className="mt-3 flex items-baseline justify-between gap-2 border-t border-halo pt-3">
+        <span className="text-[11px] text-static">Rolling accuracy</span>
+        <span className="font-mono text-[12px] tabular-nums text-starlight">
+          {accuracy === null ? "—" : accuracy.toFixed(2)}
+          <span className="ml-1 text-[10px] text-static">
+            {trials.trials.length > 0
+              ? `· ${trials.trials.length} trial${trials.trials.length === 1 ? "" : "s"}`
+              : ""}
+          </span>
+        </span>
+      </div>
+
+      <div className="mt-3 border-t border-halo pt-3">
+        {usable ? (
+          <LivePanels live={trials} strobeNames={profile?.strobes ?? {}} />
+        ) : (
+          <p className="text-[11px] leading-relaxed text-static">
+            {profile
+              ? "This sketch's Task Profile doesn't declare the strobes the panels are derived from, so only the console is available."
+              : "No Task Profile for this sketch — only the console is available."}
+          </p>
+        )}
+      </div>
+
+      <div className="mt-3 border-t border-halo pt-2">
+        <button
+          type="button"
+          onClick={() => setConsoleOpen((open) => !open)}
+          aria-expanded={consoleOpen}
+          className="flex w-full items-center gap-1.5 text-left text-[11px] text-static transition-colors hover:text-starlight"
+        >
+          <motion.span
+            className="block"
+            animate={{ rotate: consoleOpen ? 0 : -90 }}
+            transition={springSnappy}
+          >
+            <ChevronDown size={13} strokeWidth={1.75} />
+          </motion.span>
+          Console
+        </button>
+
+        <AnimatePresence initial={false}>
+          {consoleOpen && (
+            <motion.div
+              key="console"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={springPanel}
+              className="overflow-hidden"
+            >
+              <div className="pt-2">
+                <StrobeFeed box={box.box} strobeNames={profile?.strobes ?? {}} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </motion.aside>
   );

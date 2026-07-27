@@ -1,27 +1,26 @@
 import { motion } from "framer-motion";
 import { CircleAlert, Settings as SettingsIcon } from "lucide-react";
 
-import { Select, TextInput, Toggle } from "@/components/common/controls";
+import { Toggle } from "@/components/common/controls";
 import { BackupStatusNote } from "@/components/settings/BackupStatusNote";
-import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
 import { DirectoryField } from "@/components/settings/DirectoryField";
-import { DirectoryStatusNote } from "@/components/settings/DirectoryStatusNote";
 import { SettingGroup, SettingRow } from "@/components/settings/SettingRow";
 import { useBackupStatus } from "@/lib/backup/useBackupStatus";
 import { springPanel } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
-import { BAUD_RATES } from "@/lib/settings/schema";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Settings (ephymeris_v1.0.md §4.5).
+ * Settings (ephymeris_v1.0.md §4.5) — storage and interface.
  *
- * Deliberately usable while the sidecar is down — that's the whole reason
- * settings are shell-owned. Nothing on this screen is gated on the WebSocket;
- * only the sidecar-derived readouts (directory scan) go quiet.
+ * Everything hardware-shaped (boxes, baud, Arduino Directory, arduino-cli)
+ * lives in Config (§4.6); this screen is what's left. Deliberately usable
+ * while the sidecar is down — that's the whole reason settings are
+ * shell-owned. Nothing here is gated on the WebSocket; only the backup
+ * readout goes quiet.
  */
 export function Settings() {
-  const { settings, update, discovery, refreshSketches, loaded, saveError } = useSettings();
+  const { settings, update, loaded, saveError } = useSettings();
   const { status } = useSidecar();
   const backup = useBackupStatus();
   const connected = status === "connected";
@@ -51,64 +50,6 @@ export function Settings() {
       )}
 
       <fieldset disabled={!loaded} className="contents">
-        <SettingGroup title="Hardware">
-          <div className="border-b border-halo px-4 py-3.5">
-            <div className="flex items-start justify-between gap-8">
-              <div className="min-w-0 pt-0.5">
-                <div className="text-[13px] font-medium text-starlight">Arduino Directory</div>
-                <p className="mt-0.5 text-[12px] leading-relaxed text-static">
-                  Root folder holding your sketch categories and a shared{" "}
-                  <code className="font-mono">libraries/</code> folder. Each machine
-                  configures its own.
-                </p>
-              </div>
-              <DirectoryField
-                value={settings.arduinoDirectory}
-                onChange={(next) => void update({ arduinoDirectory: next })}
-                title="Choose the Arduino Directory"
-              />
-            </div>
-            <DirectoryStatusNote
-              discovery={discovery}
-              onRefresh={() => void refreshSketches()}
-              canRefresh={connected}
-            />
-          </div>
-
-          <SettingRow
-            label="Default baud rate"
-            description="Starting value for each console. Debug Mode allows a per-box override."
-          >
-            <Select
-              label="Default baud rate"
-              value={settings.defaultBaud}
-              options={BAUD_RATES.map((b) => ({ value: b, label: String(b) }))}
-              onChange={(defaultBaud) => void update({ defaultBaud })}
-            />
-          </SettingRow>
-
-          <SettingRow
-            label="arduino-cli path"
-            description="Leave empty to use the bundled binary. Override only if you need a specific install."
-          >
-            <TextInput
-              label="arduino-cli path override"
-              mono
-              value={settings.arduinoCliPath ?? ""}
-              placeholder="bundled"
-              onChange={(v) => void update({ arduinoCliPath: v.trim() === "" ? null : v })}
-              className="w-[280px]"
-            />
-          </SettingRow>
-        </SettingGroup>
-
-        <SettingGroup title="Boxes">
-          <BoxBindingsTable
-            boxes={settings.boxes}
-            onChange={(boxes) => void update({ boxes })}
-          />
-        </SettingGroup>
-
         <SettingGroup title="Storage">
           <SettingRow
             label="Data directory"

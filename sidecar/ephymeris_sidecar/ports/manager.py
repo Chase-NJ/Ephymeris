@@ -116,7 +116,7 @@ class PortManager:
         """
         hardware_id = self._settings.hardware_id_for(box)
         if not hardware_id:
-            raise PortNotBound(f"No board is bound to box {box}. Assign one in Settings.")
+            raise PortNotBound(f"No board is bound to box {box}. Assign one in Config.")
         board = self._presence.get(hardware_id)
         if board is None:
             raise BoardNotDetected(

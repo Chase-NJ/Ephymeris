@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { Button } from "@/components/common/controls";
+import { useBackupStatus } from "@/lib/backup/useBackupStatus";
 import { Constellation3D } from "@/components/sessions/Constellation3D";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { MetricStrip } from "@/components/sessions/MetricStrip";
@@ -314,10 +315,43 @@ function Header({
           {groupName && ` · ${groupName}`}
         </p>
       </div>
-      <div className="font-mono text-[26px] tabular-nums text-starlight">
-        {clock24(now)}
+      <div className="flex items-baseline gap-4">
+        <BackupPill />
+        <div className="font-mono text-[26px] tabular-nums text-starlight">
+          {clock24(now)}
+        </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Mirroring state, mid-run (`data-saving.md` §8).
+ *
+ * Deliberately near-silent when healthy — a session screen shouldn't spend
+ * attention on something that's working. But a backup target dying during an
+ * overnight run is exactly the thing you need to learn *now* rather than from
+ * a log the next morning, so failure is stated in words, not a colour change.
+ * Hidden entirely when no backup directory is configured: there is nothing to
+ * report, and nagging about an optional setting mid-session helps no one.
+ */
+function BackupPill() {
+  const { status } = useBackupStatus();
+  if (!status.configured) return null;
+
+  const failed = status.state === "failed";
+  return (
+    <span
+      className="font-mono text-[11px]"
+      style={{ color: failed ? "var(--color-status-error)" : "var(--color-static)" }}
+      title={
+        failed
+          ? (status.lastError ?? "The backup directory isn't writable.")
+          : `Mirroring to ${status.directory}`
+      }
+    >
+      {failed ? "backup failing" : "backup ok"}
+    </span>
   );
 }
 

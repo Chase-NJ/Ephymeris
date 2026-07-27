@@ -4,7 +4,9 @@
 >
 > **This is a derived view.** Each spec's own **Open Items / TBD** table remains the authoritative record for its area; this document aggregates and prioritizes them so nothing is visible only to someone who happened to open the right file. **When you close an item, update both the spec and this register.**
 >
-> **Last reconciled** · Against the working tree at commit `878cb0c`, on 2026-07-26. Tree clean; all three test gates green.
+> **Last reconciled** · On 2026-07-26, after building `data-saving.md` §8's Backup Directory mirroring and closing items 2, 17, 18, and 19. Sidecar suite green at 372 tests; `typecheck` and `cargo test` green.
+>
+> **Item numbers are stable.** A closed item keeps its number and moves to [Recently closed](#recently-closed) rather than being deleted and the rest renumbered — otherwise a commit message or a note referring to "item 12" would silently start pointing at something else.
 
 **Priority legend**
 
@@ -34,21 +36,9 @@ Nothing about shipping exists. Four separate pieces:
 
 This is the largest single body of remaining work, and it was deliberately deferred while v1 was developed. **Nothing else on this list matters if the app can't be installed on the two lab machines it exists for.**
 
-### 2. Backup Directory is a promise the app doesn't keep
+With item 2 closed, this is now the **only** thing standing between the current tree and a shippable v1.0.
 
-**Source:** `data-saving.md` §8, §11 · `ephymeris_v1.0.md` §6 · `cohorts.md` §12
-
-The setting is collected, persisted, and pushed to the sidecar. **Nothing in the sidecar reads it** — a search for "backup" across the entire sidecar tree returns zero matches. A user who sets it reasonably believes their data is being mirrored, and it isn't.
-
-Three unbuilt mechanisms:
-
-- Finalization copy of `.json`/`.mat` into the mirror.
-- Periodic `.tsv` mirror (~5–10 s cadence, deliberately *not* per-line — the backup target may be slow or networked, and stalling the strobe thread on a remote write would undermine the local durability guarantee).
-- `ephymeris.db` backup on app start and after every cohort-affecting write.
-
-The `.tsv` write-ahead log means the *same-disk* crash guarantee already holds; what's missing is the different-disk guarantee against drive failure or accidental deletion.
-
-> **Decide explicitly: build it, or hide the field.** Shipping a setting that silently does nothing is the worse of the two.
+*(Item 2, Backup Directory, is built — see [Recently closed](#recently-closed).)*
 
 ---
 
@@ -162,23 +152,7 @@ Three small, known, individually tolerable issues:
 - **Groups can't be added to a brand-new cohort** until after its first save, because the groups panel is hidden while only the implicit default group exists. Auto-Balance is the normal path to multiple groups, so this rarely bites.
 - **Archive has no confirmation.** Deliberate — archive is the reversible everyday action and only permanent delete is gated. Revisit if it proves too easy to trigger on a large cohort.
 
-### 17. `MM_DD_YY` date format doesn't sort across a year boundary
-
-**Source:** `data-saving.md` §2
-
-`12_31_26` sorts after `01_01_27` alphabetically. Preserved deliberately to match the lab's existing convention — continuity was judged to matter more than sortability. Noted, not proposed for change; **don't "fix" it without talking to the lab.**
-
-### 18. Backup cadence specifics
-
-**Source:** `data-saving.md` §11
-
-Blocked on P1 item 2 being built at all. Two sub-questions: the exact `.tsv` mirror interval beyond "every ~5–10 s", and whether `ephymeris.db` needs a periodic timer in addition to "app start plus every cohort-affecting write" when the app runs unattended for long stretches.
-
-### 19. `.tsv` files are opened in truncating write mode
-
-**Source:** codebase — `sessions/writer.py`
-
-The per-animal filename carries `HHMMSS`, so two runs colliding on the same path is practically unreachable, and this has never caused a problem. It is listed only because the file in question is the one carrying the durability guarantee, and "practically unreachable" is a weaker claim there than elsewhere. Append mode, or an explicit exclusive-create, would close it outright.
+*(Items 17–19 — the date format, backup cadence specifics, and the `.tsv` open mode — are all now decided and built. See [Recently closed](#recently-closed).)*
 
 ---
 
@@ -202,6 +176,39 @@ These are recorded so they aren't rediscovered as oversights. Each was decided, 
 ## Recently closed
 
 Kept briefly so a reader returning to this register can see what moved, rather than wondering whether an item was dropped or resolved.
+
+### ~~2. Backup Directory is a promise the app doesn't keep~~ — closed
+
+**Was:** P1. The setting was collected, persisted, and pushed to the sidecar, and nothing read it — a search for "backup" across the sidecar tree returned zero matches.
+
+**Now built**, in `sidecar/ephymeris_sidecar/backup/`, specified in `data-saving.md` §8 and covered by `tests/test_backup.py`. All three mechanisms exist: the finalization copy (queued, never blocking session teardown), the periodic `.tsv` mirror (10 s, self-paced, whole-file), and the `ephymeris.db` backup with dated daily snapshots.
+
+Four decisions worth carrying forward, since each closed a question this register was tracking separately:
+
+- **The mirror is anchored on the cohort folder, not `dataDirectory`.** It has to be — `cohorts.setDataFolder` can put a cohort anywhere, so path arithmetic against the data directory doesn't work in general. This wasn't visible until implementation started.
+- **`ephymeris.db` backs up on every commit, not every "cohort-affecting write."** The original wording was too narrow: `session_animal_runs` is written at finalization during an unattended overnight run and isn't a cohort edit. Hooking `commit` itself means no write path can forget.
+- **Dated snapshots, not just a live mirror.** A single overwritten copy would propagate an accidental cohort deletion within seconds — defeating one of the two failures backup exists to protect against.
+- **Failure is visible.** A backup that silently stops working is the same problem this item was about. It surfaces as a persistent state on `backup.status`, not a transient toast that a dead share would fire every ten seconds.
+
+What remains, tracked in `data-saving.md` §11: this has not yet run a full session against a real network share, which is the one thing local-filesystem tests can't exercise.
+
+### ~~17. `MM_DD_YY` date format doesn't sort across a year boundary~~ — closed
+
+**Was:** P3, marked "don't fix it without talking to the lab."
+
+**The lab decided to change it.** Session folders and per-animal files now carry ISO `YYYY-MM-DD` (`data-saving.md` §2.1), which sorts chronologically as a plain string.
+
+The non-obvious part is the **hyphen**. `MM_DD_YY` and `YYYY_MM_DD` split into the same number of underscore-separated tokens, so an existing analysis script parsing positionally would have kept running and silently read every date wrong. Hyphenating changes the token count, so such a script breaks loudly instead. Nothing already on disk is renamed, and `parse_name_date` reads both spellings — which means the "never sort these names lexically" invariant is now *more* important than before, not less, since both formats coexist indefinitely.
+
+### ~~18. Backup cadence specifics~~ — closed
+
+`.tsv` mirrors every **10 s, self-paced** from the end of the previous pass. `ephymeris.db` backs up on **every commit, debounced 5 s, with no periodic timer** — the timer question dissolved rather than being answered: the database only changes when something writes to it, so a timer over an idle database would re-copy identical bytes. Both in `data-saving.md` §8.2–§8.3.
+
+### ~~19. `.tsv` files are opened in truncating write mode~~ — closed
+
+Now opened with exclusive create (`"x"`). A collision fails the box with the offending path named in both the operator-facing error and the recorded `stop_reason`, rather than truncating.
+
+Failing the run outright was chosen over silently disambiguating the filename: the collision is unreachable by construction, so if it ever happens something is wrong in a way worth stopping for.
 
 ### ~~`sidecar.error` is defined but never emitted~~ — closed
 

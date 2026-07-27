@@ -170,6 +170,14 @@ command — see `data-saving.md` §7.
 | `port.startSession` | `{box, startCommand}` | `{state}` | Per-box `IN_SESSION` entry: open → DTR reset → await `READY` → send `startCommand` → optional `SEED` (`starting-a-session.md` §7) |
 | `port.stopSession` | `{box}` | `{state}` | Sends the literal `STOP` line. Does **not** force the transition — the board's own end-of-session strobe does (`starting-a-session.md` §5.3) |
 
+### 3.3 Backup
+
+Mirroring itself takes no commands — it runs off `Settings.backupDirectory`, pushed with everything else via `settings.push` (`data-saving.md` §8). The one command here is the deliberate backfill.
+
+| Command | Args | Result | Notes |
+|---|---|---|---|
+| `backup.syncNow` | — | `{copied, skipped, failed, errors: [string], directory}` | Walks every cohort data folder and mirrors anything missing or stale, then backs up `ephymeris.db`. Setting a backup directory deliberately does **not** backfill on its own — that could mean an unannounced multi-gigabyte copy to a network share the moment a folder is picked — so this is the explicit version, and doubles as the way to prove a target works before trusting it. Rejected with `BACKUP_UNAVAILABLE` when no directory is set or a sync is already running. Long-running: the client should raise its reply timeout for this command |
+
 ---
 
 ## 4. Events (server → client)
@@ -186,6 +194,7 @@ command — see `data-saving.md` §7.
 | `prefixes.updated` | `{prefixes: [Prefix]}` | Push-on-change for the prefix list, same pattern as `cohorts.updated` |
 | `session.telemetry` | `{box, animalId, metrics: [<TelemetryMetric>]}` | Pushed on every strobe that updates a rolling live metric (`starting-a-session.md` §7 step 7) — **not** batched at `port.output`'s 20Hz, since metric updates are far lower-frequency than raw strobes |
 | `session.animalEnded` | `{box, animalId, stopReason, filePath}` | One animal's run finalized (`starting-a-session.md` §8's `stopReason` set) |
+| `backup.status` | `<BackupStatus>` | The state of Backup Directory mirroring (`data-saving.md` §8). Sent on client connect, on every settings push that changes the directory, and whenever the mirror's state changes or it actually copies something — deliberately **not** every quiet 10s tick, so six idle boxes don't generate an event stream |
 | `sidecar.error` | `{code, message, detail}` | Failures with no command to attribute them to. **Emitted** by the session runner when a mid-session `.tsv` write raises (disk full, permissions) — `data-saving.md` §7.1. Carries `code: "INTERNAL"`, a message naming the box, and `detail: {box}` |
 
 ### Shared payload shapes
@@ -210,6 +219,24 @@ command — see `data-saving.md` §7.
 ```
 
 `skipped` is carried in full rather than as a bare count so the reason a sketch is missing is inspectable, per `arduino-directory.md` §4 step 4 ("skipped but reported, not silently dropped").
+
+```jsonc
+// BackupStatus — data-saving.md §8
+{
+  "configured": true,                      // false when no backupDirectory is set
+  "directory": "D:/EphymerisBackup" | null,
+  "state": "disabled" | "pending" | "ok" | "failed",
+  "pending": 2,                            // finalized files queued for their one-shot copy
+  "tracking": 6,                           // live .tsv files being mirrored each pass
+  "mirroredFiles": 148,                    // copies made this sidecar lifetime
+  "lastSuccessAt": "2026-07-26T11:31:23+00:00" | null,
+  "lastError": "remy1_….tsv: [Errno 28] No space left on device" | null,
+  "syncing": false,                        // a backup.syncNow walk is running
+  "intervalSeconds": 10.0
+}
+```
+
+`state` is `pending` between a directory being set and the first pass completing — distinct from `ok` (a pass succeeded) and from `failed` (the last pass didn't). The distinction matters because a freshly-set network path that turns out to be unreachable should not read as healthy for its first ten seconds.
 
 ### Cohort payload shapes
 
@@ -375,6 +402,7 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | `SESSION_INVALID` | Malformed session command — unknown cohort/prefix/group, or a mapping referencing a box/animal that doesn't belong to the session |
 | `SESSION_NOT_READY` | `sessions.create` against a cohort with no group holding a box-assigned animal (`starting-a-session.md` §1) |
 | `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed. `detail` carries the parse error; the sketch is otherwise treated as profile-less |
+| `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. Note that an ordinary mirroring **failure** never surfaces as a command error — there is no command to attribute it to; it appears as `state: "failed"` on `backup.status` (`data-saving.md` §8) |
 | `DIR_INVALID` | Arduino Directory missing, not a directory, or unreadable |
 | `INTERNAL` | Unhandled sidecar exception. Also the code carried by `sidecar.error` on a mid-session write failure |
 

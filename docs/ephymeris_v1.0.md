@@ -197,7 +197,7 @@ Note: **Start a Session** is deliberately *not* a sidebar nav item. It's the app
 - Sidebar item → route `/settings`.
 - Needs a real, if minimal, persisted config even at this stage. Proposed fields to start:
   - Default data save directory
-  - Backup directory
+  - Backup directory — a second copy on a different drive or share; see `data-saving.md` §8 for what is mirrored and when
   - **Arduino Directory** — root folder for sketches/libraries; see `arduino-directory.md` for structure, detection, and error handling
   - Default baud rate
   - Per-box COM port labels/nicknames
@@ -247,7 +247,7 @@ No open questions remaining as of this revision.
 - [x] ~~WebSocket/IPC message schema (shared with `hardware-interaction.md`), including the settings-push message shape~~ — resolved in `websocket-protocol.md`
 - [ ] App icon / wordmark design for Ephymeris. The titlebar currently carries a placeholder mark — a six-point star knocked out of a Pulsar squircle
 - [ ] **Constellation adjacency (§2.7).** The spec says lines connect *adjacent* nodes but never enumerates which pairs. `components/chrome/ConstellationStatus.tsx` uses `1–2, 2–3, 4–5, 5–6, 1–4, 3–6` — one closed shape, so no node is ever orphaned — over node positions pinned in a 100×54 viewBox. **Confirm this matches the physical box arrangement on the bench;** if the rig is laid out differently, the map should mirror it. Now that only bound boxes render, a sparse selection can leave nodes with no edges at all, which makes the pair list more visible than it used to be. Applies to the sidebar widget only — Mission Control's 3D constellation computes its own links and is unaffected
-- [ ] **Backup Directory does nothing yet.** The setting is collected and pushed to the sidecar, but `data-saving.md` §8's mirroring — session files, the `.tsv` while running, and `ephymeris.db` — is unbuilt. The setting reads as a promise the app doesn't keep, so either build it or hide the field
+- [x] ~~**Backup Directory does nothing yet.**~~ — **built.** `data-saving.md` §8's mirroring now covers all three: session files at finalization (queued, never blocking teardown), the `.tsv` while running (10 s, self-paced), and `ephymeris.db` (every commit, debounced, with dated daily snapshots). Settings shows live mirroring state and an explicit sync control beside the field, and Mission Control carries a compact indicator — because a backup that silently stops working would be the same broken promise this item was about
 - [ ] **Windows packaging** — deliberately deferred while v1 was developed on macOS. Covers: freezing/shipping the Python sidecar (dev builds run it from `sidecar/.venv`), bundling `arduino-cli` + the `arduino:avr` core with the installer per `hardware-interaction.md` §2 (currently uses the machine's own install), Tauri Windows bundling/signing, and a Windows CI build. None of it is started
 
 ---

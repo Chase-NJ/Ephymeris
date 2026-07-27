@@ -6,7 +6,7 @@
 >
 > **Read with** · [starting-a-session.md](starting-a-session.md) (runs boxes against this model) · [data-saving.md](data-saving.md) (writes beneath the `dataFolder` resolved here) · [websocket-protocol.md](websocket-protocol.md) (canonical for the commands §10 proposed)
 >
-> **Still open** · `ephymeris.db` backup · three small editor rough edges (§12)
+> **Still open** · three small editor rough edges (§12)
 
 **Contents** — [1. Data Model](#1-data-model) · [2. Validation](#2-validation-rules) · [3. Persistence](#3-persistence) · [4. Browser UI](#4-cohort-browser-ui) · [5. Procedural Icon](#5-procedural-icon-generation) · [6. Create / Edit](#6-create--edit--manage-flow) · [7. Auto-Balance](#7-auto-balance--group-suggestion-tooling) · [8. Data Folder](#8-data-folder-resolution) · [9. Archive / Delete](#9-archive--delete-semantics) · [10. Wire Messages](#10-wire-messages-proposed) · [11. Resolved Decisions](#11-resolved-decisions) · [12. Open Items](#12-open-items--tbd)
 
@@ -231,7 +231,7 @@ No open questions remaining as of this revision.
 
 - [x] ~~Merge §10's proposed commands/events into `websocket-protocol.md` as the canonical source once reviewed — including a `cohorts.suggestGroups` command for §7's preview step~~ — **done**; nine commands, one event, five error codes, and the shared payload shapes now live there, with the contract test covering all three sources
 - [ ] Custom/uploaded cohort icons as an alternative to the generated one (§5) — deferred, not asked for
-- [ ] Ensure the Data Saving doc's backup strategy includes `ephymeris.db` (§3), not just per-session output files — **specified** in `data-saving.md` §8 (mirrored on app start and after every cohort-affecting write), but **not built**: none of that doc's backup mirroring exists yet, so this stays open until it does
+- [x] ~~Ensure the Data Saving doc's backup strategy includes `ephymeris.db` (§3), not just per-session output files~~ — **built**, `data-saving.md` §8.3. Backed up to the mirror on **every commit**, debounced 5 s, plus one dated snapshot per day with the newest 14 retained. The trigger ended up broader than this item asked for: "after every cohort-affecting write" would have missed `session_animal_runs`, written at finalization during an unattended run, so the hook sits on `commit` itself and no write path can forget it. The dated snapshots exist because a single overwritten mirror would faithfully reproduce an accidental cohort deletion — §9's permanent delete removes bookkeeping only, but the bookkeeping *is* what this file holds
 - [x] ~~Starting a Session doc must define what "ready to run" means against this model~~ — resolved in `starting-a-session.md` §1: **at least one group with at least one animal that has a `boxNumber` assigned.** A group with zero box-assigned animals is skipped automatically rather than blocking the cohort
 - [ ] **Animals added before a cohort's first save** are written in a follow-up `cohorts.update`, since they need the group id the sidecar mints at creation. Works, but means creation isn't a single atomic call — worth revisiting if `cohorts.create` ever accepts an initial roster
 - [ ] **Groups can only be added from the editor once a cohort exists**, because §6 hides the groups panel while only the implicit default group is present. A brand-new cohort therefore can't be split until after its first save. Fine in practice (Auto-Balance is the normal path to multiple groups) but worth confirming it matches expectations

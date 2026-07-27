@@ -121,6 +121,29 @@ def test_records_after_finalize_are_ignored(tmp_path: Path) -> None:
     assert writer.event_count == 0
 
 
+def test_an_existing_tsv_is_refused_not_overwritten(tmp_path: Path) -> None:
+    """§7.1 — the durable file is opened exclusively.
+
+    The `HHMMSS` in the filename makes this practically unreachable, but this
+    is the one file carrying the durability guarantee: refusing to start beats
+    silently truncating a previous animal's data.
+    """
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    writer.record(221, 0)
+    writer.finalize("operator stop")
+    existing = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text()
+
+    with pytest.raises(WriteError) as caught:
+        make_writer(tmp_path).open_files()
+
+    # The message names the file standing in the way, so the operator can act.
+    assert "already exists" in str(caught.value)
+    assert "remy1.tsv" in str(caught.value)
+    # And the first run's data is untouched.
+    assert (tmp_path / "behavior.tsv" / "remy1.tsv").read_text() == existing
+
+
 def test_a_write_to_a_bad_path_raises_writeerror(tmp_path: Path) -> None:
     # Point the .tsv at a path whose parent is a file, so mkdir/open fails.
     blocker = tmp_path / "blocker"

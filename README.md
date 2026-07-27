@@ -4,7 +4,7 @@ A lab desktop app for running rodent behavior sessions on up to six Arduino Mega
 
 Built for two Windows 11 lab machines; developed on macOS and Windows.
 
-**Status: v1.0 in progress.** Cohorts, Debug Mode, Settings, and the complete session flow (config → mapping → flash → Mission Control → 3D constellation) are implemented and verified against real hardware. Analytics is a stub, Backup Directory does nothing yet, and Windows packaging is unstarted. See [docs/TODO.md](docs/TODO.md) for the full register.
+**Status: v1.0 in progress.** Cohorts, Debug Mode, Settings, and the complete session flow (config → mapping → flash → Mission Control → 3D constellation) are implemented and verified against real hardware. Analytics is a stub and Windows packaging is unstarted. See [docs/TODO.md](docs/TODO.md) for the full register.
 
 ---
 

@@ -63,6 +63,9 @@ class Cmd:
     PORT_START_SESSION: Final = "port.startSession"
     PORT_STOP_SESSION: Final = "port.stopSession"
 
+    # Backup Directory mirroring (data-saving.md §8)
+    BACKUP_SYNC_NOW: Final = "backup.syncNow"
+
 
 ALL_COMMANDS: Final[frozenset[str]] = frozenset(
     v for k, v in vars(Cmd).items() if not k.startswith("_") and isinstance(v, str)
@@ -82,6 +85,7 @@ class Evt:
     PREFIXES_UPDATED: Final = "prefixes.updated"
     SESSION_TELEMETRY: Final = "session.telemetry"
     SESSION_ANIMAL_ENDED: Final = "session.animalEnded"
+    BACKUP_STATUS: Final = "backup.status"
     SIDECAR_ERROR: Final = "sidecar.error"
 
 
@@ -112,6 +116,7 @@ class ErrCode:
     SESSION_INVALID: Final = "SESSION_INVALID"
     SESSION_NOT_READY: Final = "SESSION_NOT_READY"
     TASK_PROFILE_INVALID: Final = "TASK_PROFILE_INVALID"
+    BACKUP_UNAVAILABLE: Final = "BACKUP_UNAVAILABLE"
     DIR_INVALID: Final = "DIR_INVALID"
     INTERNAL: Final = "INTERNAL"
 

@@ -44,6 +44,11 @@ class SidecarSettings:
     #: folders (`cohorts.md` §8) — distinct from the app data directory that
     #: holds the cohort database (§3).
     data_directory: str | None = None
+    #: Where session data and `ephymeris.db` are mirrored (`data-saving.md`
+    #: §8). Protects against losing `data_directory` entirely — a different
+    #: failure from the one the `.tsv` write-ahead log covers. `None` turns
+    #: mirroring off; the app is fully usable without it.
+    backup_directory: str | None = None
     default_baud: int = DEFAULT_BAUD
     boxes: list[BoxBinding] = field(default_factory=list)
 
@@ -57,6 +62,7 @@ class SidecarSettings:
             arduino_directory=_opt_str(payload.get("arduinoDirectory")),
             arduino_cli_path=_opt_str(payload.get("arduinoCliPath")),
             data_directory=_opt_str(payload.get("dataDirectory")),
+            backup_directory=_opt_str(payload.get("backupDirectory")),
             default_baud=_baud(payload.get("defaultBaud")),
             boxes=_boxes(payload.get("boxes")),
         )

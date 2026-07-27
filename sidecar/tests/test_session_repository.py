@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -16,6 +16,7 @@ from ephymeris_sidecar.sessions.models import (
     SessionNotFound,
 )
 from ephymeris_sidecar.sessions.paths import (
+    parse_name_date,
     resolve_animal_files,
     resolve_session_folder,
     session_folder_name,
@@ -202,24 +203,79 @@ def test_deleting_a_cohort_cascades_to_its_sessions(db, repo) -> None:
 
 def test_session_folder_name_matches_the_convention() -> None:
     when = datetime(2026, 7, 22, 11, 31, 23)
-    assert session_folder_name("2O-Bdisc", "25", when) == "2O-Bdisc_25_07_22_26"
+    assert session_folder_name("2O-Bdisc", "25", when) == "2O-Bdisc_25_2026-07-22"
 
 
 def test_session_folder_nests_under_cohort_and_prefix() -> None:
     when = datetime(2026, 7, 22, 11, 31, 23)
     folder = resolve_session_folder("/data/RemyCohort", "2O-Bdisc", "25", when)
-    assert folder == Path("/data/RemyCohort/2O-Bdisc/2O-Bdisc_25_07_22_26")
+    assert folder == Path("/data/RemyCohort/2O-Bdisc/2O-Bdisc_25_2026-07-22")
 
 
 def test_animal_files_share_a_timestamped_basename() -> None:
     when = datetime(2026, 7, 22, 11, 31, 23)
-    folder = Path("/data/RemyCohort/2O-Bdisc/2O-Bdisc_25_07_22_26")
+    folder = Path("/data/RemyCohort/2O-Bdisc/2O-Bdisc_25_2026-07-22")
     files = resolve_animal_files(folder, "remy1", "2O-Bdisc", "25", when)
 
-    assert files.tsv.name == "remy1_2O-Bdisc_25_07_22_26_113123.tsv"
-    assert files.json.name == "remy1_2O-Bdisc_25_07_22_26_113123.json"
-    assert files.mat.name == "remy1_2O-Bdisc_25_07_22_26_113123.mat"
+    assert files.tsv.name == "remy1_2O-Bdisc_25_2026-07-22_113123.tsv"
+    assert files.json.name == "remy1_2O-Bdisc_25_2026-07-22_113123.json"
+    assert files.mat.name == "remy1_2O-Bdisc_25_2026-07-22_113123.mat"
     # Three format subfolders, one shared stem.
     assert files.tsv.parent.name == "behavior.tsv"
     assert files.json.parent.name == "behavior.json"
-    assert files.basename == "remy1_2O-Bdisc_25_07_22_26_113123"
+    assert files.basename == "remy1_2O-Bdisc_25_2026-07-22_113123"
+
+
+# --- §2 the ISO date change and its legacy compatibility ------------------
+
+
+def test_session_folders_sort_chronologically_across_a_year_boundary() -> None:
+    """The whole reason MM_DD_YY was replaced (TODO item 17)."""
+    december = session_folder_name("2O-Bdisc", "25", datetime(2026, 12, 31))
+    january = session_folder_name("2O-Bdisc", "26", datetime(2027, 1, 1))
+    assert sorted([january, december]) == [december, january]
+
+
+def test_the_date_is_one_token_so_a_positional_parser_breaks_loudly() -> None:
+    """Hyphenated, not `YYYY_MM_DD`.
+
+    `MM_DD_YY` and `YYYY_MM_DD` split into the *same* number of underscore
+    tokens, so an existing analysis script parsing by position would have kept
+    running and silently misread every date. One hyphenated token changes the
+    count, which is a failure someone notices.
+    """
+    when = datetime(2026, 7, 22, 11, 31, 23)
+    new = resolve_animal_files(Path("/s"), "remy1", "2O-Bdisc", "25", when).tsv.stem
+    legacy = "remy1_2O-Bdisc_25_07_22_26_113123"
+    assert len(new.split("_")) != len(legacy.split("_"))
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        # Current spelling, folder and per-animal file.
+        ("2O-Bdisc_25_2026-07-22", date(2026, 7, 22)),
+        ("remy1_2O-Bdisc_25_2026-07-22_113123", date(2026, 7, 22)),
+        ("remy1_2O-Bdisc_25_2026-07-22_113123.json", date(2026, 7, 22)),
+        # Legacy spelling — still on disk, still has to be readable.
+        ("2O-Bdisc_25_07_22_26", date(2026, 7, 22)),
+        ("remy1_2O-Bdisc_25_07_22_26_113123", date(2026, 7, 22)),
+        ("remy1_2O-Bdisc_25_07_22_26_113123.tsv", date(2026, 7, 22)),
+        # Nothing date-shaped at the end.
+        ("behavior.tsv", None),
+        ("2O-Bdisc", None),
+    ],
+)
+def test_parse_name_date_reads_both_spellings(name: str, expected: date | None) -> None:
+    assert parse_name_date(name) == expected
+
+
+def test_legacy_parsing_is_not_fooled_by_the_session_number() -> None:
+    """`2O-Bdisc_25_07_22_26` is number 25 then 07_22_26, not 25_07_22.
+
+    An unanchored search for `NN_NN_NN` finds the wrong three tokens first,
+    which is exactly the ambiguity the old format carried. Anchoring at the end
+    of the name is what resolves it.
+    """
+    assert parse_name_date("2O-Bdisc_25_07_22_26") == date(2026, 7, 22)
+    assert parse_name_date("2O-Bdisc_25_07_22_26_113123") == date(2026, 7, 22)

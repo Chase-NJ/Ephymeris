@@ -2,10 +2,12 @@ import { motion } from "framer-motion";
 import { CircleAlert, Settings as SettingsIcon } from "lucide-react";
 
 import { Select, TextInput, Toggle } from "@/components/common/controls";
+import { BackupStatusNote } from "@/components/settings/BackupStatusNote";
 import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
 import { DirectoryField } from "@/components/settings/DirectoryField";
 import { DirectoryStatusNote } from "@/components/settings/DirectoryStatusNote";
 import { SettingGroup, SettingRow } from "@/components/settings/SettingRow";
+import { useBackupStatus } from "@/lib/backup/useBackupStatus";
 import { springPanel } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
 import { BAUD_RATES } from "@/lib/settings/schema";
@@ -21,6 +23,7 @@ import { useSidecar } from "@/lib/ws/context";
 export function Settings() {
   const { settings, update, discovery, refreshSketches, loaded, saveError } = useSettings();
   const { status } = useSidecar();
+  const backup = useBackupStatus();
   const connected = status === "connected";
 
   return (
@@ -118,13 +121,32 @@ export function Settings() {
             />
           </SettingRow>
 
-          <SettingRow label="Backup directory" description="Secondary copy of session data.">
-            <DirectoryField
-              value={settings.backupDirectory}
-              onChange={(next) => void update({ backupDirectory: next })}
-              title="Choose the backup directory"
+          <div className="px-4 py-3.5">
+            <div className="flex items-start justify-between gap-8">
+              <div className="min-w-0 pt-0.5">
+                <div className="text-[13px] font-medium text-starlight">
+                  Backup directory
+                </div>
+                <p className="mt-0.5 text-[12px] leading-relaxed text-static">
+                  A second copy of session files and the cohort database, on a
+                  different drive or share. Setting one doesn't copy what's
+                  already on disk — use the refresh button for that.
+                </p>
+              </div>
+              <DirectoryField
+                value={settings.backupDirectory}
+                onChange={(next) => void update({ backupDirectory: next })}
+                title="Choose the backup directory"
+              />
+            </div>
+            <BackupStatusNote
+              status={backup.status}
+              onSync={() => void backup.syncNow()}
+              canSync={connected}
+              syncError={backup.syncError}
+              lastSync={backup.lastSync}
             />
-          </SettingRow>
+          </div>
         </SettingGroup>
 
         <SettingGroup title="Interface">

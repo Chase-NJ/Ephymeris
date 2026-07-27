@@ -4,7 +4,7 @@
 >
 > **Purpose** · The specs describe behaviour and rationale but never map to files. This one does. Read it after [ephymeris_v1.0.md](ephymeris_v1.0.md) and before touching code.
 >
-> **Verified** · Against the working tree at commit `878cb0c`, on 2026-07-26. `tsc --noEmit` clean · **332** sidecar tests passing · **2** Rust tests passing.
+> **Verified** · On 2026-07-26, after building `data-saving.md` §8's Backup Directory mirroring. `tsc --noEmit` clean · **372** sidecar tests passing · **2** Rust tests passing.
 
 **Contents** — [1. Architecture](#1-system-architecture) · [2. Module Map](#2-module-map) · [3. Wire Surface](#3-wire-surface-at-a-glance) · [4. Core Behaviours](#4-core-domain-behaviours) · [5. Implementation Status](#5-implementation-status) · [6. Development](#6-development) · [7. Known Rough Edges](#7-known-rough-edges-in-the-code) · [8. Glossary](#8-glossary)
 
@@ -72,7 +72,7 @@ Owns everything stateful. Runtime dependencies are deliberately just `pyserial` 
 | Module | Responsibility | Spec |
 |---|---|---|
 | `__main__.py` | CLI entry, `--data-dir`/`--token`/`--no-parent-watch`, stdin-EOF orphan watch | protocol §1 |
-| `app.py` | Wires everything together; registers **32** command handlers. The largest module (~775 lines) and the place to look first for any command's behaviour | protocol §3 |
+| `app.py` | Wires everything together; registers **33** command handlers. The largest module (~800 lines) and the place to look first for any command's behaviour | protocol §3 |
 | `server.py` | WebSocket server, auth handshake, command dispatch, event fan-out. Handles `auth` itself, before dispatch | protocol §1.1 |
 | `settings.py` | Receives the shell's settings push. Deliberately lenient — an unknown key is a non-event, a malformed value degrades to a default rather than killing the process that owns the ports | v1.0 §4.5 |
 | `discovery.py` | Arduino Directory validation and sketch/library scanning, including the skipped-but-reported rule | arduino-directory §3–§6 |
@@ -85,7 +85,7 @@ Owns everything stateful. Runtime dependencies are deliberately just `pyserial` 
 | `boards/tool.py` | The `BoardTool` interface — the seam the gRPC migration will slot into | hardware §2 |
 | `boards/cli_tool.py` | Current backend: `arduino-cli` subprocess with `--format json` | hardware §2, §4 |
 | **`cohorts/`** | | |
-| `cohorts/db.py` | SQLite connection and schema | cohorts §3 |
+| `cohorts/db.py` | SQLite connection and schema. Its connection subclass reports every commit, which is what triggers a database backup — hooking `commit` rather than each repository method means no write path can forget | cohorts §3, data-saving §8.3 |
 | `cohorts/models.py` | Cohort/Animal/Group dataclasses | cohorts §1 |
 | `cohorts/repository.py` | CRUD, validation, archive/delete semantics | cohorts §2, §9 |
 | `cohorts/folders.py` | Data folder resolution, name sanitization, collision suffixing | cohorts §8 |
@@ -93,10 +93,13 @@ Owns everything stateful. Runtime dependencies are deliberately just `pyserial` 
 | **`sessions/`** | | |
 | `sessions/models.py` | `Session` and `SessionAnimalRun` records | data-saving §4 |
 | `sessions/repository.py` | Session/prefix persistence, session-number suggestion | data-saving §3–§4 |
-| `sessions/paths.py` | Directory and filename construction. Pure, no I/O — the naming scheme itself avoids collisions, so there is no "already exists" special case | data-saving §1–§2 |
-| `sessions/writer.py` | Per-animal file writer. `.tsv` write-ahead log with per-line `flush()`+`fsync()`; `.json`/`.mat` built once at finalization | data-saving §5, §7 |
+| `sessions/paths.py` | Directory and filename construction. Pure, no I/O. Also `parse_name_date`, which reads both the current ISO and the legacy `MM_DD_YY` spelling — **use it instead of sorting names as strings**, since both formats coexist on disk | data-saving §1–§2 |
+| `sessions/writer.py` | Per-animal file writer. `.tsv` write-ahead log with per-line `flush()`+`fsync()`, opened exclusively so a collision fails loudly; `.json`/`.mat` built once at finalization | data-saving §5, §7 |
 | `sessions/matwriter.py` | Hand-written MAT v5 serializer — exists specifically to avoid a `scipy` dependency | data-saving §5.1 |
 | `sessions/runner.py` | Live session runner: which animal is in which box, its writer, its metrics, its run record. Writer I/O stays on the port's session thread; anything touching the socket or state machine is scheduled back onto the event loop | starting §7 |
+| **`backup/`** | | |
+| `backup/manager.py` | The mirror: queued finalization copies, the 10 s self-paced `.tsv` pass, the debounced `ephymeris.db` backup with dated snapshots, and the explicit sync walk. Every filesystem operation runs in a worker thread; nothing here is ever on a session's critical path | data-saving §8 |
+| `backup/paths.py` | Mirror path resolution, anchored on the cohort folder rather than `dataDirectory` — a relocated cohort isn't under it, so path subtraction doesn't work in general. Pure, no I/O | data-saving §8.1 |
 | **`tasks/`** | | |
 | `tasks/profile.py` | `task.json` parsing and validation | data-saving §6.1–§6.2 |
 | `tasks/start_command.py` | Builds `START <wireKey>=<value> …` from a profile plus config | data-saving §6.3 |
@@ -113,6 +116,7 @@ Talks to the sidecar over the WebSocket only.
 | `lib/ws/SidecarProvider.tsx` | Mounts the client at the app root |
 | `lib/{hardware,cohorts,sessions,settings}/` | One Provider + store per domain, each wrapping the shared client |
 | `lib/settings/schema.ts` | The settings shape and its normalizer, tolerant of older stored shapes |
+| `lib/backup/useBackupStatus.ts` | Live mirroring state plus the `backup.syncNow` call. A hook rather than a Provider — unlike hardware state, nothing needs this on every screen or needs it accumulating while unmounted |
 | `lib/sessions/stars.ts` | Deterministic star placement seeded from `(cohortId, animalId)`, plus the nearest-neighbour link pass |
 | `lib/prng.ts` | The `mulberry32`-style seeded generator behind every procedural visual |
 | `lib/motion.ts`, `lib/useReduceMotion.ts` | Shared spring definitions and the reduced-motion hook |
@@ -155,11 +159,11 @@ The interpreter resolves to `sidecar/.venv` unless `EPHYMERIS_SIDECAR_PYTHON` ov
 
 [`websocket-protocol.md`](websocket-protocol.md) is canonical and carries every argument, result, and payload shape. This is the index.
 
-The surface is **33 commands, 11 events, 21 error codes**. 32 commands are registered in `app.py`; `auth` is handled in `server.py` as the connection's mandatory first message and never reaches the dispatch table.
+The surface is **34 commands, 12 events, 22 error codes**. 33 commands are registered in `app.py`; `auth` is handled in `server.py` as the connection's mandatory first message and never reaches the dispatch table.
 
 **Envelope.** JSON over loopback. Client→server is always a command carrying a client-generated `id`. Server→client is either a correlated reply (`corr`, exactly one per command) or an unsolicited event. Protocol version mismatches are rejected, not best-effort parsed. `PROTOCOL_VERSION` is `1`.
 
-### Commands (33 including `auth`)
+### Commands (34 including `auth`)
 
 | Group | Commands |
 |---|---|
@@ -171,16 +175,17 @@ The surface is **33 commands, 11 events, 21 error codes**. 32 commands are regis
 | Task profiles | `tasks.getProfile` |
 | Sessions | `sessions.suggestNumber`, `.create`, `.abandon`, `.confirmMapping`, `.status`, `.startAll`, `.switchGroup`, `.end` |
 | Session ports | `port.startSession`, `port.stopSession` |
+| Backup | `backup.syncNow` |
 
-### Events (11)
+### Events (12)
 
-`server.hello` · `port.state` · `port.output` · `boards.presence` · `flash.progress` · `sketches.updated` · `cohorts.updated` · `prefixes.updated` · `session.telemetry` · `session.animalEnded` · `sidecar.error`
+`server.hello` · `port.state` · `port.output` · `boards.presence` · `flash.progress` · `sketches.updated` · `cohorts.updated` · `prefixes.updated` · `session.telemetry` · `session.animalEnded` · `backup.status` · `sidecar.error`
 
-All eleven are emitted. `sidecar.error` fires on a mid-session `.tsv` write failure — the failure with no command to attribute it to, and the one a user most needs to hear about immediately.
+All twelve are emitted. `sidecar.error` fires on a mid-session `.tsv` write failure — the failure with no command to attribute it to, and the one a user most needs to hear about immediately.
 
-### Error codes (21)
+### Error codes (22)
 
-`BAD_MESSAGE` · `UNKNOWN_COMMAND` · `UNAUTHORIZED` · `PROTOCOL_VERSION_MISMATCH` · `ILLEGAL_TRANSITION` · `SEND_NOT_PASSTHROUGH` · `PORT_NOT_BOUND` · `PORT_OPEN_FAILED` · `FLASH_FAILED` · `SKETCH_UNKNOWN` · `COHORT_NOT_FOUND` · `COHORT_NAME_TAKEN` · `COHORT_INVALID` · `COHORT_NOT_ARCHIVED` · `DATA_FOLDER_INVALID` · `PREFIX_NAME_TAKEN` · `SESSION_INVALID` · `SESSION_NOT_READY` · `TASK_PROFILE_INVALID` · `DIR_INVALID` · `INTERNAL`
+`BAD_MESSAGE` · `UNKNOWN_COMMAND` · `UNAUTHORIZED` · `PROTOCOL_VERSION_MISMATCH` · `ILLEGAL_TRANSITION` · `SEND_NOT_PASSTHROUGH` · `PORT_NOT_BOUND` · `PORT_OPEN_FAILED` · `FLASH_FAILED` · `SKETCH_UNKNOWN` · `COHORT_NOT_FOUND` · `COHORT_NAME_TAKEN` · `COHORT_INVALID` · `COHORT_NOT_ARCHIVED` · `DATA_FOLDER_INVALID` · `PREFIX_NAME_TAKEN` · `SESSION_INVALID` · `SESSION_NOT_READY` · `TASK_PROFILE_INVALID` · `BACKUP_UNAVAILABLE` · `DIR_INVALID` · `INTERNAL`
 
 `DIR_INVALID` is defined in both mirrors but **never raised** — directory problems surface as a `DirectoryStatus` payload instead. See the note in `websocket-protocol.md` §6.
 
@@ -285,15 +290,15 @@ Only the **root** `libraries/` is passed to `arduino-cli --libraries`, so every 
 | Flashing + DTR reset | **Done** | Sequential; session sequence halts at first failure |
 | Board presence polling | **Done** | Out-of-band at 1.5 s, never opens a port |
 | Arduino Directory discovery | **Done** | All four states; `--libraries` confirmed against arduino-cli 1.5.1 |
-| WebSocket protocol | **Done** | All 33 commands and 11 events implemented and emitted |
+| WebSocket protocol | **Done** | All 34 commands and 12 events implemented and emitted |
 | Cohorts (model, UI, Auto-Balance) | **Done** | |
-| Settings | **Done** | Except that `backupDirectory` is collected but unused |
+| Settings | **Done** | All seven fields collected; the sidecar consumes six and ignores `reducedMotion` by design |
 | Session flow (config → mapping → flash) | **Done** | |
 | Mission Control + 3D constellation | **Done** | Zoomed star view currently shows a recent-strobe feed; live-metric sparklines live in the per-box cards |
 | `IN_SESSION` runner + file writing | **Done** | `.tsv` write-ahead log, `.json`/`.mat` at finalization |
 | Task Profiles (behavior + utility) | **Done** | |
 | **Analytics** | **Stub** | `<PlaceholderView>`; also the session-end landing |
-| **Backup Directory** | **Not built** | Setting exists and is pushed; nothing in the sidecar reads it |
+| Backup Directory mirroring | **Done** | Session files, live `.tsv`, and `ephymeris.db` with dated snapshots. Not yet exercised against a real network share |
 | **Windows packaging** | **Not started** | Sidecar freezing, `arduino-cli` bundling, signing, CI |
 | **arduino-cli gRPC daemon** | **Deferred** | Committed migration behind the `BoardTool` seam |
 | **Crash recovery utility** | **Not built** | Backfill `.json`/`.mat` from an orphaned `.tsv` |
@@ -327,27 +332,30 @@ The Tauri shell expects the sidecar interpreter at `sidecar/.venv`; override wit
 
 ### Test map
 
-**332 sidecar tests · 2 Rust tests · no frontend test runner.**
+**372 sidecar tests · 2 Rust tests · no frontend test runner.**
 
 | Test file | Tests | Covers |
 |---|---:|---|
-| `test_protocol_contract.py` | 69 | Mirror drift across doc, `protocol.py`, `protocol.ts` |
+| `test_protocol_contract.py` | 72 | Mirror drift across doc, `protocol.py`, `protocol.ts` |
 | `test_port_states.py` | 35 | Transition table legality |
 | `test_port_handler.py` | 30 | Read loop, line splitting, ring buffer, send gating |
 | `test_task_profiles.py` | 30 | `task.json` parsing, validation, START building |
 | `test_cohort_repository.py` | 30 | CRUD, validation, archive/delete |
+| `test_session_repository.py` | 30 | Session/prefix persistence, number suggestion, both date spellings |
 | `test_discovery.py` | 26 | Sketch scanning, the four directory states |
+| `test_backup.py` | 25 | Mirror layout, copy semantics, db backup and snapshots, explicit sync |
 | `test_grouping.py` | 19 | Auto-Balance round-robin |
-| `test_session_repository.py` | 19 | Session/prefix persistence, number suggestion |
 | `test_data_folder.py` | 18 | Resolution, sanitization, collision suffixing |
 | `test_in_session.py` | 13 | `IN_SESSION` entry/exit sequence |
 | `test_flash_reset.py` | 12 | Flash and DTR reset paths |
 | `test_settings.py` | 9 | Lenient settings parsing |
-| `test_writer.py` | 8 | Write-ahead log and finalization |
+| `test_writer.py` | 9 | Write-ahead log, exclusive open, finalization |
 | `test_session_runner.py` | 8 | Runner orchestration |
 | `test_matwriter.py` | 6 | Hand-written MAT v5 output |
 
 `test_writer.py` includes a crash-durability test that kills a child mid-write (`_kill_writer_child.py`) to prove the `.tsv` guarantee holds. It runs on Windows.
+
+`test_backup.py` deliberately tests more than "did the file appear." A mirror that works but blocks session finalization, or one that drops a queued file when the target blinks, would pass a naive check and still be wrong — so isolation and failure-recovery have their own cases.
 
 ### Dependency policy
 

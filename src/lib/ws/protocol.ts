@@ -51,6 +51,9 @@ export const CMD = {
   SESSIONS_END: "sessions.end",
   PORT_START_SESSION: "port.startSession",
   PORT_STOP_SESSION: "port.stopSession",
+
+  // Backup Directory mirroring (data-saving.md §8)
+  BACKUP_SYNC_NOW: "backup.syncNow",
 } as const;
 
 export type CommandName = (typeof CMD)[keyof typeof CMD];
@@ -68,6 +71,7 @@ export const EVT = {
   PREFIXES_UPDATED: "prefixes.updated",
   SESSION_TELEMETRY: "session.telemetry",
   SESSION_ANIMAL_ENDED: "session.animalEnded",
+  BACKUP_STATUS: "backup.status",
   SIDECAR_ERROR: "sidecar.error",
 } as const;
 
@@ -95,6 +99,7 @@ export const ERR = {
   SESSION_INVALID: "SESSION_INVALID",
   SESSION_NOT_READY: "SESSION_NOT_READY",
   TASK_PROFILE_INVALID: "TASK_PROFILE_INVALID",
+  BACKUP_UNAVAILABLE: "BACKUP_UNAVAILABLE",
   DIR_INVALID: "DIR_INVALID",
   INTERNAL: "INTERNAL",
 } as const;

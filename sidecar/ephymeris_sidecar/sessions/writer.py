@@ -63,11 +63,23 @@ class AnimalWriter:
         """Create the folders, open the `.tsv`, and write its header.
 
         Called after `START`/`SEED` resolve, before the first strobe (§7.1).
+
+        Opened **exclusively** (`"x"`), not truncating. The `HHMMSS` in the
+        filename (§2) already makes a collision practically unreachable, so
+        this will effectively never fire — but this is the one file carrying
+        the durability guarantee, and "practically unreachable" is a weaker
+        claim there than anywhere else. Refusing to start beats silently
+        overwriting a previous animal's data.
         """
         for path in (self._tsv_path, self._json_path, self._mat_path):
             path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            self._tsv = open(self._tsv_path, "w", encoding="utf-8", newline="\n")
+            self._tsv = open(self._tsv_path, "x", encoding="utf-8", newline="\n")
+        except FileExistsError as exc:
+            raise WriteError(
+                f"{self._tsv_path} already exists — refusing to overwrite a "
+                f"session file. Move or rename it, then start this box again."
+            ) from exc
         except OSError as exc:
             raise WriteError(f"couldn't open {self._tsv_path}: {exc}") from exc
 

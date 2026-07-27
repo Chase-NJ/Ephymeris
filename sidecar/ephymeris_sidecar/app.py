@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, discovery
+from .backup import BackupManager, BackupNotConfigured
 from .boards.cli_tool import ArduinoCliTool
 from .boards.tool import FlashFailed
 from .cohorts import folders, grouping
@@ -65,6 +66,7 @@ class Application:
         self.cohorts = CohortRepository(self.db)
         self.sessions = SessionRepository(self.db)
         self.runner: SessionRunner | None = None
+        self.backup: BackupManager | None = None
         self._running_session_id: str | None = None
 
     # --- lifecycle --------------------------------------------------------
@@ -104,12 +106,24 @@ class Application:
         self.server.register(Cmd.SESSIONS_END, self._sessions_end)
         self.server.register(Cmd.PORT_START_SESSION, self._port_start_session)
         self.server.register(Cmd.PORT_STOP_SESSION, self._port_stop_session)
+        self.server.register(Cmd.BACKUP_SYNC_NOW, self._backup_sync_now)
 
         self.server.on_client_ready(self._replay_state)
 
     def start(self) -> None:
         self.db.connect()
         loop = asyncio.get_running_loop()
+        self.backup = BackupManager(
+            loop=loop,
+            db=self.db,
+            cohort_roots=self._cohort_roots,
+            broadcast=self.server.broadcast,
+        )
+        # Every commit marks the database for backup — no write path can forget
+        # to, and `session_animal_runs` written overnight counts just as much as
+        # a cohort edit (`data-saving.md` §8).
+        self.db.on_commit(self.backup.mark_db_dirty)
+        self.backup.start()
         self.ports = PortManager(
             loop=loop,
             tool=self.tool,
@@ -123,12 +137,23 @@ class Application:
             ports=self.ports,
             broadcast=self.server.broadcast,
             on_animal_ended=self._on_animal_ended,
+            backup=self.backup,
         )
 
     async def stop(self) -> None:
         if self.ports is not None:
             await self.ports.stop()
+        if self.backup is not None:
+            await self.backup.stop()
         self.db.close()
+
+    def _cohort_roots(self) -> list[str]:
+        """Every cohort's data folder — the anchors for mirror paths (§8).
+
+        Archived cohorts are included deliberately: archival is a bookkeeping
+        state, and their data is exactly as worth protecting as anyone else's.
+        """
+        return [c.data_folder for c in self.cohorts.list_cohorts()]
 
     def _require_ports(self) -> PortManager:
         if self.ports is None:
@@ -165,6 +190,8 @@ class Application:
         await send(event(Evt.SKETCHES_UPDATED, self.discovery.to_json()))
         await send(event(Evt.COHORTS_UPDATED, {"cohorts": await self._cohort_summaries()}))
         await send(event(Evt.PREFIXES_UPDATED, {"prefixes": await self._prefix_list()}))
+        if self.backup is not None:
+            await send(event(Evt.BACKUP_STATUS, self.backup.status()))
 
     # --- hardware callbacks ----------------------------------------------
 
@@ -218,11 +245,14 @@ class Application:
         """
         self.settings = SidecarSettings.from_payload(args.get("settings", args))
         log.info(
-            "settings received (arduinoDirectory=%r, defaultBaud=%d)",
+            "settings received (arduinoDirectory=%r, defaultBaud=%d, backupDirectory=%r)",
             self.settings.arduino_directory,
             self.settings.default_baud,
+            self.settings.backup_directory,
         )
         self.tool.set_binary(self.settings.arduino_cli_path)
+        if self.backup is not None:
+            await self.backup.configure(self.settings.backup_directory)
         if self.ports is not None:
             self.ports.update_settings(self.settings)
             # Bindings may have changed, so the boxId on each board can differ
@@ -494,6 +524,23 @@ class Application:
                 {"sketchPath": sketch_path},
             ) from exc
         return profile.to_json() if profile is not None else {"profile": None}
+
+    # --- backup (data-saving.md §8) ---------------------------------------
+
+    async def _backup_sync_now(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """Copy anything the mirror is missing, on demand.
+
+        Setting a backup directory doesn't backfill by itself — that could mean
+        an unannounced multi-gigabyte copy the moment someone picks a folder on
+        a network share. This is the deliberate version, and it's also how a
+        user proves the target works before trusting it.
+        """
+        if self.backup is None:
+            raise CommandError(ErrCode.INTERNAL, "backup manager isn't running")
+        try:
+            return await self.backup.sync_now()
+        except BackupNotConfigured as exc:
+            raise CommandError(ErrCode.BACKUP_UNAVAILABLE, str(exc)) from exc
 
     # --- sessions (starting-a-session.md §9) ------------------------------
 

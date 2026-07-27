@@ -61,6 +61,8 @@ const DEFAULT_CALL_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   [CMD.PORT_FLASH]: 300_000,
   [CMD.SKETCHES_REFRESH]: 60_000,
+  // A first sync can be an entire archive copied to a network share.
+  [CMD.BACKUP_SYNC_NOW]: 600_000,
 };
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;

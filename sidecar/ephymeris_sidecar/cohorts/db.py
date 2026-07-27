@@ -10,9 +10,11 @@ blocks on disk.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Callable
 
 log = logging.getLogger(__name__)
 
@@ -104,11 +106,37 @@ CREATE INDEX IF NOT EXISTS idx_runs_session    ON session_animal_runs(session_id
 """
 
 
+class _TrackedConnection(sqlite3.Connection):
+    """A connection that reports every successful commit.
+
+    Backup triggering hangs off this rather than off a call in each repository
+    method (`data-saving.md` §8). Two reasons: there is no write path that can
+    forget to announce itself, and the trigger is genuinely "the database
+    changed" rather than the narrower "a cohort changed" — `session_animal_runs`
+    is written at finalization during an unattended overnight run, and is not a
+    cohort edit by any reading.
+    """
+
+    on_commit: Callable[[], None] | None = None
+
+    def commit(self) -> None:
+        super().commit()
+        if self.on_commit is not None:
+            self.on_commit()
+
+
 class Database:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
+        self._on_commit: Callable[[], None] | None = None
+
+    def on_commit(self, callback: Callable[[], None] | None) -> None:
+        """Register a post-commit hook (the backup manager's dirty mark)."""
+        self._on_commit = callback
+        if self._conn is not None:
+            self._conn.on_commit = callback  # type: ignore[attr-defined]
 
     def connect(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,7 +144,9 @@ class Database:
             self.path,
             # Safe because every access goes through `self._lock`.
             check_same_thread=False,
+            factory=_TrackedConnection,
         )
+        conn.on_commit = self._on_commit
         conn.row_factory = sqlite3.Row
         # Not on by default in SQLite; without it the ON DELETE CASCADE above
         # is silently inert and deleting a cohort would orphan its animals.
@@ -132,6 +162,34 @@ class Database:
             if self._conn is not None:
                 self._conn.close()
                 self._conn = None
+
+    def snapshot_to(self, destination: Path) -> None:
+        """Write a consistent copy of the database to `destination`.
+
+        Uses SQLite's own online backup API rather than copying the file, so
+        this is safe with the live connection open and mid-transaction — a
+        plain file copy could capture a torn page. Stdlib only; no dependency.
+
+        `destination` should be **local**. The lock is held for the duration,
+        so pointing this straight at a network share would let that share's
+        latency block every cohort read in the app; the backup manager
+        snapshots locally and does the slow copy afterwards with nothing held.
+        """
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        target = sqlite3.connect(destination)
+        try:
+            with self._lock:
+                self.conn.backup(target)
+        finally:
+            target.close()
+        # Trim the WAL/journal companions a fresh connect may have left behind,
+        # so what gets mirrored out is a single self-contained file.
+        for suffix in ("-wal", "-shm"):
+            companion = destination.with_name(destination.name + suffix)
+            try:
+                os.unlink(companion)
+            except OSError:
+                pass
 
     @property
     def lock(self) -> threading.Lock:

@@ -1,12 +1,12 @@
 # Data Saving
 
-> **Status** · Living spec — **Built and verified against real hardware**, for §§1–7 and §9. Two exceptions, both called out in place: §5.1's `.mat` writer deviates from the originally-named `scipy`, and **§8's Backup Directory mirroring is not built at all.**
+> **Status** · Living spec — **Built**, for §§1–9. §§1–7 and §9 are verified against real hardware; §8's mirroring is built and unit-tested but has not yet run a full session against a real network share. One deviation, called out in place: §5.1's `.mat` writer replaces the originally-named `scipy`.
 >
-> **Owns** · The on-disk layout, the per-animal file schema, the Task Profile mechanism, and the crash-safety strategy.
+> **Owns** · The on-disk layout, the per-animal file schema, the Task Profile mechanism, and the crash-safety and backup strategies.
 >
 > **Read with** · [starting-a-session.md](starting-a-session.md) (what triggers these writes — the two were written together) · [cohorts.md](cohorts.md) (the `dataFolder` written beneath) · [websocket-protocol.md](websocket-protocol.md) (canonical for the commands §9 proposed)
 >
-> **Still open** · Backup Directory mirroring · the crash-recovery backfill utility
+> **Still open** · the crash-recovery backfill utility
 
 **Contents** — [1. Directory Structure](#1-directory-structure) · [2. Naming](#2-naming-conventions) · [3. Session Prefix](#3-session-prefix) · [4. Session Entity](#4-session-entity) · [5. File Schema](#5-per-animal-session-file-schema) · [6. Task Profiles](#6-task-profiles) · [7. Crash Safety](#7-write-strategy--crash-safety) · [8. Backup](#8-backup-strategy) · [9. Wire Messages](#9-wire-messages-merged) · [10. Resolved Decisions](#10-resolved-decisions) · [11. Open Items](#11-open-items--tbd)
 
@@ -28,31 +28,51 @@ Defines the on-disk directory/file layout, the per-animal session file schema (J
 <Settings.dataDirectory>/
 └── <cohort name>/                          ← Cohort.dataFolder, per cohorts.md §8
     └── <prefix>/                           ← Session Prefix, §3
-        └── <prefix>_<sessionNumber>_<MM>_<DD>_<YY>/     ← one per (prefix, sessionNumber, date) — see §2
+        └── <prefix>_<sessionNumber>_<YYYY-MM-DD>/     ← one per (prefix, sessionNumber, date) — see §2
             ├── behavior.tsv/                    ← written live, during the session — see §7
-            │   ├── remy1_<prefix>_<sessionNumber>_<MM>_<DD>_<YY>_<HHMMSS>.tsv
-            │   └── remy2_<prefix>_<sessionNumber>_<MM>_<DD>_<YY>_<HHMMSS>.tsv
+            │   ├── remy1_<prefix>_<sessionNumber>_<YYYY-MM-DD>_<HHMMSS>.tsv
+            │   └── remy2_<prefix>_<sessionNumber>_<YYYY-MM-DD>_<HHMMSS>.tsv
             ├── behavior.json/                    ← built once, at session end, from the same data
-            │   ├── remy1_<prefix>_<sessionNumber>_<MM>_<DD>_<YY>_<HHMMSS>.json
-            │   └── remy2_<prefix>_<sessionNumber>_<MM>_<DD>_<YY>_<HHMMSS>.json
+            │   ├── remy1_<prefix>_<sessionNumber>_<YYYY-MM-DD>_<HHMMSS>.json
+            │   └── remy2_<prefix>_<sessionNumber>_<YYYY-MM-DD>_<HHMMSS>.json
             └── behavior.mat/
-                ├── remy1_<prefix>_<sessionNumber>_<MM>_<DD>_<YY>_<HHMMSS>.mat
-                └── remy2_<prefix>_<sessionNumber>_<MM>_<DD>_<YY>_<HHMMSS>.mat
+                ├── remy1_<prefix>_<sessionNumber>_<YYYY-MM-DD>_<HHMMSS>.mat
+                └── remy2_<prefix>_<sessionNumber>_<YYYY-MM-DD>_<HHMMSS>.mat
 ```
 
-Concretely, from the sample file: `Data Directory/<cohort>/2O-Bdisc/2O-Bdisc_25_07_22_26/behavior.json/remy1_2O-Bdisc_25_07_22_26_113123.json`.
+Concretely: `Data Directory/<cohort>/2O-Bdisc/2O-Bdisc_25_2026-07-22/behavior.json/remy1_2O-Bdisc_25_2026-07-22_113123.json`. The original sample file was named `remy1_2O-Bdisc_25_07_22_26_113123.json`; §2.1 covers why that spelling changed and why old files keep it.
 
 **A session folder is keyed by `(prefix, sessionNumber, date)`, not just date.** Starting a second session with the same prefix later the same day but a *different* session number produces a second folder; reusing the same prefix **and** number the same day (unusual, but not blocked — see `starting-a-session.md` §2) lands in the *same* folder, with new per-animal files added alongside the earlier ones. This falls out of the naming scheme on its own — the per-animal filename's `HHMMSS` suffix means same-day reruns never collide, so there's no special-case logic needed for "already exists."
+
+The writer nonetheless opens its `.tsv` **exclusively** rather than trusting that (§7.1). The naming scheme is what makes a collision unreachable; the exclusive open is what makes an unreachable collision fail loudly instead of quietly truncating an animal's data.
 
 ---
 
 ## 2. Naming Conventions
 
-- **Date:** `MM_DD_YY` (e.g. `07_22_26`). This matches the real sample exactly, so it's preserved as-is rather than switched to something like ISO `YYYY-MM-DD` for alphabetical sortability — continuity with the lab's existing convention matters more than that property, but it's worth flagging: `MM_DD_YY` does **not** sort correctly across a year boundary (`12_31_26` sorts after `01_01_27` alphabetically). Not proposing a change, just noting it.
+- **Date:** ISO `YYYY-MM-DD` (e.g. `2026-07-22`). See §2.1 — this replaced the sample's original `MM_DD_YY`.
 - **Time:** `HHMMSS`, 24-hour, matching `remy1_..._113123` = 11:31:23.
-- **Session folder:** `<prefix>_<sessionNumber>_<MM>_<DD>_<YY>`.
-- **Per-animal file (both formats):** `<animal name>_<prefix>_<sessionNumber>_<MM>_<DD>_<YY>_<HHMMSS>.<ext>` — timestamped at the moment that animal's run actually starts (not session-config time), so two animals starting a few minutes apart get distinct, honest timestamps.
+- **Session folder:** `<prefix>_<sessionNumber>_<YYYY-MM-DD>`.
+- **Per-animal file (both formats):** `<animal name>_<prefix>_<sessionNumber>_<YYYY-MM-DD>_<HHMMSS>.<ext>` — timestamped at the moment that animal's run actually starts (not session-config time), so two animals starting a few minutes apart get distinct, honest timestamps.
 - **Sanitization:** cohort/prefix/animal names run through the same filesystem-safe sanitization already established for cohort data folders (`cohorts.md` §8).
+
+### 2.1 Why the date format changed, and why it's hyphenated
+
+The original convention, taken from the real sample file, was `MM_DD_YY`. It does not sort correctly across a year boundary — `12_31_26` sorts *after* `01_01_27` alphabetically — and for a while that was accepted as the cost of continuity with the lab's existing naming. It was changed on an explicit lab-side decision, not silently: session folders now carry ISO dates and sort chronologically as plain strings.
+
+**Hyphenated (`2026-07-22`), not underscored (`2026_07_22`), and the distinction is the interesting part.** Both `MM_DD_YY` and `YYYY_MM_DD` split into the same number of `_`-separated tokens:
+
+```
+remy1_2O-Bdisc_25_07_22_26_113123      →  7 tokens   (legacy)
+remy1_2O-Bdisc_25_2026_07_22_113123    →  7 tokens   (underscored ISO — rejected)
+remy1_2O-Bdisc_25_2026-07-22_113123    →  6 tokens   (chosen)
+```
+
+An existing analysis script parsing these names positionally would survive the underscored change and read every date **wrong** — year where it expected month, month where it expected day. The hyphenated form changes the token count instead, so such a script fails immediately and visibly. A loud break beats silent corruption, and hyphens are already normal in these names anyway (the prefix `2O-Bdisc` carries one).
+
+**Nothing already on disk is renamed.** Consistent with how cohort delete and prefix delete refuse to touch files (§3, `cohorts.md` §9), the change applies to newly-written folders only; a prefix folder will contain both spellings for as long as its history spans the change. `sessions/paths.py`'s `parse_name_date` therefore reads **both**, anchored at the end of the name — anchoring is what disambiguates the legacy form, since an unanchored search for `NN_NN_NN` in `2O-Bdisc_25_07_22_26` matches `25_07_22`, the session number plus two thirds of the date.
+
+> **Never sort these names lexically.** Both formats coexist on disk indefinitely, so string ordering over a real archive is wrong regardless of which format you assume. Parse the date. This is a standing invariant for Analytics and for the §11 recovery utility, and `parse_name_date` exists so there's no reason to hand-roll it.
 
 ---
 
@@ -266,7 +286,9 @@ Every parsed strobe (`starting-a-session.md` §7 step 7) is appended to that ani
 
 A short header, written once immediately after `START`/`SEED` resolve (before the first strobe arrives, since everything needed is already known by then): `rat`, `serial_port`, `session_id`, `sketch`, and any Task Profile config fields, each as a `# key: value` comment line. Raw strobe lines follow below it. `stop_reason` and `n_events` aren't knowable yet at that point, so they're **appended as a footer** at clean finalization (§7.3) — a `.tsv` recovered mid-session is missing only that footer, nothing else.
 
-**If the write itself fails** (disk full, permissions) mid-session, that's surfaced via `sidecar.error` (`websocket-protocol.md` §4) — there's no user command to attribute it to, which is the exact reason that error hook exists. **This is built:** the runner catches the write failure, logs it, and broadcasts `sidecar.error` naming the box. The strobe is dropped rather than retried, and the run continues — the operator is told immediately that data is no longer being saved, and can decide what to do about it.
+**The file is opened exclusively (`"x"`), not truncating.** §1's `HHMMSS` already makes a same-path collision unreachable, so this will effectively never fire — but this is the one file carrying the durability guarantee, and "practically unreachable" is a weaker claim there than anywhere else in the codebase. On the impossible day it does fire, the box refuses to start with an error naming the file in the way, rather than silently overwriting a previous animal's session. Refusing to start is recoverable; a truncated write-ahead log is not.
+
+**If the write itself fails** (disk full, permissions) mid-session, that's surfaced via `sidecar.error` (`websocket-protocol.md` §4) — there's no user command to attribute it to, which is the exact reason that error hook exists. **This is built:** the runner catches the write failure, logs it, and broadcasts `sidecar.error` naming the box. The strobe is dropped rather than retried, and the run continues — the operator is told immediately that data is no longer being saved, and can decide what to do about it. A failure to *open* the file at all takes the same route, and carries the underlying cause into both the error and the recorded `stop_reason`, so a box that refuses to start says why.
 
 ### 7.2 `.json`/`.mat` are built once, at the end
 
@@ -284,12 +306,57 @@ What's **not** in scope for v1, deliberately: the app noticing on restart that a
 
 ## 8. Backup Strategy
 
-> **Not implemented.** `Settings.backupDirectory` exists in the settings schema and is pushed to the sidecar, but nothing copies files into it yet — neither the finalization copy nor the periodic `.tsv` mirror nor the `ephymeris.db` backup. The `.tsv` write-ahead log (§7) *is* built, so the same-disk crash guarantee holds; what's missing is the different-disk guarantee. Tracked in §11.
+> **Built** (`sidecar/ephymeris_sidecar/backup/`). Previously the largest gap in this document: the setting was collected and pushed but nothing read it, so a user who set it reasonably believed their data was mirrored when it wasn't.
 
 Two distinct, complementary mechanisms, protecting against two different failures — worth being explicit that they're not the same thing:
 
-- **`.tsv` as write-ahead log (§7):** protects against the app/power dying mid-session, on the *same* disk. This is now load-bearing, not redundant.
-- **Backup Directory mirroring** (`ephymeris_v1.0.md` §4.5's separate `backupDirectory` setting): protects against losing the whole `dataDirectory` — drive failure, accidental deletion — a different disk/location entirely. `.json`/`.mat` are copied into the mirror on finalization, same as before. `.tsv` is mirrored too, but on a **periodic cadence** (e.g. every ~5–10s) rather than per-line: `backupDirectory` may be a slower or network location, and stalling the real-time strobe-parsing thread on every single line's remote write would undermine the exact guarantee §7 just established locally. `ephymeris.db` (`cohorts.md` §3) is included in this mirror too — resolving that doc's §12 TBD item — backed up on every app start and after any cohort-affecting write.
+- **`.tsv` as write-ahead log (§7):** protects against the app/power dying mid-session, on the *same* disk. This is load-bearing, not redundant.
+- **Backup Directory mirroring** (`ephymeris_v1.0.md` §4.5's separate `backupDirectory` setting): protects against losing the whole `dataDirectory` — drive failure, accidental deletion — a different disk or location entirely.
+
+Mirroring is **entirely off the critical path**, and every design decision below follows from one rule: *the backup target may be slow, networked, or dead, and none of that may ever slow, stall, or fail a session.* A mirror that works but blocks finalization would be worse than no mirror at all, because it would put a network share in the path of the guarantee §7 exists to make.
+
+### 8.1 Layout — anchored on the cohort folder, not the data directory
+
+```
+<backupDirectory>/
+├── <cohort folder basename>/       ← mirrors that cohort's folder, contents unchanged
+│   └── <prefix>/<session folder>/behavior.{tsv,json,mat}/…
+├── ephymeris.db                    ← current mirror of the cohort database
+└── db-snapshots/
+    └── ephymeris_<YYYY-MM-DD>.db   ← one per day, newest 14 kept
+```
+
+The mirror path is **not** derived by subtracting `Settings.dataDirectory` from the source path, because it can't be: `cohorts.setDataFolder` (`cohorts.md` §8) can put a cohort's folder anywhere, including somewhere with no relationship to the data directory at all. Every mirrored file is anchored on the cohort folder containing it instead. In the normal case — cohort folders sitting under `dataDirectory` — this reproduces the familiar layout exactly, which is the point: a last-resort archive nobody can navigate is worth much less than one they can.
+
+Two cohorts can only collide here if *both* had their folders relocated by hand into different parents sharing a basename. When that happens every member of the colliding set gets a short path-derived suffix, so the layout doesn't depend on which order cohorts happen to be enumerated in.
+
+**The mirror is additive. Nothing is ever deleted from it because it disappeared from the source** — a mirror that faithfully reproduces a deletion is no protection against one.
+
+### 8.2 Session files
+
+- **`.json`/`.mat` at finalization** are *queued*, not copied inline. Ending a session, or switching groups with six boxes finalizing at once, never waits on the backup target. `backup.status` reports the queue depth, so "not yet mirrored" is visible rather than assumed.
+- **`.tsv` while running** is mirrored on a **periodic ~10s cadence**, never per line. Stalling the real-time strobe-parsing thread on a remote write would undermine the exact guarantee §7 established locally. The interval is measured from the *end* of the previous pass, so a slow target stretches the cadence instead of queuing overlapping passes. At the real session rate of well under one event per second this leaves at most ~10 strobes unmirrored, against a local file that is already `fsync`'d per line.
+- **Every copy is whole-file**, not an incremental append. A partial append to a slow target could leave the mirrored write-ahead log torn; copying whole makes that impossible, and a full session `.tsv` is only tens of kilobytes. Copies land via a `.part` file plus an atomic replace, so a crash mid-copy can never leave a half-written file where a good one was.
+
+### 8.3 `ephymeris.db`
+
+Backed up on **every commit**, debounced by 5 s — resolving `cohorts.md` §12's open item. Hooking commit itself rather than calling out from each repository method means no write path can forget to announce itself, and it broadens the trigger correctly: `session_animal_runs` is written at finalization during an unattended overnight run, and is not a "cohort-affecting write" by any reading. The debounce matters because editing a roster commits many times in quick succession, and without it every keystroke's save would copy the file to a network share.
+
+This is also why **no periodic timer is needed** (an earlier open question): the database only changes when something writes to it, so a timer over an idle database would re-copy identical bytes. A settings push carrying a new directory marks it dirty immediately, which is what satisfies "on every app start" — settings arrive right after the sidecar comes up.
+
+The copy is two-step on purpose. SQLite's own online backup API is used rather than a file copy, since a plain copy of a live database can capture a torn page — but that API holds the database lock for its duration, so it writes to a **local** temp file first (milliseconds), and the slow copy out to the mirror happens with nothing locked. Pointing it straight at a network share would let that share's latency block every cohort read in the app.
+
+**Dated snapshots exist because the live mirror alone doesn't protect against half of what backup is for.** A single overwritten copy would faithfully propagate an accidental cohort deletion within seconds. One dated snapshot per day, first-of-day wins (a later one would only overwrite the very state someone is trying to undo), newest 14 retained. Snapshot names are ISO-dated, so pruning the oldest is a plain sort — a small payoff of §2.1's date decision.
+
+### 8.4 No automatic backfill
+
+Setting a backup directory mirrors from that moment on; it does **not** copy what's already on disk. Doing so automatically could mean an unannounced multi-gigabyte copy to a network share the instant someone picks a folder, and it would fire again on every repoint. The explicit version is `backup.syncNow` (`websocket-protocol.md` §3.3), surfaced as a refresh control beside the Settings field, which walks every cohort folder and copies anything missing or stale. It doubles as the way to prove a target actually works before trusting it with anything.
+
+### 8.5 Failure is visible, not silent
+
+A backup that silently stops working is the same class of problem as a setting that silently does nothing — which is what this section was written to fix. Mirroring failures surface as `state: "failed"` on the `backup.status` event, with the underlying error, rendered as a persistent note in Settings and a compact indicator in Mission Control. They are deliberately **not** `sidecar.error` toasts: a dead network share fails every pass, and a transient notification every 10 s would be noise that teaches people to ignore it. Retries continue on the normal cadence, and recovery clears the state on its own.
+
+Nothing about a failed mirror affects the session. Local writing continues untouched, which the Settings note says in as many words.
 
 ---
 
@@ -305,12 +372,14 @@ Two distinct, complementary mechanisms, protecting against two different failure
 | `prefixes.create` | `{name}` | `{prefix}` |
 | `prefixes.delete` | `{id}` | `{deleted: true}` |
 | `tasks.getProfile` | `{sketchPath}` | `<TaskProfile>` or `{profile: null}` if the sketch has none |
+| `backup.syncNow` | — | `{copied, skipped, failed, errors, directory}` — the §8.4 explicit backfill |
 
 **Events:**
 
 | Event | `data` | Notes |
 |---|---|---|
 | `prefixes.updated` | `{prefixes: [Prefix]}` | Push-on-change, same pattern as `cohorts.updated` |
+| `backup.status` | `<BackupStatus>` | Mirroring state (§8.5). Sent on connect, on a directory change, and on any state change or real copy — not on quiet ticks |
 
 Session lifecycle commands/events (`session.start`, per-animal telemetry, etc.) are specified in `starting-a-session.md` §9 rather than duplicated here, since they're driven by that doc's flow.
 
@@ -325,6 +394,13 @@ Session lifecycle commands/events (`session.start`, per-animal telemetry, etc.) 
 | Session number format | Free text, confirmed. Config UI suggests the next numeric value as a default (`starting-a-session.md` §2.2) |
 | `.mat` writer (§5.1) | **Hand-written MAT v5 serializer, not `scipy`.** Zero added runtime dependencies, on the explicit instruction to minimise setup failure modes for non-technical users; compatibility proven by a throwaway-venv `loadmat` round-trip |
 | `SessionAnimalRun` write timing | **At finalization only**, not incrementally — the lighter of §11's two options. Incremental writes only buy anything for crash resumption, which is out of scope |
+| Date format (§2.1) | **Changed to ISO `YYYY-MM-DD`**, on an explicit lab-side decision. Hyphenated so a positional parser breaks loudly rather than misreading dates silently. Existing files keep `MM_DD_YY`; `parse_name_date` reads both |
+| `.tsv` mirror cadence (§8.2) | **~10 s, self-paced** from the end of the previous pass, plus a copy at finalization. Whole-file, never incremental append |
+| `ephymeris.db` backup trigger (§8.3) | **Every commit, debounced 5 s.** No periodic timer — an idle database has nothing new to copy, and hooking commit means no write path can forget |
+| `ephymeris.db` retention (§8.3) | **Live mirror plus one dated snapshot per day, newest 14 kept.** A single overwritten copy would propagate an accidental deletion, defeating half the purpose |
+| Backfill on setting a directory (§8.4) | **None automatic.** Explicit `backup.syncNow` instead, which also serves as the way to verify a target works |
+| Finalization copy timing (§8.2) | **Queued, never blocking.** A slow or dead target must not be able to stall session teardown |
+| `.tsv` open mode (§7.1) | **Exclusive create (`"x"`).** A collision fails the box loudly rather than truncating; the naming scheme already makes it unreachable |
 
 ---
 
@@ -332,11 +408,12 @@ Session lifecycle commands/events (`session.start`, per-animal telemetry, etc.) 
 
 - [x] ~~Confirm `scipy.io.savemat`'s exact type mapping (bools, strings) once implementation starts (§5.1)~~ — moot: `scipy` isn't used. The hand-written serializer's mapping is fixed by us and asserted by `test_matwriter.py`, and was checked against `loadmat` once in a throwaway venv
 - [x] ~~Merge §9's proposed commands/events into `websocket-protocol.md`~~ — **done**, along with `starting-a-session.md` §9; the contract test covers every name across the doc, `protocol.py`, and `protocol.ts`
-- [ ] **§8's Backup Directory mirroring is not built at all** — finalization copy, periodic `.tsv` mirror, and `ephymeris.db` backup are all still to do. This is the largest known gap in this doc, and the one that leaves `cohorts.md` §12's `ephymeris.db` item open
-- [ ] Small recovery utility to backfill `.json`/`.mat` from an orphaned `.tsv` after a crash, with `stop_reason: "recovered after crash"` — cheap given §7's design, deliberately out of scope for this pass (§7.3)
-- [ ] Exact backup mirroring interval for `.tsv` beyond "every ~5–10s" (§8) — blocked on the above being built at all
-- [ ] Exact backup trigger cadence for `ephymeris.db` beyond "app start + every cohort-affecting write" (§8) — may need a periodic timer too if the app runs unattended for long stretches
-- [ ] `.tsv` files are opened in truncating write mode. The `HHMMSS` in the filename (§2) makes a collision practically unreachable, so this has never bitten — but the durable file's open mode is the one place where "practically unreachable" is worth a second look
+- [x] ~~**§8's Backup Directory mirroring is not built at all**~~ — **built.** Finalization queue, periodic `.tsv` mirror, and `ephymeris.db` backup with dated snapshots all live in `sidecar/ephymeris_sidecar/backup/`, covered by `tests/test_backup.py`. This also closes `cohorts.md` §12's `ephymeris.db` item
+- [x] ~~Exact backup mirroring interval for `.tsv` beyond "every ~5–10s"~~ — **10 s, self-paced** (§8.2)
+- [x] ~~Exact backup trigger cadence for `ephymeris.db` beyond "app start + every cohort-affecting write"~~ — **every commit, debounced 5 s, no timer** (§8.3). The original wording was also too narrow: `session_animal_runs` is written unattended and isn't a cohort edit
+- [x] ~~`.tsv` files are opened in truncating write mode~~ — **exclusive create** (§7.1). A collision now fails the box with the offending path named, instead of truncating
+- [ ] Small recovery utility to backfill `.json`/`.mat` from an orphaned `.tsv` after a crash, with `stop_reason: "recovered after crash"` — cheap given §7's design, deliberately out of scope for this pass (§7.3). Note it must use §2.1's `parse_name_date` rather than assuming either date spelling
+- [ ] §8's mirroring is unit-tested but has not yet run a full session against a **real network share** — the slow-target behaviour it's designed around is the one thing a local-filesystem test can't exercise
 
 ---
 

@@ -25,7 +25,7 @@ from typing import Any, Awaitable, Callable
 from ..tasks.metrics import MetricSet
 from ..tasks.profile import TaskProfile
 from .models import SessionAnimalRun
-from .paths import resolve_animal_files
+from .paths import AnimalFilePaths, resolve_animal_files
 from .writer import AnimalWriter
 
 log = logging.getLogger(__name__)
@@ -60,10 +60,15 @@ class ActiveRun:
     metrics: MetricSet | None = None
     end_code: int | None = None
     resolved: bool = False
-    file_json: str | None = None
+    files: AnimalFilePaths | None = None
     seed: int | None = None
     #: Guards writer.record against finalize running concurrently.
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    @property
+    def file_json(self) -> str | None:
+        """The finalized `.json` path recorded on `SessionAnimalRun` (§4)."""
+        return str(self.files.json) if self.files is not None else None
 
 
 class SessionRunner:
@@ -73,11 +78,15 @@ class SessionRunner:
         ports: Any,
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         on_animal_ended: Callable[[ActiveRun, str], Awaitable[None]],
+        backup: Any = None,
     ) -> None:
         self._loop = loop
         self._ports = ports
         self._broadcast = broadcast
         self._on_animal_ended = on_animal_ended
+        # Optional so the runner stays testable without a mirror behind it.
+        # Nothing here ever waits on it — see `backup/manager.py`.
+        self._backup = backup
         # Per-session box configs, and the currently-running boxes.
         self._configs: dict[int, BoxConfig] = {}
         self._active: dict[int, ActiveRun] = {}
@@ -183,7 +192,7 @@ class SessionRunner:
             *_split_label(run.session_id_label),
             when,
         )
-        run.file_json = str(files.json)
+        run.files = files
 
         # §5 core fields, then flat task-profile config, then optional trial_seed.
         core = {
@@ -200,11 +209,21 @@ class SessionRunner:
         try:
             writer.open_files()
         except Exception as exc:  # noqa: BLE001 - surface, don't crash the thread
+            # Carry the real cause into both the operator-facing error and the
+            # recorded stop reason. A bare "sidecar error" would leave someone
+            # staring at a box that refused to start with nothing to act on —
+            # and the most likely cause here (§7.1's exclusive open) names the
+            # exact file standing in the way.
             log.error("box %d: couldn't open session files: %s", box, exc)
-            self._schedule(self._fail_run(box, "sidecar error"))
+            self._schedule(self._emit_write_error(box, str(exc)))
+            self._schedule(self._fail_run(box, f"sidecar error: {exc}"))
             return
         run.writer = writer
         run.metrics = MetricSet(run.config.profile)
+        # From here the `.tsv` grows on every strobe; the mirror picks it up on
+        # its own cadence and never on this thread (`data-saving.md` §8).
+        if self._backup is not None:
+            self._backup.track(files.tsv)
 
     def _on_strobe(self, box: int, code: int, ts: int) -> None:
         run = self._active.get(box)
@@ -254,6 +273,12 @@ class SessionRunner:
 
         if run.writer is not None:
             await asyncio.to_thread(run.writer.finalize, reason)
+        # Hand the finished trio to the mirror and stop tracking the .tsv. This
+        # only *queues* the copy — ending a session must never wait on a slow
+        # or dead backup target (§8).
+        if self._backup is not None and run.files is not None:
+            self._backup.untrack(run.files.tsv)
+            self._backup.enqueue(run.files.tsv, run.files.json, run.files.mat)
         if clean:
             try:
                 await asyncio.to_thread(self._ports.end_session, box, reason)

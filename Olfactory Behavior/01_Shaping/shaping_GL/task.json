@@ -1,6 +1,7 @@
 {
   "taskName": "Shaping — Go-Left (Odor 3)",
   "kind": "behavior",
+  "legacyNames": ["Shape - L"],
   "config": [],
   "strobes": {
     "101": "ODOR_1_ON", "102": "ODOR_2_ON", "103": "ODOR_3_ON",

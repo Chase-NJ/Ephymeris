@@ -9,6 +9,11 @@ dashboard.py / read_arduino.py can be exercised end-to-end without an Arduino
 wired to the rig. No pins are driven — this only talks serial, so it runs on
 any board.
 
+A "STOP" line is honoured at the next trial boundary, exactly as the real
+firmware's checkForStop(): the trial in progress completes, then the session
+ends early with BF_END_SESSION — so the host's Stop button and the session
+time limit both work against the sim.
+
 This build mirrors the firmware's two confound-closing changes so they can
 be validated off-rig:
   - SEED line: emitted right after START (seed = micros()), so the host's
@@ -386,6 +391,11 @@ void waitForStart() {
   }
 }
 
+/* Mid-session STOP uses BehaviorBox.h's own checkForStop() — the exact
+   non-blocking poll the real firmware calls once per trial boundary. The sim
+   spends its whole session inside delay()s, so a STOP sent by the host just
+   accumulates in the RX buffer until the next boundary drains it. */
+
 void setup() {
   Serial.begin(baudRate);
   delay(50);                 // let the post-reset serial settle
@@ -401,6 +411,11 @@ void setup() {
   emit(BF_START_SESSION, REAL_PRIMING_DELAY);  // odor priming before the first lights-on
 
   for (int i = 0; i < NUM_TRIALS; i++) {
+    // 0. Trial boundary: honour a STOP that arrived during the last trial —
+    //    the same once-per-boundary check the real firmware makes, so the
+    //    host's Stop button (and the session time limit) end the sim early.
+    if (checkForStop()) break;
+
     // 1. The anti-bias selector picks this trial's correct side.
     bool goRight = selectNextGoRight();
 

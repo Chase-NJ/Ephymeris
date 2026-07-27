@@ -1,0 +1,55 @@
+{
+  "taskName": "Box Utility",
+  "kind": "utility",
+  "legacyNames": ["PRIME_Lines", "PRIME_Bolus", "TEST_Box"],
+  "controls": [
+    { "id": "selftest", "label": "Full self-test", "type": "button", "command": "SELFTEST" },
+    { "id": "stop", "label": "Stop test", "type": "button", "command": "STOP" },
+    { "id": "alloff", "label": "All off", "type": "button", "command": "ALLOFF" },
+    { "id": "pulse_ms", "label": "Pulse width", "type": "select", "options": [
+      { "label": "50 ms",  "command": "SET PULSE=50" },
+      { "label": "100 ms", "command": "SET PULSE=100" },
+      { "label": "200 ms", "command": "SET PULSE=200" },
+      { "label": "500 ms", "command": "SET PULSE=500" },
+      { "label": "1 s",    "command": "SET PULSE=1000" }
+    ] },
+
+    { "id": "fluids", "label": "Fluid lines", "type": "grid", "channels": [
+      { "label": "Left 1",  "state": "f1", "toggle": "TOGGLE F1", "pulse": "PULSE F1" },
+      { "label": "Left 2",  "state": "f2", "toggle": "TOGGLE F2", "pulse": "PULSE F2" },
+      { "label": "Right 1", "state": "f3", "toggle": "TOGGLE F3", "pulse": "PULSE F3" },
+      { "label": "Right 2", "state": "f4", "toggle": "TOGGLE F4", "pulse": "PULSE F4" }
+    ] },
+
+    { "id": "aux", "label": "Vacuum & light", "type": "grid", "channels": [
+      { "label": "Vacuum",      "state": "vac",   "toggle": "TOGGLE VAC",   "pulse": "PULSE VAC" },
+      { "label": "Trial light", "state": "light", "toggle": "TOGGLE LIGHT", "pulse": "PULSE LIGHT" }
+    ] },
+
+    { "id": "odors", "label": "Odor lines", "type": "grid", "channels": [
+      { "label": "Odor 1",  "state": "o1",  "toggle": "TOGGLE O1",  "pulse": "PULSE O1" },
+      { "label": "Odor 2",  "state": "o2",  "toggle": "TOGGLE O2",  "pulse": "PULSE O2" },
+      { "label": "Odor 3",  "state": "o3",  "toggle": "TOGGLE O3",  "pulse": "PULSE O3" },
+      { "label": "Odor 4",  "state": "o4",  "toggle": "TOGGLE O4",  "pulse": "PULSE O4" },
+      { "label": "Odor 5",  "state": "o5",  "toggle": "TOGGLE O5",  "pulse": "PULSE O5" },
+      { "label": "Odor 6",  "state": "o6",  "toggle": "TOGGLE O6",  "pulse": "PULSE O6" },
+      { "label": "Odor 7",  "state": "o7",  "toggle": "TOGGLE O7",  "pulse": "PULSE O7" },
+      { "label": "Odor 8",  "state": "o8",  "toggle": "TOGGLE O8",  "pulse": "PULSE O8" },
+      { "label": "Odor 9",  "state": "o9",  "toggle": "TOGGLE O9",  "pulse": "PULSE O9" },
+      { "label": "Odor 10", "state": "o10", "toggle": "TOGGLE O10", "pulse": "PULSE O10" },
+      { "label": "Odor 11", "state": "o11", "toggle": "TOGGLE O11", "pulse": "PULSE O11" },
+      { "label": "Odor 12", "state": "o12", "toggle": "TOGGLE O12", "pulse": "PULSE O12" }
+    ] }
+  ],
+  "telemetry": {
+    "match": "STATUS",
+    "fields": [
+      { "key": "mode",  "label": "Mode" },
+      { "key": "test",  "label": "Test" },
+      { "key": "step",  "label": "Step" },
+      { "key": "pass",  "label": "Checks passed" },
+      { "key": "beams", "label": "Beams (odor/L/R)" },
+      { "key": "pulse", "label": "Pulse width (ms)" }
+    ]
+  }
+}

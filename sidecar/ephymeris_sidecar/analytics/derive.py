@@ -27,7 +27,10 @@ from ..tasks.profile import LiveMetric, TaskProfile
 #: fixed bug would keep serving numbers from the old definition forever, with
 #: no symptom anywhere (`analytics.md` §8.3).
 #: v3 added the trial-outcome tally (§3.8) — rewarded vs side accuracy.
-CODEC_VERSION = 3
+#: v4 split that tally per declared condition (§3.9), so "how many go-right
+#: trials were administered, and how many of those paid out" is answerable
+#: without re-reading the file.
+CODEC_VERSION = 4
 
 #: z for a 95% interval. Wilson rather than the normal approximation because
 #: this data lives at small n *and* at p near 1 — a trained animal sits around
@@ -171,6 +174,37 @@ class TrialOutcomes:
 
 
 @dataclass(frozen=True)
+class ConditionOutcomes:
+    """The same tally as `TrialOutcomes`, restricted to one declared condition
+    (§3.9).
+
+    A condition is a declared `liveMetrics` entry, identified by the trigger
+    code that opens its trials — for GRGL that is odor 1 (answer right) and
+    odor 3 (answer left), so this is what makes "how many go-right trials were
+    administered, and how many of those paid out" answerable. Driven off the
+    profile's authored metrics rather than any particular task's vocabulary: a
+    profile declaring five conditions gets five of these.
+
+    Two metrics sharing a trigger code would legitimately produce two entries
+    over the same trials — the trigger is what delimits a condition, and a
+    profile that declares the same trials twice is asking for exactly that.
+    """
+
+    metric_id: str
+    label: str
+    trigger_code: int
+    outcomes: TrialOutcomes
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "metricId": self.metric_id,
+            "label": self.label,
+            "triggerCode": self.trigger_code,
+            "outcomes": self.outcomes.to_json(),
+        }
+
+
+@dataclass(frozen=True)
 class RunSummary:
     """Everything the cohort-scale panels need about one animal's run."""
 
@@ -183,6 +217,10 @@ class RunSummary:
     #: absent rather than zeroed, because "this task has no notion of a reward
     #: delivery" and "this animal earned nothing" are different claims.
     outcomes: TrialOutcomes | None = None
+    #: The same tally split per declared condition (§3.9). Empty — not None —
+    #: when `outcomes` is None: there is no separate claim to make about a task
+    #: whose vocabulary can't express an outcome at all.
+    conditions: list[ConditionOutcomes] = field(default_factory=list)
     total_events: int = 0
     duration_ms: int | None = None
     stop_reason: str | None = None
@@ -199,6 +237,7 @@ class RunSummary:
             "metrics": [m.to_json() for m in self.metrics],
             "overall": self.overall.to_json() if self.overall else None,
             "outcomes": self.outcomes.to_json() if self.outcomes else None,
+            "conditions": [c.to_json() for c in self.conditions],
             "totalEvents": self.total_events,
             "durationMs": self.duration_ms,
             "stopReason": self.stop_reason,
@@ -228,6 +267,23 @@ class MetricSeries:
             "n": self.counts,
             "windowSize": self.window_size,
         }
+
+
+@dataclass(frozen=True)
+class StrategyPoint:
+    """One sample of the within-session strategy walk (§4.4)."""
+
+    #: Counted trials resolved across **both** conditions at this sample — the
+    #: only shared clock the two metrics have. Not a wall time, and not either
+    #: metric's own index.
+    trial: int
+    x: float
+    y: float
+    #: The smaller of the two rolling window lengths behind this point.
+    n: int
+
+    def to_json(self) -> dict[str, Any]:
+        return {"trial": self.trial, "x": _round(self.x), "y": _round(self.y), "n": self.n}
 
 
 #: The clean-end reason, matching `sessions/runner.py`'s literal exactly.
@@ -323,14 +379,18 @@ def _vocabulary(profile: TaskProfile) -> _Vocabulary:
 
 def _classify_trials(
     codes: list[int], boundaries: frozenset[int], vocab: _Vocabulary
-) -> Iterator[str]:
-    """One classification per trial, delimited exactly as the metrics are.
+) -> Iterator[tuple[int, str]]:
+    """`(opening code, classification)` per trial, delimited as the metrics are.
 
     Uses `boundaries_for`'s union rather than a single trigger for the same
     reason the metrics do: a trial abandoned when the next odor fires must
     close there, or its outcome is stolen by whichever trial answers next.
+
+    The opening code rides along so a caller can split the tally per condition
+    (§3.9) without a second, separately-drifting pass over the stream.
     """
     open_trial = False
+    trigger = 0
     sampled = False
     outcome: str | None = None
 
@@ -344,8 +404,8 @@ def _classify_trials(
     for code in codes:
         if code in boundaries:
             if open_trial:
-                yield settle()
-            open_trial, sampled, outcome = True, False, None
+                yield trigger, settle()
+            open_trial, trigger, sampled, outcome = True, code, False, None
             continue
         if not open_trial:
             continue
@@ -360,28 +420,18 @@ def _classify_trials(
                 outcome = "wrong_well"
 
     if open_trial:
-        yield settle()
+        yield trigger, settle()
 
 
-def outcomes_of(codes: list[int], profile: TaskProfile | None) -> TrialOutcomes | None:
-    """Tally trial outcomes, or `None` when the profile can't express them."""
-    if profile is None:
-        return None
-    boundaries = boundaries_for(profile)
-    if not boundaries:
-        return None
-    vocab = _vocabulary(profile)
-    if not vocab.usable:
-        return None
-
-    tally = Counter(_classify_trials(codes, boundaries, vocab))
-    rewarded = tally["rewarded"]
-    hold_failed = tally["hold_failed"]
-    wrong_well = tally["wrong_well"]
-    no_response = tally["no_response"]
-    aborted = tally["aborted"]
+def _tally(classifications: Iterable[str]) -> TrialOutcomes:
+    counts = Counter(classifications)
+    rewarded = counts["rewarded"]
+    hold_failed = counts["hold_failed"]
+    wrong_well = counts["wrong_well"]
+    no_response = counts["no_response"]
+    aborted = counts["aborted"]
     return TrialOutcomes(
-        trials=sum(tally.values()),
+        trials=sum(counts.values()),
         # Everything that reached a well was necessarily administered, whether
         # or not the sampling marker was seen — deriving it from the resolved
         # outcomes keeps the denominator consistent with its own numerators.
@@ -392,6 +442,56 @@ def outcomes_of(codes: list[int], profile: TaskProfile | None) -> TrialOutcomes 
         no_response=no_response,
         aborted=aborted,
     )
+
+
+def outcomes_of(codes: list[int], profile: TaskProfile | None) -> TrialOutcomes | None:
+    """Tally trial outcomes, or `None` when the profile can't express them."""
+    classified = _classified_trials(codes, profile)
+    if classified is None:
+        return None
+    return _tally(outcome for _, outcome in classified)
+
+
+def conditions_of(
+    codes: list[int], profile: TaskProfile | None
+) -> list[ConditionOutcomes]:
+    """The same tally, split per declared condition (§3.9).
+
+    Empty whenever `outcomes_of` is None, and in the same authored order as
+    `liveMetrics` — the order the strategy space already treats as load-bearing
+    (§4.2), so a reader comparing the two panels is looking at the same axes in
+    the same order.
+    """
+    classified = _classified_trials(codes, profile)
+    if classified is None or profile is None:
+        return []
+    by_trigger: dict[int, list[str]] = {}
+    for trigger, outcome in classified:
+        by_trigger.setdefault(trigger, []).append(outcome)
+    return [
+        ConditionOutcomes(
+            metric_id=metric.id,
+            label=metric.label,
+            trigger_code=metric.trigger_code,
+            outcomes=_tally(by_trigger.get(metric.trigger_code, [])),
+        )
+        for metric in profile.live_metrics
+    ]
+
+
+def _classified_trials(
+    codes: list[int], profile: TaskProfile | None
+) -> list[tuple[int, str]] | None:
+    """One classification pass, or `None` when the profile can't express one."""
+    if profile is None:
+        return None
+    boundaries = boundaries_for(profile)
+    if not boundaries:
+        return None
+    vocab = _vocabulary(profile)
+    if not vocab.usable:
+        return None
+    return list(_classify_trials(codes, boundaries, vocab))
 
 
 def summarize(
@@ -434,6 +534,7 @@ def summarize(
         metrics=metrics,
         overall=_overall(metrics, min_counted),
         outcomes=outcomes_of(codes, profile),
+        conditions=conditions_of(codes, profile),
         excluded_by_default=profile.kind == "utility",
         **base,
     )
@@ -558,6 +659,81 @@ def series(
                 values=values,
                 counts=_window_lengths(len(values), effective.window_size),
                 window_size=effective.window_size,
+            )
+        )
+    return out
+
+
+def strategy_trail(
+    document: dict[str, Any],
+    profile: TaskProfile | None,
+    *,
+    min_window: int = DEFAULT_MIN_COUNTED,
+) -> list[StrategyPoint]:
+    """The within-session walk through the strategy space (§4.4).
+
+    The cross-session strategy space (§4) plots one point per session, so a
+    session is an endpoint there and its shape is invisible: an animal that
+    spent the first eighty trials answering one port and then started
+    discriminating lands in exactly the same place as one that was steady
+    throughout. This is that same plane, walked at trial resolution.
+
+    Why it cannot be assembled on the frontend from `series`: those are indexed
+    by each metric's **own** counted trials, and the conditions interleave, so
+    index *k* of one is not the same moment as index *k* of the other. Pairing
+    them requires replaying the stream with both accumulators fed together —
+    which is what happens here, using the live `MetricAccumulator` so the walk
+    agrees with what Mission Control displayed rather than approximating it.
+
+    Sampled after every counted trial in either condition, at each metric's own
+    authored `windowSize`: the point is "what strategy is this animal running
+    *right now*", which is the rolling figure, never the whole-session one.
+
+    **The walk starts once both windows hold `min_window` trials**, not at the
+    first scored trial. A rolling proportion over one trial is exactly 0.0 or
+    1.0, so an unfiltered walk begins pinned to a corner of the plane and
+    thrashes between the edges for its first few trials — an artefact of the
+    estimator that reads as a behaviour, which is the worst kind of wrong here.
+    `DEFAULT_MIN_COUNTED` is reused rather than a fresh constant invented: it is
+    already the app's answer to "too few trials to read firmly" (§3.5). A window
+    authored shorter than that caps the requirement at its own size, so a
+    small-window profile still gets a walk instead of silently getting none.
+    """
+    if profile is None or len(profile.live_metrics) != 2:
+        return []
+    codes = codes_of(document)
+    boundaries = boundaries_for(profile)
+    x_metric, y_metric = profile.live_metrics
+    x_acc = MetricAccumulator(x_metric, boundaries)
+    y_acc = MetricAccumulator(y_metric, boundaries)
+    x_floor = max(1, min(min_window, x_metric.window_size))
+    y_floor = max(1, min(min_window, y_metric.window_size))
+
+    out: list[StrategyPoint] = []
+    counted = 0
+    for code in codes:
+        x_acc.offer(code)
+        y_acc.offer(code)
+        total = x_acc.counted_total + y_acc.counted_total
+        if total == counted:
+            continue
+        counted = total
+        x_value, y_value = x_acc.value(), y_acc.value()
+        # Until both conditions carry enough trials to mean anything there is no
+        # position in the plane. A run that only ever triggered one odor has a
+        # coordinate and a blank, which is not a point either.
+        if x_value.value is None or y_value.value is None:
+            continue
+        if x_value.n < x_floor or y_value.n < y_floor:
+            continue
+        out.append(
+            StrategyPoint(
+                trial=counted,
+                x=x_value.value,
+                y=y_value.value,
+                # The weaker of the two windows: a point is only as trustworthy
+                # as the condition supporting it least.
+                n=min(x_value.n, y_value.n),
             )
         )
     return out

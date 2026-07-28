@@ -186,7 +186,7 @@ Designed in [analytics.md](analytics.md) §9, which carries the rationale. Imple
 |---|---|---|---|
 | `sessions.list` | `{cohortId, includeAborted?}` | `{sessions: [SessionListItem]}` | Belongs to the `sessions.*` family rather than `analytics.*` because session history is independently useful. **Must never touch the filesystem**, so selectors populate instantly. Returns a chronological `ordinal` derived from `(date, startedAt)` — never from `sessionNumber`, which is free text. `SessionListItem` is the trimmed listing form of `Session` (no `prefixId`/`groupRuns`, plus `ordinal` and `runCount`) and is the same shape `analytics.summary` embeds — one emitter serves both |
 | `analytics.summary` | `{cohortId, sessionIds?, animalIds?, minCountedTrials?}` | cohort table — sessions, animals, run summaries, profile groups, counts, warnings | One call per cohort; every session and animal selection filters it client-side. The heatmap and the strategy space are the same data, so they share one command. Run summaries are a **flat list, not a matrix** — a matrix has nowhere to put two runs for one animal and session, which really happens |
-| `analytics.series` | `{runIds: [], mode?, metricIds?}` | `{series: [RunSeries], warnings}` | Learning-curve data. **Plural** so "all six animals in this session" is one call; the list is capped server-side. The x-axis is the counted-trial index and is implicit |
+| `analytics.series` | `{runIds: [], mode?, metricIds?}` | `{series: [RunSeries], warnings}` | Learning-curve data. **Plural** so "all six animals in this session" is one call; the list is capped server-side. The x-axis is the counted-trial index and is implicit. Each `RunSeries` also carries `trail` — the within-session walk through the strategy plane (`analytics.md` §4.4) as `[StrategyPoint]`. It rides here rather than in its own command because the file is already open and decoded, and it is **always rolling** whatever `mode` says. Empty unless the profile declares exactly two conditions, and **not** derivable client-side from `metrics`: those are indexed by each metric's own counted trials, which interleave |
 | `analytics.rescan` | `{cohortId, adoptOrphans?}` | `{scanned, adopted, orphans: [RescanOrphan], cohortId}` | The explicit archive walk, for files no run record points at. Same pattern as `sketches.refresh` and `backup.syncNow`: expensive reconciliation is a deliberate user action, never a side effect of opening a view |
 
 A corrupt or missing file is **data, not an error** — it yields a run with a non-ok status plus a warning, and the command still succeeds. One unreadable `.json` must never blank a year of history.
@@ -360,6 +360,19 @@ ISO-8601 strings.
   "startedAt": "…", "endedAt": "…",
   "stopReason": "BF_END_SESSION received"   // starting-a-session.md §8
 }
+
+// ConditionOutcomes — TrialOutcomes restricted to one declared condition
+// (analytics.md §3.9). One per liveMetrics entry, in authored order; the
+// entries partition `outcomes` field-for-field. Empty (never null) when the
+// profile's vocabulary cannot express an outcome at all.
+{ "metricId": "p_r_odor1", "label": "P(R | Odor 1)",
+  "triggerCode": 101,               // the code opening this condition's trials
+  "outcomes": { /* <TrialOutcomes> */ } }
+
+// StrategyPoint — one sample of the within-session strategy walk (§4.4)
+{ "trial": 84,                      // counted trials across BOTH conditions
+  "x": 0.9, "y": 0.55,              // rolling P per condition, authored order
+  "n": 20 }                         // the smaller of the two window lengths
 
 // TelemetryMetric — one rolling live-metric value (session.telemetry)
 { "id": "p_r_odor1", "value": 0.85, "n": 20 }   // value = P(hit); n = counted trials in window

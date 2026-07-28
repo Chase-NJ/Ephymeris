@@ -261,6 +261,22 @@ Trials are delimited by the same boundary union as the metrics (§3.1), so an ab
 
 ---
 
+### 3.9 The same tally, per condition
+
+`outcomes` (§3.8) pools every trial in the run. That answers "what did this animal earn", but not "on which *kind* of trial", and the difference is the whole question a two-condition task exists to ask: a rat that earned 60% overall could be at 95% on one odor and 25% on the other, and the pooled figure is the same number in both worlds.
+
+So each run also carries `conditions` — the identical tally restricted to the trials one declared condition opened. A **condition** is a `liveMetrics` entry, and its trials are the ones its `triggerCode` opened. For GRGL that is odor 1 (answer right) and odor 3 (answer left), which is what makes "how many go-right trials were administered, and how many of those paid out" a field lookup rather than a re-read of the file.
+
+- **Driven off the profile, never off a task's vocabulary.** A profile declaring five conditions gets five entries; one declaring none gets an empty list. Nothing here knows what an odor is.
+- **Authored `liveMetrics` order**, the same order §4.2 already treats as load-bearing — so a reader comparing this tile against the strategy space sees the same conditions in the same sequence.
+- **A partition, not a second count.** Every trial belongs to exactly one condition, and the entries sum to `outcomes` field-for-field. One classification pass produces both, so they cannot drift apart.
+- **A declared condition with no trials is zeroed, not omitted.** "Odor 3 never came up" is a fact about the session. Its rates stay `null` rather than collapsing to `0.0`, following §3.6.
+- **Empty — not `null` — when `outcomes` is `null`.** There is no separate claim to make about a task whose vocabulary cannot express an outcome at all.
+
+Two metrics sharing a trigger code legitimately produce two entries over the same trials. The trigger is what delimits a condition; a profile declaring the same trials twice is asking for exactly that.
+
+---
+
 ## 4. The Strategy Space
 
 The panel that separates *learning* from *being lucky*.
@@ -303,6 +319,30 @@ Plotting the values as authored requires no such inference, works for any two-me
 - Trail order is `(session.date, session.started_at, run.started_at)`.
 - Axis labels are the metrics' own `label` strings, so the plot reads correctly for any task without app-side knowledge.
 - Chance is marked at the centre and along the anti-diagonal, in Halo, dashed — the same reference-line treatment `MetricChart.tsx` already uses for its 0.5 line.
+
+### 4.4 The within-session walk
+
+§4.1 plots **one point per session**, so a session is an endpoint there and its shape is invisible. An animal that answered the same port for the first eighty trials and then started discriminating lands in the same place as one that was steady throughout — and those are not the same session.
+
+So the plane has a second occupant: the same axes, same reference lines, same region meanings, walked at trial resolution. **The across-session trails render only when the scope is all sessions; selecting one session replaces them with that session's walks.** Two trail types in one frame would be four unlabelled meanings of a line, and the reader has no way to tell a week from an hour.
+
+| | Across-session (§4.1) | Within-session (§4.4) |
+|---|---|---|
+| One point is | one session | one counted trial |
+| Coordinates | `pSession` — the whole-session figure | rolling P at the authored `windowSize` |
+| Clock | `(session.date, started_at)` | counted trials across **both** conditions |
+| Reads as | learning, over weeks | the strategy actually running, minute to minute |
+
+Rules that are decisions rather than description:
+
+- **The coordinates are the rolling figure, never the whole-session one.** The question is "what strategy is this animal running *right now*", and a running whole-session average is dominated by its own history — it would flatten the very transition the panel exists to show.
+- **The clock is counted trials across both conditions**, because that is the only one the two metrics share. It is not wall time (§5 gives the reasons) and not either metric's own index.
+- **A point needs both conditions to have scored.** A coordinate and a blank is not a position, so the walk never begins at trial 1.
+- **And it needs both windows to hold `minCountedTrials` (§3.5).** A rolling proportion over one trial is exactly 0.0 or 1.0, so an unfiltered walk opens pinned to a corner of the plane and thrashes between the edges for its first few trials. That is an artefact of the estimator that reads as a behaviour — the worst kind of wrong in this panel, since a corner is where the whole plot's meaning is concentrated. The existing "too few trials to read firmly" threshold is reused rather than a fresh number invented. A profile whose authored window is *shorter* than that caps the requirement at its own window size, so a small-window task still gets a walk instead of silently getting none.
+- **`n` is the smaller of the two window lengths.** A point is only as trustworthy as the condition supporting it least.
+- **Start hollow, end filled**, and the path fades from dim to full along its length — the same direction-of-travel grammar as the across-session trail, so one reading serves both.
+
+This cannot be assembled client-side from the §5 series. Those are indexed by each metric's **own** counted trials, and the conditions interleave, so index *k* of one is not the same moment as index *k* of the other. Pairing them requires replaying the stream with both accumulators fed together, which is why the walk is computed sidecar-side and rides along on `analytics.series` as `trail` — the file is already open and already decoded there, and the panel that wants it is on the same screen as the panels that want the series.
 
 ---
 
@@ -354,11 +394,23 @@ Values are shown **in the cell**, in mono, at every size the grid permits — wi
 
 ### 6.3 The session summary
 
-Selecting a session opens it up beneath the cohort views: those *compare* sessions, this one is the inside of a single one. One row per animal, showing — in this order — each declared condition as a within-session trajectory, then the two accuracies side by side, then how the administered trials actually resolved.
+Selecting a session opens it up beneath the cohort views: those *compare* sessions, this one is the inside of a single one. **One card per animal**, not one row — the per-condition counts below need a second dimension, and a row that carries them all is a row nobody can read.
 
-The two accuracies are the point of the panel. A trajectory can only show the declared metrics, which are reward-unconditional (§3.8), so an animal can hold a respectable P(R | Odor 1) while earning almost nothing if it keeps releasing the well before the fluid hold clears. Showing `rewarded / side` as a pair makes that visible at a glance, and the gap between the two numbers is the hold-failure rate.
+Each card answers, in this order:
 
-The outcome bar is scaled by **administered count**, not normalised per animal: a rat that engaged with half as many trials reads as half a bar rather than a full bar of different proportions. Composition and effort are both part of what happened, and normalising would hide one to show the other.
+| | |
+|---|---|
+| **Trials · administered · aborted** | the effort header. Administered is every accuracy's denominator (§3.8), so it is stated before any rate. |
+| **Per condition** (§3.9) — one row each, in authored order | `administered`, `rewarded`, and that condition's within-session trajectory. This is where "how many go-right trials, and how many paid out" is read off. |
+| **Rewarded vs side** | the two accuracies, as one bar, not two. |
+| **Outcome composition** | how the administered trials resolved. |
+
+Two things this gets right on purpose:
+
+- **The two accuracies share one track.** Side accuracy is `(rewarded + holdFailed) / administered` and rewarded is `rewarded / administered`, so the second is a **subset** of the first — always ≥, never crossing (§3.8). Drawing them as two independent bars invites reading the difference as a comparison of unrelated quantities; drawing rewarded as a filled span *inside* the side span makes the containment structural, and the remaining segment **is** the hold-failure rate rather than a number the reader has to subtract. That segment carries the hold-failure colour it already has in the outcome bar, so the same behaviour is the same colour in both places on the card.
+- **The outcome bar is scaled by administered count**, not normalised per animal: a rat that engaged with half as many trials reads as half a bar rather than a full bar of different proportions. Composition and effort are both part of what happened, and normalising would hide one to show the other.
+
+A trajectory can only show the declared metrics, which are reward-unconditional (§3.8) — an animal can hold a respectable P(R | Odor 1) while earning almost nothing if it keeps releasing the well before the fluid hold clears. That is why the card carries counts and the reward bar alongside the trajectories rather than trajectories alone.
 
 ### 6.4 Rewarded accuracy across sessions
 
@@ -516,7 +568,7 @@ The granularity follows from §2.1: selecting a cohort makes **one** summary cal
 |---|---|---|
 | `sessions.list` | `{cohortId, includeAborted?}` | `{sessions: [SessionListItem]}` |
 | `analytics.summary` | `{cohortId, sessionIds?, animalIds?, minCountedTrials?}` | the cohort table — sessions, animals, run summaries, profile groups, counts, warnings |
-| `analytics.series` | `{runIds: [], mode?, metricIds?}` | `{series: [RunSeries], warnings: []}` |
+| `analytics.series` | `{runIds: [], mode?, metricIds?}` | `{series: [RunSeries], warnings: []}` — each `RunSeries` carries `metrics` and the §4.4 `trail` |
 | `analytics.rescan` | `{cohortId, adoptOrphans?}` | `{scanned, adopted, orphans, cohortId}` |
 
 | Event | `data` |

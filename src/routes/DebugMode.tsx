@@ -34,6 +34,11 @@ export function DebugMode() {
   const { settings, refreshSketches } = useSettings();
   const refreshedRef = useRef(false);
   const [selected, setSelected] = useState<number | null>(null);
+  // Held here rather than inside `NodeDetail`, which is keyed by box and so
+  // remounts on every selection: a utility sketch's controls need the wide
+  // panel on box 2 for the same reason they needed it on box 1, and having to
+  // re-widen it each time is the kind of small friction that reads as a bug.
+  const [wide, setWide] = useState(false);
 
   useEffect(() => {
     if (status === "connected" && !refreshedRef.current) {
@@ -84,6 +89,8 @@ export function DebugMode() {
                   key={selected}
                   box={selected}
                   onBack={() => setSelected(null)}
+                  wide={wide}
+                  onToggleWide={() => setWide((current) => !current)}
                 />
               )}
             </AnimatePresence>

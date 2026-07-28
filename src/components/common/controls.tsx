@@ -13,6 +13,7 @@ export function Button({
   disabled = false,
   title,
   label,
+  className = "",
 }: {
   children: ReactNode;
   onClick: () => void;
@@ -32,6 +33,14 @@ export function Button({
   title?: string;
   /** Accessible name. Needed when the button's content is only an icon. */
   label?: string;
+  /**
+   * Layout-only additions (widths, alignment, wrapping) — visual identity
+   * stays here, exactly as on `Select` and `TextInput`. Do **not** pass
+   * padding or colour utilities: two conflicting utilities for one property
+   * are resolved by stylesheet order, not by string order, which is the trap
+   * `shape` exists to avoid.
+   */
+  className?: string;
 }) {
   const styles = {
     primary: "bg-pulsar text-void hover:brightness-108",
@@ -53,7 +62,7 @@ export function Button({
       disabled={disabled}
       title={title}
       aria-label={label ?? title}
-      className={`flex items-center gap-1.5 rounded-sm text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${sizing} ${styles}`}
+      className={`flex items-center gap-1.5 rounded-sm text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${sizing} ${styles} ${className}`}
     >
       {children}
     </button>

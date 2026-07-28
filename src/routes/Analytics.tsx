@@ -9,6 +9,7 @@ import { CohortHeatmap } from "@/components/analytics/CohortHeatmap";
 import { LearningCurves } from "@/components/analytics/LearningCurves";
 import { RewardedTrend } from "@/components/analytics/RewardedTrend";
 import { SessionRail } from "@/components/analytics/SessionRail";
+import { SessionStrategy } from "@/components/analytics/SessionStrategy";
 import { SessionSummary } from "@/components/analytics/SessionSummary";
 import { StrategySpace } from "@/components/analytics/StrategySpace";
 import { Button, Select } from "@/components/common/controls";
@@ -23,15 +24,17 @@ import {
   useSessionList,
   useSummary,
 } from "@/lib/analytics/context";
+import { useRunSeries } from "@/lib/analytics/series";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
-import type { AnalyticsSummary, RescanResult } from "@/lib/analytics/types";
-import { buildAnimalColors, dominantProfile } from "@/lib/analytics/view";
+import type { AnalyticsSummary, RescanResult, RunSummary } from "@/lib/analytics/types";
+import { buildAnimalColors, dominantProfile, runsInProfile } from "@/lib/analytics/view";
 import { useCohorts } from "@/lib/cohorts/context";
 import { springPanel } from "@/lib/motion";
 import { useSidecar } from "@/lib/ws/context";
 
 /** Stable empty reference, so the profile memo isn't invalidated every render. */
 const NO_PROFILES: AnalyticsSummary["profileGroups"] = [];
+const NO_RUNS: RunSummary[] = [];
 
 /**
  * The Analytics dashboard — the "Observatory" (`analytics.md` §2).
@@ -114,6 +117,20 @@ export function Analytics() {
         : (sessions.find((session) => session.id === sessionScope) ?? null),
     [sessions, sessionScope],
   );
+  // Fetched once here rather than in each panel: selecting a session puts the
+  // summary tile, the within-session strategy walk and the learning curves on
+  // screen together, and all three want the same `analytics.series` reply.
+  const sessionRuns = useMemo(
+    () =>
+      selectedSession && summary
+        ? runsInProfile(summary.runs, profile).filter(
+            (run) => run.sessionId === selectedSession.id,
+          )
+        : NO_RUNS,
+    [summary, profile, selectedSession],
+  );
+  const sessionSeries = useRunSeries(client, sessionRuns);
+
   const folderWarning = summary?.warnings.find((w) => w.code === "data-folder-missing");
   const runWarnings = useMemo(
     () => summary?.warnings.filter((w) => w.code !== "data-folder-missing") ?? [],
@@ -300,17 +317,27 @@ export function Analytics() {
             />
             <div className="flex min-w-0 flex-col gap-3">
               <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
-                <StrategySpace
-                  summary={summary}
-                  profile={profile}
-                  colors={colors}
-                  sessionScope={sessionScope}
-                />
+                {/* §4.4 — the two strategy panels share one plane and swap,
+                    never coexist: a line in one spans weeks and a line in the
+                    other spans an hour, and the frame cannot tell them apart. */}
+                {selectedSession ? (
+                  <SessionStrategy
+                    summary={summary}
+                    profile={profile}
+                    colors={colors}
+                    runs={sessionRuns}
+                    series={sessionSeries}
+                    revealKey={revealKey}
+                  />
+                ) : (
+                  <StrategySpace summary={summary} profile={profile} colors={colors} />
+                )}
                 <LearningCurves
                   summary={summary}
                   profile={profile}
                   colors={colors}
                   sessionScope={sessionScope}
+                  series={sessionSeries}
                 />
               </div>
               {/* Rewarded accuracy is an across-session trend by nature: one
@@ -343,6 +370,8 @@ export function Analytics() {
                 profile={profile}
                 colors={colors}
                 session={selectedSession}
+                runs={sessionRuns}
+                series={sessionSeries}
                 revealKey={revealKey}
               />
             )}

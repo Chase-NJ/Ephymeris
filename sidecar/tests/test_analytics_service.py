@@ -417,6 +417,28 @@ async def test_series_returns_a_trajectory_per_run(rig: Rig) -> None:
     assert first["n"] == [1, 2, 3, 4], "n is the window length behind each point"
 
 
+async def test_series_carries_the_strategy_walk_alongside_the_metrics(rig: Rig) -> None:
+    """One call feeds both the per-metric curves and the within-session
+    strategy panel — the file is already open and decoded here."""
+    session = rig.add_session("1", "2026-07-22")
+    run_id = rig.add_run(session, "a1", (HIT_1 + HIT_3) * 12)
+
+    entry = (await rig.service.series([run_id]))["series"][0]
+    assert entry["trail"], "a two-condition profile has a walk"
+    assert entry["trail"][-1] == {"trial": 24, "x": 1.0, "y": 1.0, "n": 12}
+
+
+async def test_the_walk_is_empty_for_a_profile_that_has_no_plane(rig: Rig) -> None:
+    """One condition is a coordinate, not a position."""
+    rig.write_sketch({**GRGL, "liveMetrics": [GRGL["liveMetrics"][0]]})
+    session = rig.add_session("1", "2026-07-22")
+    run_id = rig.add_run(session, "a1", HIT_1 * 20)
+
+    entry = (await rig.service.series([run_id]))["series"][0]
+    assert entry["metrics"], "the run still decodes — it just has no second axis"
+    assert entry["trail"] == []
+
+
 async def test_series_refuses_an_oversized_request(rig: Rig) -> None:
     with pytest.raises(ValueError):
         await rig.service.series([f"r{i}" for i in range(50)])

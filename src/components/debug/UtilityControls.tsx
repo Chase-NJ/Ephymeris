@@ -19,15 +19,27 @@ import { CMD } from "@/lib/ws/protocol";
  *  - `telemetry` parses the sketch's non-persisted `STATUS` lines out of
  *    `port.output` into a labelled strip. Nothing here is stored — it's live
  *    display only (`websocket-protocol.md` §5.4).
+ *
+ * **Nothing here truncates a name.** A control's label is the operator's only
+ * description of what it will do to the rig, and a profile is free to declare
+ * as many as the hardware has — so labels wrap and the layout gives way, never
+ * the other way round. `NodeDetail`'s width toggle then decides how many
+ * columns that layout gets.
  */
 export function UtilityControls({
   box,
   profile,
   canSend,
+  wide,
+  onRequestWidth,
 }: {
   box: number;
   profile: TaskProfile;
   canSend: boolean;
+  /** The panel is at its wide width — worth more grid columns. */
+  wide: boolean;
+  /** Widen the panel, or null when it already is. */
+  onRequestWidth: (() => void) | null;
 }) {
   const { client } = useSidecar();
   const lines = useBoxOutput(box);
@@ -49,6 +61,11 @@ export function UtilityControls({
   const inline = controls.filter((c) => c.type !== "grid");
   const grids = controls.filter((c) => c.type === "grid");
 
+  // How many channels the widest grid carries. A box with eighteen outputs is
+  // the case that made the docked width untenable, so the offer to widen is
+  // driven by that count rather than shown unconditionally.
+  const busiest = Math.max(0, ...grids.map((c) => c.channels?.length ?? 0));
+
   return (
     <div className="border-t border-halo px-2.5 py-2">
       {inline.length > 0 && (
@@ -62,6 +79,9 @@ export function UtilityControls({
                 onClick={() => c.command && send(c.command)}
                 disabled={!canSend || !c.command}
                 title={canSend ? (c.command ?? c.label) : "Open passthrough to control"}
+                // A long label wraps inside the button rather than pushing it
+                // past the panel edge — the name is the point of the control.
+                className="max-w-full text-left whitespace-normal"
               >
                 {c.label}
               </Button>
@@ -77,8 +97,19 @@ export function UtilityControls({
           status={status}
           disabled={!canSend}
           onSend={send}
+          wide={wide}
         />
       ))}
+
+      {onRequestWidth && busiest > 6 && (
+        <button
+          type="button"
+          onClick={onRequestWidth}
+          className="mt-1.5 text-left text-[10px] text-static underline decoration-halo underline-offset-2 hover:text-starlight"
+        >
+          {busiest} channels — widen the panel for more room
+        </button>
+      )}
 
       {telemetry && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -102,13 +133,21 @@ export function UtilityControls({
 }
 
 /**
- * A `grid` control: one row per piece of hardware, each with a live state lamp
+ * A `grid` control: one cell per piece of hardware, each with a live state lamp
  * and its own toggle/pulse.
  *
  * A box has 18 controllable outputs; as flat buttons that would be 36 controls
  * in a wrapped row with no indication of which are open. The grid exists so a
  * lab tech priming a line can see, at a glance, exactly what is energized —
  * which for solenoids on a fluid rig is a safety readout, not a convenience.
+ *
+ * **The label gets its own line, above the buttons.** Sharing a row with them
+ * left it whatever width was left over, which at the docked panel width was
+ * about eight characters — so `Left water solenoid` and `Left odor valve`
+ * rendered as the same ellipsis, on a control that opens a fluid line. Stacking
+ * costs vertical space in a panel that already scrolls, and buys a name that is
+ * correct at every width. The label wraps rather than truncating for the same
+ * reason.
  *
  * The lamp reads the channel's `state` telemetry key: "1"/"open"/"true" is
  * energized, anything else is closed, and an absent key means the sketch
@@ -120,11 +159,13 @@ function ChannelGrid({
   status,
   disabled,
   onSend,
+  wide,
 }: {
   control: Control;
   status: Record<string, string> | null;
   disabled: boolean;
   onSend: (command: string) => void;
+  wide: boolean;
 }) {
   const channels = control.channels ?? [];
   if (channels.length === 0) return null;
@@ -132,7 +173,10 @@ function ChannelGrid({
   return (
     <div className="mt-2">
       <div className="mb-1 text-[11px] text-static">{control.label}</div>
-      <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+      {/* Column count follows the panel's own width, not the viewport's — a
+          `sm:` breakpoint would key an 820px panel's layout to the size of the
+          monitor it happens to be on. */}
+      <div className={`grid gap-1 ${wide ? "grid-cols-3" : "grid-cols-2"}`}>
         {channels.map((ch) => {
           const raw = ch.state ? status?.[ch.state] : undefined;
           const known = raw !== undefined;
@@ -140,45 +184,51 @@ function ChannelGrid({
           return (
             <div
               key={ch.label}
-              className="flex items-center gap-2 rounded-sm border border-halo px-2 py-1"
+              className="flex flex-col gap-1 rounded-sm border border-halo px-2 py-1.5"
             >
-              <motion.span
-                className="size-1.5 shrink-0 rounded-full"
-                animate={{
-                  backgroundColor: !known
-                    ? "var(--color-halo)"
-                    : on
-                      ? "var(--color-status-ok)"
-                      : "var(--color-static)",
-                  opacity: known && !on ? 0.4 : 1,
-                }}
-                transition={springSnappy}
-              />
-              <span
-                className={`min-w-0 flex-1 truncate font-mono text-[11px] ${
-                  on ? "text-starlight" : "text-static"
-                }`}
-              >
-                {ch.label}
+              <span className="flex items-start gap-1.5">
+                <motion.span
+                  className="mt-[5px] size-1.5 shrink-0 rounded-full"
+                  animate={{
+                    backgroundColor: !known
+                      ? "var(--color-halo)"
+                      : on
+                        ? "var(--color-status-ok)"
+                        : "var(--color-static)",
+                    opacity: known && !on ? 0.4 : 1,
+                  }}
+                  transition={springSnappy}
+                />
+                <span
+                  className={`min-w-0 font-mono text-[11px] leading-snug break-words ${
+                    on ? "text-starlight" : "text-static"
+                  }`}
+                >
+                  {ch.label}
+                </span>
               </span>
-              {ch.toggle && (
-                <Button
-                  onClick={() => onSend(ch.toggle!)}
-                  disabled={disabled}
-                  title={disabled ? "Open passthrough to control" : ch.toggle}
-                >
-                  {on ? "Close" : "Open"}
-                </Button>
-              )}
-              {ch.pulse && (
-                <Button
-                  variant="ghost"
-                  onClick={() => onSend(ch.pulse!)}
-                  disabled={disabled}
-                  title={disabled ? "Open passthrough to control" : ch.pulse}
-                >
-                  Pulse
-                </Button>
+              {(ch.toggle || ch.pulse) && (
+                <span className="flex flex-wrap items-center gap-1">
+                  {ch.toggle && (
+                    <Button
+                      onClick={() => onSend(ch.toggle!)}
+                      disabled={disabled}
+                      title={disabled ? "Open passthrough to control" : ch.toggle}
+                    >
+                      {on ? "Close" : "Open"}
+                    </Button>
+                  )}
+                  {ch.pulse && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => onSend(ch.pulse!)}
+                      disabled={disabled}
+                      title={disabled ? "Open passthrough to control" : ch.pulse}
+                    >
+                      Pulse
+                    </Button>
+                  )}
+                </span>
               )}
             </div>
           );
@@ -206,6 +256,9 @@ function SelectControl({
       label={control.label}
       value={value}
       disabled={disabled}
+      // A long option name sizes the select; capping it at the row keeps that
+      // from pushing the whole strip past the panel edge.
+      className="max-w-full"
       options={options.map((o) => ({ value: o.command, label: o.label }))}
       onChange={(next) => {
         setValue(next);

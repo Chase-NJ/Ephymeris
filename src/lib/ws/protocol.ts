@@ -602,6 +602,22 @@ export interface TrialOutcomes {
   sideHigh: number | null;
 }
 
+/**
+ * TrialOutcomes restricted to one declared condition (`analytics.md` §3.9), in authored
+ * liveMetrics order. Answers 'how many trials of this kind were administered, and how many of
+ * those paid out'.
+ */
+export interface ConditionOutcomes {
+  metricId: string;
+  label: string;
+  /**
+   * The code that opens this condition's trials — what splits the tally. Two metrics sharing one
+   * legitimately cover the same trials.
+   */
+  triggerCode: number;
+  outcomes: TrialOutcomes;
+}
+
 export type RunStatus = "ok" | "no-metrics" | "missing" | "unreadable";
 
 /**
@@ -635,6 +651,11 @@ export interface RunSummary {
    * 'this task has no notion of a reward delivery' is not 'this animal earned nothing'.
    */
   outcomes: TrialOutcomes | null;
+  /**
+   * Empty — not null — whenever `outcomes` is null: there is no separate claim to make about a
+   * task that can't express an outcome at all.
+   */
+  conditions: ConditionOutcomes[];
   totalEvents: number;
   durationMs: number | null;
   stopReason: string | null;
@@ -706,10 +727,30 @@ export interface MetricSeries {
   windowSize: number;
 }
 
+/** One sample of the within-session strategy walk (`analytics.md` §4.4). */
+export interface StrategyPoint {
+  /**
+   * Counted trials resolved across *both* conditions at this sample — the only shared clock the
+   * two metrics have.
+   */
+  trial: number;
+  x: number;
+  y: number;
+  /** The smaller of the two rolling window lengths. */
+  n: number;
+}
+
 export interface RunSeries {
   runId: string;
   mode: "rolling" | "cumulative";
   metrics: MetricSeries[];
+  /**
+   * The joint walk through the strategy plane. Always rolling, whatever `mode` is — 'what
+   * strategy is running right now' is a rolling question. Empty unless the profile declares
+   * exactly two conditions. Cannot be assembled client-side from `metrics`: those are indexed by
+   * each metric's own counted trials, which interleave.
+   */
+  trail: StrategyPoint[];
 }
 
 export interface SeriesResult {

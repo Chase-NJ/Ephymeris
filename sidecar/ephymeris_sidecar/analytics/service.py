@@ -233,11 +233,18 @@ class AnalyticsService:
             metrics = derive.series(
                 result.document, resolved.profile, mode=mode, metric_ids=metric_ids
             )
+            # The joint walk rides along with the per-metric series rather than
+            # taking a command of its own: the file is already open and already
+            # decoded here, and the one panel that wants it is on the same
+            # screen as the ones that want the series. It is empty for any
+            # profile that doesn't declare exactly two conditions.
+            trail = derive.strategy_trail(result.document, resolved.profile)
             out.append(
                 {
                     "runId": run_id,
                     "mode": mode,
                     "metrics": [m.to_json() for m in metrics],
+                    "trail": [p.to_json() for p in trail],
                 }
             )
         return {"series": out, "warnings": warnings}

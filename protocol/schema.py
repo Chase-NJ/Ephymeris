@@ -571,6 +571,24 @@ SHAPES = (
         "from the declared metrics, which are reward-*unconditional* — they "
         "score a detected poke whether or not the fluid hold cleared.",
     ),
+    Shape(
+        "ConditionOutcomes",
+        obj(
+            f("metricId", STR),
+            f("label", STR),
+            f(
+                "triggerCode",
+                INT,
+                doc="The code that opens this condition's trials — what splits "
+                "the tally. Two metrics sharing one legitimately cover the "
+                "same trials.",
+            ),
+            f("outcomes", Ref("TrialOutcomes")),
+        ),
+        doc="TrialOutcomes restricted to one declared condition (`analytics.md` "
+        "§3.9), in authored liveMetrics order. Answers 'how many trials of this "
+        "kind were administered, and how many of those paid out'.",
+    ),
     Shape("RunStatus", lit("ok", "no-metrics", "missing", "unreadable")),
     Shape(
         "ProfileSource",
@@ -609,6 +627,13 @@ SHAPES = (
                 doc="Null when the profile declares no reward vocabulary (§3.8) — "
                 "absent rather than zeroed, since 'this task has no notion of a "
                 "reward delivery' is not 'this animal earned nothing'.",
+            ),
+            f(
+                "conditions",
+                ListOf(Ref("ConditionOutcomes")),
+                doc="Empty — not null — whenever `outcomes` is null: there is no "
+                "separate claim to make about a task that can't express an "
+                "outcome at all.",
             ),
             f("totalEvents", INT),
             f("durationMs", nullable(FLOAT)),
@@ -681,11 +706,36 @@ SHAPES = (
         ),
     ),
     Shape(
+        "StrategyPoint",
+        obj(
+            f(
+                "trial",
+                INT,
+                doc="Counted trials resolved across *both* conditions at this "
+                "sample — the only shared clock the two metrics have.",
+            ),
+            f("x", FLOAT),
+            f("y", FLOAT),
+            f("n", INT, doc="The smaller of the two rolling window lengths."),
+        ),
+        doc="One sample of the within-session strategy walk (`analytics.md` §4.4).",
+    ),
+    Shape(
         "RunSeries",
         obj(
             f("runId", STR),
             f("mode", lit("rolling", "cumulative")),
             f("metrics", ListOf(Ref("MetricSeries"))),
+            f(
+                "trail",
+                ListOf(Ref("StrategyPoint")),
+                doc="The joint walk through the strategy plane. Always rolling, "
+                "whatever `mode` is — 'what strategy is running right now' is a "
+                "rolling question. Empty unless the profile declares exactly two "
+                "conditions. Cannot be assembled client-side from `metrics`: "
+                "those are indexed by each metric's own counted trials, which "
+                "interleave.",
+            ),
         ),
     ),
     Shape(

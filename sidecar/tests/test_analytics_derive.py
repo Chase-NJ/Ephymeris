@@ -190,6 +190,158 @@ def test_rewarded_accuracy_is_independent_of_the_declared_metrics() -> None:
     assert summary2.outcomes.p_side == 0.5
 
 
+# --- §3.9 the same tally, per condition ------------------------------------
+
+#: Odor 3's mirror of the odor-1 fixtures above — left is the correct well.
+REWARDED_3 = [103, 226, 248, 252, 369]
+HOLD_FAIL_3 = [103, 226, 248, 250]
+WRONG_3 = [103, 226, 249, 258]
+ABORTED_3 = [103, 225]
+
+
+def test_conditions_split_the_tally_by_which_odor_opened_the_trial() -> None:
+    """The question the session tile asks: how many go-right trials were
+    administered, and how many of those actually paid out."""
+    codes = REWARDED_1 * 3 + WRONG_1 + REWARDED_3 + WRONG_3 * 2
+    conditions = derive.conditions_of(codes, FULL_PROFILE)
+    assert [c.metric_id for c in conditions] == ["p_r_odor1", "p_l_odor3"]
+
+    odor1, odor3 = (c.outcomes for c in conditions)
+    assert (odor1.administered, odor1.rewarded) == (4, 3)
+    assert (odor3.administered, odor3.rewarded) == (3, 1)
+
+
+def test_the_conditions_sum_to_the_pooled_tally() -> None:
+    """Every trial belongs to exactly one condition, so the split is a
+    partition rather than a second, independently-drifting count."""
+    codes = (
+        REWARDED_1 * 2 + HOLD_FAIL_1 + WRONG_1 + NO_RESPONSE_1 + ABORTED_1
+        + REWARDED_3 + HOLD_FAIL_3 * 2 + WRONG_3 + ABORTED_3
+    )
+    pooled = derive.outcomes_of(codes, FULL_PROFILE)
+    conditions = derive.conditions_of(codes, FULL_PROFILE)
+    assert pooled is not None
+
+    for attribute in (
+        "trials",
+        "administered",
+        "rewarded",
+        "hold_failed",
+        "wrong_well",
+        "no_response",
+        "aborted",
+    ):
+        assert getattr(pooled, attribute) == sum(
+            getattr(c.outcomes, attribute) for c in conditions
+        ), attribute
+
+
+def test_a_condition_the_animal_never_saw_is_zeroed_not_missing() -> None:
+    """A declared condition with no trials still gets a row — "odor 3 never
+    came up" is a fact about the session, not an absent one."""
+    conditions = derive.conditions_of(REWARDED_1 * 3, FULL_PROFILE)
+    assert len(conditions) == 2
+    assert conditions[1].outcomes.trials == 0
+    # And a rate over nothing stays None rather than collapsing to 0.0.
+    assert conditions[1].outcomes.p_rewarded is None
+
+
+def test_conditions_are_empty_when_the_vocabulary_cannot_express_an_outcome() -> None:
+    assert derive.conditions_of(HIT_1 + HIT_3, PROFILE) == []
+    assert derive.conditions_of(HIT_1, None) == []
+
+
+def test_conditions_ride_along_on_the_summary() -> None:
+    payload = derive.summarize(document(REWARDED_1 + WRONG_3), FULL_PROFILE).to_json()
+    assert [c["metricId"] for c in payload["conditions"]] == ["p_r_odor1", "p_l_odor3"]
+    assert payload["conditions"][0]["label"] == "P(R | Odor 1)"
+    assert payload["conditions"][0]["triggerCode"] == 101
+    assert payload["conditions"][0]["outcomes"]["rewarded"] == 1
+    assert payload["conditions"][1]["outcomes"]["wrongWell"] == 1
+    # Empty, not null, when the profile can't express an outcome at all.
+    assert derive.summarize(document(HIT_1), PROFILE).to_json()["conditions"] == []
+
+
+# --- §4.4 the within-session strategy walk ---------------------------------
+
+
+def test_the_trail_pairs_both_conditions_on_one_clock() -> None:
+    """The whole reason this lives in the sidecar: the per-metric series are
+    indexed by each metric's *own* counted trials, which interleave, so index
+    k of one is not the same moment as index k of the other."""
+    codes = (HIT_1 + HIT_3) * 15
+    trail = derive.strategy_trail(document(codes), PROFILE)
+    assert trail, "thirty counted trials should produce a walk"
+    # A perfect discriminator sits in the top-right corner the whole way.
+    assert all(point.x == 1.0 and point.y == 1.0 for point in trail)
+    # The clock counts trials across both conditions, so it is strictly
+    # increasing and ends at the total.
+    assert [p.trial for p in trail] == sorted({p.trial for p in trail})
+    assert trail[-1].trial == 30
+
+
+def test_the_trail_shows_a_bias_becoming_discrimination_within_one_session() -> None:
+    """The shape the cross-session space cannot show: an animal that answered
+    right for the first half and discriminated in the second lands in the same
+    end-of-session place as one that was steady throughout."""
+    biased = (HIT_1 + MISS_3) * 20  # always right: on the bias anti-diagonal
+    learned = (HIT_1 + HIT_3) * 20  # discriminating: the corner
+    trail = derive.strategy_trail(document(biased + learned), PROFILE)
+    start, end = trail[0], trail[-1]
+    assert start.y < 0.25, "the run opens answering the same side regardless"
+    assert end.y > 0.75, "and closes discriminating"
+    # The window is rolling, so the ending point is the *current* strategy —
+    # not the whole-session average, which would still be near chance here.
+    assert end.x == 1.0
+
+
+def test_the_trail_needs_exactly_two_conditions() -> None:
+    one_metric = parse_profile({**GRGL, "liveMetrics": [GRGL["liveMetrics"][0]]})
+    assert derive.strategy_trail(document(HIT_1 * 4), one_metric) == []
+    assert derive.strategy_trail(document(HIT_1), None) == []
+
+
+def test_the_trail_starts_only_once_both_conditions_have_scored() -> None:
+    """A coordinate and a blank is not a point."""
+    assert derive.strategy_trail(document(HIT_1 * 30), PROFILE) == []
+
+
+def test_the_trail_does_not_begin_pinned_to_a_corner() -> None:
+    """A rolling proportion over one trial is exactly 0.0 or 1.0.
+
+    Left unfiltered the walk opens in a corner of the plane and thrashes
+    between the edges — an artefact of the estimator that reads as a behaviour,
+    which is the failure worth a test rather than the obvious one.
+    """
+    codes = (HIT_1 + MISS_1 + HIT_3 + MISS_3) * 10
+    trail = derive.strategy_trail(document(codes), PROFILE)
+    assert trail
+    # Every point rests on a real window, so none of them can be a bare 0/1.
+    assert all(point.n >= derive.DEFAULT_MIN_COUNTED for point in trail)
+    assert 0.0 < trail[0].x < 1.0 and 0.0 < trail[0].y < 1.0
+
+
+def test_the_trail_reports_the_weaker_of_the_two_windows() -> None:
+    """A point is only as trustworthy as the condition supporting it least."""
+    # Odor 1 fills its window well ahead of odor 3, so odor 3 is the binding
+    # constraint on both when the walk starts and on `n` throughout.
+    codes = HIT_1 * 25 + (HIT_1 + HIT_3) * 10
+    point = derive.strategy_trail(document(codes), PROFILE)[0]
+    assert point.n == derive.DEFAULT_MIN_COUNTED
+    assert point.to_json() == {"trial": 45, "x": 1.0, "y": 1.0, "n": 10}
+
+
+def test_a_window_shorter_than_the_floor_still_produces_a_walk() -> None:
+    """Capping the requirement at the authored window is what keeps a
+    small-window profile from silently getting no walk at all."""
+    short = parse_profile({
+        **GRGL,
+        "liveMetrics": [{**m, "windowSize": 4} for m in GRGL["liveMetrics"]],
+    })
+    trail = derive.strategy_trail(document((HIT_1 + HIT_3) * 6), short)
+    assert trail and all(point.n == 4 for point in trail)
+
+
 # --- §3.1 the boundary-code trap ------------------------------------------
 
 

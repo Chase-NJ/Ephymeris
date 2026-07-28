@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
 import { UnitChart, segmentsWithGaps, type BandPoint } from "@/components/charts/UnitChart";
-import { getSeries } from "@/lib/analytics/commands";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
 import type {
   AnalyticsSummary,
@@ -16,14 +15,14 @@ import {
   pickMetric,
   runsInProfile,
 } from "@/lib/analytics/view";
-import { useSidecar } from "@/lib/ws/context";
 
 /**
  * P(correct) over time (`analytics.md` §5).
  *
  * Two resolutions, chosen by the session selector: across sessions it is one
  * point per session at whole-session P; within one session it is the rolling
- * value per counted trial, fetched from `analytics.series`.
+ * value per counted trial, from the `analytics.series` reply the route fetches
+ * once for every panel that needs it.
  *
  * The x axis is **trial index, never time**. Timestamps are elapsed since each
  * animal's own start, animals in one session begin minutes apart, and stream
@@ -35,11 +34,15 @@ export function LearningCurves({
   profile,
   colors,
   sessionScope,
+  series,
 }: {
   summary: AnalyticsSummary;
   profile: ProfileGroup | null;
   colors: Map<string, string>;
   sessionScope: string;
+  /** The selected session's trajectories. Empty across sessions, where the
+   *  curves are built from the summary's per-session scalars instead. */
+  series: RunSeries[];
 }) {
   const withinSession = sessionScope !== ALL_SESSIONS;
   const runsInScope = useMemo(
@@ -49,7 +52,6 @@ export function LearningCurves({
         : [],
     [summary, profile, sessionScope, withinSession],
   );
-  const series = useRunSeries(withinSession ? runsInScope : []);
 
   // Within a session the pooled figure has no series: `analytics.series`
   // replays each declared condition separately, and pooling interleaved trials
@@ -109,33 +111,6 @@ export function LearningCurves({
       ))}
     </div>
   );
-}
-
-/** Fetches the rolling trajectories for the runs currently on screen. */
-function useRunSeries(runs: RunSummary[]): RunSeries[] {
-  const { client } = useSidecar();
-  const [series, setSeries] = useState<RunSeries[]>([]);
-  const ids = runs.map((run) => run.runId).join(",");
-
-  useEffect(() => {
-    if (!ids) {
-      setSeries([]);
-      return;
-    }
-    let live = true;
-    void getSeries(client, ids.split(","))
-      .then((result) => {
-        if (live) setSeries(result.series);
-      })
-      .catch(() => {
-        if (live) setSeries([]);
-      });
-    return () => {
-      live = false;
-    };
-  }, [client, ids]);
-
-  return series;
 }
 
 function withinSessionLines(

@@ -12,6 +12,8 @@ import type { ProfileGroup, ProfileSource } from "@/lib/ws/protocol";
 export type {
   SessionListItem,
   MetricSummary,
+  TrialOutcomes,
+  ConditionOutcomes,
   RunStatus,
   ProfileSource,
   RunSummary,
@@ -22,6 +24,7 @@ export type {
   AnalyticsAnimal,
   AnalyticsSummary,
   MetricSeries,
+  StrategyPoint,
   RunSeries,
   SeriesResult,
   RescanOrphan,

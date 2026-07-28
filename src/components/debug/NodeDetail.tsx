@@ -2,6 +2,8 @@ import { motion } from "framer-motion";
 import {
   ArrowLeft,
   Check,
+  ChevronsLeftRight,
+  ChevronsRightLeft,
   CircleAlert,
   Copy,
   RotateCcw,
@@ -54,6 +56,15 @@ import type { TaskProfile } from "@/lib/sessions/types";
  * The UI disables what the current state forbids, but that's a courtesy — the
  * sidecar enforces the rules, and any rejection it returns is surfaced in the
  * Connection group rather than swallowed (§6.3).
+ *
+ * **The panel widens on request.** A utility sketch declares its own controls
+ * (`data-saving.md` §6.6), and a box with eighteen controllable outputs has
+ * eighteen named channels — at the docked width those names are the first
+ * thing to be truncated, which turns a fluid rig's control surface into a
+ * column of ellipses. Widening is a deliberate toggle rather than something
+ * that happens on its own: the panel covers the constellation it is docked
+ * over, so how much of the scene to trade for control real estate is the
+ * operator's call, not a heuristic on a sketch's control count.
  */
 
 const LINE_ENDING_OPTIONS = [
@@ -63,7 +74,17 @@ const LINE_ENDING_OPTIONS = [
   { value: "crlf", label: "CRLF" },
 ] as const;
 
-export function NodeDetail({ box, onBack }: { box: number; onBack: () => void }) {
+export function NodeDetail({
+  box,
+  onBack,
+  wide,
+  onToggleWide,
+}: {
+  box: number;
+  onBack: () => void;
+  wide: boolean;
+  onToggleWide: () => void;
+}) {
   const { client, status: connStatus } = useSidecar();
   const { settings } = useSettings();
   const port = usePortStatus(box);
@@ -180,13 +201,39 @@ export function NodeDetail({ box, onBack }: { box: number; onBack: () => void })
       // Above the nameplates, which drei renders as DOM at z-index <= 10. A
       // crisp plate drifting over a control would be worse than the star it
       // labels being hidden.
-      className="pointer-events-auto absolute top-4 right-4 bottom-4 z-20 w-[420px] overflow-y-auto rounded-lg border border-halo bg-nebula/80 p-4 backdrop-blur-xl"
+      //
+      // The wide width is capped against the scene rather than fixed, so on a
+      // laptop it becomes "nearly the whole frame" instead of overflowing it.
+      className={`pointer-events-auto absolute top-4 right-4 bottom-4 z-20 overflow-y-auto rounded-lg border border-halo bg-nebula/80 p-4 backdrop-blur-xl ${
+        wide ? "w-[min(820px,calc(100%-2rem))]" : "w-[420px]"
+      }`}
+      // The width is a layout change, not a decorative one — animating it lets
+      // the eye follow what moved instead of re-finding every control.
+      layout
     >
       <div className="flex items-center gap-3">
         <Button variant="ghost" onClick={onBack} title="Back to the constellation (Esc)">
           <ArrowLeft size={13} strokeWidth={1.75} />
           Constellation
         </Button>
+        <div className="ml-auto">
+          <Button
+            variant="ghost"
+            shape="icon"
+            onClick={onToggleWide}
+            title={
+              wide
+                ? "Narrow the panel, showing more of the constellation"
+                : "Widen the panel, for sketches with many controls"
+            }
+          >
+            {wide ? (
+              <ChevronsRightLeft size={14} strokeWidth={1.75} />
+            ) : (
+              <ChevronsLeftRight size={14} strokeWidth={1.75} />
+            )}
+          </Button>
+        </div>
       </div>
 
       <h2 className="mt-3 font-display text-[18px] text-starlight">
@@ -315,7 +362,13 @@ export function NodeDetail({ box, onBack }: { box: number; onBack: () => void })
               </div>
             </div>
             {profile?.kind === "utility" && (
-              <UtilityControls box={box} profile={profile} canSend={canSend} />
+              <UtilityControls
+                box={box}
+                profile={profile}
+                canSend={canSend}
+                wide={wide}
+                onRequestWidth={wide ? null : onToggleWide}
+              />
             )}
           </Group>
 

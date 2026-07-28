@@ -1,32 +1,37 @@
 import { motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { getSeries } from "@/lib/analytics/commands";
 import { useIsHighlighted, useAnalyticsStore } from "@/lib/analytics/context";
 import type {
   AnalyticsSummary,
+  ConditionOutcomes,
+  MetricSummary,
   ProfileGroup,
   RunSeries,
   RunSummary,
   SessionListItem,
+  TrialOutcomes,
 } from "@/lib/analytics/types";
-import { declaredMetrics, poolOutcomes, runsInProfile } from "@/lib/analytics/view";
+import { declaredMetrics, poolOutcomes } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
-import { useSidecar } from "@/lib/ws/context";
 
 /**
- * One session, per animal (`analytics.md` §3.8, §6.2).
+ * One session, per animal (`analytics.md` §3.8, §3.9, §6.3).
  *
  * The panel answers "what happened in this session" at a glance, which the
  * cohort-scale views deliberately cannot: they compare sessions, this one
  * opens a single one up.
  *
- * Per animal it shows the declared conditions as within-session trajectories,
- * then the outcome breakdown those trajectories cannot express — because the
- * declared metrics are **reward-unconditional** (§3.8). An animal can score
- * well on P(R | Odor 1) while earning almost nothing, if it keeps releasing
- * the well before the fluid hold clears. The two accuracies are therefore
- * shown side by side, and the gap between them *is* the hold-failure rate.
+ * **One card per animal, not one row.** The per-condition counts (§3.9) need a
+ * second dimension — a row carrying trials, administered, two conditions'
+ * administered and rewarded counts, two trajectories and two bars is a row
+ * nobody can read.
+ *
+ * Each card reads top to bottom as: the effort (trials, administered,
+ * aborted), then each declared condition's own administered/rewarded counts
+ * with its trajectory, then the two accuracies as one bar, then how the
+ * administered trials resolved. The accuracies come last of the numbers
+ * because `administered` is their denominator and is stated first.
  */
 
 /** The trial-outcome palette. Deliberately the heat ramp's ends plus the
@@ -43,23 +48,22 @@ export function SessionSummary({
   profile,
   colors,
   session,
+  runs,
+  series,
   revealKey,
 }: {
   summary: AnalyticsSummary;
   profile: ProfileGroup | null;
   colors: Map<string, string>;
   session: SessionListItem;
+  runs: RunSummary[];
+  series: RunSeries[];
   revealKey: string;
 }) {
-  const runs = useMemo(
-    () => runsInProfile(summary.runs, profile).filter((run) => run.sessionId === session.id),
-    [summary, profile, session.id],
-  );
   const names = useMemo(
     () => new Map(summary.animals.map((animal) => [animal.id, animal.name])),
     [summary],
   );
-  const series = useRunSeries(runs);
   const conditions = declaredMetrics(profile);
   const pooled = poolOutcomes(runs);
 
@@ -104,30 +108,14 @@ export function SessionSummary({
         </span>
       </div>
 
-      {/* Column headers, so the numbers below never need a legend lookup. */}
-      <div className="mt-3 grid grid-cols-[minmax(64px,1fr)_repeat(3,minmax(0,1.15fr))_minmax(0,1.6fr)] items-end gap-x-3 border-b border-halo pb-1 text-[10px] text-static/70">
-        <span>animal</span>
-        {conditions.map((metric) => (
-          <span key={metric.id} className="truncate">
-            {metric.label}
-          </span>
-        ))}
-        {conditions.length < 2 &&
-          Array.from({ length: 2 - conditions.length }, (_, i) => <span key={`pad-${i}`} />)}
-        <span>
-          rewarded <span className="text-static/50">/ side</span>
-        </span>
-        <span>outcome of administered trials</span>
-      </div>
-
-      <div className="flex flex-col">
+      <div className="mt-3 grid grid-cols-1 gap-2 xl:grid-cols-2">
         {runs.map((run, index) => (
-          <AnimalRow
+          <AnimalCard
             key={run.runId}
             run={run}
             name={names.get(run.animalId) ?? run.animalId}
             color={colors.get(run.animalId) ?? "var(--color-series-1)"}
-            conditions={conditions.map((metric) => metric.id)}
+            conditions={conditions}
             series={series.find((entry) => entry.runId === run.runId) ?? null}
             index={index}
             revealKey={revealKey}
@@ -141,11 +129,11 @@ export function SessionSummary({
 }
 
 /**
- * One animal's row. A separate component per animal because that is what the
+ * One animal's card. A separate component per animal because that is what the
  * cross-panel highlight scheme requires (`context.ts`'s `useIsHighlighted`
  * invariant) — a single component looping over animals would silently lose it.
  */
-function AnimalRow({
+function AnimalCard({
   run,
   name,
   color,
@@ -157,7 +145,7 @@ function AnimalRow({
   run: RunSummary;
   name: string;
   color: string;
-  conditions: string[];
+  conditions: ProfileGroup["metrics"];
   series: RunSeries | null;
   index: number;
   revealKey: string;
@@ -165,61 +153,122 @@ function AnimalRow({
   const store = useAnalyticsStore();
   const highlighted = useIsHighlighted(run.animalId);
   const outcomes = run.outcomes;
+  const byMetric = new Map(run.conditions.map((entry) => [entry.metricId, entry]));
 
   return (
     <motion.div
-      className={`grid grid-cols-[minmax(64px,1fr)_repeat(3,minmax(0,1.15fr))_minmax(0,1.6fr)] items-center gap-x-3 rounded-sm px-1 py-1.5 transition-colors ${
-        highlighted ? "bg-halo" : ""
+      className={`rounded-sm border px-3 py-2.5 transition-colors ${
+        highlighted ? "border-static/40 bg-halo/50" : "border-halo"
       }`}
       onPointerEnter={() => store.hoverAnimal(run.animalId)}
       onPointerLeave={() => store.hoverAnimal(null)}
-      initial={{ opacity: 0, x: -6 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ ...springSnappy, delay: index * 0.05 }}
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ ...springSnappy, delay: index * 0.04 }}
     >
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span
-          className="size-2 shrink-0 rounded-full"
-          style={{ background: color, opacity: highlighted ? 1 : 0.85 }}
-        />
-        <span
-          className={`truncate text-[12px] ${highlighted ? "text-starlight" : "text-static"}`}
-        >
-          {name}
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span
+            className="size-2 shrink-0 rounded-full"
+            style={{ background: color, opacity: highlighted ? 1 : 0.85 }}
+          />
+          <span
+            className={`truncate text-[12px] ${highlighted ? "text-starlight" : "text-static"}`}
+          >
+            {name}
+          </span>
         </span>
-      </span>
+        <Effort outcomes={outcomes} />
+      </div>
 
-      {/* The declared conditions, as within-session trajectories. */}
-      {conditions.map((metricId) => (
-        <ConditionSpark
-          key={metricId}
-          values={series?.metrics.find((m) => m.id === metricId)?.values ?? []}
+      {/* Per condition (§3.9): how many trials of this kind were administered,
+          and how many of those paid out. */}
+      <div className="mt-2 grid grid-cols-[minmax(0,1fr)_72px_60px_minmax(52px,1fr)] items-center gap-x-2 border-b border-halo pb-1 font-mono text-[9px] text-static/70">
+        <span>condition</span>
+        <span className="text-right">administered</span>
+        <span className="text-right">rewarded</span>
+        <span className="text-right">trajectory</span>
+      </div>
+      {conditions.map((metric) => (
+        <ConditionRow
+          key={metric.id}
+          label={metric.label}
+          condition={byMetric.get(metric.id) ?? null}
+          fallback={run.metrics.find((m) => m.id === metric.id) ?? null}
+          values={series?.metrics.find((m) => m.id === metric.id)?.values ?? []}
           color={color}
-          revealKey={`${revealKey}:${run.runId}:${metricId}`}
+          revealKey={`${revealKey}:${run.runId}:${metric.id}`}
         />
       ))}
-      {conditions.length < 2 &&
-        Array.from({ length: 2 - conditions.length }, (_, i) => <span key={`pad-${i}`} />)}
 
-      {/* The third figure the conditions cannot give: what was actually earned. */}
-      <span className="font-mono text-[11px] tabular-nums">
-        {outcomes === null ? (
-          <span className="text-static/60">—</span>
-        ) : (
-          <>
-            <span style={{ color: OUTCOME_STYLE.rewarded.fill }}>
-              {outcomes.pRewarded === null ? "—" : pct(outcomes.pRewarded)}
-            </span>
-            <span className="text-static/50"> / </span>
-            <span className="text-starlight">
-              {outcomes.pSide === null ? "—" : pct(outcomes.pSide)}
-            </span>
-          </>
-        )}
-      </span>
-
-      <OutcomeBar run={run} index={index} revealKey={revealKey} />
+      <RewardGap outcomes={outcomes} index={index} revealKey={revealKey} />
+      <OutcomeBar outcomes={outcomes} index={index} revealKey={revealKey} />
     </motion.div>
+  );
+}
+
+/**
+ * Trials, administered, aborted — the header every rate below is a fraction of.
+ *
+ * `trials` and `administered` are both shown because they are different facts:
+ * 200 trials with 90 administered is a very different session from 200 with
+ * 195 at identical accuracy (§3.8).
+ */
+function Effort({ outcomes }: { outcomes: TrialOutcomes | null }) {
+  if (!outcomes) {
+    return <span className="font-mono text-[10px] text-static/50">no outcome data</span>;
+  }
+  return (
+    <span className="shrink-0 font-mono text-[10px] tabular-nums text-static/80">
+      <span className="text-starlight">{outcomes.trials}</span> trials ·{" "}
+      <span className="text-starlight">{outcomes.administered}</span> administered
+      {outcomes.aborted > 0 && <> · {outcomes.aborted} aborted</>}
+    </span>
+  );
+}
+
+/**
+ * One declared condition's counts and trajectory.
+ *
+ * When the profile declares no reward vocabulary there is no per-condition
+ * tally to show (§3.9), so the row falls back to the metric's own scored-trial
+ * count and says nothing at all about rewards — a dash rather than a zero,
+ * because "this task has no notion of a reward" is not "none was earned".
+ */
+function ConditionRow({
+  label,
+  condition,
+  fallback,
+  values,
+  color,
+  revealKey,
+}: {
+  label: string;
+  condition: ConditionOutcomes | null;
+  fallback: MetricSummary | null;
+  values: number[];
+  color: string;
+  revealKey: string;
+}) {
+  const administered = condition ? condition.outcomes.administered : (fallback?.counted ?? null);
+  const rewarded = condition ? condition.outcomes.rewarded : null;
+
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_72px_60px_minmax(52px,1fr)] items-center gap-x-2 py-1">
+      <span className="truncate text-[11px] text-static" title={label}>
+        {label}
+      </span>
+      <span className="text-right font-mono text-[11px] tabular-nums text-starlight">
+        {administered ?? "—"}
+      </span>
+      <span
+        className="text-right font-mono text-[11px] tabular-nums"
+        style={{ color: rewarded === null ? undefined : OUTCOME_STYLE.rewarded.fill }}
+      >
+        {rewarded ?? <span className="text-static/50">—</span>}
+      </span>
+      <ConditionSpark values={values} color={color} revealKey={revealKey} />
+    </div>
   );
 }
 
@@ -234,18 +283,13 @@ function ConditionSpark({
   revealKey: string;
 }) {
   if (values.length < 2) {
-    return <span className="font-mono text-[10px] text-static/50">—</span>;
+    return <span className="text-right font-mono text-[10px] text-static/50">—</span>;
   }
   const points = values
     .map((value, index) => `${(index / (values.length - 1)) * 100},${(1 - value) * 18}`)
     .join(" ");
   return (
-    <svg
-      viewBox="0 0 100 18"
-      preserveAspectRatio="none"
-      className="h-[18px] w-full"
-      aria-hidden
-    >
+    <svg viewBox="0 0 100 18" preserveAspectRatio="none" className="h-[18px] w-full" aria-hidden>
       <line
         x1={0}
         y1={9}
@@ -273,28 +317,93 @@ function ConditionSpark({
 }
 
 /**
- * How the administered trials resolved, as one stacked bar.
+ * Rewarded accuracy against side accuracy, as **one** bar (§6.3).
  *
- * The bar's width is the *administered* count relative to the widest animal in
- * the session, so a rat that engaged with half as many trials reads as half a
- * bar rather than as a full bar of different proportions — the count and the
- * composition are both part of the story.
+ * Side accuracy is `(rewarded + holdFailed) / administered` and rewarded is
+ * `rewarded / administered`, so the second is a strict subset of the first —
+ * always ≥, never crossing. Two separate bars would invite reading the
+ * difference as a comparison of unrelated quantities; drawing rewarded as a
+ * filled span *inside* the side span makes the containment structural, and the
+ * remaining segment **is** the hold-failure rate rather than a subtraction the
+ * reader has to perform.
+ *
+ * That segment carries `holdFailed`'s colour from the outcome bar below, so
+ * the same behaviour is the same colour in both places on the card.
  */
-function OutcomeBar({
-  run,
+function RewardGap({
+  outcomes,
   index,
   revealKey,
 }: {
-  run: RunSummary;
+  outcomes: TrialOutcomes | null;
   index: number;
   revealKey: string;
 }) {
-  const outcomes = run.outcomes;
+  if (!outcomes || outcomes.administered === 0) return null;
+  const rewarded = outcomes.pRewarded ?? 0;
+  const side = outcomes.pSide ?? 0;
+  const gap = Math.max(0, side - rewarded);
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-baseline justify-between gap-2 font-mono text-[9px] text-static/70">
+        <span>rewarded vs side</span>
+        <span className="tabular-nums">
+          <span style={{ color: OUTCOME_STYLE.rewarded.fill }}>{pct(rewarded)}</span>
+          <span className="text-static/50"> → </span>
+          <span className="text-starlight">{pct(side)}</span>
+          {gap > 0 && (
+            <span style={{ color: OUTCOME_STYLE.holdFailed.fill }}>
+              {" "}
+              · {pct(gap)} no hold
+            </span>
+          )}
+        </span>
+      </div>
+      <motion.div
+        key={`${revealKey}:gap`}
+        className="mt-0.5 flex h-2 overflow-hidden rounded-[2px] bg-halo/60"
+        title={`${outcomes.rewarded} rewarded and ${outcomes.holdFailed} correct-well-no-hold of ${outcomes.administered} administered`}
+        initial={{ scaleX: 0 }}
+        animate={{ scaleX: 1 }}
+        transition={{ ...springSnappy, delay: index * 0.04 + 0.1 }}
+        style={{ transformOrigin: "left center" }}
+      >
+        <span
+          style={{ width: `${rewarded * 100}%`, background: OUTCOME_STYLE.rewarded.fill }}
+        />
+        {/* The gap between the two accuracies: the correct side was chosen and
+            no drop was earned. */}
+        <span
+          style={{ width: `${gap * 100}%`, background: OUTCOME_STYLE.holdFailed.fill }}
+        />
+      </motion.div>
+    </div>
+  );
+}
+
+/**
+ * How the administered trials resolved, as one stacked bar.
+ *
+ * Scaled by the **administered count** against the widest bar the card can
+ * show, so composition and effort are both legible: a rat that engaged with
+ * half as many trials reads as half a bar rather than a full bar of different
+ * proportions.
+ */
+function OutcomeBar({
+  outcomes,
+  index,
+  revealKey,
+}: {
+  outcomes: TrialOutcomes | null;
+  index: number;
+  revealKey: string;
+}) {
   if (!outcomes || outcomes.administered === 0) {
     return (
-      <span className="font-mono text-[10px] text-static/50">
+      <p className="mt-2 font-mono text-[10px] text-static/50">
         {outcomes ? `${outcomes.aborted} aborted, none administered` : "no outcome data"}
-      </span>
+      </p>
     );
   }
 
@@ -306,13 +415,17 @@ function OutcomeBar({
   ].filter((part) => part.value > 0);
 
   return (
-    <span className="flex items-center gap-2">
-      <motion.span
-        key={revealKey}
-        className="flex h-3 min-w-0 flex-1 overflow-hidden rounded-[2px]"
+    <div className="mt-2">
+      <div className="flex items-baseline justify-between gap-2 font-mono text-[9px] text-static/70">
+        <span>outcome of administered</span>
+        <span className="tabular-nums">{outcomes.administered}</span>
+      </div>
+      <motion.div
+        key={`${revealKey}:outcome`}
+        className="mt-0.5 flex h-2 overflow-hidden rounded-[2px]"
         initial={{ scaleX: 0 }}
         animate={{ scaleX: 1 }}
-        transition={{ ...springSnappy, delay: index * 0.05 + 0.1 }}
+        transition={{ ...springSnappy, delay: index * 0.04 + 0.15 }}
         style={{ transformOrigin: "left center" }}
       >
         {parts.map((part) => (
@@ -325,17 +438,14 @@ function OutcomeBar({
             }}
           />
         ))}
-      </motion.span>
-      <span className="shrink-0 font-mono text-[10px] tabular-nums text-static/80">
-        {outcomes.administered}
-      </span>
-    </span>
+      </motion.div>
+    </div>
   );
 }
 
 function Legend() {
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-halo pt-2 font-mono text-[9px] text-static/70">
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-halo pt-2 font-mono text-[9px] text-static/70">
       {Object.entries(OUTCOME_STYLE).map(([key, style]) => (
         <span key={key} className="flex items-center gap-1">
           <span
@@ -350,34 +460,6 @@ function Legend() {
       </span>
     </div>
   );
-}
-
-/**
- * The within-session trajectories for these runs.
- *
- * Keyed on the joined run ids so the effect is stable across the re-renders a
- * hover causes — the same idiom `LearningCurves` uses.
- */
-function useRunSeries(runs: RunSummary[]): RunSeries[] {
-  const { client } = useSidecar();
-  const [series, setSeries] = useState<RunSeries[]>([]);
-  const ids = runs.map((run) => run.runId).join(",");
-
-  useEffect(() => {
-    if (!ids) {
-      setSeries([]);
-      return;
-    }
-    let live = true;
-    void getSeries(client, ids.split(","))
-      .then((result) => live && setSeries(result.series))
-      .catch(() => live && setSeries([]));
-    return () => {
-      live = false;
-    };
-  }, [client, ids]);
-
-  return series;
 }
 
 function pct(value: number): string {

@@ -3,23 +3,33 @@ import { ArrowRight, ChartLine, Rocket, Terminal, Users } from "lucide-react";
 import { useNavigate } from "react-router";
 import type { LucideIcon } from "lucide-react";
 
+import { NODE_FILL, useBoxHealth, type BoxHealth } from "@/components/chrome/ConstellationStatus";
 import { springPanel, springSnappy } from "@/lib/motion";
-import { useCohortCount } from "@/lib/cohorts/context";
+import { useActiveCohorts, useCohortsLoaded } from "@/lib/cohorts/context";
 import { useRunningSession } from "@/lib/sessions/context";
-import { useBoundBoxes } from "@/lib/settings/context";
+import { useSettings } from "@/lib/settings/context";
 
 /**
  * Dashboard / landing view (ephymeris_v1.0.md §3.3).
  *
- * Hero CTA over a three-tile row. Settings is intentionally not a tile — it
- * lives in one fixed, always-reachable place in the sidebar rather than as
- * browsable content (§3.2).
+ * Hero CTA over a three-tile row, then the two at-a-glance panels — cohorts
+ * and rig health. Both read state the app-level providers already hold
+ * (cohort summaries, presence poll, port states), so the landing page costs
+ * no extra round-trips and never shows a spinner. Settings is intentionally
+ * not a tile — it lives in one fixed, always-reachable place in the sidebar
+ * rather than as browsable content (§3.2).
  */
 export function Dashboard() {
   const navigate = useNavigate();
-  const cohortCount = useCohortCount();
-  const boundBoxes = useBoundBoxes();
+  const { settings } = useSettings();
+  const cohorts = useActiveCohorts();
+  const cohortsLoaded = useCohortsLoaded();
+  const health = useBoxHealth();
   const running = useRunningSession();
+
+  const cohortCount = cohorts.length;
+  const boundBindings = settings.boxes.filter((b) => b.hardwareId !== null);
+  const boundBoxes = boundBindings.map((b) => b.box);
 
   // §4.1: starting a session requires an existing cohort — now a live check
   // against the real cohort count rather than a hardcoded always-zero.
@@ -94,7 +104,139 @@ export function Dashboard() {
           onClick={() => navigate("/debug")}
         />
       </div>
+
+      <div className="mt-5 grid grid-cols-1 items-start gap-3 md:grid-cols-2">
+        <Panel
+          title="Cohorts"
+          empty={
+            cohortsLoaded && cohortCount === 0
+              ? "No cohorts yet — create one to start recording sessions."
+              : null
+          }
+        >
+          {cohorts.slice(0, MAX_ROWS).map((cohort) => (
+            <PanelRow key={cohort.id} onClick={() => navigate(`/cohorts/${cohort.id}`)}>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-starlight">
+                {cohort.name}
+              </span>
+              <span className="shrink-0 font-mono text-[11px] text-static">
+                {cohort.animalCount} animal{cohort.animalCount === 1 ? "" : "s"} ·{" "}
+                {cohort.groupCount} group{cohort.groupCount === 1 ? "" : "s"}
+              </span>
+            </PanelRow>
+          ))}
+          {cohortCount > MAX_ROWS && (
+            <PanelFooterLink onClick={() => navigate("/cohorts")}>
+              all {cohortCount} cohorts
+            </PanelFooterLink>
+          )}
+        </Panel>
+
+        <Panel
+          title="Rig"
+          empty={
+            boundBindings.length === 0
+              ? "No boxes bound yet — box setup in Config binds each one to a board."
+              : null
+          }
+        >
+          {boundBindings.map((binding) => {
+            const state = health[binding.box] ?? "absent";
+            return (
+              <PanelRow key={binding.box} onClick={() => navigate("/debug")}>
+                <span
+                  aria-hidden
+                  className="size-[7px] shrink-0 rounded-full"
+                  style={{ background: NODE_FILL[state] }}
+                />
+                <span className="shrink-0 font-mono text-[11px] text-static">
+                  Box {binding.box}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[13px] text-starlight">
+                  {binding.label || `Box ${binding.box}`}
+                </span>
+                <span className="shrink-0 font-mono text-[11px] text-static">
+                  {HEALTH_LABEL[state]}
+                </span>
+              </PanelRow>
+            );
+          })}
+        </Panel>
+      </div>
     </motion.div>
+  );
+}
+
+/** Rows before a cohort panel defers to the full grid. */
+const MAX_ROWS = 5;
+
+/** The sidebar constellation's health states, in words for the row readout. */
+const HEALTH_LABEL: Record<BoxHealth, string> = {
+  nominal: "active",
+  idle: "connected",
+  absent: "not detected",
+  fault: "error",
+};
+
+function Panel({
+  title,
+  empty,
+  children,
+}: {
+  title: string;
+  empty: string | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="surface rounded-md p-4">
+      <h2 className="text-[13px] font-medium text-starlight">{title}</h2>
+      {empty ? (
+        <p className="mt-2 text-[12px] leading-relaxed text-static">{empty}</p>
+      ) : (
+        <div className="mt-2 flex flex-col">{children}</div>
+      )}
+    </section>
+  );
+}
+
+function PanelRow({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="-mx-1.5 flex items-center gap-2 rounded-sm px-1.5 py-1.5 text-left transition-colors hover:bg-nebula"
+    >
+      {children}
+    </button>
+  );
+}
+
+function PanelFooterLink({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group mt-1 flex items-center gap-1 self-start font-mono text-[11px] text-static hover:text-starlight"
+    >
+      {children}
+      <ArrowRight
+        size={11}
+        strokeWidth={2}
+        className="transition-transform group-hover:translate-x-0.5"
+      />
+    </button>
   );
 }
 

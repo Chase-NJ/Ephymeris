@@ -12,8 +12,8 @@ import type {
 import { declaredMetrics } from "@/lib/analytics/view";
 import {
   NoPlane,
+  PLANE_VIEWBOX,
   PlaneReferences,
-  SIZE,
   StrategyNote,
   StrategyPanel,
   px,
@@ -99,7 +99,7 @@ export function SessionStrategy({
         }
       >
         <svg
-          viewBox={`0 0 ${SIZE} ${SIZE}`}
+          viewBox={PLANE_VIEWBOX}
           className="w-full"
           preserveAspectRatio="xMidYMid meet"
           role="img"

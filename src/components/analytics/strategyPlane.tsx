@@ -19,6 +19,20 @@ import type { ProfileMetricInfo } from "@/lib/analytics/types";
 
 export const SIZE = 100;
 
+/**
+ * Breathing room around the unit square, in viewBox units.
+ *
+ * A session scoring 0.0 or 1.0 puts its marker *on* the square's edge, and a
+ * `0 0 SIZE SIZE` viewBox sliced those markers to half-circles — data at the
+ * extremes is exactly the data that must not look broken. Widening the window
+ * rather than remapping the coordinates keeps the `px`/`py` contract intact:
+ * both panels' geometry is untouched, they just render with a margin.
+ */
+export const PAD = 4;
+
+/** The viewBox both panels must use — the unit square plus the margin. */
+export const PLANE_VIEWBOX = `${-PAD} ${-PAD} ${SIZE + 2 * PAD} ${SIZE + 2 * PAD}`;
+
 /** Unit space → viewBox. y inverts: 1.0 is the top of the plot, not the bottom. */
 export const px = (x: number) => (x * SIZE).toFixed(2);
 export const py = (y: number) => ((1 - y) * SIZE).toFixed(2);

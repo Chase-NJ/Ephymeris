@@ -15,6 +15,7 @@ import type { Cohort } from "@/lib/cohorts/types";
 import { useAllPortStatuses, usePortStatus } from "@/lib/hardware/context";
 import { springPanel } from "@/lib/motion";
 import {
+  abandonSession,
   endSession,
   sessionStatus,
   startAll,
@@ -28,7 +29,12 @@ import {
   useEndedCount,
   useSessionStore,
 } from "@/lib/sessions/context";
-import { populatedGroups, type SessionBox, type SessionSnapshot } from "@/lib/sessions/types";
+import {
+  firstGroupToRun,
+  populatedGroups,
+  type SessionBox,
+  type SessionSnapshot,
+} from "@/lib/sessions/types";
 import { useBoxAccuracies } from "@/lib/sessions/useBoxAccuracies";
 import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
@@ -91,6 +97,12 @@ export function MissionControl() {
   const session = snapshot?.session ?? null;
   const boxes = useMemo(() => snapshot?.boxes ?? [], [snapshot]);
 
+  // Reached with a mapping that was never confirmed — a deep link, a reload
+  // mid-setup, or Back from a partial flash. Nothing has run and nothing is
+  // recording, so the running-session chrome (elapsed clock, Switch Group)
+  // would all be describing a session that doesn't exist yet.
+  const configuring = session?.status === "configuring";
+
   // §6.2 — every animal in the cohort gets a star; only those whose box is
   // actually IN_SESSION are lit and interactive. An animal in a group that
   // isn't running, or with no box at all, is present but inert.
@@ -139,9 +151,14 @@ export function MissionControl() {
   const journeyStep = groupDone && lastGroup ? ("finish" as const) : ("run" as const);
   const hint = !connected
     ? "Waiting for the hardware service…"
-    : boxes.length === 0
-      ? "No boxes in this group — switch group or end the session."
-      : groupDone
+    : configuring
+      ? "This session hasn't started — finish box confirmation first."
+      : boxes.length === 0
+        // Only name actions that exist: Switch Group is a multi-group control.
+        ? multiGroup
+          ? "No boxes in this group — switch group or end the session."
+          : "No boxes in this group — end the session."
+        : groupDone
         ? lastGroup
           ? "All boxes finished — End Session saves and wraps up."
           : "Group finished — Switch Group runs the next one."
@@ -172,6 +189,20 @@ export function MissionControl() {
   async function startOne(box: number) {
     await startBox(client, box);
     sessionStore.resetBox(box);
+  }
+
+  // Back to Step 2 for a never-confirmed session — the same derivation
+  // Launch's "Resume setup" uses, since the record doesn't carry a group.
+  function resumeSetup() {
+    if (!cohort) return;
+    const group = firstGroupToRun(cohort);
+    if (!group) {
+      setError(
+        "This session's cohort no longer has a box-assigned group — end the session instead.",
+      );
+      return;
+    }
+    navigate(`/session/${sessionId}/mapping?cohort=${cohort.id}&group=${group.id}`);
   }
 
   // Shared by the header button and the group-swap prompt (§5.5).
@@ -207,7 +238,10 @@ export function MissionControl() {
       <Header
         name={sessionName ?? "—"}
         date={session?.date ?? ""}
-        startedAt={session?.startedAt ?? null}
+        // A configuring session's startedAt is its *creation* time — showing
+        // "started 11:49" with a ticking elapsed counter would be describing
+        // a recording that never began.
+        startedAt={configuring ? null : (session?.startedAt ?? null)}
         groupName={groupInfo?.name ?? null}
       />
 
@@ -235,7 +269,9 @@ export function MissionControl() {
           <Play size={13} strokeWidth={2} />
           Start All
         </Button>
-        {multiGroup && (
+        {/* Not while configuring: "switch" implies a group already ran, and
+            the sidecar would refuse it — Resume setup below is the real path. */}
+        {multiGroup && !configuring && (
           <Button
             disabled={busy || !connected}
             title="Ends this group's runs, then returns to box confirmation for the next group"
@@ -250,6 +286,14 @@ export function MissionControl() {
           disabled={busy || !connected}
           onClick={() =>
             void run(async () => {
+              // A never-started session is discarded, not "ended": nothing was
+              // recorded, so marking it completed would seed Analytics with an
+              // empty session — same rule as Launch's Discard.
+              if (configuring) {
+                await abandonSession(client, sessionId!);
+                navigate("/launch");
+                return;
+              }
               await endSession(client, sessionId!);
               navigate("/analytics", {
                 state: {
@@ -261,7 +305,7 @@ export function MissionControl() {
             })
           }
         >
-          End Session
+          {configuring ? "Discard session" : "End Session"}
         </Button>
       </div>
 
@@ -297,9 +341,24 @@ export function MissionControl() {
       </AnimatePresence>
 
       {boxes.length === 0 ? (
-        <p className="mt-6 text-[13px] text-static">
-          No boxes are configured for this session yet.
-        </p>
+        configuring ? (
+          // The hint above says what's wrong; this is the way back. Same
+          // derivation as Launch's "Resume setup" — Step 2 needs a group and
+          // the record doesn't carry one.
+          <div className="mt-6 flex flex-col items-start gap-3">
+            <p className="text-[13px] text-static">
+              Boxes were never confirmed for this session, so there is nothing
+              to run yet. Pick sketches and flash from box confirmation.
+            </p>
+            <Button variant="primary" disabled={busy || !connected || !cohort} onClick={resumeSetup}>
+              Resume setup
+            </Button>
+          </div>
+        ) : (
+          <p className="mt-6 text-[13px] text-static">
+            No boxes are configured for this session yet.
+          </p>
+        )
       ) : (
         <>
           {/* The centrepiece (§6), and sized like one: the constellation is

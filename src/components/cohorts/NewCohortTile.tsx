@@ -55,8 +55,12 @@ export function NewCohortTile({ onClick }: { onClick: () => void }) {
         <span className="block text-[13px] font-medium text-starlight">
           + New Cohort
         </span>
+        {/* Sits in the same slot as the sibling cards' "N animals · N groups",
+            so it has to read as an invitation rather than as this tile's own
+            status — "nothing here yet" next to populated cohorts reads like a
+            failed load. */}
         <span className="mt-0.5 block font-mono text-[11px] text-static">
-          nothing here yet
+          animals &amp; groups
         </span>
       </span>
     </motion.button>

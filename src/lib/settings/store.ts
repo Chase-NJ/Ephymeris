@@ -19,7 +19,14 @@ const SETTINGS_KEY = "settings";
 let storePromise: Promise<Store> | null = null;
 
 function getStore(): Promise<Store> {
-  storePromise ??= load(STORE_FILE, { autoSave: false });
+  // Never cache a *rejected* promise: a single failed open — a transient IO
+  // error, or a browser-preview run with no shell — would otherwise make every
+  // later save fail for the rest of the session, and the only screen that can
+  // fix a bad config is the one that stops saving.
+  storePromise ??= load(STORE_FILE, { autoSave: false }).catch((err: unknown) => {
+    storePromise = null;
+    throw err;
+  });
   return storePromise;
 }
 

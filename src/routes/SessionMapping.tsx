@@ -50,7 +50,7 @@ export function SessionMapping() {
   const cohortId = params.get("cohort") ?? "";
   const navigate = useNavigate();
   const { client, status } = useSidecar();
-  const { discovery } = useSettings();
+  const { discovery, settings } = useSettings();
   const sessionStore = useSessionStore();
 
   const [cohort, setCohort] = useState<Cohort | null>(null);
@@ -64,6 +64,16 @@ export function SessionMapping() {
   const connected = status === "connected";
   const sketches = discovery.sketches;
   const portStates = useAllPortStatuses();
+
+  /**
+   * Boxes this machine can actually flash — configured *and* bound to a board.
+   * A cohort's stored assignments are planning data and may name boxes this rig
+   * has never had, so they are not evidence that a board exists.
+   */
+  const configuredBoxes = useMemo(
+    () => new Set(settings.boxes.filter((b) => b.hardwareId !== null).map((b) => b.box)),
+    [settings.boxes],
+  );
 
   // Seed the mapping from the cohort's standing box assignments.
   useEffect(() => {
@@ -197,6 +207,20 @@ export function SessionMapping() {
     [mappings, portStates],
   );
 
+  /**
+   * Mapped boxes with no board behind them. Flashing one is a guaranteed
+   * failure, and because §4 flashes in sequence the failure lands *after*
+   * earlier boxes are already reflashed — so it is worth saying before the
+   * button is pressed rather than discovering it halfway through the rig.
+   */
+  const unconfiguredBoxes = useMemo(
+    () =>
+      [...new Set(mappings.map((m) => m.box))]
+        .filter((box) => !configuredBoxes.has(box))
+        .sort((a, b) => a - b),
+    [mappings, configuredBoxes],
+  );
+
   async function acknowledge(box: number) {
     setError(null);
     try {
@@ -221,13 +245,17 @@ export function SessionMapping() {
 
   const hint = busy
     ? "Flashing each box in turn — keep the boards plugged in."
-    : erroredBoxes.length > 0
-      ? `Box ${erroredBoxes.join(", ")} needs acknowledging before it can flash.`
-      : duplicateBox !== null
-        ? `Two animals share box ${duplicateBox} — move one first.`
-        : !allChosen
-          ? "Pick a sketch for every box, then confirm."
-          : "Confirm and flash, then place the animals.";
+    : // Before "pick a sketch": with an unset or moved Arduino Directory there
+      // are none to pick, and the picker alone cannot say so.
+      sketches.length === 0
+      ? "No sketches found — set the Arduino Directory in Config."
+      : erroredBoxes.length > 0
+        ? `Box ${erroredBoxes.join(", ")} needs acknowledging before it can flash.`
+        : duplicateBox !== null
+          ? `Two animals share box ${duplicateBox} — move one first.`
+          : !allChosen
+            ? "Pick a sketch for every box, then confirm."
+            : "Confirm and flash, then place the animals.";
 
   async function confirmAndFlash() {
     if (!sessionId || !allChosen) return;
@@ -280,6 +308,50 @@ export function SessionMapping() {
         >
           <CircleAlert size={14} strokeWidth={1.75} className="mt-px shrink-0" />
           {error}
+        </div>
+      )}
+
+      {/* A dead end otherwise: the picker can only show "— select a sketch —",
+          the flow keeps asking for a sketch, and nothing says where sketches
+          come from. This is the ordinary first-run state, and the state after
+          the Arduino Directory moves. */}
+      {connected && sketches.length === 0 && (
+        <div className="mt-4 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
+          <div className="min-w-0">
+            <p className="text-[12px]" style={{ color: "var(--color-status-warning)" }}>
+              No sketches found.
+            </p>
+            <p className="mt-0.5 text-[12px] text-static">
+              Set the Arduino Directory to the folder holding your sketch
+              categories, then come back — there is nothing to flash until then.
+            </p>
+          </div>
+          <div className="shrink-0">
+            <Button onClick={() => navigate("/config")}>Open Config</Button>
+          </div>
+        </div>
+      )}
+
+      {/* The cohort's stored box numbers are planning data; this rig may never
+          have had those boxes. Flashing is sequential, so an unbound box fails
+          only after the boxes before it have already been reflashed. */}
+      {unconfiguredBoxes.length > 0 && (
+        <div className="mt-4 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
+          <div className="min-w-0">
+            <p className="text-[12px]" style={{ color: "var(--color-status-warning)" }}>
+              {unconfiguredBoxes.length === 1
+                ? `Box ${unconfiguredBoxes[0]} has no board bound to it.`
+                : `Boxes ${unconfiguredBoxes.join(", ")} have no board bound to them.`}
+            </p>
+            <p className="mt-0.5 text-[12px] text-static">
+              Flashing stops at the first one that fails, after the boxes before
+              it have already been flashed. Bind them in Config, or move these
+              animals to boxes that are set up.
+            </p>
+          </div>
+          <div className="shrink-0">
+            <Button onClick={() => navigate("/config")}>Open Config</Button>
+          </div>
         </div>
       )}
 
@@ -344,9 +416,12 @@ export function SessionMapping() {
                   <Select
                     label={`Box for ${animal?.name ?? "animal"}`}
                     value={String(mapping.box)}
+                    // All six stay selectable — a box can be assigned before
+                    // its board is bound — but an unbound one says so here
+                    // rather than only failing at flash time.
                     options={[1, 2, 3, 4, 5, 6].map((n) => ({
                       value: String(n),
-                      label: `Box ${n}`,
+                      label: configuredBoxes.has(n) ? `Box ${n}` : `Box ${n} · unbound`,
                     }))}
                     onChange={(v) =>
                       setMappings((prev) =>

@@ -101,7 +101,9 @@ class Application:
         self.discovery = discovery.SketchDiscovery(
             directory=discovery.DirectoryStatus("not_configured")
         )
-        self.tool = ArduinoCliTool()
+        # data_dir is where the bundled arduino data seed gets its writable
+        # copy in a packaged install (`boards/cli_tool.py`).
+        self.tool = ArduinoCliTool(app_data_dir=data_dir)
         self.ports: PortManager | None = None
 
         self.db = Database(data_dir / DB_FILENAME)

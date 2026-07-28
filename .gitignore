@@ -8,9 +8,13 @@ dist/
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/schemas/
+# Staged by scripts/package-resources.mjs; regenerated per build
+src-tauri/resources/
 
 # Python sidecar
 sidecar/.venv/
+sidecar/build/
+sidecar/dist/
 __pycache__/
 *.py[cod]
 .pytest_cache/

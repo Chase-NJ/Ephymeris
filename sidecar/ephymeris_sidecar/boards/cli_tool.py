@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
+from pathlib import Path
 from typing import Any
 
 from .tool import BoardTool, DetectedBoard, FlashFailed, ProgressLine
@@ -19,10 +21,25 @@ from .tool import BoardTool, DetectedBoard, FlashFailed, ProgressLine
 log = logging.getLogger(__name__)
 
 DEFAULT_BINARY = "arduino-cli"
+#: Set by the packaged Tauri shell: the bundled arduino-cli binary, and the
+#: read-only `arduino:avr` data seed shipped in the app's resources. Absent in
+#: development, where PATH resolution keeps working exactly as before.
+BUNDLED_CLI_ENV = "EPHYMERIS_BUNDLED_ARDUINO_CLI"
+BUNDLED_SEED_ENV = "EPHYMERIS_BUNDLED_ARDUINO_DATA_SEED"
+#: Written into the data-dir copy after a complete seed copy. A crash mid-copy
+#: leaves the marker absent, so the next launch re-copies instead of running a
+#: half-written toolchain.
+SEED_MARKER = ".seed-complete"
+
 LIST_TIMEOUT_S = 10.0
 #: First compile on a machine also builds the core; generous on purpose.
 COMPILE_TIMEOUT_S = 300.0
 UPLOAD_TIMEOUT_S = 120.0
+
+
+def _default_binary() -> str:
+    """The bundled binary when the shell shipped one, else PATH resolution."""
+    return os.environ.get(BUNDLED_CLI_ENV) or DEFAULT_BINARY
 
 
 class ArduinoCliError(Exception):
@@ -30,12 +47,22 @@ class ArduinoCliError(Exception):
 
 
 class ArduinoCliTool(BoardTool):
-    def __init__(self, binary: str | None = None) -> None:
-        self._binary = binary or DEFAULT_BINARY
+    def __init__(self, binary: str | None = None, app_data_dir: Path | None = None) -> None:
+        self._binary = binary or _default_binary()
+        #: Where the writable copy of the bundled data seed lives (beside
+        #: ephymeris.db). None in tests and bare construction — then no seed
+        #: handling happens at all.
+        self._app_data_dir = app_data_dir
+        self._env: dict[str, str] | None = None
+        self._env_lock = asyncio.Lock()
 
     def set_binary(self, binary: str | None) -> None:
-        """Apply the `arduino-cli` path override from Settings."""
-        self._binary = binary or DEFAULT_BINARY
+        """Apply the `arduino-cli` path override from Settings.
+
+        Settings wins over the bundled binary on purpose: the override exists
+        precisely for "use this specific install instead of what shipped".
+        """
+        self._binary = binary or _default_binary()
 
     @property
     def binary(self) -> str:
@@ -44,12 +71,51 @@ class ArduinoCliTool(BoardTool):
     def is_available(self) -> bool:
         return shutil.which(self._binary) is not None or "/" in self._binary
 
+    async def _invocation_env(self) -> dict[str, str] | None:
+        """Environment for arduino-cli subprocesses, seeding data on first use.
+
+        The bundled seed ships inside the install directory, which may be
+        read-only and is replaced wholesale on update — but arduino-cli needs
+        a writable data dir (it maintains an inventory there and unpacks tool
+        downloads). So the seed is copied once into the app data dir and every
+        invocation points ARDUINO_DIRECTORIES_* at the copy. Without a seed
+        (development), returns None: the subprocess inherits our environment
+        untouched and arduino-cli uses its own default directories.
+        """
+        seed = os.environ.get(BUNDLED_SEED_ENV)
+        if not seed or self._app_data_dir is None:
+            return None
+
+        async with self._env_lock:
+            if self._env is not None:
+                return self._env
+
+            target = self._app_data_dir / "arduino-data"
+            marker = target / SEED_MARKER
+            if not marker.exists():
+                log.info("copying bundled arduino data seed to %s", target)
+                # Worker thread: the copy is a few hundred MB on first launch,
+                # and blocking the loop would stall the WebSocket with it.
+                await asyncio.to_thread(
+                    shutil.copytree, seed, target, dirs_exist_ok=True
+                )
+                marker.touch()
+                log.info("arduino data seed ready")
+
+            self._env = {
+                **os.environ,
+                "ARDUINO_DIRECTORIES_DATA": str(target),
+                "ARDUINO_DIRECTORIES_DOWNLOADS": str(target / "staging"),
+            }
+            return self._env
+
     async def _run(self, *args: str, timeout: float) -> dict[str, Any]:
         proc = await asyncio.create_subprocess_exec(
             self._binary,
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=await self._invocation_env(),
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -149,6 +215,7 @@ class ArduinoCliTool(BoardTool):
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=await self._invocation_env(),
             )
         except OSError as exc:
             raise FlashFailed(phase, f"couldn't run `{self._binary}`: {exc}") from exc

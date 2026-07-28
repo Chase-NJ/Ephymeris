@@ -4,7 +4,7 @@
 >
 > **This is a derived view.** Each spec's own **Open Items / TBD** table remains the authoritative record for its area; this document aggregates and prioritizes them so nothing is visible only to someone who happened to open the right file. **When you close an item, update both the spec and this register.**
 >
-> **Last reconciled** · On 2026-07-27, after building the Config tab (`ephymeris_v1.0.md` §4.6): box setup moved out of Settings, a first-run wizard, zodiac constellation layouts (superseding item 13, partially addressing item 14), and a passthrough-composed handshake test. Same day, earlier: Analytics decodes the lab's real Remy archive (item 25, item 26 opened), the wire protocol moved to build-time codegen (item 8), Analytics built end to end (item 3), item 24 fixed. Sidecar suite green at 493 tests; `typecheck` green.
+> **Last reconciled** · On 2026-07-28, after Windows packaging landed (item 1 closed — the last P1; item 27 opened for signing/CI). Previously 2026-07-27, after building the Config tab (`ephymeris_v1.0.md` §4.6): box setup moved out of Settings, a first-run wizard, zodiac constellation layouts (superseding item 13, partially addressing item 14), and a passthrough-composed handshake test. Same day, earlier: Analytics decodes the lab's real Remy archive (item 25, item 26 opened), the wire protocol moved to build-time codegen (item 8), Analytics built end to end (item 3), item 24 fixed. Sidecar suite green at 493 tests; `typecheck` green.
 >
 > **Item numbers are stable.** A closed item keeps its number and moves to [Recently closed](#recently-closed) rather than being deleted and the rest renumbered — otherwise a commit message or a note referring to "item 12" would silently start pointing at something else. New items take the next free number, so they are **not** always in ascending order within a section: an item is placed next to whatever it blocks or explains.
 
@@ -23,22 +23,7 @@
 
 ## P1 — Blocks shipping v1.0
 
-### 1. Windows packaging is unstarted
-
-**Source:** `ephymeris_v1.0.md` §6
-
-Nothing about shipping exists. Four separate pieces:
-
-- Freezing and bundling the Python sidecar — dev builds run it from `sidecar/.venv`, which won't exist on a lab machine.
-- Bundling `arduino-cli` plus the `arduino:avr` core with the installer. The spec commits to no runtime internet dependency; today the app uses whatever the machine already has.
-- Tauri Windows bundling and signing.
-- A Windows CI build.
-
-This is the largest single body of remaining work, and it was deliberately deferred while v1 was developed. **Nothing else on this list matters if the app can't be installed on the two lab machines it exists for.**
-
-With item 2 closed, this is now the **only** thing standing between the current tree and a shippable v1.0.
-
-*(Item 2, Backup Directory, is built — see [Recently closed](#recently-closed).)*
+**Empty.** Item 1 (Windows packaging) closed 2026-07-28 — see [Recently closed](#recently-closed). What remains of it (code signing, a CI build — item 27) does not block installing on the lab machines.
 
 ---
 
@@ -134,6 +119,12 @@ How a physically swapped board (new `hardware_id`, same cage) gets re-bound. A b
 
 Scan-on-trigger (setting change, manual refresh, Debug Mode mount) was judged sufficient, avoiding a background watcher for marginal benefit. Revisit only if that assumption proves wrong in practice.
 
+### 27. Installer signing and a CI build
+
+**Source:** what remains of item 1 after packaging landed (2026-07-28)
+
+The shipped installer is unsigned — every fresh lab machine shows the SmartScreen "Windows protected your PC" dialog once, and the install instructions have to say "More info → Run anyway". A code-signing certificate (or Azure Trusted Signing) would remove that. Separately, the installer is built by hand on a dev machine via `npm run package`; a Windows CI build would make the artifact reproducible and untie it from any one machine's `arduino-cli`. Neither blocks the two lab machines. macOS packaging has never been run and stays run-from-source by decision.
+
 ### 16. Cohort editor rough edges
 
 **Source:** `cohorts.md` §12
@@ -168,6 +159,12 @@ These are recorded so they aren't rediscovered as oversights. Each was decided, 
 ## Recently closed
 
 Kept briefly so a reader returning to this register can see what moved, rather than wondering whether an item was dropped or resolved.
+
+### ~~1. Windows packaging is unstarted~~ — closed
+
+**Was:** the largest single body of remaining work and the last P1: no freezing, no bundling, no installer.
+
+**Built 2026-07-28.** `npm run package` → `Ephymeris_1.0.0_x64-setup.exe` (NSIS, per-user, ~65 MB). `scripts/package-resources.mjs` stages a PyInstaller-frozen sidecar (onedir, ~24 MB), the machine's `arduino-cli`, and a cleanly seeded `arduino:avr` data dir (~322 MB — core, avr-gcc, avrdude), satisfying `hardware-interaction.md` §2's no-runtime-internet commitment. The shell resolves frozen-first in release and venv-first in dev (`src-tauri/src/sidecar.rs`), spawns with `CREATE_NO_WINDOW`, and exports `EPHYMERIS_BUNDLED_ARDUINO_*`; the sidecar copies the seed to a writable app-data dir on first use behind a completion marker (`boards/cli_tool.py`). Verified on a real install: silent install, frozen sidecar spawned from resources, seed copied, and the stdin orphan-watch still kills the sidecar when the shell dies. Signing and CI split off as item 27.
 
 ### ~~13. Constellation adjacency pairs~~ — superseded
 

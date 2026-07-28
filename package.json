@@ -18,7 +18,8 @@
     "typecheck": "tsc --noEmit",
     "gen:protocol": "node scripts/gen-protocol.mjs",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev"
+    "tauri:dev": "tauri dev",
+    "package": "node scripts/package-resources.mjs && tauri build"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",

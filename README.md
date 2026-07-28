@@ -14,13 +14,43 @@ Sketches stay data-driven: a sketch can ship a `task.json` describing its start-
 
 Built for two Windows 11 lab machines; developed on macOS and Windows.
 
-**Status: v1.0 in progress.** Cohorts, Config, Debug Mode, Settings, Backup Directory mirroring, and the complete session flow (config → mapping → flash → Mission Control → 3D constellation) are implemented, and everything but the mirroring is verified against real hardware. Analytics is built and decodes the lab's real archive end to end. Windows packaging is unstarted — there is no installer yet, so the app runs from source on both platforms. See [docs/TODO.md](docs/TODO.md) for the full register.
+**Status: v1.0.** Cohorts, Config, Debug Mode, Settings, Backup Directory mirroring, and the complete session flow (config → mapping → flash → Mission Control → 3D constellation) are implemented, and everything but the mirroring is verified against real hardware. Analytics is built and decodes the lab's real archive end to end. A Windows installer builds via `npm run package`; macOS packaging and CI builds remain open. See [docs/TODO.md](docs/TODO.md) for the full register.
 
 ---
 
-## Getting it running
+## Installing on a lab machine (Windows 11)
 
-There is no packaged build yet. Both platforms run the same three-process dev setup, and the only real differences are the system toolchain and the path to the Python interpreter.
+This is the path for a machine that will *run* Ephymeris, not develop it. The installer is self-contained: the machine needs **no Python, no Node, no Arduino IDE, no internet** — the frozen backend, `arduino-cli`, and the full `arduino:avr` toolchain (compiler and uploader) all ship inside it.
+
+1. Copy `Ephymeris_1.0.0_x64-setup.exe` to the machine (USB stick is fine) and run it. It installs per-user — no administrator account needed.
+2. The build is not code-signed, so the first run of the installer shows a **"Windows protected your PC"** SmartScreen dialog. Click **More info → Run anyway**. This is expected for unsigned software from a small lab, not a sign of a problem.
+3. Launch Ephymeris from the Start menu. On the very first launch the app copies its bundled Arduino toolchain into place; boards may take a few extra seconds to appear that one time.
+4. Do the first-launch setup, same as ever:
+   - **Config** opens the box-setup wizard — plug in the boards, bind each box 1–6 to its board, nickname them, pick a constellation.
+   - **Config → Hardware → Arduino Directory** — the folder holding your sketch categories and shared `libraries/`. Copy it onto the machine first if it isn't there already.
+   - **Settings → Data directory** — where session files are written; optionally a **Backup directory** on another drive or share.
+5. Create or import cohorts under **Cohorts**, then run sessions from **Launch**.
+
+Where things live on an installed machine: the app is in `%LOCALAPPDATA%\Ephymeris`, and its own state (cohort database, settings, the writable Arduino toolchain copy) is in `%APPDATA%\edu.hartlab.ephymeris`. Session data goes wherever the Data directory points. Uninstalling from Windows Settings removes the app but touches neither the app-data folder nor any session data.
+
+To update: run a newer installer over the old install. Cohorts, settings, and session data are untouched.
+
+## Building the installer
+
+Done from a development machine that already runs the app from source (next section). The bundled `arduino-cli` is taken from that machine's `PATH`, and the first build downloads the `arduino:avr` core, so it needs the network once. PyInstaller comes from the sidecar venv's `package` extra:
+
+```bash
+sidecar/.venv/Scripts/pip.exe install -e "sidecar[dev,package]"
+npm run package
+```
+
+That stages the bundle resources (freezes the sidecar with PyInstaller, copies `arduino-cli`, seeds the AVR core), then runs `tauri build`. The installer lands in `src-tauri/target/release/bundle/nsis/`. Staged resources are cached — delete `src-tauri/resources/` to force a re-seed.
+
+Only the Windows installer exists today. The staging script is written platform-neutrally, but a macOS build has never been run and the lab targets are Windows; treat macOS as run-from-source.
+
+## Getting it running from source
+
+This is the development setup. Both platforms run the same three-process arrangement, and the only real differences are the system toolchain and the path to the Python interpreter.
 
 ### 1. Install the prerequisites
 
@@ -137,6 +167,7 @@ Run these from the repository root unless noted.
 | `npm run typecheck` | `tsc --noEmit` — the only automated frontend check |
 | `npm run build` | Typecheck, then a production Vite build |
 | `npm run gen:protocol` | Regenerate the two wire-protocol mirrors from `protocol/schema.py` |
+| `npm run package` | Stage bundle resources, then build the Windows installer |
 | `pytest` | Sidecar test suite (run from `sidecar/`, inside its venv) |
 | `cargo test` | Rust shell tests (run from `src-tauri/`) |
 

@@ -74,6 +74,14 @@ An existing analysis script parsing these names positionally would survive the u
 
 > **Never sort these names lexically.** Both formats coexist on disk indefinitely, so string ordering over a real archive is wrong regardless of which format you assume. Parse the date. This is a standing invariant for Analytics and for the §11 recovery utility, and `parse_name_date` exists so there's no reason to hand-roll it.
 
+### 2.2 Reading names other software wrote
+
+Everything above governs what this app *writes*. What it **reads** is wider, because the archive walk (`analytics.md` §8.1) meets folders named by programs that never saw this document — and the standing rule that nothing here renames a user's files means those names have to be read as they are, permanently.
+
+Two shapes beyond the legacy date turned up in a real cohort. The session number can lead rather than trail (`00_01_shaping_gr_06_17_26` — number, then task label, then date, the inverse of the convention above), so `parse_session_folder` identifies the number by *being numeric* rather than by its position: trailing first, so every name this app wrote is read exactly as before, then leading. And separators vary within one archive — one folder among thirty was typed `18-19-shaping-gr` while its siblings used underscores.
+
+**A separator variant is reported as written, not normalized.** Folding `-` into `_` would tidy that one folder and also merge `2O-Bdisc` with `2O_bdisc`, which are two distinct prefixes in another real archive. Reporting `shaping-gr` for a folder named `shaping-gr` is the honest read; anything else is the app deciding it knows better than the disk. Renaming the folder is a five-second operation with no data risk, and it belongs to whoever owns the data.
+
 ---
 
 ## 3. Session Prefix

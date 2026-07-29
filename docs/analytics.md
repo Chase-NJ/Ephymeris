@@ -115,6 +115,12 @@ Ending a session navigates to `/analytics` carrying `endedSession` in router sta
 
 It becomes: **the dashboard opens with that cohort and that session already selected**, the save confirmation riding above as a dismissible banner. The guided flow's last step stops being an acknowledgement and becomes the payoff — you finish a run and immediately see how every animal did, at the one moment when the operator's context and the data are perfectly aligned.
 
+**The arrival always refetches, and it is keyed on the navigation rather than on the cohort.** Both halves are corrections of the same bug. The client cache holds a summary per cohort for the life of the app, and the run that just finished is precisely what that cache predates — so a cohort looked at earlier in the session would land showing everything *except* the session the banner is announcing. And keying the arrival on "no cohort selected yet" meant a different cohort already in view simply won, putting one session's confirmation above another cohort's panels. The refetch drops the cached summary before asking, so the interval shows the reading notice rather than the old numbers, per §2.4.
+
+It deliberately does **not** rescan. For a session this app ran, the run record and the file both exist by the time `sessions.end` returns, so the database-first path already has it and a walk would find nothing new — while §8.1's rule that reconciliation is a deliberate user action exists exactly to keep an expensive archive walk off a view-opening path, on the machine whose data directory is a network share. The one case where the record is genuinely absent is a finalization that lands after the session closed, and the cure for that is the Rescan button, reached deliberately after noticing something missing.
+
+Staleness is also handled away from this path: a finished run invalidates the client cache on `session.animalEnded`, so a dashboard left open on another route can't keep serving a summary the disk has moved past. The event names an animal and a box but not a cohort, so that invalidation is deliberately broad — the cache is only ever an optimization, and nothing refetches until a view asks.
+
 ### 2.6 Arriving cold: the cohort landing
 
 Arriving from anywhere *other* than a finished session shows a **cohort picker**, not a dashboard — the same procedural-icon card grid the Cohorts view uses (`cohorts.md` §5), because choosing a cohort to study is the same act as choosing one to manage and this lab already recognises a cohort by that icon.
@@ -126,6 +132,20 @@ This replaced auto-selecting the most recent cohort. That put an answer on scree
 Data appears rather than blinking into place: the heatmap fills **column by column in session order**, per-animal sparklines draw left to right, and the rewarded-accuracy line draws with them. It replays on the two events that mean the data underneath is genuinely different — a cohort swap and a rescan — and never on a hover or a session selection, which would make the panels twitch every time the pointer moved.
 
 This is not decoration. The heatmap's x-axis *is* time, so filling it in time order says what the axis means before a single label is read.
+
+The reveal is also **armed by visibility**: a panel below the fold holds its initial state until it is actually on screen, then plays once. A line that draws itself where nobody is looking plays to an empty room, and the reader scrolls down to an already-finished chart — which is indistinguishable from no reveal at all. Scrolling away and back does not replay it; only the two data events above do, and a replay triggered while the panel is off-screen again waits to be seen.
+
+> **A line draws on by being wiped, never with `pathLength`** — `components/charts/DrawOn.tsx`. Framer Motion implements `pathLength` by normalising the path to length 1 and animating `stroke-dasharray`, which the browser resolves in *user* space, while `vector-effect="non-scaling-stroke"` — which every chart here needs so a stretched viewBox doesn't distort line weight — paints that dash in *screen* space. An upscaled chart therefore **finishes** its animation holding a dash far shorter than the line it should cover, and settles as disconnected chunks whose gaps fall in arbitrary places rather than at the data's own discontinuities. Measured on the shipped panels: the rewarded-accuracy trend renders at 8.2× horizontally and its finished dash covered 18% of the line; the strategy plane was broken at a perfectly *uniform* 3.52×, so upscaling is the trigger, not non-uniformity. Only the animal rail escaped, and only because it is the one chart drawn smaller than its viewBox.
+>
+> The wipe also reads better on a time axis, which is the reason to prefer it even where it isn't forced: `pathLength` advances along arc length, so a jagged stretch crawls while a flat one races and the draw never tracks x, whereas a wipe advances uniformly — which is what "draws left to right in session order" actually means. It is also what lets a mark delayed by `x × duration` surface exactly as the edge reaches it, and it composes with `stroke-dasharray`, so a dashed gap bridge reveals on the same clock instead of needing its own fade.
+>
+> The one panel that cannot use it is the **within-session strategy walk**, whose x is a probability rather than time: a left-to-right wipe would assert a chronology a 2D trajectory doesn't have, and a per-segment reveal is the hundred-elements-per-animal cost that component is built to avoid — its nodes are trials, and there are hundreds. It fades instead, and loses nothing: its gradient already carries the direction of travel.
+
+**Highlighting an animal replays its own history, in session order.** The arrival reveal shows the cohort; this shows one animal, and it is a different question asked deliberately — so it runs **slower** (`HIGHLIGHT_DRAW`, `components/charts/reveal.ts`). An arrival reveal has to get out of the way before the reader can start; a highlight reveal *is* the reading, and the eye has to be able to follow it. Only the hovered animal animates. Every other trail holds still at its dimmed weight, because six lines redrawing at once is the thing the highlight exists to cut through.
+
+On a time axis — the learning curves at either resolution, and the rewarded-accuracy overlay — that is the same left-to-right wipe, just longer. The **across-session strategy space** is the exception, and the interesting one: its x is a probability, so the trail has to be *walked node by node* instead, each session's hop and marker arriving in turn. That is affordable here precisely because only one animal is ever walking and its nodes are sessions rather than trials — a few dozen elements, not a few hundred.
+
+> Each hop is delayed by its **session ordinal**, not by its position among the sessions the animal actually ran. So a trail with sessions missing from the middle *pauses* over the gap rather than closing it up — the walk spends real time where the animal has no data, which is the same honesty the dashed bridge buys in space. It also means the last node always lands at `HIGHLIGHT_DRAW` whatever the trail's length, so two animals' walks are comparable histories rather than a race.
 
 ---
 
@@ -249,7 +269,7 @@ So each run also carries a tally of what happened per trial, classified from the
 From which:
 
 - **Rewarded accuracy** = `rewarded / administered`. Conservative — a hold failure counts against it.
-- **Side accuracy** = `(rewarded + holdFailed) / administered`. The discrimination figure: the correct side was chosen whether or not the hold earned the drop. **Always ≥ rewarded accuracy**, and the gap between the two *is* the consummatory hold-failure rate — a real, separately interesting behaviour rather than noise.
+- **Side accuracy** = `(rewarded + holdFailed) / administered`. The discrimination figure: the correct side was chosen whether or not the hold earned the drop. **Always ≥ rewarded accuracy**, and the gap between the two *is* the consummatory hold-failure rate — a real, separately interesting behaviour rather than noise. Carried on the wire as `pSide`, and surfaced to the reader as **response accuracy** (§6.5) — the UI name says what the figure answers ("did it respond correctly"), where `pSide` says how it is computed.
 
 Three things this gets right on purpose:
 
@@ -418,6 +438,30 @@ A separate panel from the learning curves, deliberately: those plot the declared
 
 Across sessions only. Within one session there is a single pooled number rather than a trend, and §6.3 shows that per animal instead of flattening it to a dot.
 
+Pooled is the resting state, not the only one. The shared highlight (§2.1) reaches this panel too: hovering an animal fades the cohort figure and its band back and overlays that animal's own rewarded line, in its identity colour, on the same session slots — the same question asked of one animal, directly comparable to the cohort behind it. Sessions the animal sat out bridge dashed rather than interpolating (§3.6), and its thin points draw hollow on the same rule as the pooled ones. Nothing is highlighted by default, so the panel still opens on the cohort answer.
+
+This panel and the three below it share one x-slot list — one point per session with at least one outcome tally — so a session sits above itself in all four. §6.5 depends on that most: the gap between its curve and this one is only readable if a session is at the same x in both. A session whose administered count is zero keeps its slot: the rewarded line bridges it dashed rather than interpolating (§3.6), because "ran and aborted everything" is data, not absence.
+
+### 6.5 Response accuracy across sessions
+
+The same panel as §6.4, on the same slots, asking the same question of the **choice** instead of the **drop**: a trial where the animal answered the correct well counts here whether or not it held long enough to earn fluid. `derive.py` already computes it as `pSide` (§3.8) — this is the panel that finally shows it.
+
+**It exists to be read against the panel above it, and everything about it is held identical so that it can be.** Same x slots, same `administered` denominator, same Wilson treatment, same hollow-mark rule, same accent colour — because this line is always the higher of the two, and **the vertical gap between them is the consummatory hold failure rate**. Giving it its own colour would imply the two measure different things rather than the same thing at two strictnesses. The one place the two panels differ is the band: each gets a Wilson interval on its *own* numerator, since the wider proportion is not the wider interval and reusing one band under both curves would overstate the tighter and understate the looser.
+
+Why it earns a panel rather than a second line on §6.4: two lines on one axis invite reading the gap as a trend in a single quantity, which is the confusion §6.4 was split off to avoid in the first place. Stacked, the gap is still measurable by eye but is unmistakably a comparison between two figures.
+
+> **The Squeekstreet archive is the argument for this panel.** Across its 30 sessions response accuracy climbs 0.55 → 0.99 while rewarded accuracy stays flat and even falls, 0.64 → 0.26 → 0.44; the gap widens from 0.09 to 0.60. Read on the rewarded panel alone, that cohort looks like it never learned the task or got worse at it. It learned the discrimination almost perfectly and simply does not hold for the fluid — the opposite conclusion, and one no single panel here could have reached.
+
+### 6.6 Effort across sessions
+
+Every accuracy in the dashboard divides by `administered`, so a steady rewarded line over collapsing trial counts is a very different cohort from the same line over steady ones (§3.8) — and nothing above this panel can tell those apart. One bar per session: total height is the cohort's pooled `trials`, the filled span is `administered`, and the remainder — the aborted trials — draws as an **outline, not a fill**: disengagement is an absence, and a solid block would read as one more outcome category. The y scale is the cohort's own maximum trial count, the one across-session panel where a count axis rather than 0–1 is the honest choice.
+
+### 6.7 Outcome mix across sessions
+
+§6.4 answers "how often was fluid earned"; this answers "and what happened instead". One normalised stacked bar per session — rewarded on the baseline, then hold-failed, wrong well, no response — in the same outcome colours as the session cards (§6.3), so the same behaviour is the same colour in both places. The scientific point is the drift *between* failure modes: a cohort moving from wrong-well errors to hold failures is learning the discrimination even while the rewarded line barely moves.
+
+Normalised to each session's own administered count, deliberately unlike the §6.3 card bars: composition and effort are split across this panel and §6.6 rather than folded into one bar, because side by side each stays legible where a combined bar would hide one behind the other. A session that administered nothing leaves its slot empty rather than inventing a composition.
+
 ---
 
 ## 7. Palette Additions
@@ -493,12 +537,27 @@ This is the *only* path by which a pre-Ephymeris archive reaches Analytics, so i
 
 | Legacy shape | Handling |
 |---|---|
-| Format folders named `behavior_json` / `recovery_tsv` (underscores) | The walk globs both spellings; `sibling_tsv` follows whichever layout it found, so a missing-`.json` report still says "recoverable" correctly |
+| Format folders named `behavior_json` / `recovery_tsv` (underscores) | The walk reads both spellings; `sibling_tsv` follows whichever layout it found, so a missing-`.json` report still says "recoverable" correctly |
 | Session folders dated `MM_DD_YY` | `parse_session_folder` reads both spellings and normalizes to ISO at adoption, so the merged session axis sorts correctly |
-| A hand-made prefix-grouping level (`The Remy's/2O-Bdisc/…`) | Already the shape the walk expects — `<cohort>/<prefix>/<session>/` |
+| A hand-made prefix-grouping level (`The Remy's/2O-Bdisc/…`) | One of the shapes the walk reads — see **the walk finds format folders by name, not by depth** below |
+| **Session folders straight under the cohort, with no grouping level** (`Squeekstreet Syndicate/00_01_shaping_gr_06_17_26/…`) | Same rule. A fixed two-level glob found **zero** of that archive's 444 files, which is why depth is no longer assumed |
+| **Non-data folders beside and inside the format folders** (`00_session_analytics/`, `behavior_json/analytics/`) | A format folder's data is exactly its direct children, and the walk stops at one |
+| **The session number written first** (`00_01_shaping_gr_…`, the inverse of this app's `<prefix>_<number>_<date>`) | `parse_session_folder` looks for a *numeric* token rather than a positional one — trailing first, then leading. Reading it positionally reported the prefix as `00_01_shaping` and the number as `gr` |
+| **One folder typed with hyphens** among underscored siblings (`18-19-shaping-gr_…`) | Parsed and reported **as written**. Folding `-` to `_` would also merge `2O-Bdisc` with `2O_bdisc`, two real and distinct prefixes in the Remy archive; the tidy-up, if wanted, is a rename on disk and is the operator's to make |
 | `sketch` recorded as a human label, not a folder name | Resolved through the profile's declared `legacyNames` (`data-saving.md` §6.7) |
+| **A typo in one document's `rat` field** (`HmM103` beside a filename reading `HM103`) | Falls back to the animal the *filename* names — see **two recordings, not a guess** below |
 | **AppleDouble sidecars** (`._name.json`) | Skipped. macOS writes one beside every real file when copying to a filesystem that can't hold its metadata — a USB stick, a share. They contain a resource fork, not JSON, so each would otherwise surface as an "unreadable" run that never existed. The real Remy archive holds **454 of them against 586 real files**: left in, junk would have been the majority of what the walk reported |
 | **A consolidated copy of every session** beside the per-prefix originals (`ALL/`) | Deduplicated by run identity — see below |
+
+**The walk finds format folders by name, not by depth.** This app files sessions under a prefix folder, but the lab's archives disagree about that level: one has it, another puts session folders straight under the cohort, and nothing stops a per-year level appearing next. Matching `behavior.json`/`behavior_json` by name wherever it sits reads all of those in one pass, and `session_folder_of` stays correct without knowing the depth because it is defined relative to the *format* folder rather than to the cohort root. A cap on the descent exists only because a cohort's data folder is user-settable and could be pointed at a drive root.
+
+The scoping rule is unchanged and is what makes this safe: **a file is only data if it sits directly inside a format folder.** That is the sole thing standing between the archive walk and every stray `.json` on a shared drive, and it also disposes of the report folders real archives keep — `00_session_analytics/` beside the format folders, `behavior_json/analytics/` inside one — as a consequence of the rule rather than as a list of names to avoid.
+
+A directory the walk can't read costs a warning and its own contents, never the cohort. **A bad directory is data too** — the same call §8.3 makes for a bad file, one level up. Previously a single permission bit anywhere in the tree returned an empty list for the whole archive, which is indistinguishable from "there's nothing here".
+
+**Two recordings of the animal, not a guess.** A run's animal is written twice at finalization: into the document's `rat` field and into the filename. The lab's Squeekstreet archive has one file where the first is `HmM103` and the second is `HM103` — and with only the document consulted, that run vanishes from HM103's history, which reads as *the animal didn't run that day*. A hole that looks like data is worse than the typo.
+
+So when the document's name matches no animal, the file stem is tried — and this is not the guessing this section rules out elsewhere. The stem must be exactly what `data-saving.md` §2 prescribes, `<animal>_<the session folder the file is actually sitting in>_<HHMMSS>`, checked against the folder on disk rather than assumed; a file that doesn't follow the convention contributes nothing. The token that survives that must still match a roster name exactly and case-folded, the same test the document's field had to pass. The document always wins where it matches, no match still means unattributed, and `RescanOrphan.animalSource` reports which recording was used — a correction the operator can't see is one they can't check.
 
 **Duplicate copies are one run, not two.** A hand-managed archive commonly keeps a rolled-up copy of everything alongside the per-prefix folders; in the real Remy archive **290 of 296 runs exist twice**. Adopting both would silently double every animal in the heatmap and put two points per session on every curve — wrong numbers that look plausible, which is the worst failure available.
 
@@ -509,6 +568,8 @@ Which copy survives is decided by **content, not walk order**: a copy whose docu
 > **The synthetic run id is keyed on that identity, not on the path** — and that distinction is load-bearing rather than stylistic. Which copy `_prefer` picks can legitimately change between scans, so a path-keyed id would mint a *second* row for a run that already had one and leave both in place: exactly the double-counting the deduplication exists to prevent, reintroduced by the mechanism meant to make rescanning idempotent. Caught by re-running the walk twice against the real archive, where the row count went 296 → 297.
 >
 > For the same reason, preference is judged **only on what the document says**, never on whether that sketch currently resolves. Resolution depends on settings that change between scans; letting it pick the winner makes a run's recorded path flip back and forth for reasons that have nothing to do with the data.
+
+> **Correcting the name parser moves synthetic *session* ids; it does not move run ids.** The synthetic session id is derived from `(prefix, number, date)`, so an archive the old positional split read wrongly now groups under different ids. Adopted **run** ids are untouched — they hash the file stem, which no parser change reaches — so `INSERT OR REPLACE` still lands on the same rows and the 296 → 297 failure above cannot recur through this. Nothing persists a synthetic session id either, so no stored selection can dangle. An already-adopted archive keeps its old labels until its next rescan, which is when `adopted_runs` picks up the corrected prefix and number. Verified by re-running both real archives through the old and new splits: **Remy's 71 session-folder names split identically** (and its 428 files are found identically), while all 30 of Squeekstreet's changed.
 
 **A sketch name is resolved when a run is read, not when it is adopted.** The path stored at adoption is a cache of that lookup, never a fact about the run. Freezing it means a cohort adopted while the Arduino Directory was unset or unreachable stays permanently undecodable until someone thinks to rescan — whereas resolving at read time lets a corrected directory take effect on the very next summary. Verified against the real archive: with the directory removed the archive read 0 of 296 scored, and restoring it returned 295 of 296 with no re-adoption.
 
@@ -544,6 +605,12 @@ Cache key: file path, mtime, size, profile hash, and a **codec version**.
 
 > **The codec version is the important one.** Without it, a fixed bug in the derivation keeps serving numbers computed by the old definition, forever, with no symptom. It is a module constant, bumped whenever the metric math changes, and it also covers fallback-decoded rows whose meaning changes when a `task.json` on disk changes.
 
+**Every field of that key is answerable from a `stat`, so a cache hit opens nothing.** This is worth stating because it was not always true: the indexing pass used to read and parse each file and only *then* build the key and compare it, which meant the persisted cache saved the arithmetic and none of the I/O. On a 444-run archive that was 30 MB pulled across the wire on every dashboard open, on the machine whose archive lives on a network share — the case the §9 progress event exists for. Reading is now strictly behind the miss: `stat_run` settles the key, `parse_run` runs only if it doesn't match. Measured on that archive, a warm summary went from ~440 ms to ~10 ms and from 30 MB to zero bytes. The vanished-file branch deliberately stays *ahead* of the comparison, because a file that isn't there has no stat to build a key from.
+
+**Profile resolution is memoized per pass, and deliberately not across passes.** A whole archive is usually one or two sketches, so without a memo every run pays its own `task.json` read, sha256 and `INSERT OR IGNORE`. Making that memo outlive the pass would be a regression rather than a further optimization: §8.1 resolves a sketch at *read* time precisely so a corrected Arduino Directory or an edited `task.json` takes effect on the very next summary, and a longer-lived cache freezes exactly what that rule keeps thawed. The `legacyNames` lookup is indexed once per Arduino Directory scan for the same reason at the other end — answering it per run re-read every `task.json` in the directory each time, 2220 reads for the 444-run archive against 5 now.
+
+**The rescan and the summary that follows both read every file, and that is kept.** Avoiding it means holding a whole archive's parsed documents in memory between two independent wire commands, in the process that must never stall a session. It looks like free money and isn't.
+
 **Never delete a cache entry because a file vanished** — mark it stale and keep serving it. A briefly unreachable network share must not erase history from the heatmap. This is the same principle the backup mirror already holds to (`data-saving.md` §8.1: the mirror is additive).
 
 A corrupt file caches its **negative** result under the same key, so it is not re-parsed on every open, and surfaces as a warning. **A bad file is data, not an error** — one unreadable `.json` must never blank a year of history.
@@ -553,6 +620,8 @@ A corrupt file caches its **negative** result under the same key, so it is not r
 > **Invariant, inherited from `data-saving.md` §8.** No analytics operation may slow, stall, or fail a running session.
 
 One indexing job at a time behind a lock, so two clients or a double-click cannot launch two archive walks. Reads are **sequential in a single worker thread, not a pool** — six boxes are `fsync`ing per strobe, and a thread pool would multiply disk contention against the write-ahead log that carries the durability guarantee. Consider refusing, or at least warning, on a rescan requested while boxes are running.
+
+Runs are handed to that worker in **chunks**, not one at a time. This strengthens the rule rather than bending it: the runs inside a chunk are still read one after another on one thread, and chunking *reduces* the number of distinct executor threads the pass touches — it only stops the loop paying a thread hop per run, which at archive scale costs more than the reads do once the cache is warm. The chunk is small enough that a batch of misses can't hold the event loop off a live `port.output` flush.
 
 Persisted cache writes go in **one transaction per job**. Writing them as individual commits would mark the database dirty repeatedly and trigger a whole-file copy to the backup target each time (`data-saving.md` §8.3).
 
@@ -666,7 +735,9 @@ This also changes `SessionAnimalRun`'s payload shape, which the contract test wi
 - [ ] **Cross-animal time alignment** is out of scope by §5's reasoning. Revisit only if a real question needs it, and only with the handshake offset handled honestly
 - [ ] **Orphaned archives from deleted cohorts** are unreachable — cohort delete removes the record but never the files (`cohorts.md` §9), and the walk needs the record's data folder to find them. Out of scope; noted so it is not rediscovered as a bug
 - [ ] **Payload shapes here are the largest on the wire and are unguarded** by the contract test (`TODO.md` item 8). A field added on one side and forgotten on the other passes every test today
-- [ ] The archive walk (§8.1) and the crash-recovery backfill (`data-saving.md` §11) need the same file walker and the same both-date-format parsing. **Build them to share one**, whichever lands first
+- [x] ~~**A second lab archive was invisible to the walk.**~~ — **fixed.** A cohort whose session folders sit straight under the cohort root scanned **0 of 444 files**, because the walk's depth was hard-coded to one prefix level; its folder names also split wrongly (number-first) and one document's `rat` field carried a typo. Same lesson as Remy, now twice confirmed: **every failure was in the finding layer, none in the maths.** §8.1 is the result — format folders are matched by name at any depth, the number is found by being numeric rather than by position, and the filename is a second recording of the animal. Result on that archive: 444 scanned, 444 adopted, 30 sessions, 12 animals, 444 decoded, zero warnings, and Remy byte-identical
+- [ ] **`analytics.series` has no in-memory LRU.** §8.3 specifies one; the sidecar doesn't implement it, and the only series caching is client-side. Noted so the gap is registered rather than rediscovered
+- [ ] The archive walk (§8.1) and the crash-recovery backfill (`data-saving.md` §11) need the same file walker and the same both-date-format parsing. **Build them to share one**, whichever lands first — §8.1's walker is now the depth-tolerant one to reuse
 
 ---
 

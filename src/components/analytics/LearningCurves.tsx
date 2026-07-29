@@ -1,7 +1,16 @@
-import { useMemo } from "react";
-
 import { ChartFrame } from "@/components/charts/ChartFrame";
-import { UnitChart, segmentsWithGaps, type BandPoint } from "@/components/charts/UnitChart";
+import { DrawOn } from "@/components/charts/DrawOn";
+import { HIGHLIGHT_DRAW } from "@/components/charts/reveal";
+import {
+  UnitChart,
+  ribbon,
+  segmentsWithGaps,
+  unitX,
+  unitY,
+  type BandPoint,
+  type Segment,
+} from "@/components/charts/UnitChart";
+import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
 import type {
   AnalyticsSummary,
@@ -28,6 +37,12 @@ import {
  * animal's own start, animals in one session begin minutes apart, and stream
  * t=0 trails the recorded start by the handshake — so a shared time axis would
  * be quietly wrong.
+ *
+ * Each animal's band and curve draw in a per-animal `<CurveLayer>` inside the
+ * chart rather than through `UnitChart`'s `series` prop, because the layer is
+ * where the shared highlight lands (§2.1): the highlighted animal gains
+ * stroke weight, the rest drop to a dim opacity, and only these small layers
+ * re-render on hover.
  */
 export function LearningCurves({
   summary,
@@ -45,13 +60,9 @@ export function LearningCurves({
   series: RunSeries[];
 }) {
   const withinSession = sessionScope !== ALL_SESSIONS;
-  const runsInScope = useMemo(
-    () =>
-      withinSession
-        ? runsInProfile(summary.runs, profile).filter((r) => r.sessionId === sessionScope)
-        : [],
-    [summary, profile, sessionScope, withinSession],
-  );
+  const runsInScope = withinSession
+    ? runsInProfile(summary.runs, profile).filter((r) => r.sessionId === sessionScope)
+    : [];
 
   // Within a session the pooled figure has no series: `analytics.series`
   // replays each declared condition separately, and pooling interleaved trials
@@ -89,69 +100,136 @@ export function LearningCurves({
           xLeft={withinSession ? "trial 1" : "first"}
           xRight={withinSession ? "last" : "latest"}
         >
-          <UnitChart
-            height={46}
-            references={[{ y: 0.5 }]}
-            bands={
-              withinSession
-                ? []
-                : summary.animals
-                    .map((animal) =>
-                      acrossSessionBand(summary, profile, animal.id, metric.id, colors),
-                    )
-                    .filter((b): b is NonNullable<typeof b> => b !== null)
-            }
-            series={
-              withinSession
-                ? withinSessionLines(series, runsInScope, metric.id, colors)
-                : acrossSessionLines(summary, profile, metric.id, colors)
-            }
-          />
+          <UnitChart height={46} references={[{ y: 0.5 }]}>
+            {(withinSession
+              ? withinSessionLayers(series, runsInScope, metric.id, colors)
+              : acrossSessionLayers(summary, profile, metric.id, colors)
+            ).map((layer) => (
+              <CurveLayer key={layer.key} layer={layer} height={46} />
+            ))}
+          </UnitChart>
         </ChartFrame>
       ))}
     </div>
   );
 }
 
-function withinSessionLines(
+interface CurveLayerData {
+  key: string;
+  animalId: string;
+  color: string;
+  segments: Segment[];
+  /** The Wilson ribbon behind the curve — across-session scope only. */
+  band: BandPoint[] | null;
+}
+
+/**
+ * One animal's ribbon and curve. One component instance per animal, so a
+ * hover re-renders these layers and never the chart around them (§2.1).
+ * Weight, not colour alone, marks the highlight (§7.1).
+ *
+ * Picking an animal also re-lays its curve down in order — left to right,
+ * which on both of this panel's x axes is chronological. The `key` is what
+ * replays it: this layer is mounted whether or not it is highlighted, so
+ * without it the wipe would have run once, on arrival, and never again.
+ */
+function CurveLayer({ layer, height }: { layer: CurveLayerData; height: number }) {
+  const highlighted = useIsHighlighted(layer.animalId);
+  const someoneHighlighted = useHasHighlight();
+  const dimmed = someoneHighlighted && !highlighted;
+
+  const body = (
+    <>
+      {/* Band before curve: SVG paints in document order, and the ribbon
+          belongs behind its own line. Wide where n is small, so uncertainty
+          is drawn rather than thresholded away — kept faint so six
+          overlapping bands stay readable (§3.5). */}
+      {layer.band && layer.band.length >= 2 && (
+        <polygon
+          points={ribbon(layer.band, height)}
+          fill={layer.color}
+          fillOpacity={highlighted ? 0.18 : 0.1}
+          stroke="none"
+        />
+      )}
+      {layer.segments.map((segment, index) =>
+        segment.points.length < 2 ? null : (
+          <polyline
+            key={index}
+            points={segment.points
+              .map((p) => `${unitX(p.x)},${unitY(p.y, height)}`)
+              .join(" ")}
+            fill="none"
+            stroke={layer.color}
+            strokeWidth={highlighted ? 2.1 : 1.5}
+            strokeLinejoin="round"
+            strokeDasharray={segment.dashed ? "2 2" : undefined}
+            vectorEffect="non-scaling-stroke"
+          />
+        ),
+      )}
+    </>
+  );
+
+  return (
+    <g opacity={dimmed ? 0.18 : 1}>
+      {highlighted ? (
+        <DrawOn key="walk" viewBox={[0, 0, 100, height]} duration={HIGHLIGHT_DRAW}>
+          {body}
+        </DrawOn>
+      ) : (
+        body
+      )}
+    </g>
+  );
+}
+
+function withinSessionLayers(
   series: RunSeries[],
   runs: RunSummary[],
   metricId: string,
   colors: Map<string, string>,
-) {
+): CurveLayerData[] {
   const animalOf = new Map(runs.map((run) => [run.runId, run.animalId]));
   return series.flatMap((run) => {
     const metric = run.metrics.find((m) => m.id === metricId);
     if (!metric || metric.values.length < 2) return [];
-    const animalId = animalOf.get(run.runId);
+    const animalId = animalOf.get(run.runId) ?? "";
     const points = metric.values.map((value, index) => ({
       x: index / (metric.values.length - 1),
       y: value,
     }));
     return [
       {
+        key: run.runId,
+        animalId,
+        color: colors.get(animalId) ?? "var(--color-series-1)",
         segments: [{ points }],
-        stroke: colors.get(animalId ?? "") ?? "var(--color-series-1)",
-        strokeWidth: 1.5,
+        band: null,
       },
     ];
   });
 }
 
-function acrossSessionLines(
+function acrossSessionLayers(
   summary: AnalyticsSummary,
   profile: ProfileGroup | null,
   metricId: string,
   colors: Map<string, string>,
-) {
+): CurveLayerData[] {
   return summary.animals.flatMap((animal) => {
     const points = acrossSessionPoints(summary, profile, animal.id, metricId);
-    if (points.filter(Boolean).length < 2) return [];
+    const segments =
+      points.filter(Boolean).length >= 2 ? segmentsWithGaps(points) : [];
+    const band = acrossSessionBand(summary, profile, animal.id, metricId);
+    if (segments.length === 0 && band === null) return [];
     return [
       {
-        segments: segmentsWithGaps(points),
-        stroke: colors.get(animal.id) ?? "var(--color-series-1)",
-        strokeWidth: 1.5,
+        key: animal.id,
+        animalId: animal.id,
+        color: colors.get(animal.id) ?? "var(--color-series-1)",
+        segments,
+        band,
       },
     ];
   });
@@ -162,8 +240,7 @@ function acrossSessionBand(
   profile: ProfileGroup | null,
   animalId: string,
   metricId: string,
-  colors: Map<string, string>,
-): { points: BandPoint[]; fill: string; opacity: number } | null {
+): BandPoint[] | null {
   const runs = chronological(
     runsInProfile(summary.runs, profile).filter((r) => r.animalId === animalId),
     summary.sessions,
@@ -179,14 +256,7 @@ function acrossSessionBand(
       high: metric.wilsonHigh,
     });
   });
-  if (points.length < 2) return null;
-  return {
-    points,
-    fill: colors.get(animalId) ?? "var(--color-series-1)",
-    // Wide where n is small, so uncertainty is drawn rather than thresholded
-    // away — kept faint so six overlapping bands stay readable (§3.5).
-    opacity: 0.1,
-  };
+  return points.length < 2 ? null : points;
 }
 
 function acrossSessionPoints(

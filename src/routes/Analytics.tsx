@@ -1,12 +1,15 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { ChartLine, CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
 
 import { AnimalRail } from "@/components/analytics/AnimalRail";
 import { ChangeCohort, CohortLanding } from "@/components/analytics/CohortLanding";
 import { CohortHeatmap } from "@/components/analytics/CohortHeatmap";
+import { EffortTrend } from "@/components/analytics/EffortTrend";
 import { LearningCurves } from "@/components/analytics/LearningCurves";
+import { OutcomeMix } from "@/components/analytics/OutcomeMix";
+import { ResponseTrend } from "@/components/analytics/ResponseTrend";
 import { RewardedTrend } from "@/components/analytics/RewardedTrend";
 import { SessionRail } from "@/components/analytics/SessionRail";
 import { SessionStrategy } from "@/components/analytics/SessionStrategy";
@@ -16,6 +19,7 @@ import { Button, Select } from "@/components/common/controls";
 import { errorMessage, rescan } from "@/lib/analytics/commands";
 import {
   useAnalyticsStore,
+  useDataVersion,
   useIndexProgress,
   useLoadError,
   useLoadState,
@@ -57,6 +61,7 @@ export function Analytics() {
   const loadError = useLoadError(cohortId);
   const progress = useIndexProgress();
   const sessionScope = useSelectedSession();
+  const version = useDataVersion();
 
   const [rescanning, setRescanning] = useState(false);
   const [rescanNote, setRescanNote] = useState<string | null>(null);
@@ -82,19 +87,35 @@ export function Analytics() {
   // the guided flow's last step is a payoff, not another picker (§2.5).
   // Arriving cold shows the picker instead: auto-selecting the most recent
   // cohort answers a question the reader hasn't asked yet.
+  //
+  // Keyed on the navigation entry rather than on the cohort, for two reasons.
+  // The arrival has to win even when some *other* cohort is already selected,
+  // or the banner announces one session above another cohort's panels. And the
+  // fetch has to be forced: a cohort looked at earlier this run is cached, and
+  // the run that just finished is precisely what the cache predates. §2.4 —
+  // the reload shows the reading notice rather than the old numbers.
+  const handledArrival = useRef<string | null>(null);
   useEffect(() => {
-    if (cohortId || !landing?.cohortId) return;
+    if (!landing?.cohortId || handledArrival.current === location.key) return;
+    // Not marked handled until the socket is up, so a cold start retries
+    // instead of dropping the arrival on the floor.
+    if (!connected) return;
+    handledArrival.current = location.key;
     store.selectCohort(landing.cohortId);
-  }, [cohortId, landing?.cohortId, store]);
+    if (landing.sessionId) store.selectSession(landing.sessionId);
+    setMetricId(null);
+    setProfileHash(null);
+    setReveal((n) => n + 1);
+    void store.refresh(client, landing.cohortId);
+  }, [location.key, landing?.cohortId, landing?.sessionId, connected, client, store]);
 
+  // `version` is what makes an invalidation actionable: it is the only one of
+  // these that changes when a cached summary is dropped out from under a
+  // dashboard that is already on screen.
   useEffect(() => {
     if (!connected || !cohortId) return;
     void store.load(client, cohortId);
-  }, [client, connected, cohortId, store]);
-
-  useEffect(() => {
-    if (landing?.sessionId && summary) store.selectSession(landing.sessionId);
-  }, [landing?.sessionId, summary, store]);
+  }, [client, connected, cohortId, store, version]);
 
   // §4.3 — every panel is scoped to one task profile, because metrics from
   // different tasks are not comparable even when they share an axis count.
@@ -144,9 +165,8 @@ export function Analytics() {
     try {
       const result = await rescan(client, cohortId);
       setRescanNote(describeRescan(result));
-      store.invalidate(cohortId);
       setReveal((n) => n + 1);
-      await store.load(client, cohortId, true);
+      await store.refresh(client, cohortId);
     } catch (error) {
       setRescanNote(errorMessage(error));
     } finally {
@@ -340,15 +360,35 @@ export function Analytics() {
                   series={sessionSeries}
                 />
               </div>
-              {/* Rewarded accuracy is an across-session trend by nature: one
-                  session has a single pooled figure, and the summary below
-                  shows that per animal instead of flattening it to a dot. */}
+              {/* The outcome trends are across-session by nature: one session
+                  has a single pooled figure, and the summary below shows that
+                  per animal instead of flattening it to a dot. All three share
+                  x slots (`sessionOutcomePoints`), so a session sits above
+                  itself in every panel. */}
               {sessionScope === ALL_SESSIONS && (
-                <RewardedTrend
-                  summary={summary}
-                  profile={profile}
-                  revealKey={revealKey}
-                />
+                <>
+                  <RewardedTrend
+                    summary={summary}
+                    profile={profile}
+                    colors={colors}
+                    revealKey={revealKey}
+                  />
+                  {/* Directly below rewarded accuracy, and full width like it:
+                      the two share x slots and a denominator, so the gap
+                      between the curves is the hold-failure rate — a reading
+                      that only survives if a session sits above itself and
+                      both plots are the same shape. */}
+                  <ResponseTrend
+                    summary={summary}
+                    profile={profile}
+                    colors={colors}
+                    revealKey={revealKey}
+                  />
+                  <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
+                    <EffortTrend summary={summary} profile={profile} revealKey={revealKey} />
+                    <OutcomeMix summary={summary} profile={profile} revealKey={revealKey} />
+                  </div>
+                </>
               )}
               <CohortHeatmap
                 summary={summary}
@@ -410,6 +450,13 @@ function describeRescan(result: RescanResult): string {
   const unmatched = result.orphans.filter((o) => o.animalId === null).length;
   if (unmatched > 0) {
     parts.push(`${unmatched} matched no animal on the roster and were left alone`);
+  }
+  // A correction the operator can't see is one they can't check.
+  const byName = result.orphans.filter((o) => o.animalSource === "filename").length;
+  if (byName > 0) {
+    parts.push(
+      `${byName} named an animal the roster doesn't have and ${byName === 1 ? "was" : "were"} matched on ${byName === 1 ? "its" : "their"} filename instead`,
+    );
   }
   if (parts.length === 1) return `${parts[0]} — everything on disk is already indexed.`;
   return `${parts.join("; ")}.`;

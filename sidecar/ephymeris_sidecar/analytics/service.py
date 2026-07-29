@@ -35,6 +35,11 @@ PROGRESS_EVERY = 10
 #: a multi-megabyte frame.
 MAX_SERIES_RUNS = 24
 
+#: Runs handed to the worker thread per hop. Also the granularity at which the
+#: event loop gets to breathe between batches, so it is kept small enough that
+#: a chunk of cache misses can't stall a live `port.output` batch.
+INDEX_CHUNK = 32
+
 
 class AnalyticsBusy(Exception):
     """An indexing job is already running for this cohort."""
@@ -51,6 +56,12 @@ class _Resolved:
     #: unresolvable sketch name is indistinguishable from a genuinely
     #: profile-less sketch, and the operator has nothing to act on.
     reason: str | None = None
+
+
+#: One indexing pass's resolved profiles, keyed on what a run asks for
+#: (snapshot hash, recorded sketch path, sketch name) and holding what that
+#: question resolved to, plus the sketch path it landed on.
+_ProfileMemo = dict[tuple[str, str, str], tuple[_Resolved, str]]
 
 
 class AnalyticsService:
@@ -338,20 +349,31 @@ class AnalyticsService:
         the start time; the box, stop reason, and end time stay unknown.
         """
         result = reader.read_run(path)
+        session_folder = reader.session_folder_of(path)
         rat = None
         if result.ok and result.document is not None:
             value = result.document.get("rat")
             rat = value if isinstance(value, str) else None
         match = None
+        source = None
         if rat:
             folded = rat.casefold()
             match = next(
                 (a.id for a in cohort.animals if a.name.casefold() == folded), None
             )
+            if match is not None:
+                source = "document"
+        if match is None:
+            # The document's field is not the only place this run recorded its
+            # animal — the filename did too, in the same breath.
+            match = _animal_from_filename(path, session_folder, cohort.animals)
+            if match is not None:
+                source = "filename"
         entry = {
             "path": str(path),
             "animalId": match,
             "animalName": rat,
+            "animalSource": source,
             "date": _iso_or_none(parse_name_date(path.name)),
             "status": result.status,
             "reason": result.detail,
@@ -359,7 +381,6 @@ class AnalyticsService:
         if match is None or not result.ok or result.document is None:
             return entry, None
 
-        session_folder = reader.session_folder_of(path)
         parsed = parse_session_folder(session_folder.name)
         date_iso = parsed.date.isoformat() if parsed.date is not None else None
         time = parse_name_time(path.name)
@@ -402,15 +423,23 @@ class AnalyticsService:
         out: list[CachedRun] = []
         fresh: list[CachedRun] = []
         total = len(runs)
+        memo: _ProfileMemo = {}
 
         await self._progress(cohort_id, "reading", 0, total)
-        for index, run in enumerate(runs, start=1):
-            entry = await asyncio.to_thread(self._index_one, run, cached.get(run.id), threshold)
-            out.append(entry)
-            if cached.get(run.id) is not entry:
-                fresh.append(entry)
-            if index % PROGRESS_EVERY == 0:
-                await self._progress(cohort_id, "reading", index, total)
+        emitted = 0
+        for start in range(0, total, INDEX_CHUNK):
+            chunk = runs[start : start + INDEX_CHUNK]
+            entries = await asyncio.to_thread(
+                self._index_chunk, chunk, cached, threshold, memo
+            )
+            for run, entry in zip(chunk, entries):
+                out.append(entry)
+                if cached.get(run.id) is not entry:
+                    fresh.append(entry)
+            done = start + len(chunk)
+            if done - emitted >= PROGRESS_EVERY:
+                emitted = done
+                await self._progress(cohort_id, "reading", done, total)
 
         if fresh:
             await asyncio.to_thread(self._repo.store, fresh)
@@ -427,10 +456,31 @@ class AnalyticsService:
         )
         return out
 
+    def _index_chunk(
+        self,
+        runs: list[SessionAnimalRun],
+        cached: dict[str, CachedRun],
+        threshold: int,
+        memo: _ProfileMemo,
+    ) -> list[CachedRun]:
+        """One worker-thread hop's worth of runs.
+
+        Chunking does not add concurrency — the runs inside a chunk are still
+        read one after another on one thread, and the whole pass is still
+        behind the service lock (§8.4). It only stops the loop paying a thread
+        hop per run, which at archive scale costs more than the reads do once
+        the cache is warm.
+        """
+        return [self._index_one(r, cached.get(r.id), threshold, memo) for r in runs]
+
     def _index_one(
-        self, run: SessionAnimalRun, cached: CachedRun | None, threshold: int
+        self,
+        run: SessionAnimalRun,
+        cached: CachedRun | None,
+        threshold: int,
+        memo: _ProfileMemo | None = None,
     ) -> CachedRun:
-        resolved = self._resolve_profile(run)
+        resolved = self._resolve_profile(run, memo)
 
         if not run.file_path:
             return CachedRun(
@@ -443,32 +493,44 @@ class AnalyticsService:
                 key=CacheKey("", None, None, resolved.digest, derive.CODEC_VERSION),
             )
 
-        result = reader.read_run(run.file_path)
+        # Stat, not read. The cache key is answerable from the stat alone, so a
+        # hit costs one syscall and opens nothing — which is the difference
+        # between a warm dashboard open reading a whole archive off a network
+        # share and reading none of it (§8.3).
+        stat = reader.stat_run(run.file_path)
 
-        if result.status == "missing":
+        if stat.status == "missing":
             # Keep the last good summary rather than dropping it — a briefly
             # unreachable share must not erase history from the heatmap (§8.3).
+            # This stays *before* the key comparison: a vanished file has no
+            # stat to build a key from.
             if cached is not None and cached.status == "ok":
                 return CachedRun(**{**cached.__dict__, "stale": True})
             return CachedRun(
                 run_id=run.id,
                 status="missing",
-                detail=result.detail,
+                detail=stat.detail,
                 profile_hash=resolved.digest,
                 profile_source=resolved.source,
-                summary=derive.RunSummary(status="missing", detail=result.detail).to_json(),
+                summary=derive.RunSummary(status="missing", detail=stat.detail).to_json(),
                 key=CacheKey(run.file_path, None, None, resolved.digest, derive.CODEC_VERSION),
             )
 
         key = CacheKey(
             file_path=run.file_path,
-            mtime_ns=result.mtime_ns,
-            size=result.size,
+            mtime_ns=stat.mtime_ns,
+            size=stat.size,
             profile_hash=resolved.digest,
             codec_version=derive.CODEC_VERSION,
         )
         if cached is not None and cached.key == key:
             return cached
+
+        result = (
+            reader.parse_run(run.file_path, stat)
+            if stat.ok
+            else reader.ReadResult(status=stat.status, detail=stat.detail)
+        )
 
         if result.status == "unreadable" or result.document is None:
             # Cache the negative result too, so a corrupt file isn't re-parsed
@@ -513,13 +575,48 @@ class AnalyticsService:
         adopted = self._repo.adopted_for_cohort(cohort_id)
         return _synthetic_sessions(adopted, cohort_id)
 
-    def _resolve_profile(self, run: SessionAnimalRun) -> _Resolved:
+    def _resolve_profile(
+        self,
+        run: SessionAnimalRun,
+        memo: _ProfileMemo | None = None,
+    ) -> _Resolved:
         """Snapshot, then today's `task.json`, then nothing (§8.2).
 
         Three states, not two: the fallback itself can fail, because the
         recorded `sketch_path` may have been renamed, moved, or the Arduino
         Directory re-pointed since the run.
+
+        `memo` collapses the repeated work of one indexing pass — a whole
+        archive is usually one or two sketches, and without it every run pays
+        its own `task.json` read, sha256, and `INSERT OR IGNORE`.
+
+        **It is scoped to the pass and must stay that way.** Resolution happens
+        at read time on purpose (§8.1): a corrected Arduino Directory, or an
+        edited `task.json`, takes effect on the very next summary. A memo that
+        outlived the pass would freeze exactly what that rule exists to keep
+        thawed. Promoting this to a field would look like an obvious win and
+        would be a regression.
         """
+        key = (
+            run.profile_hash or "",
+            run.sketch_path or "",
+            getattr(run, "sketch_name", None) or "",
+        )
+        if memo is not None and key in memo:
+            resolved, sketch_path = memo[key]
+            # Replay the path the first run of this key resolved to. It is not
+            # bookkeeping: `summary` reports `sketchPath` per run (§9), so
+            # skipping this would leave one run of a group naming its sketch
+            # and the rest naming nothing.
+            run.sketch_path = sketch_path
+            return resolved
+
+        resolved = self._resolve_profile_uncached(run)
+        if memo is not None:
+            memo[key] = (resolved, run.sketch_path)
+        return resolved
+
+    def _resolve_profile_uncached(self, run: SessionAnimalRun) -> _Resolved:
         if run.profile_hash:
             stored = self._repo.load_profile(run.profile_hash)
             if stored is not None:
@@ -669,6 +766,38 @@ def _prefer(candidate: AdoptedRun, incumbent: AdoptedRun) -> bool:
     if bool(candidate.sketch_name) != bool(incumbent.sketch_name):
         return bool(candidate.sketch_name)
     return candidate.file_path < incumbent.file_path
+
+
+def _animal_from_filename(
+    path: Path, session_folder: Path, animals: list[Any]
+) -> str | None:
+    """The animal a file *names*, when the document it holds got it wrong.
+
+    Real archives carry typos. One file in this lab's Squeekstreet archive
+    records `rat: "HmM103"` while its filename says `HM103_…` — and without a
+    second opinion that run vanishes from HM103's history, which reads like the
+    animal didn't run that day rather than like a mistyped field. A hole that
+    looks like data is the worst of the available failures.
+
+    This is not the guessing §8.1 rules out. The filename and the `rat` field
+    are two independent recordings of the same fact by the same program at the
+    same moment, and the stem has to be *exactly* what `data-saving.md` §2
+    prescribes — `<animal>_<the session folder this file is actually sitting
+    in>_<HHMMSS>` — checked against the folder on disk rather than assumed. A
+    file that doesn't follow the convention contributes nothing. The token that
+    survives all that must still match a roster name exactly, case-folded, the
+    same test the document's field had to pass.
+    """
+    stem = path.stem
+    marker = f"_{session_folder.name}_"
+    cut = stem.find(marker)
+    if cut <= 0:
+        return None
+    tail = stem[cut + len(marker) :]
+    if len(tail) != 6 or not tail.isdigit():
+        return None
+    folded = stem[:cut].casefold()
+    return next((a.id for a in animals if a.name.casefold() == folded), None)
 
 
 def _orphan_run_id(path: Path) -> str:

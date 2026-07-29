@@ -747,7 +747,21 @@ SHAPES = (
         obj(
             f("path", STR),
             f("animalId", nullable(STR), doc="Matched by name, never guessed (§8.1)."),
-            f("animalName", nullable(STR)),
+            f(
+                "animalName",
+                nullable(STR),
+                doc="The animal name the *document* carries, reported as written "
+                "even when it is what failed to match.",
+            ),
+            f(
+                "animalSource",
+                nullable(lit("document", "filename")),
+                doc="Which recording of the animal `animalId` came from. "
+                "`filename` means the document's `rat` field matched no animal "
+                "and the file stem did — an exact match against the roster on a "
+                "second recording of the same fact, never a guess (§8.1). Null "
+                "when the run is unattributed.",
+            ),
             f("date", nullable(STR)),
             f("status", STR),
             f("reason", nullable(STR)),

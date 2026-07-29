@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { useMemo } from "react";
 
+import { useRevealOnView } from "@/components/charts/reveal";
 import { useAnalyticsStore, useIsHighlighted } from "@/lib/analytics/context";
 import type { AnalyticsSummary, ProfileGroup } from "@/lib/analytics/types";
 import { binFor, cellAt, labelColor, pivotRuns, type Cell } from "@/lib/analytics/view";
@@ -29,7 +30,20 @@ const MIN_PX_PER_COLUMN = 34;
  *  glyphs undistorted, so there is no reason to pay that cost. */
 const LABEL_W = 2.6;
 
-export function CohortHeatmap({
+export function CohortHeatmap(props: {
+  summary: AnalyticsSummary;
+  profile: ProfileGroup | null;
+  metricId: string | null;
+  sessionScope: string;
+  /** Changes when the data does — replays the column-by-column reveal. */
+  revealKey: string;
+}) {
+  // Keyed on the reveal, so new data remounts the body and its visibility
+  // gate re-arms — the column fill waits to be seen all over again (§2.7).
+  return <HeatmapBody key={props.revealKey} {...props} />;
+}
+
+function HeatmapBody({
   summary,
   profile,
   metricId,
@@ -40,10 +54,10 @@ export function CohortHeatmap({
   profile: ProfileGroup | null;
   metricId: string | null;
   sessionScope: string;
-  /** Changes when the data does — replays the column-by-column reveal. */
   revealKey: string;
 }) {
   const store = useAnalyticsStore();
+  const { ref, seen } = useRevealOnView();
 
   const rows = useMemo(() => layoutRows(summary), [summary]);
 
@@ -96,7 +110,7 @@ export function CohortHeatmap({
   const height = rows.length === 0 ? CELL : rows[rows.length - 1]!.y + CELL;
 
   return (
-    <div className="surface rounded-md p-4">
+    <div className="surface rounded-md p-4" ref={ref}>
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-[11px] text-static">
           Animals × sessions
@@ -156,6 +170,7 @@ export function CohortHeatmap({
                   // the reveal reads as history being laid down rather than as
                   // a grid switching on.
                   reveal={`${revealKey}:${column}`}
+                  seen={seen}
                   delay={column * 0.022}
                   emphasised={sessionScope === session.id}
                   animalName={row.name}
@@ -202,6 +217,7 @@ function HeatCell({
   y,
   scoped,
   reveal,
+  seen,
   delay,
   emphasised,
   animalName,
@@ -215,6 +231,8 @@ function HeatCell({
   /** Whether the grid is filtered to one task profile. */
   scoped: boolean;
   reveal: string;
+  /** The grid is on screen — until then the fill holds at nothing (§2.7). */
+  seen: boolean;
   delay: number;
   emphasised: boolean;
   animalName: string;
@@ -231,7 +249,7 @@ function HeatCell({
     // without it a cohort swap would repaint silently.
     key: reveal,
     initial: { opacity: 0 },
-    animate: { opacity: 1 },
+    animate: { opacity: seen ? 1 : 0 },
     transition: { duration: 0.28, delay },
   };
 

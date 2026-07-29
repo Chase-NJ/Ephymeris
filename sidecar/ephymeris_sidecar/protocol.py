@@ -207,7 +207,7 @@ SHAPES: Final[dict[str, Any]] = {
     "StrategyPoint": ('obj', (('trial', 'int', False), ('x', 'float', False), ('y', 'float', False), ('n', 'int', False))),
     "RunSeries": ('obj', (('runId', 'str', False), ('mode', ('lit', ('rolling', 'cumulative')), False), ('metrics', ('list', ('ref', 'MetricSeries')), False), ('trail', ('list', ('ref', 'StrategyPoint')), False))),
     "SeriesResult": ('obj', (('series', ('list', ('ref', 'RunSeries')), False), ('warnings', ('list', ('ref', 'AnalyticsWarning')), False))),
-    "RescanOrphan": ('obj', (('path', 'str', False), ('animalId', ('union', ('str', 'null')), False), ('animalName', ('union', ('str', 'null')), False), ('date', ('union', ('str', 'null')), False), ('status', 'str', False), ('reason', ('union', ('str', 'null')), False))),
+    "RescanOrphan": ('obj', (('path', 'str', False), ('animalId', ('union', ('str', 'null')), False), ('animalName', ('union', ('str', 'null')), False), ('animalSource', ('union', (('lit', ('document', 'filename')), 'null')), False), ('date', ('union', ('str', 'null')), False), ('status', 'str', False), ('reason', ('union', ('str', 'null')), False))),
     "RescanResult": ('obj', (('scanned', 'int', False), ('adopted', 'int', False), ('duplicates', 'int', False), ('orphans', ('list', ('ref', 'RescanOrphan')), False), ('cohortId', 'str', False), ('dataFolder', 'str', False), ('folderMissing', 'bool', False))),
     "AnalyticsProgress": ('obj', (('cohortId', 'str', False), ('phase', ('lit', ('reading', 'walking')), False), ('done', 'int', False), ('total', 'int', False))),
     "ServerHello": ('obj', (('protocolVersion', 'int', False), ('sidecarVersion', 'str', False))),

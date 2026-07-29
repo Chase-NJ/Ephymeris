@@ -38,6 +38,15 @@ export class AnalyticsStore {
    *  cohort switch both coalesce onto one call rather than racing. */
   private inflight = new Map<string, Promise<unknown>>();
   private progress: AnalyticsProgress | null = null;
+  /**
+   * Bumped on every invalidation, so a *mounted* dashboard refetches.
+   *
+   * Without it, dropping a cached summary leaves the route staring at nothing:
+   * its load effect keys on the cohort id, which invalidation doesn't change,
+   * so nothing ever asks again. Reading this in that effect's deps is what
+   * turns "the cache is gone" into "go and get it".
+   */
+  private version = 0;
 
   private cohortId: string | null = null;
   private sessionId: string = ALL_SESSIONS;
@@ -63,7 +72,7 @@ export class AnalyticsStore {
   }
 
   attach(client: SidecarClient): () => void {
-    const off = client.on(EVT.ANALYTICS_PROGRESS, (data) => {
+    const offProgress = client.on(EVT.ANALYTICS_PROGRESS, (data) => {
       const next = data as AnalyticsProgress | null;
       // Bucketed by cohort so switching mid-scan can't paint the wrong
       // panel's progress.
@@ -72,7 +81,16 @@ export class AnalyticsStore {
         this.notify("progress");
       }
     });
-    return off;
+    // A run finishing writes a file and a run record, so some cohort's summary
+    // is now behind. The event says which animal and which box, but not which
+    // cohort — so this drops all of them rather than guessing at one. That is
+    // affordable precisely because the cache is only ever an optimisation and
+    // invalidation is lazy: nothing refetches until a view asks.
+    const offEnded = client.on(EVT.SESSION_ANIMAL_ENDED, () => this.invalidateAll());
+    return () => {
+      offProgress();
+      offEnded();
+    };
   }
 
   // --- selection ---------------------------------------------------------
@@ -174,27 +192,44 @@ export class AnalyticsStore {
     this.errors.delete(cohortId);
     this.notify("data");
 
+    // Stamped at the start and re-checked before each write. A request that
+    // was already in the air when something invalidated the cache is carrying
+    // an answer to the older question — writing it would put exactly the data
+    // the invalidation was meant to discard back into the cache, and leave the
+    // route with no reason to ask again.
+    const started = this.version;
+
     const work = (async () => {
       // Sessions first and separately: the sidecar never touches disk for
       // them, so the rail can render while the summary is still reading files.
       const sessions = await listSessions(client, cohortId);
+      if (this.version !== started) return;
       this.sessions.set(cohortId, sessions);
       this.notify("data");
       const summary = await getSummary(client, cohortId);
+      if (this.version !== started) return;
       this.summaries.set(cohortId, summary);
     })();
 
     this.inflight.set(cohortId, work);
     try {
       await work;
-      this.states.set(cohortId, "ready");
+      // A superseded load leaves the state alone rather than claiming "ready"
+      // over an empty cache — the reload the version bump triggers sets
+      // "loading" again, so the route shows the notice, not a blank.
+      if (this.version === started) this.states.set(cohortId, "ready");
     } catch (error) {
       this.states.set(cohortId, "error");
       this.errors.set(cohortId, error instanceof Error ? error.message : String(error));
     } finally {
-      this.inflight.delete(cohortId);
-      this.progress = null;
-      this.notify("progress");
+      // Only clean up if this is still the current request. A superseded load
+      // that tore down the map entry or the progress readout would be doing it
+      // to whichever load replaced it.
+      if (this.inflight.get(cohortId) === work) {
+        this.inflight.delete(cohortId);
+        this.progress = null;
+        this.notify("progress");
+      }
       this.notify("data");
     }
   }
@@ -204,6 +239,39 @@ export class AnalyticsStore {
     this.summaries.delete(cohortId);
     this.sessions.delete(cohortId);
     this.states.delete(cohortId);
+    // Forget the in-flight request too. Its writes are already fenced off by
+    // the version check, so leaving it here would only let the next load
+    // coalesce onto an answer to the question just invalidated — and then
+    // nothing would fetch at all.
+    this.inflight.delete(cohortId);
+    this.version += 1;
     this.notify("data");
+  }
+
+  /** Every cohort at once, for a change whose blast radius isn't known. */
+  invalidateAll(): void {
+    this.summaries.clear();
+    this.sessions.clear();
+    this.states.clear();
+    this.inflight.clear();
+    this.version += 1;
+    this.notify("data");
+  }
+
+  getVersion(): number {
+    return this.version;
+  }
+
+  /**
+   * Drop a cohort's cache and fetch it again.
+   *
+   * Dropping *before* fetching is the point, not tidiness: the route renders
+   * its panels behind `summary &&`, so clearing first shows the reading
+   * notice instead of last time's numbers. §2.4 — when data can't be trusted,
+   * show nothing rather than something stale.
+   */
+  async refresh(client: SidecarClient, cohortId: string): Promise<void> {
+    this.invalidate(cohortId);
+    await this.load(client, cohortId, true);
   }
 }

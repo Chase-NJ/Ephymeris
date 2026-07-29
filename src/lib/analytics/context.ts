@@ -41,6 +41,19 @@ export function useLoadError(cohortId: string | null): string | null {
   return useSyncExternalStore(subscribe, () => store.getError(cohortId));
 }
 
+/**
+ * A counter that changes whenever a cached summary is dropped.
+ *
+ * Belongs in a load effect's dependency list: without it an invalidation from
+ * a rescan, a finished session, or a landing leaves a mounted dashboard with
+ * no cache and no reason to go and get one.
+ */
+export function useDataVersion(): number {
+  const store = useAnalyticsStore();
+  const subscribe = useCallback((cb: () => void) => store.subscribe("data", cb), [store]);
+  return useSyncExternalStore(subscribe, () => store.getVersion());
+}
+
 export function useIndexProgress(): AnalyticsProgress | null {
   const store = useAnalyticsStore();
   const subscribe = useCallback((cb: () => void) => store.subscribe("progress", cb), [store]);

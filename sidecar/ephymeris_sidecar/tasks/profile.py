@@ -22,7 +22,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterable
 
 TASK_FILENAME = "task.json"
 
@@ -243,6 +243,34 @@ def load_profile(sketch_dir: str | Path) -> TaskProfile | None:
     except (ValueError, OSError) as exc:
         raise TaskProfileError(f"couldn't read {path.name}: {exc}") from exc
     return parse_profile(raw)
+
+
+def build_legacy_name_index(
+    sketches: Iterable[Any],
+    load: Callable[[str], TaskProfile | None] = load_profile,
+) -> dict[str, str]:
+    """Every declared `legacyNames` entry → the sketch path that declares it.
+
+    Reading a whole Arduino Directory to answer one name is fine once and
+    ruinous per run: an adopted archive asks the same question for every file
+    it holds. Built as a whole index so the answer costs one `task.json` read
+    per sketch, not per question.
+
+    First declaration in discovery order wins, matching the picker. A sketch
+    whose `task.json` is broken contributes nothing rather than failing the
+    build — one bad profile must not hide every other sketch's legacy names.
+    """
+    index: dict[str, str] = {}
+    for sketch in sketches:
+        try:
+            profile = load(sketch.path)
+        except TaskProfileError:
+            continue
+        if profile is None:
+            continue
+        for name in profile.legacy_names:
+            index.setdefault(name, sketch.path)
+    return index
 
 
 def parse_profile(raw: Any) -> TaskProfile:

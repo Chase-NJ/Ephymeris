@@ -10,6 +10,7 @@ import pytest
 from ephymeris_sidecar.tasks.metrics import MetricSet, compute_series
 from ephymeris_sidecar.tasks.profile import (
     TaskProfileError,
+    build_legacy_name_index,
     load_profile,
     parse_profile,
 )
@@ -353,3 +354,55 @@ def test_a_profile_less_metric_set_is_empty() -> None:
     metric_set = MetricSet(None)
     assert metric_set.empty
     assert metric_set.offer(101) == []
+
+
+# --- §6.7 the legacyNames index -------------------------------------------
+
+
+class _Sketch:
+    """Just the attribute `build_legacy_name_index` reads off a discovered
+    sketch, so the index is testable without a whole Application."""
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+
+def test_the_legacy_name_index_reads_each_task_json_once() -> None:
+    """One read per sketch, not one per question. An adopted archive asks the
+    same question for every file it holds."""
+    reads: list[str] = []
+
+    def load(path: str):
+        reads.append(path)
+        return parse_profile({**GRGL, "legacyNames": [f"Shape - {path[-1]}"]})
+
+    index = build_legacy_name_index([_Sketch("a/L"), _Sketch("b/R")], load=load)
+    assert index == {"Shape - L": "a/L", "Shape - R": "b/R"}
+    assert reads == ["a/L", "b/R"]
+
+
+def test_the_first_declaration_wins() -> None:
+    """Same rule as the picker — discovery order decides a collision."""
+
+    def load(path: str):
+        return parse_profile({**GRGL, "legacyNames": ["Shape - L"]})
+
+    index = build_legacy_name_index([_Sketch("first"), _Sketch("second")], load=load)
+    assert index == {"Shape - L": "first"}
+
+
+def test_one_broken_task_json_does_not_hide_the_others() -> None:
+    """A single malformed profile must not cost every other sketch its legacy
+    names — the index is a lookup table, not a validation pass."""
+
+    def load(path: str):
+        if path == "broken":
+            raise TaskProfileError("nope")
+        if path == "profileless":
+            return None
+        return parse_profile({**GRGL, "legacyNames": ["Shape - R"]})
+
+    index = build_legacy_name_index(
+        [_Sketch("broken"), _Sketch("profileless"), _Sketch("good")], load=load
+    )
+    assert index == {"Shape - R": "good"}

@@ -1,7 +1,9 @@
+import { motion } from "framer-motion";
 import { useMemo } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
-import { segmentsWithGaps, type Point } from "@/components/charts/UnitChart";
+import { HIGHLIGHT_DRAW } from "@/components/charts/reveal";
+import { edgesWithGaps, segmentsWithGaps, type Point } from "@/components/charts/UnitChart";
 import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
 import type { AnalyticsSummary, ProfileGroup, RunSummary } from "@/lib/analytics/types";
 import { chronological, declaredMetrics, runsInProfile } from "@/lib/analytics/view";
@@ -125,46 +127,94 @@ function AnimalTrail({
   // state is every animal at equal weight rather than everything faded.
   const dimmed = someoneHighlighted && !highlighted;
 
-  const segments = segmentsWithGaps(trail.points);
+  const total = trail.points.length;
+  const nodes = trail.points.flatMap((point, index) =>
+    point === null ? [] : [{ point, index, run: trail.runs[index]! }],
+  );
 
   return (
-    <g opacity={dimmed ? 0.18 : 1}>
-      {segments.map((segment, index) => (
-        <polyline
-          key={index}
-          points={segment.points.map((p) => `${px(p.x)},${py(p.y)}`).join(" ")}
-          fill="none"
-          stroke={color}
-          strokeWidth={highlighted ? 1.6 : 0.9}
-          strokeLinejoin="round"
-          strokeDasharray={segment.dashed ? "2 2" : undefined}
-          opacity={0.65}
-          vectorEffect="non-scaling-stroke"
-        />
-      ))}
-      {trail.points.map((point, index) => {
-        if (!point) return null;
-        const run = trail.runs[index]!;
-        const isLatest = index === trail.points.length - 1;
+    // Keyed on the highlight so picking this animal remounts the trail and
+    // replays the walk — hovering is the gesture that asks for it.
+    <g key={highlighted ? "walk" : "rest"} opacity={dimmed ? 0.18 : 1}>
+      {highlighted
+        ? edgesWithGaps(trail.points).map((edge) => (
+            <motion.polyline
+              key={edge.index}
+              points={`${px(edge.from.x)},${py(edge.from.y)} ${px(edge.to.x)},${py(edge.to.y)}`}
+              fill="none"
+              stroke={color}
+              strokeWidth={1.6}
+              strokeLinejoin="round"
+              strokeDasharray={edge.dashed ? "2 2" : undefined}
+              vectorEffect="non-scaling-stroke"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.65 }}
+              transition={{ duration: STEP, delay: walkDelay(edge.index, total) }}
+            />
+          ))
+        : segmentsWithGaps(trail.points).map((segment, index) => (
+            <polyline
+              key={index}
+              points={segment.points.map((p) => `${px(p.x)},${py(p.y)}`).join(" ")}
+              fill="none"
+              stroke={color}
+              strokeWidth={0.9}
+              strokeLinejoin="round"
+              strokeDasharray={segment.dashed ? "2 2" : undefined}
+              opacity={0.65}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+      {nodes.map(({ point, index, run }) => {
+        const isLatest = index === total - 1;
         const lowConfidence = run.metrics.some((metric) => metric.lowConfidence);
-        return (
-          <circle
+        const shared = {
+          cx: px(point.x),
+          cy: py(point.y),
+          r: isLatest ? 2.2 : 1.6,
+          fill: lowConfidence ? "none" : color,
+          stroke: lowConfidence ? color : "none",
+          strokeWidth: lowConfidence ? 0.5 : 0,
+          vectorEffect: "non-scaling-stroke" as const,
+        };
+        const settled = fade(index, total, 1);
+        const title = <title>{describe(run, trail, sessionLabel(run, sessions))}</title>;
+        return highlighted ? (
+          <motion.circle
             key={run.runId}
-            cx={px(point.x)}
-            cy={py(point.y)}
-            r={isLatest ? 2.2 : 1.6}
-            fill={lowConfidence ? "none" : color}
-            stroke={lowConfidence ? color : "none"}
-            strokeWidth={lowConfidence ? 0.5 : 0}
-            opacity={fade(index, trail.points.length, 1)}
-            vectorEffect="non-scaling-stroke"
+            {...shared}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: settled }}
+            transition={{ duration: STEP, delay: walkDelay(index, total) }}
           >
-            <title>{describe(run, trail, sessionLabel(run, sessions))}</title>
+            {title}
+          </motion.circle>
+        ) : (
+          <circle key={run.runId} {...shared} opacity={settled}>
+            {title}
           </circle>
         );
       })}
     </g>
   );
+}
+
+/** How long one hop takes to arrive, independent of how many there are. */
+const STEP = 0.18;
+
+/**
+ * When the walk reaches a node, in seconds.
+ *
+ * Proportional to the node's **session ordinal** rather than to its position
+ * among the points that exist, so a trail with sessions missing from the
+ * middle pauses over the gap instead of closing it up — the same reason those
+ * gaps are drawn dashed rather than interpolated. The last node lands at
+ * `HIGHLIGHT_DRAW`, so every animal's walk takes the same time whatever its
+ * length, and the trails read as comparable histories rather than as a race.
+ */
+function walkDelay(index: number, total: number): number {
+  if (total <= 1) return 0;
+  return (index / (total - 1)) * HIGHLIGHT_DRAW;
 }
 
 function describe(run: RunSummary, trail: Trail, label: string): string {

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -101,6 +102,12 @@ class Application:
         self.discovery = discovery.SketchDiscovery(
             directory=discovery.DirectoryStatus("not_configured")
         )
+        # `legacyNames` → sketch path, built lazily by `_sketch_path_for_name`
+        # and tied to the discovery it was built from. Read from an analytics
+        # worker thread while `_rescan` runs on the loop, hence the lock.
+        self._legacy_names: dict[str, str] = {}
+        self._legacy_names_from: object | None = None
+        self._legacy_names_lock = threading.Lock()
         # data_dir is where the bundled arduino data seed gets its writable
         # copy in a packaged install (`boards/cli_tool.py`).
         self.tool = ArduinoCliTool(app_data_dir=data_dir)
@@ -619,19 +626,24 @@ class Application:
         under a human label ("Shape - L") reaches the sketch that can decode it.
         Declared, never inferred: resemblance is not evidence, and decoding
         real data with the wrong strobe map is worse than not decoding it.
+
+        The fallback index is built on first use rather than in `_rescan`,
+        which runs on every settings push: a directory whose legacy names
+        nobody asks about should cost no reads at all. It is keyed on the
+        discovery object it was built from, so a re-scan invalidates it whether
+        or not the code below remembered to.
         """
         match = next((s for s in self.discovery.sketches if s.name == name), None)
         if match is not None:
             return match.path
 
-        for sketch in self.discovery.sketches:
-            try:
-                profile = task_profile.load_profile(sketch.path)
-            except task_profile.TaskProfileError:
-                continue
-            if profile is not None and name in profile.legacy_names:
-                return sketch.path
-        return None
+        with self._legacy_names_lock:
+            if self._legacy_names_from is not self.discovery:
+                self._legacy_names = task_profile.build_legacy_name_index(
+                    self.discovery.sketches
+                )
+                self._legacy_names_from = self.discovery
+            return self._legacy_names.get(name)
 
     async def _sessions_list(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         """A cohort's sessions, chronologically. **Never touches the filesystem.**

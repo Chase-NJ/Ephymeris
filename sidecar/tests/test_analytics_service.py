@@ -17,12 +17,13 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService
-from ephymeris_sidecar.analytics import derive
+from ephymeris_sidecar.analytics import derive, reader
 from ephymeris_sidecar.analytics.repository import AnalyticsRepository
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import Prefix, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
+from ephymeris_sidecar.tasks import profile as task_profile
 from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
 
 GRGL = {
@@ -391,6 +392,67 @@ async def test_the_cache_key_includes_the_codec_version(
     await rig.service.summary(rig.cohort.id)
     recomputed = rig.profiles.load_cached([run_id])[run_id]
     assert recomputed.key.codec_version == derive.CODEC_VERSION
+
+
+async def test_a_cache_hit_never_reopens_the_file(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cache key is answerable from a stat, so a warm pass reads no bytes.
+
+    This is what a networked archive actually feels: before, a persisted cache
+    saved the arithmetic and still pulled every file across the wire.
+    """
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "a1", HIT_1 * 5)
+    first = await rig.service.summary(rig.cohort.id)
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a cache hit must not open the file")
+
+    monkeypatch.setattr(reader, "parse_run", boom)
+    assert await rig.service.summary(rig.cohort.id) == first
+
+
+async def test_a_vanished_file_still_goes_stale_without_being_parsed(rig: Rig) -> None:
+    """The missing branch has to stay ahead of the key comparison: there is no
+    stat to build a key from, and §8.3 keeps the last good summary either way."""
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "a1", HIT_1 * 5)
+    good = await rig.service.summary(rig.cohort.id)
+
+    Path(rig.sessions.runs_for(session)[0].file_path).unlink()
+    payload = await rig.service.summary(rig.cohort.id)
+    assert payload["runs"][0]["stale"] is True
+    assert payload["runs"][0]["metrics"] == good["runs"][0]["metrics"]
+
+
+async def test_the_profile_is_resolved_once_per_pass(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No snapshots, so every run has to fall back to today's `task.json` —
+    # which is the path that pays a disk read per run without the memo.
+    session = rig.add_session("1", "2026-07-22")
+    for animal in ("a1", "a2"):
+        rig.add_run(session, animal, HIT_1 * 5, snapshot=False)
+
+    reads = 0
+    real = task_profile.load_profile
+
+    def counted(path: str) -> object:
+        nonlocal reads
+        reads += 1
+        return real(path)
+
+    monkeypatch.setattr(task_profile, "load_profile", counted)
+    await rig.service.summary(rig.cohort.id)
+    assert reads == 1
+
+    # ...and the memo does not survive the pass. Profiles resolve at read time
+    # on purpose (§8.1) — a memo that outlived one indexing job would freeze an
+    # edited task.json and a re-pointed Arduino Directory alike.
+    reads = 0
+    await rig.service.summary(rig.cohort.id)
+    assert reads == 1
 
 
 async def test_progress_is_published_while_indexing(rig: Rig) -> None:

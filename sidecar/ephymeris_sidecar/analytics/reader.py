@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,16 @@ FORMAT_DIRS = frozenset(
     {TSV_DIR, JSON_DIR, "behavior.mat", LEGACY_JSON_DIR, LEGACY_TSV_DIR, "behavior_mat"}
 )
 
+#: How far below the cohort folder the walk will look for a format folder.
+#: A cohort's `dataFolder` is user-settable and could be pointed at a drive
+#: root, so the descent needs a floor; real layouts use two or three levels.
+MAX_FORMAT_DEPTH = 6
+
+#: Directories the walk never descends into, on top of every dotted name.
+#: `__MACOSX` is where macOS unpacks the AppleDouble sidecars `is_sidecar_file`
+#: filters per-file — same junk, one level up.
+PRUNED_DIRS = frozenset({"__MACOSX"})
+
 
 @dataclass(frozen=True)
 class ReadResult:
@@ -48,6 +59,25 @@ class ReadResult:
     detail: str | None = None
     mtime_ns: int | None = None
     size: int | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "ok"
+
+
+@dataclass(frozen=True)
+class StatResult:
+    """What one `stat` says about a run file — everything the cache key needs.
+
+    Split out from `ReadResult` because the cache key is answerable without
+    opening the file, and the indexing path asks that question about every run
+    on every dashboard open (§8.3).
+    """
+
+    status: str  # 'ok' | 'missing' | 'unreadable'
+    mtime_ns: int | None = None
+    size: int | None = None
+    detail: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -94,28 +124,32 @@ def run_identity(path: Path) -> str:
 def session_folder_of(file_path: Path) -> Path:
     """The session folder a per-animal file belongs to.
 
-    Files normally sit inside a format folder (`behavior.json/`,
-    `behavior_json/`, …) whose parent is the session folder; a file sitting
-    directly in a session folder (the oldest hand-managed layouts) is its
-    parent's child already.
+    Defined relative to the *format folder*, never to the cohort root — which
+    is precisely why `walk_session_files` can find format folders at any depth
+    without this needing to know how deep it went.
+
+    The second branch is defensive, not a supported layout: `walk_session_files`
+    only ever yields files from inside a format folder, so it cannot produce a
+    path that takes it. It exists for a `file_path` read back out of the
+    database, where returning the parent beats raising. **Don't "fix" the walk
+    to match it** — scoping discovery to format folders is the only thing
+    keeping every stray `.json` on a shared drive out of the archive.
     """
     parent = file_path.parent
     return parent.parent if parent.name in FORMAT_DIRS else parent
 
 
-def read_run(path: str | Path) -> ReadResult:
-    """Load one per-animal session document.
+def stat_run(path: str | Path) -> StatResult:
+    """Is the file there, and has it changed? — without opening it.
 
-    Three outcomes, deliberately distinguished because they mean different
-    things to the operator:
+    Two of `read_run`'s three outcomes are decided here:
 
     * **missing** — nothing at that path. When the sibling `.tsv` *is* there,
       say so: that is the disk-full-at-finalization case (`data-saving.md`
       §7.2 writes `.json` best-effort and only logs an `OSError`), the data is
       not lost, and the crash-recovery utility is what fixes it.
-    * **unreadable** — present but not parseable. Cached as a negative result
-      so it isn't re-parsed on every dashboard open.
-    * **ok** — with the stat used for cache invalidation.
+    * **unreadable** — the path itself can't be interrogated.
+    * **ok** — with the stat the cache key is built from.
     """
     target = Path(path)
     try:
@@ -130,10 +164,20 @@ def read_run(path: str | Path) -> ReadResult:
                 )
         except OSError:  # pragma: no cover - unreadable mount
             pass
-        return ReadResult(status="missing", detail=detail)
+        return StatResult(status="missing", detail=detail)
     except OSError as exc:
-        return ReadResult(status="unreadable", detail=str(exc))
+        return StatResult(status="unreadable", detail=str(exc))
 
+    return StatResult(status="ok", mtime_ns=stat.st_mtime_ns, size=stat.st_size)
+
+
+def parse_run(path: str | Path, stat: StatResult) -> ReadResult:
+    """Open and parse a file `stat_run` has already said is there.
+
+    **unreadable** covers present-but-not-parseable, and is cached as a
+    negative result so a corrupt file isn't re-parsed on every dashboard open.
+    """
+    target = Path(path)
     try:
         raw = json.loads(target.read_text(encoding="utf-8"))
     except (ValueError, OSError) as exc:
@@ -149,29 +193,84 @@ def read_run(path: str | Path) -> ReadResult:
     return ReadResult(
         status="ok",
         document=raw,
-        mtime_ns=stat.st_mtime_ns,
-        size=stat.st_size,
+        mtime_ns=stat.mtime_ns,
+        size=stat.size,
     )
+
+
+def read_run(path: str | Path) -> ReadResult:
+    """Load one per-animal session document — stat and parse in one call.
+
+    Three outcomes, deliberately distinguished because they mean different
+    things to the operator: **missing**, **unreadable**, and **ok** with the
+    stat used for cache invalidation.
+
+    Callers that need the document unconditionally (the rescan, `series`) want
+    this. The indexing path deliberately does *not*: it calls `stat_run`,
+    settles the cache key, and only reaches `parse_run` on a miss.
+    """
+    stat = stat_run(path)
+    if stat.status != "ok":
+        return ReadResult(status=stat.status, detail=stat.detail)
+    return parse_run(path, stat)
 
 
 def walk_session_files(cohort_folder: str | Path) -> list[Path]:
     """Every per-animal `.json` under one cohort's data folder (§8.1).
 
     Only used by the explicit rescan — the normal path reads what run records
-    point at. Scoped to `behavior.json/` folders rather than every `.json` in
-    the tree, so an unrelated file someone dropped in the cohort folder is
-    never mistaken for a session.
+    point at. Two rules do all the work here, and both are stated positively so
+    that neither needs a list of exceptions to grow over time:
+
+    **A format folder is recognized by its name, at any depth.** This app files
+    sessions under a prefix folder (`<cohort>/<prefix>/<session>/`), but other
+    software in this lab put them straight under the cohort root, and nothing
+    stops someone adding a per-year level next. Matching on the name instead of
+    on a fixed depth reads every one of those from a single pass, which is why
+    the depth never has to be known in advance.
+
+    **A format folder's data is exactly its direct children.** The walk stops
+    at one, so a plots or notes folder *inside* it (real archives carry
+    `behavior_json/analytics/`) contributes nothing, and neither do the
+    per-session report folders sitting beside it. Scoping to format folders at
+    all is what keeps an unrelated file someone dropped in the cohort folder
+    from being mistaken for a session.
+
+    A directory that can't be read costs a warning and its own contents, never
+    the cohort: **a bad directory is data too**, the same call §8.3 makes for a
+    bad file. That is why this returns a list and not an error.
     """
     base = Path(cohort_folder).expanduser()
-    if not base.is_dir():
-        return []
     try:
-        found: list[Path] = []
-        for json_dir in (JSON_DIR, LEGACY_JSON_DIR):
-            found.extend(
-                p for p in base.glob(f"*/*/{json_dir}/*.json") if not is_sidecar_file(p)
-            )
-        return sorted(found)
+        if not base.is_dir():
+            return []
     except OSError as exc:  # pragma: no cover - unreadable mount
-        log.warning("couldn't walk %s: %s", base, exc)
+        log.warning("couldn't reach %s: %s", base, exc)
         return []
+
+    def note(exc: OSError) -> None:
+        log.warning("skipping %s: %s", getattr(exc, "filename", base), exc)
+
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(base, onerror=note, followlinks=False):
+        here = Path(dirpath)
+
+        if here.name in FORMAT_DIRS:
+            dirnames[:] = []
+            if here.name in (JSON_DIR, LEGACY_JSON_DIR):
+                found.extend(
+                    here / name
+                    for name in filenames
+                    if name.endswith(".json") and not is_sidecar_file(here / name)
+                )
+            continue
+
+        if len(here.relative_to(base).parts) >= MAX_FORMAT_DEPTH:
+            dirnames[:] = []
+            continue
+
+        dirnames[:] = sorted(
+            d for d in dirnames if not d.startswith(".") and d not in PRUNED_DIRS
+        )
+
+    return sorted(found)

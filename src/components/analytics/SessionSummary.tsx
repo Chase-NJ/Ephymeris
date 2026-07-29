@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { useMemo } from "react";
 
+import { DrawOn } from "@/components/charts/DrawOn";
 import { useIsHighlighted, useAnalyticsStore } from "@/lib/analytics/context";
 import type {
   AnalyticsSummary,
@@ -12,7 +13,7 @@ import type {
   SessionListItem,
   TrialOutcomes,
 } from "@/lib/analytics/types";
-import { declaredMetrics, poolOutcomes } from "@/lib/analytics/view";
+import { OUTCOME_STYLE, declaredMetrics, poolOutcomes } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
 
 /**
@@ -33,15 +34,6 @@ import { springSnappy } from "@/lib/motion";
  * administered trials resolved. The accuracies come last of the numbers
  * because `administered` is their denominator and is stated first.
  */
-
-/** The trial-outcome palette. Deliberately the heat ramp's ends plus the
- *  status colours, so nothing new enters the theme for this one panel. */
-const OUTCOME_STYLE = {
-  rewarded: { fill: "var(--color-status-ok)", label: "rewarded" },
-  holdFailed: { fill: "var(--color-status-warning)", label: "correct well, no hold" },
-  wrongWell: { fill: "var(--color-status-error)", label: "wrong well" },
-  noResponse: { fill: "var(--color-halo)", label: "no response" },
-} as const;
 
 export function SessionSummary({
   summary,
@@ -300,18 +292,16 @@ function ConditionSpark({
         strokeDasharray="2 2"
         vectorEffect="non-scaling-stroke"
       />
-      <motion.polyline
-        key={revealKey}
-        points={points}
-        fill="none"
-        stroke={color}
-        strokeWidth={1.2}
-        strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
-        initial={{ pathLength: 0 }}
-        animate={{ pathLength: 1 }}
-        transition={{ duration: 0.7, ease: "easeOut" }}
-      />
+      <DrawOn key={revealKey} viewBox={[0, 0, 100, 18]} duration={0.7}>
+        <polyline
+          points={points}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.2}
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      </DrawOn>
     </svg>
   );
 }

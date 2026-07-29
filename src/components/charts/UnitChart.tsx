@@ -9,7 +9,14 @@
  * **No text goes inside this SVG.** `preserveAspectRatio="none"` scales
  * non-uniformly, which is fine for strokes and ruinous for glyphs — labels
  * belong in the HTML beside it, which is what `ChartFrame` is for.
+ *
+ * Layers that subscribe to shared state — the per-animal highlight above all —
+ * render as `children` inside the SVG rather than as `series` props, so a
+ * hover re-renders one small layer and never the chart that contains it.
+ * `unitX`/`unitY`/`ribbon` are exported for exactly those layers.
  */
+
+import type { ReactNode } from "react";
 
 export interface Point {
   x: number;
@@ -53,6 +60,16 @@ export interface Reference {
   to?: Point;
 }
 
+/** x in 0–1 → viewBox units. */
+export function unitX(x: number): string {
+  return (x * 100).toFixed(2);
+}
+
+/** y in 0–1 → viewBox units, flipped so 1.0 is the top. */
+export function unitY(y: number, height: number): string {
+  return ((1 - y) * height).toFixed(2);
+}
+
 export function UnitChart({
   height = 46,
   references = [],
@@ -60,6 +77,7 @@ export function UnitChart({
   series = [],
   marks = [],
   className,
+  children,
 }: {
   height?: number;
   references?: Reference[];
@@ -67,9 +85,11 @@ export function UnitChart({
   series?: Series[];
   marks?: Mark[];
   className?: string;
+  /** Extra layers drawn between the series and the marks — see the header. */
+  children?: ReactNode;
 }) {
-  const X = (x: number) => (x * 100).toFixed(2);
-  const Y = (y: number) => ((1 - y) * height).toFixed(2);
+  const X = unitX;
+  const Y = (y: number) => unitY(y, height);
 
   return (
     <svg
@@ -103,7 +123,7 @@ export function UnitChart({
         band.points.length < 2 ? null : (
           <polygon
             key={`band-${index}`}
-            points={ribbon(band.points, X, Y)}
+            points={ribbon(band.points, height)}
             fill={band.fill}
             fillOpacity={band.opacity ?? 0.12}
             stroke="none"
@@ -129,6 +149,8 @@ export function UnitChart({
         ),
       )}
 
+      {children}
+
       {marks.map((mark, index) => (
         <circle
           key={`mark-${index}`}
@@ -147,13 +169,9 @@ export function UnitChart({
 }
 
 /** Forward along the low edge, back along the high edge, closing the ribbon. */
-function ribbon(
-  points: BandPoint[],
-  X: (x: number) => string,
-  Y: (y: number) => string,
-): string {
-  const low = points.map((p) => `${X(p.x)},${Y(p.low)}`);
-  const high = [...points].reverse().map((p) => `${X(p.x)},${Y(p.high)}`);
+export function ribbon(points: BandPoint[], height: number): string {
+  const low = points.map((p) => `${unitX(p.x)},${unitY(p.low, height)}`);
+  const high = [...points].reverse().map((p) => `${unitX(p.x)},${unitY(p.high, height)}`);
   return [...low, ...high].join(" ");
 }
 
@@ -162,6 +180,44 @@ function ribbon(
  * was skipped — so a session that scored nothing shows as a discontinuity
  * rather than a line interpolated through nothing (`analytics.md` §3.6).
  */
+export interface Edge {
+  from: Point;
+  to: Point;
+  /** Bridges a gap — drawn dashed, exactly as `segmentsWithGaps` would. */
+  dashed: boolean;
+  /** Where `to` sat in the original list. The ordinal, not the edge count, so
+   *  a delay computed from it tracks the session a node belongs to even when
+   *  earlier ones are missing. */
+  index: number;
+}
+
+/**
+ * The same split as `segmentsWithGaps`, but one edge at a time.
+ *
+ * A polyline is the right shape for drawing a trail and the wrong one for
+ * *walking* it: revealing a trail node by node needs each hop to be its own
+ * element with its own delay. Same gap rules, so the two cannot disagree about
+ * where a discontinuity is.
+ */
+export function edgesWithGaps(points: Array<Point | null>): Edge[] {
+  const edges: Edge[] = [];
+  let previous: Point | null = null;
+  let gapPending = false;
+
+  points.forEach((point, index) => {
+    if (point === null) {
+      if (previous !== null) gapPending = true;
+      return;
+    }
+    if (previous !== null) {
+      edges.push({ from: previous, to: point, dashed: gapPending, index });
+    }
+    gapPending = false;
+    previous = point;
+  });
+  return edges;
+}
+
 export function segmentsWithGaps(points: Array<Point | null>): Segment[] {
   const segments: Segment[] = [];
   let current: Point[] = [];

@@ -191,6 +191,8 @@ Designed in [analytics.md](analytics.md) §9, which carries the rationale. Imple
 
 A corrupt or missing file is **data, not an error** — it yields a run with a non-ok status plus a warning, and the command still succeeds. One unreadable `.json` must never blank a year of history.
 
+Each `RescanOrphan` reports one file the walk found and what could honestly be said about it. `animalName` is always the name the *document* carries, reported as written even when that is what failed to match; `animalSource` says which recording `animalId` was resolved from. `document` is the normal case. `filename` means the document's `rat` matched no animal on the roster and the file stem did — the per-animal naming rule (`data-saving.md` §2) gives a second independent recording of the same fact, and matching it exactly is not the same act as guessing from a resemblance. Null `animalSource` means the run is kept unattributed, which stays the outcome whenever neither recording matches.
+
 ---
 
 ## 4. Events (server → client)

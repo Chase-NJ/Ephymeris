@@ -19,7 +19,7 @@
     "gen:protocol": "node scripts/gen-protocol.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "package": "node scripts/package-resources.mjs && tauri build"
+    "package": "node scripts/package-resources.mjs && tauri build --config src-tauri/tauri.bundle.conf.json"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",

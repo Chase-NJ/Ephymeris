@@ -14,6 +14,7 @@ corrupt session-number suggestion and the same-day reuse warning.
 from __future__ import annotations
 
 import json
+import os
 from datetime import date
 from pathlib import Path
 
@@ -112,6 +113,8 @@ class LegacyRig:
         json_dir: str = "behavior_json",
         with_tsv: bool = False,
         group: str | None = None,
+        nest: bool = True,
+        rat: str | None = None,
     ) -> Path:
         """One per-animal file in the lab's real on-disk shape.
 
@@ -120,13 +123,25 @@ class LegacyRig:
         and again under a consolidated `ALL/`, with identical session-folder
         and file names underneath. `sketch=None` omits the key entirely, as the
         older per-prefix copies do.
+
+        `nest=False` is the *other* real archive shape: session folders sitting
+        straight under the cohort root with no grouping level, and the session
+        number written before the prefix rather than after it.
+
+        `rat` overrides the document's animal name, which is how a real archive
+        carries a typo in one file while its filename stays correct.
         """
-        session = self.root / (group or prefix) / f"{prefix}_{number}_{folder_date}"
-        stem = f"{animal}_{prefix}_{number}_{folder_date}_{time}"
+        if nest:
+            folder = f"{prefix}_{number}_{folder_date}"
+            session = self.root / (group or prefix) / folder
+        else:
+            folder = f"{number}_{prefix}_{folder_date}"
+            session = self.root / folder
+        stem = f"{animal}_{folder}_{time}"
         path = session / json_dir / f"{stem}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         document = {
-            "rat": animal,
+            "rat": animal if rat is None else rat,
             "serial_port": "COM6",
             "session_id": f"{prefix}_{number}",
             "stop_reason": "BF_END_SESSION received",
@@ -161,6 +176,19 @@ def rig(db: Database, tmp_path: Path) -> LegacyRig:
         # An underscored prefix must not be mistaken for the session number.
         ("2O_bdisc_01_05_29_26", "2O_bdisc", "01", date(2026, 5, 29)),
         ("Test_00_07_24_26", "Test", "00", date(2026, 7, 24)),
+        # Software older than this app wrote the number *first*. Taking the
+        # trailing token whatever it was read these as prefix `00_01_shaping`,
+        # number `gr`.
+        ("00_01_shaping_gr_06_17_26", "shaping_gr", "00_01", date(2026, 6, 17)),
+        ("29_30_shaping_gr_07_28_26", "shaping_gr", "29_30", date(2026, 7, 28)),
+        # Same archive, one folder typed with hyphens. Reported as written —
+        # folding `-` to `_` would also merge `2O-Bdisc` with `2O_bdisc`, which
+        # are two real and distinct prefixes above.
+        ("18-19-shaping-gr_07_13_26", "shaping-gr", "18-19", date(2026, 7, 13)),
+        # The degradation that protects a digit-leading *prefix*: no numeric
+        # token at either end, so nothing is split off. A bare `^\d+` would
+        # report the prefix here as `O-Bdisc_gr`.
+        ("2O-Bdisc_gr_07_13_26", "2O-Bdisc_gr", "", date(2026, 7, 13)),
     ],
 )
 def test_session_folder_names_split_into_prefix_number_date(
@@ -207,6 +235,72 @@ def test_walk_still_ignores_a_stray_json(rig: LegacyRig) -> None:
     rig.add_legacy_run("remy1", HIT_1 * 5)
     (rig.root / "2O-Bdisc" / "notes.json").write_text("{}", encoding="utf-8")
     assert len(reader.walk_session_files(rig.root)) == 1
+
+
+def test_walk_finds_sessions_sitting_straight_under_the_cohort(rig: LegacyRig) -> None:
+    """The other lab archive has no grouping level at all. Matching a format
+    folder by name rather than by depth is what reads it."""
+    flat = rig.add_legacy_run(
+        "remy1", HIT_1 * 5, prefix="shaping_gr", number="00_01", nest=False
+    )
+    assert reader.walk_session_files(rig.root) == [flat]
+
+
+def test_walk_reads_a_flat_and_a_nested_archive_in_one_pass(rig: LegacyRig) -> None:
+    """Depths are a property of the folder, not of the cohort — one archive can
+    carry both, and a rescan must not have to be told which."""
+    nested = rig.add_legacy_run("remy1", HIT_1 * 5)
+    flat = rig.add_legacy_run(
+        "remy2", HIT_1 * 5, prefix="shaping_gr", number="00_01", nest=False
+    )
+    assert set(reader.walk_session_files(rig.root)) == {nested, flat}
+
+
+def test_a_folder_inside_a_format_folder_is_not_data(rig: LegacyRig) -> None:
+    """Real archives keep plots in `behavior_json/analytics/`. A format
+    folder's data is exactly its direct children — the walk stops at one."""
+    run = rig.add_legacy_run("remy1", HIT_1 * 5)
+    nested = run.parent / "analytics"
+    nested.mkdir()
+    (nested / "rolling_accuracy.png").write_bytes(b"\x89PNG")
+    (nested / "notes.json").write_text("{}", encoding="utf-8")
+    assert reader.walk_session_files(rig.root) == [run]
+
+
+def test_a_report_folder_beside_the_format_folders_is_not_data(rig: LegacyRig) -> None:
+    """`00_session_analytics/` and friends sit *in* the session folder, where
+    nothing marks them as not-data except that they aren't a format folder."""
+    run = rig.add_legacy_run("remy1", HIT_1 * 5)
+    reports = run.parent.parent / "00_session_analytics"
+    reports.mkdir()
+    (reports / "cumulative.json").write_text("{}", encoding="utf-8")
+    assert reader.walk_session_files(rig.root) == [run]
+
+
+def test_the_walk_stops_at_the_depth_cap(rig: LegacyRig) -> None:
+    """A cohort's data folder is user-settable and could be a drive root."""
+    deep = rig.root
+    for level in range(reader.MAX_FORMAT_DEPTH + 1):
+        deep = deep / f"level{level}"
+    buried = deep / "behavior_json"
+    buried.mkdir(parents=True)
+    (buried / "remy1_2O-Bdisc_01_06_16_26_120022.json").write_text("{}", encoding="utf-8")
+    assert reader.walk_session_files(rig.root) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads anything")
+def test_an_unreadable_directory_does_not_blank_the_cohort(rig: LegacyRig) -> None:
+    """A bad directory is data too (§8.3, one level up). Losing a year of
+    history to one bad permission bit is the failure worth ruling out."""
+    run = rig.add_legacy_run("remy1", HIT_1 * 5)
+    walled = rig.root / "locked"
+    walled.mkdir()
+    walled.chmod(0o000)
+    try:
+        assert reader.walk_session_files(rig.root) == [run]
+    finally:
+        walled.chmod(0o755)
 
 
 def test_sibling_tsv_follows_the_layout_it_found(rig: LegacyRig) -> None:
@@ -373,9 +467,78 @@ async def test_an_unmatched_file_is_reported_but_not_adopted(rig: LegacyRig) -> 
     assert result["adopted"] == 0
     assert result["orphans"][0]["animalName"] == "remy9"
     assert result["orphans"][0]["animalId"] is None
+    assert result["orphans"][0]["animalSource"] is None
 
     payload = await rig.service.summary(rig.cohort.id)
     assert payload["runs"] == []
+
+
+async def test_a_typo_in_the_rat_field_falls_back_to_the_filename(
+    rig: LegacyRig,
+) -> None:
+    """The lab's real archive carries exactly this: one document recording
+    `HmM103` beside a filename that says `HM103`. Losing the run leaves a hole
+    that reads as "this animal didn't run", which is worse than the typo."""
+    rig.add_legacy_run("remy1", HIT_1 * 5, rat="rrremy1")
+
+    result = await rig.service.rescan(rig.cohort.id)
+    assert validate_command_result("analytics.rescan", result) == []
+    assert result["adopted"] == 1
+    orphan = result["orphans"][0]
+    assert orphan["animalId"] == "a1"
+    # The document is still reported as written — the correction is visible,
+    # never silent.
+    assert orphan["animalName"] == "rrremy1"
+    assert orphan["animalSource"] == "filename"
+
+    payload = await rig.service.summary(rig.cohort.id)
+    assert [r["animalId"] for r in payload["runs"]] == ["a1"]
+
+
+async def test_a_document_match_is_never_overridden_by_the_filename(
+    rig: LegacyRig,
+) -> None:
+    """The document is the primary recording; the filename is only consulted
+    when it fails."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5, rat="remy2")
+
+    result = await rig.service.rescan(rig.cohort.id)
+    assert path.stem.startswith("remy1_")
+    assert result["orphans"][0]["animalId"] == "a2"
+    assert result["orphans"][0]["animalSource"] == "document"
+
+
+async def test_the_filename_fallback_still_demands_an_exact_roster_match(
+    rig: LegacyRig,
+) -> None:
+    """Structural, not fuzzy. A name off the roster stays off it."""
+    rig.add_legacy_run("ghost", HIT_1 * 5, rat="also-nobody")
+
+    result = await rig.service.rescan(rig.cohort.id)
+    assert result["adopted"] == 0
+    assert result["orphans"][0]["animalId"] is None
+    assert result["orphans"][0]["animalSource"] is None
+
+
+async def test_the_filename_fallback_demands_the_stem_match_its_folder(
+    rig: LegacyRig,
+) -> None:
+    """This is what makes it a naming *rule* rather than a first-token guess:
+    the stem has to be `<animal>_<the folder it is in>_<HHMMSS>`, checked
+    against the folder on disk."""
+    real = rig.add_legacy_run("remy2", HIT_1 * 5)
+    # `remy1` is on the roster, and this file leads with it — but the rest of
+    # the stem is not the session folder it is sitting in, so it is not a
+    # per-animal file and the leading token is not an attribution.
+    stray = real.parent / "remy1_something_else_120000.json"
+    stray.write_text(json.dumps({"rat": "nobody", "ts_data": []}), encoding="utf-8")
+
+    result = await rig.service.rescan(rig.cohort.id)
+    assert result["scanned"] == 2
+    assert result["adopted"] == 1, "the real run, matched on its document"
+    by_path = {o["path"]: o for o in result["orphans"]}
+    assert by_path[str(stray)]["animalId"] is None
+    assert by_path[str(stray)]["animalSource"] is None
 
 
 async def test_an_unresolvable_sketch_says_why_it_scored_nothing(

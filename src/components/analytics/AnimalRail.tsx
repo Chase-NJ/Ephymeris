@@ -1,6 +1,6 @@
-import { motion } from "framer-motion";
 import { useMemo } from "react";
 
+import { DrawOn } from "@/components/charts/DrawOn";
 import { LINK_STROKE } from "@/components/chrome/constellationStyle";
 import { useAnalyticsStore, useIsHighlighted, usePinnedAnimal } from "@/lib/analytics/context";
 import type { AnalyticsSummary, ProfileGroup } from "@/lib/analytics/types";
@@ -147,18 +147,22 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
         vectorEffect="non-scaling-stroke"
       />
       {/* Drawn left to right on first paint, so an animal's history arrives
-          in the order it was earned rather than appearing all at once. */}
-      <motion.polyline
-        points={points}
-        fill="none"
-        stroke={color}
-        strokeWidth={1.5}
-        strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
-        initial={{ pathLength: 0 }}
-        animate={{ pathLength: 1 }}
-        transition={{ duration: 0.8, ease: "easeOut" }}
-      />
+          in the order it was earned rather than appearing all at once.
+          Wiped rather than `pathLength`-drawn: this rail is the one chart
+          rendered *smaller* than its viewBox, which is the only reason that
+          approach didn't shatter the line here the way it did everywhere else
+          (see `DrawOn`) — and widening the rail would have been enough to
+          break it. */}
+      <DrawOn viewBox={[0, 0, 100, 30]} duration={0.8}>
+        <polyline
+          points={points}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      </DrawOn>
     </svg>
   );
 }

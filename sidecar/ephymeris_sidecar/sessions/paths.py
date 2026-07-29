@@ -48,6 +48,14 @@ LEGACY_DATE_FORMAT = "%m_%d_%y"
 _ISO_TAIL = re.compile(r"_(\d{4}-\d{2}-\d{2})(?:_(\d{6}))?$")
 _LEGACY_TAIL = re.compile(r"_(\d{2}_\d{2}_\d{2})(?:_(\d{6}))?$")
 
+# A leading run of digits that is a *whole* `_`/`-` token: `00_01`, `18-19`,
+# `07`. Some software wrote the session number first and the task label after
+# it, the inverse of this app's `<prefix>_<number>_<date>`.
+#
+# The lookahead is load-bearing. Without it `^\d+` would match the `2` of this
+# lab's own `2O-Bdisc` and report the prefix as `O-Bdisc`.
+_LEADING_NUMBER = re.compile(r"^(\d+(?:[-_]\d+)*)(?=[-_]|$)")
+
 
 def date_stamp(when: datetime) -> str:
     """`YYYY-MM-DD` (§2)."""
@@ -110,6 +118,12 @@ def parse_session_folder(name: str) -> ParsedSessionFolder:
     Degrades honestly rather than guessing: a name with no recognizable date
     tail comes back whole as the prefix with an empty session number, because
     inventing a split would attribute data to a session that never existed.
+
+    Once the date tail is off, the session number is found by looking for a
+    *numeric* token rather than by position, because other software in this lab
+    wrote the number on the other end (`00_01_shaping_gr_06_17_26`). Trailing
+    is still tried first, so no name this parser already read correctly can
+    shift — see `_split_head`.
     """
     for pattern in (_ISO_TAIL, _LEGACY_TAIL):
         match = pattern.search(name)
@@ -118,13 +132,35 @@ def parse_session_folder(name: str) -> ParsedSessionFolder:
         parsed = parse_date_stamp(match.group(1))
         if parsed is None:
             continue
-        head = name[: match.start()]
-        if "_" in head:
-            prefix, number = head.rsplit("_", 1)
-        else:
-            prefix, number = head, ""
+        prefix, number = _split_head(name[: match.start()])
         return ParsedSessionFolder(prefix=prefix, session_number=number, date=parsed)
     return ParsedSessionFolder(prefix=name, session_number="", date=None)
+
+
+def _split_head(head: str) -> tuple[str, str]:
+    """`<prefix>_<number>` — from either end, in that order of preference.
+
+    Trailing first, and only when the token is actually numeric: this app
+    writes `2O-Bdisc_25_…`, and the old check took the last token whatever it
+    was, so `00_01_shaping_gr_…` came back as prefix `00_01_shaping`, number
+    `gr`. Testing `isdigit()` is what tells the two apart.
+
+    Leading second, for the number-first spelling. A head with no numeric token
+    at either end keeps its whole self as the prefix rather than being split
+    somewhere arbitrary.
+    """
+    if "_" in head:
+        prefix, number = head.rsplit("_", 1)
+        if number.isdigit():
+            return prefix, number
+
+    lead = _LEADING_NUMBER.match(head)
+    if lead is not None:
+        rest = head[lead.end() + 1 :]
+        if rest:
+            return rest, lead.group(1)
+
+    return head, ""
 
 
 def parse_name_time(name: str) -> str | None:

@@ -762,7 +762,17 @@ export interface RescanOrphan {
   path: string;
   /** Matched by name, never guessed (§8.1). */
   animalId: string | null;
+  /**
+   * The animal name the *document* carries, reported as written even when it is what failed to
+   * match.
+   */
   animalName: string | null;
+  /**
+   * Which recording of the animal `animalId` came from. `filename` means the document's `rat`
+   * field matched no animal and the file stem did — an exact match against the roster on a second
+   * recording of the same fact, never a guess (§8.1). Null when the run is unattributed.
+   */
+  animalSource: "document" | "filename" | null;
   date: string | null;
   status: string;
   reason: string | null;

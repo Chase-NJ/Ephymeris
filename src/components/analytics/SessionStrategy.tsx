@@ -194,6 +194,15 @@ function AnimalWalk({
         </linearGradient>
       </defs>
 
+      {/* Fades in rather than drawing on. `pathLength` is unusable with
+          `vector-effect="non-scaling-stroke"` on an upscaled chart — it
+          *finishes* holding a dash covering ~28% of this plane's walk, so the
+          trail settled as disconnected chunks (see `DrawOn`). The two fixes
+          available elsewhere are both closed here: a left-to-right wipe would
+          assert a chronology a 2D walk doesn't have, and a per-segment reveal
+          is the hundred-elements-per-animal cost this component exists to
+          avoid. Nothing is lost — the gradient already carries the direction
+          of travel, which is what the draw-on was there to say. */}
       <motion.polyline
         key={revealKey}
         points={path}
@@ -203,9 +212,9 @@ function AnimalWalk({
         strokeLinejoin="round"
         strokeLinecap="round"
         vectorEffect="non-scaling-stroke"
-        initial={{ pathLength: 0 }}
-        animate={{ pathLength: 1 }}
-        transition={{ duration: 0.8, ease: "easeOut" }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
       >
         <title>{describe(name, points)}</title>
       </motion.polyline>

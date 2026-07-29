@@ -20,6 +20,11 @@
  *
  * Run via `npm run package` (which chains `tauri build` after this), or
  * standalone with `node scripts/package-resources.mjs`.
+ *
+ * The `bundle.resources` mapping for these lives in
+ * `src-tauri/tauri.bundle.conf.json`, merged in only by `npm run package`'s
+ * `tauri build --config` — keeping it out of `tauri.conf.json` means
+ * `tauri dev` works on machines that have never staged resources.
  */
 
 import { execFileSync, spawnSync } from "node:child_process";

@@ -39,6 +39,8 @@ The Observatory now **does** render the lab's real archive: 50 sessions × 6 ani
 
 What hasn't happened is anyone *looking at it with a scientist's eye*. Three things are known-marginal at this scale and were only ever designed against an 18-session synthetic set: the heatmap's cell density at 50 columns, the session selector's length, and the six-colour ramp repeating past six animals. Whether the strategy space is usable when the dominant profile declares one condition (the shaping half of this archive) is a real design question — it currently shows an explanatory note instead of a plot.
 
+A **second** real cohort now sharpens all four (item 27): Squeekstreet Syndicate is 30 sessions × **12 animals** — double the colour ramp's length, so the repeat is guaranteed rather than hypothetical — and its profile (`shaping_GR`) declares exactly **one** live metric, making the single-condition strategy space the normal case for that cohort rather than an edge of another one. Both have been driven at the service layer; neither has been judged on screen.
+
 ### 4. Crash-recovery utility for orphaned `.tsv` files
 
 **Source:** `data-saving.md` §7.3, §11 · `analytics.md` §8.1
@@ -47,7 +49,17 @@ If the machine loses power mid-session, every strobe up to that moment is durabl
 
 A small utility that reads an orphaned `.tsv` and backfills both structured formats with `stop_reason: "recovered after crash"` is cheap given the existing design. Note this is **not** session resumption (see P4).
 
-It needs the **same archive walker** as `analytics.md` §8.1's orphan adoption — both walk cohort data folders and both must parse either date spelling. Build them to share one, whichever lands first.
+It needs the **same archive walker** as `analytics.md` §8.1's orphan adoption — both walk cohort data folders and both must parse either date spelling. Build them to share one, whichever lands first. §8.1's is now the depth-tolerant one (format folders matched by name at any depth, pruned at the format folder) and is the version to reuse.
+
+### 28. A finalization landing after `sessions.end` writes files with no run record
+
+**Source:** codebase — `sessions/runner.py:275`, `app.py:_sessions_end`, `_on_animal_ended`
+
+`_on_track` schedules `finalize_box` as a fire-and-forget task when a board reports its own end strobe. Meanwhile `_sessions_end` awaits `end_all` — which waits only briefly — and then clears `self._running_session_id`. `_on_animal_ended` records the `session_animal_runs` row *only* `if self._running_session_id is not None`, so a finalization that lands on the wrong side of that clear **writes the `.json`/`.mat` and no database row**.
+
+The data is not lost, and the symptom is mild and recoverable: the run is invisible to `analytics.summary`'s database-first path until someone clicks Rescan, which adopts it. But it is self-inflicted — this is precisely the "runs finalized while no session was active" orphan cause `analytics.md` §8.1 lists, being manufactured by the end path itself rather than by a crash.
+
+Found while establishing that the post-session Analytics landing does **not** need a disk rescan (`analytics.md` §2.5). The landing fix is correct as shipped; this is the residual case that keeps Rescan the honest cure rather than a redundancy. Likely fix: have `_sessions_end` await outstanding finalizations before clearing the id, or key the record-on-end guard to the run rather than to a mutable field.
 
 ### 5. Switch Group's second lap is untested on hardware
 
@@ -197,6 +209,26 @@ Four things worth carrying forward:
 - **Real data broke the *finding* layer, not the maths.** `derive.py` needed no change. Every blocker was in locating and attributing files — which is the part that was only ever tested against archives this app wrote itself.
 - **`profileGroups` were unlabeled and nobody noticed**, because fallback-decoded profiles were hashed but never stored, so `profile_meta` found nothing. Invisible with snapshots present; universal on any pre-snapshot archive. Storing the blob does not promote trust — that is `profileSource`, which stays `sketch-current`.
 - **The real archive validated §3.7's pooled-accuracy decision immediately.** remy2 scores `p_r_odor1 = 0.00` and `p_l_odor3 = 1.00` — a perfectly side-locked animal that either single metric would report as flawless. Pooled, it sits at 0.48: chance. That is the trap the spec predicted, in the lab's own data.
+
+### ~~27. A second lab archive was invisible to the walk~~ — closed
+
+**Source:** `analytics.md` §8.1 · a colleague's cohort, `04_Data/00_Behavior/Squeekstreet Syndicate`
+
+**Was:** a cohort recorded on pre-Ephymeris software — 30 sessions, 444 `.json`, 801 `.tsv` — that `analytics.rescan` scanned **0 files** of. Item 25's lesson repeated on data item 25 never saw.
+
+**Three independent blockers, only the first fatal:**
+
+- **The walk's depth was hard-coded.** It globbed `<cohort>/*/*/behavior_json/*.json`, which assumes the prefix-grouping level the Remy archive happens to have. These session folders sit straight under the cohort root, so the glob matched nothing. Format folders are now matched **by name at any depth**, pruned so that a format folder's data is exactly its direct children — which also disposes of the `00_session_analytics/` and `behavior_json/analytics/` report folders this archive keeps, by rule rather than by name.
+- **The session number was read positionally.** These folders are named number-first (`00_01_shaping_gr_06_17_26`), the inverse of `<prefix>_<number>_<date>`, so taking the trailing `_`-token reported the prefix as `00_01_shaping` and the number as `gr`. Now found by *being numeric* — trailing first, so nothing already read correctly moved.
+- **One document's `rat` field was typo'd** (`HmM103`, filename `HM103_…`), which under strict document-only matching cost HM103 a day. The filename is a second independent recording of the same fact and is now consulted when the document fails, structurally (the stem must match its own session folder) and still requiring an exact roster match.
+
+**Result: 444 scanned, 444 adopted, 0 duplicates, 30 sessions, 12 animals, 444 decoded, zero warnings**, stable across a repeated rescan with every id unchanged.
+
+Worth carrying forward:
+
+- **Twice now, real data has broken only the *finding* layer.** `derive.py` needed no change here either. Every blocker was in locating, naming, or attributing files — the part that synthetic fixtures cannot anticipate because they are written by the code that reads them.
+- **The first archive taught the wrong lesson by being too tidy.** Remy's hand-made prefix level made a fixed two-level glob look like it had been generalized when it had only been re-specialized. One example is not a shape.
+- **A regression check on a *second* corpus is what made the parser change safe to ship.** Re-running both archives through the old and new splits showed Remy's 71 folder names splitting identically and all 30 of Squeekstreet's changing — evidence rather than argument, and cheap.
 
 ### ~~8. The contract test guards names, not shapes~~ — closed
 

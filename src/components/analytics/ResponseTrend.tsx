@@ -15,7 +15,7 @@ import {
 import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
 import type { AnalyticsSummary, ProfileGroup } from "@/lib/analytics/types";
 import {
-  REWARDED_ACCURACY,
+  RESPONSE_ACCURACY,
   accuracyBand,
   animalAccuracyLines,
   poolOutcomes,
@@ -27,52 +27,44 @@ import {
 } from "@/lib/analytics/view";
 
 /**
- * Cohort mean **rewarded** accuracy across sessions (`analytics.md` §3.8).
+ * Cohort mean **response** accuracy across sessions (`analytics.md` §6.5).
  *
- * Deliberately a separate panel from the learning curves rather than another
- * line on them: those plot the declared metrics, which are
- * reward-*unconditional* — an animal that reaches the correct well and
- * releases before the hold still scores a hit there. This is the stricter
- * question, "how often did the cohort actually earn water", and the two
- * belong on separate axes or neither can be read honestly. The panel says
- * `fluid delivered` in the frame for exactly that reason.
+ * The same question as the rewarded-accuracy panel above, asked of the
+ * *choice* instead of the *drop*: a trial where the animal answered the
+ * correct well counts here whether or not it held long enough to earn fluid.
+ * `derive.py` calls this figure `pSide`, and the tally it comes from
+ * (`analytics.md` §3.8) exists precisely to keep the two apart — the declared
+ * live metrics are reward-unconditional, so scoring them against fluid
+ * delivery would quietly answer neither question.
  *
- * Pooled is still the resting state, but the shared highlight reaches here
- * too (§2.1): hovering an animal fades the cohort figure back and overlays
- * that animal's own rewarded line, in its identity colour — the same
- * question, asked of one animal.
+ * **Read it against the panel above, not on its own.** Same x slots, same
+ * denominator, same hollow-mark rule, and this line is always the higher of
+ * the two — so the vertical gap between them *is* the consummatory hold
+ * failure rate. An animal learning the discrimination while still fumbling
+ * the hold shows as this line climbing away from the rewarded one; a cohort
+ * that has learned both shows the two converging. Either reading is
+ * unavailable from a single panel, which is why there are two.
  *
- * Across sessions only. Within one session there is a single pooled figure,
- * not a trend, and the session summary shows that per animal instead.
- *
- * The x slots come from `sessionOutcomePoints`, shared with the effort and
- * outcome-mix panels below, so one session sits above itself in all three. A
- * session that administered nothing keeps its slot and bridges dashed (§3.6).
+ * Drawn in the same accent as the rewarded line on purpose. They are the same
+ * kind of figure and the comparison is vertical — giving one its own colour
+ * would imply they measure different things rather than the same thing at two
+ * strictnesses.
  */
 
 /** Below this many administered trials the point is drawn hollow (§3.5). */
 const THIN = 30;
 
-/** The viewBox's y extent. Only a coordinate space — `PLOT_PX` is what the
- *  chart actually occupies. */
+/** The viewBox's y extent — a coordinate space, not a size. */
 const HEIGHT = 54;
 
-/**
- * The plot's height in CSS pixels, fixed rather than left to the SVG's
- * intrinsic aspect ratio: this panel spans the full column, and an
- * aspect-driven height would make it ~500px tall — a trend line lost in a
- * field of empty plot. Fixed here, the panel keeps one shape at every window
- * width.
- */
+/** Matches the rewarded panel exactly, so the pair reads as one stacked band
+ *  and a session sits directly above itself. */
 const PLOT_PX = 132;
 
-/** Total seconds the pooled line takes to lay its history down (§2.7). The
- *  marks key their delay off it, so a point surfaces exactly as the draw
- *  reaches its session — which holds because the wipe advances uniformly in x
- *  (see `DrawOn`). */
+/** Seconds the pooled line takes to lay its history down (§2.7). */
 const DRAW = 0.9;
 
-export function RewardedTrend(props: {
+export function ResponseTrend(props: {
   summary: AnalyticsSummary;
   profile: ProfileGroup | null;
   colors: Map<string, string>;
@@ -80,10 +72,10 @@ export function RewardedTrend(props: {
    *  and again waits to be seen (§2.7). */
   revealKey: string;
 }) {
-  return <TrendBody key={props.revealKey} {...props} />;
+  return <ResponseBody key={props.revealKey} {...props} />;
 }
 
-function TrendBody({
+function ResponseBody({
   summary,
   profile,
   colors,
@@ -95,37 +87,31 @@ function TrendBody({
   const { ref, seen } = useRevealOnView();
   const points = useMemo(() => sessionOutcomePoints(summary, profile), [summary, profile]);
   const animalLines = useMemo(
-    () => animalAccuracyLines(summary, points, REWARDED_ACCURACY, THIN),
+    () => animalAccuracyLines(summary, points, RESPONSE_ACCURACY, THIN),
     [summary, points],
   );
 
-  if (points.length === 0) {
-    return (
-      <Panel>
-        <p className="text-[12px] leading-relaxed text-static">
-          No rewarded-trial data for this task. A task only reports it if its
-          profile declares the reward vocabulary (§3.8).
-        </p>
-      </Panel>
-    );
-  }
+  // Silent rather than explanatory when there is nothing to draw: the panel
+  // above says the same thing about the same missing vocabulary, and saying it
+  // twice reads as two faults rather than one.
+  if (points.length === 0) return null;
 
   // A session that administered nothing holds its slot as a gap, so the line
   // bridges dashed rather than interpolating through it (§3.6).
   const line: Array<Point | null> = points.map((point, index) =>
-    point.outcomes.pRewarded === null
+    point.outcomes.pSide === null
       ? null
-      : { x: sessionSlot(index, points.length), y: point.outcomes.pRewarded },
+      : { x: sessionSlot(index, points.length), y: point.outcomes.pSide },
   );
   const segments = segmentsWithGaps(line);
-  const bands = accuracyBand(points, REWARDED_ACCURACY);
+  const bands = accuracyBand(points, RESPONSE_ACCURACY);
   const dots: Dot[] = points.flatMap((point, index) =>
-    point.outcomes.pRewarded === null
+    point.outcomes.pSide === null
       ? []
       : [
           {
             x: sessionSlot(index, points.length),
-            y: point.outcomes.pRewarded,
+            y: point.outcomes.pSide,
             hollow: point.outcomes.administered < THIN,
           },
         ],
@@ -139,9 +125,9 @@ function TrendBody({
         <ChartFrame
           title={
             <span>
-              Rewarded accuracy
+              Response accuracy
               <span className="ml-2 text-static/70">
-                fluid delivered · pooled across the cohort
+                correct well answered · pooled across the cohort
               </span>
             </span>
           }
@@ -152,29 +138,23 @@ function TrendBody({
           footer={
             <span className="truncate text-static/70">
               {points.length} session{points.length === 1 ? "" : "s"}
-              {overall.pRewarded !== null &&
-                ` · ${pct(overall.pRewarded)} of ${overall.administered} administered earned fluid`}
+              {overall.pSide !== null &&
+                ` · ${pct(overall.pSide)} of ${overall.administered} administered chose the correct well`}
+              {overall.pSide !== null &&
+                overall.pRewarded !== null &&
+                ` · ${pct(overall.pSide - overall.pRewarded)} lost to the hold`}
               {" · band = 95% Wilson · hollow = <"}
               {THIN} administered
             </span>
           }
         >
           <div className="relative" style={{ height: PLOT_PX }}>
-            {/* Band, line and marks share one reveal: the band settles in as
-                the line lays the cohort's history down in order, and each
-                mark surfaces as the draw reaches its session. All fade back
-                together while an animal is highlighted, so the overlaid
-                per-animal line reads against them, not through them. */}
             <PooledLayer>
               <UnitChart
                 height={HEIGHT}
                 className="h-full w-full"
                 references={[{ y: 0.5 }]}
               >
-                {/* Band, solid runs and dashed bridges all ride one wipe, so
-                    the ribbon arrives with the curve it belongs to rather than
-                    ahead of it — and a bridge reveals on the same clock as
-                    everything else instead of needing its own fade. */}
                 <DrawOn viewBox={[0, 0, 100, HEIGHT]} seen={seen} duration={DRAW}>
                   {bands.map((band, index) => (
                     <polygon
@@ -209,7 +189,7 @@ function TrendBody({
               />
             </PooledLayer>
             {animalLines.map((entry) => (
-              <AnimalRewardedLine
+              <AnimalResponseLine
                 key={entry.animalId}
                 animalId={entry.animalId}
                 color={colors.get(entry.animalId) ?? "var(--color-series-1)"}
@@ -217,8 +197,7 @@ function TrendBody({
               />
             ))}
             {/* Invisible per-session hit targets, one column each, so the
-                numbers behind a point are a hover away. Native titles rather
-                than a styled tooltip — the same idiom as the heatmap cells. */}
+                numbers behind a point are a hover away. */}
             <svg
               viewBox={`0 0 100 ${HEIGHT}`}
               preserveAspectRatio="none"
@@ -226,8 +205,7 @@ function TrendBody({
               aria-hidden
             >
               {points.map((point, index) => {
-                const half =
-                  points.length > 1 ? 100 / (points.length - 1) / 2 : 50;
+                const half = points.length > 1 ? 100 / (points.length - 1) / 2 : 50;
                 const centre = sessionSlot(index, points.length) * 100;
                 const left = Math.max(0, centre - half);
                 return (
@@ -252,17 +230,11 @@ function TrendBody({
 }
 
 /**
- * Fades the pooled figure back while any animal is highlighted. A wrapper
- * component rather than a hook in the panel, so a hover re-renders this
- * `<div>` and the overlay layers — never the chart or the reveal animation
- * behind them (§2.1).
+ * Fades the pooled figure back while any animal is highlighted, so the
+ * overlaid per-animal line reads against it rather than through it (§2.1).
  */
 function PooledLayer({ children }: { children: ReactNode }) {
   const dimmed = useHasHighlight();
-  // `h-full`, not auto: the chart inside sizes itself with `h-full` too, and a
-  // percentage height against an auto-height parent resolves to nothing — the
-  // SVG would fall back to its viewBox aspect ratio and stand ~490px tall,
-  // overflowing this panel onto the ones below it.
   return (
     <div className="relative h-full" style={{ opacity: dimmed ? 0.25 : 1 }}>
       {children}
@@ -271,20 +243,10 @@ function PooledLayer({ children }: { children: ReactNode }) {
 }
 
 /**
- * One animal's own rewarded line, visible only while that animal is
- * highlighted. Its x positions are the pooled line's session slots, so the
- * two are directly comparable; sessions the animal sat out bridge dashed.
- *
- * Its own overlay pair rather than a `<g>` in a shared one: at most one animal
- * is highlighted at a time, and this keeps the line's SVG and its HTML dots
- * mounting and unmounting together.
- *
- * It lays itself down in session order on every hover — mounting *is* the
- * gesture here, so no key is needed to replay it — and at the slower highlight
- * pace, because following one animal's history is the thing the reader just
- * asked to do.
+ * One animal's own response line, visible only while that animal is
+ * highlighted, laid down in session order at the slower highlight pace (§2.7).
  */
-function AnimalRewardedLine({
+function AnimalResponseLine({
   animalId,
   color,
   points,
@@ -336,15 +298,20 @@ function AnimalRewardedLine({
 function describePoint(point: SessionOutcomePoint): string {
   const { session, outcomes } = point;
   const head = `${session.prefixName}_${session.sessionNumber} · ${session.date}`;
-  if (outcomes.pRewarded === null) {
+  if (outcomes.pSide === null) {
     return `${head}\nno administered trials — ${outcomes.aborted} aborted`;
   }
   const parts = [
-    `${pct(outcomes.pRewarded)} rewarded of ${outcomes.administered} administered`,
+    `${pct(outcomes.pSide)} correct well of ${outcomes.administered} administered`,
   ];
-  if (outcomes.rewardedLow !== null && outcomes.rewardedHigh !== null) {
-    parts.push(`95% band ${pct(outcomes.rewardedLow)}–${pct(outcomes.rewardedHigh)}`);
+  if (outcomes.sideLow !== null && outcomes.sideHigh !== null) {
+    parts.push(`95% band ${pct(outcomes.sideLow)}–${pct(outcomes.sideHigh)}`);
   }
+  // The split behind the number: how many of those correct choices earned
+  // fluid and how many lost it at the hold. This is the reason the panel
+  // exists, so it belongs in the tooltip and not only in the eye's comparison
+  // with the panel above.
+  parts.push(`${outcomes.rewarded} rewarded · ${outcomes.holdFailed} no hold`);
   if (outcomes.administered < THIN) {
     parts.push(`fewer than ${THIN} administered — read loosely`);
   }

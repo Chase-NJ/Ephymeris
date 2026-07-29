@@ -2,6 +2,7 @@
   "taskName": "Box Utility",
   "kind": "utility",
   "legacyNames": ["PRIME_Lines", "PRIME_Bolus", "TEST_Box"],
+  "identify": { "on": "ON LIGHT", "off": "OFF LIGHT" },
   "controls": [
     { "id": "selftest", "label": "Full self-test", "type": "button", "command": "SELFTEST" },
     { "id": "stop", "label": "Stop test", "type": "button", "command": "STOP" },

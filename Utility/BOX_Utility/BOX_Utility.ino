@@ -7,6 +7,18 @@ Ephymeris Debug Mode. Priming a line and pulsing it were never different
 *programs* -- they were the same solenoid with a different open time -- and
 having to re-flash between them cost more than it saved.
 
+HANDSHAKE
+  On boot it announces READY, exactly as the behavior sketches do, and then
+  does nothing at all until the app tells it to. READY is what Config's
+  handshake test looks for and what tells Ephymeris the board on the other end
+  of the port speaks its protocol -- which matters more for this sketch than
+  for any other, because it is the one the app flashes to every idle box on its
+  own (the hardware utility baseline).
+
+  It does NOT block waiting for a START the way a task sketch does: there is no
+  session here, and the app drives it with arbitrary commands from the moment
+  the port opens.
+
 APP CONTROL (Ephymeris Debug Mode / PASSTHROUGH; see task.json `controls`)
   Channel tokens name every controllable output:
     O1..O12   the twelve odor solenoids
@@ -41,12 +53,18 @@ SAFETY
   ALLOFF, and boot -- closes every channel. The self-test is interruptible at
   every wait, so STOP is always honoured within ~2 ms.
 
-MANUAL (no app)
-  An odor poke while idle starts the self-test, as TEST_Box did.
+  Nothing here runs on its own. TEST_Box started its self-test on an odor poke,
+  which was a reasonable convenience for a sketch you flashed by hand when you
+  wanted to test a box. It is not one for this sketch: Ephymeris now flashes
+  BOX_Utility to every idle box as its resting firmware, and animals are placed
+  into those boxes while it is the sketch running. A nose poke would fire all
+  twelve odor lines and pulse every fluid line, into an occupied chamber. The
+  app is the only thing that starts anything.
 ==================================*/
 
 #include <BehaviorBox.h> // shared pinout + CommandReader + emitStatus
 
+const int baudRate = 9600;                      // Serial baud (matches the app)
 const int pollingRate = 2;                      // IR sensor polling (ms)
 const unsigned long STATUS_HEARTBEAT_MS = 1000; // re-report at least this often
 
@@ -70,7 +88,6 @@ bool testRunning = false;
 
 CommandReader commands;
 unsigned long lastStatus = 0;
-int prevOdor = HIGH;
 
 /* Self-test bookkeeping, reported live so the strip shows progress. */
 const char *testPhase = "-";
@@ -344,8 +361,6 @@ void runSelfTest()
   }
   if (completed && testPassed < testChecks)
     note("    Re-seat the failed sensor's connector and run it again.");
-  // Don't let a poke held through the test immediately re-trigger it.
-  prevOdor = digitalRead(odorPort);
   reportStatus();
 }
 
@@ -412,8 +427,16 @@ void setup()
   initBoxHardware(); // configure every pin and land all outputs LOW
   for (int ch = 0; ch < NUM_CHANNELS; ch++)
     channelOpen[ch] = false;
-  Serial.begin(9600);
-  note("BOX Utility ready. SELFTEST for the full check, or drive channels directly.");
+  Serial.begin(baudRate);
+
+  /* Announce the protocol, same token and same shape as every task sketch.
+     The 50 ms lets the post-reset serial settle first -- opening the port is
+     what reset us, so the host is already listening and would otherwise catch
+     a half-line. Unlike a task sketch we do NOT block for a START: there is no
+     session here, and the app starts driving as soon as the port is open. */
+  delay(50);
+  Serial.println("READY");
+  note("BOX Utility. SELFTEST for the full check, or drive channels directly.");
   reportStatus();
 }
 
@@ -421,12 +444,6 @@ void loop()
 {
   if (commands.poll())
     handleCommand(commands.line());
-
-  /* Manual fallback: an odor poke while idle starts the self-test. */
-  int odor = digitalRead(odorPort);
-  if (!testRunning && odor == LOW && prevOdor == HIGH)
-    runSelfTest();
-  prevOdor = odor;
 
   /* Heartbeat, so a late-connecting app still learns the state -- and so the
      beam readout stays live while idle. */

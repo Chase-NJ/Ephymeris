@@ -70,8 +70,28 @@ int main()
                                        digitalRead(Odors[0]) == LOW &&
                                        digitalRead(vac) == LOW &&
                                        digitalRead(trialLight) == LOW);
-  check("boot announces itself in the console", outputContains("BOX Utility ready"));
+  check("boot announces READY, like every task sketch", outputContains("READY"));
+  check("boot announces itself in the console", outputContains("BOX Utility."));
   check("boot emits a STATUS snapshot", statusHas("mode=idle"));
+
+  // --- nothing runs without the app ------------------------------------
+  // TEST_Box started its self-test on an odor poke. This sketch is now the
+  // resting firmware on every idle box, and animals are placed into boxes
+  // while it runs — a nose poke must not fire twelve odor lines into an
+  // occupied chamber.
+  bb_resetCapture();
+  bb_pinValue[odorPort] = LOW; // a poke, held
+  // Long enough to clear the 1 s STATUS heartbeat (loop() delays pollingRate
+  // per pass and the shim's millis advances on delay), so there is a fresh
+  // status to read — and so a *held* poke is proven harmless, not just a brief one.
+  for (int i = 0; i < 600; i++) loop();
+  check("an odor poke starts nothing", !outputContains("Box self-test starting"));
+  check("an odor poke leaves the box closed", digitalRead(Odors[0]) == LOW &&
+                                              digitalRead(Fluids[0]) == LOW &&
+                                              digitalRead(vac) == LOW);
+  check("an odor poke leaves it idle", statusHas("mode=idle"));
+  check("the poke is still reported", statusHas("beams=100"));
+  bb_pinValue[odorPort] = HIGH; // beam clear again for the checks below
   check("STATUS carries a key per fluid line", statusHas("f1=0") && statusHas("f4=0"));
   check("STATUS carries a key per odor line", statusHas("o1=0") && statusHas("o12=0"));
   check("STATUS carries vac/light/pulse", statusHas("vac=0") && statusHas("light=0") &&

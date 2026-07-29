@@ -20,7 +20,7 @@ from . import __version__, discovery
 from .analytics import AnalyticsBusy, AnalyticsService
 from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager, BackupNotConfigured
-from .boards.cli_tool import ArduinoCliTool
+from .boards import create_board_tool
 from .boards.tool import FlashFailed
 from .cohorts import folders, grouping
 from .cohorts.db import DB_FILENAME, Database
@@ -40,6 +40,7 @@ from .sessions.models import (
     SessionInvalid,
     SessionNotFound,
 )
+from .sessions import recovery
 from .sessions.paths import resolve_session_folder
 from .sessions.repository import SessionRepository
 from .sessions.runner import ActiveRun, BoxConfig, SessionRunner
@@ -51,6 +52,7 @@ from .ports.states import IllegalTransition, PortState
 from .protocol import Cmd, ErrCode, Evt, event
 from .server import CommandError, SidecarServer
 from .settings import SidecarSettings
+from .utility import UtilityBaseline, UtilityUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -109,9 +111,12 @@ class Application:
         self._legacy_names_from: object | None = None
         self._legacy_names_lock = threading.Lock()
         # data_dir is where the bundled arduino data seed gets its writable
-        # copy in a packaged install (`boards/cli_tool.py`).
-        self.tool = ArduinoCliTool(app_data_dir=data_dir)
+        # copy in a packaged install (`boards/cli_tool.py`). The factory picks
+        # the gRPC daemon backend when grpcio is importable, the subprocess
+        # backend otherwise (`boards/__init__.py`).
+        self.tool = create_board_tool(app_data_dir=data_dir)
         self.ports: PortManager | None = None
+        self.utility: UtilityBaseline | None = None
 
         self.db = Database(data_dir / DB_FILENAME)
         self.cohorts = CohortRepository(self.db)
@@ -134,6 +139,9 @@ class Application:
         self.server.register(Cmd.PORT_FLASH, self._port_flash)
         self.server.register(Cmd.PORT_RESET, self._port_reset)
         self.server.register(Cmd.PORT_ERROR_ACK, self._port_error_ack)
+        self.server.register(Cmd.UTILITY_STATUS, self._utility_status)
+        self.server.register(Cmd.UTILITY_ENSURE, self._utility_ensure)
+        self.server.register(Cmd.UTILITY_IDENTIFY, self._utility_identify)
 
         self.server.register(Cmd.COHORTS_LIST, self._cohorts_list)
         self.server.register(Cmd.COHORTS_GET, self._cohorts_get)
@@ -166,6 +174,7 @@ class Application:
         self.server.register(Cmd.ANALYTICS_SUMMARY, self._analytics_summary)
         self.server.register(Cmd.ANALYTICS_SERIES, self._analytics_series)
         self.server.register(Cmd.ANALYTICS_RESCAN, self._analytics_rescan)
+        self.server.register(Cmd.SESSIONS_RECOVER, self._sessions_recover)
 
         self.server.on_client_ready(self._replay_state)
 
@@ -198,6 +207,12 @@ class Application:
             on_presence=self._handle_presence,
         )
         self.ports.start()
+        self.utility = UtilityBaseline(
+            loop=loop,
+            ports=self.ports,
+            discovery=lambda: self.discovery,
+            broadcast=self.server.broadcast,
+        )
         self.runner = SessionRunner(
             loop=loop,
             ports=self.ports,
@@ -207,8 +222,15 @@ class Application:
         )
 
     async def stop(self) -> None:
+        # Before the ports go: a lit box has a console open that must be closed
+        # through the state machine rather than yanked out from under it.
+        if self.utility is not None:
+            await self.utility.stop()
         if self.ports is not None:
             await self.ports.stop()
+        # After ports: nothing may be mid-flash once the manager has stopped,
+        # so the daemon child (if the gRPC backend is active) can go too.
+        await self.tool.close()
         if self.backup is not None:
             await self.backup.stop()
         self.db.close()
@@ -256,6 +278,8 @@ class Application:
         await send(event(Evt.SKETCHES_UPDATED, self.discovery.to_json()))
         await send(event(Evt.COHORTS_UPDATED, {"cohorts": await self._cohort_summaries()}))
         await send(event(Evt.PREFIXES_UPDATED, {"prefixes": await self._prefix_list()}))
+        if self.utility is not None:
+            await send(event(Evt.UTILITY_UPDATED, self.utility.status()))
         if self.backup is not None:
             await send(event(Evt.BACKUP_STATUS, self.backup.status()))
 
@@ -288,6 +312,12 @@ class Application:
             and self.runner is not None
         ):
             self.runner.board_dropped(box)
+        # §8: a box that has just become nobody's is a box that should go back
+        # to baseline. Driving this off the transition rather than off each
+        # command means every way a port can fall idle — a run ending, a
+        # console closing, an error acknowledged — is covered by one hook.
+        if current == PortState.IDLE and self.utility is not None:
+            self.utility.ensure([box])
 
     async def _handle_output(self, box: int, lines: list[OutputLine]) -> None:
         await self.server.broadcast(
@@ -296,6 +326,14 @@ class Application:
 
     async def _handle_presence(self, boards: list[dict[str, object]]) -> None:
         await self.server.broadcast(event(Evt.BOARDS_PRESENCE, {"boards": boards}))
+        if self.utility is not None:
+            # This is also the startup path: the first poll that finds the rig
+            # is what triggers the first baseline restore (§8.1).
+            self.utility.note_presence(
+                str(b.get("hardwareId")) for b in boards if b.get("hardwareId")
+            )
+            self.utility.ensure()
+            await self.utility.publish()
 
     # --- handlers ---------------------------------------------------------
 
@@ -328,6 +366,12 @@ class Application:
         # Rescan unconditionally, even when the path itself is unchanged: it may
         # have been deleted, renamed, or unmounted since the last push.
         await self._rescan()
+        # After the rescan, so a newly-chosen utility sketch resolves against
+        # the directory as it is now rather than as it was one push ago.
+        if self.utility is not None:
+            self.utility.update_settings(self.settings)
+            self.utility.ensure()
+            await self.utility.publish()
         return {"arduinoDirectory": self.discovery.directory.to_json()}
 
     async def _sketches_refresh(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -409,6 +453,12 @@ class Application:
                 on_progress,
                 suppress_passthrough_resume=suppress,
             )
+        # Whatever the app just put on that board is now what's on it — the one
+        # place every deliberate flash passes through, so the baseline belief
+        # can't be left claiming a utility sketch a session flash overwrote.
+        if self.utility is not None:
+            self.utility.note_flashed(box, sketch.path)
+            await self.utility.publish()
         return {"state": state.value, "resumedPassthrough": resumed}
 
     async def _port_reset(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -422,6 +472,43 @@ class Application:
         with _mapped_errors(box):
             state = self._require_ports().acknowledge_error(box)
         return {"state": state.value}
+
+    # --- utility baseline (hardware-interaction.md §8) --------------------
+
+    def _require_utility(self) -> UtilityBaseline:
+        if self.utility is None:
+            raise CommandError(ErrCode.INTERNAL, "hardware layer isn't running")
+        return self.utility
+
+    async def _utility_status(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        return self._require_utility().status()
+
+    async def _utility_ensure(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """Schedule a baseline restore and return the picture as it stands.
+
+        Deliberately doesn't await the flashing: six boxes take minutes, and
+        the client watches `utility.updated` instead of holding a reply open.
+        """
+        utility = self._require_utility()
+        boxes = args.get("boxes")
+        targets = (
+            [b for b in boxes if isinstance(b, int) and not isinstance(b, bool)]
+            if isinstance(boxes, list)
+            else None
+        )
+        utility.ensure(targets, force=args.get("force") is True)
+        return utility.status()
+
+    async def _utility_identify(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        box = _box_arg(args)
+        on = args.get("on")
+        if not isinstance(on, bool):
+            raise CommandError(ErrCode.BAD_MESSAGE, "`on` must be a boolean")
+        try:
+            delivered, state = await self._require_utility().identify(box, on)
+        except UtilityUnavailable as exc:
+            raise CommandError(ErrCode.UTILITY_UNAVAILABLE, str(exc), {"box": box}) from exc
+        return {"delivered": delivered, "state": state}
 
     # --- cohorts (cohorts.md) ---------------------------------------------
 
@@ -451,8 +538,16 @@ class Application:
 
             # The record goes in first so a duplicate name fails *before* any
             # directory is made — otherwise a rejected create would litter the
-            # user's data directory with orphaned folders.
-            cohort = await asyncio.to_thread(self.cohorts.create, name, str(target))
+            # user's data directory with orphaned folders. The roster rides
+            # along when the editor has one, making creation a single call
+            # rather than a create plus a patch that could fail on its own.
+            cohort = await asyncio.to_thread(
+                self.cohorts.create,
+                name,
+                str(target),
+                args.get("animals"),
+                args.get("groups"),
+            )
             try:
                 await asyncio.to_thread(folders.ensure_folder, target)
             except Exception:
@@ -711,6 +806,26 @@ class Application:
             except AnalyticsBusy as exc:
                 raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
 
+    async def _sessions_recover(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """The crash-recovery backfill (`data-saving.md` §7.3, §11).
+
+        Guarded against a running session: a live box's `.tsv` legitimately
+        has no `.json` yet, and "recovering" it would mint a half-session
+        document the real finalization then overwrites. One session runs at a
+        time app-wide, so any running box means hands off every archive.
+        """
+        cohort_id = _str_arg(args, "cohortId")
+        if self.runner is not None and self.runner.running_boxes():
+            raise CommandError(
+                ErrCode.SESSION_INVALID,
+                "a session is running — its live .tsv files would look like "
+                "orphans. End the session, then recover.",
+            )
+        with _cohort_errors():
+            cohort = await asyncio.to_thread(self.cohorts.get, cohort_id)
+        result = await asyncio.to_thread(recovery.recover_cohort, cohort.data_folder)
+        return {**result, "cohortId": cohort_id}
+
     # --- sessions (starting-a-session.md §9) ------------------------------
 
     def _require_runner(self) -> SessionRunner:
@@ -801,6 +916,7 @@ class Application:
             self._require_runner().clear()
             self._running_session_id = None
         session = await asyncio.to_thread(self.sessions.set_status, session_id, "aborted")
+        await self._release_baseline()
         await self._broadcast_lifecycle()
         return {"session": session.to_json()}
 
@@ -862,6 +978,13 @@ class Application:
             ),
         )
         self._running_session_id = session_id
+        # From here until the session ends the boxes belong to the runner: they
+        # will carry task sketches and fall idle between flashes, and a
+        # baseline restore landing in that window would erase the very sketch
+        # this mapping just chose (§8.2). Also extinguishes the placement walk's
+        # lights, in case the client didn't.
+        if self.utility is not None:
+            self.utility.hold()
         await self._broadcast_lifecycle()
         return {"ok": True}
 
@@ -917,6 +1040,10 @@ class Application:
         # Next populated group after those already run, by order (§5.2).
         run_group_ids = {g.group_id for g in session.group_runs}
         next_group = _next_populated_group(cohort, run_group_ids)
+        # The boxes are idle and the operator is about to walk the rig again for
+        # the next group, so the baseline comes back now rather than after the
+        # whole session — that walk is the one that needs the lights.
+        await self._release_baseline()
         if next_group is None:
             # Every populated group has run — finalize exactly as sessions.end
             # would, so no client has to follow up with a second command and
@@ -932,8 +1059,17 @@ class Application:
         await asyncio.to_thread(self._close_group_run, session_id)
         session = await asyncio.to_thread(self.sessions.set_status, session_id, "completed")
         self._running_session_id = None
+        await self._release_baseline()
         await self._broadcast_lifecycle()
         return {"session": session.to_json()}
+
+    async def _release_baseline(self) -> None:
+        """Hand the rig back to the utility baseline once a session lets go."""
+        if self.utility is None:
+            return
+        self.utility.release()
+        self.utility.ensure()
+        await self.utility.publish()
 
     def _open_group_run(self, session_id: str, group_id: str) -> None:
         """Record that a group started running.

@@ -6,7 +6,7 @@
 >
 > **Read with** · [starting-a-session.md](starting-a-session.md) (what triggers these writes — the two were written together) · [cohorts.md](cohorts.md) (the `dataFolder` written beneath) · [websocket-protocol.md](websocket-protocol.md) (canonical for the commands §9 proposed)
 >
-> **Still open** · the crash-recovery backfill utility
+> **Still open** · §8's mirroring against a real network share
 
 **Contents** — [1. Directory Structure](#1-directory-structure) · [2. Naming](#2-naming-conventions) · [3. Session Prefix](#3-session-prefix) · [4. Session Entity](#4-session-entity) · [5. File Schema](#5-per-animal-session-file-schema) · [6. Task Profiles](#6-task-profiles) · [7. Crash Safety](#7-write-strategy--crash-safety) · [8. Backup](#8-backup-strategy) · [9. Wire Messages](#9-wire-messages-merged) · [10. Resolved Decisions](#10-resolved-decisions) · [11. Open Items](#11-open-items--tbd)
 
@@ -323,6 +323,26 @@ Only the archive walk reads this. It is never used to pick a sketch to flash, ne
 
 ---
 
+### 6.8 `identify` — asking a box to point at itself
+
+A utility profile may declare one more pair, used by the hardware utility baseline (`hardware-interaction.md` §8.3) rather than by any control in Debug Mode:
+
+```jsonc
+{
+  "kind": "utility",
+  "identify": { "on": "ON LIGHT", "off": "OFF LIGHT" },
+  /* … */
+}
+```
+
+"Point at box 3" is a universal thing for the app to want; `ON LIGHT` is a Hart-lab detail. Putting the pair in the profile is the same call §6.2 makes everywhere else — the app drives hardware it knows nothing about, through commands the sketch names — and it is why the guided placement walk (`starting-a-session.md` §3.5) works on a rig whose boxes signal with a buzzer, or an LED on a different pin, or not at all.
+
+**Both halves are required together.** A sketch that can be lit but not unlit would leave a box announcing itself indefinitely, so a profile declaring only one is malformed rather than half-supported. Omitting the block entirely is the normal case for a behaviour sketch and perfectly fine for a utility one; it means the box can't be asked, which every caller is expected to degrade around.
+
+The pair is deliberately **not** the same thing as the `LIGHT` row in `BOX_Utility`'s `aux` grid. That row is a manual control a human toggles while debugging; `identify` is a contract the app drives on its own. They happen to reach the same solenoid, and would not on a rig that signalled some other way.
+
+---
+
 ## 7. Write Strategy & Crash Safety
 
 The actual goal — recoverable data up to the moment of a power loss, not just "eventually consistent" — reframes `.tsv`'s role. Rather than a third redundant export format, it's the **write-ahead log that makes the durability guarantee real**, and `.json`/`.mat` are built from it rather than sitting alongside it as equals.
@@ -347,7 +367,9 @@ Finalization is **idempotent** (the first `stop_reason` wins, so a double-stop c
 
 What's now genuinely guaranteed: if the lab PC loses power mid-session, every strobe up through the last completed line is safely on disk in `.tsv`, immediately readable by a human, with at most the very last in-flight line at risk (and even that only if power died mid-write, not mid-buffer — nothing sits unflushed waiting on a timer anymore).
 
-What's **not** in scope for v1, deliberately: the app noticing on restart that a session was interrupted and automatically resuming it. That's a materially bigger feature (reconnecting boards, resuming trial state, deciding whether the animal even kept running during the outage) and stays out of scope here. What this design does make cheap, as a natural follow-on rather than core scope: a small recovery utility that reads an orphaned `.tsv` and backfills the missing `.json`/`.mat` with `stop_reason: "recovered after crash"` — flagged in §11, not built now.
+What's **not** in scope for v1, deliberately: the app noticing on restart that a session was interrupted and automatically resuming it. That's a materially bigger feature (reconnecting boards, resuming trial state, deciding whether the animal even kept running during the outage) and stays out of scope here.
+
+The cheap follow-on this design promised is now **built**: `sessions/recovery.py` and the `sessions.recover` command (surfaced as **Recover** beside Rescan in Analytics) walk a cohort's archive for orphaned `.tsv` files — write-ahead logs with no `.json` sibling — and rebuild both structured formats from them. Discovery shares `analytics.md` §8.1's depth-tolerant walker (one traversal underlies both, per §11's build-them-to-share-one note), so every legacy layout the adoption walk reads, recovery reads too, and it backfills layout-preservingly (a `recovery_tsv/` orphan gets `behavior_json/`/`behavior_mat/`). Two honesty rules: a footer-carrying `.tsv` — §7.2's disk-full case, where `finalize` ran but the best-effort `.json` write failed — keeps its recorded `stop_reason`, and only a footer-less (crashed) log gets `stop_reason: "recovered after crash"`; and `n_events` is always recomputed from the lines actually parsed, never copied from a footer a torn file may no longer live up to. A torn final line matches neither the header nor the strobe grammar and costs only itself, exactly the at-most-one-line risk stated above. The command is rejected while any box is running — a live run's `.tsv` legitimately has no `.json` yet and is not an orphan.
 
 ---
 
@@ -459,7 +481,7 @@ Session lifecycle commands/events (`session.start`, per-animal telemetry, etc.) 
 - [x] ~~Exact backup mirroring interval for `.tsv` beyond "every ~5–10s"~~ — **10 s, self-paced** (§8.2)
 - [x] ~~Exact backup trigger cadence for `ephymeris.db` beyond "app start + every cohort-affecting write"~~ — **every commit, debounced 5 s, no timer** (§8.3). The original wording was also too narrow: `session_animal_runs` is written unattended and isn't a cohort edit
 - [x] ~~`.tsv` files are opened in truncating write mode~~ — **exclusive create** (§7.1). A collision now fails the box with the offending path named, instead of truncating
-- [ ] Small recovery utility to backfill `.json`/`.mat` from an orphaned `.tsv` after a crash, with `stop_reason: "recovered after crash"` — cheap given §7's design, deliberately out of scope for this pass (§7.3). Note it must use §2.1's `parse_name_date` rather than assuming either date spelling, and that it needs the **same archive walker** as `analytics.md` §8.1 — build them to share one, whichever lands first
+- [x] ~~Small recovery utility to backfill `.json`/`.mat` from an orphaned `.tsv` after a crash, with `stop_reason: "recovered after crash"`~~ — **built** (§7.3): `sessions/recovery.py` + `sessions.recover`, covered by `tests/test_recovery.py`. It does share §8.1's walker — `reader._walk_format_dirs` now underlies both walks — and the shared traversal is what makes it date-spelling- and layout-agnostic. One refinement to the original wording: a `.tsv` that carries its footer keeps its recorded `stop_reason`; only a footer-less (genuinely crashed) log gets the `"recovered after crash"` marker
 - [x] ~~`profileHash` on `SessionAnimalRun` (§4) is specified but not built~~ — **built.** Every run finalized from now on records the profile that decoded it. Runs recorded before this keep `null` and fall back to the current `task.json`, flagged in the UI (`analytics.md` §8.2)
 - [ ] §8's mirroring is unit-tested but has not yet run a full session against a **real network share** — the slow-target behaviour it's designed around is the one thing a local-filesystem test can't exercise
 

@@ -176,9 +176,32 @@ def test_task_profile_payloads_match_schema() -> None:
                 },
             ],
             "telemetry": {"match": "STATUS", "fields": [{"key": "gear", "label": "Fluid set"}]},
+            "identify": {"on": "ON LIGHT", "off": "OFF LIGHT"},
         }
     )
     assert validate(("ref", "TaskProfile"), utility.to_json()) == []
+
+
+def test_utility_baseline_payloads_match_schema() -> None:
+    """The baseline snapshot is one shape shared by two commands and an event."""
+    from ephymeris_sidecar.utility import BoxBaseline
+
+    box = BoxBaseline(box=2, state="restoring", detail="flashing BOX_Utility")
+    assert validate(("ref", "UtilityBoxState"), box.to_json()) == []
+    assert validate_command_result("utility.identify", {"delivered": False, "state": box.to_json()}) == []
+
+    status = {
+        "configured": True,
+        "sketchPath": "/sk/Utility/BOX_Utility",
+        "sketchName": "BOX_Utility",
+        "canIdentify": True,
+        "held": False,
+        "message": None,
+        "boxes": [box.to_json()],
+    }
+    assert validate_command_result("utility.status", status) == []
+    assert validate_command_result("utility.ensure", status) == []
+    assert validate_event_data("utility.updated", status) == []
 
 
 def test_hardware_payloads_match_schema() -> None:

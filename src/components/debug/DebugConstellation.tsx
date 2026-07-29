@@ -13,6 +13,8 @@ import {
   type SceneLink,
   type SceneNode,
 } from "@/components/constellation3d/Scene";
+import type { SceneOrbiter } from "@/components/constellation3d/Orbiters";
+import { useRunningSession } from "@/lib/sessions/context";
 import { buildSky } from "@/lib/sessions/stars";
 import { useBoundBoxes, useSettings } from "@/lib/settings/context";
 import { useReduceMotion } from "@/lib/useReduceMotion";
@@ -79,6 +81,21 @@ export function DebugConstellation({
     [settings.boxes],
   );
 
+  // When a session is live, its box → animal mapping shows here too: the
+  // assigned animal rides the box's star as a named satellite, so the rig
+  // view answers "who is in box 3 right now" without leaving Debug. No
+  // session, no satellites — the mote already says "alive on the bus".
+  const running = useRunningSession();
+  const crews = useMemo(() => {
+    const map = new Map<number, SceneOrbiter[]>();
+    for (const b of running?.boxes ?? []) {
+      const crew = map.get(b.box) ?? [];
+      crew.push({ id: b.animalId, name: b.animalName, active: b.running });
+      map.set(b.box, crew);
+    }
+    return map;
+  }, [running]);
+
   const nodes: SceneNode[] = sky.points.map((point, index) => {
     if (point.occupantId === null) {
       return {
@@ -91,6 +108,7 @@ export function DebugConstellation({
     }
     const box = Number(point.occupantId);
     const state = health[box] ?? "absent";
+    const crew = crews.get(box);
     return {
       id: point.occupantId,
       position: point.position,
@@ -102,7 +120,11 @@ export function DebugConstellation({
       active: true,
       name: labels.get(box) ?? `Box ${box}`,
       badge: box,
-      body: <BoxStar radius={point.radius} health={state} />,
+      // The anonymous mote stands down while a named satellite is up — two
+      // craft in crossing orbits would read as noise, and a box with a crewed
+      // run is self-evidently alive on the bus.
+      body: <BoxStar radius={point.radius} health={state} crewed={!!crew?.length} />,
+      orbiters: crew,
     };
   });
 
@@ -138,7 +160,16 @@ function isLive(
  * is exactly right under §2.2's no-glow rule — with the motion carrying what
  * the colour alone can't.
  */
-function BoxStar({ radius, health }: { radius: number; health: BoxHealth }) {
+function BoxStar({
+  radius,
+  health,
+  crewed = false,
+}: {
+  radius: number;
+  health: BoxHealth;
+  /** A named animal satellite is in orbit — the anonymous mote stands down. */
+  crewed?: boolean;
+}) {
   const reduceMotion = useReduceMotion();
   const core = useRef<THREE.Group>(null);
   const mote = useRef<THREE.Group>(null);
@@ -192,7 +223,7 @@ function BoxStar({ radius, health }: { radius: number; health: BoxHealth }) {
           disappears, but the camera also arrives within a few units of it, and
           at that range a large one reads as a second star rather than an
           annotation. */}
-      {detected && (
+      {detected && !crewed && (
         <group ref={mote} rotation={[0.4, 0, 0.15]}>
           <mesh position={[radius * 2.5, 0, 0]}>
             <sphereGeometry args={[radius * 0.2, 10, 10]} />

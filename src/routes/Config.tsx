@@ -8,16 +8,19 @@ import { ConstellationBoard } from "@/components/config/ConstellationBoard";
 import { ConstellationPicker } from "@/components/config/ConstellationPicker";
 import { HandshakeList } from "@/components/config/HandshakeList";
 import { SetupWizard } from "@/components/config/SetupWizard";
+import { UtilitySketchPanel } from "@/components/config/UtilitySketchPanel";
 import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
 import { DirectoryField } from "@/components/settings/DirectoryField";
 import { DirectoryStatusNote } from "@/components/settings/DirectoryStatusNote";
 import { SettingGroup, SettingRow } from "@/components/settings/SettingRow";
 import { reconcileSlots } from "@/lib/constellations/slots";
 import { zodiacById } from "@/lib/constellations/zodiac";
+import { useUtilityStatus } from "@/lib/hardware/context";
 import { useHandshakeTest } from "@/lib/hardware/useHandshakeTest";
 import { springPanel } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
 import { BAUD_RATES, type BoxBinding } from "@/lib/settings/schema";
+import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -33,10 +36,12 @@ import { useSidecar } from "@/lib/ws/context";
  */
 export function Config() {
   const { settings, update, discovery, refreshSketches, loaded, saveError } = useSettings();
-  const { status } = useSidecar();
+  const { client, status } = useSidecar();
   const health = useBoxHealth();
   const handshake = useHandshakeTest();
+  const utility = useUtilityStatus();
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [reflashing, setReflashing] = useState(false);
   const connected = status === "connected";
 
   const bound = useMemo(
@@ -71,6 +76,22 @@ export function Config() {
           }
         : { boxes },
     );
+  }
+
+  /**
+   * The one manual restore. `force` is what makes it useful: the automatic
+   * paths skip a box already believed to be at baseline, and the reason to
+   * press this is usually that the belief is wrong.
+   */
+  async function reflashBaseline() {
+    setReflashing(true);
+    try {
+      await client.call(CMD.UTILITY_ENSURE, { force: true });
+    } catch (err) {
+      console.error("utility baseline reflash failed", err);
+    } finally {
+      setReflashing(false);
+    }
   }
 
   function onPickConstellation(id: string) {
@@ -182,6 +203,17 @@ export function Config() {
               canRefresh={connected}
             />
           </div>
+
+          <UtilitySketchPanel
+            sketches={discovery.sketches}
+            boxes={settings.boxes}
+            value={settings.utilitySketchPath}
+            status={utility}
+            busy={reflashing}
+            connected={connected}
+            onChange={(utilitySketchPath) => void update({ utilitySketchPath })}
+            onReflash={() => void reflashBaseline()}
+          />
 
           <SettingRow
             label="Default baud rate"

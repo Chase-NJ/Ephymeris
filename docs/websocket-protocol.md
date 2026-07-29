@@ -10,7 +10,7 @@
 
 **Contents** — [1. Transport & Lifecycle](#1-transport--lifecycle) · [2. Envelope](#2-envelope) · [3. Commands](#3-commands-client--server) · [4. Events](#4-events-server--client) · [5. Invariants](#5-invariants) · [6. Error Codes](#6-error-codes) · [7. Versioning](#7-versioning) · [8. Resolved Decisions](#8-resolved-decisions) · [9. Open Items](#9-open-items--tbd)
 
-This document resolves the "WebSocket/IPC message schema" item listed as TBD in `hardware-interaction.md` §8 and `ephymeris_v1.0.md` §6.
+This document resolves the "WebSocket/IPC message schema" item listed as TBD in `hardware-interaction.md` §9 and `ephymeris_v1.0.md` §6.
 
 > **Changing the wire — the required order.** This document is the **prose** authority (rationale, lifecycle, invariants); `protocol/schema.py` at the repo root is the **shape** authority. `sidecar/ephymeris_sidecar/protocol.py` and `src/lib/ws/protocol.ts` are **generated** from the schema — never edit them by hand:
 >
@@ -113,7 +113,7 @@ Timing out client-side does **not** cancel the sidecar's work. The sidecar remai
 
 `box` is always a **box number, 1–6** — never a port address. See §5.1.
 
-Of the 38 commands, 37 are registered in the sidecar's dispatch table. **`auth` is the exception:** it is consumed by the server's authentication step before dispatch begins and never reaches a handler, because it must be the connection's literal first frame (§1.1).
+Of the 43 commands, 42 are registered in the sidecar's dispatch table. **`auth` is the exception:** it is consumed by the server's authentication step before dispatch begins and never reaches a handler, because it must be the connection's literal first frame (§1.1).
 
 | Command | Args | Result | Notes |
 |---|---|---|---|
@@ -121,7 +121,7 @@ Of the 38 commands, 37 are registered in the sidecar's dispatch table. **`auth` 
 | `ping` | — | `{pong, sidecarVersion}` | Liveness probe for the connection indicator |
 | `settings.push` | full settings payload (§4) | `{arduinoDirectory: <DirectoryStatus>}` | Sent on connect and on every change. The reply carries the immediate Arduino Directory validation required by `arduino-directory.md` §2 |
 | `sketches.refresh` | — | `<SketchDiscovery>` (§4) | Manual Refresh and Debug Mode mount, per `arduino-directory.md` §4 |
-| `port.passthrough.open` | `{box, baud}` | `{state}` | `baud` per box, default 115200 (`hardware-interaction.md` §6.4) |
+| `port.passthrough.open` | `{box, baud}` | `{state}` | `baud` per box; omitted means the configured `defaultBaud`, which ships as 9600 (`hardware-interaction.md` §6.4) |
 | `port.passthrough.close` | `{box}` | `{state}` | |
 | `port.send` | `{box, text, lineEnding}` | `{bytesWritten}` | `lineEnding` ∈ `none` \| `lf` \| `cr` \| `crlf`, default `lf`. Rejected with `SEND_NOT_PASSTHROUGH` unless the port is in `PASSTHROUGH` (`hardware-interaction.md` §6.3) |
 | `port.flash` | `{box, sketchPath, suppressPassthroughResume?}` | `{state, resumedPassthrough: bool}` | Streams `flash.progress`. `resumedPassthrough` reports the §3.3 auto-resume. `suppressPassthroughResume` (default `false`) forces the port to land in `IDLE` afterward regardless of pre-flash state — the session flash sequence needs `IDLE` so the runner can claim the port (`starting-a-session.md` §4) |
@@ -137,7 +137,7 @@ All cohort state lives in the sidecar's SQLite database (`cohorts.md` §3).
 |---|---|---|---|
 | `cohorts.list` | — | `{cohorts: [CohortSummary]}` | Includes archived; the client filters (`cohorts.md` §4) |
 | `cohorts.get` | `{id}` | `{cohort: <Cohort>}` | Full detail, fetched when a card is opened |
-| `cohorts.create` | `{name, dataFolder?}` | `{cohort: <Cohort>}` | `dataFolder` resolved per `cohorts.md` §8 when omitted; an implicit default group is always created (§2) |
+| `cohorts.create` | `{name, dataFolder?, animals?, groups?}` | `{cohort: <Cohort>}` | `dataFolder` resolved per `cohorts.md` §8 when omitted. **The roster may travel with the create**, which is what makes the editor's Create a single call: animals and groups are built client-side with their own ids before the cohort exists, and sending them afterwards meant a second command that could fail on its own and leave a named, empty cohort. Both are validated *before* any row is written, so a rejected roster leaves no cohort and no folder. Omitting `groups` still mints the implicit default group (§2) |
 | `cohorts.update` | `{id, patch}` | `{cohort: <Cohort>}` | `patch` may carry `name`, `animals`, `groups`. Also the commit path for an Auto-Balance preview (§7.4) — no separate apply command |
 | `cohorts.archive` | `{id}` | `{cohort: <Cohort>}` | Soft-delete; record and `dataFolder` stay intact (§9) |
 | `cohorts.restore` | `{id}` | `{cohort: <Cohort>}` | Rejected with `COHORT_NAME_TAKEN` if an active cohort has since claimed the name |
@@ -188,10 +188,46 @@ Designed in [analytics.md](analytics.md) §9, which carries the rationale. Imple
 | `analytics.summary` | `{cohortId, sessionIds?, animalIds?, minCountedTrials?}` | cohort table — sessions, animals, run summaries, profile groups, counts, warnings | One call per cohort; every session and animal selection filters it client-side. The heatmap and the strategy space are the same data, so they share one command. Run summaries are a **flat list, not a matrix** — a matrix has nowhere to put two runs for one animal and session, which really happens |
 | `analytics.series` | `{runIds: [], mode?, metricIds?}` | `{series: [RunSeries], warnings}` | Learning-curve data. **Plural** so "all six animals in this session" is one call; the list is capped server-side. The x-axis is the counted-trial index and is implicit. Each `RunSeries` also carries `trail` — the within-session walk through the strategy plane (`analytics.md` §4.4) as `[StrategyPoint]`. It rides here rather than in its own command because the file is already open and decoded, and it is **always rolling** whatever `mode` says. Empty unless the profile declares exactly two conditions, and **not** derivable client-side from `metrics`: those are indexed by each metric's own counted trials, which interleave |
 | `analytics.rescan` | `{cohortId, adoptOrphans?}` | `{scanned, adopted, orphans: [RescanOrphan], cohortId}` | The explicit archive walk, for files no run record points at. Same pattern as `sketches.refresh` and `backup.syncNow`: expensive reconciliation is a deliberate user action, never a side effect of opening a view |
+| `sessions.recover` | `{cohortId}` | `{scanned, recovered, failed, entries: [RecoveredTsv], cohortId, dataFolder, folderMissing}` (`RecoverResult`) | The crash-recovery backfill (`data-saving.md` §7.3, §11): rebuilds `.json`/`.mat` from orphaned write-ahead `.tsv` files — same traversal as the rescan's walk, same explicit-action discipline. Each `RecoveredTsv` entry is `{tsvPath, jsonPath, status, nEvents, stopReason, reason}`; a footer-carrying `.tsv` keeps its recorded `stop_reason`, a footer-less (crashed) one gets `"recovered after crash"`. Rejected with `SESSION_INVALID` while any box is running — a live run's `.tsv` has no `.json` yet and is not an orphan |
 
 A corrupt or missing file is **data, not an error** — it yields a run with a non-ok status plus a warning, and the command still succeeds. One unreadable `.json` must never blank a year of history.
 
 Each `RescanOrphan` reports one file the walk found and what could honestly be said about it. `animalName` is always the name the *document* carries, reported as written even when that is what failed to match; `animalSource` says which recording `animalId` was resolved from. `document` is the normal case. `filename` means the document's `rat` matched no animal on the roster and the file stem did — the per-animal naming rule (`data-saving.md` §2) gives a second independent recording of the same fact, and matching it exactly is not the same act as guessing from a resemblance. Null `animalSource` means the run is kept unattributed, which stays the outcome whenever neither recording matches.
+
+### 3.5 Hardware utility baseline
+
+Designed in [hardware-interaction.md](hardware-interaction.md) §8, which carries the rationale. The baseline is the state the app returns every idle box to: the configured utility sketch, flashed and left in `IDLE`, so any box that isn't doing something else is a box Ephymeris can talk to. Restores are automatic — on startup, when a board appears, and whenever a run or session ends — so these commands exist for the two moments the automatic path can't cover: a client that wants the picture, and the placement walk that needs a specific box lit *now*.
+
+| Command | Args | Result | Notes |
+|---|---|---|---|
+| `utility.status` | — | `<UtilityStatus>` | The same snapshot `utility.updated` pushes, for a client that just mounted |
+| `utility.ensure` | `{boxes?, force?}` | `<UtilityStatus>` | Restore the baseline now instead of waiting for the next board or session event. **Returns as soon as the work is scheduled** — flashing six boxes outlasts any sane reply timeout, so progress arrives on `utility.updated`. Never touches a box that isn't `IDLE`, and never one held by a confirmed session mapping. `force` reflashes a box already believed to be at baseline (the Config button; no automatic path sets it) |
+| `utility.identify` | `{box, on}` | `{delivered, state: <UtilityBoxState>}` | Make one box point at itself with its profile's `identify` pair (`starting-a-session.md` §3.5). Opens `PASSTHROUGH` if the box is `IDLE` and closes it again on the matching `off`; a box the *user* already has open in Debug Mode keeps its console. `delivered: false` is the ordinary answer for a box not at baseline — the placement walk carries on by number rather than failing |
+
+Rejected with `UTILITY_UNAVAILABLE` when no utility sketch is configured or the configured one can't be used at all. A box-level problem is **not** an error: it is a `state` on that box in the returned snapshot.
+
+```jsonc
+// UtilityStatus — the utility.status/utility.ensure result AND the
+// utility.updated payload. One shape, one emitter.
+{
+  "configured": true,
+  "sketchPath": "/…/Utility/BOX_Utility",
+  "sketchName": "BOX_Utility",
+  "canIdentify": true,        // the profile declares an `identify` pair
+  "held": false,              // a confirmed session mapping owns the rig
+  "message": null,            // why the baseline isn't operating at all
+  "boxes": [
+    { "box": 1, "state": "ready", "detail": null, "identifying": false },
+    { "box": 2, "state": "restoring", "detail": "flashing BOX_Utility", "identifying": false },
+    { "box": 3, "state": "busy", "detail": "port is PASSTHROUGH", "identifying": false },
+    { "box": 4, "state": "unavailable", "detail": "no board bound to box 4", "identifying": false }
+  ]
+}
+```
+
+`state` ∈ `unknown` | `restoring` | `ready` | `busy` | `held` | `unavailable` | `failed`. Only `failed` is a fault; `busy` and `held` both mean *not now, deliberately* — the sidecar never takes a port away from a console, a flash, or a running session to restore a baseline.
+
+An `identify` pair rides on the utility sketch's own `task.json` (`data-saving.md` §6.8) rather than in settings, for the same reason the rest of the Task Profile does: the app must not know that a Hart-lab box says `ON LIGHT`.
 
 ---
 
@@ -210,6 +246,7 @@ Each `RescanOrphan` reports one file the walk found and what could honestly be s
 | `session.telemetry` | `{box, animalId, metrics: [<TelemetryMetric>]}` | Pushed on every strobe that updates a rolling live metric (`starting-a-session.md` §7 step 7) — **not** batched at `port.output`'s 20Hz, since metric updates are far lower-frequency than raw strobes |
 | `session.animalEnded` | `{box, animalId, stopReason, filePath}` | One animal's run finalized (`starting-a-session.md` §8's `stopReason` set) |
 | `session.lifecycle` | `<ActiveSessions>` | Broadcast whenever session **identity or status** changes — create, abandon, confirmMapping, startAll, switchGroup, end. A full snapshot, not a delta: a second window learns "ended" by seeing `running: null` with zero merge logic, and snapshots cannot be mis-merged. Per-box liveness is deliberately **not** re-broadcast here — `port.state` remains that channel, and `boxes[].running` inside the snapshot is point-in-time |
+| `utility.updated` | `<UtilityStatus>` | The hardware utility baseline (§3.5). Sent on client connect and whenever any box's belief changes — a restore starting or finishing, a hold going on or off, an identify light. This is the only progress channel `utility.ensure` has, since that command returns before the flashing starts |
 | `backup.status` | `<BackupStatus>` | The state of Backup Directory mirroring (`data-saving.md` §8). Sent on client connect, on every settings push that changes the directory, and whenever the mirror's state changes or it actually copies something — deliberately **not** every quiet 10s tick, so six idle boxes don't generate an event stream |
 | `analytics.progress` | `{cohortId, phase, done, total}` | Earns its place against the client's 15 s default reply timeout: the first summary after upgrading is a cold index of every historical run, and on a network-mounted data directory this is the difference between "working" and "hung". Published on phase change and every N files, following `backup.status`'s discipline — never per file |
 | `sidecar.error` | `{code, message, detail}` | Failures with no command to attribute them to. **Emitted** by the session runner when a mid-session `.tsv` write raises (disk full, permissions) — `data-saving.md` §7.1. Carries `code: "INTERNAL"`, a message naming the box, and `detail: {box}` |
@@ -260,10 +297,11 @@ Each `RescanOrphan` reports one file the walk found and what could honestly be s
 Mirrors the `cohorts.md` §1 data model. Timestamps are ISO-8601 strings.
 
 ```jsonc
-// CohortSummary — enough for the grid and the dashboard tile, no animal detail
+// CohortSummary — enough for the grid and the dashboard tile, no per-animal detail
 {
   "id": "9f2c…", "name": "Batch A",
   "animalCount": 6, "groupCount": 2,
+  "assignedBoxes": [1, 2, 3],   // distinct box numbers its animals hold, sorted
   "archived": false,
   "createdAt": "2026-07-23T…", "updatedAt": "2026-07-23T…"
 }
@@ -398,7 +436,7 @@ ISO-8601 strings.
 
 ### `settings.push` payload
 
-The payload mirrors the Tauri-side store, which is the source of truth (`ephymeris_v1.0.md` §4.5). The full settings schema is still an open item there, so this document does **not** restate it as fixed — the sidecar reads the keys it needs (`arduinoDirectory`, `arduinoCliPath`, `defaultBaud`, `boxes`, `dataDirectory`, `backupDirectory`) and ignores the rest. Adding a setting the sidecar doesn't consume is deliberately a non-event — the Config view's `constellation`, `constellationSlots`, and `boxSetupComplete` (`ephymeris_v1.0.md` §4.6) ride the same payload and are ignored by the sidecar entirely.
+The payload mirrors the Tauri-side store, which is the source of truth (`ephymeris_v1.0.md` §4.5). The full settings schema is still an open item there, so this document does **not** restate it as fixed — the sidecar reads the keys it needs (`arduinoDirectory`, `arduinoCliPath`, `utilitySketchPath`, `defaultBaud`, `boxes`, `dataDirectory`, `backupDirectory`) and ignores the rest. Adding a setting the sidecar doesn't consume is deliberately a non-event — the Config view's `constellation`, `constellationSlots`, and `boxSetupComplete` (`ephymeris_v1.0.md` §4.6) ride the same payload and are ignored by the sidecar entirely.
 
 ---
 
@@ -450,6 +488,7 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | `SESSION_NOT_READY` | `sessions.create` against a cohort with no group holding a box-assigned animal (`starting-a-session.md` §1) |
 | `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed. `detail` carries the parse error; the sketch is otherwise treated as profile-less |
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. Note that an ordinary mirroring **failure** never surfaces as a command error — there is no command to attribute it to; it appears as `state: "failed"` on `backup.status` (`data-saving.md` §8) |
+| `UTILITY_UNAVAILABLE` | A `utility.*` command with no `utilitySketchPath` set, or with one that can't be used at all — a path no longer in the Arduino Directory, or a sketch whose profile isn't `kind: "utility"`. A *box-level* problem never raises this: it is reported as that box's `state` in the snapshot (§3.5), because "box 4 has no board" is a fact about the rig, not a failure of the command |
 | `DIR_INVALID` | Arduino Directory missing, not a directory, or unreadable |
 | `INTERNAL` | Unhandled sidecar exception. Also the code carried by `sidecar.error` on a mid-session write failure |
 
@@ -486,7 +525,7 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 - [x] ~~`sidecar.error` is defined and mirrored but nothing emits it~~ — **resolved.** The session runner now emits it on a mid-session `.tsv` write failure, which was always its intended first use (§4)
 - [x] ~~Analytics query messages~~ — **designed** in `analytics.md` §9 and documented in §3.4/§4 as proposed. Four commands, one event, no new error codes. Not implemented, and deliberately absent from both mirrors until they are
 - [x] ~~The contract test guards *names*, not *shapes*~~ — **resolved** by switching to build-time codegen: both mirrors are generated from `protocol/schema.py`, TypeScript callers are typed against the generated payload maps, and the sidecar validates payloads against the schema under `EPHYMERIS_WIRE_VALIDATE=1` (on in the test suite). See the "Changing the wire" callout above
-- [ ] Multi-port batching (e.g. "flash all 6") — shared with `hardware-interaction.md` §8; whether that is one command with six progress streams or six independent commands
+- [ ] Multi-port batching (e.g. "flash all 6") — shared with `hardware-interaction.md` §9; whether that is one command with six progress streams or six independent commands
 - [ ] Back-pressure policy if the frontend cannot keep up with `port.output` at 20 Hz × 6 boxes (currently: unbounded send, relying on the ring buffer cap)
 
 ---

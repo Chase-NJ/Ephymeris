@@ -80,8 +80,10 @@ export function DebugMode() {
               constellation is the view's subject rather than a thumbnail above
               the real controls. Viewport-relative so a large lab monitor gets a
               genuinely cinematic scene, with a floor that keeps it usable on a
-              laptop. */}
-          <div className="relative mt-5 h-[min(70vh,760px)] min-h-[480px] overflow-hidden rounded-lg border border-halo">
+              laptop. Unframed like Mission Control's too: the transparent,
+              edge-faded canvas (Scene.tsx) joins the page background, and a
+              border would put the tile wall back. */}
+          <div className="relative mt-5 h-[min(70vh,760px)] min-h-[480px] overflow-hidden">
             <DebugConstellation selected={selected} onSelect={setSelected} />
             <AnimatePresence>
               {selected !== null && (

@@ -19,7 +19,9 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 BOX_COUNT = 6
-DEFAULT_BAUD = 115200
+#: Matches the `baudRate` every sketch in the lab's Arduino Directory declares.
+#: Only a fallback here — the shell owns the real value and pushes it.
+DEFAULT_BAUD = 9600
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,10 @@ class BoxBinding:
 class SidecarSettings:
     arduino_directory: str | None = None
     arduino_cli_path: str | None = None
+    #: The sketch every idle box is returned to (`hardware-interaction.md` §8).
+    #: `None` turns the baseline off entirely — the app is fully usable without
+    #: one, it just can't ask a box to point at itself.
+    utility_sketch_path: str | None = None
     #: Where session output lives. Used as the base for new cohorts' data
     #: folders (`cohorts.md` §8) — distinct from the app data directory that
     #: holds the cohort database (§3).
@@ -61,6 +67,7 @@ class SidecarSettings:
         return cls(
             arduino_directory=_opt_str(payload.get("arduinoDirectory")),
             arduino_cli_path=_opt_str(payload.get("arduinoCliPath")),
+            utility_sketch_path=_opt_str(payload.get("utilitySketchPath")),
             data_directory=_opt_str(payload.get("dataDirectory")),
             backup_directory=_opt_str(payload.get("backupDirectory")),
             default_baud=_baud(payload.get("defaultBaud")),

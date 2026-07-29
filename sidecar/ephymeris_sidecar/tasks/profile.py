@@ -165,6 +165,23 @@ class Telemetry:
 
 
 @dataclass(frozen=True)
+class Identify:
+    """The two commands that make a box announce itself (§6.8).
+
+    Declared by the sketch, never assumed by the app: "point at box 3" is a
+    universal thing to want and ``ON LIGHT`` is a Hart-lab detail. A utility
+    profile that omits it simply can't be asked, which the guided placement
+    walk degrades around rather than refusing.
+    """
+
+    on: str
+    off: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {"on": self.on, "off": self.off}
+
+
+@dataclass(frozen=True)
 class TaskProfile:
     task_name: str
     kind: str = "behavior"
@@ -173,6 +190,7 @@ class TaskProfile:
     live_metrics: list[LiveMetric] = field(default_factory=list)
     controls: list[Control] = field(default_factory=list)
     telemetry: Telemetry | None = None
+    identify: Identify | None = None
     #: Names older software wrote into a run document's `sketch` field for this
     #: same task (`data-saving.md` §6.7). Only the archive walk reads these, to
     #: decode historical runs whose recorded name isn't a folder name. Declared
@@ -195,6 +213,8 @@ class TaskProfile:
         }
         if self.telemetry is not None:
             out["telemetry"] = self.telemetry.to_json()
+        if self.identify is not None:
+            out["identify"] = self.identify.to_json()
         return out
 
     @property
@@ -289,8 +309,28 @@ def parse_profile(raw: Any) -> TaskProfile:
         live_metrics=_parse_metrics(raw.get("liveMetrics")),
         controls=_parse_controls(raw.get("controls")),
         telemetry=_parse_telemetry(raw.get("telemetry")),
+        identify=_parse_identify(raw.get("identify")),
         legacy_names=_parse_legacy_names(raw.get("legacyNames")),
     )
+
+
+def _parse_identify(raw: Any) -> Identify | None:
+    """The `identify` pair (§6.8) — absent is the norm, not an error.
+
+    Both halves are required together: a sketch that can be lit but not
+    unlit would leave a box announcing itself forever.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise TaskProfileError("identify must be an object")
+    on = raw.get("on")
+    off = raw.get("off")
+    if not isinstance(on, str) or not on.strip():
+        raise TaskProfileError("identify.on must be a non-empty command")
+    if not isinstance(off, str) or not off.strip():
+        raise TaskProfileError("identify.off must be a non-empty command")
+    return Identify(on=on.strip(), off=off.strip())
 
 
 def _parse_legacy_names(raw: Any) -> list[str]:

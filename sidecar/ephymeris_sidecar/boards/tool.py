@@ -97,3 +97,10 @@ class BoardTool(ABC):
         (`hardware-interaction.md` §3.3) before calling. Raises `FlashFailed`
         on error.
         """
+
+    async def close(self) -> None:
+        """Release whatever the backend holds (a daemon child, a channel).
+
+        A no-op by default — the subprocess backend holds nothing between
+        calls. Called once from `Application.stop()`.
+        """

@@ -6,7 +6,7 @@ import { ConstellationBoard } from "./ConstellationBoard";
 import { ConstellationPicker } from "./ConstellationPicker";
 import { HandshakeList } from "./HandshakeList";
 import { useBoxHealth } from "@/components/chrome/ConstellationStatus";
-import { Button, TextInput } from "@/components/common/controls";
+import { Button, Select, TextInput } from "@/components/common/controls";
 import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
 import { reconcileSlots } from "@/lib/constellations/slots";
 import { zodiacById } from "@/lib/constellations/zodiac";
@@ -14,6 +14,7 @@ import { useBoardPresence } from "@/lib/hardware/context";
 import { useHandshakeTest } from "@/lib/hardware/useHandshakeTest";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
+import { BAUD_RATES } from "@/lib/settings/schema";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -191,6 +192,22 @@ export function SetupWizard({ onExit }: { onExit: () => void }) {
                       : "The backend isn't connected, so ports can't be opened. You can continue and test later from Config."
                   }
                 />
+                {/* The baud rate lives on this step rather than a step of its
+                    own because this is where a wrong one first shows itself: a
+                    mismatch doesn't error, it just makes every box look silent.
+                    Every sketch in the lab's directory opens at 9600. */}
+                <div className="flex items-center justify-between gap-4 px-4 pb-3">
+                  <p className="text-[12px] text-static">
+                    Baud rate — match what your sketches open the serial port at.
+                    A mismatch looks exactly like a dead board.
+                  </p>
+                  <Select
+                    label="Default baud rate"
+                    value={settings.defaultBaud}
+                    options={BAUD_RATES.map((b) => ({ value: b, label: String(b) }))}
+                    onChange={(defaultBaud) => void update({ defaultBaud })}
+                  />
+                </div>
                 <div className="px-4 pb-4">
                   <HandshakeList bound={bound} handshake={handshake} connected={connected} />
                 </div>

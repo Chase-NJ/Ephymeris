@@ -200,13 +200,24 @@ async def test_the_time_limit_sends_stop_and_the_board_ends_the_run(tmp_path: Pa
 async def test_an_early_end_cancels_the_deadline(tmp_path: Path) -> None:
     """A box that finished before its time limit must never get a ghost STOP —
     by then the port is free and could belong to something else."""
-    runner, ports, _events, ended = make_runner(tmp_path, duration_s=0.08)
+    # The limit is far enough out that no scheduling delay can let it fire
+    # during the test: what's asserted below is the timer's *cancelled* state,
+    # not that we outran it. Racing a 0.08 s deadline against a 0.15 s wall
+    # sleep failed whenever the loop stalled — a stalled loop is exactly when
+    # `call_later` fires late, so the old form tested machine load, not this.
+    runner, ports, _events, ended = make_runner(tmp_path, duration_s=3600.0)
     runner.start_box(1)
+    deadline = runner._active[1].deadline
+    assert deadline is not None and not deadline.cancelled(), "box 1 armed no deadline"
+
     ports.on_ready(None)
     ports.on_strobe(246, 100)  # clean end well before the deadline
 
     await wait_until(lambda: bool(ended))
-    await asyncio.sleep(0.15)  # ride past where the deadline would have fired
+    # The handle finalization cancelled is the one this box was armed with, and
+    # asyncio never runs a cancelled handle's callback — so `_on_deadline` can
+    # no longer reach a port that by now could belong to something else.
+    assert deadline.cancelled(), "the early end left the deadline armed"
     assert ports.stopped == [], "the cancelled deadline still sent STOP"
 
 

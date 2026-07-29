@@ -70,6 +70,8 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   // them takes the slow fallback-decode path (`analytics.md` §9).
   [CMD.ANALYTICS_SUMMARY]: 120_000,
   [CMD.ANALYTICS_RESCAN]: 300_000,
+  // Same walk as the rescan, plus a .json/.mat write per orphan found.
+  [CMD.SESSIONS_RECOVER]: 300_000,
 };
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;

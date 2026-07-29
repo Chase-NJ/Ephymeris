@@ -1,7 +1,16 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { motion } from "framer-motion";
-import { Archive, ArrowLeft, Check, Circle, CircleAlert, FolderOpen, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  Archive,
+  ArrowLeft,
+  Check,
+  Circle,
+  CircleAlert,
+  FolderOpen,
+  Radio,
+  RotateCcw,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import { Button, TextInput } from "@/components/common/controls";
@@ -10,6 +19,11 @@ import { AnimalTable } from "@/components/cohorts/AnimalTable";
 import { CohortIcon } from "@/components/cohorts/CohortIcon";
 import { DataFolderField } from "@/components/cohorts/DataFolderField";
 import { GroupsPanel } from "@/components/cohorts/GroupsPanel";
+import {
+  assignmentProblems,
+  problemSummary,
+  useBoxAvailability,
+} from "@/lib/cohorts/boxAvailability";
 import {
   archiveCohort,
   createCohort,
@@ -23,6 +37,7 @@ import {
 import type { Animal, Cohort, Group } from "@/lib/cohorts/types";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
+import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useSidecar } from "@/lib/ws/context";
 
 /** Seeds the one group every cohort has, even before its first save (§2). */
@@ -37,6 +52,15 @@ function newLocalGroupId(): string {
  * preview together are more than a dialog can hold comfortably. The cohort's
  * icon shares a `layoutId` with its grid card, so opening one morphs the icon
  * into this header instead of cutting.
+ *
+ * **Creating and editing share this component but not its shape.** A new
+ * cohort is a flow: name, then roster, then groups and boxes, each revealing
+ * the next as it's satisfied, so there is exactly one thing to do at a time
+ * and the order is legible without reading anything. An existing cohort shows
+ * everything at once — you came back to change one thing, and being walked
+ * past the other three would be an obstacle rather than guidance. Splitting
+ * these into two components would duplicate the roster, group and box logic
+ * to express a difference that is purely presentational.
  */
 export function CohortEditor() {
   const { id } = useParams<{ id: string }>();
@@ -62,11 +86,32 @@ export function CohortEditor() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const connected = status === "connected";
+  const reduceMotion = useReduceMotion();
+  const { statusOf } = useBoxAvailability();
   // Falls back to a placeholder only in the brief window an existing cohort
   // hasn't finished loading yet — `adopt()` replaces it with the real groups.
   const defaultGroupId =
     [...groups].sort((a, b) => a.order - b.order)[0]?.id ?? "pending";
+  const named = name.trim() !== "";
   const readyToRun = animals.some((a) => a.boxNumber !== null);
+
+  /**
+   * How far down the create flow to reveal. An existing cohort is always fully
+   * open; a new one earns each section by satisfying the one above it, and
+   * never closes a section again once opened — a name cleared mid-edit
+   * shouldn't yank the roster out from under the cursor.
+   */
+  const [reached, setReached] = useState(0);
+  const stage = isNew ? Math.max(reached, named ? (animals.length > 0 ? 2 : 1) : 0) : 2;
+  useEffect(() => {
+    setReached((r) => Math.max(r, stage));
+  }, [stage]);
+
+  /** Assignments this machine can't currently honour (`boxAvailability.ts`). */
+  const problems = useMemo(
+    () => assignmentProblems(animals, groups, statusOf),
+    [animals, groups, statusOf],
+  );
 
   const adopt = useCallback((next: Cohort) => {
     setCohort(next);
@@ -120,15 +165,15 @@ export function CohortEditor() {
         return;
       }
       const created = await run(async () => {
-        const fresh = await createCohort(client, name, dataFolder ?? undefined);
-        // Groups and animals were built entirely client-side, with their own
-        // ids, before this cohort existed server-side. `cohorts.update`
-        // upserts by whatever id it's given, so the whole local state can be
-        // sent verbatim in one follow-up patch — replacing the sidecar's own
-        // freshly-minted default group with the one(s) configured here.
-        if (animals.length > 0 || groups.length > 1) {
-          await updateCohort(client, fresh.id, { groups, animals });
-        }
+        // One call, roster included. Groups and animals were built entirely
+        // client-side with their own ids before this cohort existed, and the
+        // sidecar validates them before writing anything — so a rejected
+        // roster leaves no half-made cohort and no orphaned folder.
+        const fresh = await createCohort(client, name, {
+          ...(dataFolder ? { dataFolder } : {}),
+          animals,
+          groups,
+        });
         navigate(`/cohorts/${fresh.id}`, { replace: true });
       });
       if (created) setMessage("Cohort created.");
@@ -173,7 +218,7 @@ export function CohortEditor() {
       </div>
 
       {!cohort?.archivedAt && (
-        <ReadinessStrip name={name} animalCount={animals.length} readyToRun={readyToRun} />
+        <ReadinessStrip named={named} animalCount={animals.length} readyToRun={readyToRun} />
       )}
 
       {loadError && <Banner tone="error">{loadError}</Banner>}
@@ -198,18 +243,25 @@ export function CohortEditor() {
             label="Cohort name"
             value={name}
             placeholder="Batch A"
+            autoFocus={isNew}
+            attention={isNew && !named}
             onChange={setName}
             className="w-[280px]"
           />
         </div>
 
         {isNew ? (
-          <NewCohortFolder
-            value={dataFolder}
-            error={errors["dataFolder"]}
-            dataDirectory={settings.dataDirectory}
-            onChange={setDataFolderPath}
-          />
+          // Only a rig with no configured data directory has a decision to make
+          // here — otherwise §8 derives the folder and asking would be noise in
+          // the middle of the flow.
+          <Reveal open={stage >= 1 && settings.dataDirectory === null} still={reduceMotion}>
+            <NewCohortFolder
+              value={dataFolder}
+              error={errors["dataFolder"]}
+              dataDirectory={settings.dataDirectory}
+              onChange={setDataFolderPath}
+            />
+          </Reveal>
         ) : (
           cohort && (
             <DataFolderField
@@ -231,29 +283,74 @@ export function CohortEditor() {
         )}
       </SettingGroup>
 
-      <SettingGroup title="Animals">
-        <AnimalTable
-          animals={animals}
-          defaultGroupId={defaultGroupId}
-          errors={errors}
-          onChange={setAnimals}
-        />
-      </SettingGroup>
+      <Reveal open={stage >= 1} still={reduceMotion}>
+        <SettingGroup title="Animals">
+          <AnimalTable
+            animals={animals}
+            defaultGroupId={defaultGroupId}
+            errors={errors}
+            attention={isNew && stage === 1}
+            onChange={setAnimals}
+          />
+        </SettingGroup>
+      </Reveal>
 
-      <SettingGroup title="Groups & boxes">
-        <GroupsPanel
-          groups={groups}
-          animals={animals}
-          onChange={(nextGroups, nextAnimals) => {
-            setGroups(nextGroups);
-            setAnimals(nextAnimals);
-          }}
-        />
-      </SettingGroup>
+      <Reveal open={stage >= 2} still={reduceMotion}>
+        {/* Above the section that fixes it, not at the top of the page: the
+            remedy is a box selector twelve inches below this sentence. */}
+        {problems.length > 0 && (
+          <div className="mt-7 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[12px]" style={{ color: "var(--color-status-warning)" }}>
+                {problemSummary(problems)}.
+              </p>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-static">
+                {problems.length === 1
+                  ? `${problems[0]!.animalName} is assigned to it`
+                  : `${problems.length} animals are assigned to ${
+                      problems.length === 2 ? "them" : "those"
+                    }`}
+                {" — "}
+                {problems
+                  .slice(0, 4)
+                  .map((p) => `${p.animalName} (box ${p.box})`)
+                  .join(", ")}
+                {problems.length > 4 && `, and ${problems.length - 4} more`}. A session
+                can't start those animals until the boxes are back, or they're moved to
+                boxes that are.
+              </p>
+            </div>
+            <div className="shrink-0">
+              <Button onClick={() => navigate("/config")}>
+                <Radio size={13} strokeWidth={1.75} />
+                Open Config
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <SettingGroup title="Groups & boxes">
+          <GroupsPanel
+            groups={groups}
+            animals={animals}
+            onChange={(nextGroups, nextAnimals) => {
+              setGroups(nextGroups);
+              setAnimals(nextAnimals);
+            }}
+          />
+        </SettingGroup>
+      </Reveal>
 
       <div className="mt-6 flex items-center justify-between">
         <div className="flex gap-2">
-          <Button variant="primary" onClick={() => void save()} disabled={busy || !connected}>
+          {/* A nameless cohort is rejected server-side, so the round trip only
+              exists to deliver news we already have. */}
+          <Button
+            variant="primary"
+            onClick={() => void save()}
+            disabled={busy || !connected || !named}
+            {...(!named ? { title: "Give the cohort a name first" } : {})}
+          >
             {busy ? "Saving…" : isNew ? "Create cohort" : "Save changes"}
           </Button>
           <Button variant="ghost" onClick={() => navigate("/cohorts")}>
@@ -298,26 +395,69 @@ export function CohortEditor() {
 }
 
 /**
+ * A section that arrives when its precondition is met.
+ *
+ * The create flow's whole shape: one thing to do at a time, and the next thing
+ * sliding in as evidence you finished the last. `still` collapses it to a
+ * plain conditional under reduced motion — the *ordering* is the information,
+ * and that survives without the movement.
+ */
+function Reveal({
+  open,
+  still,
+  children,
+}: {
+  open: boolean;
+  still: boolean;
+  children: ReactNode;
+}) {
+  if (still) return open ? <>{children}</> : null;
+  return (
+    <AnimatePresence initial={false}>
+      {open && (
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: "auto", opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={springSnappy}
+          className="overflow-hidden"
+        >
+          {children}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/**
  * Lightweight coaching, not a gate — three quiet checkpoints against what a
  * cohort actually needs before it can start a session (`starting-a-session.md`
  * §1: at least one group with at least one box-assigned animal). A cohort can
  * still be saved and left incomplete at any point (`cohorts.md` §1 — real lab
  * setup rarely happens in one sitting); this just orients the user on what's
  * left without blocking anything.
+ *
+ * Doubles as the create flow's spine: each checkpoint corresponds to a section
+ * below, so the strip reads as "where am I" and not only "what's missing". The
+ * current step's bar widens the way the setup wizard's step dots do — one
+ * shared idiom for the same idea.
  */
 function ReadinessStrip({
-  name,
+  named,
   animalCount,
   readyToRun,
 }: {
-  name: string;
+  named: boolean;
   animalCount: number;
   readyToRun: boolean;
 }) {
   const items: Array<{ label: string; done: boolean }> = [
-    { label: name.trim() ? "Named" : "Name this cohort", done: name.trim() !== "" },
+    { label: named ? "Named" : "Name this cohort", done: named },
     {
-      label: animalCount > 0 ? `${animalCount} ${animalCount === 1 ? "animal" : "animals"}` : "Add animals",
+      label:
+        animalCount > 0
+          ? `${animalCount} ${animalCount === 1 ? "animal" : "animals"}`
+          : "Add animals",
       done: animalCount > 0,
     },
     {
@@ -325,17 +465,33 @@ function ReadinessStrip({
       done: readyToRun,
     },
   ];
+  // The first unfinished checkpoint is where the user is standing.
+  const current = items.findIndex((item) => !item.done);
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-      {items.map((item) => (
+    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+      {items.map((item, index) => (
         <span
           key={item.label}
           className="flex items-center gap-1.5 text-[11px]"
-          style={{ color: item.done ? "var(--color-status-ok)" : "var(--color-static)" }}
+          style={{
+            color: item.done
+              ? "var(--color-status-ok)"
+              : index === current
+                ? "var(--color-starlight)"
+                : "var(--color-static)",
+          }}
         >
           {item.done ? (
             <Check size={12} strokeWidth={2} />
+          ) : index === current ? (
+            <motion.span
+              layout
+              initial={false}
+              animate={{ width: 16, backgroundColor: "var(--color-pulsar)" }}
+              transition={springSnappy}
+              className="h-1.5 rounded-full"
+            />
           ) : (
             <Circle size={7} strokeWidth={0} fill="currentColor" className="opacity-50" />
           )}
@@ -411,21 +567,31 @@ function NewCohortFolder({
   );
 }
 
+/**
+ * Tones follow the app's convention: **error** is something that failed or
+ * will fail on save, **warning** is a precondition the user can still choose
+ * to live with, **info** is confirmation. Colour lands on the text; the border
+ * stays Halo so a banner never reads as a differently-shaped surface (§2.2).
+ */
+const BANNER_TONE: Record<"error" | "warning" | "info", string> = {
+  error: "var(--color-status-error)",
+  warning: "var(--color-status-warning)",
+  info: "var(--color-static)",
+};
+
 function Banner({
   tone,
   children,
 }: {
-  tone: "error" | "info";
-  children: React.ReactNode;
+  tone: "error" | "warning" | "info";
+  children: ReactNode;
 }) {
   return (
     <div
       className="mt-4 flex items-start gap-2 rounded-sm border border-halo px-3 py-2 text-[12px] leading-relaxed"
-      style={{
-        color: tone === "error" ? "var(--color-status-error)" : "var(--color-static)",
-      }}
+      style={{ color: BANNER_TONE[tone] }}
     >
-      {tone === "error" && (
+      {tone !== "info" && (
         <CircleAlert size={14} strokeWidth={1.75} className="mt-px shrink-0" />
       )}
       <span>{children}</span>

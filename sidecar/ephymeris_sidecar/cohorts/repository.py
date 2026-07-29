@@ -59,10 +59,33 @@ class CohortRepository:
 
     # --- writes -----------------------------------------------------------
 
-    def create(self, name: str, data_folder: str) -> Cohort:
+    def create(
+        self,
+        name: str,
+        data_folder: str,
+        animals: Any = None,
+        groups: Any = None,
+    ) -> Cohort:
+        """Create a cohort, optionally with its whole roster in one go.
+
+        The editor builds animals and groups client-side, with their own ids,
+        before the cohort exists — so it used to create and then immediately
+        patch. Two round trips meant two ways to fail, and the second one
+        failing left a named, empty cohort nobody asked for. Accepting the
+        roster here makes creation atomic: it is validated *before* any row is
+        written, so a rejected roster leaves no cohort and no folder behind.
+        """
         clean = (name or "").strip()
         if not clean:
             raise ValidationError({"name": "Give the cohort a name."})
+
+        # Parse and validate before touching the database, so a bad roster and
+        # a taken name fail the same way regardless of write order. Both
+        # parsers already turn `None` into the empty/default case, which is
+        # exactly the no-roster create.
+        parsed_groups = _parse_groups(groups)
+        parsed_animals = _parse_animals(animals)
+        _validate(parsed_animals, parsed_groups)
 
         now = _now()
         cohort_id = _new_id()
@@ -77,10 +100,28 @@ class CohortRepository:
                 )
                 # §2 — groups always exist, even implicitly, so "grouped" and
                 # "ungrouped" cohorts stay one code path.
-                conn.execute(
-                    'INSERT INTO groups (id, cohort_id, name, "order") VALUES (?, ?, ?, 0)',
-                    (_new_id(), cohort_id, DEFAULT_GROUP_NAME),
-                )
+                for group in parsed_groups:
+                    conn.execute(
+                        'INSERT INTO groups (id, cohort_id, name, "order")'
+                        " VALUES (?, ?, ?, ?)",
+                        (group.id, cohort_id, group.name, group.order),
+                    )
+                for animal in parsed_animals:
+                    conn.execute(
+                        "INSERT INTO animals"
+                        " (id, cohort_id, group_id, name, box_number, sex, id_number, notes)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            animal.id,
+                            cohort_id,
+                            animal.group_id,
+                            animal.name,
+                            animal.box_number,
+                            animal.sex,
+                            animal.id_number,
+                            animal.notes,
+                        ),
+                    )
                 conn.commit()
             except sqlite3.IntegrityError as exc:  # pragma: no cover - raced insert
                 conn.rollback()

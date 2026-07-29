@@ -365,8 +365,11 @@ export function MissionControl() {
               the view's subject, not a thumbnail above the real controls. It
               takes the viewport's height rather than a fixed pixel box so a
               large lab monitor gets a genuinely cinematic scene, with a floor
-              that keeps it usable on a laptop. */}
-          <div className="relative mt-5 h-[min(64vh,720px)] min-h-[460px] overflow-hidden rounded-lg border border-halo">
+              that keeps it usable on a laptop. Unframed on purpose — the
+              canvas is transparent and fades out at its edges (Scene.tsx), so
+              the sky belongs to the page rather than sitting in a tile; a
+              border here would put the wall back. */}
+          <div className="relative mt-5 h-[min(64vh,720px)] min-h-[460px] overflow-hidden">
             {cohort && (
               <Constellation3D
                 cohortId={cohort.id}

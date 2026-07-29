@@ -1,6 +1,6 @@
 {
   "name": "ephymeris",
-  "version": "1.0.0",
+  "version": "1.1.0-rc.1",
   "description": "Behavioral data collection & analysis suite",
   "private": true,
   "type": "module",
@@ -29,6 +29,7 @@
     "@react-three/fiber": "^9.6.1",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
+    "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-store": "^2.4.4",
     "framer-motion": "^12.42.2",
     "lucide-react": "^1.25.0",

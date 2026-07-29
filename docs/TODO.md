@@ -41,25 +41,17 @@ What hasn't happened is anyone *looking at it with a scientist's eye*. Three thi
 
 A **second** real cohort now sharpens all four (item 27): Squeekstreet Syndicate is 30 sessions × **12 animals** — double the colour ramp's length, so the repeat is guaranteed rather than hypothetical — and its profile (`shaping_GR`) declares exactly **one** live metric, making the single-condition strategy space the normal case for that cohort rather than an edge of another one. Both have been driven at the service layer; neither has been judged on screen.
 
-### 4. Crash-recovery utility for orphaned `.tsv` files
+*(Items 4 and 28 — the crash-recovery utility and the `sessions.end` run-record race — are closed; see [Recently closed](#recently-closed).)*
 
-**Source:** `data-saving.md` §7.3, §11 · `analytics.md` §8.1
+### 29. The utility baseline and the placement walk are untested on hardware
 
-If the machine loses power mid-session, every strobe up to that moment is durably on disk in `.tsv` — but no `.json`/`.mat` is ever produced, because those are built only at clean finalization. Today that recovery is manual.
+**Source:** `hardware-interaction.md` §8, §9 · `starting-a-session.md` §3.5
 
-A small utility that reads an orphaned `.tsv` and backfills both structured formats with `stop_reason: "recovered after crash"` is cheap given the existing design. Note this is **not** session resumption (see P4).
+Built and covered by 18 sidecar tests against the real port state machine, but never run against boards. Three things want watching the first time it is:
 
-It needs the **same archive walker** as `analytics.md` §8.1's orphan adoption — both walk cohort data folders and both must parse either date spelling. Build them to share one, whichever lands first. §8.1's is now the depth-tolerant one (format folders matched by name at any depth, pruned at the format folder) and is the version to reuse.
-
-### 28. A finalization landing after `sessions.end` writes files with no run record
-
-**Source:** codebase — `sessions/runner.py:275`, `app.py:_sessions_end`, `_on_animal_ended`
-
-`_on_track` schedules `finalize_box` as a fire-and-forget task when a board reports its own end strobe. Meanwhile `_sessions_end` awaits `end_all` — which waits only briefly — and then clears `self._running_session_id`. `_on_animal_ended` records the `session_animal_runs` row *only* `if self._running_session_id is not None`, so a finalization that lands on the wrong side of that clear **writes the `.json`/`.mat` and no database row**.
-
-The data is not lost, and the symptom is mild and recoverable: the run is invisible to `analytics.summary`'s database-first path until someone clicks Rescan, which adopts it. But it is self-inflicted — this is precisely the "runs finalized while no session was active" orphan cause `analytics.md` §8.1 lists, being manufactured by the end path itself rather than by a crash.
-
-Found while establishing that the post-session Analytics landing does **not** need a disk rescan (`analytics.md` §2.5). The landing fix is correct as shipped; this is the residual case that keeps Rescan the honest cure rather than a redundancy. Likely fix: have `_sessions_end` await outstanding finalizations before clearing the id, or key the record-on-end guard to the run rather than to a mutable field.
+- **Cold start is six sequential flashes.** The first presence poll after launch triggers a restore of every bound box, so a fresh launch has the rig busy for a minute or two. If that proves annoying the fix is probably to defer the cold restore until something needs a box — not to parallelise it, which would fight the one-owner-per-port rule.
+- **The identify confirmation assumes `telemetry`.** Delivery is confirmed by waiting for the sketch's own `STATUS` line, which is also what catches a baud mismatch. A utility sketch declaring `identify` but no `telemetry` gets no confirmation and is trusted on the send alone. (`defaultBaud` itself is fixed — it shipped as 115200 against sketches that all open at 9600, and now ships as 9600; see `hardware-interaction.md` §6.4.)
+- **The hold window is load-bearing.** `sessions.confirmMapping` suspends restores and `sessions.end`/`switchGroup`/`abandon` release them. If any path out of a session ever fails to release, the rig quietly stops returning to baseline; if a release ever landed *early*, a restore would erase a task sketch mid-setup. Worth confirming on the two-group pass (item 5), which exercises both edges in one run.
 
 ### 5. Switch Group's second lap is untested on hardware
 
@@ -77,31 +69,17 @@ This is the highest-value remaining hardware test, and multi-group runs are a no
 
 The wire mirrors are guarded by the contract test, so the highest-risk surface is covered. But store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`) and the session flow's step transitions are untested code paths that real sessions depend on.
 
-### 7. Debug log export is clipboard-only
-
-**Source:** `hardware-interaction.md` §6.5, §8
-
-The spec asks for "copy log / save debug log"; v1 ships copy-to-clipboard via `navigator.clipboard.writeText`. Saving to a file needs a write path the shell doesn't currently have. **Decide who owns it:** `tauri-plugin-fs` plus a save dialog, or a sidecar-side export command.
-
-*(Item 8, payload-shape drift, is closed by the switch to codegen — see [Recently closed](#recently-closed).)*
+*(Item 7, clipboard-only debug log export, is closed — the shell owns the save path; see [Recently closed](#recently-closed). Item 8, payload-shape drift, is closed by the switch to codegen — same section.)*
 
 ---
 
 ## P3 — Open decisions
 
-### 9. Migrate `BoardTool` to the arduino-cli gRPC daemon
-
-**Source:** `hardware-interaction.md` §2, §8
-
-**Committed, not conditional** — the subprocess backend is a staging step, not the destination. It was scheduled for after flashing worked end to end so it could be validated against a known-good baseline. That milestone is reached, making this the next hardware-layer task.
-
-Requires vendoring arduino-cli's `.proto` files and adding a `grpcio-tools` codegen step, since there is no official Python gRPC client. It also buys true line-by-line compiler streaming, which `--format json` cannot provide — output currently arrives buffered at phase end and is replayed as progress after the fact.
-
-Weigh against the dependency policy (`reference.md` §6): this adds a substantial sidecar build-time dependency to a project that deliberately keeps runtime dependencies at two.
+*(Item 9, the gRPC daemon migration, is closed — see [Recently closed](#recently-closed).)*
 
 ### 10. Multi-port batching for Debug Mode
 
-**Source:** `hardware-interaction.md` §8 · `websocket-protocol.md` §9
+**Source:** `hardware-interaction.md` §9 · `websocket-protocol.md` §9
 
 Partly answered: the *session* flash sequence is strictly sequential and halts at the first failure, and that's built. Still open is whether Debug Mode wants a "flash all 6" affordance at all, whether it shares the halt policy, and whether it would be one command with six progress streams or six independent commands.
 
@@ -109,7 +87,7 @@ Partly answered: the *session* flash sequence is strictly sequential and halts a
 
 **Source:** `ephymeris_v1.0.md` §4.5, §6
 
-The ten implemented fields — `dataDirectory`, `backupDirectory`, `arduinoDirectory`, `arduinoCliPath`, `defaultBaud`, `boxes`, `reducedMotion`, plus Config's shell-only `constellation`, `constellationSlots`, and `boxSetupComplete` (§4.6) — are described as a starting point, not final. Per-box COM port nicknames exist within `boxes` as `label`. The sidecar reads only six of them (`arduinoDirectory`, `arduinoCliPath`, `dataDirectory`, `backupDirectory`, `defaultBaud`, `boxes`) and ignores the rest, so adding a field is deliberately a non-event — proven again by the three Config keys, which needed no sidecar change at all.
+The eleven implemented fields — `dataDirectory`, `backupDirectory`, `arduinoDirectory`, `arduinoCliPath`, `utilitySketchPath`, `defaultBaud`, `boxes`, `reducedMotion`, plus Config's shell-only `constellation`, `constellationSlots`, and `boxSetupComplete` (§4.6) — are described as a starting point, not final. Per-box COM port nicknames exist within `boxes` as `label`. The sidecar reads only seven of them (`arduinoDirectory`, `arduinoCliPath`, `utilitySketchPath`, `dataDirectory`, `backupDirectory`, `defaultBaud`, `boxes`) and ignores the rest, so adding a field is deliberately a non-event — proven again by the three Config keys, which needed no sidecar change at all.
 
 ### 12. Back-pressure policy for `port.output`
 
@@ -121,7 +99,7 @@ Currently unbounded send, relying on the ring buffer cap. No policy exists for a
 
 ### 14. Box→board re-binding UX
 
-**Source:** `hardware-interaction.md` §8
+**Source:** `hardware-interaction.md` §9
 
 How a physically swapped board (new `hardware_id`, same cage) gets re-bound. A board swap is a routine lab event. **Partially addressed (2026-07-27):** bindings now live in the Config tab (`ephymeris_v1.0.md` §4.6) with a re-runnable setup wizard and a per-box handshake test to confirm a swap took. Still open: proactive surfacing — "a new board appeared, bind it to box 3?" — rather than the user knowing to open Config.
 
@@ -141,11 +119,13 @@ The shipped installer is unsigned — every fresh lab machine shows the SmartScr
 
 **Source:** `cohorts.md` §12
 
-Three small, known, individually tolerable issues:
+Mostly closed by the cohorts overhaul. What was here:
 
-- **Creation isn't atomic.** Animals added before a cohort's first save go in a follow-up `cohorts.update`, because they need the group id the sidecar mints at creation. Worth revisiting if `cohorts.create` ever accepts an initial roster.
-- **Groups can't be added to a brand-new cohort** until after its first save, because the groups panel is hidden while only the implicit default group exists. Auto-Balance is the normal path to multiple groups, so this rarely bites.
-- **Archive has no confirmation.** Deliberate — archive is the reversible everyday action and only permanent delete is gated. Revisit if it proves too easy to trigger on a large cohort.
+- ~~**Creation isn't atomic.**~~ **Fixed.** `cohorts.create` now accepts optional `animals` and `groups`, validated before any row is written, so Create is one call and a rejected roster leaves no cohort and no folder. The stated reason (animals "need the group id the sidecar mints at creation") was already false — the editor seeds its own group client-side and the sidecar keeps whatever ids it is given.
+- ~~**Groups can't be added to a brand-new cohort.**~~ **Was never true.** The editor has seeded a local group from the start and the groups panel always renders; a new cohort could always be split before its first save. The doc claim was stale.
+- **Archive has no confirmation.** Still open, still deliberate — archive is the reversible everyday action and only permanent delete is gated. Revisit if it proves too easy to trigger on a large cohort.
+
+Two bugs were found and fixed alongside it: the box selector offered boxes 1–6 from a module constant with no knowledge of the rig (so an animal could be assigned to a box that had never existed), and a duplicate cohort name **failed completely silently** — `fieldErrors` returned `{field: "name"}`, a key nothing rendered, which also suppressed the fallback message.
 
 *(Items 17–19 — the date format, backup cadence specifics, and the `.tsv` open mode — are all now decided and built. See [Recently closed](#recently-closed).)*
 
@@ -171,6 +151,30 @@ These are recorded so they aren't rediscovered as oversights. Each was decided, 
 ## Recently closed
 
 Kept briefly so a reader returning to this register can see what moved, rather than wondering whether an item was dropped or resolved.
+
+### ~~9. Migrate `BoardTool` to the arduino-cli gRPC daemon~~ — closed
+
+**Was:** P3, and the standing "next hardware-layer task": the subprocess `--format json` backend was an explicit staging step behind the `BoardTool` seam, with the daemon committed since the original spec.
+
+**Now migrated** (2026-07-29): `boards/grpc_tool.py` is the primary backend — one long-lived `arduino-cli daemon`, stubs generated from protos vendored at the CLI's own tag (`sidecar/proto/`, `scripts/gen_grpc.py`) and committed like the wire mirrors, so nothing generates at install time. It buys both promised wins: presence polling with no process spawn, and true line-by-line compile/upload streaming instead of `--format json`'s buffered replay. The dependency-policy weighing landed on **fenced acceptance**: `grpcio`/`protobuf` join the runtime dependencies, but the subprocess backend stays as a per-call fallback chosen automatically (and loudly logged) when `grpcio` won't import or the daemon won't run — a machine where the wheel failed loses streaming, never flashing (`reference.md` dependency policy; `EPHYMERIS_NO_GRPC_DAEMON=1` forces the fallback). Validated by `test_grpc_tool.py`: unit parity pins both backends to identical board filters, and four integration tests drive a real daemon — spawn, kill-respawn recovery, a genuinely streamed `arduino:avr:mega` compile, and a compile error naming its `error:` line. Field note recorded in `hardware-interaction.md` §2: the daemon exits on **stdin EOF** (its parent-death watch), so it must hold a live stdin pipe — which doubles as free orphan protection. Still to prove: a real flash through the daemon onto lab hardware (alongside the other standing hardware passes, item 5), and a fresh `npm run package` install — `package-resources.mjs` now ships the vendored stub tree as PyInstaller data files, and the frozen sidecar should be seen choosing the daemon backend (the "arduino-cli daemon up" log line) before the next lab deploy.
+
+### ~~28. A finalization landing after `sessions.end` writes files with no run record~~ — closed
+
+**Was:** P2. A board's own end strobe schedules `finalize_box` fire-and-forget; `end_all` waited only its 0.1 s grace and checked `_active` — but an in-flight finalization has already popped its box from `_active`, so `sessions.end` could clear `_running_session_id` while the writer was still mid-`finalize`, and `_on_animal_ended` then skipped the `session_animal_runs` row: files on disk, no record — the self-inflicted `analytics.md` §8.1 orphan.
+
+**Now fixed** (2026-07-29): every fire-and-forget path into `finalize_box` goes through `SessionRunner._schedule_finalize`, which tracks the task, and `end_all` drains the set before returning — so `sessions.end` (and Switch Group) can't clear the id while a finalization is in flight, and every recorded run provably precedes the `completed` status flip. Regression-tested by slowing the writer past the grace window (`test_session_runner.py::test_end_all_waits_for_an_in_flight_finalization`); the test fails with the drain removed.
+
+### ~~4. Crash-recovery utility for orphaned `.tsv` files~~ — closed
+
+**Was:** P2. A power loss mid-session leaves every strobe durably in `.tsv` but no `.json`/`.mat` — those are built only at finalization — and the recovery was manual.
+
+**Now built** (2026-07-29): `sessions/recovery.py` + the `sessions.recover` command, surfaced as **Recover** beside Rescan in Analytics. It shares §8.1's depth-tolerant archive walker by construction (`reader._walk_format_dirs` now underlies both `walk_session_files` and the new `walk_orphaned_tsvs`), finds every `.tsv` with no `.json` sibling, and rebuilds both structured formats — layout-preserving, so a legacy `recovery_tsv/` orphan backfills into `behavior_json/`/`behavior_mat/`. A footer-carrying `.tsv` (finalized, but the best-effort `.json` write failed) keeps its recorded `stop_reason`; only a footer-less crash gets `"recovered after crash"`. `n_events` is recomputed from parsed lines, never copied from a footer. Rejected while any box is running — a live run's `.tsv` has no `.json` yet and is not an orphan. The frontend chains a rescan after any successful recovery so the recovered files are adopted in the same click. Covered by `tests/test_recovery.py` (10 cases), including a round-trip against the real writer and the recovery→adoption handoff. Still **not** session resumption (see P4).
+
+### ~~7. Debug log export is clipboard-only~~ — closed
+
+**Was:** P2, with the ownership question open: `tauri-plugin-fs` plus a save dialog, or a sidecar-side export command.
+
+**Decided and built** (2026-07-29): the **shell owns it** — the frontend already used `@tauri-apps/plugin-dialog` for folder pickers, the dialog plugin adds the user-chosen path to the fs scope at runtime (so the webview can write exactly the file the user picked and nothing else), and a shell-side path keeps working when the sidecar is down, which is exactly when a debug log matters most. `NodeDetail.tsx` gains a save button beside copy: `save()` → `writeTextFile()`, exporting whichever console tab is visible. Like the clipboard path, it never enters the data pipeline (§6.5).
 
 ### ~~1. Windows packaging is unstarted~~ — closed
 

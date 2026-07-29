@@ -124,6 +124,12 @@ SHAPES = (
             f("backupDirectory", nullable(STR)),
             f("arduinoDirectory", nullable(STR)),
             f("arduinoCliPath", nullable(STR)),
+            f(
+                "utilitySketchPath",
+                nullable(STR),
+                doc="The hardware utility sketch every idle box is returned to "
+                "(`hardware-interaction.md` §8). Null turns the baseline off.",
+            ),
             f("defaultBaud", INT),
             f("boxes", ListOf(Ref("BoxBinding"))),
             f("reducedMotion", BOOL),
@@ -148,6 +154,53 @@ SHAPES = (
         ),
         doc="The Tauri-side store's schema. The sidecar reads the keys it needs "
         "and ignores the rest, so adding a setting is deliberately a non-event.",
+    ),
+    # Hardware utility baseline (hardware-interaction.md §8)
+    Shape(
+        "UtilityBaselineState",
+        lit("unknown", "restoring", "ready", "busy", "held", "unavailable", "failed"),
+        doc="What the sidecar believes about one box's baseline firmware. "
+        "`busy` (the port has another owner) and `held` (a confirmed session "
+        "mapping owns the rig) are both 'not now' rather than 'not working' — "
+        "the distinction is the whole reason a restore never fights the user.",
+    ),
+    Shape(
+        "UtilityBoxState",
+        obj(
+            f("box", INT),
+            f("state", Ref("UtilityBaselineState")),
+            f("detail", nullable(STR), doc="Why, when the state isn't `ready`."),
+            f("identifying", BOOL, doc="This box is currently lit by utility.identify."),
+        ),
+    ),
+    Shape(
+        "UtilityStatus",
+        obj(
+            f("configured", BOOL),
+            f("sketchPath", nullable(STR)),
+            f("sketchName", nullable(STR)),
+            f(
+                "canIdentify",
+                BOOL,
+                doc="The configured sketch's profile declares an `identify` pair. "
+                "False means placement can still run, just without lights.",
+            ),
+            f(
+                "held",
+                BOOL,
+                doc="Restores are suspended because a confirmed session mapping "
+                "owns the boxes — reflashing then would erase the task sketch.",
+            ),
+            f(
+                "message",
+                nullable(STR),
+                doc="Why the baseline isn't operating at all (unset sketch, a "
+                "path no longer in the Arduino Directory, a non-utility profile).",
+            ),
+            f("boxes", ListOf(Ref("UtilityBoxState"))),
+        ),
+        doc="The whole baseline picture — one snapshot, shared by the command "
+        "and the event, so a client never merges two shapes.",
     ),
     # Backup Directory mirroring (data-saving.md §8)
     Shape(
@@ -225,11 +278,19 @@ SHAPES = (
             f("name", STR),
             f("animalCount", INT),
             f("groupCount", INT),
+            f(
+                "assignedBoxes",
+                ListOf(INT),
+                doc="Distinct box numbers this cohort's animals hold. The one "
+                "piece of animal detail the summary carries, so the browser "
+                "grid can flag a cohort whose boxes no longer exist on this "
+                "machine without fetching every cohort in full.",
+            ),
             f("archived", BOOL),
             f("createdAt", STR),
             f("updatedAt", STR),
         ),
-        doc="Enough for the grid and dashboard tile, no animal detail.",
+        doc="Enough for the grid and dashboard tile, no per-animal detail.",
     ),
     Shape(
         "CohortPatch",
@@ -372,6 +433,14 @@ SHAPES = (
         "port.output (§6.6). Parsed client-side — nothing here is stored.",
     ),
     Shape(
+        "IdentifySpec",
+        obj(f("on", STR), f("off", STR)),
+        doc="The two commands that make a box announce itself — a trial light, "
+        "a buzzer, whatever the rig has (`hardware-interaction.md` §8.3). "
+        "Declared by the sketch so the app never has to know that a Hart-lab "
+        "box says `ON LIGHT`.",
+    ),
+    Shape(
         "TaskProfile",
         obj(
             f("taskName", STR),
@@ -393,6 +462,14 @@ SHAPES = (
                 "never inferred.",
             ),
             f("telemetry", Ref("TelemetrySpec"), optional=True, doc="Utility profiles only."),
+            f(
+                "identify",
+                Ref("IdentifySpec"),
+                optional=True,
+                doc="Utility profiles only — absent means this sketch can't be "
+                "asked to point at its own box, which the placement walk "
+                "degrades around rather than refusing.",
+            ),
         ),
         doc="Parsed from the sketch's task.json sibling (§6.1); passed through "
         "verbatim — the sidecar validates shape but doesn't reinterpret.",
@@ -795,6 +872,36 @@ SHAPES = (
         "AnalyticsProgress",
         obj(f("cohortId", STR), f("phase", lit("reading", "walking")), f("done", INT), f("total", INT)),
     ),
+    Shape(
+        "RecoveredTsv",
+        obj(
+            f("tsvPath", STR),
+            f("jsonPath", nullable(STR), doc="Null when recovery failed."),
+            f("status", lit("recovered", "failed")),
+            f("nEvents", INT, doc="Recomputed from the lines actually parsed, never copied from a footer."),
+            f(
+                "stopReason",
+                nullable(STR),
+                doc="The footer's recorded reason when the .tsv has one (a "
+                "finalized run whose best-effort .json write failed); "
+                "'recovered after crash' for a footer-less log. Null on failure.",
+            ),
+            f("reason", nullable(STR), doc="Why recovery failed, when it did."),
+        ),
+        doc="One orphaned write-ahead log the crash-recovery backfill processed.",
+    ),
+    Shape(
+        "RecoverResult",
+        obj(
+            f("scanned", INT, doc="Orphaned .tsv files found — write-ahead logs with no .json sibling."),
+            f("recovered", INT),
+            f("failed", INT),
+            f("entries", ListOf(Ref("RecoveredTsv"))),
+            f("cohortId", STR),
+            f("dataFolder", STR),
+            f("folderMissing", BOOL, doc="Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'."),
+        ),
+    ),
     # Event-only envelope payloads
     Shape("ServerHello", obj(f("protocolVersion", INT), f("sidecarVersion", STR))),
     Shape(
@@ -861,7 +968,7 @@ COMMANDS = (
     ),
     Command(
         "port.passthrough.open",
-        args=obj(f("box", INT), f("baud", INT, optional=True, doc="Default 115200, per box.")),
+        args=obj(f("box", INT), f("baud", INT, optional=True, doc="Defaults to the configured `defaultBaud`, per box.")),
         result=_STATE,
     ),
     Command("port.passthrough.close", args=obj(f("box", INT)), result=_STATE),
@@ -903,6 +1010,39 @@ COMMANDS = (
         result=_STATE,
         doc="ERROR → IDLE (`hardware-interaction.md` §3.2).",
     ),
+    Command(
+        "utility.status",
+        result=Ref("UtilityStatus"),
+        doc="The baseline picture on demand — the same snapshot `utility.updated` "
+        "pushes, for a client that just mounted.",
+        section="Hardware utility baseline (hardware-interaction.md §8)",
+    ),
+    Command(
+        "utility.ensure",
+        args=obj(
+            f("boxes", ListOf(INT), optional=True, doc="Default: every bound box."),
+            f(
+                "force",
+                BOOL,
+                optional=True,
+                doc="Reflash even a box already believed to be at baseline. For "
+                "the Config button; the automatic paths never set it.",
+            ),
+        ),
+        result=Ref("UtilityStatus"),
+        doc="Restore the baseline now, rather than waiting for the next board "
+        "or session event. Returns as soon as the work is scheduled — progress "
+        "arrives on `utility.updated`. Never touches a box that isn't IDLE.",
+    ),
+    Command(
+        "utility.identify",
+        args=obj(f("box", INT), f("on", BOOL)),
+        result=obj(f("delivered", BOOL), f("state", Ref("UtilityBoxState"))),
+        doc="Make one box point at itself, using its profile's `identify` pair "
+        "(`starting-a-session.md` §3.5). `delivered: false` is the ordinary "
+        "answer for a box that isn't at baseline — the caller carries on "
+        "without the light rather than failing.",
+    ),
     # Cohorts
     Command(
         "cohorts.list",
@@ -916,6 +1056,22 @@ COMMANDS = (
         args=obj(
             f("name", STR),
             f("dataFolder", STR, optional=True, doc="Resolved per cohorts.md §8 when omitted."),
+            f(
+                "animals",
+                ListOf(Ref("Animal")),
+                optional=True,
+                doc="The roster to create the cohort with, so the editor's "
+                "Create is one call rather than a create plus a patch that "
+                "could fail on its own and leave a named, empty cohort.",
+            ),
+            f(
+                "groups",
+                ListOf(Ref("Group")),
+                optional=True,
+                doc="Replaces the default group the create would otherwise "
+                "mint. Validated together with `animals`, before the data "
+                "folder is made — a rejected roster leaves nothing behind.",
+            ),
         ),
         result=_COHORT,
     ),
@@ -1103,6 +1259,18 @@ COMMANDS = (
         doc="The explicit archive walk — expensive reconciliation is a "
         "deliberate user action, never a side effect of opening a view.",
     ),
+    # Crash recovery
+    Command(
+        "sessions.recover",
+        args=obj(f("cohortId", STR)),
+        result=Ref("RecoverResult"),
+        doc="The crash-recovery backfill (`data-saving.md` §7.3, §11): "
+        "rebuilds .json/.mat from orphaned write-ahead .tsv files. Same "
+        "traversal as analytics.rescan's walk, and same discipline — an "
+        "explicit user action, never a side effect. Rejected while any box "
+        "is running: a live run's .tsv has no .json yet and is not an orphan.",
+        section="Crash recovery (data-saving.md §7.3, §11)",
+    ),
 )
 
 
@@ -1131,6 +1299,12 @@ EVENTS = (
         "abandon, confirmMapping, startAll, switchGroup, end). A full snapshot, "
         "not a delta — clients replace state wholesale. Per-box liveness is not "
         "re-broadcast here; port.state remains that channel.",
+    ),
+    Event(
+        "utility.updated",
+        Ref("UtilityStatus"),
+        doc="Pushed on connect and whenever any box's baseline belief changes — "
+        "a restore starting or finishing, a hold, an identify light.",
     ),
     Event(
         "backup.status",
@@ -1170,6 +1344,11 @@ ERRORS = (
     ErrorCode("SESSION_NOT_READY", "sessions.create against a cohort with no box-assigned animal."),
     ErrorCode("TASK_PROFILE_INVALID", "A sketch's task.json exists but is malformed."),
     ErrorCode("BACKUP_UNAVAILABLE", "backup.syncNow with no directory set, or a sync already running."),
+    ErrorCode(
+        "UTILITY_UNAVAILABLE",
+        "No hardware utility sketch is configured, or the configured one can't "
+        "be used (missing from the Arduino Directory, or not a utility profile).",
+    ),
     ErrorCode("DIR_INVALID", "Defined but never raised — kept in case the reasoning reverses (§6)."),
     ErrorCode("INTERNAL", "Unhandled sidecar exception; also carried by sidecar.error."),
 )

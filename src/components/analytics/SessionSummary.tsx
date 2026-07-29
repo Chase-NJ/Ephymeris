@@ -174,11 +174,14 @@ function AnimalCard({
       </div>
 
       {/* Per condition (§3.9): how many trials of this kind were administered,
-          and how many of those paid out. */}
-      <div className="mt-2 grid grid-cols-[minmax(0,1fr)_72px_60px_minmax(52px,1fr)] items-center gap-x-2 border-b border-halo pb-1 font-mono text-[9px] text-static/70">
+          how many of those paid out, and how many chose the correct well —
+          each count with its rate over that condition's administered trials,
+          beside that condition's own trajectory. */}
+      <div className={`mt-2 grid ${CONDITION_GRID} items-center gap-x-2 border-b border-halo pb-1 font-mono text-[9px] text-static/70`}>
         <span>condition</span>
-        <span className="text-right">administered</span>
+        <span className="text-right">admin.</span>
         <span className="text-right">rewarded</span>
+        <span className="text-right">correct</span>
         <span className="text-right">trajectory</span>
       </div>
       {conditions.map((metric) => (
@@ -219,8 +222,19 @@ function Effort({ outcomes }: { outcomes: TrialOutcomes | null }) {
   );
 }
 
+/** Shared column template for the per-condition header and rows. */
+const CONDITION_GRID =
+  "grid-cols-[minmax(0,1fr)_44px_84px_84px_minmax(44px,1fr)]";
+
 /**
  * One declared condition's counts and trajectory.
+ *
+ * `rewarded` and `correct` each read `count · rate`, the rate being that count
+ * over **this condition's** administered trials — the per-odor version of the
+ * card's rewarded/side accuracies, sitting beside the per-odor trajectory they
+ * explain. `correct` is the reward-unconditional choice (`rewarded +
+ * holdFailed`, §3.8): the right well was reached whether or not the hold
+ * earned the drop.
  *
  * When the profile declares no reward vocabulary there is no per-condition
  * tally to show (§3.9), so the row falls back to the metric's own scored-trial
@@ -244,23 +258,77 @@ function ConditionRow({
 }) {
   const administered = condition ? condition.outcomes.administered : (fallback?.counted ?? null);
   const rewarded = condition ? condition.outcomes.rewarded : null;
+  const correct = condition
+    ? condition.outcomes.rewarded + condition.outcomes.holdFailed
+    : null;
+  const pRewarded = condition?.outcomes.pRewarded ?? null;
+  const pSide = condition?.outcomes.pSide ?? null;
 
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_72px_60px_minmax(52px,1fr)] items-center gap-x-2 py-1">
+    <div className={`grid ${CONDITION_GRID} items-center gap-x-2 py-1`}>
       <span className="truncate text-[11px] text-static" title={label}>
         {label}
       </span>
       <span className="text-right font-mono text-[11px] tabular-nums text-starlight">
         {administered ?? "—"}
       </span>
-      <span
-        className="text-right font-mono text-[11px] tabular-nums"
-        style={{ color: rewarded === null ? undefined : OUTCOME_STYLE.rewarded.fill }}
-      >
-        {rewarded ?? <span className="text-static/50">—</span>}
-      </span>
+      <CountWithRate
+        count={rewarded}
+        rate={pRewarded}
+        administered={administered}
+        color={OUTCOME_STYLE.rewarded.fill}
+        what="rewarded"
+        label={label}
+      />
+      <CountWithRate
+        count={correct}
+        rate={pSide}
+        administered={administered}
+        color="var(--color-starlight)"
+        what="chose correct"
+        label={label}
+      />
       <ConditionSpark values={values} color={color} revealKey={revealKey} />
     </div>
+  );
+}
+
+/** `count · rate%` in one cell — the rate dashed when nothing was
+ *  administered, the whole cell dashed when the task can't express it. */
+function CountWithRate({
+  count,
+  rate,
+  administered,
+  color,
+  what,
+  label,
+}: {
+  count: number | null;
+  rate: number | null;
+  administered: number | null;
+  color: string;
+  what: string;
+  label: string;
+}) {
+  if (count === null) {
+    return (
+      <span className="text-right font-mono text-[11px] tabular-nums text-static/50">
+        —
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-right font-mono text-[11px] tabular-nums"
+      style={{ color }}
+      title={`${count} of ${administered ?? 0} administered ${label} trials ${what}`}
+    >
+      {count}
+      <span className="text-[9px] opacity-70">
+        {" "}
+        · {rate === null ? "—" : pct(rate)}
+      </span>
+    </span>
   );
 }
 
@@ -338,10 +406,17 @@ function RewardGap({
     <div className="mt-2">
       <div className="flex items-baseline justify-between gap-2 font-mono text-[9px] text-static/70">
         <span>rewarded vs side</span>
+        {/* This animal's whole-run fractions, counts and rates together —
+            rewarded/administered, then chose-correct/administered. */}
         <span className="tabular-nums">
-          <span style={{ color: OUTCOME_STYLE.rewarded.fill }}>{pct(rewarded)}</span>
+          <span style={{ color: OUTCOME_STYLE.rewarded.fill }}>
+            {outcomes.rewarded}/{outcomes.administered} · {pct(rewarded)}
+          </span>
           <span className="text-static/50"> → </span>
-          <span className="text-starlight">{pct(side)}</span>
+          <span className="text-starlight">
+            {outcomes.rewarded + outcomes.holdFailed}/{outcomes.administered} ·{" "}
+            {pct(side)}
+          </span>
           {gap > 0 && (
             <span style={{ color: OUTCOME_STYLE.holdFailed.fill }}>
               {" "}

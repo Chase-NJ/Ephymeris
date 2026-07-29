@@ -29,6 +29,8 @@ export type {
   SeriesResult,
   RescanOrphan,
   RescanResult,
+  RecoveredTsv,
+  RecoverResult,
   AnalyticsProgress,
 } from "@/lib/ws/protocol";
 

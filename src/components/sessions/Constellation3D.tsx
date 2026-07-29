@@ -122,6 +122,19 @@ export function Constellation3D({
       active: lit,
       name: animal?.name ?? "",
       badge: animal?.box ?? null,
+      // Every animal mapped to this box rides in orbit around its star, tagged
+      // by name — running animals orbit and strobe, assigned-but-idle ones
+      // park (`Orbiters.tsx`). Zodiac mode only: there a star *is* the box, so
+      // the satellite says "assigned here". In the seeded fallback the star is
+      // the animal itself, and a craft orbiting its own namesake would just
+      // repeat the nameplate. One animal per box per group means one
+      // satellite, but the shape holds if a task ever pairs animals.
+      orbiters:
+        layout === null || point.box === null
+          ? undefined
+          : animals
+              .filter((a) => a.box === point.box)
+              .map((a) => ({ id: a.animalId, name: a.name, active: a.lit })),
       body: lit ? (
         <StellarSurface radius={point.radius} accuracy={animal?.accuracy ?? null} />
       ) : (

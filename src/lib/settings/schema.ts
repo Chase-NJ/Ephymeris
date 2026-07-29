@@ -25,7 +25,13 @@ export type {
 
 /** Hardware ceiling: six Mega2560s (`hardware-interaction.md` §1). */
 export const BOX_COUNT = 6;
-export const DEFAULT_BAUD = 115200;
+/**
+ * Every sketch in the lab's Arduino Directory opens at 9600 (each declares its
+ * own `baudRate`, and they all agree), so 115200 was a default that was wrong
+ * for every box on both machines — silently, since a mismatched console just
+ * prints nothing readable.
+ */
+export const DEFAULT_BAUD = 9600;
 
 /** Offered in the picker; Debug Mode also allows a per-box override (§6.4). */
 export const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 250000] as const;
@@ -56,6 +62,9 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
   // (arduino-directory.md §2).
   arduinoDirectory: null,
   arduinoCliPath: null,
+  // No baseline until the user names a utility sketch (`hardware-interaction.md`
+  // §8) — there is no safe sketch to guess, and guessing would flash the rig.
+  utilitySketchPath: null,
   defaultBaud: DEFAULT_BAUD,
   // No boxes until the user adds them.
   boxes: [],
@@ -120,6 +129,7 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
     backupDirectory: optString(value["backupDirectory"]),
     arduinoDirectory: optString(value["arduinoDirectory"]),
     arduinoCliPath: optString(value["arduinoCliPath"]),
+    utilitySketchPath: optString(value["utilitySketchPath"]),
     defaultBaud: typeof baud === "number" && baud > 0 ? baud : DEFAULT_BAUD,
     boxes: normalizeBoxes(value["boxes"]),
     reducedMotion: value["reducedMotion"] === true,

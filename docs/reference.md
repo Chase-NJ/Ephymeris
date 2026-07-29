@@ -82,8 +82,11 @@ Owns everything stateful. Runtime dependencies are deliberately just `pyserial` 
 | `ports/handler.py` | Per-port owner: read loop, write path, ring buffer, line splitting, the three-phase session handshake, strobe parsing | hardware §6 |
 | `ports/manager.py` | Owns the six handlers, the binding map, the 1.5 s presence poll, and the 20 Hz output flush | hardware §7 |
 | **`boards/`** | | |
-| `boards/tool.py` | The `BoardTool` interface — the seam the gRPC migration will slot into | hardware §2 |
-| `boards/cli_tool.py` | Current backend: `arduino-cli` subprocess with `--format json` | hardware §2, §4 |
+| `boards/__init__.py` | `create_board_tool` — the daemon backend when `grpcio` imports, the subprocess backend otherwise; `EPHYMERIS_NO_GRPC_DAEMON=1` forces the latter | hardware §2 |
+| `boards/tool.py` | The `BoardTool` interface — the seam both backends sit behind | hardware §2 |
+| `boards/cli_tool.py` | Subprocess backend: `arduino-cli` with `--format json`. No longer the primary, kept as the daemon backend's fallback; also owns binary resolution and the packaged data-seed environment for both | hardware §2, §4 |
+| `boards/grpc_tool.py` | **Primary backend**: one long-lived `arduino-cli daemon` over gRPC. Live line-by-line compile/upload streaming, no process spawn per presence poll. The daemon exits on **stdin EOF** (its parent-death watch) — the spawn holds a pipe open, which is also what kills it with a hard-killed sidecar; never "simplify" to DEVNULL. Falls back to `cli_tool` per call, loudly, when the daemon can't run | hardware §2 |
+| `boards/rpc/` | Generated gRPC stubs from vendored arduino-cli protos (`sidecar/proto/`, tag in `scripts/gen_grpc.py`). Committed like the wire mirrors — regenerate with the script, never edit | hardware §2 |
 | **`cohorts/`** | | |
 | `cohorts/db.py` | SQLite connection, schema, and **migrations**. Reads `PRAGMA user_version` before writing it, applies ordered migrations, commits once. Its connection subclass reports every commit, which is what triggers a database backup — hooking `commit` rather than each repository method means no write path can forget | cohorts §3, data-saving §8.3, analytics §10.1 |
 | `cohorts/models.py` | Cohort/Animal/Group dataclasses | cohorts §1 |
@@ -96,17 +99,19 @@ Owns everything stateful. Runtime dependencies are deliberately just `pyserial` 
 | `sessions/paths.py` | Directory and filename construction. Pure, no I/O. Also `parse_name_date`, which reads both the current ISO and the legacy `MM_DD_YY` spelling — **use it instead of sorting names as strings**, since both formats coexist on disk | data-saving §1–§2 |
 | `sessions/writer.py` | Per-animal file writer. `.tsv` write-ahead log with per-line `flush()`+`fsync()`, opened exclusively so a collision fails loudly; `.json`/`.mat` built once at finalization | data-saving §5, §7 |
 | `sessions/matwriter.py` | Hand-written MAT v5 serializer — exists specifically to avoid a `scipy` dependency | data-saving §5.1 |
-| `sessions/runner.py` | Live session runner: which animal is in which box, its writer, its metrics, its run record. Writer I/O stays on the port's session thread; anything touching the socket or state machine is scheduled back onto the event loop | starting §7 |
+| `sessions/runner.py` | Live session runner: which animal is in which box, its writer, its metrics, its run record. Writer I/O stays on the port's session thread; anything touching the socket or state machine is scheduled back onto the event loop. Fire-and-forget finalizations are tracked and `end_all` drains them, so `sessions.end` can't clear the running-session id while a run is still being recorded | starting §7 |
+| `sessions/recovery.py` | Crash-recovery backfill: rebuilds `.json`/`.mat` from an orphaned write-ahead `.tsv`. Pure file transformation, the inverse of `writer.py` — a footer-carrying `.tsv` keeps its recorded `stop_reason`, a footer-less one gets `"recovered after crash"`. Discovery shares `analytics/reader.py`'s walker | data-saving §7.3, §11 |
 | **`analytics/`** | | |
 | `analytics/derive.py` | **Pure.** `(document, profile)` → summary or series. No I/O, no database, no clock — which is what lets a test assert it agrees with the live metric path over a recorded stream. The three traps live here: boundary codes, rolling-vs-whole-session, and window-length-is-not-trial-count | analytics §3 |
-| `analytics/reader.py` | Walks a cohort's archive and reads a finalized `.json` back off disk, classifying failures. A bad file becomes a status, never an exception; a bad directory costs its own contents, never the cohort. The walk matches format folders **by name at any depth** — see analytics §8.1 before assuming a layout. `stat_run` is split from `parse_run` so a cache hit opens nothing | analytics §8.1, §8.3 |
+| `analytics/reader.py` | Walks a cohort's archive and reads a finalized `.json` back off disk, classifying failures. A bad file becomes a status, never an exception; a bad directory costs its own contents, never the cohort. The walk matches format folders **by name at any depth** — see analytics §8.1 before assuming a layout. One traversal (`_walk_format_dirs`) underlies both `walk_session_files` (adoption) and `walk_orphaned_tsvs` (crash recovery). `stat_run` is split from `parse_run` so a cache hit opens nothing | analytics §8.1, §8.3 |
 | `analytics/repository.py` | Profile snapshots and the derived-metrics cache. Cache rows batch into one transaction — every commit marks the database dirty for backup | analytics §8.2–§8.3 |
 | `analytics/service.py` | Orchestration: the indexing lock, progress events, profile resolution, and the archive walk. Sequential reads in one worker thread, never a pool | analytics §8 |
 | **`backup/`** | | |
 | `backup/manager.py` | The mirror: queued finalization copies, the 10 s self-paced `.tsv` pass, the debounced `ephymeris.db` backup with dated snapshots, and the explicit sync walk. Every filesystem operation runs in a worker thread; nothing here is ever on a session's critical path | data-saving §8 |
 | `backup/paths.py` | Mirror path resolution, anchored on the cohort folder rather than `dataDirectory` — a relocated cohort isn't under it, so path subtraction doesn't work in general. Pure, no I/O | data-saving §8.1 |
+| `utility.py` | The hardware utility baseline: what firmware each box is believed to carry, restoring idle boxes to the configured utility sketch, and the `identify` signal. Only ever takes an `IDLE` port and never one held by a confirmed session mapping — those two exclusions are the whole design. A failed restore is acknowledged back out of `ERROR`, because a background action must not leave the rig needing manual clearing | hardware §8 |
 | **`tasks/`** | | |
-| `tasks/profile.py` | `task.json` parsing and validation | data-saving §6.1–§6.2 |
+| `tasks/profile.py` | `task.json` parsing and validation, including the utility-only `identify` pair | data-saving §6.1–§6.2, §6.8 |
 | `tasks/start_command.py` | Builds `START <wireKey>=<value> …` from a profile plus config | data-saving §6.3 |
 | `tasks/metrics.py` | Rolling live-metric computation. This is scientific output, not a UI detail — the hit/miss/excluded definition is followed to the letter | data-saving §6.5 |
 
@@ -121,10 +126,13 @@ Talks to the sidecar over the WebSocket only.
 | `lib/ws/SidecarProvider.tsx` | Mounts the client at the app root |
 | `lib/{hardware,cohorts,sessions,settings}/` | One Provider + store per domain, each wrapping the shared client |
 | `lib/settings/schema.ts` | The settings shape and its normalizer, tolerant of older stored shapes |
+| `lib/cohorts/boxAvailability.ts` | Which boxes this machine can offer a cohort, and which stored assignments it can't honour. The machine-local half of `cohorts.md` §2 — the sidecar still stores and validates a bare 1–6 range, so a cohort stays editable on the other lab machine. Gates on *bound*, not detected; detection only downgrades a label |
+| `lib/cohorts/roster.ts` | Bulk-add parsing: separated names, or `prefix × count`. Pure, and skips names the cohort already has rather than minting duplicate-name validation failures |
 | `lib/backup/useBackupStatus.ts` | Live mirroring state plus the `backup.syncNow` call. A hook rather than a Provider — unlike hardware state, nothing needs this on every screen or needs it accumulating while unmounted |
 | `lib/sessions/stars.ts` | Deterministic star placement seeded from `(cohortId, animalId)`, plus the nearest-neighbour link pass |
 | `lib/constellations/` | The twelve hand-authored zodiac asterisms (`zodiac.ts`) and the box→star slot logic (`slots.ts`) behind the Config layout (`ephymeris_v1.0.md` §4.6) |
 | `lib/hardware/useHandshakeTest.ts` | The Config handshake test — passthrough open/listen/close composition, tiered result, teardown-safe |
+| `lib/hardware/utility.ts` | Presentation for the baseline: labels written for the moment it fails, and only a real fault coloured as one — `busy` and `held` are the sidecar correctly keeping its hands off |
 | `lib/prng.ts` | The `mulberry32`-style seeded generator behind every procedural visual |
 | `lib/motion.ts`, `lib/useReduceMotion.ts` | Shared spring definitions and the reduced-motion hook |
 | `styles/index.css` | **The theme.** Tailwind v4 `@theme` block — every colour, font, and radius token lives here. There is no `tailwind.config.js` |
@@ -132,6 +140,7 @@ Talks to the sidecar over the WebSocket only.
 | `components/chrome/` | Persistent shell: sidebar, titlebar, starfield, constellation status widget |
 | `components/cohorts/` | Cohort grid, editor panels, procedural icon, Auto-Balance |
 | `components/config/` | The Config tab's pieces: setup wizard, interactive constellation board, zodiac picker, handshake indicator/list |
+| `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: camera/controls/reticle/nameplates/arrival (`Scene.tsx`), the seeded deep-sky backdrop — twinkle field, nebulae, supernovae (`Backdrop.tsx`) — and the assigned-animal satellites (`Orbiters.tsx`) |
 | `components/debug/` | The Debug views: constellation landing (`DebugConstellation`), per-box detail with the 3D star (`NodeDetail`, `Star3D`), scrollback, flash dialog, state badges, utility controls |
 | `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, task config form, journey rail, placement banner |
 
@@ -168,17 +177,18 @@ The interpreter resolves to `sidecar/.venv` unless `EPHYMERIS_SIDECAR_PYTHON` ov
 
 [`websocket-protocol.md`](websocket-protocol.md) is canonical and carries every argument, result, and payload shape. This is the index.
 
-The surface is **39 commands, 14 events, 22 error codes**. 38 commands are registered in `app.py`; `auth` is handled in `server.py` as the connection's mandatory first message and never reaches the dispatch table.
+The surface is **43 commands, 15 events, 23 error codes**. 42 commands are registered in `app.py`; `auth` is handled in `server.py` as the connection's mandatory first message and never reaches the dispatch table.
 
 **Envelope.** JSON over loopback. Client→server is always a command carrying a client-generated `id`. Server→client is either a correlated reply (`corr`, exactly one per command) or an unsolicited event. Protocol version mismatches are rejected, not best-effort parsed. `PROTOCOL_VERSION` is `1`.
 
-### Commands (39 including `auth`)
+### Commands (43 including `auth`)
 
 | Group | Commands |
 |---|---|
 | Connection | `auth`, `ping`, `settings.push` |
 | Sketches | `sketches.refresh` |
 | Ports | `port.passthrough.open`, `port.passthrough.close`, `port.send`, `port.flash`, `port.reset`, `port.error.ack` |
+| Utility baseline | `utility.status`, `utility.ensure`, `utility.identify` |
 | Cohorts | `cohorts.list`, `.get`, `.create`, `.update`, `.archive`, `.restore`, `.delete`, `.setDataFolder`, `.suggestGroups` |
 | Prefixes | `prefixes.list`, `.create`, `.delete` |
 | Task profiles | `tasks.getProfile` |
@@ -186,16 +196,17 @@ The surface is **39 commands, 14 events, 22 error codes**. 38 commands are regis
 | Session ports | `port.startSession`, `port.stopSession` |
 | Backup | `backup.syncNow` |
 | Analytics | `sessions.list`, `analytics.summary`, `analytics.series`, `analytics.rescan` |
+| Crash recovery | `sessions.recover` |
 
-### Events (14)
+### Events (15)
 
-`server.hello` · `port.state` · `port.output` · `boards.presence` · `flash.progress` · `sketches.updated` · `cohorts.updated` · `prefixes.updated` · `session.telemetry` · `session.animalEnded` · `session.lifecycle` · `backup.status` · `analytics.progress` · `sidecar.error`
+`server.hello` · `port.state` · `port.output` · `boards.presence` · `flash.progress` · `sketches.updated` · `cohorts.updated` · `prefixes.updated` · `session.telemetry` · `session.animalEnded` · `session.lifecycle` · `utility.updated` · `backup.status` · `analytics.progress` · `sidecar.error`
 
-All fourteen are emitted. `sidecar.error` fires on a mid-session `.tsv` write failure — the failure with no command to attribute it to, and the one a user most needs to hear about immediately.
+All fifteen are emitted. `sidecar.error` fires on a mid-session `.tsv` write failure — the failure with no command to attribute it to, and the one a user most needs to hear about immediately.
 
-### Error codes (22)
+### Error codes (23)
 
-`BAD_MESSAGE` · `UNKNOWN_COMMAND` · `UNAUTHORIZED` · `PROTOCOL_VERSION_MISMATCH` · `ILLEGAL_TRANSITION` · `SEND_NOT_PASSTHROUGH` · `PORT_NOT_BOUND` · `PORT_OPEN_FAILED` · `FLASH_FAILED` · `SKETCH_UNKNOWN` · `COHORT_NOT_FOUND` · `COHORT_NAME_TAKEN` · `COHORT_INVALID` · `COHORT_NOT_ARCHIVED` · `DATA_FOLDER_INVALID` · `PREFIX_NAME_TAKEN` · `SESSION_INVALID` · `SESSION_NOT_READY` · `TASK_PROFILE_INVALID` · `BACKUP_UNAVAILABLE` · `DIR_INVALID` · `INTERNAL`
+`BAD_MESSAGE` · `UNKNOWN_COMMAND` · `UNAUTHORIZED` · `PROTOCOL_VERSION_MISMATCH` · `ILLEGAL_TRANSITION` · `SEND_NOT_PASSTHROUGH` · `PORT_NOT_BOUND` · `PORT_OPEN_FAILED` · `FLASH_FAILED` · `SKETCH_UNKNOWN` · `COHORT_NOT_FOUND` · `COHORT_NAME_TAKEN` · `COHORT_INVALID` · `COHORT_NOT_ARCHIVED` · `DATA_FOLDER_INVALID` · `PREFIX_NAME_TAKEN` · `SESSION_INVALID` · `SESSION_NOT_READY` · `TASK_PROFILE_INVALID` · `BACKUP_UNAVAILABLE` · `UTILITY_UNAVAILABLE` · `DIR_INVALID` · `INTERNAL`
 
 `DIR_INVALID` is defined in both mirrors but **never raised** — directory problems surface as a `DirectoryStatus` payload instead. See the note in `websocket-protocol.md` §6.
 
@@ -309,9 +320,9 @@ Only the **root** `libraries/` is passed to `arduino-cli --libraries`, so every 
 
 | Analytics | **Done** | Observatory dashboard, three linked panels, four commands. Verified against a synthetic archive **and** the lab's real 306-file Remy archive via orphan adoption; the frontend hasn't yet been driven at that volume |
 | Backup Directory mirroring | **Done** | Session files, live `.tsv`, and `ephymeris.db` with dated snapshots. Not yet exercised against a real network share |
-| **Windows packaging** | **Not started** | Sidecar freezing, `arduino-cli` bundling, signing, CI |
-| **arduino-cli gRPC daemon** | **Deferred** | Committed migration behind the `BoardTool` seam |
-| **Crash recovery utility** | **Not built** | Backfill `.json`/`.mat` from an orphaned `.tsv` |
+| Windows packaging | **Done** | PyInstaller-frozen sidecar + bundled arduino-cli + NSIS installer (`npm run package`). Unsigned; no CI build |
+| arduino-cli gRPC daemon | **Done** | Primary backend (`boards/grpc_tool.py`), subprocess fallback kept. Live compile streaming; no spawn per poll |
+| Crash recovery utility | **Done** | `sessions.recover` backfills `.json`/`.mat` from orphaned `.tsv`; Recover button in Analytics |
 | Session resumption after restart | **Out of scope** | By decision, not omission |
 
 Full detail and priority: [TODO.md](TODO.md).
@@ -359,9 +370,12 @@ The Tauri shell expects the sidecar interpreter at `sidecar/.venv`; override wit
 | `test_data_folder.py` | 18 | Resolution, sanitization, collision suffixing |
 | `test_in_session.py` | 13 | `IN_SESSION` entry/exit sequence |
 | `test_flash_reset.py` | 12 | Flash and DTR reset paths |
+| `test_utility.py` | 18 | The utility baseline against the real port manager: restores only from `IDLE`, the session hold, belief invalidation, a failed restore acknowledged rather than left in `ERROR`, and the identify handshake — including the silent-board (baud-mismatch) case |
+| `test_grpc_tool.py` | 19 | Daemon banner parsing, board-filter parity with the subprocess parser, stream line splitting, fallback; four integration tests drive a **real daemon** (spawn, kill-respawn, a streamed compile, a compile error) and skip where arduino-cli isn't installed |
 | `test_settings.py` | 9 | Lenient settings parsing |
 | `test_writer.py` | 9 | Write-ahead log, exclusive open, finalization |
-| `test_session_runner.py` | 8 | Runner orchestration |
+| `test_session_runner.py` | 12 | Runner orchestration, including the end-all finalization drain |
+| `test_recovery.py` | 10 | Crash-recovery backfill: writer round-trip, footer honesty, torn lines, the shared walk, recovery→adoption handoff |
 | `test_migrations.py` | 16 | Schema version reading, ordered migrations, idempotent `ADD COLUMN`, one-commit startup, the real v2→v3 upgrade |
 | `test_analytics_service.py` | 29 | Profile resolution, caching and invalidation, damaged files, the archive walk |
 | `test_analytics_derive.py` | 28 | The derived metrics, including offline-equals-live and the pooled-accuracy bias case |
@@ -373,11 +387,13 @@ The Tauri shell expects the sidecar interpreter at `sidecar/.venv`; override wit
 
 ### Dependency policy
 
-Sidecar runtime dependencies are **deliberately just `pyserial` and `websockets`**. Lab machines are maintained by non-technical users, so install failure modes are a real cost. This is why `.mat` writing is a hand-written serializer rather than `scipy` — a large binary wheel and by far the most likely thing to fail at install time.
+Sidecar runtime dependencies were **deliberately just `pyserial` and `websockets`** for most of v1. Lab machines are maintained by non-technical users, so install failure modes are a real cost. This is why `.mat` writing is a hand-written serializer rather than `scipy` — a large binary wheel and by far the most likely thing to fail at install time.
+
+**One exception has since been granted, with its risk fenced:** `grpcio` + `protobuf`, for the committed arduino-cli daemon migration (`hardware-interaction.md` §2). The policy's concern — an install that fails and takes a feature with it — is answered structurally rather than waved away: the subprocess backend remains as the daemon backend's fallback, and `create_board_tool` degrades to it (loudly, in the log) when `grpcio` doesn't import or the daemon won't start. A lab machine where the wheel failed loses live compiler streaming, never flashing. `grpcio-tools` is dev-only — stubs are generated by `scripts/gen_grpc.py` and committed, so nothing gets compiled or generated at install time.
 
 Frontend dependencies are less constrained (the 3D stack is `three` + `@react-three/fiber` + `@react-three/drei`) because npm install failures don't happen on the lab machines.
 
-Don't add a sidecar runtime dependency without strong justification.
+Don't add a sidecar runtime dependency without strong justification — and when one is granted, follow the `grpcio` pattern: the feature it powers must degrade, not disappear, when the dependency is absent.
 
 ### Theme constraints
 

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { ChartLine, CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
+import { ArchiveRestore, ChartLine, CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
 
@@ -16,7 +16,7 @@ import { SessionStrategy } from "@/components/analytics/SessionStrategy";
 import { SessionSummary } from "@/components/analytics/SessionSummary";
 import { StrategySpace } from "@/components/analytics/StrategySpace";
 import { Button, Select } from "@/components/common/controls";
-import { errorMessage, rescan } from "@/lib/analytics/commands";
+import { errorMessage, recover, rescan } from "@/lib/analytics/commands";
 import {
   useAnalyticsStore,
   useDataVersion,
@@ -30,7 +30,12 @@ import {
 } from "@/lib/analytics/context";
 import { useRunSeries } from "@/lib/analytics/series";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
-import type { AnalyticsSummary, RescanResult, RunSummary } from "@/lib/analytics/types";
+import type {
+  AnalyticsSummary,
+  RecoverResult,
+  RescanResult,
+  RunSummary,
+} from "@/lib/analytics/types";
 import { buildAnimalColors, dominantProfile, runsInProfile } from "@/lib/analytics/view";
 import { useCohorts } from "@/lib/cohorts/context";
 import { springPanel } from "@/lib/motion";
@@ -64,6 +69,7 @@ export function Analytics() {
   const version = useDataVersion();
 
   const [rescanning, setRescanning] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [rescanNote, setRescanNote] = useState<string | null>(null);
   const [metricId, setMetricId] = useState<string | null>(null);
   const [profileHash, setProfileHash] = useState<string | null>(null);
@@ -174,6 +180,33 @@ export function Analytics() {
     }
   }
 
+  /**
+   * The crash-recovery backfill, chained into adoption: a recovered `.json`
+   * is by definition a file no run record points at, so without the follow-up
+   * rescan it would sit invisible until someone thought to click Rescan —
+   * one deliberate action should finish the job it started.
+   */
+  async function runRecover() {
+    if (!cohortId) return;
+    setRecovering(true);
+    setRescanNote(null);
+    try {
+      const result = await recover(client, cohortId);
+      if (result.recovered > 0) {
+        const adopted = await rescan(client, cohortId);
+        setRescanNote(`${describeRecover(result)} ${describeRescan(adopted)}`);
+        setReveal((n) => n + 1);
+        await store.refresh(client, cohortId);
+      } else {
+        setRescanNote(describeRecover(result));
+      }
+    } catch (error) {
+      setRescanNote(errorMessage(error));
+    } finally {
+      setRecovering(false);
+    }
+  }
+
   // The picker is the landing state; a cohort is only chosen deliberately.
   if (!cohortId) {
     return (
@@ -252,11 +285,20 @@ export function Analytics() {
           <Button
             variant="outline"
             onClick={() => void runRescan()}
-            disabled={!connected || !cohortId || rescanning}
+            disabled={!connected || !cohortId || rescanning || recovering}
             title="Look for session files no run record points at"
           >
             <RefreshCw size={13} strokeWidth={1.75} />
             {rescanning ? "Scanning…" : "Rescan"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void runRecover()}
+            disabled={!connected || !cohortId || rescanning || recovering}
+            title="Rebuild .json/.mat from write-ahead .tsv files a crash left behind"
+          >
+            <ArchiveRestore size={13} strokeWidth={1.75} />
+            {recovering ? "Recovering…" : "Recover"}
           </Button>
         </div>
       </div>
@@ -459,6 +501,29 @@ function describeRescan(result: RescanResult): string {
     );
   }
   if (parts.length === 1) return `${parts[0]} — everything on disk is already indexed.`;
+  return `${parts.join("; ")}.`;
+}
+
+/**
+ * The recovery half of the note. Failures are named per file — an operator
+ * running this at all is cleaning up after a crash, and "1 of 2 failed" with
+ * no path would send them digging through the sidecar log for which one.
+ */
+function describeRecover(result: RecoverResult): string {
+  if (result.folderMissing) {
+    return `Can't reach ${result.dataFolder} — nothing was scanned. Reconnect the drive, or change this cohort's data folder.`;
+  }
+  if (result.scanned === 0) {
+    return "No orphaned .tsv files — every write-ahead log already has its .json.";
+  }
+  const parts = [
+    `Recovered ${result.recovered} of ${result.scanned} orphaned .tsv file${result.scanned === 1 ? "" : "s"}`,
+  ];
+  for (const entry of result.entries) {
+    if (entry.status === "failed") {
+      parts.push(`${entry.tsvPath}: ${entry.reason ?? "failed"}`);
+    }
+  }
   return `${parts.join("; ")}.`;
 }
 

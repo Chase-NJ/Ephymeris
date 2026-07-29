@@ -56,6 +56,11 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        // Present only for saving debug logs: the dialog plugin adds the
+        // user-chosen path to the fs scope at runtime, so the webview can
+        // write exactly the file the user picked and nothing else
+        // (hardware-interaction.md §6.5).
+        .plugin(tauri_plugin_fs::init())
         .manage(sidecar::SidecarState::default())
         .invoke_handler(tauri::generate_handler![sidecar::sidecar_endpoint])
         .setup(|app| {

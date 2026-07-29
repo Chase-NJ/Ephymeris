@@ -71,11 +71,26 @@ if (!existsSync(python)) {
   process.exit(1);
 }
 
+// The vendored arduino-cli gRPC stubs (`boards/rpc/cc`, `boards/rpc/google`)
+// are imported via a sys.path entry that `boards/rpc/__init__.py` appends, so
+// PyInstaller's import analysis cannot see them — ship them as data files;
+// the frozen app's path finder imports plain .py from sys.path just fine.
+const sep = win ? ";" : ":";
+const rpcData = (sub) => {
+  const rel = join("ephymeris_sidecar", "boards", "rpc", sub);
+  // Source must be absolute: PyInstaller resolves a relative source against
+  // `--specpath` (build/), not the cwd the freeze runs in. The destination
+  // stays relative — that half really is app-bundle-relative.
+  return `${join(sidecarDir, rel)}${sep}${rel}`;
+};
+
 run(python, [
   "-m", "PyInstaller",
   "--noconfirm", "--clean", "--onedir", "--console",
   "--name", "ephymeris-sidecar",
   "--collect-submodules", "ephymeris_sidecar",
+  "--add-data", rpcData("cc"),
+  "--add-data", rpcData("google"),
   "--distpath", "dist",
   "--workpath", "build",
   "--specpath", "build",

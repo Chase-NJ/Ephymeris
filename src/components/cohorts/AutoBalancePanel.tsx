@@ -2,8 +2,8 @@ import { CircleAlert, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button, Select, TextInput, Toggle } from "@/components/common/controls";
+import { useBoxAvailability } from "@/lib/cohorts/boxAvailability";
 import { suggestGroupsLocal } from "@/lib/cohorts/grouping";
-import { useBoardPresence } from "@/lib/hardware/context";
 import { MAX_GROUP_SIZE, type Animal, type Group, type GroupProposal } from "@/lib/cohorts/types";
 
 /**
@@ -32,18 +32,28 @@ type Mode = "count" | "size";
 
 export function AutoBalancePanel({
   animals,
+  suggestedGroupCount,
   onApply,
 }: {
   animals: Animal[];
+  /**
+   * What the panel should open on when the caller already knows the answer —
+   * a roster that outgrew the rig arrives here with `ceil(n / boxes)` rather
+   * than a generic 2 the user has to correct.
+   */
+  suggestedGroupCount?: number;
   onApply: (groups: Group[], animals: Animal[]) => void;
 }) {
-  const boards = useBoardPresence();
+  const { offers } = useBoxAvailability();
 
   const [mode, setMode] = useState<Mode>("count");
-  // §7.1 — a courtesy default from live hardware, editable and never enforced;
-  // cohort configuration stays decoupled from what's plugged in (§2).
-  const suggestedSize = boards.length > 0 ? Math.min(boards.length, MAX_GROUP_SIZE) : 3;
-  const [groupCount, setGroupCount] = useState("2");
+  // §7.1 — a courtesy default from the rig, editable and never enforced. Drawn
+  // from *bound* boxes rather than detected ones, matching what the box
+  // selectors offer: a box that's merely unplugged is still one this cohort
+  // can be planned around.
+  const usable = offers.filter((o) => o.availability !== "unbound").length;
+  const suggestedSize = usable > 0 ? Math.min(usable, MAX_GROUP_SIZE) : 3;
+  const [groupCount, setGroupCount] = useState(String(suggestedGroupCount ?? 2));
   const [maxSize, setMaxSize] = useState(String(suggestedSize));
   const [balanceBySex, setBalanceBySex] = useState(false);
   const [proposal, setProposal] = useState<GroupProposal | null>(null);

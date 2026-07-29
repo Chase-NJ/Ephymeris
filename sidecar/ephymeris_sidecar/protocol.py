@@ -39,6 +39,11 @@ class Cmd:
     PORT_RESET: Final = "port.reset"
     PORT_ERROR_ACK: Final = "port.error.ack"
 
+    # Hardware utility baseline (hardware-interaction.md §8)
+    UTILITY_STATUS: Final = "utility.status"
+    UTILITY_ENSURE: Final = "utility.ensure"
+    UTILITY_IDENTIFY: Final = "utility.identify"
+
     # Cohorts (cohorts.md)
     COHORTS_LIST: Final = "cohorts.list"
     COHORTS_GET: Final = "cohorts.get"
@@ -76,6 +81,9 @@ class Cmd:
     ANALYTICS_SERIES: Final = "analytics.series"
     ANALYTICS_RESCAN: Final = "analytics.rescan"
 
+    # Crash recovery (data-saving.md §7.3, §11)
+    SESSIONS_RECOVER: Final = "sessions.recover"
+
 
 ALL_COMMANDS: Final[frozenset[str]] = frozenset(
     v for k, v in vars(Cmd).items() if not k.startswith("_") and isinstance(v, str)
@@ -96,6 +104,7 @@ class Evt:
     SESSION_TELEMETRY: Final = "session.telemetry"
     SESSION_ANIMAL_ENDED: Final = "session.animalEnded"
     SESSION_LIFECYCLE: Final = "session.lifecycle"
+    UTILITY_UPDATED: Final = "utility.updated"
     BACKUP_STATUS: Final = "backup.status"
     ANALYTICS_PROGRESS: Final = "analytics.progress"
     SIDECAR_ERROR: Final = "sidecar.error"
@@ -129,6 +138,7 @@ class ErrCode:
     SESSION_NOT_READY: Final = "SESSION_NOT_READY"
     TASK_PROFILE_INVALID: Final = "TASK_PROFILE_INVALID"
     BACKUP_UNAVAILABLE: Final = "BACKUP_UNAVAILABLE"
+    UTILITY_UNAVAILABLE: Final = "UTILITY_UNAVAILABLE"
     DIR_INVALID: Final = "DIR_INVALID"
     INTERNAL: Final = "INTERNAL"
 
@@ -155,7 +165,10 @@ SHAPES: Final[dict[str, Any]] = {
     "SkippedEntry": ('obj', (('path', 'str', False), ('reason', 'str', False))),
     "SketchDiscovery": ('obj', (('directory', ('ref', 'DirectoryStatus'), False), ('sketches', ('list', ('ref', 'SketchEntry')), False), ('skipped', ('list', ('ref', 'SkippedEntry')), False), ('skippedCount', 'int', False), ('libraries', ('list', 'str'), False), ('librariesPath', ('union', ('str', 'null')), False))),
     "BoxBinding": ('obj', (('box', 'int', False), ('hardwareId', ('union', ('str', 'null')), False), ('label', 'str', False))),
-    "EphymerisSettings": ('obj', (('dataDirectory', ('union', ('str', 'null')), False), ('backupDirectory', ('union', ('str', 'null')), False), ('arduinoDirectory', ('union', ('str', 'null')), False), ('arduinoCliPath', ('union', ('str', 'null')), False), ('defaultBaud', 'int', False), ('boxes', ('list', ('ref', 'BoxBinding')), False), ('reducedMotion', 'bool', False), ('constellation', ('union', ('str', 'null')), False), ('constellationSlots', ('map', 'int'), False), ('boxSetupComplete', 'bool', False))),
+    "EphymerisSettings": ('obj', (('dataDirectory', ('union', ('str', 'null')), False), ('backupDirectory', ('union', ('str', 'null')), False), ('arduinoDirectory', ('union', ('str', 'null')), False), ('arduinoCliPath', ('union', ('str', 'null')), False), ('utilitySketchPath', ('union', ('str', 'null')), False), ('defaultBaud', 'int', False), ('boxes', ('list', ('ref', 'BoxBinding')), False), ('reducedMotion', 'bool', False), ('constellation', ('union', ('str', 'null')), False), ('constellationSlots', ('map', 'int'), False), ('boxSetupComplete', 'bool', False))),
+    "UtilityBaselineState": ('lit', ('unknown', 'restoring', 'ready', 'busy', 'held', 'unavailable', 'failed')),
+    "UtilityBoxState": ('obj', (('box', 'int', False), ('state', ('ref', 'UtilityBaselineState'), False), ('detail', ('union', ('str', 'null')), False), ('identifying', 'bool', False))),
+    "UtilityStatus": ('obj', (('configured', 'bool', False), ('sketchPath', ('union', ('str', 'null')), False), ('sketchName', ('union', ('str', 'null')), False), ('canIdentify', 'bool', False), ('held', 'bool', False), ('message', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'UtilityBoxState')), False))),
     "BackupState": ('lit', ('disabled', 'pending', 'ok', 'failed')),
     "BackupStatus": ('obj', (('configured', 'bool', False), ('directory', ('union', ('str', 'null')), False), ('state', ('ref', 'BackupState'), False), ('pending', 'int', False), ('tracking', 'int', False), ('mirroredFiles', 'int', False), ('lastSuccessAt', ('union', ('str', 'null')), False), ('lastError', ('union', ('str', 'null')), False), ('syncing', 'bool', False), ('intervalSeconds', 'float', False))),
     "SyncResult": ('obj', (('copied', 'int', False), ('skipped', 'int', False), ('failed', 'int', False), ('errors', ('list', 'str'), False), ('directory', 'str', False))),
@@ -163,7 +176,7 @@ SHAPES: Final[dict[str, Any]] = {
     "Group": ('obj', (('id', 'str', False), ('name', 'str', False), ('order', 'int', False))),
     "Animal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('sex', ('union', (('ref', 'Sex'), 'null')), False), ('idNumber', ('union', ('str', 'null')), False), ('notes', ('union', ('str', 'null')), False))),
     "Cohort": ('obj', (('id', 'str', False), ('name', 'str', False), ('dataFolder', 'str', False), ('animals', ('list', ('ref', 'Animal')), False), ('groups', ('list', ('ref', 'Group')), False), ('archivedAt', ('union', ('str', 'null')), False), ('createdAt', 'str', False), ('updatedAt', 'str', False))),
-    "CohortSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('animalCount', 'int', False), ('groupCount', 'int', False), ('archived', 'bool', False), ('createdAt', 'str', False), ('updatedAt', 'str', False))),
+    "CohortSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('animalCount', 'int', False), ('groupCount', 'int', False), ('assignedBoxes', ('list', 'int'), False), ('archived', 'bool', False), ('createdAt', 'str', False), ('updatedAt', 'str', False))),
     "CohortPatch": ('obj', (('name', 'str', True), ('animals', ('list', ('ref', 'Animal')), True), ('groups', ('list', ('ref', 'Group')), True))),
     "ProposedAnimal": ('obj', (('animalId', 'str', False), ('boxNumber', 'int', False))),
     "ProposedGroup": ('obj', (('name', 'str', False), ('order', 'int', False), ('animals', ('list', ('ref', 'ProposedAnimal')), False))),
@@ -182,7 +195,8 @@ SHAPES: Final[dict[str, Any]] = {
     "Control": ('obj', (('id', 'str', False), ('label', 'str', False), ('type', ('lit', ('button', 'select', 'grid')), False), ('command', 'str', True), ('options', ('list', ('ref', 'ControlOption')), True), ('channels', ('list', ('ref', 'ControlChannel')), True))),
     "TelemetryField": ('obj', (('key', 'str', False), ('label', 'str', False))),
     "TelemetrySpec": ('obj', (('match', 'str', False), ('fields', ('list', ('ref', 'TelemetryField')), False))),
-    "TaskProfile": ('obj', (('taskName', 'str', False), ('kind', ('ref', 'ProfileKind'), False), ('config', ('list', ('ref', 'ConfigField')), False), ('strobes', ('map', 'str'), False), ('liveMetrics', ('list', ('ref', 'LiveMetric')), False), ('controls', ('list', ('ref', 'Control')), False), ('legacyNames', ('list', 'str'), False), ('telemetry', ('ref', 'TelemetrySpec'), True))),
+    "IdentifySpec": ('obj', (('on', 'str', False), ('off', 'str', False))),
+    "TaskProfile": ('obj', (('taskName', 'str', False), ('kind', ('ref', 'ProfileKind'), False), ('config', ('list', ('ref', 'ConfigField')), False), ('strobes', ('map', 'str'), False), ('liveMetrics', ('list', ('ref', 'LiveMetric')), False), ('controls', ('list', ('ref', 'Control')), False), ('legacyNames', ('list', 'str'), False), ('telemetry', ('ref', 'TelemetrySpec'), True), ('identify', ('ref', 'IdentifySpec'), True))),
     "SessionBoxMapping": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('sketchPath', 'str', False), ('config', ('map', 'any'), False))),
     "SessionBox": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('animalName', 'str', False), ('sketchName', 'str', False), ('sketchPath', 'str', False), ('running', 'bool', False), ('startedAt', ('union', ('str', 'null')), False))),
     "TelemetryMetric": ('obj', (('id', 'str', False), ('value', ('union', ('float', 'null')), False), ('n', 'int', False))),
@@ -210,6 +224,8 @@ SHAPES: Final[dict[str, Any]] = {
     "RescanOrphan": ('obj', (('path', 'str', False), ('animalId', ('union', ('str', 'null')), False), ('animalName', ('union', ('str', 'null')), False), ('animalSource', ('union', (('lit', ('document', 'filename')), 'null')), False), ('date', ('union', ('str', 'null')), False), ('status', 'str', False), ('reason', ('union', ('str', 'null')), False))),
     "RescanResult": ('obj', (('scanned', 'int', False), ('adopted', 'int', False), ('duplicates', 'int', False), ('orphans', ('list', ('ref', 'RescanOrphan')), False), ('cohortId', 'str', False), ('dataFolder', 'str', False), ('folderMissing', 'bool', False))),
     "AnalyticsProgress": ('obj', (('cohortId', 'str', False), ('phase', ('lit', ('reading', 'walking')), False), ('done', 'int', False), ('total', 'int', False))),
+    "RecoveredTsv": ('obj', (('tsvPath', 'str', False), ('jsonPath', ('union', ('str', 'null')), False), ('status', ('lit', ('recovered', 'failed')), False), ('nEvents', 'int', False), ('stopReason', ('union', ('str', 'null')), False), ('reason', ('union', ('str', 'null')), False))),
+    "RecoverResult": ('obj', (('scanned', 'int', False), ('recovered', 'int', False), ('failed', 'int', False), ('entries', ('list', ('ref', 'RecoveredTsv')), False), ('cohortId', 'str', False), ('dataFolder', 'str', False), ('folderMissing', 'bool', False))),
     "ServerHello": ('obj', (('protocolVersion', 'int', False), ('sidecarVersion', 'str', False))),
     "PortStateData": ('obj', (('box', 'int', False), ('state', ('ref', 'PortStateName'), False), ('prev', ('ref', 'PortStateName'), False), ('reason', 'str', False))),
     "PortOutputData": ('obj', (('box', 'int', False), ('lines', ('list', ('ref', 'OutputLine')), False))),
@@ -231,9 +247,12 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "port.flash": ('obj', (('box', 'int', False), ('sketchPath', 'str', False), ('suppressPassthroughResume', 'bool', True))),
     "port.reset": ('obj', (('box', 'int', False),)),
     "port.error.ack": ('obj', (('box', 'int', False),)),
+    "utility.status": ('obj', ()),
+    "utility.ensure": ('obj', (('boxes', ('list', 'int'), True), ('force', 'bool', True))),
+    "utility.identify": ('obj', (('box', 'int', False), ('on', 'bool', False))),
     "cohorts.list": ('obj', ()),
     "cohorts.get": ('obj', (('id', 'str', False),)),
-    "cohorts.create": ('obj', (('name', 'str', False), ('dataFolder', 'str', True))),
+    "cohorts.create": ('obj', (('name', 'str', False), ('dataFolder', 'str', True), ('animals', ('list', ('ref', 'Animal')), True), ('groups', ('list', ('ref', 'Group')), True))),
     "cohorts.update": ('obj', (('id', 'str', False), ('patch', ('ref', 'CohortPatch'), False))),
     "cohorts.archive": ('obj', (('id', 'str', False),)),
     "cohorts.restore": ('obj', (('id', 'str', False),)),
@@ -260,6 +279,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "analytics.summary": ('obj', (('cohortId', 'str', False), ('sessionIds', ('list', 'str'), True), ('animalIds', ('list', 'str'), True), ('minCountedTrials', 'int', True))),
     "analytics.series": ('obj', (('runIds', ('list', 'str'), False), ('mode', ('lit', ('rolling', 'cumulative')), True), ('metricIds', ('list', 'str'), True))),
     "analytics.rescan": ('obj', (('cohortId', 'str', False), ('adoptOrphans', 'bool', True))),
+    "sessions.recover": ('obj', (('cohortId', 'str', False),)),
 }
 
 COMMAND_RESULTS: Final[dict[str, Any]] = {
@@ -273,6 +293,9 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "port.flash": ('obj', (('state', ('ref', 'PortStateName'), False), ('resumedPassthrough', 'bool', False))),
     "port.reset": ('obj', (('state', ('ref', 'PortStateName'), False), ('resumedPassthrough', 'bool', False))),
     "port.error.ack": ('obj', (('state', ('ref', 'PortStateName'), False),)),
+    "utility.status": ('ref', 'UtilityStatus'),
+    "utility.ensure": ('ref', 'UtilityStatus'),
+    "utility.identify": ('obj', (('delivered', 'bool', False), ('state', ('ref', 'UtilityBoxState'), False))),
     "cohorts.list": ('obj', (('cohorts', ('list', ('ref', 'CohortSummary')), False),)),
     "cohorts.get": ('obj', (('cohort', ('ref', 'Cohort'), False),)),
     "cohorts.create": ('obj', (('cohort', ('ref', 'Cohort'), False),)),
@@ -302,6 +325,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "analytics.summary": ('ref', 'AnalyticsSummary'),
     "analytics.series": ('ref', 'SeriesResult'),
     "analytics.rescan": ('ref', 'RescanResult'),
+    "sessions.recover": ('ref', 'RecoverResult'),
 }
 
 EVENT_DATA: Final[dict[str, Any]] = {
@@ -316,6 +340,7 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "session.telemetry": ('ref', 'BoxTelemetry'),
     "session.animalEnded": ('ref', 'AnimalEnded'),
     "session.lifecycle": ('ref', 'ActiveSessions'),
+    "utility.updated": ('ref', 'UtilityStatus'),
     "backup.status": ('ref', 'BackupStatus'),
     "analytics.progress": ('ref', 'AnalyticsProgress'),
     "sidecar.error": ('ref', 'SidecarErrorData'),

@@ -93,6 +93,10 @@ class SessionRunner:
         # Per-session box configs, and the currently-running boxes.
         self._configs: dict[int, BoxConfig] = {}
         self._active: dict[int, ActiveRun] = {}
+        # In-flight fire-and-forget finalizations (end strobes, board drops).
+        # `end_all` drains this so a caller that clears session state right
+        # after it returns can't strand a finalization mid-write.
+        self._finalizations: set[asyncio.Task] = set()
         self._session_folder: Path | None = None
         self._session_id_label: str = ""
         self._group_id: str = ""
@@ -238,7 +242,7 @@ class SessionRunner:
             # exact file standing in the way.
             log.error("box %d: couldn't open session files: %s", box, exc)
             self._schedule(self._emit_write_error(box, str(exc)))
-            self._schedule(self._fail_run(box, f"sidecar error: {exc}"))
+            self._schedule_finalize(box, f"sidecar error: {exc}", clean=True)
             return
         run.writer = writer
         run.metrics = MetricSet(run.config.profile)
@@ -272,7 +276,7 @@ class SessionRunner:
 
         if run.end_code is not None and code == run.end_code:
             # Clean firmware-reported end (§7 exit, §8).
-            self._schedule(self.finalize_box(box, CLEAN_STOP_REASON, clean=True))
+            self._schedule_finalize(box, CLEAN_STOP_REASON, clean=True)
 
     # --- stop / end -------------------------------------------------------
 
@@ -330,7 +334,7 @@ class SessionRunner:
     def board_dropped(self, box: int) -> None:
         """Called when a box drops to ERROR mid-session (hook from app §7/§10)."""
         if box in self._active:
-            self._schedule(self.finalize_box(box, "board disconnected", clean=False))
+            self._schedule_finalize(box, "board disconnected", clean=False)
 
     async def end_all(self, reason: str = "operator stop") -> None:
         for box in list(self._active):
@@ -340,6 +344,14 @@ class SessionRunner:
         await asyncio.sleep(0.1)
         for box in list(self._active):
             await self.finalize_box(box, reason, clean=True)
+        # Fire-and-forget finalizations (an end strobe that landed just before
+        # or during the grace window, a board drop racing the stop) may still
+        # be mid-write. Wait them out: `sessions.end` clears the running
+        # session id as soon as this returns, and a finalization landing on
+        # the wrong side of that clear would write its files with no
+        # `session_animal_runs` row — the self-inflicted §8.1 orphan.
+        while self._finalizations:
+            await asyncio.gather(*list(self._finalizations), return_exceptions=True)
 
     # --- internals --------------------------------------------------------
 
@@ -362,12 +374,24 @@ class SessionRunner:
             )
         )
 
-    async def _fail_run(self, box: int, reason: str) -> None:
-        await self.finalize_box(box, reason, clean=True)
-
     def _schedule(self, coro: Awaitable[None]) -> None:
         """Hand a coroutine to the event loop from a worker thread."""
         self._loop.call_soon_threadsafe(lambda: asyncio.ensure_future(coro))
+
+    def _schedule_finalize(self, box: int, reason: str, clean: bool) -> None:
+        """Schedule a finalization *and track it* until it completes.
+
+        Every fire-and-forget path into `finalize_box` goes through here, so
+        `end_all` can wait on the whole set. An untracked finalization is the
+        race `end_all`'s drain exists to close; don't add one via `_schedule`.
+        """
+
+        def _create() -> None:
+            task = asyncio.ensure_future(self.finalize_box(box, reason, clean))
+            self._finalizations.add(task)
+            task.add_done_callback(self._finalizations.discard)
+
+        self._loop.call_soon_threadsafe(_create)
 
 
 def _now() -> str:

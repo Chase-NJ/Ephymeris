@@ -59,7 +59,11 @@ A cohort can be created with zero animals and populated over following days — 
 
 - **Cohort name** unique among active (non-archived) cohorts. Archived cohorts don't block reuse of a name.
 - **Animal name** unique within its own cohort (not globally).
-- **`boxNumber`** is an abstract slot, `1`–`6`, validated only against that fixed range — **not** checked against which physical boards happen to be bound in Settings right now. A cohort can be fully configured before any hardware is even connected, and box bindings can change independently of cohort definitions. This decoupling is deliberate.
+- **`boxNumber`** is an abstract slot, `1`–`6`, **stored and validated against that fixed range and nothing else** — never against which boards happen to be bound right now. This decoupling is deliberate and load-bearing: the app runs on two lab machines with independent bindings against a shared data directory, so a cohort configured on one must stay loadable, editable and savable on the other. Narrowing what may be *stored* would make a cohort un-editable on whichever machine has fewer boxes.
+
+  **The editor is a separate question, and it is opinionated.** It offers only boxes bound on *this* machine, because offering one that doesn't exist produced an assignment nobody could honour — discovered halfway down the session flash sequence rather than at the moment of the mistake. The two halves must stay distinct: `src/lib/cohorts/boxAvailability.ts` holds the machine-local opinion, the sidecar holds the range rule, and neither should be "fixed" into the other.
+
+  A stored assignment the current machine can't honour is **kept and reported, never rewritten**. A box that is merely unplugged is still the box that animal belongs in; silently clearing it would turn a loose USB hub into data loss. The editor names the affected animals and the browser grid flags the cohort (via `CohortSummary.assignedBoxes`), and both fall silent when the sidecar is disconnected — detection is unknowable then, and reporting blindness as a fault is worse than saying nothing.
 - **`boxNumber` uniqueness is scoped to the group, not the cohort.** Two animals in *different* groups can share `boxNumber: 3` — groups run consecutively (§3, Groups), so the same physical box slot is legitimately reused across them. Two animals in the *same* group cannot share a box number. Animals with `boxNumber: null` don't collide with anything.
 - **Groups always exist, even implicitly.** If the user never creates an explicit group, all animals belong to a single default group created transparently. This keeps "grouped" and "ungrouped" cohorts the same code path rather than a special case — a cohort with 3 animals and 3 boxes just happens to have exactly one group.
 
@@ -117,13 +121,21 @@ Group membership is **not** encoded into the icon — it stays a pure "how many 
 
 ## 6. Create / Edit / Manage Flow
 
-Opened either from the "+ New Cohort" tile (create) or by clicking an existing card (edit) — same form, different initial state.
+Opened either from the "+ New Cohort" tile (create) or by clicking an existing card (edit) — one component, two shapes.
 
-- **Name** — text field.
-- **Data folder** — defaults per §7, with an explicit override (native directory picker).
-- **Animals** — an editable list: add/remove animal, name field, sex selector (M/F/Unknown), ID number field, notes field, box-number selector (1–6 or unassigned), group assignment (dropdown, or drag-between-columns if groups > 1).
-- **Groups** — a lightweight sub-panel: add/remove/rename group, reorder (drag or up/down) to set `order`, plus the Auto-Balance tool (§7). Not shown at all when there's only the implicit default group, to avoid presenting UI for a concept most cohorts won't need.
-- Standard save/cancel; validation errors (§2) surface inline, not as a toast after the fact.
+**Creating is a flow; editing is a form.** A new cohort reveals its sections in order — name, then roster, then groups and boxes — each arriving as the one above it is satisfied, so there is exactly one thing to do at a time and the order needs no explaining. An existing cohort shows everything at once: you came back to change one thing, and being walked past the other three would be an obstacle. The reveal is the height-spring idiom used elsewhere in the app, and collapses to a plain conditional under reduced motion — the *ordering* is the information and survives without the movement.
+
+The readiness strip doubles as the flow's spine. Its three checkpoints (named / has animals / session-ready) each correspond to a section below, so it reads as "where am I" as well as "what's missing". It remains **coaching, never a gate** — a cohort can be saved incomplete at any point (§1), the sole exception being that Create is disabled without a name, since that request is one the sidecar would only reject.
+
+- **Name** — text field, autofocused on a new cohort and carrying the attention pulse until filled.
+- **Data folder** — §8's resolution. Only asked for when no `dataDirectory` is configured; otherwise it is derived and asking would be noise mid-flow.
+- **Animals** — biographical data only: name, sex (M/F/Unknown), ID number, notes. **Bulk entry is the primary way in**: one field takes a comma-, newline- or tab-separated list (a spreadsheet column pastes straight in) or a prefix and a count (`R- × 8` → `R-1`…`R-8`). Names already in the cohort are skipped rather than added, because duplicates are a §2 validation failure and a double paste otherwise turns the whole roster red. A single blank-row button stays for the afterthought animal.
+- **Groups & boxes** — one card per group, each showing its full membership: add/remove/rename, reorder with up/down to set `order`, move an animal between groups, and assign its box. Box assignment lives **here, not in the Animals list**, because uniqueness is scoped per group (§2) — it is a property of a membership, not of an animal, and only makes sense with the whole group visible at once. The panel is always present, since assignment has to happen somewhere regardless of group count; a single group renders as a quiet unlabeled card rather than exposing rename/reorder chrome nobody needs yet.
+- **Box selectors offer only boxes bound on this machine** (§2), labelling any that isn't currently connected. A box already taken within the same group isn't offered at all — prevention rather than a save-time error.
+- **The panel points at the one misconfiguration that actually bites**: more animals in a single group than the rig has boxes. That can't be fixed by assigning more carefully, so the panel says so, pre-fills the split count, and opens Auto-Balance rather than leaving it to be discovered one empty dropdown at a time. A per-group **Fill boxes** button handles the opposite case — eight dropdowns for a decision nobody has a preference about.
+- Standard save/cancel; validation errors (§2) surface inline against the offending row, not as a toast after the fact.
+
+Colour carries the severity distinction and nothing else: **error** for what will fail on save (missing or duplicate name, duplicate box in a group), **warning** for preconditions that still save fine (a box not connected or not set up, a group larger than the rig), **Ion** only for completed readiness checkpoints. The attention pulse marks the single control the flow is waiting on and is never applied to two things at once.
 
 ---
 
@@ -139,7 +151,7 @@ The user chooses one of two equivalent ways to express the target split:
 
 Whichever isn't chosen is derived from the other. A **"Balance by sex"** checkbox is available whenever at least one animal in the cohort has `sex` set to `M` or `F` (not `unknown`/null) — otherwise it's disabled, since there's nothing to balance against.
 
-As a courtesy default, if boards are currently connected (via the app's existing live presence data), the dialog pre-fills group size with the connected box count — editable, not enforced. This is a suggested starting point, not a dependency: cohort configuration stays decoupled from live hardware state per §2, this just saves a step in the common case where the tool is being used with hardware already plugged in.
+As a courtesy default, group size pre-fills with the number of boxes **bound on this machine** — editable, not enforced. Bound rather than currently detected, matching what the box selectors offer (§2): a box that is merely unplugged is still one this cohort can be planned around, and a default that changed as USB re-enumerated would be worse than useless. When the panel is opened because a roster outgrew the rig, the group count arrives pre-filled with `ceil(animals / boxes)` rather than a generic 2 the user has to correct.
 
 ### 7.2 Hard Constraint
 
@@ -233,6 +245,10 @@ Two distinct actions, not one:
 | Data folder when `dataDirectory` is unset (§8 gap) | **Explicit choice required in the create form.** Pre-filled from `Settings.dataDirectory` when set — the sidecar derives and collision-suffixes it — and required, with inline validation, when it isn't. `dataFolder` is never null, and no location is ever guessed at |
 | Group reordering / animal→group assignment | **Dropdowns + up/down buttons.** §6 offers "dropdown, *or* drag" and "drag *or* up/down"; the non-drag branch satisfies the spec with no drag-and-drop dependency |
 | Create-failure cleanup | **The cohort record is written before its folder is created.** Reversing that order meant a rejected duplicate name left an orphaned directory in the user's data directory (found during implementation). A folder that then fails to create rolls the record back |
+| Which boxes the editor offers | **Bound, not detected.** Bindings are shell-owned settings that load from disk with no sidecar involved, so the editor keeps working with the backend down and the rig unplugged — configuring a cohort at a desk is a real workflow. Live detection only downgrades a label and raises a warning; it never removes an option, because a box blinking out as USB re-enumerates must not pull a control out from under a click |
+| A stored box the machine can't honour | **Kept and reported, never rewritten** (§2). Clearing it would let a loose USB hub erase a cohort's box layout. It stays selectable on its own animal, labelled with the reason, and both the editor and the grid fall silent about it while the sidecar is disconnected |
+| Adding animals | **Bulk field first, rows second.** A roster already exists in a spreadsheet or a naming scheme; retyping it a blank row at a time was the slowest part of setting a cohort up. Accepts separated names or `prefix × count`, and skips names the cohort already has rather than minting §2 violations |
+| Creation atomicity | **`cohorts.create` takes the roster.** Two round trips meant two ways to fail, and the second failing left a named, empty cohort. Validation now runs before any row is written |
 
 No open questions remaining as of this revision.
 
@@ -244,8 +260,8 @@ No open questions remaining as of this revision.
 - [ ] Custom/uploaded cohort icons as an alternative to the generated one (§5) — deferred, not asked for
 - [x] ~~Ensure the Data Saving doc's backup strategy includes `ephymeris.db` (§3), not just per-session output files~~ — **built**, `data-saving.md` §8.3. Backed up to the mirror on **every commit**, debounced 5 s, plus one dated snapshot per day with the newest 14 retained. The trigger ended up broader than this item asked for: "after every cohort-affecting write" would have missed `session_animal_runs`, written at finalization during an unattended run, so the hook sits on `commit` itself and no write path can forget it. The dated snapshots exist because a single overwritten mirror would faithfully reproduce an accidental cohort deletion — §9's permanent delete removes bookkeeping only, but the bookkeeping *is* what this file holds
 - [x] ~~Starting a Session doc must define what "ready to run" means against this model~~ — resolved in `starting-a-session.md` §1: **at least one group with at least one animal that has a `boxNumber` assigned.** A group with zero box-assigned animals is skipped automatically rather than blocking the cohort
-- [ ] **Animals added before a cohort's first save** are written in a follow-up `cohorts.update`, since they need the group id the sidecar mints at creation. Works, but means creation isn't a single atomic call — worth revisiting if `cohorts.create` ever accepts an initial roster
-- [ ] **Groups can only be added from the editor once a cohort exists**, because §6 hides the groups panel while only the implicit default group is present. A brand-new cohort therefore can't be split until after its first save. Fine in practice (Auto-Balance is the normal path to multiple groups) but worth confirming it matches expectations
+- [x] ~~**Animals added before a cohort's first save** are written in a follow-up `cohorts.update`… worth revisiting if `cohorts.create` ever accepts an initial roster~~ — **done.** `cohorts.create` now takes optional `animals` and `groups`, validated before anything is written, so creation is one call and a rejected roster leaves no cohort and no folder. The premise that the roster needed a server-minted group id was already false: the editor seeds its own group locally and the sidecar keeps whatever ids it is given
+- [x] ~~**Groups can only be added from the editor once a cohort exists**, because §6 hides the groups panel while only the implicit default group is present~~ — **stale, and was already false.** The editor seeds its one group client-side from the start and the groups panel is always rendered (a single group as a quiet unlabeled card), so a brand-new cohort can be split before its first save
 - [ ] **No confirmation on archive.** §9 makes archive the reversible everyday action and gates only permanent delete, so archiving is one click. Revisit if it proves too easy to trigger accidentally on a large cohort
 
 ---

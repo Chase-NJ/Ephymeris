@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import * as THREE from "three";
 
 import { GL } from "@/components/chrome/constellationStyle";
+import { SceneBackdrop } from "./Backdrop";
+import { OrbiterBelt, type SceneOrbiter } from "./Orbiters";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
@@ -41,6 +43,17 @@ const FLIGHT_SECONDS = 1.5;
 const PAN_STEP = 0.22;
 
 /**
+ * Fades the canvas (and the nameplates portalled into its wrapper) out over
+ * its last few dozen pixels on every side. Two gradients intersected rather
+ * than one radial: a radial mask would hollow out the corners of a wide
+ * frame, and the fade must hug the rectangle the scene actually occupies.
+ */
+const EDGE_FADE_MASK = [
+  "linear-gradient(to right, transparent, black 56px, black calc(100% - 56px), transparent)",
+  "linear-gradient(to bottom, transparent, black 44px, black calc(100% - 44px), transparent)",
+].join(", ");
+
+/**
  * One drawable point.
  *
  * An unoccupied star of the asterism is not a special case — it is simply a
@@ -60,6 +73,8 @@ export interface SceneNode {
   badge?: number | null;
   /** The star's own visual, and the caller's whole say over colour. */
   body: ReactNode;
+  /** Animal satellites in orbit around this star — see `Orbiters.tsx`. */
+  orbiters?: SceneOrbiter[] | undefined;
 }
 
 /** Indices into `nodes`. `live` decides the link's opacity, nothing else. */
@@ -102,9 +117,20 @@ export function ConstellationScene({
       <Canvas
         camera={{ position: OVERVIEW_POSITION.toArray(), fov: 45 }}
         dpr={[1, 2]}
-        gl={{ antialias: true }}
-        style={{ background: GL.void }}
+        // Transparent, deliberately: the scene composites over the app's own
+        // Void background and drifting 2D starfield, so the browser reads as a
+        // window onto the app's sky rather than a separate framed tile. The
+        // mask below fades the canvas out at its edges for the same reason —
+        // in-scene backdrop stars must dissolve into the page, not hit a wall.
+        gl={{ antialias: true, alpha: true }}
+        style={{
+          maskImage: EDGE_FADE_MASK,
+          maskComposite: "intersect",
+          WebkitMaskImage: EDGE_FADE_MASK,
+          WebkitMaskComposite: "source-in",
+        }}
       >
+        <SceneBackdrop />
         <CameraRig nodes={nodes} focusedId={focusedId} view={view} />
 
         {links.map(({ a, b, live }) => (
@@ -483,6 +509,14 @@ function StarNode({
   return (
     <group position={node.position}>
       <group ref={visual}>{node.body}</group>
+
+      {/* Assigned-animal satellites, when the caller sent any. Outside the
+          hover-swell group on purpose: the swell announces the *star* under
+          the pointer, and satellites lurching outward with it would read as
+          part of the star rather than the annotation they are. */}
+      {node.orbiters && node.orbiters.length > 0 && (
+        <OrbiterBelt orbiters={node.orbiters} starRadius={radius} />
+      )}
 
       {/* A wider invisible hit area — a 0.2-unit sphere is a hard click target
           at overview distance. All interaction lives here, and it only exists

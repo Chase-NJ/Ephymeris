@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, CircleAlert, Zap } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowRight, Check, CircleAlert, Lightbulb, Undo2, Zap } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { Button, Select } from "@/components/common/controls";
@@ -9,7 +9,7 @@ import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { SketchPicker, TaskConfigForm } from "@/components/sessions/TaskConfigForm";
 import { errorMessage, getCohort } from "@/lib/cohorts/commands";
 import type { Cohort } from "@/lib/cohorts/types";
-import { useAllPortStatuses } from "@/lib/hardware/context";
+import { useAllPortStatuses, useUtilityStatus } from "@/lib/hardware/context";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
 import {
@@ -34,14 +34,25 @@ import { useSidecar } from "@/lib/ws/context";
 import { NODE_ACCENT, NODE_PRIMARY } from "@/components/chrome/constellationStyle";
 
 /**
- * Step 2 — animal→box mapping confirmation, then the flash sequence
- * (`starting-a-session.md` §3–§4).
+ * Step 2 — animal→box mapping confirmation, the guided placement walk, then
+ * the flash sequence (`starting-a-session.md` §3–§4).
  *
  * Edits here are **session-local**: they never write back to the cohort's
  * stored mapping (§3). Permanent changes go through Cohort management.
+ *
+ * The three phases are one screen rather than three, because they are three
+ * views of the same six rows: choose (which sketch, which box), place (one
+ * animal at a time, with that box lit — §3.5), then flash. Splitting them into
+ * routes would mean re-establishing which row you were on twice.
  */
 
 type FlashState = "idle" | "flashing" | "done" | "failed";
+
+/** `review` edits the mapping, `placing` walks the rig, `placed` flashes. */
+type Phase = "review" | "placing" | "placed";
+
+/** What the current box's identify light is doing, as far as we know. */
+type Light = { box: number; status: "pending" | "on" | "failed"; note: string | null };
 
 export function SessionMapping() {
   const { id: sessionId } = useParams<{ id: string }>();
@@ -60,10 +71,14 @@ export function SessionMapping() {
   const [flashStates, setFlashStates] = useState<Record<number, FlashState>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<Phase>("review");
+  const [placeIndex, setPlaceIndex] = useState(0);
+  const [light, setLight] = useState<Light | null>(null);
 
   const connected = status === "connected";
   const sketches = discovery.sketches;
   const portStates = useAllPortStatuses();
+  const utility = useUtilityStatus();
 
   /**
    * Boxes this machine can actually flash — configured *and* bound to a board.
@@ -221,6 +236,105 @@ export function SessionMapping() {
     [mappings, configuredBoxes],
   );
 
+  /**
+   * The walk order is by **box number**, never by animal: the operator is
+   * walking down a bench, and sending them from box 5 to box 2 and back is how
+   * an animal ends up in the wrong chamber.
+   */
+  const placementOrder = useMemo(
+    () => [...mappings].sort((a, b) => a.box - b.box),
+    [mappings],
+  );
+  const current = phase === "placing" ? (placementOrder[placeIndex] ?? null) : null;
+  const currentBox = current?.box ?? null;
+
+  // A rig with no utility sketch still gets the guided walk — it just names the
+  // box instead of lighting it. The lights are the better version of the same
+  // instruction, not a prerequisite for giving it.
+  const canLight = utility.configured && utility.canIdentify && utility.message === null;
+
+  /**
+   * One serial queue for identify calls. Command handlers run concurrently
+   * sidecar-side, so the "off" for the box being left and the "on" for the box
+   * being arrived at could otherwise land out of order — and the loser of that
+   * race is a box left lit with nothing pointing at it.
+   */
+  const identifyChain = useRef<Promise<unknown>>(Promise.resolve());
+  const identify = useCallback(
+    (box: number, on: boolean) => {
+      const run = () => client.call(CMD.UTILITY_IDENTIFY, { box, on });
+      const next = identifyChain.current.then(run, run);
+      // A failed link must not poison the queue for the next box.
+      identifyChain.current = next.catch(() => undefined);
+      return next;
+    },
+    [client],
+  );
+
+  /**
+   * Light the box the operator is being sent to, and put it out again on the
+   * way past. The cleanup is the *only* thing that turns a light off, so every
+   * exit — next animal, going back, cancelling, navigating away — is covered
+   * by one path rather than four that each have to remember.
+   */
+  useEffect(() => {
+    if (!connected || currentBox === null) return;
+    if (!canLight) {
+      setLight({ box: currentBox, status: "failed", note: null });
+      return;
+    }
+    let active = true;
+    setLight({ box: currentBox, status: "pending", note: null });
+    void identify(currentBox, true)
+      .then((result) => {
+        if (!active) return;
+        setLight({
+          box: currentBox,
+          status: result.delivered ? "on" : "failed",
+          note: result.state.detail,
+        });
+      })
+      .catch((err) => {
+        if (active) setLight({ box: currentBox, status: "failed", note: errorMessage(err) });
+      });
+    return () => {
+      active = false;
+      void identify(currentBox, false).catch(() => undefined);
+    };
+  }, [connected, currentBox, canLight, identify]);
+
+  function startPlacement() {
+    setError(null);
+    setPlaceIndex(0);
+    setPhase("placing");
+    // Nudge these boxes toward baseline in case one still carries the last
+    // session's task sketch. Deliberately not awaited: the walk starts now,
+    // and a box that isn't ready yet is a box without a light, not a blocker.
+    if (utility.configured) {
+      void client
+        .call(CMD.UTILITY_ENSURE, { boxes: placementOrder.map((m) => m.box) })
+        .catch(() => undefined);
+    }
+  }
+
+  function advancePlacement() {
+    if (placeIndex + 1 >= placementOrder.length) {
+      setPhase("placed");
+      setLight(null);
+    } else {
+      setPlaceIndex((n) => n + 1);
+    }
+  }
+
+  function retreatPlacement() {
+    if (placeIndex === 0) {
+      setPhase("review");
+      setLight(null);
+    } else {
+      setPlaceIndex((n) => n - 1);
+    }
+  }
+
   async function acknowledge(box: number) {
     setError(null);
     try {
@@ -245,17 +359,21 @@ export function SessionMapping() {
 
   const hint = busy
     ? "Flashing each box in turn — keep the boards plugged in."
-    : // Before "pick a sketch": with an unset or moved Arduino Directory there
-      // are none to pick, and the picker alone cannot say so.
-      sketches.length === 0
-      ? "No sketches found — set the Arduino Directory in Config."
-      : erroredBoxes.length > 0
-        ? `Box ${erroredBoxes.join(", ")} needs acknowledging before it can flash.`
-        : duplicateBox !== null
-          ? `Two animals share box ${duplicateBox} — move one first.`
-          : !allChosen
-            ? "Pick a sketch for every box, then confirm."
-            : "Confirm and flash, then place the animals.";
+    : phase === "placing"
+      ? `Placing ${placeIndex + 1} of ${placementOrder.length} — ${current ? names[current.animalId]?.name ?? "this animal" : ""} into box ${currentBox}.`
+      : phase === "placed"
+        ? "Every animal is placed. Confirm and flash to start."
+        : // Before "pick a sketch": with an unset or moved Arduino Directory
+          // there are none to pick, and the picker alone cannot say so.
+          sketches.length === 0
+          ? "No sketches found — set the Arduino Directory in Config."
+          : erroredBoxes.length > 0
+            ? `Box ${erroredBoxes.join(", ")} needs acknowledging before it can flash.`
+            : duplicateBox !== null
+              ? `Two animals share box ${duplicateBox} — move one first.`
+              : !allChosen
+                ? "Pick a sketch for every box, then confirm."
+                : "Confirm the boxes, then place the animals one at a time.";
 
   async function confirmAndFlash() {
     if (!sessionId || !allChosen) return;
@@ -296,9 +414,13 @@ export function SessionMapping() {
       className="mx-auto max-w-5xl px-8 py-8"
     >
       <SessionJourney step="boxes" hint={hint} group={groupInfo} />
-      <h1 className="font-display text-[22px] text-starlight">Confirm boxes</h1>
+      <h1 className="font-display text-[22px] text-starlight">
+        {phase === "placing" ? "Place the animals" : "Confirm boxes"}
+      </h1>
       <p className="mt-1 text-[12px] text-static">
-        Changes here apply to this run only.
+        {phase === "placing"
+          ? "One at a time, in box order. The mapping is locked while you walk the rig."
+          : "Changes here apply to this run only."}
       </p>
 
       {error && (
@@ -360,7 +482,22 @@ export function SessionMapping() {
           No box-assigned animals in this group.
         </p>
       ) : (
-        <RatPlacementBanner boxes={mappings.map((m) => m.box)} />
+        // Mid-walk the drawing stops being a general illustration and becomes
+        // the instruction: one animal, one chamber, the number the operator is
+        // looking for.
+        <RatPlacementBanner
+          boxes={current !== null ? [current.box] : mappings.map((m) => m.box)}
+          {...(current !== null
+            ? {
+                caption: `Lift ${names[current.animalId]?.name ?? "this animal"} into box ${current.box}, then close the enclosure.`,
+              }
+            : phase === "placed"
+              ? {
+                  caption:
+                    "Every animal is in its box. Confirm and flash to load the tasks.",
+                }
+              : {})}
+        />
       )}
 
       {mappings.length > 0 && (
@@ -372,8 +509,22 @@ export function SessionMapping() {
             const profile = mapping.sketchPath
               ? (profiles[mapping.sketchPath] ?? null)
               : null;
+            const isCurrent = current?.animalId === mapping.animalId;
+            // Everything that isn't the one tile being pointed at recedes, and
+            // stops accepting clicks: mid-walk, changing a box the operator has
+            // already filled would silently invalidate the animals behind them.
+            const dimmed = phase === "placing" && !isCurrent;
+            const placed = phase === "placed" || (phase === "placing" &&
+              placementOrder.findIndex((m) => m.animalId === mapping.animalId) < placeIndex);
             return (
-              <div key={mapping.animalId} className="surface rounded-md p-4">
+              <motion.div
+                key={mapping.animalId}
+                animate={{ opacity: dimmed ? 0.4 : 1 }}
+                transition={springSnappy}
+                className={`surface rounded-md p-4 ${isCurrent ? "attention-border" : ""}`}
+                style={{ pointerEvents: dimmed ? "none" : "auto" }}
+                aria-current={isCurrent ? "step" : undefined}
+              >
                 {/* Identity line: the animal's full name is the point of the
                     card, so it never truncates — an unusually long one wraps
                     instead. */}
@@ -387,6 +538,18 @@ export function SessionMapping() {
                       </span>
                     )}
                   </div>
+                  {/* The walk's only persistent record of itself: which
+                      animals are already in their boxes. Without it, coming
+                      back to the screen means counting tiles. */}
+                  {placed && (
+                    <Check
+                      size={15}
+                      strokeWidth={2}
+                      className="mt-1 shrink-0"
+                      style={{ color: "var(--color-ion)" }}
+                      aria-label="placed"
+                    />
+                  )}
                 </div>
 
                 {/* Mapping line, reading left to right: sketch → arrow → box.
@@ -408,6 +571,7 @@ export function SessionMapping() {
                       );
                       void loadProfile(mapping.animalId, path);
                     }}
+                    disabled={phase !== "review"}
                     className="min-w-0 flex-1 truncate"
                   />
                   <div className="flex w-5 shrink-0 items-center justify-center">
@@ -423,6 +587,7 @@ export function SessionMapping() {
                       value: String(n),
                       label: configuredBoxes.has(n) ? `Box ${n}` : `Box ${n} · unbound`,
                     }))}
+                    disabled={phase !== "review"}
                     onChange={(v) =>
                       setMappings((prev) =>
                         prev.map((m) =>
@@ -432,6 +597,47 @@ export function SessionMapping() {
                     }
                   />
                 </div>
+
+                {/* The instruction itself, on the tile it is about. It sits
+                    below the mapping line so the eye reads name → box → "put
+                    it there", which is the order the sentence is spoken in. */}
+                {isCurrent && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={springSnappy}
+                    className="mt-3 flex items-center justify-between gap-3 rounded-sm border border-halo px-3 py-2.5"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-[13px] leading-snug text-starlight">
+                        Place this animal in{" "}
+                        <span className="font-mono text-pulsar">box {mapping.box}</span>
+                      </p>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-static">
+                        <Lightbulb
+                          size={12}
+                          strokeWidth={1.75}
+                          className="shrink-0"
+                          style={
+                            light?.status === "on"
+                              ? { color: "var(--color-ion)" }
+                              : undefined
+                          }
+                        />
+                        {lightHint(light, canLight)}
+                      </p>
+                    </div>
+                    <Button
+                      variant="primary"
+                      disabled={busy}
+                      onClick={advancePlacement}
+                      className="shrink-0"
+                    >
+                      <Check size={13} strokeWidth={2} />
+                      Enclosure closed
+                    </Button>
+                  </motion.div>
+                )}
 
                 {/* Recovery in place: a box left in `ERROR` (usually by the
                     flash that just failed) can't be flashed again until the
@@ -486,7 +692,7 @@ export function SessionMapping() {
                     </motion.div>
                   )}
                 </AnimatePresence>
-              </div>
+              </motion.div>
             );
           })}
         </div>
@@ -503,30 +709,83 @@ export function SessionMapping() {
       )}
 
       <div className="mt-6 flex items-center gap-2">
-        <Button
-          variant="primary"
-          onClick={() => void confirmAndFlash()}
-          disabled={!allChosen || busy || !connected || erroredBoxes.length > 0}
-          {...(erroredBoxes.length > 0
-            ? { title: "Acknowledge the box error first — a box in ERROR can't be flashed" }
-            : {})}
-        >
-          <Zap size={13} strokeWidth={1.75} />
-          {busy ? "Flashing…" : "Confirm and flash"}
-          {!busy && <ArrowRight size={13} strokeWidth={2} />}
-        </Button>
-        {midSession ? (
-          <Button variant="ghost" disabled={busy} onClick={() => void endFromHere()}>
-            End session
-          </Button>
-        ) : (
-          <Button variant="ghost" disabled={busy} onClick={() => void backToConfig()}>
-            Back
+        {/* Placement sits between confirming the mapping and flashing on
+            purpose: the boxes are still carrying the utility sketch, which is
+            the only firmware that can be asked to light one (§3.5). Flashing
+            first would put the tasks on and the lights out of reach. */}
+        {phase === "review" && (
+          <Button
+            variant="primary"
+            onClick={startPlacement}
+            disabled={!allChosen || busy || !connected || mappings.length === 0}
+          >
+            Place the animals
+            <ArrowRight size={13} strokeWidth={2} />
           </Button>
         )}
+
+        {phase === "placing" && (
+          <>
+            <Button variant="ghost" disabled={busy} onClick={retreatPlacement}>
+              {placeIndex === 0 ? "Back to boxes" : "Previous animal"}
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={advancePlacement}>
+              Skip this box
+            </Button>
+          </>
+        )}
+
+        {phase === "placed" && (
+          <>
+            <Button
+              variant="primary"
+              onClick={() => void confirmAndFlash()}
+              disabled={!allChosen || busy || !connected || erroredBoxes.length > 0}
+              {...(erroredBoxes.length > 0
+                ? { title: "Acknowledge the box error first — a box in ERROR can't be flashed" }
+                : {})}
+            >
+              <Zap size={13} strokeWidth={1.75} />
+              {busy ? "Flashing…" : "Confirm and flash"}
+              {!busy && <ArrowRight size={13} strokeWidth={2} />}
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={startPlacement}>
+              <Undo2 size={13} strokeWidth={1.75} />
+              Walk the boxes again
+            </Button>
+          </>
+        )}
+
+        {phase !== "placing" &&
+          (midSession ? (
+            <Button variant="ghost" disabled={busy} onClick={() => void endFromHere()}>
+              End session
+            </Button>
+          ) : (
+            <Button variant="ghost" disabled={busy} onClick={() => void backToConfig()}>
+              Back
+            </Button>
+          ))}
       </div>
     </motion.section>
   );
+}
+
+/**
+ * What the box's light is doing, said in terms of what the operator should do.
+ *
+ * A box that can't be lit is not an error and must not read as one — the
+ * instruction is still complete without it, because the box number is written
+ * on the tile and on the chamber. The light is a confirmation, not the
+ * message.
+ */
+function lightHint(light: Light | null, canLight: boolean): string {
+  if (!canLight) {
+    return "Match the number on the chamber — no utility sketch is set up to light it.";
+  }
+  if (light?.status === "pending") return "Lighting the box…";
+  if (light?.status === "on") return "Its light is on, and goes out when you confirm.";
+  return light?.note ?? "Couldn't light this box — go by the number on the chamber.";
 }
 
 /**

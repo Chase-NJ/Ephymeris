@@ -1,3 +1,5 @@
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -6,6 +8,7 @@ import {
   ChevronsRightLeft,
   CircleAlert,
   Copy,
+  Download,
   RotateCcw,
   Send,
   Zap,
@@ -103,6 +106,8 @@ export function NodeDetail({
   const [draft, setDraft] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [logError, setLogError] = useState<string | null>(null);
   const [profile, setProfile] = useState<TaskProfile | null>(null);
   const [tab, setTab] = useState<"console" | "status">("console");
 
@@ -174,15 +179,43 @@ export function NodeDetail({
     if (ok) setDraft("");
   }
 
-  /** Copies whichever tab you're looking at — the one you meant. */
-  function copyLog() {
-    const body = shown
+  /** The visible tab's lines, rendered the same way for copy and save. */
+  function logBody(): string {
+    return shown
       .map((l) => `${l.dir === "tx" ? "› " : "  "}${l.text}`)
       .join("\n");
-    void navigator.clipboard.writeText(body).then(() => {
+  }
+
+  /** Copies whichever tab you're looking at — the one you meant. */
+  function copyLog() {
+    void navigator.clipboard.writeText(logBody()).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
+  }
+
+  /** Saves the visible tab to a file the user picks (§6.5's "save debug log").
+   *
+   * Deliberately shell-side, not a sidecar command: the dialog plugin adds the
+   * chosen path to the fs scope at runtime, and the export keeps working when
+   * the sidecar is down — which is exactly when a debug log matters most. Like
+   * the clipboard, this never enters the data pipeline.
+   */
+  async function saveLog() {
+    setLogError(null);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    try {
+      const path = await save({
+        defaultPath: `ephymeris-box${box}-${tab}-${stamp}.log`,
+        filters: [{ name: "Log", extensions: ["log", "txt"] }],
+      });
+      if (!path) return; // cancelled
+      await writeTextFile(path, logBody());
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (err) {
+      setLogError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   const canOpen = connected && port.state === "IDLE" && board !== null;
@@ -386,7 +419,7 @@ export function NodeDetail({
                 active={tab === "status"}
                 onClick={() => setTab("status")}
               />
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-1">
                 <Button
                   variant="ghost"
                   onClick={copyLog}
@@ -399,8 +432,29 @@ export function NodeDetail({
                     <Copy size={13} strokeWidth={1.75} />
                   )}
                 </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => void saveLog()}
+                  disabled={shown.length === 0}
+                  title={`Save the ${tab === "console" ? "console" : "status"} log to a file`}
+                >
+                  {saved ? (
+                    <Check size={13} strokeWidth={2} />
+                  ) : (
+                    <Download size={13} strokeWidth={1.75} />
+                  )}
+                </Button>
               </div>
             </div>
+
+            {logError && (
+              <p
+                className="border-b border-halo px-3 py-1.5 text-[11px]"
+                style={{ color: "var(--color-status-error)" }}
+              >
+                Couldn't save the log — {logError}
+              </p>
+            )}
 
             <Scrollback
               lines={shown}

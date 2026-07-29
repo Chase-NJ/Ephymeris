@@ -421,8 +421,8 @@ Each card answers, in this order:
 | | |
 |---|---|
 | **Trials · administered · aborted** | the effort header. Administered is every accuracy's denominator (§3.8), so it is stated before any rate. |
-| **Per condition** (§3.9) — one row each, in authored order | `administered`, `rewarded`, and that condition's within-session trajectory. This is where "how many go-right trials, and how many paid out" is read off. |
-| **Rewarded vs side** | the two accuracies, as one bar, not two. |
+| **Per condition** (§3.9) — one row each, in authored order | `administered`, then `rewarded` and `correct` each as `count · rate` over **that condition's** administered trials, beside that condition's within-session trajectory. `correct` is the reward-unconditional choice (`rewarded + holdFailed`, §3.8): the right well was reached whether or not the hold earned the drop. This is where "how many go-right trials, how many paid out, and how many chose right" is read off — the per-odor version of the card's two accuracies, sitting next to the per-odor trajectory they explain. |
+| **Rewarded vs side** | the two accuracies, as one bar, not two — headed by the whole-run fractions, counts and rates together (`64/108 · 59% → 82/108 · 76%`). |
 | **Outcome composition** | how the administered trials resolved. |
 
 Two things this gets right on purpose:
@@ -653,6 +653,8 @@ Notes that are design decisions rather than description:
 
 Deliberately **not** commands: across-session P(correct) (derivable from the summary — a second command would be a second, drifting definition of the same number), per-animal cross-session queries (same payload, client-side filter), and cohort/roster listing (`cohorts.list` and `cohorts.get` already serve it).
 
+One neighbouring command lives beside these in the UI but not in this family: the Observatory's **Recover** button calls `sessions.recover` (`data-saving.md` §7.3's crash-recovery backfill, canonical in `websocket-protocol.md`), then chains an `analytics.rescan` so the recovered files are adopted in the same click. It is a `sessions.*` command because it writes session data files — analytics reads, it never writes the archive.
+
 ---
 
 ## 10. Schema Changes
@@ -737,7 +739,7 @@ This also changes `SessionAnimalRun`'s payload shape, which the contract test wi
 - [ ] **Payload shapes here are the largest on the wire and are unguarded** by the contract test (`TODO.md` item 8). A field added on one side and forgotten on the other passes every test today
 - [x] ~~**A second lab archive was invisible to the walk.**~~ — **fixed.** A cohort whose session folders sit straight under the cohort root scanned **0 of 444 files**, because the walk's depth was hard-coded to one prefix level; its folder names also split wrongly (number-first) and one document's `rat` field carried a typo. Same lesson as Remy, now twice confirmed: **every failure was in the finding layer, none in the maths.** §8.1 is the result — format folders are matched by name at any depth, the number is found by being numeric rather than by position, and the filename is a second recording of the animal. Result on that archive: 444 scanned, 444 adopted, 30 sessions, 12 animals, 444 decoded, zero warnings, and Remy byte-identical
 - [ ] **`analytics.series` has no in-memory LRU.** §8.3 specifies one; the sidecar doesn't implement it, and the only series caching is client-side. Noted so the gap is registered rather than rediscovered
-- [ ] The archive walk (§8.1) and the crash-recovery backfill (`data-saving.md` §11) need the same file walker and the same both-date-format parsing. **Build them to share one**, whichever lands first — §8.1's walker is now the depth-tolerant one to reuse
+- [x] ~~The archive walk (§8.1) and the crash-recovery backfill (`data-saving.md` §11) need the same file walker and the same both-date-format parsing. **Build them to share one**, whichever lands first~~ — **shared, as required**: `reader._walk_format_dirs` is the one traversal, `walk_session_files` (this walk) and `walk_orphaned_tsvs` (the backfill's, `data-saving.md` §7.3) are thin views over it, and `tests/test_recovery.py` pins the handoff — a recovered `.json` is found by this walk and adopted on the next rescan
 
 ---
 

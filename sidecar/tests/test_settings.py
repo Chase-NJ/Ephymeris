@@ -10,12 +10,20 @@ def test_reads_the_keys_the_sidecar_needs() -> None:
         {
             "arduinoDirectory": "/tmp/arduino",
             "arduinoCliPath": "/opt/homebrew/bin/arduino-cli",
+            "utilitySketchPath": "/tmp/arduino/Utility/BOX_Utility",
             "defaultBaud": 9600,
         }
     )
     assert settings.arduino_directory == "/tmp/arduino"
     assert settings.arduino_cli_path == "/opt/homebrew/bin/arduino-cli"
+    assert settings.utility_sketch_path == "/tmp/arduino/Utility/BOX_Utility"
     assert settings.default_baud == 9600
+
+
+def test_an_unset_utility_sketch_turns_the_baseline_off() -> None:
+    """No sketch is a supported configuration, not a missing one."""
+    assert SidecarSettings.from_payload({}).utility_sketch_path is None
+    assert SidecarSettings.from_payload({"utilitySketchPath": "  "}).utility_sketch_path is None
 
 
 def test_unknown_keys_are_a_non_event() -> None:

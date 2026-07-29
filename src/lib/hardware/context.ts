@@ -6,6 +6,7 @@ import type {
   FlashedSketch,
   HardwareStore,
   PortStatus,
+  UtilityStatus,
 } from "./store";
 
 export const HardwareContext = createContext<HardwareStore | null>(null);
@@ -63,4 +64,15 @@ export function useBoardPresence(): DetectedBoard[] {
   const store = useHardwareStore();
   const subscribe = useCallback((cb: () => void) => store.subscribe("presence", cb), [store]);
   return useSyncExternalStore(subscribe, () => store.getBoards());
+}
+
+/**
+ * The hardware utility baseline (`hardware-interaction.md` §8) — which boxes
+ * are back on the utility sketch, and whether one can be asked to point at
+ * itself. Pushed, not polled: restores happen on the sidecar's own schedule.
+ */
+export function useUtilityStatus(): UtilityStatus {
+  const store = useHardwareStore();
+  const subscribe = useCallback((cb: () => void) => store.subscribe("utility", cb), [store]);
+  return useSyncExternalStore(subscribe, () => store.getUtility());
 }

@@ -26,6 +26,11 @@ export const CMD = {
   PORT_RESET: "port.reset",
   PORT_ERROR_ACK: "port.error.ack",
 
+  // Hardware utility baseline (hardware-interaction.md §8)
+  UTILITY_STATUS: "utility.status",
+  UTILITY_ENSURE: "utility.ensure",
+  UTILITY_IDENTIFY: "utility.identify",
+
   // Cohorts (cohorts.md)
   COHORTS_LIST: "cohorts.list",
   COHORTS_GET: "cohorts.get",
@@ -62,6 +67,9 @@ export const CMD = {
   ANALYTICS_SUMMARY: "analytics.summary",
   ANALYTICS_SERIES: "analytics.series",
   ANALYTICS_RESCAN: "analytics.rescan",
+
+  // Crash recovery (data-saving.md §7.3, §11)
+  SESSIONS_RECOVER: "sessions.recover",
 } as const;
 
 export type CommandName = (typeof CMD)[keyof typeof CMD];
@@ -80,6 +88,7 @@ export const EVT = {
   SESSION_TELEMETRY: "session.telemetry",
   SESSION_ANIMAL_ENDED: "session.animalEnded",
   SESSION_LIFECYCLE: "session.lifecycle",
+  UTILITY_UPDATED: "utility.updated",
   BACKUP_STATUS: "backup.status",
   ANALYTICS_PROGRESS: "analytics.progress",
   SIDECAR_ERROR: "sidecar.error",
@@ -110,6 +119,7 @@ export const ERR = {
   SESSION_NOT_READY: "SESSION_NOT_READY",
   TASK_PROFILE_INVALID: "TASK_PROFILE_INVALID",
   BACKUP_UNAVAILABLE: "BACKUP_UNAVAILABLE",
+  UTILITY_UNAVAILABLE: "UTILITY_UNAVAILABLE",
   DIR_INVALID: "DIR_INVALID",
   INTERNAL: "INTERNAL",
 } as const;
@@ -187,6 +197,11 @@ export interface EphymerisSettings {
   backupDirectory: string | null;
   arduinoDirectory: string | null;
   arduinoCliPath: string | null;
+  /**
+   * The hardware utility sketch every idle box is returned to (`hardware-interaction.md` §8).
+   * Null turns the baseline off.
+   */
+  utilitySketchPath: string | null;
   defaultBaud: number;
   boxes: BoxBinding[];
   reducedMotion: boolean;
@@ -199,6 +214,48 @@ export interface EphymerisSettings {
   constellationSlots: Record<string, number>;
   /** First-run box setup finished or explicitly skipped; gates the Config wizard. Shell-only. */
   boxSetupComplete: boolean;
+}
+
+/**
+ * What the sidecar believes about one box's baseline firmware. `busy` (the port has another
+ * owner) and `held` (a confirmed session mapping owns the rig) are both 'not now' rather than
+ * 'not working' — the distinction is the whole reason a restore never fights the user.
+ */
+export type UtilityBaselineState = "unknown" | "restoring" | "ready" | "busy" | "held" | "unavailable" | "failed";
+
+export interface UtilityBoxState {
+  box: number;
+  state: UtilityBaselineState;
+  /** Why, when the state isn't `ready`. */
+  detail: string | null;
+  /** This box is currently lit by utility.identify. */
+  identifying: boolean;
+}
+
+/**
+ * The whole baseline picture — one snapshot, shared by the command and the event, so a client
+ * never merges two shapes.
+ */
+export interface UtilityStatus {
+  configured: boolean;
+  sketchPath: string | null;
+  sketchName: string | null;
+  /**
+   * The configured sketch's profile declares an `identify` pair. False means placement can still
+   * run, just without lights.
+   */
+  canIdentify: boolean;
+  /**
+   * Restores are suspended because a confirmed session mapping owns the boxes — reflashing then
+   * would erase the task sketch.
+   */
+  held: boolean;
+  /**
+   * Why the baseline isn't operating at all (unset sketch, a path no longer in the Arduino
+   * Directory, a non-utility profile).
+   */
+  message: string | null;
+  boxes: UtilityBoxState[];
 }
 
 /**
@@ -271,12 +328,18 @@ export interface Cohort {
   updatedAt: string;
 }
 
-/** Enough for the grid and dashboard tile, no animal detail. */
+/** Enough for the grid and dashboard tile, no per-animal detail. */
 export interface CohortSummary {
   id: string;
   name: string;
   animalCount: number;
   groupCount: number;
+  /**
+   * Distinct box numbers this cohort's animals hold. The one piece of animal detail the summary
+   * carries, so the browser grid can flag a cohort whose boxes no longer exist on this machine
+   * without fetching every cohort in full.
+   */
+  assignedBoxes: number[];
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -427,6 +490,16 @@ export interface TelemetrySpec {
 }
 
 /**
+ * The two commands that make a box announce itself — a trial light, a buzzer, whatever the rig
+ * has (`hardware-interaction.md` §8.3). Declared by the sketch so the app never has to know that
+ * a Hart-lab box says `ON LIGHT`.
+ */
+export interface IdentifySpec {
+  on: string;
+  off: string;
+}
+
+/**
  * Parsed from the sketch's task.json sibling (§6.1); passed through verbatim — the sidecar
  * validates shape but doesn't reinterpret.
  */
@@ -449,6 +522,11 @@ export interface TaskProfile {
   legacyNames: string[];
   /** Utility profiles only. */
   telemetry?: TelemetrySpec;
+  /**
+   * Utility profiles only — absent means this sketch can't be asked to point at its own box,
+   * which the placement walk degrades around rather than refusing.
+   */
+  identify?: IdentifySpec;
 }
 
 /** One box's session-local mapping + task config (`starting-a-session.md` §3). */
@@ -804,6 +882,35 @@ export interface AnalyticsProgress {
   total: number;
 }
 
+/** One orphaned write-ahead log the crash-recovery backfill processed. */
+export interface RecoveredTsv {
+  tsvPath: string;
+  /** Null when recovery failed. */
+  jsonPath: string | null;
+  status: "recovered" | "failed";
+  /** Recomputed from the lines actually parsed, never copied from a footer. */
+  nEvents: number;
+  /**
+   * The footer's recorded reason when the .tsv has one (a finalized run whose best-effort .json
+   * write failed); 'recovered after crash' for a footer-less log. Null on failure.
+   */
+  stopReason: string | null;
+  /** Why recovery failed, when it did. */
+  reason: string | null;
+}
+
+export interface RecoverResult {
+  /** Orphaned .tsv files found — write-ahead logs with no .json sibling. */
+  scanned: number;
+  recovered: number;
+  failed: number;
+  entries: RecoveredTsv[];
+  cohortId: string;
+  dataFolder: string;
+  /** Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'. */
+  folderMissing: boolean;
+}
+
 export interface ServerHello {
   protocolVersion: number;
   sidecarVersion: string;
@@ -861,9 +968,12 @@ export interface CommandArgsMap {
   "port.flash": { box: number; sketchPath: string; suppressPassthroughResume?: boolean };
   "port.reset": { box: number };
   "port.error.ack": { box: number };
+  "utility.status": Record<string, never>;
+  "utility.ensure": { boxes?: number[]; force?: boolean };
+  "utility.identify": { box: number; on: boolean };
   "cohorts.list": Record<string, never>;
   "cohorts.get": { id: string };
-  "cohorts.create": { name: string; dataFolder?: string };
+  "cohorts.create": { name: string; dataFolder?: string; animals?: Animal[]; groups?: Group[] };
   "cohorts.update": { id: string; patch: CohortPatch };
   "cohorts.archive": { id: string };
   "cohorts.restore": { id: string };
@@ -890,6 +1000,7 @@ export interface CommandArgsMap {
   "analytics.summary": { cohortId: string; sessionIds?: string[]; animalIds?: string[]; minCountedTrials?: number };
   "analytics.series": { runIds: string[]; mode?: "rolling" | "cumulative"; metricIds?: string[] };
   "analytics.rescan": { cohortId: string; adoptOrphans?: boolean };
+  "sessions.recover": { cohortId: string };
 }
 
 /** The `result` field of each command's ok-reply. */
@@ -904,6 +1015,9 @@ export interface CommandResultMap {
   "port.flash": { state: PortStateName; resumedPassthrough: boolean };
   "port.reset": { state: PortStateName; resumedPassthrough: boolean };
   "port.error.ack": { state: PortStateName };
+  "utility.status": UtilityStatus;
+  "utility.ensure": UtilityStatus;
+  "utility.identify": { delivered: boolean; state: UtilityBoxState };
   "cohorts.list": { cohorts: CohortSummary[] };
   "cohorts.get": { cohort: Cohort };
   "cohorts.create": { cohort: Cohort };
@@ -933,6 +1047,7 @@ export interface CommandResultMap {
   "analytics.summary": AnalyticsSummary;
   "analytics.series": SeriesResult;
   "analytics.rescan": RescanResult;
+  "sessions.recover": RecoverResult;
 }
 
 /** The `data` field of each event. */
@@ -948,6 +1063,7 @@ export interface EventDataMap {
   "session.telemetry": BoxTelemetry;
   "session.animalEnded": AnimalEnded;
   "session.lifecycle": ActiveSessions;
+  "utility.updated": UtilityStatus;
   "backup.status": BackupStatus;
   "analytics.progress": AnalyticsProgress;
   "sidecar.error": SidecarErrorData;

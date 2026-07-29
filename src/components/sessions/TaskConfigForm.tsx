@@ -83,12 +83,14 @@ export function SketchPicker({
   value,
   onChange,
   label,
+  disabled = false,
   className = "",
 }: {
   sketches: Array<{ category: string; name: string; path: string }>;
   value: string | null;
   onChange: (path: string | null) => void;
   label: string;
+  disabled?: boolean;
   /** Layout-only — forwarded to the underlying Select. */
   className?: string;
 }) {
@@ -102,8 +104,10 @@ export function SketchPicker({
       value={value ?? ""}
       options={options}
       onChange={(v) => onChange(v === "" ? null : String(v))}
-      // The flow is waiting on exactly this control until a sketch is picked.
-      attention={value === null}
+      disabled={disabled}
+      // The flow is waiting on exactly this control until a sketch is picked —
+      // but not while it's locked, when waiting on it would be a lie.
+      attention={value === null && !disabled}
       className={className}
     />
   );

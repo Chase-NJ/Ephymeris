@@ -106,6 +106,7 @@ export function Select<T extends string | number>({
   label,
   disabled = false,
   attention = false,
+  tone = "normal",
   className = "",
 }: {
   value: T;
@@ -116,19 +117,35 @@ export function Select<T extends string | number>({
   /** Pulses the border until the user acts — for the one control a guided
       flow is waiting on. */
   attention?: boolean;
+  /**
+   * Tints the selected value when the *current* choice is the problem — a box
+   * whose board is gone, say. Colour lands on the text only, per §2.2; the
+   * border stays Halo like every other control so a warning row doesn't read
+   * as a different kind of surface.
+   */
+  tone?: "normal" | "warning" | "error";
   /** Layout-only additions (widths, flex) — visual identity stays here. */
   className?: string;
 }) {
+  const toned =
+    tone === "warning"
+      ? { color: "var(--color-status-warning)" }
+      : tone === "error"
+        ? { color: "var(--color-status-error)" }
+        : undefined;
   return (
     <select
       aria-label={label}
       value={String(value)}
       disabled={disabled}
+      {...(toned ? { style: toned } : {})}
       onChange={(e) => {
         const next = options.find((o) => String(o.value) === e.target.value);
         if (next) onChange(next.value);
       }}
-      className={`rounded-sm border border-halo bg-nebula px-2.5 py-1.5 font-mono text-[12px] text-starlight disabled:cursor-not-allowed disabled:opacity-40 ${
+      className={`rounded-sm border border-halo bg-nebula px-2.5 py-1.5 font-mono text-[12px] ${
+        tone === "normal" ? "text-starlight" : ""
+      } disabled:cursor-not-allowed disabled:opacity-40 ${
         attention ? "attention-border" : ""
       } ${className}`}
     >
@@ -144,16 +161,24 @@ export function Select<T extends string | number>({
 export function TextInput({
   value,
   onChange,
+  onSubmit,
   placeholder,
   label,
   mono = false,
+  autoFocus = false,
+  attention = false,
   className = "",
 }: {
   value: string;
   onChange: (next: string) => void;
+  /** Enter commits. For a field whose whole job is "type this, then go". */
+  onSubmit?: () => void;
   placeholder?: string;
   label: string;
   mono?: boolean;
+  autoFocus?: boolean;
+  /** Same contract as `Select`'s: the one control a guided flow is waiting on. */
+  attention?: boolean;
   className?: string;
 }) {
   return (
@@ -162,10 +187,23 @@ export function TextInput({
       aria-label={label}
       value={value}
       placeholder={placeholder}
+      // eslint-disable-next-line jsx-a11y/no-autofocus -- the first field of a
+      // guided create flow; focus belongs there and nowhere else.
+      autoFocus={autoFocus}
       onChange={(e) => onChange(e.target.value)}
+      {...(onSubmit
+        ? {
+            onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onSubmit();
+              }
+            },
+          }
+        : {})}
       className={`rounded-sm border border-halo bg-nebula px-2.5 py-1.5 text-[12px] text-starlight placeholder:text-static/60 ${
         mono ? "font-mono" : ""
-      } ${className}`}
+      } ${attention ? "attention-border" : ""} ${className}`}
     />
   );
 }

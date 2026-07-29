@@ -12,9 +12,15 @@
  */
 
 import type { SidecarClient } from "../ws/client";
-import { EVT, type DetectedBoard, type OutputLine, type PortStateName } from "../ws/protocol";
+import {
+  EVT,
+  type DetectedBoard,
+  type OutputLine,
+  type PortStateName,
+  type UtilityStatus,
+} from "../ws/protocol";
 
-export type { DetectedBoard, PortStateName } from "../ws/protocol";
+export type { DetectedBoard, PortStateName, UtilityBoxState, UtilityStatus } from "../ws/protocol";
 
 /** One box's state as last reported — `port.state` minus the `box` key. */
 export interface PortStatus {
@@ -48,6 +54,21 @@ const INITIAL_STATUSES: Readonly<Record<number, PortStatus>> = Object.fromEntrie
   BOX_IDS.map((b) => [b, INITIAL_STATUS]),
 );
 
+/**
+ * Before the first `utility.updated` lands. `configured: false` is the honest
+ * pre-connect answer — it renders as "no baseline", which is also what an
+ * un-set-up rig looks like, and never claims a box is ready.
+ */
+const NO_UTILITY: UtilityStatus = {
+  configured: false,
+  sketchPath: null,
+  sketchName: null,
+  canIdentify: false,
+  held: false,
+  message: null,
+  boxes: BOX_IDS.map((box) => ({ box, state: "unknown", detail: null, identifying: false })),
+};
+
 export class HardwareStore {
   private statuses = new Map<number, PortStatus>(BOX_IDS.map((b) => [b, INITIAL_STATUS]));
   /** Immutable snapshot of all six, replaced on change — for whole-map consumers. */
@@ -58,6 +79,8 @@ export class HardwareStore {
    *  load for utility controls/telemetry. Not sidecar state; client-tracked
    *  from the flash the user performed. */
   private flashed = new Map<number, FlashedSketch | null>(BOX_IDS.map((b) => [b, null]));
+  /** The hardware utility baseline, as last reported (`hardware-interaction.md` §8). */
+  private utility: UtilityStatus = NO_UTILITY;
   private subs = new Map<string, Set<() => void>>();
   private seq = 0;
 
@@ -91,6 +114,11 @@ export class HardwareStore {
         this.boards = d?.boards ?? NO_BOARDS;
         this.notify("presence");
       }),
+
+      client.on(EVT.UTILITY_UPDATED, (data) => {
+        this.utility = data as UtilityStatus;
+        this.notify("utility");
+      }),
     ];
     return () => offs.forEach((off) => off());
   }
@@ -111,6 +139,10 @@ export class HardwareStore {
 
   getBoards(): DetectedBoard[] {
     return this.boards;
+  }
+
+  getUtility(): UtilityStatus {
+    return this.utility;
   }
 
   getFlashed(box: number): FlashedSketch | null {

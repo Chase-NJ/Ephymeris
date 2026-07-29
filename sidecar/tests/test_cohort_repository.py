@@ -41,6 +41,77 @@ def test_a_new_cohort_gets_an_implicit_default_group(repo) -> None:
     assert cohort.archived is False
 
 
+def test_a_cohort_can_be_created_with_its_whole_roster(repo) -> None:
+    """One call, not a create plus a patch that could fail on its own."""
+    groups = [{"id": "g1", "name": "Morning", "order": 0}]
+    cohort = repo.create(
+        "Batch A",
+        "/tmp/batch-a",
+        animals=[animal("R-1", "g1", boxNumber=1), animal("R-2", "g1", boxNumber=2)],
+        groups=groups,
+    )
+    assert [g.name for g in cohort.groups] == ["Morning"]
+    assert sorted(a.name for a in cohort.animals) == ["R-1", "R-2"]
+    # The client's own group id survives, which is what lets the editor build
+    # the roster before the cohort exists.
+    assert cohort.animals[0].group_id == "g1"
+
+
+def test_a_rejected_roster_creates_nothing(repo) -> None:
+    """Validation runs before any row is written, so a bad roster leaves no
+    half-made cohort for the user to find and clean up."""
+    with pytest.raises(ValidationError):
+        repo.create(
+            "Batch A",
+            "/tmp/batch-a",
+            animals=[animal("R-1", "g1", boxNumber=9)],  # out of range
+            groups=[{"id": "g1", "name": "Morning", "order": 0}],
+        )
+    assert repo.list_cohorts() == []
+
+
+def test_creating_without_a_roster_still_gets_the_default_group(repo) -> None:
+    cohort = repo.create("Batch B", "/tmp/batch-b", animals=None, groups=None)
+    assert len(cohort.groups) == 1
+    assert cohort.animals == []
+
+
+def test_summary_reports_the_boxes_in_use(repo) -> None:
+    """The grid flags an unreachable box without fetching every cohort in full."""
+    cohort = repo.create("Batch A", "/tmp/batch-a")
+    group = cohort.groups[0].id
+    saved = repo.update(
+        cohort.id,
+        {
+            "animals": [
+                animal("R-1", group, boxNumber=3),
+                animal("R-2", group, boxNumber=1),
+                animal("R-3", group),  # unassigned contributes nothing
+            ]
+        },
+    )
+    # Distinct and sorted, so the grid renders a stable list.
+    assert saved.to_summary()["assignedBoxes"] == [1, 3]
+
+
+def test_summary_boxes_are_deduplicated_across_groups(repo) -> None:
+    """Box numbers legitimately repeat between groups (§2) — the grid cares
+    which boxes are needed, not how many animals want each one."""
+    cohort = repo.create("Batch A", "/tmp/batch-a")
+    first = cohort.groups[0].id
+    saved = repo.update(
+        cohort.id,
+        {
+            "groups": [
+                {"id": first, "name": "Group 1", "order": 0},
+                {"id": "g2", "name": "Group 2", "order": 1},
+            ],
+            "animals": [animal("R-1", first, boxNumber=2), animal("R-2", "g2", boxNumber=2)],
+        },
+    )
+    assert saved.to_summary()["assignedBoxes"] == [2]
+
+
 def test_a_cohort_can_start_empty(repo) -> None:
     """§1 — real lab setup is rarely a single sitting."""
     cohort = repo.create("Batch A", "/tmp/a")

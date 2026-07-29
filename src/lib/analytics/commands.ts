@@ -9,6 +9,7 @@ import type { SidecarClient } from "../ws/client";
 import { CMD, SidecarCommandError } from "../ws/protocol";
 import type {
   AnalyticsSummary,
+  RecoverResult,
   RescanResult,
   SeriesResult,
   SessionListItem,
@@ -56,6 +57,19 @@ export async function rescan(
   cohortId: string,
 ): Promise<RescanResult> {
   return (await client.call(CMD.ANALYTICS_RESCAN, { cohortId })) as RescanResult;
+}
+
+/**
+ * The crash-recovery backfill (`data-saving.md` §7.3): rebuild `.json`/`.mat`
+ * from orphaned write-ahead `.tsv` files. Same explicit-action discipline as
+ * the rescan — and its natural follow-up, since a recovered file is an orphan
+ * the rescan can then adopt.
+ */
+export async function recover(
+  client: SidecarClient,
+  cohortId: string,
+): Promise<RecoverResult> {
+  return (await client.call(CMD.SESSIONS_RECOVER, { cohortId })) as RecoverResult;
 }
 
 export function errorMessage(err: unknown): string {

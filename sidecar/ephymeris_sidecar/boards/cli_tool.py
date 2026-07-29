@@ -71,7 +71,7 @@ class ArduinoCliTool(BoardTool):
     def is_available(self) -> bool:
         return shutil.which(self._binary) is not None or "/" in self._binary
 
-    async def _invocation_env(self) -> dict[str, str] | None:
+    async def invocation_env(self) -> dict[str, str] | None:
         """Environment for arduino-cli subprocesses, seeding data on first use.
 
         The bundled seed ships inside the install directory, which may be
@@ -115,7 +115,7 @@ class ArduinoCliTool(BoardTool):
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=await self._invocation_env(),
+            env=await self.invocation_env(),
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -215,7 +215,7 @@ class ArduinoCliTool(BoardTool):
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=await self._invocation_env(),
+                env=await self.invocation_env(),
             )
         except OSError as exc:
             raise FlashFailed(phase, f"couldn't run `{self._binary}`: {exc}") from exc

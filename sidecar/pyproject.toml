@@ -6,12 +6,21 @@ requires-python = ">=3.12"
 dependencies = [
     "pyserial>=3.5",
     "websockets>=14",
+    # The arduino-cli gRPC daemon client (hardware-interaction.md §2). A
+    # deliberate exception to the two-dependency rule — see reference.md's
+    # dependency policy: the subprocess backend remains as a fallback, so a
+    # failed grpcio install degrades flashing to the old path, never breaks it.
+    "grpcio>=1.60",
+    "protobuf>=5",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    # Codegen for the vendored arduino-cli protos (scripts/gen_grpc.py).
+    # Build-time only: the generated stubs are committed, like the wire mirrors.
+    "grpcio-tools>=1.60",
 ]
 # Only needed to build a shipped installer, so it doesn't ride along with dev.
 package = [

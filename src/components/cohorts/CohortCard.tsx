@@ -1,6 +1,8 @@
 import { motion } from "framer-motion";
+import { CircleAlert } from "lucide-react";
 import { useState } from "react";
 
+import { useBoxAvailability } from "@/lib/cohorts/boxAvailability";
 import { springSnappy } from "@/lib/motion";
 import type { CohortSummary } from "@/lib/cohorts/types";
 import { CohortIcon } from "./CohortIcon";
@@ -12,6 +14,10 @@ import { CohortIcon } from "./CohortIcon";
  * elevated surface. Name in Inter (Space Grotesk stays confined to section
  * headers per the typography rule), stat line in JetBrains Mono since that's
  * the app's convention for compact data readouts.
+ *
+ * Carries a quiet warning when one of the cohort's boxes isn't available on
+ * this machine — the grid is where someone looks before starting a session,
+ * so it's the last useful moment to find out before the mapping step.
  */
 export function CohortCard({
   cohort,
@@ -21,6 +27,8 @@ export function CohortCard({
   onOpen: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
+  const { statusOf } = useBoxAvailability();
+  const unavailable = cohort.assignedBoxes.filter((b) => statusOf(b) !== "available");
 
   return (
     <motion.button
@@ -52,6 +60,20 @@ export function CohortCard({
           {cohort.animalCount} {cohort.animalCount === 1 ? "animal" : "animals"}
           {cohort.groupCount > 1 && ` · ${cohort.groupCount} groups`}
         </span>
+        {unavailable.length > 0 && (
+          <span
+            className="mt-1 flex items-center gap-1 text-[11px]"
+            style={{ color: "var(--color-status-warning)" }}
+            title={`Assigned to ${
+              unavailable.length === 1 ? "a box" : "boxes"
+            } this machine can't reach: ${unavailable.join(", ")}`}
+          >
+            <CircleAlert size={11} strokeWidth={2} className="shrink-0" />
+            <span className="font-mono">
+              box {unavailable.join(", ")} unavailable
+            </span>
+          </span>
+        )}
       </span>
     </motion.button>
   );

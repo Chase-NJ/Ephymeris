@@ -82,12 +82,22 @@ class Cohort:
         }
 
     def to_summary(self) -> dict[str, Any]:
-        """The grid/dashboard shape — no animal or group detail (§10)."""
+        """The grid/dashboard shape — no animal or group detail (§10).
+
+        `assignedBoxes` is the one exception to "no animal detail", and it
+        earns it: the browser grid has to say whether a cohort's boxes still
+        exist on this machine, and without it that answer needs a full
+        `cohorts.get` per card. Distinct numbers only — *which* animal holds a
+        box is the editor's business, not the grid's.
+        """
         return {
             "id": self.id,
             "name": self.name,
             "animalCount": len(self.animals),
             "groupCount": len(self.groups),
+            "assignedBoxes": sorted(
+                {a.box_number for a in self.animals if a.box_number is not None}
+            ),
             "archived": self.archived,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,

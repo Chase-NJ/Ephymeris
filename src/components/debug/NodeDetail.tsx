@@ -26,6 +26,7 @@ import {
   useBoxOutput,
   useFlashedSketch,
   usePortStatus,
+  useUtilityStatus,
 } from "@/lib/hardware/context";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { getTaskProfile } from "@/lib/sessions/commands";
@@ -33,6 +34,7 @@ import { useSettings } from "@/lib/settings/context";
 import { BAUD_RATES } from "@/lib/settings/schema";
 import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
+import type { UtilityBaselineState } from "@/lib/ws/protocol";
 import type { TaskProfile } from "@/lib/sessions/types";
 
 /**
@@ -94,7 +96,23 @@ export function NodeDetail({
   const lines = useBoxOutput(box);
   const boards = useBoardPresence();
   const flashed = useFlashedSketch(box);
+  const utility = useUtilityStatus();
   const health = useBoxHealth()[box] ?? "absent";
+
+  // What the board is actually carrying (`hardware-interaction.md` §8): the
+  // baseline keeps every idle bound box on the configured utility sketch, so
+  // a box the sidecar reports `ready` has that sketch on it *now* — no manual
+  // flash needed for its controls and telemetry to be live. The sidecar's
+  // belief outranks the client-tracked flash, which goes stale the moment a
+  // background restore re-flashes over the user's sketch; conversely, a user
+  // flash of a different sketch moves the box off `ready`, so the tracked
+  // flash correctly takes over until the baseline reclaims the port.
+  const utilityBox = utility.boxes.find((b) => b.box === box);
+  const atBaseline =
+    utility.configured && utility.sketchPath !== null && utilityBox?.state === "ready";
+  const effectiveSketch = atBaseline
+    ? { path: utility.sketchPath!, name: utility.sketchName ?? "utility sketch" }
+    : flashed;
 
   const binding = settings.boxes.find((b) => b.box === box);
   const board = boards.find((b) => b.boxId === box) ?? null;
@@ -137,15 +155,17 @@ export function NodeDetail({
   // moves on, it's stale.
   useEffect(() => setActionError(null), [port.state]);
 
-  // Load the flashed sketch's Task Profile so a *utility* sketch gets its
-  // controls/telemetry strip. A behavior or profile-less sketch clears it.
+  // Load the carried sketch's Task Profile so a *utility* sketch gets its
+  // controls/telemetry strip — from the first open, when the baseline already
+  // put it there. A behavior or profile-less sketch clears it.
+  const effectivePath = effectiveSketch?.path ?? null;
   useEffect(() => {
-    if (!flashed) {
+    if (!effectivePath) {
       setProfile(null);
       return;
     }
     let cancelled = false;
-    getTaskProfile(client, flashed.path)
+    getTaskProfile(client, effectivePath)
       .then((p) => {
         if (!cancelled) setProfile(p);
       })
@@ -155,7 +175,7 @@ export function NodeDetail({
     return () => {
       cancelled = true;
     };
-  }, [client, flashed]);
+  }, [client, effectivePath]);
 
   async function run(action: () => Promise<unknown>): Promise<boolean> {
     setActionError(null);
@@ -294,9 +314,15 @@ export function NodeDetail({
           />
           <IdentityRow
             label="Sketch"
-            value={flashed ? flashed.name : "none flashed this session"}
-            mono={!!flashed}
-            dim={!flashed}
+            value={
+              effectiveSketch
+                ? atBaseline && !flashed
+                  ? `${effectiveSketch.name} (baseline)`
+                  : effectiveSketch.name
+                : baselineWord(utilityBox?.state)
+            }
+            mono={!!effectiveSketch}
+            dim={!effectiveSketch}
             last
           />
         </section>
@@ -379,7 +405,11 @@ export function NodeDetail({
           <Group title="Sketch">
             <div className="flex flex-wrap items-center gap-1.5 px-3 py-2.5">
               <span className="min-w-0 truncate font-mono text-[11px] text-static">
-                {flashed ? flashed.name : "nothing flashed this session"}
+                {effectiveSketch
+                  ? atBaseline && !flashed
+                    ? `${effectiveSketch.name} · baseline`
+                    : effectiveSketch.name
+                  : baselineWord(utilityBox?.state)}
               </span>
               <div className="ml-auto">
                 <Button
@@ -540,6 +570,22 @@ function ConsoleTab({
       </span>
     </button>
   );
+}
+
+/**
+ * The empty-sketch readout, honest about *why* nothing is known: a baseline
+ * restore mid-flight or a failed one says more than "none flashed" would.
+ * Every other state genuinely means the board's firmware is unknown.
+ */
+function baselineWord(state: UtilityBaselineState | undefined): string {
+  switch (state) {
+    case "restoring":
+      return "restoring baseline…";
+    case "failed":
+      return "baseline restore failed — see Config";
+    default:
+      return "none flashed this session";
+  }
 }
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {

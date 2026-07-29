@@ -13,7 +13,7 @@
 **The flow at a glance:**
 
 ```
-Launch  /launch               sidebar tab + dashboard hero CTA both land here:
+Dashboard  /                  hero CTA + session dock (the retired /launch's content):
    │                          start fresh, resume the running session, end it,
    │                          or resume/discard a set-up left mid-flow
    ▼
@@ -35,7 +35,7 @@ This document also resolves three long-standing TBD items: `hardware-interaction
 
 ## 0. Scope
 
-Defines the full path from the Launch page (`/launch` — the sidebar tab the dashboard's hero CTA also lands on) to a running Mission Control dashboard: the configuration step, the animal→box mapping and flashing sequence, and the live session UI (3D constellation, per-box controls, the zoomed-in per-animal view). Launch is also the way *back*: it renders `sessions.active`'s answer — the running session with an Open Mission Control action, set-ups still in `configuring` with Resume-setup/Discard, and crash-orphaned `stale` rows shown read-only (View in Analytics / Close out — never Resume, per §11). Consumes `data-saving.md`'s Task Profiles and file schema; doesn't redefine them.
+Defines the full path from the Dashboard (`/` — the hero CTA and the session dock beside it, which absorbed the retired `/launch` page, `ephymeris_v1.0.md` §3.2) to a running Mission Control dashboard: the configuration step, the animal→box mapping and flashing sequence, and the live session UI (3D constellation, per-box controls, the zoomed-in per-animal view). The session dock is also the way *back*: it renders `sessions.active`'s answer — the running session with an Open Mission Control action, set-ups still in `configuring` with Resume-setup/Discard, and crash-orphaned `stale` rows shown read-only (View in Analytics / Close out — never Resume, per §11). Consumes `data-saving.md`'s Task Profiles and file schema; doesn't redefine them.
 
 ---
 
@@ -188,7 +188,7 @@ Panning also has on-screen controls: a four-arrow pad with a recentre button, do
 
 Stars for animals currently `IN_SESSION` are **illuminated**; everyone else in the constellation is present but dim/unlit — including animals in a group that isn't running right now (§5.2), and animals with no box assigned at all. Only illuminated stars are interactive (hover reticle, nameplate, clickable) — an unlit star has no live view to show, and gets neither treatment.
 
-**A lit star's colour is its temperature, and its temperature is that animal's pooled rolling accuracy** (`components/sessions/starSurface.ts`). It renders as an actual stellar surface — granulated convection cells from a noise fBm, limb darkening so the disc reads as a sphere, and a rim-only chromosphere — climbing the real stellar sequence as the animal works:
+**A lit star's colour is its temperature, and its temperature is that animal's pooled rolling accuracy** (`components/constellation3d/starSurface.ts` + `StellarSurface.tsx`, shared with Debug's rig view since 2026-07-29 — `ephymeris_v1.0.md` §4.3). It renders as an actual stellar surface — granulated convection cells from a noise fBm, limb darkening so the disc reads as a sphere, and a rim-only chromosphere — climbing the real stellar sequence as the animal works:
 
 | Pooled rolling accuracy | Reads as | Class |
 |---|---|---|
@@ -349,7 +349,7 @@ All of the above now live in `websocket-protocol.md`, same convention as `cohort
 - [x] ~~Exact camera-motion parameters (easing curve, duration) for §6.3~~ — cubic ease-out over 1.5 s, recorded in §10
 - [x] ~~Whether `SessionAnimalRun` should be written incrementally or only at finalization~~ — **finalization only** (`data-saving.md` §10). Incremental writes only pay off for crash resumption, which is deliberately out of scope
 - [ ] **Switch Group's second lap is untested end to end.** The group-run bookkeeping that makes it advance rather than cycle is verified (the first group is recorded and skipped), but a full two-group session — switch, re-map, re-flash, run, end — hasn't been driven on hardware
-- [ ] Session resumption after an app or sidecar restart remains unsupported and unbuilt, by decision rather than omission. Mission Control recovers a *reload* fine via `sessions.status`, because the sidecar kept running; if the sidecar dies, the run is over and the `.tsv` is the record. The Launch page now *surfaces* such crash-orphaned rows (`sessions.active`'s `stale` list) with View-in-Analytics and Close-out actions — visibility changed, the no-resumption decision did not
+- [ ] Session resumption after an app or sidecar restart remains unsupported and unbuilt, by decision rather than omission. Mission Control recovers a *reload* fine via `sessions.status`, because the sidecar kept running; if the sidecar dies, the run is over and the `.tsv` is the record. The Dashboard's session dock now *surfaces* such crash-orphaned rows (`sessions.active`'s `stale` list) with View-in-Analytics and Close-out actions — visibility changed, the no-resumption decision did not
 - [x] ~~**`MetricChart.tsx` is built but unwired** (§6.4)~~ — **closed.** The zoomed view now has real live panels (§6.4), built on the shared `components/charts/` primitives; `MetricChart.tsx` is deleted rather than wired, since `UnitChart` had already generalised its idiom
 
 ---

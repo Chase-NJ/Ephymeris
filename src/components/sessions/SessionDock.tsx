@@ -1,14 +1,11 @@
-import { motion } from "framer-motion";
-import { ArrowRight, CircleAlert, Rocket } from "lucide-react";
+import { ArrowRight, CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
 import { errorMessage, getCohort } from "@/lib/cohorts/commands";
-import { useCohortCount } from "@/lib/cohorts/context";
 import { useAllPortStatuses } from "@/lib/hardware/context";
-import { springPanel, springSnappy } from "@/lib/motion";
 import { abandonSession, endSession } from "@/lib/sessions/commands";
 import {
   useActiveLoaded,
@@ -19,24 +16,28 @@ import { firstGroupToRun, type Session, type SessionSnapshot } from "@/lib/sessi
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Launch (`ephymeris_v1.0.md` §3.2) — the hub for getting into a session.
+ * The session dock — everything `sessions.active` reports, docked beside the
+ * Dashboard's hero CTA (ephymeris_v1.0.md §3.3). This is the former Launch
+ * page's content in panel form: the running session with its way back into
+ * Mission Control, set-ups still in `configuring` with Resume/Discard, and
+ * crash-orphaned `stale` rows shown read-only. The dock renders whatever the
+ * sidecar reports and stays current via `session.lifecycle` — nothing here is
+ * predicted client-side, per the sidecar-is-authoritative rule. Per-box
+ * liveness comes from `port.state`, not the snapshot's point-in-time flags.
  *
- * Start a new one, get back to the running one, end it, and clean up setups
- * that never finished. The page renders whatever `sessions.active` reports and
- * stays current via `session.lifecycle` — nothing here is predicted
- * client-side, per the sidecar-is-authoritative rule. Per-box liveness comes
- * from `port.state`, not from the snapshot's point-in-time `running` flags.
+ * Renders nothing when there is nothing to act on — the hero alone is the
+ * whole story then — and nothing before `sessions.active` has answered, per
+ * the Dashboard's no-spinner rule.
  *
  * Crash-orphaned sessions (`stale`) are shown read-only: their data is on disk
  * via the write-ahead `.tsv`, but resumption after a restart is out of scope
  * by decision — Close Out marks them completed, nothing offers to resume.
  */
-export function Launch() {
+export function SessionDock() {
   const navigate = useNavigate();
   const { client, status } = useSidecar();
   const active = useActiveSessions();
   const loaded = useActiveLoaded();
-  const cohortCount = useCohortCount();
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -52,6 +53,9 @@ export function Launch() {
   const running = active?.running ?? null;
   const configuring = active?.configuring ?? [];
   const stale = active?.stale ?? [];
+
+  if (!connected || !loaded) return null;
+  if (!running && configuring.length === 0 && stale.length === 0 && !error) return null;
 
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
@@ -82,17 +86,10 @@ export function Launch() {
   }
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={springPanel}
-      className="mx-auto max-w-4xl px-10 py-9"
-    >
-      <h1 className="font-display text-[22px] text-starlight">Launch</h1>
-
+    <div className="flex min-w-0 flex-1 flex-col gap-3">
       {error && (
         <div
-          className="mt-4 flex items-start gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
+          className="flex items-start gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
           style={{ color: "var(--color-status-error)" }}
         >
           <CircleAlert size={14} strokeWidth={1.75} className="mt-px shrink-0" />
@@ -100,95 +97,79 @@ export function Launch() {
         </div>
       )}
 
-      {!connected || !loaded ? (
-        <p className="mt-6 text-[13px] text-static">Waiting for the hardware service…</p>
-      ) : (
-        <>
-          {running ? (
-            <RunningCard
-              snapshot={running}
-              busy={busy}
-              onOpen={() =>
-                navigate(
-                  `/session/${running.session.id}/control?cohort=${running.session.cohortId}`,
-                )
-              }
-              onEnd={() => setConfirm({ kind: "end", session: running.session })}
-            />
-          ) : (
-            <StartCta
-              hasCohorts={cohortCount > 0}
-              onClick={() => navigate(cohortCount > 0 ? "/session/new" : "/cohorts")}
-            />
-          )}
+      {running && (
+        <RunningCard
+          snapshot={running}
+          busy={busy}
+          onOpen={() =>
+            navigate(`/session/${running.session.id}/control?cohort=${running.session.cohortId}`)
+          }
+          onEnd={() => setConfirm({ kind: "end", session: running.session })}
+        />
+      )}
 
-          {configuring.length > 0 && (
-            <section className="mt-8">
-              <h2 className="text-[13px] font-medium text-starlight">Set-up in progress</h2>
-              <p className="mt-1 text-[12px] text-static">
-                Created but never started — resume where you left off, or discard.
-              </p>
-              <div className="mt-3 flex flex-col gap-2">
-                {configuring.map((session) => (
-                  <SessionRow key={session.id} session={session}>
-                    <Button
-                      disabled={busy || !connected}
-                      onClick={() => void resumeSetup(session)}
-                    >
-                      Resume setup
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      disabled={busy || !connected}
-                      onClick={() => setConfirm({ kind: "discard", session })}
-                    >
-                      Discard
-                    </Button>
-                  </SessionRow>
-                ))}
-              </div>
-            </section>
-          )}
+      {configuring.length > 0 && (
+        <section>
+          <h2 className="text-[12px] font-medium text-starlight">
+            Set-up in progress
+            <span className="ml-2 font-sans text-[11px] font-normal text-static">
+              created but never started
+            </span>
+          </h2>
+          <div className="mt-2 flex flex-col gap-2">
+            {configuring.map((session) => (
+              <SessionRow key={session.id} session={session}>
+                <Button disabled={busy || !connected} onClick={() => void resumeSetup(session)}>
+                  Resume setup
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy || !connected}
+                  onClick={() => setConfirm({ kind: "discard", session })}
+                >
+                  Discard
+                </Button>
+              </SessionRow>
+            ))}
+          </div>
+        </section>
+      )}
 
-          {stale.length > 0 && (
-            <section className="mt-8">
-              <h2
-                className="text-[13px] font-medium"
-                style={{ color: "var(--color-status-warning)" }}
-              >
-                Ended unexpectedly
-              </h2>
-              <p className="mt-1 text-[12px] text-static">
-                These sessions were still running when the app last closed. Everything
-                recorded up to that point is safe on disk and visible in Analytics; a
-                session can&apos;t be resumed after a restart.
-              </p>
-              <div className="mt-3 flex flex-col gap-2">
-                {stale.map((session) => (
-                  <SessionRow key={session.id} session={session}>
-                    <Button
-                      disabled={busy || !connected}
-                      onClick={() =>
-                        navigate("/analytics", {
-                          state: { cohortId: session.cohortId, sessionId: session.id },
-                        })
-                      }
-                    >
-                      View in Analytics
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      disabled={busy || !connected}
-                      onClick={() => setConfirm({ kind: "closeout", session })}
-                    >
-                      Close out
-                    </Button>
-                  </SessionRow>
-                ))}
-              </div>
-            </section>
-          )}
-        </>
+      {stale.length > 0 && (
+        <section>
+          <h2
+            className="text-[12px] font-medium"
+            style={{ color: "var(--color-status-warning)" }}
+          >
+            Ended unexpectedly
+            <span className="ml-2 font-sans text-[11px] font-normal text-static">
+              recorded data is safe on disk; a session can&apos;t resume after a restart
+            </span>
+          </h2>
+          <div className="mt-2 flex flex-col gap-2">
+            {stale.map((session) => (
+              <SessionRow key={session.id} session={session}>
+                <Button
+                  disabled={busy || !connected}
+                  onClick={() =>
+                    navigate("/analytics", {
+                      state: { cohortId: session.cohortId, sessionId: session.id },
+                    })
+                  }
+                >
+                  View in Analytics
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy || !connected}
+                  onClick={() => setConfirm({ kind: "closeout", session })}
+                >
+                  Close out
+                </Button>
+              </SessionRow>
+            ))}
+          </div>
+        </section>
       )}
 
       <Modal
@@ -254,7 +235,7 @@ export function Launch() {
           </>
         )}
       </Modal>
-    </motion.section>
+    </div>
   );
 }
 
@@ -262,7 +243,7 @@ function sessionName(session: Session): string {
   return `${session.prefixName}_${session.sessionNumber}`;
 }
 
-/** The hero of the page while something is running: status at a glance plus
+/** The dock's centerpiece while something is running: status at a glance plus
  *  the way back in. Telemetry charts stay in Mission Control — this is the
  *  door, not a second cockpit. */
 function RunningCard({
@@ -304,30 +285,28 @@ function RunningCard({
   ).length;
 
   return (
-    <div className="surface mt-6 rounded-lg p-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <span
-              className="inline-block size-[7px] rounded-full"
-              style={{ background: "var(--color-status-ok)" }}
-            />
-            <h2 className="font-mono text-[15px] text-starlight">{sessionName(session)}</h2>
-          </div>
-          <p className="mt-1 font-mono text-[11px] text-static">
-            {session.date}
-            {` · started ${clock24(new Date(session.startedAt))}`}
-            {groupName && ` · ${groupName}`}
-          </p>
+    <div className="surface rounded-md p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-block size-[7px] rounded-full"
+            style={{ background: "var(--color-status-ok)" }}
+          />
+          <h2 className="font-mono text-[14px] text-starlight">{sessionName(session)}</h2>
         </div>
         <p className="font-mono text-[11px] text-static">
           {runningCount} of {boxes.length} boxes recording
           {endedCount > 0 && ` · ${endedCount} finished`}
         </p>
       </div>
+      <p className="mt-1 font-mono text-[11px] text-static">
+        {session.date}
+        {` · started ${clock24(new Date(session.startedAt))}`}
+        {groupName && ` · ${groupName}`}
+      </p>
 
       {boxes.length > 0 && (
-        <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1.5 lg:grid-cols-3">
+        <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-1.5">
           {boxes.map((box) => {
             const state = portStates[box.box]?.state ?? "IDLE";
             const live = state === "IN_SESSION";
@@ -351,7 +330,7 @@ function RunningCard({
         </div>
       )}
 
-      <div className="mt-5 flex items-center gap-2">
+      <div className="mt-4 flex items-center gap-2">
         <Button variant="primary" disabled={busy} onClick={onOpen}>
           Open Mission Control
           <ArrowRight size={13} strokeWidth={2} />
@@ -364,39 +343,9 @@ function RunningCard({
   );
 }
 
-/** Nothing running or mid-setup — same gate as the Dashboard hero: sessions
- *  need a cohort to run against. */
-function StartCta({ hasCohorts, onClick }: { hasCohorts: boolean; onClick: () => void }) {
-  return (
-    <motion.button
-      type="button"
-      whileHover={{ y: -2 }}
-      whileTap={{ scale: 0.995 }}
-      transition={springSnappy}
-      onClick={onClick}
-      className="mt-6 flex w-full items-center justify-between rounded-lg bg-pulsar px-6 py-5 text-left"
-    >
-      <span className="flex items-center gap-4">
-        <Rocket size={22} strokeWidth={1.75} className="shrink-0 text-void" />
-        <span>
-          <span className="block font-display text-lg font-semibold text-void">
-            {hasCohorts ? "Start a Session" : "Create a cohort to get started"}
-          </span>
-          <span className="mt-0.5 block text-[12px] text-void/70">
-            {hasCohorts
-              ? "Configure boxes and begin data collection"
-              : "Sessions run against a cohort — you'll need one first"}
-          </span>
-        </span>
-      </span>
-      <ArrowRight size={20} strokeWidth={2} className="shrink-0 text-void" />
-    </motion.button>
-  );
-}
-
 function SessionRow({ session, children }: { session: Session; children: React.ReactNode }) {
   return (
-    <div className="surface flex flex-wrap items-center justify-between gap-3 rounded-md px-4 py-3">
+    <div className="surface flex flex-wrap items-center justify-between gap-2 rounded-md px-3 py-2.5">
       <div className="min-w-0">
         <div className="font-mono text-[13px] text-starlight">{sessionName(session)}</div>
         <div className="mt-0.5 font-mono text-[11px] text-static">

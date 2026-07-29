@@ -191,8 +191,8 @@ export function MissionControl() {
     sessionStore.resetBox(box);
   }
 
-  // Back to Step 2 for a never-confirmed session — the same derivation
-  // Launch's "Resume setup" uses, since the record doesn't carry a group.
+  // Back to Step 2 for a never-confirmed session — the same derivation the
+  // session dock's "Resume setup" uses, since the record doesn't carry a group.
   function resumeSetup() {
     if (!cohort) return;
     const group = firstGroupToRun(cohort);
@@ -288,10 +288,10 @@ export function MissionControl() {
             void run(async () => {
               // A never-started session is discarded, not "ended": nothing was
               // recorded, so marking it completed would seed Analytics with an
-              // empty session — same rule as Launch's Discard.
+              // empty session — same rule as the session dock's Discard.
               if (configuring) {
                 await abandonSession(client, sessionId!);
-                navigate("/launch");
+                navigate("/");
                 return;
               }
               await endSession(client, sessionId!);
@@ -343,8 +343,8 @@ export function MissionControl() {
       {boxes.length === 0 ? (
         configuring ? (
           // The hint above says what's wrong; this is the way back. Same
-          // derivation as Launch's "Resume setup" — Step 2 needs a group and
-          // the record doesn't carry one.
+          // derivation as the session dock's "Resume setup" — Step 2 needs a
+          // group and the record doesn't carry one.
           <div className="mt-6 flex flex-col items-start gap-3">
             <p className="text-[13px] text-static">
               Boxes were never confirmed for this session, so there is nothing

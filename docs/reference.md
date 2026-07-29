@@ -150,8 +150,7 @@ Talks to the sidecar over the WebSocket only.
 
 | Route | View | Status |
 |---|---|---|
-| `/` | Dashboard — hero CTA (routes through Launch) plus three summary tiles | Wired |
-| `/launch` | Launch — start a session, status of / way back to the running one, end it, resume or discard unfinished set-ups, crash-orphan surfacing | Wired |
+| `/` | Dashboard — hero CTA with the session dock beside it (way back to the running session, end it, resume or discard unfinished set-ups, crash-orphan surfacing) plus three summary cards. Absorbed the retired `/launch` route (`ephymeris_v1.0.md` §3.2) | Wired |
 | `/cohorts`, `/cohorts/new`, `/cohorts/:id` | Cohort browser and editor | Wired |
 | `/debug` | Debug Mode console grid | Wired |
 | `/session/new` | Step 1 — configuration | Wired |

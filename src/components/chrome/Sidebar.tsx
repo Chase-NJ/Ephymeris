@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ChartLine, Orbit, Radio, Rocket, Settings, Terminal, Users } from "lucide-react";
+import { ChartLine, Orbit, Radio, Settings, Terminal, Users } from "lucide-react";
 import { NavLink, useLocation } from "react-router";
 import type { LucideIcon } from "lucide-react";
 
@@ -14,10 +14,10 @@ import { useRunningSession } from "@/lib/sessions/context";
  * Two groups: the working destinations at the top, and the configuration
  * pair (Config, Settings) pinned to the bottom just above the constellation
  * widget — the macOS convention of setup living at the edge of the list
- * rather than among the daily destinations. Launch owns the primary action
- * *and* the way back to a running session — the original "hero CTA only"
- * decision was reversed once sessions could outlive the screen that started
- * them (§3.2); its active state deliberately covers the whole /session/*
+ * rather than among the daily destinations. The Dashboard owns the primary
+ * action *and* the way back to a running session — the Launch nav item is
+ * retired (§3.2): its content docks beside the Dashboard's hero CTA, so the
+ * Dashboard row's active state deliberately covers the whole /session/*
  * flow, and a matte status-ok dot marks it while a session is running. The
  * constellation widget stays at the very bottom so box connectivity is never
  * something the user has to navigate to check.
@@ -32,12 +32,11 @@ interface NavItem {
 }
 
 const NAV_MAIN: readonly NavItem[] = [
-  { to: "/", label: "Dashboard", icon: Orbit },
   {
-    to: "/launch",
-    label: "Launch",
-    icon: Rocket,
-    match: (p) => p.startsWith("/launch") || p.startsWith("/session"),
+    to: "/",
+    label: "Dashboard",
+    icon: Orbit,
+    match: (p) => p === "/" || p.startsWith("/session"),
   },
   { to: "/cohorts", label: "Cohorts", icon: Users },
   { to: "/debug", label: "Debug", icon: Terminal },
@@ -91,7 +90,7 @@ function NavList({
                 className={active ? "text-pulsar" : ""}
               />
               <span className="font-medium">{item.label}</span>
-              {item.to === "/launch" && sessionRunning && (
+              {item.to === "/" && sessionRunning && (
                 <span
                   title="Session running"
                   className="ml-auto inline-block size-1.5 rounded-full"

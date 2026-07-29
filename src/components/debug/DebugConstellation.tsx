@@ -13,7 +13,9 @@ import {
   type SceneLink,
   type SceneNode,
 } from "@/components/constellation3d/Scene";
+import { StellarSurface } from "@/components/constellation3d/StellarSurface";
 import type { SceneOrbiter } from "@/components/constellation3d/Orbiters";
+import { useBoxStellar } from "./useBoxStellar";
 import { useRunningSession } from "@/lib/sessions/context";
 import { buildSky } from "@/lib/sessions/stars";
 import { useBoundBoxes, useSettings } from "@/lib/settings/context";
@@ -28,17 +30,25 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * bound box is a star at its assigned slot, nicknamed; selecting one flies the
  * camera in and docks the box's detail panel over the still-running scene.
  *
- * **Colour here is status, not performance.** Mission Control tints a star by
- * the animal's rolling accuracy; that would be meaningless on a box, and this
- * view exists to answer "is this box alive and what is it doing". So the core
- * takes `GL_HEALTH`, and the motion says the rest — the same grammar the 2D
- * widget established, lifted into three dimensions:
+ * **Colour is temperature here too** (revised 2026-07-29 — this view
+ * originally kept colour for status). A box's star takes Mission Control's
+ * stellar ramp (`StellarSurface`), tinted by the **mean recorded accuracy of
+ * the animals assigned to that box** across all scored sessions
+ * (`useBoxStellar`), so the rig view answers "which boxes house working
+ * animals" with the same vocabulary the session view taught. The assigned
+ * animals themselves ride the star as named satellites, running or not.
  *
- *  - a detected box has a mote in orbit (it's alive on the bus);
- *  - an *open* box (passthrough / in session) adds a slow dashed ring — the
- *    instrument-HUD read, never a glow (§2.2);
- *  - a configured-but-undetected box sits still in Halo, and a faulted box
- *    still in Error red — stillness is the status.
+ * Status still animates, it just no longer colours the photosphere — the 2D
+ * widget's grammar, lifted into three dimensions:
+ *
+ *  - a *detected* box's surface churns and carries a mote in orbit (alive on
+ *    the bus); an undetected box's surface is frozen — stillness is the
+ *    status, carried into the star itself;
+ *  - an *open* box (passthrough / in session) adds the slow dashed instrument
+ *    ring — the instrument-HUD read, never a glow (§2.2);
+ *  - a *faulted* box wears a thin steady ring in Error red — the one place
+ *    status still owns a colour, because a fault must not be mistakable for a
+ *    cool star.
  *
  * Unlike Mission Control there is no seeded fallback: `resolveLayout` answers
  * with the pre-zodiac `legacyLayout` when no constellation has been chosen, and
@@ -54,6 +64,7 @@ export function DebugConstellation({
   const { settings } = useSettings();
   const bound = useBoundBoxes();
   const health = useBoxHealth();
+  const stellar = useBoxStellar();
 
   const layout = useMemo(
     () => resolveLayout(settings.constellation, settings.constellationSlots, bound),
@@ -61,8 +72,8 @@ export function DebugConstellation({
   );
 
   // Boxes are their own occupants here — a star *is* a box, so the two ids are
-  // the same fact. Keyed on the bound set alone: health arrives from the
-  // presence poll and the port state machine and must never move a star.
+  // the same fact. Keyed on the bound set alone: health and temperature arrive
+  // from their own stores and must never move a star.
   const boundKey = bound.join(",");
   const sky = useMemo(
     () =>
@@ -81,20 +92,30 @@ export function DebugConstellation({
     [settings.boxes],
   );
 
-  // When a session is live, its box → animal mapping shows here too: the
-  // assigned animal rides the box's star as a named satellite, so the rig
-  // view answers "who is in box 3 right now" without leaving Debug. No
-  // session, no satellites — the mote already says "alive on the bus".
+  // Every animal assigned to a box rides its star as a named satellite —
+  // the rig view answers "whose box is this" at a glance. While a session is
+  // live, its box → animal mapping upgrades the matching satellites to
+  // active (orbit + strobe), so "who is in box 3 right now" reads as motion
+  // against the parked assignment.
   const running = useRunningSession();
   const crews = useMemo(() => {
     const map = new Map<number, SceneOrbiter[]>();
+    for (const [box, info] of Object.entries(stellar)) {
+      if (!info) continue;
+      map.set(
+        Number(box),
+        info.crew.map((animal) => ({ id: animal.id, name: animal.name, active: false })),
+      );
+    }
     for (const b of running?.boxes ?? []) {
       const crew = map.get(b.box) ?? [];
-      crew.push({ id: b.animalId, name: b.animalName, active: b.running });
+      const known = crew.find((c) => c.id === b.animalId);
+      if (known) known.active = b.running;
+      else crew.push({ id: b.animalId, name: b.animalName, active: b.running });
       map.set(b.box, crew);
     }
     return map;
-  }, [running]);
+  }, [stellar, running]);
 
   const nodes: SceneNode[] = sky.points.map((point, index) => {
     if (point.occupantId === null) {
@@ -120,10 +141,17 @@ export function DebugConstellation({
       active: true,
       name: labels.get(box) ?? `Box ${box}`,
       badge: box,
-      // The anonymous mote stands down while a named satellite is up — two
-      // craft in crossing orbits would read as noise, and a box with a crewed
-      // run is self-evidently alive on the bus.
-      body: <BoxStar radius={point.radius} health={state} crewed={!!crew?.length} />,
+      // The anonymous mote stands down while any satellite is up — crossing
+      // craft would read as noise, and a crewed box's liveness still shows in
+      // the churn of its surface.
+      body: (
+        <BoxStar
+          radius={point.radius}
+          health={state}
+          accuracy={stellar[box]?.accuracy ?? null}
+          crewed={!!crew?.length}
+        />
+      ),
       orbiters: crew,
     };
   });
@@ -156,22 +184,26 @@ function isLive(
 }
 
 /**
- * One box, as a star. Matte and faceted — flat triangles catch nothing, which
- * is exactly right under §2.2's no-glow rule — with the motion carrying what
- * the colour alone can't.
+ * One box, as a star. The photosphere is Mission Control's shared
+ * `StellarSurface`, tinted by the box's earned temperature; the hardware
+ * status rides on top as motion and instrument rings, never as surface
+ * colour — except the fault ring, which is the one status that must not be
+ * readable as anything else.
  */
 function BoxStar({
   radius,
   health,
+  accuracy,
   crewed = false,
 }: {
   radius: number;
   health: BoxHealth;
+  /** Mean recorded accuracy of the box's assigned animals (`useBoxStellar`). */
+  accuracy: number | null;
   /** A named animal satellite is in orbit — the anonymous mote stands down. */
   crewed?: boolean;
 }) {
   const reduceMotion = useReduceMotion();
-  const core = useRef<THREE.Group>(null);
   const mote = useRef<THREE.Group>(null);
   const ring = useRef<THREE.Group>(null);
 
@@ -180,21 +212,15 @@ function BoxStar({
 
   useFrame((_state, delta) => {
     if (reduceMotion) return;
-    // A slow turn, so the facets read as a solid rather than a disc. Stillness
-    // is the status for an absent or faulted box, so neither turns.
-    if (core.current && detected) core.current.rotation.y += delta * 0.35;
     if (mote.current) mote.current.rotation.y += delta * (open ? 0.9 : 0.45);
     if (ring.current) ring.current.rotation.z += delta * 0.26;
   });
 
   return (
     <group>
-      <group ref={core}>
-        <mesh>
-          <icosahedronGeometry args={[radius, 1]} />
-          <meshBasicMaterial color={GL_HEALTH[health]} />
-        </mesh>
-      </group>
+      {/* The surface churns only while the box is detected — stillness is the
+          status, now written into the photosphere itself. */}
+      <StellarSurface radius={radius} accuracy={accuracy} churn={detected} />
 
       {/* Open box: the slow dashed instrument ring. Built from short arc
           segments rather than a dashed material, which needs line distances
@@ -215,6 +241,21 @@ function BoxStar({
             </mesh>
           ))}
         </group>
+      )}
+
+      {/* Faulted box: a thin steady Error-red ring. Status colour's last
+          holdout — a fault has to be unmistakable at overview range, and a
+          cool-red star alone could be an innocently unscored box. */}
+      {health === "fault" && (
+        <mesh rotation={[Math.PI / 2.4, 0, 0]}>
+          <ringGeometry args={[radius * 1.7, radius * 1.7 + 0.045, 40]} />
+          <meshBasicMaterial
+            color={GL_HEALTH.fault}
+            transparent
+            opacity={0.85}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
       )}
 
       {/* Detected box: a mote in orbit — alive on the bus.

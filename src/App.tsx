@@ -7,7 +7,6 @@ import { CohortEditor } from "./routes/CohortEditor";
 import { Cohorts } from "./routes/Cohorts";
 import { Dashboard } from "./routes/Dashboard";
 import { DebugMode } from "./routes/DebugMode";
-import { Launch } from "./routes/Launch";
 import { MissionControl } from "./routes/MissionControl";
 import { SessionConfig } from "./routes/SessionConfig";
 import { SessionMapping } from "./routes/SessionMapping";
@@ -18,7 +17,8 @@ export default function App() {
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<Dashboard />} />
-        <Route path="/launch" element={<Launch />} />
+        {/* /launch is retired (ephymeris_v1.0.md §3.2) — the Dashboard's hero
+            and session dock absorbed it, and old paths fall through to `*`. */}
         <Route path="/cohorts" element={<Cohorts />} />
         <Route path="/cohorts/new" element={<CohortEditor />} />
         <Route path="/cohorts/:id" element={<CohortEditor />} />

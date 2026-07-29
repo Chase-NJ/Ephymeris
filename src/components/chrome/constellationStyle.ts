@@ -51,12 +51,12 @@ export const GL = {
 } as const;
 
 /**
- * Box health as a WebGL colour — the 3D counterpart of `NODE_FILL`, and the
- * reason Debug Mode's constellation does *not* borrow Mission Control's
- * temperature ramp. In a session view a star's colour is the animal's
- * accuracy; in Debug it is the box's own status, which is the only thing that
- * view exists to report. Two meanings for one channel is exactly why each view
- * supplies its own star body rather than sharing one.
+ * Box health as a WebGL colour — the 3D counterpart of `NODE_FILL`.
+ *
+ * Debug's constellation now shares Mission Control's temperature ramp for the
+ * star surfaces themselves (revised 2026-07-29, `ephymeris_v1.0.md` §4.3), so
+ * of these only `fault` still reaches the 3D scene — the error ring around a
+ * faulted box's star, the one status that must keep its colour.
  *
  * Keys match `BoxHealth`; values must track `NODE_FILL`'s tokens.
  */

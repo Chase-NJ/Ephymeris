@@ -1,6 +1,4 @@
-import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
-import * as THREE from "three";
 
 import { GL } from "@/components/chrome/constellationStyle";
 import {
@@ -8,19 +6,11 @@ import {
   type SceneLink,
   type SceneNode,
 } from "@/components/constellation3d/Scene";
-import {
-  CORONA_FRAGMENT,
-  CORONA_VERTEX,
-  STAR_FRAGMENT,
-  STAR_VERTEX,
-  rampColors,
-  temperatureFor,
-} from "./starSurface";
+import { StellarSurface } from "@/components/constellation3d/StellarSurface";
 import { layoutFor } from "@/lib/constellations/slots";
 import { zodiacById } from "@/lib/constellations/zodiac";
 import { buildSky } from "@/lib/sessions/stars";
 import { useBoundBoxes, useSettings } from "@/lib/settings/context";
-import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
  * The 3D constellation (`starting-a-session.md` §6).
@@ -183,72 +173,3 @@ function EmptyStar({ radius }: { radius: number }) {
   );
 }
 
-/**
- * A running animal's star: granulated surface plus a rim-only chromosphere,
- * both tinted by the temperature its pooled accuracy earns (`starSurface.ts`).
- *
- * The colour is animated toward its target rather than snapped, so a run of
- * good trials warms the star visibly instead of making it flicker between
- * classes trial by trial.
- */
-function StellarSurface({
-  radius,
-  accuracy,
-}: {
-  radius: number;
-  accuracy: number | null;
-}) {
-  const reduceMotion = useReduceMotion();
-
-  const uniforms = useMemo(
-    () => ({
-      uTime: { value: 0 },
-      uCore: { value: new THREE.Color("#ff6a3d") },
-      uEdge: { value: new THREE.Color("#8f2d1a") },
-      uActivity: { value: 1 },
-    }),
-    [],
-  );
-  // Shares the *same* Color instance as the surface, so the rim tracks the
-  // temperature for free — lerping one below updates both.
-  const coronaUniforms = useMemo(
-    () => ({ uCore: { value: uniforms.uCore.value }, uStrength: { value: 0.5 } }),
-    [uniforms],
-  );
-
-  const target = useMemo(() => rampColors(temperatureFor(accuracy)), [accuracy]);
-
-  useFrame((_state, delta) => {
-    if (!reduceMotion) uniforms.uTime.value += delta;
-    uniforms.uActivity.value = reduceMotion ? 0 : 1;
-    // Ease toward the earned temperature — fast enough to notice within a few
-    // trials, slow enough that one lucky trial doesn't recolour the star.
-    const k = Math.min(1, delta * 1.2);
-    uniforms.uCore.value.lerp(target.core, k);
-    uniforms.uEdge.value.lerp(target.edge, k);
-  });
-
-  return (
-    <group>
-      <mesh>
-        <sphereGeometry args={[radius, 48, 48]} />
-        <shaderMaterial
-          vertexShader={STAR_VERTEX}
-          fragmentShader={STAR_FRAGMENT}
-          uniforms={uniforms}
-        />
-      </mesh>
-      <mesh scale={1.35}>
-        <sphereGeometry args={[radius, 32, 32]} />
-        <shaderMaterial
-          vertexShader={CORONA_VERTEX}
-          fragmentShader={CORONA_FRAGMENT}
-          uniforms={coronaUniforms}
-          transparent
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-    </group>
-  );
-}

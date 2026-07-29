@@ -96,7 +96,9 @@ const TRAVEL = 26;
  * travels forward into it rather than cutting.
  */
 function flowStep(pathname: string): number | null {
-  if (pathname === "/launch") return 0;
+  // The Dashboard is the flow's start now that /launch is retired (§3.2) —
+  // its hero CTA and session dock are where every session journey begins.
+  if (pathname === "/") return 0;
   if (pathname === "/session/new") return 1;
   if (/^\/session\/[^/]+\/mapping$/.test(pathname)) return 2;
   if (/^\/session\/[^/]+\/control$/.test(pathname)) return 3;

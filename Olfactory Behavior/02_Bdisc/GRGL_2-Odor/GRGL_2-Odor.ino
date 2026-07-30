@@ -8,77 +8,43 @@ Purpose:
 
   Notable Features:
   - Anti-bias selection
-  - Integration with Python GUI
+  - Integration with the Ephymeris app
   - Per-side correction trials
-  - Togglable lazy rat delay escalation
+  - Togglable (and stage-gated) lazy rat delay escalation
 
-  Runtime config arrives from the GUI in the START command (see BehaviorBox.h /
-  the app's start-command builder): START CL=<int> CR=<int> LAZY=<0|1> SEED=<uint32>
-  -- per-side correction budgets, the escalating-lazy-penalty toggle, and this
-  run's RNG seed. Bare START = CL=0 CR=0 LAZY=1 and a self-seeded (weak) RNG.
+  This sketch is ONLY: the two go-trial types, the session policy objects, and
+  the setup/loop wiring. The trial runner lives in BehaviorBox.h, shared with
+  every other behavior sketch -- which is what keeps this sketch and its GRGL_2-Odor_EZ sibling
+  from drifting apart, as two hand-maintained copies of the loop had.
+
+  EVERY timing, hold, window, penalty, reward volume, anti-bias clamp and stage
+  threshold arrives from the app on the START line and is declared in this
+  sketch's task.json -- tuned per run in the Config page, not by reflashing. The
+  values applied by clampTaskParams() below are only
+  the bare-START fallback for a hand-typed console session or an older host.
 */
 
-#include <BehaviorBox.h> // the single shared header for every sketch (pins, strobes, session policy)
+#include <BehaviorBox.h> // pins, strobes, TaskParams, session policy + the shared trial runner
 
-/*============= Experiment Hyperparameters =============*/
-/* Trial timing parameters (in ms) */
-const int baudRate = 9600;           // Baud rate for communication with MatLab via serial port
-const int errorDelay = 20000;        // Timeout for incorrect response.
-const int odorPortTimeout = 4000;    // Window rat has to poke following light on.
-const int odorPokeHold = 500;        // Duration rat must hold poke before odor delivery AND during odor sampling. (ms)
-const int fluidWellHold = 200;       // Duration rat must hold poke before fluid delivery (on correct trials). (ms)
-const int fluidWellPoll = 2000;      // Window rat has to respond following successful odor sampling.
-const int nogoWellPoll = 2000;       // Duration rat must withold response on NO-GO trials, following successful odor sampling.
-const int lazyRatDelay = 6000;       // Base timeout for failure to initiate trial. Now >= standardITI so
-                                     // not-playing is never cheaper than playing-and-winning.
-const int lazyEscalateStep = 6000;   // Added per CONSECUTIVE lazy trial (escalating abstention cost)
-const int lazyDelayMax = 30000;      // Ceiling on the escalated lazy penalty
-const int noPokeHoldTimeout = 10000; // Timeout for failure to hold poke
-const int standardITI = 4000;        // Intertrial interval on correct trials
-const int FluidPinTimes[] = {
-    100, // Left-well  1
-    100, // Left-well  2
-    100, // Right-well 1
-    100  // Right-well 2
-};
-/*======================================================*/
+/* ======== Session wiring ======== */
+const int baudRate = 9600;    // Serial baud (matches the app)
+int currentTrial = 0;         // # of trials advanced this session
+bool sessionComplete = false; // Session start / end guard
 
-/* ======== Trial sequence parameters ======== */
-const int pollingRate = 5;     // Polling rate for our IR sensors (in ms)
-const int primingDelay = 1000; // Time odor is primed prior to trial light on (fixed, controlled latency)
-const int numTrials = 1000;    // Number of trials to be run (session cap)
-int currentTrial = 0;          // # of trials advanced this session
-bool sessionComplete = false;  // If rat somehow completes numTrials...
-// Correction budgets + lazy-penalty escalation now live in CorrectionPolicy /
-// AbstentionPenalty (BehaviorBox.h), configured from the START command.
+TaskParams params; // every tunable, filled from the START line (BehaviorBox.h)
+TrialClock clock;  // trial timestamps
 
-/* ===== Adaptive anti-bias selection ===== */
-const int biasWindow = 20;        // sliding window of recent expressed choices
-const float debiasStrength = 0.5; // how hard to push the correct side against the rat's bias
-const float pSideMin = 0.02;      // clamp on P(correct side); near-0 lets a fixed-side rat be starved hard,
-const float pSideMax = 0.98;      // while still never going fully deterministic (which would itself be a cue)
-const int maxConsecutiveSide = 10; // hard cap on consecutive identical correct sides. Raised so the anti-bias
-                                  // draw isn't forced to hand a fixed-side rat a "free" opposite-side trial
-                                  // every 3rd trial -- that floor was ~1/3 of remy2's entire reward income.
+/* recordEvent -> emitStrobe (BehaviorBox.h) bound to this sketch's clock. */
+void recordEvent(int eventCode) { emitStrobe(clock, eventCode); }
 
-/* Trial Timing -- TrialClock lives in BehaviorBox.h (shared). */
-TrialClock clock; // Encapsulates the logic for trial timestamps
-
-/* The box pinout (odorPort/rightWell/leftWell/trialLight/vac/Odors[]/Fluids[]),
-   the BF_* strobe codes, the Fluids[] index macros (LEFT_WELL_FL_1 ... SENTINEL),
-   and the distinct BF_ODOR_n_ON codes all live in BehaviorBox.h now. The concrete
-   go-trial instances below stay here -- they wire this sketch's odor/strobe
-   choices into the shared TrialType. */
-
-/* ===== TRIAL TYPES ===== */
-// Two go trials -- one per side. The AntiBiasSelector (selector.selectNext())
-// picks between these live, using the adaptive anti-bias logic, not a fixed pool.
-// Go Trials:
+/* ===== TRIAL TYPES =====
+   Two go trials -- one per side. The AntiBiasSelector picks between them live,
+   using the adaptive anti-bias logic, not a fixed pool. */
 const TrialType goRight1(
     true,             // Is this a go trial?
     Odors[0],         // Odor 1
     rightWell,        // Correct response: right fluid well
-    RIGHT_WELL_FL_1,  // Index into Fluids[] & FluidPinTimes[]
+    RIGHT_WELL_FL_1,  // Index into Fluids[] & params.fluidPinTimes[]
     BF_ODOR_1_ON,     // Strobe for odor on
     BF_FLUID_R,       // Strobe for right fluid
     BF_STOP_FLUID_G_R // Strobe for stop right fluid
@@ -92,119 +58,24 @@ const TrialType goLeft1(
     BF_FLUID_L,
     BF_STOP_FLUID_G_L);
 
-/* ===== Session objects (BehaviorBox.h) =====
-   The anti-bias ring buffer + selection, the lazy-penalty escalator, the
-   per-side correction budgets, and the START-parsed config are each owned by a
-   small class now, so adding the next policy/toggle is a localized change. The
-   anti-bias tuning constants above (which differ between the two sketches) are
-   passed in here. */
-SessionConfig sessionCfg; // populated from START in setup()
-AntiBiasSelector selector(&goRight1, &goLeft1, biasWindow, debiasStrength,
-                          pSideMin, pSideMax, maxConsecutiveSide);
-AbstentionPenalty abstention(lazyRatDelay, lazyEscalateStep, lazyDelayMax);
+/* ===== Session policy (BehaviorBox.h) =====
+   The anti-bias ring buffer + selection, the lazy-penalty escalator and the
+   per-side correction budgets each live in their own small class. They are
+   globals, so they are constructed long before START arrives -- each one adopts
+   the run's parameters in configure(), called once after the line is parsed. */
+AntiBiasSelector selector(&goRight1, &goLeft1);
+AbstentionPenalty abstention;
 CorrectionPolicy correction;
+TrialPolicy policy; // the three, handed to the shared runner
 
-const TrialType *currentTrialPtr = nullptr; // current trial; re-selected only when we advance
-
-void setup()
-{
-  initBoxHardware(); // configure every box pin + land all outputs LOW (BehaviorBox.h)
-
-  sessionComplete = true; // session start / end guard
-  Serial.begin(baudRate); // Initialize serial com with baud rate
-
-  /* Wait for the START token from the Python GUI.
-     1. The host opens the port (which resets the Mega via DTR).
-     2. We land here, announce READY so the GUI can arm its START button.
-     3. Block until we receive a "START" line, optionally carrying runtime
-        config: "START CL=<int> CR=<int> LAZY=<0|1>" (per-side correction
-        budgets + lazy-escalation toggle). A bare "START" uses the defaults
-        (CL=0 CR=0 LAZY=1) -- the legacy behavior. parseStartCommand() mirrors
-        protocol.build_start_command in the Python package. */
-  digitalWrite(trialLight, HIGH); // Light on == armed, waiting for GO
-  delay(50);                      // Let the post-reset serial settle
-  Serial.println("READY");        // Tell the GUI we're ready to begin
-
-  char cmd[96]; // must hold the whole key=value line, SEED token included --
-                // readLineInto() truncates at this cap, and a SEED lost there
-                // silently drops the session back onto the weak clock fallback
-  while (true)
-  {
-    if (readLineInto(cmd, sizeof(cmd)) && strncmp(cmd, "START", 5) == 0 && (cmd[5] == '\0' || cmd[5] == ' '))
-    {
-      parseStartCommand(cmd, sessionCfg); // fill sessionCfg (defaults preserved)
-      correction.configure(sessionCfg.correctionLeft, sessionCfg.correctionRight);
-      abstention.setEnabled(sessionCfg.lazyEscalationEnabled);
-      break; // START received -- begin session
-    }
-  }
-
-  /* Seed the RNG before anything draws from it, and echo the seed so the host
-     records the state this session actually ran on. The value comes from the
-     app (SEED=<n>, drawn from an OS CSPRNG at the start click); micros() is
-     only the fallback for an older host, and is weak for the reason spelled
-     out over beginSessionRng() in BehaviorBox.h. */
-  beginSessionRng(sessionCfg);
-
-  digitalWrite(trialLight, LOW);
-  beginNewSession(); // Start session! (stamps t=0, fires BF_START_SESSION)
-}
-
-// Main loop:
-void loop()
-{
-  if (sessionComplete)
-    return;
-
-  /* Honor a remote STOP from the host GUI. Checked once per trial
-     boundary (not mid-trial), so a stop never truncates a trial --
-     this keeps the strobe stream's triplet structure intact for
-     downstream analysis. If a STOP is seen we end cleanly here and
-     fall through; the sessionComplete guard above idles us next pass. */
-  if (checkForStop())
-  {
-    endCurrentSession();
-    return;
-  }
-
-  /* Pick the next trial live. We only re-select when the previous trial
-     ADVANCED; a trial that returns false (an abort, or an in-block
-     correction error) keeps currentTrialPtr so the SAME side is re-presented
-     -- preserving the original repeat-the-same-trial semantics. */
-  if (currentTrialPtr == nullptr)
-  {
-    currentTrialPtr = selector.selectNext();
-  }
-
-  /* Run our behavior! */
-  if (odorSampling(*currentTrialPtr))
-  {
-    currentTrial++; // Advance only on a completed/advancing trial
-    // Consume this side's leading correction budget (a correct trial, or an
-    // already-past-budget advance). A correction REPEAT returns false above and
-    // never reaches here, so it doesn't consume budget.
-    correction.onAdvance(currentTrialPtr->correctWell == rightWell);
-    currentTrialPtr = nullptr; // force a fresh selection next loop
-    if (currentTrial >= numTrials)
-      endCurrentSession(); // If rat completes all trials
-  }
-  else
-  {
-    recordEvent(BF_INVALID_TRIAL); // Trial aborted -- repeat the same side
-  }
-}
-
-/* ===================================== Utility functions ===================================== */
-/* checkForStop(), readLineInto(), shutdownHardware(), verifySensor(), and
-   flashLight() now live in BehaviorBox.h (shared by every sketch). */
+const TrialType *currentTrialPtr = nullptr; // re-selected only when we advance
 
 /* Housekeeping for starting a new experiment session */
 void beginNewSession()
 {
   clock.beginSession(); // Initialize clock on rising edge
-
   sessionComplete = false;
-  currentTrial = 0;              // Start at beginning of Trials array
+  currentTrial = 0;
   recordEvent(BF_START_SESSION); // Mark start
 }
 
@@ -216,204 +87,91 @@ void endCurrentSession()
   recordEvent(BF_END_SESSION);
 }
 
-/* grglFrand(), the anti-bias ring buffer + selection, verifySensor(), and
-   flashLight() now live in BehaviorBox.h. Call sites use the `selector` instance
-   and the shared helpers (verifySensor is called with this sketch's pollingRate). */
-
-/* recordEvent -> emitStrobe (BehaviorBox.h) bound to this sketch's clock, so
-   every call site below stays unchanged. */
-void recordEvent(int eventCode) { emitStrobe(clock, eventCode); }
-
-/*===============================================================================================*/
-
-/*=== Trial Logic Functions ===*/
-bool odorSampling(TrialType trial)
+void setup()
 {
-  digitalWrite(trial.odorPin, HIGH); // 1. Prime the correct odor
-  delay(primingDelay);               // 2. Fixed priming delay (controlled temporal environment)
-  digitalWrite(trialLight, HIGH);    // 3. Turn on the trial light
-  recordEvent(BF_LIGHTS_ON);
+  initBoxHardware(); // configure every box pin + land all outputs LOW
 
-  unsigned long waitStart = millis();
-  while (digitalRead(odorPort) == HIGH)
-  { // 4. Await rat to poke odorPort
-    if (millis() - waitStart >= odorPortTimeout)
+  sessionComplete = true;
+  Serial.begin(baudRate);
+
+  /* Bare-START fallback only -- the app overwrites all of this from task.json. */
+  clampTaskParams(params);
+
+  /* Wait for the START token from the app.
+     1. The host opens the port (which resets the Mega via DTR).
+     2. We land here, announce READY so the app can arm its start button.
+     3. Block until a "START" line arrives carrying this run's parameters and
+        its SEED. A bare "START" keeps every default set above. */
+  digitalWrite(trialLight, HIGH); // Light on == armed, waiting for GO
+  delay(50);                      // Let the post-reset serial settle
+  Serial.println("READY");        // Tell the app we're ready to begin
+
+  char cmd[START_LINE_MAX]; // must hold the WHOLE line: readLineInto() truncates
+                            // at this cap and a token lost there is silent -- the
+                            // session then runs on a value nobody chose.
+  while (true)
+  {
+    if (readLineInto(cmd, sizeof(cmd)) && strncmp(cmd, "START", 5) == 0 && (cmd[5] == '\0' || cmd[5] == ' '))
     {
-      // Error 1: Rat failed to poke in time
-      digitalWrite(trialLight, LOW);
-      digitalWrite(trial.odorPin, LOW);
-      recordEvent(BF_LAZY_RAT);
-      selector.recordAbstention(trial.correctWell == rightWell); // abstention feeds the bias estimate
-      // Full task: escalation is always stage-allowed; whether it actually
-      // escalates (vs a flat base delay) depends on the LAZY toggle, which the
-      // penalty owns. OFF -> flat lazyRatDelay, no consecutiveLazy growth.
-      delay(abstention.nextDelay(true));
-      return false;
+      parseStartCommand(cmd, params); // fill params (anything unsent keeps its default)
+      break;                          // START received -- begin session
     }
-    delay(pollingRate);
-  }
-  recordEvent(BF_ODOR_POKE);
-  // NOTE: the abstention escalator is NOT reset here. A bare odor-poke (or
-  // poke-and-bail) must not defuse the lazy penalty -- only a completed CORRECT
-  // trial clears it (abstention.reset() in the standardITI branch below). This
-  // closes the poke-to-reset loophole. (The EZ variant deliberately differs:
-  // it resets on poke, since its shaping stages reward engagement.)
-
-  if (!verifySensor(odorPort, odorPokeHold, pollingRate))
-  { // 5. Verify rat holds poke (pre-odor hold)
-    // Error 2: Rat didn't hold poke before vac close
-    digitalWrite(trialLight, LOW);
-    digitalWrite(trial.odorPin, LOW);
-    recordEvent(BF_ODOR_UNPOKE_EARLY);
-    selector.recordAbstention(trial.correctWell == rightWell); // poke-and-bail still counts as not-engaging
-    delay(noPokeHoldTimeout);
-    return false;
   }
 
-  recordEvent(trial.odorOnCode); // Send code to MatLab for trial-specific odor
-  digitalWrite(vac, HIGH);       // 6. Close vac (N.O.V.), directing odor to rat
+  selector.configure(params);
+  abstention.configure(params);
+  correction.configure(params.correctionLeft, params.correctionRight);
+  policy.selector = &selector;
+  policy.abstention = &abstention;
+  policy.correction = &correction;
 
-  if (!verifySensor(odorPort, odorPokeHold, pollingRate))
-  { // 7. Verify rat samples odor for odorPokeHold
-    // Error 3: Rat didn't sample odor long enough
-    digitalWrite(trialLight, LOW);
-    digitalWrite(trial.odorPin, LOW);
-    digitalWrite(vac, LOW);
-    recordEvent(BF_ODOR_UNPOKE_EARLY);
-    selector.recordAbstention(trial.correctWell == rightWell); // poke-and-bail still counts as not-engaging
-    delay(noPokeHoldTimeout);
-    return false;
-  }
+  /* Seed the RNG before anything draws from it, and echo the seed so the host
+     records the state this session actually ran on. The value comes from the
+     app (SEED=<n>, drawn from an OS CSPRNG at the start click); micros() is
+     only the fallback for an older host, and is weak for the reason spelled
+     out over beginSessionRng() in BehaviorBox.h. */
+  beginSessionRng(params);
 
-  digitalWrite(trial.odorPin, LOW); // 8. Turn off odor, open vac
-  digitalWrite(vac, LOW);
-  recordEvent(BF_ODOR_OFF);
-
-  while (digitalRead(odorPort) == LOW)
-  { // 9. Await unpoke
-    delay(pollingRate);
-  }
-  recordEvent(BF_ODOR_UNPOKE);
-
+  // The "armed" indicator going out, not a trial event: the clock is
+  // stamped by beginNewSession() on the next line, so a BF_LIGHTS_OFF here
+  // would carry a pre-session timestamp and precede BF_START_SESSION.
   digitalWrite(trialLight, LOW);
-  int responseDelay = checkResponse(trial); // 10. Successful odor sampling — delay (ms) for this outcome
-  delay(responseDelay);                     // Administer the outcome-specific delay
-  if (responseDelay == standardITI)
+  beginNewSession(); // Start session! (stamps t=0, fires BF_START_SESSION)
+}
+
+void loop()
+{
+  if (sessionComplete)
+    return;
+
+  /* Honor a remote STOP from the host. Checked once per trial boundary (not
+     mid-trial), so a stop never truncates a trial -- this keeps the strobe
+     stream's structure intact for downstream analysis. */
+  if (checkForStop())
   {
-    recordEvent(BF_END_CORRECT_ITI); // Correct response
-    abstention.reset();              // only a COMPLETED CORRECT trial clears the escalator
-    return true;                     // Advance to next trial
+    endCurrentSession();
+    return;
+  }
+
+  /* Pick the next trial live. We only re-select when the previous trial
+     ADVANCED; a trial that returns false (an abort, or an in-block correction
+     error) keeps currentTrialPtr so the SAME side is re-presented. */
+  if (currentTrialPtr == nullptr)
+    currentTrialPtr = selector.selectNext();
+
+  if (runTrial(*currentTrialPtr, params, clock, &policy, currentTrial))
+  {
+    currentTrial++;                   // Advance only on a completed/advancing trial
+    applyStage(params, currentTrial); // Ramp holds/windows for the new count
+    // Consume this side's leading correction budget. A correction REPEAT returns
+    // false above and never reaches here, so it doesn't consume budget.
+    correction.onAdvance(currentTrialPtr->correctWell == rightWell);
+    currentTrialPtr = nullptr; // force a fresh selection next loop
+    if (currentTrial >= params.numTrials)
+      endCurrentSession();
   }
   else
   {
-    recordEvent(BF_END_INCORRECT_ITI); // Incorrect response (hold failure or wrong well)
-    // Per-side correction: while THIS side is still under its leading budget,
-    // an incorrect response repeats the same trial (return false -> loop() logs
-    // BF_INVALID_TRIAL and holds currentTrialPtr, re-presenting the same side).
-    // Past that side's budget, advance regardless of correctness.
-    return !correction.shouldRepeat(trial.correctWell == rightWell);
+    recordEvent(BF_INVALID_TRIAL); // Trial aborted -- repeat the same side
   }
-}
-
-/*  int checkResponse(TrialType trial) {...} ->
-  Polls the fluid wells after successful odor sampling and returns the
-  intertrial delay (ms) to administer for the resulting outcome:
-    standardITI       -> correct (held the correct well, or correctly withheld on no-go)
-    noPokeHoldTimeout -> poked the correct well but failed to hold it
-    errorDelay        -> poked the wrong well, gave no response, or responded on a no-go
-*/
-int checkResponse(TrialType trial)
-{
-  if (trial.isGo)
-  { // GO TRIAL -> poll both wells for fluidWellPoll
-    unsigned long pollStart = millis();
-    int pokedWell = SENTINEL;
-    bool rightFirst = (random(0, 2) == 0); // randomize order: a simultaneous L/R break no longer always -> right
-
-    while (millis() - pollStart < fluidWellPoll)
-    { // 1. Poll both wells (tie broken by random order)
-      int rRead = digitalRead(rightWell);
-      int lRead = digitalRead(leftWell);
-      if (rRead == LOW && lRead == LOW)
-      {
-        pokedWell = rightFirst ? rightWell : leftWell;
-      }
-      else if (rRead == LOW)
-      {
-        pokedWell = rightWell;
-      }
-      else if (lRead == LOW)
-      {
-        pokedWell = leftWell;
-      }
-      if (pokedWell != SENTINEL)
-      {
-        recordEvent(pokedWell == rightWell ? BF_WATER_POKE_R : BF_WATER_POKE_L);
-        selector.recordChoice(pokedWell == rightWell); // feed the rat's expressed side into the anti-bias estimate
-        break;
-      }
-      delay(pollingRate);
-    }
-
-    if (pokedWell == SENTINEL)
-    {
-      // No response within timeout
-      return errorDelay;
-    }
-
-    if (pokedWell != trial.correctWell)
-    {
-      // Error 1: Wrong well
-      recordEvent(pokedWell == rightWell ? BF_WATER_POKE_ERROR_R : BF_WATER_POKE_ERROR_L);
-      return errorDelay;
-    }
-
-    if (!verifySensor(pokedWell, fluidWellHold, pollingRate))
-    { // 3. Correct well — verify hold
-      // Error 2: Didn't hold poke
-      recordEvent(pokedWell == rightWell ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L);
-      return noPokeHoldTimeout;
-    }
-
-    giveReward(trial); // 4. Held — deliver reward
-    while (digitalRead(pokedWell))
-    { // Await well unpoke
-      delay(pollingRate);
-    }
-  }
-  else
-  {
-    unsigned long pollStart = millis(); // NO-GO TRIAL -> poll both wells for nogoWellPoll
-    while (millis() - pollStart < nogoWellPoll)
-    { // 1. Poll both wells
-      if (digitalRead(rightWell) == LOW)
-      {
-        // Error 3: Rat responded on nogo
-        recordEvent(BF_WATER_POKE_R);
-        return errorDelay;
-      }
-      if (digitalRead(leftWell) == LOW)
-      {
-        // Error 3: Rat responded on nogo
-        recordEvent(BF_WATER_POKE_L);
-        return errorDelay;
-      }
-      delay(pollingRate);
-    }
-    recordEvent(BF_WATER_POKE_NONE); // No-go trial! :)
-  }
-
-  return standardITI; // Rat responded correctly
-}
-
-void giveReward(TrialType trial)
-{
-  int fluidPin = Fluids[trial.rewardIndex];
-  int fluidDuration = FluidPinTimes[trial.rewardIndex];
-
-  recordEvent(trial.fluidEventCode); // Log fluid delivery
-  digitalWrite(fluidPin, HIGH);      // Open fluid solenoid
-  delay(fluidDuration);              // Hold open for FluidPinTime
-  digitalWrite(fluidPin, LOW);       // Close fluid solenoid
-  recordEvent(trial.stopFluidCode);  // Log fluid stop
 }

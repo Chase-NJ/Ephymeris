@@ -1,8 +1,11 @@
 /*
 Author: Chase Johnston
-Date: June 10th, 2026
+Date: July 29th, 2026
 Purpose:
-  Shaping paradigm -- a go-LEFT trial on Odor 3 (PURE ORANGE EXTRACT).
+  Shaping paradigm -- a go-RIGHT trial on Odor 1 (SANDALWOOD), eased in.
+
+  The eased variant of shaping_GR: the same paradigm on a longer, softer ramp,
+  for an animal that is struggling with the standard shaping schedule.
 
   This sketch is ONLY: the four trial types, the trial POOL (its default weights
   are the sole thing that differs between the shaping sketches), and the
@@ -13,7 +16,7 @@ Purpose:
   threshold now arrives from the app on the START line and is declared in this
   sketch's task.json -- so they are tuned per sketch and per run, in the Config
   page, instead of by editing and reflashing this file. The values applied by
-  applyShapingDefaults() below are only the bare-START fallback for a
+  applyEasedShapingDefaults() below are only the bare-START fallback for a
   hand-typed console session or an older host.
 */
 
@@ -79,11 +82,11 @@ void setup()
   Serial.begin(baudRate);
 
   /* Bare-START fallback only -- the app overwrites all of this from task.json. */
-  applyShapingDefaults(params);
-  /* Default shaped side: go-LEFT on odor 3. */
-  params.poolWeights[0] = 0;
+  applyEasedShapingDefaults(params);
+  /* Default shaped side: go-RIGHT on odor 1. */
+  params.poolWeights[0] = 1;
   params.poolWeights[1] = 0;
-  params.poolWeights[2] = 1;
+  params.poolWeights[2] = 0;
   params.poolWeights[3] = 0;
 
   /* Handshake with the app: announce READY, then block until a "START" line

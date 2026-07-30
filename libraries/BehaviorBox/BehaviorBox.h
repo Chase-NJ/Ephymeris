@@ -15,11 +15,16 @@
     * the SERIAL PROTOCOL helpers shared with the Ephymeris app: the strobe
       emitter, the blocking START reader, the non-blocking STOP poll, and (for
       utility sketches) a non-blocking command reader + a STATUS emitter;
+    * TaskParams -- EVERY operator-tunable parameter, and the one declarative
+      list (TASK_PARAM_LIST) from which the START-line parser is generated. The
+      app fills this from the sketch's task.json, so a parameter is tuned per
+      sketch and per run instead of being recompiled;
     * the reusable TRIAL primitives (TrialClock, TrialType, TrialWeight +
-      generateTrials) and the GRGL session POLICY classes (anti-bias selection,
+      generateTrials) and the session POLICY classes (anti-bias selection,
       the lazy-penalty escalator, per-side correction budgets);
-    * the shaping trial runner, so shaping_GL and shaping_GR differ only in their
-      trial pool, not in a duplicated ~140-line behavior loop.
+    * the TRIAL RUNNER -- one loop for every behavior sketch. Shaping and GRGL
+      run the same trial and differ only in which policies they hand it, so all
+      five behavior sketches are a trial pool plus setup/loop wiring.
 
   Reached by every sketch as an Arduino library: the Ephymeris sidecar passes the
   repo-root `libraries/` folder to `arduino-cli compile --libraries <...>`
@@ -95,7 +100,7 @@ const int Fluids[NUM_FLUIDS] = {
 #define BF_ODOR_POKE            224 // Sent when rat pokes odor port
 #define BF_ODOR_UNPOKE_EARLY    225 // Sent when rat fails to hold odor poke for odorPokeHold
 #define BF_ODOR_UNPOKE          226 // Sent after rat successfully samples odor
-#define BF_LIGHTS_OFF           233 // Trial light off
+#define BF_LIGHTS_OFF           233 // Sent when trialLight is written LOW inside a trial
 #define BF_INVALID_TRIAL        234 // Trial aborted (lazy rat or poke-hold failure)
 #define BF_END_CORRECT_ITI      242 // Sent after correct-response intertrial interval
 #define BF_END_INCORRECT_ITI    243 // Sent after errorDelay intertrial interval
@@ -203,11 +208,22 @@ struct TrialWeight
     run; call it first, then call this. Two seeding sites is how a fixed seed
     creeps back in unnoticed. */
 inline void generateTrials(const TrialType *trials[], int numTrials, int blockSize,
-                           const TrialWeight pool[], int poolSize)
+                           TrialWeight pool[], int poolSize)
 {
   int totalWeight = 0;
   for (int i = 0; i < poolSize; i++)
     totalWeight += pool[i].weight;
+
+  /* Pool weights are operator-typed now (PW1..PW4 on the START line), and an
+     all-zero pool would divide by zero below -- on AVR that is a silent wrong
+     answer, not a trap. Fall back to equal weights: a uniform pool is a defined
+     session, where a hung box mid-shaping is not. */
+  if (totalWeight <= 0)
+  {
+    for (int i = 0; i < poolSize; i++)
+      pool[i].weight = 1;
+    totalWeight = poolSize;
+  }
 
   for (int blockStart = 0; blockStart < numTrials; blockStart += blockSize)
   {
@@ -375,7 +391,13 @@ inline void emitStatus(const char *body)
 /* ============================================================= *
  *  5. HARDWARE helpers (keyed off the shared pinout above)
  * ============================================================= */
-/* Blanket turn-off of all outputs (safe to call at any time). */
+/*  Blanket turn-off of all outputs (safe to call at any time).
+
+    Deliberately emits NO strobe, including no BF_LIGHTS_OFF. It is called from
+    initBoxHardware() in setup() -- before the clock has been stamped, so a
+    timestamp here would be meaningless -- and from the utility sketches, which
+    have no session at all. The trial light's own edges are reported from
+    runTrial(), where a trial is actually in progress. */
 inline void shutdownHardware()
 {
   for (int i = 0; i < NUM_ODORS; i++)
@@ -419,7 +441,9 @@ inline bool verifySensor(int pin, int duration, int pollMs)
 }
 
 /*  void flashLight(int duration, int pollMs) ->
-    Blink the trial light at the sketch's polling cadence for `duration` ms. */
+    Blink the trial light at the sketch's polling cadence for `duration` ms.
+    No strobes: one BF_LIGHTS_OFF per blink would bury a session's real light
+    edges under hundreds of decorative ones. */
 inline void flashLight(int duration, int pollMs)
 {
   unsigned long start = millis();
@@ -433,73 +457,325 @@ inline void flashLight(int duration, int pollMs)
 }
 
 /* ============================================================= *
- *  6. GRGL SESSION POLICY (used by GRGL_2-Odor and GRGL_2-Odor_EZ)
+ *  6. TASK PARAMETERS -- the whole START-command surface
  * ============================================================= */
-/* Runtime parameters carried from the GUI to the board in the START command.
-   Add a field here + one branch in parseStartCommand() and it flows everywhere. */
-struct SessionConfig
+/* Largest sliding bias window the anti-bias selector's ring buffer can hold. */
+#define BEHAVIOR_MAX_BIAS_WINDOW 32
+
+/*  Number of rows in the ramp table. Five is what both existing schedules use
+    (a forgiving stage 0 plus four steps toward the full task). */
+#define NUM_STAGES 5
+
+/*  One row of the ramp: the four holds/windows that a shaping schedule walks,
+    and the completed-trial count at which this row takes over. */
+struct StageStep
 {
+  int trials;          // completed trials at which this row engages
+  int odorPokeHold;    // hold before odor delivery AND during sampling (ms)
+  int fluidWellHold;   // hold at the fluid well before reward (ms)
+  int fluidWellPoll;   // window to respond after successful sampling (ms)
+  int odorPortTimeout; // window to poke following trial light on (ms)
+};
+
+/*  EVERY operator-tunable parameter, in one struct.
+
+    This replaces the old split between SessionConfig (three GUI fields) and
+    ShapingTimings (twelve compile-time ones shared by both shaping sketches, so
+    that retuning shaping_GR silently retuned shaping_GL too). Each sketch now
+    owns its own instance and the host fills it from the START line, which is
+    what makes the values per-sketch, per-run, and recorded with the data.
+
+    The in-class defaults are the FULL-TASK (GRGL_2-Odor) values, so a bare
+    "START" with no tokens still reproduces exactly the legacy behavior. Shaping
+    sketches call applyShapingDefaults() for their own bare-START baseline.
+
+    Adding a parameter is two lines: a field here and a row in TASK_PARAM_LIST. */
+struct TaskParams
+{
+  /* --- timings the ramp never touches --- */
+  int errorDelay = 20000;         // timeout after an incorrect response
+  int nogoWellPoll = 2000;        // withhold window on no-go trials
+  int lazyRatDelay = 6000;        // base penalty for failing to initiate
+  int lazyEscalateStep = 6000;    // added per CONSECUTIVE lazy trial
+  int lazyDelayMax = 30000;       // ceiling on the escalated lazy penalty
+  int noPokeHoldTimeout = 10000;  // penalty for failing to hold a poke
+  int standardITI = 4000;         // intertrial interval on correct trials
+  int primingDelay = 1000;        // odor primed before the trial light
+  int pollingRate = 5;            // IR sensor polling interval (ms)
+  int fluidPinTimes[NUM_FLUIDS] = {100, 100, 100, 100}; // per-line open time = reward volume
+
+  /* --- session policy --- */
   int correctionLeft = 0;            // CL: leading correction budget, LEFT-correct trials
   int correctionRight = 0;           // CR: leading correction budget, RIGHT-correct trials
   bool lazyEscalationEnabled = true; // LAZY: escalating lazy-rat penalty on/off
-  unsigned long trialSeed = 0;       // SEED: host-drawn RNG seed. 0 == the host
-                                     // sent none (an older app); beginSessionRng()
-                                     // falls back to the board's own clock.
+  int lazyEscalationStage = 0;       // escalation arms once this stage row is live.
+                                     // 0 == from trial 0 (the full task); an eased
+                                     // sketch points this at its last row so a rat
+                                     // still being shaped is never escalated against.
+
+  /* --- trial generation --- */
+  int numTrials = 1000;              // session cap
+  int blockSize = 30;                // pool proportions enforced within each block
+  int poolWeights[4] = {1, 0, 0, 0}; // shaping only; ignored where selection is live
+
+  /* --- adaptive anti-bias selection (ignored by shaping) --- */
+  int biasWindow = 20;         // sliding window of recent expressed choices
+  int maxConsecutiveSide = 10; // hard cap on consecutive identical correct sides
+  float debiasStrength = 0.5f; // how hard to push against the rat's bias
+  float pSideMin = 0.02f;      // clamp on P(correct side) -- never fully
+  float pSideMax = 0.98f;      // deterministic, which would itself be a cue
+
+  /* --- the ramp ---
+     Row 0 is live from trial 0. A task that does not ramp leaves rows 1..4 at
+     the sentinel count, which no session can reach, so they never engage. */
+  StageStep stage[NUM_STAGES] = {
+      {0, 500, 200, 2000, 4000},
+      {32767, 500, 200, 2000, 4000},
+      {32767, 500, 200, 2000, 4000},
+      {32767, 500, 200, 2000, 4000},
+      {32767, 500, 200, 2000, 4000}};
+
+  /* --- live holds/windows, rewritten by applyStage() ---
+     The trial runner reads ONLY these four; nothing reads stage[] directly. */
+  int odorPokeHold = 500;
+  int fluidWellHold = 200;
+  int fluidWellPoll = 2000;
+  int odorPortTimeout = 4000;
+
+  /* --- the run's RNG seed ---
+     0 == the host sent none (an older app); beginSessionRng() then falls back to
+     the board's own clock. */
+  unsigned long trialSeed = 0;
 };
 
-/*  void parseStartCommand(const char* line, SessionConfig& cfg) ->
-    Parse a START line into cfg. Grammar (mirrors the app's start-command builder):
-
-        START CL=<int> CR=<int> LAZY=<0|1> SEED=<uint32>
-
-    Order-independent; unknown keys ignored; any missing key keeps cfg's default
-    (CL=0 CR=0 LAZY=1), so a bare "START" reproduces the legacy behavior. */
-inline void parseStartCommand(const char *line, SessionConfig &cfg)
+/*  int liveStage(const TaskParams&, int completedTrials) ->
+    Index of the ramp row in force at this trial count. Scans DESCENDING with
+    >=, so it is idempotent: calling it twice, or skipping a count, lands on the
+    same row. The shaping schedule this replaces was a switch on the EXACT trial
+    index, which fired once and only if the counter hit that value precisely. */
+inline int liveStage(const TaskParams &p, int completedTrials)
 {
-  // Wide enough for every key at its longest, with room to spare: SEED alone is
-  // 15 characters. A caller's own line buffer has to be at least this big too --
-  // readLineInto() truncates at ITS cap, and a token lost there never reaches
-  // this function to be parsed.
-  char buf[96];
-  strncpy(buf, line, sizeof(buf) - 1);
-  buf[sizeof(buf) - 1] = '\0';
-
-  char *tok = strtok(buf, " ");
-  while (tok != NULL)
-  {
-    char *eq = strchr(tok, '=');
-    if (eq != NULL)
-    {
-      *eq = '\0';
-      const char *key = tok;
-      const char *val = eq + 1;
-      if (strcmp(key, "CL") == 0)
-      {
-        int v = atoi(val);
-        cfg.correctionLeft = (v > 0) ? v : 0;
-      }
-      else if (strcmp(key, "CR") == 0)
-      {
-        int v = atoi(val);
-        cfg.correctionRight = (v > 0) ? v : 0;
-      }
-      else if (strcmp(key, "LAZY") == 0)
-      {
-        cfg.lazyEscalationEnabled = (atoi(val) != 0);
-      }
-      else if (strcmp(key, "SEED") == 0)
-      {
-        // strtoul, not atoi: the seed spans the full 31-bit Park-Miller range
-        // and atoi() on AVR is a 16-bit int parse that would silently mangle it.
-        cfg.trialSeed = strtoul(val, NULL, 10);
-      }
-      // unknown keys (and the leading "START" token) are ignored
-    }
-    tok = strtok(NULL, " ");
-  }
+  for (int i = NUM_STAGES - 1; i > 0; --i)
+    if (completedTrials >= p.stage[i].trials)
+      return i;
+  return 0;
 }
 
-/*  unsigned long beginSessionRng(const SessionConfig& cfg) ->
+/*  void applyStage(TaskParams&, int completedTrials) ->
+    Copy the live ramp row into the four working holds/windows. Call once per
+    completed trial (and once before the first trial). */
+inline void applyStage(TaskParams &p, int completedTrials)
+{
+  const StageStep &s = p.stage[liveStage(p, completedTrials)];
+  p.odorPokeHold = s.odorPokeHold;
+  p.fluidWellHold = s.fluidWellHold;
+  p.fluidWellPoll = s.fluidWellPoll;
+  p.odorPortTimeout = s.odorPortTimeout;
+}
+
+/*  bool escalationArmed(const TaskParams&, int completedTrials) ->
+    Whether the lazy penalty is allowed to escalate yet (see lazyEscalationStage). */
+inline bool escalationArmed(const TaskParams &p, int completedTrials)
+{
+  return liveStage(p, completedTrials) >= p.lazyEscalationStage;
+}
+
+/*  void applyShapingDefaults(TaskParams&) ->
+    The shaping sketches' bare-START baseline: the original ShapingTimings values
+    and the original 20/25/50/100 stage schedule. Only a bare START (an older
+    host, or a hand-typed console session) ever sees these -- the app sends every
+    field from the sketch's task.json. */
+inline void applyShapingDefaults(TaskParams &p)
+{
+  p.errorDelay = 20000;
+  p.nogoWellPoll = 2000;
+  p.lazyRatDelay = 4000;
+  p.noPokeHoldTimeout = 5000;
+  p.standardITI = 4000;
+  p.primingDelay = 1000;
+  p.pollingRate = 2;
+  //                trials  poke  well  pollWindow  portTimeout
+  p.stage[0] = StageStep{0, 10, 10, 10000, 8000};
+  p.stage[1] = StageStep{20, 100, 50, 10000, 8000};
+  p.stage[2] = StageStep{25, 125, 250, 5000, 8000};
+  p.stage[3] = StageStep{50, 250, 500, 2000, 4000};
+  p.stage[4] = StageStep{100, 500, 500, 2000, 4000};
+  applyStage(p, 0);
+}
+
+/*  void applyEasedShapingDefaults(TaskParams&) ->
+    The shaping_*_EZ baseline: the same schedule stretched out and started softer,
+    for an animal that is struggling with the standard shaping ramp. Same shape,
+    more trials per step and a longer runway before the holds bite. */
+inline void applyEasedShapingDefaults(TaskParams &p)
+{
+  applyShapingDefaults(p);
+  p.lazyRatDelay = 3000;       // a shorter penalty: re-engaging is what we want
+  p.noPokeHoldTimeout = 3000;
+  //                trials  poke  well  pollWindow  portTimeout
+  p.stage[0] = StageStep{0, 10, 10, 15000, 12000};
+  p.stage[1] = StageStep{40, 50, 25, 12000, 10000};
+  p.stage[2] = StageStep{80, 125, 100, 8000, 8000};
+  p.stage[3] = StageStep{140, 250, 250, 5000, 6000};
+  p.stage[4] = StageStep{220, 500, 500, 2000, 4000};
+  applyStage(p, 0);
+}
+
+/*  void applyEasedDiscriminationDefaults(TaskParams&) ->
+    The GRGL_2-Odor_EZ baseline: the full discrimination task, entered through a
+    forgiving ramp instead of at full strictness. The anti-bias clamps are pulled
+    in as well, so a rat still learning the contingency is not starved as hard as
+    the full task starves a fixed-side rat.
+
+    lazyEscalationStage points at the last row: escalating the abstention penalty
+    against an animal that is still being shaped punishes it for the ramp. */
+inline void applyEasedDiscriminationDefaults(TaskParams &p)
+{
+  p.lazyEscalationStage = NUM_STAGES - 1;
+  p.pSideMin = 0.05f;
+  p.pSideMax = 0.95f;
+  p.maxConsecutiveSide = 6;
+  //                trials  poke  well  pollWindow  portTimeout
+  p.stage[0] = StageStep{0, 10, 10, 10000, 8000};
+  p.stage[1] = StageStep{15, 100, 50, 10000, 8000};
+  p.stage[2] = StageStep{30, 200, 200, 5000, 6000};
+  p.stage[3] = StageStep{50, 350, 350, 3000, 4000};
+  /* Row 4 IS the full task, so it matches GRGL_2-Odor exactly. It used to set a
+     350 ms well hold, against both its own docblock and the 200 ms the real task
+     uses -- which made the eased sketch's final stage stricter than the task it
+     was easing into. */
+  p.stage[4] = StageStep{80, 500, 200, 2000, 4000};
+  applyStage(p, 0);
+}
+
+/*  TASK_PARAM_LIST -- the single declarative list of wire keys.
+
+    Every key the START grammar accepts appears here exactly once, and the parser
+    below is generated from it. Adding a parameter means adding one row; there is
+    no second place that can fall out of sync.
+
+    Expand it by defining P_INT / P_FLOAT / P_BOOL / P_ULONG / P_STAGE first.
+    Keys are short on purpose: the whole line has to fit START_LINE_MAX, and a
+    fully-declared eased task sends close to fifty of them. */
+#define TASK_PARAM_LIST                     \
+  P_INT("ERR", errorDelay)                  \
+  P_INT("NWP", nogoWellPoll)                \
+  P_INT("LZD", lazyRatDelay)                \
+  P_INT("LZS", lazyEscalateStep)            \
+  P_INT("LZM", lazyDelayMax)                \
+  P_INT("NPH", noPokeHoldTimeout)           \
+  P_INT("ITI", standardITI)                 \
+  P_INT("PRM", primingDelay)                \
+  P_INT("POL", pollingRate)                 \
+  P_INT("FL1", fluidPinTimes[0])            \
+  P_INT("FL2", fluidPinTimes[1])            \
+  P_INT("FL3", fluidPinTimes[2])            \
+  P_INT("FL4", fluidPinTimes[3])            \
+  P_INT("CL", correctionLeft)               \
+  P_INT("CR", correctionRight)              \
+  P_INT("LZG", lazyEscalationStage)         \
+  P_INT("NT", numTrials)                    \
+  P_INT("BS", blockSize)                    \
+  P_INT("PW1", poolWeights[0])              \
+  P_INT("PW2", poolWeights[1])              \
+  P_INT("PW3", poolWeights[2])              \
+  P_INT("PW4", poolWeights[3])              \
+  P_INT("BW", biasWindow)                   \
+  P_INT("MCS", maxConsecutiveSide)          \
+  P_FLOAT("DBS", debiasStrength)            \
+  P_FLOAT("PMN", pSideMin)                  \
+  P_FLOAT("PMX", pSideMax)                  \
+  P_BOOL("LAZY", lazyEscalationEnabled)     \
+  P_ULONG("SEED", trialSeed)                \
+  P_STAGE(0) P_STAGE(1) P_STAGE(2) P_STAGE(3) P_STAGE(4)
+
+/*  One ramp row's five keys: S<n>T trials, S<n>P poke hold, S<n>H well hold,
+    S<n>W well poll, S<n>O odor-port timeout. */
+#define TASK_STAGE_KEYS(n)                  \
+  P_INT("S" #n "T", stage[n].trials)        \
+  P_INT("S" #n "P", stage[n].odorPokeHold)  \
+  P_INT("S" #n "H", stage[n].fluidWellHold) \
+  P_INT("S" #n "W", stage[n].fluidWellPoll) \
+  P_INT("S" #n "O", stage[n].odorPortTimeout)
+
+/*  Hard cap on a START line, mirrored by the host's build_start_command
+    (sidecar/ephymeris_sidecar/tasks/start_command.py). There is no shared source
+    across the two repos, so the two constants must be changed together: the host
+    refuses to build a line longer than this, and readLineInto() truncates
+    anything longer than this SILENTLY -- a lost token is not an error the board
+    can see, it just runs on the wrong value. */
+#define START_LINE_MAX 640
+
+/*  void clampTaskParams(TaskParams&) ->
+    Hold every field to a range the trial runner can survive. This matters more
+    than it used to: the values are typed by an operator now, not compiled in,
+    and a zero polling rate or a bias window past the ring buffer would be a hang
+    or an overrun rather than a bad session. */
+inline void clampTaskParams(TaskParams &p)
+{
+  if (p.correctionLeft < 0) p.correctionLeft = 0;
+  if (p.correctionRight < 0) p.correctionRight = 0;
+  if (p.pollingRate < 1) p.pollingRate = 1;
+  if (p.numTrials < 1) p.numTrials = 1;
+  if (p.blockSize < 1) p.blockSize = 1;
+  if (p.biasWindow < 1) p.biasWindow = 1;
+  if (p.biasWindow > BEHAVIOR_MAX_BIAS_WINDOW) p.biasWindow = BEHAVIOR_MAX_BIAS_WINDOW;
+  if (p.maxConsecutiveSide < 1) p.maxConsecutiveSide = 1;
+  if (p.lazyEscalationStage < 0) p.lazyEscalationStage = 0;
+  if (p.lazyEscalationStage >= NUM_STAGES) p.lazyEscalationStage = NUM_STAGES - 1;
+  if (p.pSideMin < 0.0f) p.pSideMin = 0.0f;
+  if (p.pSideMax > 1.0f) p.pSideMax = 1.0f;
+  if (p.pSideMax < p.pSideMin) p.pSideMax = p.pSideMin;
+  for (int i = 0; i < NUM_FLUIDS; i++)
+    if (p.fluidPinTimes[i] < 0) p.fluidPinTimes[i] = 0;
+  for (int i = 0; i < 4; i++)
+    if (p.poolWeights[i] < 0) p.poolWeights[i] = 0;
+}
+
+/*  void parseStartCommand(char* line, TaskParams& p) ->
+    Parse a START line into p. Grammar (mirrors the app's start-command builder):
+
+        START <KEY>=<value> <KEY>=<value> ...
+
+    Order-independent; unknown keys ignored; any missing key keeps p's current
+    value, so a bare "START" reproduces the sketch's compiled-in behavior and an
+    older host talking to newer firmware still runs.
+
+    PARSES IN PLACE. It used to strncpy into a private 96-byte buffer, which gave
+    the line TWO independent caps -- the caller's and this one's -- either of
+    which could silently drop a token. `line` is the caller's own buffer and is
+    modified (strtok); it must be at least the length of the line it holds. */
+inline void parseStartCommand(char *line, TaskParams &p)
+{
+  for (char *tok = strtok(line, " "); tok != NULL; tok = strtok(NULL, " "))
+  {
+    char *eq = strchr(tok, '=');
+    if (eq == NULL)
+      continue; // the leading "START" token, and any bare word
+    *eq = '\0';
+    const char *k = tok;
+    const char *v = eq + 1;
+
+// atoi() is a 16-bit parse on AVR, which is fine for every int field (the
+// largest, lazyDelayMax, is 30000). SEED is the one value that spans the full
+// 31-bit Park-Miller range, so it -- and only it -- needs strtoul.
+#define P_INT(key, field)   if (strcmp(k, key) == 0) { p.field = atoi(v); continue; }
+#define P_FLOAT(key, field) if (strcmp(k, key) == 0) { p.field = (float)atof(v); continue; }
+#define P_BOOL(key, field)  if (strcmp(k, key) == 0) { p.field = (atoi(v) != 0); continue; }
+#define P_ULONG(key, field) if (strcmp(k, key) == 0) { p.field = strtoul(v, NULL, 10); continue; }
+#define P_STAGE(n)          TASK_STAGE_KEYS(n)
+    TASK_PARAM_LIST
+#undef P_INT
+#undef P_FLOAT
+#undef P_BOOL
+#undef P_ULONG
+#undef P_STAGE
+  }
+  clampTaskParams(p);
+  applyStage(p, 0); // the live holds must reflect row 0 before trial 1 runs
+}
+
+/*  unsigned long beginSessionRng(const TaskParams& p) ->
     Seed this run's RNG and announce the seed. Call once, immediately after the
     START line is parsed and BEFORE anything draws a random number.
 
@@ -521,9 +797,9 @@ inline void parseStartCommand(const char *line, SessionConfig &cfg)
     Arduino core (it skips srandom entirely, leaving the default state), and
     avr-libc's random() is Park-Miller, whose state space ends at 2^31-2. The
     value announced is therefore exactly the state the generator is running on. */
-inline unsigned long beginSessionRng(const SessionConfig &cfg)
+inline unsigned long beginSessionRng(const TaskParams &p)
 {
-  unsigned long seed = cfg.trialSeed;
+  unsigned long seed = p.trialSeed;
   if (seed == 0)
     seed = micros();
   // Fold into the Park-Miller state space. Modulus 2^31-1, so every value the
@@ -539,9 +815,9 @@ inline unsigned long beginSessionRng(const SessionConfig &cfg)
   return seed;
 }
 
-/* Largest sliding bias window the selector's ring buffer can hold. */
-#define BEHAVIOR_MAX_BIAS_WINDOW 32
-
+/* ============================================================= *
+ *  7. SESSION POLICY (anti-bias selection, penalties, correction budgets)
+ * ============================================================= */
 /*  Adaptive anti-bias trial selection. Owns the sliding-window estimate of the
     rat's recent expressed side preference and the next-side draw that pushes
     AGAINST it, clamped so selection never collapses into a deterministic
@@ -553,12 +829,29 @@ class AntiBiasSelector
 {
 public:
   AntiBiasSelector(const TrialType *goRight, const TrialType *goLeft,
-                   int biasWindow, float debiasStrength,
-                   float pSideMin, float pSideMax, int maxConsecutiveSide)
+                   int biasWindow = 20, float debiasStrength = 0.5f,
+                   float pSideMin = 0.02f, float pSideMax = 0.98f,
+                   int maxConsecutiveSide = 10)
       : _goRight(goRight), _goLeft(goLeft),
         _window(biasWindow < BEHAVIOR_MAX_BIAS_WINDOW ? biasWindow : BEHAVIOR_MAX_BIAS_WINDOW),
         _debias(debiasStrength), _pMin(pSideMin), _pMax(pSideMax),
         _maxRun(maxConsecutiveSide) {}
+
+  /*  Adopt the run's tuning from the parsed START line. Necessary because the
+      selector is a global, constructed long before START arrives; call once,
+      after parseStartCommand(), and before the first selectNext(). Safe to call
+      on a fresh selector only -- it resizes the ring, so it discards history. */
+  void configure(const TaskParams &p)
+  {
+    _window = p.biasWindow < BEHAVIOR_MAX_BIAS_WINDOW ? p.biasWindow : BEHAVIOR_MAX_BIAS_WINDOW;
+    if (_window < 1)
+      _window = 1;
+    _debias = p.debiasStrength;
+    _pMin = p.pSideMin;
+    _pMax = p.pSideMax;
+    _maxRun = p.maxConsecutiveSide;
+    _len = _idx = _rightInWindow = 0;
+  }
 
   /* Push the rat's expressed side choice (correct OR wrong well) into the ring,
      evicting the oldest once full and keeping the running right-count in sync. */
@@ -631,8 +924,18 @@ private:
 class AbstentionPenalty
 {
 public:
-  AbstentionPenalty(long baseDelay, long step, long maxDelay)
+  AbstentionPenalty(long baseDelay = 6000, long step = 6000, long maxDelay = 30000)
       : _base(baseDelay), _step(step), _max(maxDelay) {}
+
+  /* Adopt the run's tuning + the GUI toggle from the parsed START line. */
+  void configure(const TaskParams &p)
+  {
+    _base = p.lazyRatDelay;
+    _step = p.lazyEscalateStep;
+    _max = p.lazyDelayMax;
+    _enabled = p.lazyEscalationEnabled;
+    _consecutive = 0;
+  }
 
   void setEnabled(bool enabled) { _enabled = enabled; }
   void reset() { _consecutive = 0; }
@@ -689,203 +992,245 @@ private:
 };
 
 /* ============================================================= *
- *  7. SHAPING RUNNER (shared by shaping_GL and shaping_GR)
+ *  8. TRIAL RUNNER -- one loop, shared by every behavior sketch
  * ============================================================= */
-/*  The two shaping sketches ran a byte-identical behavior loop and differed only
-    in which odor got weight in the pool. That loop lives here now so the sketches
-    stay tiny (pool + a few calls). The mutable timings that the stage schedule
-    ramps live in ShapingTimings so each sketch owns its own copy. */
-struct ShapingTimings
+/*  The shaping sketches and the GRGL sketches ran two copies of what is
+    structurally the same trial: prime odor, light on, await poke, verify the
+    pre-odor hold, present odor, verify the sampling hold, await unpoke, poll the
+    wells, administer an outcome delay. They differed only in POLICY -- GRGL adds
+    anti-bias selection, an escalating abstention penalty, and per-side
+    correction budgets; shaping has none of the three and advances on any
+    completed trial.
+
+    So the policy is passed in and the loop is written once. A sketch with no
+    policy passes nullptr and gets the shaping semantics; GRGL passes its three
+    objects. This is what makes GRGL_2-Odor and GRGL_2-Odor_EZ differ by nothing
+    but their task.json defaults, and it retires the three ways the EZ copy had
+    already drifted from the original (see the repo history for that loop). */
+struct TrialPolicy
 {
-  int errorDelay = 20000;      // Timeout for incorrect response
-  int odorPortTimeout = 8000;  // Window to poke following light on
-  int odorPokeHold = 10;       // Hold before odor delivery AND during sampling (ms)
-  int fluidWellHold = 10;      // Hold before fluid delivery on correct trials (ms)
-  int fluidWellPoll = 10000;   // Window to respond following successful sampling
-  int nogoWellPoll = 2000;     // Withhold window on no-go trials
-  int lazyRatDelay = 4000;     // Timeout for failure to initiate trial
-  int noPokeHoldTimeout = 5000;// Timeout for failure to hold poke
-  int standardITI = 4000;      // Intertrial interval on correct trials
-  int primingDelay = 1000;     // Odor priming before trial light on
-  int pollingRate = 2;         // IR sensor polling interval (ms)
-  int fluidPinTimes[NUM_FLUIDS] = {100, 100, 100, 100}; // per-line open time (ms)
+  AntiBiasSelector *selector = nullptr;   // nullptr -> fixed pool, no bias estimate
+  AbstentionPenalty *abstention = nullptr;// nullptr -> flat lazyRatDelay
+  CorrectionPolicy *correction = nullptr; // nullptr -> advance on any completed trial
 };
 
-/*  Ramp holds/windows as the rat advances (the original per-trial-count stage
-    schedule). Called once per completed trial with the new trial count. */
-inline void shapingApplyStage(ShapingTimings &t, int currentTrial)
+/*  How a trial ended. Returned by checkResponse() instead of the delay itself.
+
+    The delay used to BE the return value, and the caller recovered the outcome
+    by comparing it back against standardITI. That worked only because the three
+    delays were compiled-in and happened to differ. They are operator-typed now:
+    an operator who sets errorDelay to the same value as standardITI would make
+    every error emit BF_END_CORRECT_ITI and clear the abstention escalator, with
+    nothing anywhere reporting a problem. */
+enum TrialOutcome
 {
-  switch (currentTrial)
-  {
-  case 20: // Stage: longer holds begin
-    t.odorPokeHold = 100;
-    t.fluidWellHold = 50;
-    break;
-  case 25: // Stage 2: 250ms ttip, 250ms fluid hold, 5s well poll
-    t.odorPokeHold = 125;
-    t.fluidWellHold = 250;
-    t.fluidWellPoll = 5000;
-    break;
-  case 50: // Stage 3: 500ms ttip, 500ms fluid hold, 4s odor timeout, 2s well poll
-    t.odorPokeHold = 250;
-    t.fluidWellHold = 500;
-    t.odorPortTimeout = 4000;
-    t.fluidWellPoll = 2000;
-    break;
-  case 100: // Stage 4: 1s ttip, 500ms fluid hold
-    t.odorPokeHold = 500;
-    break;
-  default:
-    break;
-  }
+  OUTCOME_CORRECT,   // held the correct well, or correctly withheld on a no-go
+  OUTCOME_HOLD_FAIL, // poked the correct well but failed to hold it
+  OUTCOME_ERROR      // wrong well, no response, or responded on a no-go
+};
+
+inline int outcomeDelay(TrialOutcome outcome, const TaskParams &p)
+{
+  if (outcome == OUTCOME_CORRECT)
+    return p.standardITI;
+  if (outcome == OUTCOME_HOLD_FAIL)
+    return p.noPokeHoldTimeout;
+  return p.errorDelay;
 }
 
-inline void shapingGiveReward(const TrialType &trial, ShapingTimings &t, TrialClock &clock)
+/* Open this trial's fluid line for its configured duration (the reward volume). */
+inline void deliverReward(const TrialType &trial, const TaskParams &p, TrialClock &clock)
 {
   int fluidPin = Fluids[trial.rewardIndex];
-  int fluidDuration = t.fluidPinTimes[trial.rewardIndex];
+  int fluidDuration = p.fluidPinTimes[trial.rewardIndex];
 
-  emitStrobe(clock, trial.fluidEventCode); // Log fluid delivery
-  digitalWrite(fluidPin, HIGH);            // Open fluid solenoid
-  delay(fluidDuration);                    // Hold open
-  digitalWrite(fluidPin, LOW);             // Close fluid solenoid
-  emitStrobe(clock, trial.stopFluidCode);  // Log fluid stop
+  emitStrobe(clock, trial.fluidEventCode); // log fluid delivery
+  digitalWrite(fluidPin, HIGH);            // open fluid solenoid
+  delay(fluidDuration);                    // hold open
+  digitalWrite(fluidPin, LOW);             // close fluid solenoid
+  emitStrobe(clock, trial.stopFluidCode);  // log fluid stop
 }
 
-/*  Poll the wells after successful odor sampling; return the intertrial delay to
-    administer for the outcome (standardITI = correct, noPokeHoldTimeout = poked
-    correct well but didn't hold, errorDelay = wrong well / no response / no-go
-    violated). Shaping polls right-then-left in fixed order (no anti-bias). */
-inline int shapingCheckResponse(const TrialType &trial, ShapingTimings &t, TrialClock &clock)
+/*  Poll the fluid wells after successful odor sampling and classify the outcome. */
+inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
+                                  TrialClock &clock, TrialPolicy *policy)
 {
   if (trial.isGo)
   {
     unsigned long pollStart = millis();
     int pokedWell = SENTINEL;
+    /* Randomize the tie-break only where both sides are live. A simultaneous
+       L/R beam break otherwise always resolves right, which on a two-sided task
+       is a systematic bias. On a one-sided shaping pool it is just the original
+       fixed order, and randomizing there would turn a correct double-break into
+       a coin flip -- so shaping (no policy) keeps right-first. */
+    bool rightFirst = (policy != nullptr) ? (random(0, 2) == 0) : true;
 
-    while (millis() - pollStart < (unsigned long)t.fluidWellPoll)
-    {
-      if (digitalRead(rightWell) == LOW)
-      {
+    while (millis() - pollStart < (unsigned long)p.fluidWellPoll)
+    { // 1. Poll both wells (tie broken by the order above)
+      int rRead = digitalRead(rightWell);
+      int lRead = digitalRead(leftWell);
+      if (rRead == LOW && lRead == LOW)
+        pokedWell = rightFirst ? rightWell : leftWell;
+      else if (rRead == LOW)
         pokedWell = rightWell;
-        emitStrobe(clock, BF_WATER_POKE_R);
-        break;
-      }
-      if (digitalRead(leftWell) == LOW)
-      {
+      else if (lRead == LOW)
         pokedWell = leftWell;
-        emitStrobe(clock, BF_WATER_POKE_L);
+
+      if (pokedWell != SENTINEL)
+      {
+        emitStrobe(clock, pokedWell == rightWell ? BF_WATER_POKE_R : BF_WATER_POKE_L);
+        if (policy && policy->selector) // the expressed side feeds the bias estimate
+          policy->selector->recordChoice(pokedWell == rightWell);
         break;
       }
-      delay(t.pollingRate);
+      delay(p.pollingRate);
     }
 
     if (pokedWell == SENTINEL)
-      return t.errorDelay; // No response within timeout
+      return OUTCOME_ERROR; // 2. No response within the window
 
     if (pokedWell != trial.correctWell)
     {
       emitStrobe(clock, pokedWell == rightWell ? BF_WATER_POKE_ERROR_R : BF_WATER_POKE_ERROR_L);
-      return t.errorDelay; // Wrong well
+      return OUTCOME_ERROR; // Wrong well
     }
 
-    if (!verifySensor(pokedWell, t.fluidWellHold, t.pollingRate))
-    {
+    if (!verifySensor(pokedWell, p.fluidWellHold, p.pollingRate))
+    { // 3. Correct well -- verify the hold
       emitStrobe(clock, pokedWell == rightWell ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L);
-      return t.noPokeHoldTimeout; // Didn't hold
+      return OUTCOME_HOLD_FAIL;
     }
 
-    shapingGiveReward(trial, t, clock); // Held -- deliver reward
-    while (digitalRead(pokedWell))      // Await well unpoke
-      delay(t.pollingRate);
+    deliverReward(trial, p, clock); // 4. Held -- deliver reward
+    while (digitalRead(pokedWell))  // Await well unpoke
+      delay(p.pollingRate);
+    /* The consummatory bout's end, and the only place the firmware actually
+       observes the animal leaving a well. The other two exits are already
+       reported by more specific codes -- WATER_UNPOKE_EARLY_* when the hold
+       failed, and nothing at all on a wrong-well answer, where the firmware
+       returns immediately and never waits for the withdrawal. */
+    emitStrobe(clock, pokedWell == rightWell ? BF_WATER_UNPOKE_R : BF_WATER_UNPOKE_L);
   }
   else
   {
     unsigned long pollStart = millis(); // NO-GO -> poll both wells for nogoWellPoll
-    while (millis() - pollStart < (unsigned long)t.nogoWellPoll)
+    while (millis() - pollStart < (unsigned long)p.nogoWellPoll)
     {
       if (digitalRead(rightWell) == LOW)
       {
         emitStrobe(clock, BF_WATER_POKE_R);
-        return t.errorDelay; // Responded on no-go
+        return OUTCOME_ERROR; // Responded on a no-go
       }
       if (digitalRead(leftWell) == LOW)
       {
         emitStrobe(clock, BF_WATER_POKE_L);
-        return t.errorDelay; // Responded on no-go
+        return OUTCOME_ERROR; // Responded on a no-go
       }
-      delay(t.pollingRate);
+      delay(p.pollingRate);
     }
     emitStrobe(clock, BF_WATER_POKE_NONE); // Correctly withheld
   }
 
-  return t.standardITI; // Correct
+  return OUTCOME_CORRECT;
 }
 
-/*  Run one shaping trial. Returns true on any COMPLETED trial (shaping advances
-    on completion regardless of correctness), false on an abort (lazy / poke-hold
-    failure) so the caller repeats. Mirrors the GRGL odor-sampling flow minus the
-    anti-bias / correction / abstention policy. */
-inline bool shapingOdorSampling(const TrialType &trial, ShapingTimings &t, TrialClock &clock)
+/*  bool runTrial(...) ->
+    Run one trial. Returns true when the trial ADVANCES the session, false when
+    the caller should re-present the same trial (an abort, or an under-budget
+    correction error). `completedTrials` is the advancing-trial count, used only
+    to decide whether the lazy penalty may escalate yet. */
+inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
+                     TrialPolicy *policy, int completedTrials)
 {
   digitalWrite(trial.odorPin, HIGH); // 1. Prime the correct odor
-  delay(t.primingDelay);             // 2. Fixed priming delay
+  delay(p.primingDelay);             // 2. Fixed priming delay (controlled latency)
   digitalWrite(trialLight, HIGH);    // 3. Trial light on
   emitStrobe(clock, BF_LIGHTS_ON);
 
   unsigned long waitStart = millis();
   while (digitalRead(odorPort) == HIGH)
-  { // 4. Await odor poke
-    if (millis() - waitStart >= (unsigned long)t.odorPortTimeout)
+  { // 4. Await the odor poke
+    if (millis() - waitStart >= (unsigned long)p.odorPortTimeout)
     {
       digitalWrite(trialLight, LOW);
       digitalWrite(trial.odorPin, LOW);
+      emitStrobe(clock, BF_LIGHTS_OFF);
       emitStrobe(clock, BF_LAZY_RAT);
-      delay(t.lazyRatDelay);
-      return false; // Error 1: failed to poke in time
+      if (policy && policy->selector) // abstention feeds the bias estimate too
+        policy->selector->recordAbstention(trial.correctWell == rightWell);
+      if (policy && policy->abstention)
+        delay(policy->abstention->nextDelay(escalationArmed(p, completedTrials)));
+      else
+        delay(p.lazyRatDelay);
+      return false; // Error 1: failed to initiate in time
     }
-    delay(t.pollingRate);
+    delay(p.pollingRate);
   }
   emitStrobe(clock, BF_ODOR_POKE);
+  /* NOTE: the abstention escalator is NOT reset here. A bare odor-poke (or a
+     poke-and-bail) must not defuse the lazy penalty -- only a completed CORRECT
+     trial clears it, in the OUTCOME_CORRECT branch below. This closes the
+     poke-to-reset loophole, which the old EZ copy of this loop had reopened. */
 
-  if (!verifySensor(odorPort, t.odorPokeHold, t.pollingRate))
-  { // 5. Verify pre-odor hold
+  if (!verifySensor(odorPort, p.odorPokeHold, p.pollingRate))
+  { // 5. Verify the pre-odor hold
     digitalWrite(trialLight, LOW);
     digitalWrite(trial.odorPin, LOW);
+    emitStrobe(clock, BF_LIGHTS_OFF);
     emitStrobe(clock, BF_ODOR_UNPOKE_EARLY);
-    delay(t.noPokeHoldTimeout);
-    return false; // Error 2: didn't hold before vac close
+    if (policy && policy->selector) // poke-and-bail still counts as not-engaging
+      policy->selector->recordAbstention(trial.correctWell == rightWell);
+    delay(p.noPokeHoldTimeout);
+    return false; // Error 2: didn't hold before the vac closed
   }
 
   emitStrobe(clock, trial.odorOnCode); // Trial-specific odor on
-  digitalWrite(vac, HIGH);             // 6. Close vac, direct odor to rat
+  digitalWrite(vac, HIGH);             // 6. Close the N.O.V., directing odor to the rat
 
-  if (!verifySensor(odorPort, t.odorPokeHold, t.pollingRate))
-  { // 7. Verify odor sampling hold
+  if (!verifySensor(odorPort, p.odorPokeHold, p.pollingRate))
+  { // 7. Verify the odor-sampling hold
     digitalWrite(trialLight, LOW);
     digitalWrite(trial.odorPin, LOW);
     digitalWrite(vac, LOW);
+    emitStrobe(clock, BF_LIGHTS_OFF);
     emitStrobe(clock, BF_ODOR_UNPOKE_EARLY);
-    delay(t.noPokeHoldTimeout);
+    if (policy && policy->selector)
+      policy->selector->recordAbstention(trial.correctWell == rightWell);
+    delay(p.noPokeHoldTimeout);
     return false; // Error 3: didn't sample long enough
   }
 
-  digitalWrite(trial.odorPin, LOW); // 8. Odor off, open vac
+  digitalWrite(trial.odorPin, LOW); // 8. Odor off, open the vac
   digitalWrite(vac, LOW);
   emitStrobe(clock, BF_ODOR_OFF);
 
-  while (digitalRead(odorPort) == LOW) // 9. Await unpoke
-    delay(t.pollingRate);
+  while (digitalRead(odorPort) == LOW) // 9. Await the unpoke
+    delay(p.pollingRate);
   emitStrobe(clock, BF_ODOR_UNPOKE);
 
   digitalWrite(trialLight, LOW);
-  int responseDelay = shapingCheckResponse(trial, t, clock); // 10. Outcome + delay
-  delay(responseDelay);
-  if (responseDelay == t.standardITI)
+  emitStrobe(clock, BF_LIGHTS_OFF);
+  TrialOutcome outcome = checkResponse(trial, p, clock, policy); // 10. Outcome
+  delay(outcomeDelay(outcome, p));                               // 11. Its delay
+
+  if (outcome == OUTCOME_CORRECT)
+  {
     emitStrobe(clock, BF_END_CORRECT_ITI);
-  else
-    emitStrobe(clock, BF_END_INCORRECT_ITI);
-  return true; // Shaping advances on any completed trial
+    if (policy && policy->abstention)
+      policy->abstention->reset(); // only a completed CORRECT trial clears it
+    return true;
+  }
+
+  emitStrobe(clock, BF_END_INCORRECT_ITI);
+  /* Per-side correction: while THIS side is still under its leading budget, an
+     incorrect response repeats the same trial (return false -> the caller logs
+     BF_INVALID_TRIAL and re-presents the same side). Past that side's budget,
+     advance regardless of correctness. A sketch with no correction policy
+     (shaping) advances on any completed trial, as it always has. */
+  if (policy && policy->correction)
+    return !policy->correction->shouldRepeat(trial.correctWell == rightWell);
+  return true;
 }
 
 #endif // BEHAVIOR_BOX_H

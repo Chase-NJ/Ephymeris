@@ -14,7 +14,7 @@ import {
   type SceneNode,
 } from "@/components/constellation3d/Scene";
 import { StellarSurface } from "@/components/constellation3d/StellarSurface";
-import type { SceneOrbiter } from "@/components/constellation3d/Orbiters";
+import { assignShips } from "@/lib/constellations/ships";
 import { useBoxStellar } from "./useBoxStellar";
 import { useRunningSession } from "@/lib/sessions/context";
 import { buildSky } from "@/lib/sessions/stars";
@@ -92,29 +92,32 @@ export function DebugConstellation({
     [settings.boxes],
   );
 
-  // Every animal assigned to a box rides its star as a named satellite —
-  // the rig view answers "whose box is this" at a glance. While a session is
-  // live, its box → animal mapping upgrades the matching satellites to
-  // active (orbit + strobe), so "who is in box 3 right now" reads as motion
-  // against the parked assignment.
+  // Cagemates ride as one ship (`ships.ts`): each crew orbits the box of its
+  // currently running member — the live session's mapping wins over standing
+  // assignment — else the box its most recently ran member actually ran on.
+  // So the rig view answers "where is this cage" with where the operator last
+  // saw it, and a live run reads as motion against the parked fleet.
   const running = useRunningSession();
-  const crews = useMemo(() => {
-    const map = new Map<number, SceneOrbiter[]>();
-    for (const [box, info] of Object.entries(stellar)) {
-      if (!info) continue;
-      map.set(
-        Number(box),
-        info.crew.map((animal) => ({ id: animal.id, name: animal.name, active: false })),
-      );
-    }
+  const ships = useMemo(() => {
+    const members = stellar.members.map((m) => ({ ...m }));
     for (const b of running?.boxes ?? []) {
-      const crew = map.get(b.box) ?? [];
-      const known = crew.find((c) => c.id === b.animalId);
-      if (known) known.active = b.running;
-      else crew.push({ id: b.animalId, name: b.animalName, active: b.running });
-      map.set(b.box, crew);
+      const known = members.find((m) => m.id === b.animalId);
+      if (known) {
+        known.box = b.box;
+        known.running = b.running;
+      } else {
+        // Analytics hasn't caught up with this cohort yet — the live mapping
+        // is still a fact worth a ship, solo until its cage is known.
+        members.push({
+          id: b.animalId,
+          name: b.animalName,
+          cage: null,
+          box: b.box,
+          running: b.running,
+        });
+      }
     }
-    return map;
+    return assignShips(members);
   }, [stellar, running]);
 
   const nodes: SceneNode[] = sky.points.map((point, index) => {
@@ -129,7 +132,7 @@ export function DebugConstellation({
     }
     const box = Number(point.occupantId);
     const state = health[box] ?? "absent";
-    const crew = crews.get(box);
+    const crew = ships.get(box);
     return {
       id: point.occupantId,
       position: point.position,
@@ -148,7 +151,7 @@ export function DebugConstellation({
         <BoxStar
           radius={point.radius}
           health={state}
-          accuracy={stellar[box]?.accuracy ?? null}
+          accuracy={stellar.boxes[box]?.accuracy ?? null}
           crewed={!!crew?.length}
         />
       ),
@@ -168,6 +171,9 @@ export function DebugConstellation({
       links={links}
       focusedId={selected === null ? null : String(selected)}
       onFocus={(id) => onSelect(id === null ? null : Number(id))}
+      // One sky, wherever it appears: Dashboard and Debug both browse the rig,
+      // so they share one remembered camera and selection (`viewMemory.ts`).
+      persistKey="rig"
     />
   );
 }

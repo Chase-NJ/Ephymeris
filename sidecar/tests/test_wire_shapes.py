@@ -111,7 +111,7 @@ def _cohort() -> Cohort:
         created_at="2026-07-01T00:00:00+00:00",
         updated_at="2026-07-01T00:00:00+00:00",
         animals=[
-            Animal("a1", "R-14", "g1", box_number=3, sex="M"),
+            Animal("a1", "R-14", "g1", box_number=3, cage=2, sex="M"),
             Animal("a2", "R-15", "g1"),  # every nullable field null
         ],
         groups=[Group("g1", "Group 1", 0)],
@@ -202,6 +202,93 @@ def test_utility_baseline_payloads_match_schema() -> None:
     assert validate_command_result("utility.status", status) == []
     assert validate_command_result("utility.ensure", status) == []
     assert validate_event_data("utility.updated", status) == []
+
+
+def test_analytics_derive_payloads_match_schema() -> None:
+    """Every `to_json` in `analytics/derive.py`, run for real and validated.
+
+    These are the emitters most likely to drift: a field is added to the maths
+    and shows up in the payload, and `schema.py` is a separate file that has to
+    be remembered. `RunSummary.to_json` is spread across `RunSummary` on the
+    wire rather than nested, so it is checked field-by-field against that shape
+    instead of by reference.
+    """
+    from ephymeris_sidecar.analytics import derive
+
+    profile = task_profile.parse_profile(
+        {
+            "taskName": "GRGL",
+            "strobes": {
+                "101": "ODOR_1_ON", "103": "ODOR_3_ON",
+                "222": "LIGHTS_ON", "224": "ODOR_POKE",
+                "226": "ODOR_UNPOKE", "225": "ODOR_UNPOKE_EARLY",
+                "248": "WATER_POKE_L", "249": "WATER_POKE_R",
+                "250": "WATER_UNPOKE_EARLY_L", "252": "FLUID_L", "253": "FLUID_R",
+                "257": "WATER_POKE_ERROR_L", "246": "END_SESSION",
+            },
+            "liveMetrics": [
+                {"id": "p_r_odor1", "label": "P(R | Odor 1)", "triggerCode": 101,
+                 "successCode": 249, "alternateCode": 248, "windowSize": 20},
+                {"id": "p_l_odor3", "label": "P(L | Odor 3)", "triggerCode": 103,
+                 "successCode": 248, "alternateCode": 249, "windowSize": 20},
+            ],
+        }
+    )
+    # One of everything: rewarded, hold-failed, wrong-well, unanswered, a
+    # pre-odor bail and a lazy trial — so no branch of any emitter is unreached.
+    # Repeated past `DEFAULT_MIN_COUNTED` in the *slower* condition (odor 3
+    # scores once per block), or the strategy trail never starts and its
+    # emitter goes unchecked.
+    codes = (
+        [222, 224, 101, 226, 249, 253] + [222, 224, 103, 226, 248, 250]
+        + [222, 224, 101, 226, 248, 257] + [222, 224, 103, 226]
+        + [222, 224, 225] + [222, 223]
+    ) * 12
+    document = {
+        "rat": "remy1",
+        "stop_reason": derive.CLEAN_STOP_REASON,
+        "trial_seed": 288577176,
+        "ts_data": [[code, index * 1000] for index, code in enumerate(codes)],
+    }
+
+    summary = derive.summarize(document, profile)
+    payload = summary.to_json()
+    assert summary.overall is not None
+    assert summary.outcomes is not None
+    assert summary.engagement is not None
+    assert summary.conditions
+
+    for name, value in (
+        ("MetricSummary", payload["metrics"][0]),
+        ("MetricSummary", payload["overall"]),
+        ("TrialOutcomes", payload["outcomes"]),
+        ("ConditionOutcomes", payload["conditions"][0]),
+        ("TrialEngagement", payload["engagement"]),
+    ):
+        assert validate(("ref", name), value) == [], name
+
+    for name, value in (
+        ("MetricSeries", derive.series(document, profile)[0].to_json()),
+        ("StrategyPoint", derive.strategy_trail(document, profile)[0].to_json()),
+    ):
+        assert validate(("ref", name), value) == [], name
+
+    # And the nullable arms: a profile with no reward vocabulary and no trial
+    # light emits null for all three rather than an empty object.
+    bare = task_profile.parse_profile(
+        {
+            "taskName": "Bare",
+            "strobes": {"101": "ODOR_1_ON", "248": "WATER_POKE_L", "249": "WATER_POKE_R"},
+            "liveMetrics": [
+                {"id": "p_r_odor1", "label": "P", "triggerCode": 101,
+                 "successCode": 249, "alternateCode": 248, "windowSize": 20}
+            ],
+        }
+    )
+    thin = derive.summarize(document, bare).to_json()
+    assert thin["outcomes"] is None
+    assert thin["engagement"] is None
+    assert thin["conditions"] == []
 
 
 def test_hardware_payloads_match_schema() -> None:

@@ -40,6 +40,9 @@ MAX_SERIES_RUNS = 24
 #: a chunk of cache misses can't stall a live `port.output` batch.
 INDEX_CHUNK = 32
 
+#: `analytics.recentSessions` default when the caller names no limit.
+DEFAULT_RECENT_LIMIT = 6
+
 
 class AnalyticsBusy(Exception):
     """An indexing job is already running for this cohort."""
@@ -192,6 +195,7 @@ class AnalyticsService:
                     "name": a.name,
                     "groupId": a.group_id,
                     "boxNumber": a.box_number,
+                    "cage": a.cage,
                 }
                 for a in cohort.animals
             ],
@@ -259,6 +263,54 @@ class AnalyticsService:
                 }
             )
         return {"series": out, "warnings": warnings}
+
+    # --- recent sessions ----------------------------------------------------
+
+    async def recent_sessions(self, limit: int | None = None) -> dict[str, Any]:
+        """The N most recent session folders across every active cohort (§9).
+
+        Folder names only — `reader.walk_session_dirs` never opens a file — so
+        this is cheap enough for the Dashboard, where the rescan deliberately
+        is not. The point of walking disk rather than the database is the
+        `recorded: false` rows: a session another Ephymeris machine wrote into
+        the shared archive is real history, but it has no session row here
+        until a rescan adopts it, and `sessions.list` would never see it.
+        """
+        cap = limit if limit is not None and limit > 0 else DEFAULT_RECENT_LIMIT
+        cohorts = await asyncio.to_thread(self._cohorts.list_cohorts)
+        active = [c for c in cohorts if not c.archived]
+        entries = await asyncio.to_thread(self._recent_on_disk, active)
+        # Folder names carry a date but no time, so recency is by date with the
+        # folder path as a stable (not meaningful) tie-break.
+        entries.sort(key=lambda e: (e["date"], e["folderPath"]), reverse=True)
+        return {"sessions": entries[:cap]}
+
+    def _recent_on_disk(self, cohorts: list[Any]) -> list[dict[str, Any]]:
+        found: list[dict[str, Any]] = []
+        for cohort in cohorts:
+            recorded = {
+                _normalize(s.folder_path)
+                for s in self._sessions.list_sessions(cohort.id, include_aborted=True)
+                if s.folder_path
+            }
+            for session_dir in reader.walk_session_dirs(cohort.data_folder):
+                parsed = parse_session_folder(session_dir.name)
+                if parsed.date is None:
+                    # A name with no date can't be placed on a recency list;
+                    # honest omission beats inventing an order.
+                    continue
+                found.append(
+                    {
+                        "cohortId": cohort.id,
+                        "cohortName": cohort.name,
+                        "prefixName": parsed.prefix,
+                        "sessionNumber": parsed.session_number,
+                        "date": parsed.date.isoformat(),
+                        "folderPath": str(session_dir),
+                        "recorded": _normalize(str(session_dir)) in recorded,
+                    }
+                )
+        return found
 
     # --- rescan ------------------------------------------------------------
 

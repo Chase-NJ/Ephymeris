@@ -80,6 +80,7 @@ class Cmd:
     ANALYTICS_SUMMARY: Final = "analytics.summary"
     ANALYTICS_SERIES: Final = "analytics.series"
     ANALYTICS_RESCAN: Final = "analytics.rescan"
+    ANALYTICS_RECENT_SESSIONS: Final = "analytics.recentSessions"
 
     # Crash recovery (data-saving.md §7.3, §11)
     SESSIONS_RECOVER: Final = "sessions.recover"
@@ -174,7 +175,7 @@ SHAPES: Final[dict[str, Any]] = {
     "SyncResult": ('obj', (('copied', 'int', False), ('skipped', 'int', False), ('failed', 'int', False), ('errors', ('list', 'str'), False), ('directory', 'str', False))),
     "Sex": ('lit', ('M', 'F', 'unknown')),
     "Group": ('obj', (('id', 'str', False), ('name', 'str', False), ('order', 'int', False))),
-    "Animal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('sex', ('union', (('ref', 'Sex'), 'null')), False), ('idNumber', ('union', ('str', 'null')), False), ('notes', ('union', ('str', 'null')), False))),
+    "Animal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('cage', ('union', ('int', 'null')), False), ('sex', ('union', (('ref', 'Sex'), 'null')), False), ('idNumber', ('union', ('str', 'null')), False), ('notes', ('union', ('str', 'null')), False))),
     "Cohort": ('obj', (('id', 'str', False), ('name', 'str', False), ('dataFolder', 'str', False), ('animals', ('list', ('ref', 'Animal')), False), ('groups', ('list', ('ref', 'Group')), False), ('archivedAt', ('union', ('str', 'null')), False), ('createdAt', 'str', False), ('updatedAt', 'str', False))),
     "CohortSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('animalCount', 'int', False), ('groupCount', 'int', False), ('assignedBoxes', ('list', 'int'), False), ('archived', 'bool', False), ('createdAt', 'str', False), ('updatedAt', 'str', False))),
     "CohortPatch": ('obj', (('name', 'str', True), ('animals', ('list', ('ref', 'Animal')), True), ('groups', ('list', ('ref', 'Group')), True))),
@@ -205,13 +206,15 @@ SHAPES: Final[dict[str, Any]] = {
     "RunnerSession": ('obj', (('session', ('ref', 'Session'), False), ('groupId', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'SessionBox')), False))),
     "ActiveSessions": ('obj', (('running', ('union', (('ref', 'RunnerSession'), 'null')), False), ('configuring', ('list', ('ref', 'Session')), False), ('stale', ('list', ('ref', 'Session')), False))),
     "SessionListItem": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('ordinal', 'int', False), ('runCount', 'int', True))),
+    "DiskSession": ('obj', (('cohortId', 'str', False), ('cohortName', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('folderPath', 'str', False), ('recorded', 'bool', False))),
     "MetricSummary": ('obj', (('id', 'str', False), ('label', 'str', False), ('pSession', ('union', ('float', 'null')), False), ('pWindow', ('union', ('float', 'null')), False), ('counted', 'int', False), ('triggered', 'int', False), ('excluded', 'int', False), ('windowSize', 'int', False), ('wilsonLow', ('union', ('float', 'null')), False), ('wilsonHigh', ('union', ('float', 'null')), False), ('lowConfidence', 'bool', False))),
     "TrialOutcomes": ('obj', (('trials', 'int', False), ('administered', 'int', False), ('rewarded', 'int', False), ('holdFailed', 'int', False), ('wrongWell', 'int', False), ('noResponse', 'int', False), ('aborted', 'int', False), ('pRewarded', ('union', ('float', 'null')), False), ('pSide', ('union', ('float', 'null')), False), ('rewardedLow', ('union', ('float', 'null')), False), ('rewardedHigh', ('union', ('float', 'null')), False), ('sideLow', ('union', ('float', 'null')), False), ('sideHigh', ('union', ('float', 'null')), False))),
+    "TrialEngagement": ('obj', (('presented', 'int', False), ('poked', 'int', False), ('odorDelivered', 'int', False), ('noPoke', 'int', False), ('pokeAborted', 'int', False), ('pEngaged', ('union', ('float', 'null')), False), ('pDelivered', ('union', ('float', 'null')), False), ('engagedLow', ('union', ('float', 'null')), False), ('engagedHigh', ('union', ('float', 'null')), False))),
     "ConditionOutcomes": ('obj', (('metricId', 'str', False), ('label', 'str', False), ('triggerCode', 'int', False), ('outcomes', ('ref', 'TrialOutcomes'), False))),
     "RunStatus": ('lit', ('ok', 'no-metrics', 'missing', 'unreadable')),
     "ProfileSource": ('lit', ('snapshot', 'sketch-current', 'unavailable')),
-    "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False))),
-    "AnalyticsAnimal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False))),
+    "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False))),
+    "AnalyticsAnimal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('cage', ('union', ('int', 'null')), False))),
     "ProfileMetricInfo": ('obj', (('id', 'str', False), ('label', 'str', False), ('windowSize', 'int', False))),
     "ProfileGroup": ('obj', (('hash', 'str', False), ('taskName', ('union', ('str', 'null')), False), ('kind', ('union', ('str', 'null')), False), ('metrics', ('list', ('ref', 'ProfileMetricInfo')), False), ('runCount', 'int', False))),
     "AnalyticsWarning": ('obj', (('code', 'str', False), ('runId', 'str', False), ('message', 'str', False))),
@@ -279,6 +282,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "analytics.summary": ('obj', (('cohortId', 'str', False), ('sessionIds', ('list', 'str'), True), ('animalIds', ('list', 'str'), True), ('minCountedTrials', 'int', True))),
     "analytics.series": ('obj', (('runIds', ('list', 'str'), False), ('mode', ('lit', ('rolling', 'cumulative')), True), ('metricIds', ('list', 'str'), True))),
     "analytics.rescan": ('obj', (('cohortId', 'str', False), ('adoptOrphans', 'bool', True))),
+    "analytics.recentSessions": ('obj', (('limit', 'int', True),)),
     "sessions.recover": ('obj', (('cohortId', 'str', False),)),
 }
 
@@ -325,6 +329,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "analytics.summary": ('ref', 'AnalyticsSummary'),
     "analytics.series": ('ref', 'SeriesResult'),
     "analytics.rescan": ('ref', 'RescanResult'),
+    "analytics.recentSessions": ('obj', (('sessions', ('list', ('ref', 'DiskSession')), False),)),
     "sessions.recover": ('ref', 'RecoverResult'),
 }
 

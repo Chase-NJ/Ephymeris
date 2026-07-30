@@ -16,6 +16,7 @@ import { useNavigate, useParams } from "react-router";
 import { Button, TextInput } from "@/components/common/controls";
 import { SettingGroup } from "@/components/settings/SettingRow";
 import { AnimalTable } from "@/components/cohorts/AnimalTable";
+import { CageAssignment } from "@/components/cohorts/CageAssignment";
 import { CohortIcon } from "@/components/cohorts/CohortIcon";
 import { DataFolderField } from "@/components/cohorts/DataFolderField";
 import { GroupsPanel } from "@/components/cohorts/GroupsPanel";
@@ -292,6 +293,15 @@ export function CohortEditor() {
             attention={isNew && stage === 1}
             onChange={setAnimals}
           />
+        </SettingGroup>
+      </Reveal>
+
+      <Reveal open={stage >= 2} still={reduceMotion}>
+        {/* Housing, not scheduling: cagemates share a spaceship in the 3D
+            constellation, and this is where they board. Optional at every
+            point — the dock is a fine place to live. */}
+        <SettingGroup title="Cages & spaceships">
+          <CageAssignment animals={animals} onChange={setAnimals} />
         </SettingGroup>
       </Reveal>
 

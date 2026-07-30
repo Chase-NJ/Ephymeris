@@ -1,0 +1,220 @@
+import { Canvas } from "@react-three/fiber";
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+
+import { SceneBackdrop } from "./Backdrop";
+
+/**
+ * The shared constellation stage: **one** WebGL canvas for the whole app.
+ *
+ * Every view that shows a constellation — the Dashboard's full-bleed sky,
+ * Debug Mode, Mission Control — used to mount its own `<Canvas>`, which meant
+ * every navigation between them created a fresh WebGL context, recompiled
+ * every shader, and regenerated the whole deep-sky backdrop, just to draw the
+ * same instrument somewhere else. This module mounts the canvas once, at the
+ * app shell, and the views take it in turns.
+ *
+ * The handoff is physical rather than geometric: the stage owns a plain host
+ * `<div>` containing the canvas, and the active view *adopts* it into its own
+ * tracking element (`appendChild` — a reparented `<canvas>` keeps its GL
+ * context and its listeners). That sidesteps every hard problem a
+ * fixed-position canvas would have — scroll tracking, z-index against docked
+ * panels, the edge-fade mask — because the canvas is simply *in* the page,
+ * wherever the view put it, exactly as it was when each view owned one.
+ *
+ * Rules of the stage:
+ *  - **Last attach wins.** Route transitions overlap mounts (`AnimatePresence`
+ *    keeps the outgoing page alive while it exits), so an incoming view steals
+ *    the stage and the outgoing view's release becomes a no-op. The sky
+ *    jumping to the incoming page instantly is the point — between the two
+ *    rig views it reads as the sky holding still while the chrome changes.
+ *  - **The backdrop lives here, not in the views.** It is deterministic
+ *    scenery, identical in every view, and by mounting it beside (not inside)
+ *    the swapped content its point-field geometry, nebula textures and
+ *    shaders survive every navigation.
+ *  - **An empty stage costs nothing.** With no view attached the host div is
+ *    out of the document and the frameloop is parked (`frameloop="never"`),
+ *    so pages without a constellation don't pay for one. The canvas is also
+ *    created lazily on first use, so the app never builds a GL context it
+ *    hasn't needed yet.
+ */
+
+/** What a view holds while it owns the stage. Opaque outside this module. */
+export interface StageToken {
+  id: number;
+}
+
+interface StageSnapshot {
+  /** The active view's scene graph, rendered inside the shared canvas. */
+  content: ReactNode;
+  /** Whether any view currently owns the stage — drives the frameloop. */
+  attached: boolean;
+  /** Once true, the canvas exists forever; false means never yet needed. */
+  everAttached: boolean;
+}
+
+export class ConstellationStage {
+  /** The movable home of the canvas. Styled once; adopted by tracking divs. */
+  readonly host: HTMLDivElement;
+
+  private current: StageToken | null = null;
+  private nextId = 1;
+  private snapshot: StageSnapshot = {
+    content: null,
+    attached: false,
+    everAttached: false,
+  };
+  private listeners = new Set<() => void>();
+
+  constructor() {
+    this.host = document.createElement("div");
+    this.host.style.position = "absolute";
+    this.host.style.inset = "0";
+  }
+
+  /** Adopt the stage into `container`. Steals from any current owner. */
+  acquire(container: HTMLElement): StageToken {
+    const token: StageToken = { id: this.nextId++ };
+    this.current = token;
+    container.appendChild(this.host);
+    this.update({ attached: true, everAttached: true, content: null });
+    return token;
+  }
+
+  /** Render `content` inside the canvas — only honoured for the owner. */
+  setContent(token: StageToken, content: ReactNode): void {
+    if (this.current !== token) return;
+    this.update({ content });
+  }
+
+  /** Give the stage up. A no-op unless `token` still owns it (see steal). */
+  release(token: StageToken): void {
+    if (this.current !== token) return;
+    this.current = null;
+    this.host.remove();
+    this.update({ content: null, attached: false });
+  }
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
+  getSnapshot = (): StageSnapshot => this.snapshot;
+
+  private update(patch: Partial<StageSnapshot>): void {
+    this.snapshot = { ...this.snapshot, ...patch };
+    for (const listener of this.listeners) listener();
+  }
+}
+
+const StageContext = createContext<ConstellationStage | null>(null);
+
+export function useConstellationStage(): ConstellationStage {
+  const stage = useContext(StageContext);
+  if (!stage) {
+    throw new Error("constellation views must be used inside <ConstellationStageProvider>");
+  }
+  return stage;
+}
+
+/**
+ * A view's half of the handoff. Returns a ref callback for the tracking
+ * element; while that element is mounted, the stage lives inside it and
+ * renders `content`. Attach/steal/release are layout effects, so the canvas
+ * has moved before the frame paints.
+ */
+export function useConstellationView(content: ReactNode): (el: HTMLDivElement | null) => void {
+  const stage = useConstellationStage();
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  const token = useRef<StageToken | null>(null);
+
+  useLayoutEffect(() => {
+    if (!container) return;
+    token.current = stage.acquire(container);
+    return () => {
+      if (token.current) stage.release(token.current);
+      token.current = null;
+    };
+  }, [stage, container]);
+
+  // Every render, after the acquire above on the first one: the content
+  // closes over the view's live props (nodes, focus callbacks), so it must be
+  // re-tunnelled whenever the view renders.
+  useLayoutEffect(() => {
+    if (token.current) stage.setContent(token.current, content);
+  });
+
+  return setContainer;
+}
+
+/**
+ * Fades the canvas (and the nameplates portalled into its wrapper) out over
+ * its last few dozen pixels on every side. Two gradients intersected rather
+ * than one radial: a radial mask would hollow out the corners of a wide
+ * frame, and the fade must hug the rectangle the scene actually occupies.
+ */
+const EDGE_FADE_MASK = [
+  "linear-gradient(to right, transparent, black 56px, black calc(100% - 56px), transparent)",
+  "linear-gradient(to bottom, transparent, black 44px, black calc(100% - 44px), transparent)",
+].join(", ");
+
+/**
+ * Mount once, above everything that might show a constellation. Renders the
+ * children untouched plus the stage's canvas, portalled into the movable host.
+ */
+export function ConstellationStageProvider({ children }: { children: ReactNode }) {
+  const [stage] = useState(() => new ConstellationStage());
+  return (
+    <StageContext.Provider value={stage}>
+      {children}
+      <StageCanvas stage={stage} />
+    </StageContext.Provider>
+  );
+}
+
+function StageCanvas({ stage }: { stage: ConstellationStage }) {
+  const snapshot = useSyncExternalStore(stage.subscribe, stage.getSnapshot);
+
+  // No view has ever wanted the stage — don't build a GL context on spec.
+  if (!snapshot.everAttached) return null;
+
+  return createPortal(
+    <Canvas
+      // The camera is shared across views; each view's CameraRig places it on
+      // mount (Scene.tsx), so only the lens is configured here.
+      camera={{ fov: 45 }}
+      dpr={[1, 2]}
+      // Parked, not unmounted, while no view owns the stage: the context and
+      // every compiled program stay warm for the next attach.
+      frameloop={snapshot.attached ? "always" : "never"}
+      // Transparent, deliberately: the scene composites over the app's own
+      // Void background and drifting 2D starfield, so the browser reads as a
+      // window onto the app's sky rather than a separate framed tile. The
+      // mask below fades the canvas out at its edges for the same reason —
+      // in-scene backdrop stars must dissolve into the page, not hit a wall.
+      gl={{ antialias: true, alpha: true }}
+      style={{
+        maskImage: EDGE_FADE_MASK,
+        maskComposite: "intersect",
+        WebkitMaskImage: EDGE_FADE_MASK,
+        WebkitMaskComposite: "source-in",
+      }}
+    >
+      {/* Permanent scenery: identical in every view, and expensive to build —
+          seeded point fields and painted nebula textures. Living beside the
+          swapped content, it survives every navigation. */}
+      <SceneBackdrop />
+      {snapshot.content}
+    </Canvas>,
+    stage.host,
+  );
+}

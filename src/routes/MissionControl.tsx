@@ -36,6 +36,7 @@ import {
   type SessionSnapshot,
 } from "@/lib/sessions/types";
 import { useBoxAccuracies } from "@/lib/sessions/useBoxAccuracies";
+import { useLastRuns } from "@/lib/analytics/useLastRuns";
 import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
@@ -111,19 +112,28 @@ export function MissionControl() {
   // animal's pooled rolling accuracy (§6.2) — so the overview answers "who is
   // doing well" without opening a panel.
   const accuracies = useBoxAccuracies(boxes, ACCURACY_WINDOW);
+  // Recorded history, for the cage-ships' "most recently ran" anchor — reads
+  // through the shared analytics cache, so it costs nothing once Analytics or
+  // the rig view has looked at this cohort.
+  const cohortIds = useMemo(() => (cohortId ? [cohortId] : []), [cohortId]);
+  const lastRuns = useLastRuns(cohortIds);
   const constellationAnimals = useMemo(() => {
     const boxOf = new Map(boxes.map((b) => [b.animalId, b.box]));
     return (cohort?.animals ?? []).map((animal) => {
       const box = boxOf.get(animal.id);
+      const lastRun = lastRuns.get(animal.id);
       return {
         animalId: animal.id,
         name: animal.name,
         lit: box !== undefined && portStates[box]?.state === "IN_SESSION",
         accuracy: accuracies[animal.id] ?? null,
         box: box ?? null,
+        cage: animal.cage,
+        lastRunAt: lastRun?.at ?? null,
+        lastRunBox: lastRun?.box ?? null,
       };
     });
-  }, [cohort, boxes, portStates, accuracies]);
+  }, [cohort, boxes, portStates, accuracies, lastRuns]);
 
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const focusedBox = boxes.find((b) => b.animalId === focusedId) ?? null;
@@ -229,10 +239,16 @@ export function MissionControl() {
 
   return (
     <motion.section
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
+      // Opacity-only, like every view that arrives over the sky: a y-offset
+      // transiently overflows the scroll container and flashes the scrollbar,
+      // and the route transition already owns whatever travel the guided flow
+      // wants (`AppShell.tsx`).
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
       transition={springPanel}
-      className="mx-auto max-w-6xl px-8 py-8"
+      // pt-7 puts the header on the same 28px title line the Dashboard and
+      // Debug overlays use — one grid, three views.
+      className="mx-auto max-w-6xl px-8 pb-8 pt-7"
     >
       <SessionJourney step={journeyStep} hint={hint} group={groupInfo} />
       <Header
@@ -366,7 +382,7 @@ export function MissionControl() {
               takes the viewport's height rather than a fixed pixel box so a
               large lab monitor gets a genuinely cinematic scene, with a floor
               that keeps it usable on a laptop. Unframed on purpose — the
-              canvas is transparent and fades out at its edges (Scene.tsx), so
+              canvas is transparent and fades out at its edges (SharedCanvas.tsx), so
               the sky belongs to the page rather than sitting in a tile; a
               border here would put the wall back. */}
           <div className="relative mt-5 h-[min(64vh,720px)] min-h-[460px] overflow-hidden">

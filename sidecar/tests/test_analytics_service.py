@@ -593,3 +593,42 @@ def test_runs_for_cohort_spans_every_session(rig: Rig) -> None:
     rig.add_run(first, "a1", HIT_1)
     rig.add_run(second, "a1", HIT_1)
     assert len(rig.sessions.runs_for_cohort(rig.cohort.id)) == 2
+
+
+# --- analytics.recentSessions ------------------------------------------------
+
+
+async def test_recent_sessions_sees_unrecorded_archive_folders(rig: Rig) -> None:
+    """A session another machine wrote into the shared archive is real history:
+    it must appear, marked `recorded: False`, ahead of an older local one."""
+    local = rig.add_session("1", "2026-07-20")
+    rig.add_run(local, "a1", HIT_1 * 15)
+
+    foreign = rig.root / "2O-Bdisc" / "2O-Bdisc_2_2026-07-28" / "behavior.json"
+    foreign.mkdir(parents=True)
+    (foreign / "remy9_2O-Bdisc_2_2026-07-28_101010.json").write_text(
+        "{}", encoding="utf-8"
+    )
+
+    payload = await rig.service.recent_sessions()
+    sessions = payload["sessions"]
+    assert [(s["date"], s["recorded"]) for s in sessions] == [
+        ("2026-07-28", False),
+        ("2026-07-20", True),
+    ]
+    assert sessions[0]["prefixName"] == "2O-Bdisc"
+    assert sessions[0]["sessionNumber"] == "2"
+    assert sessions[0]["cohortName"] == "Batch A"
+
+
+async def test_recent_sessions_honours_limit_and_skips_dateless_folders(rig: Rig) -> None:
+    for number, date in (("1", "2026-07-01"), ("2", "2026-07-02"), ("3", "2026-07-03")):
+        session = rig.add_session(number, date)
+        rig.add_run(session, "a1", HIT_1 * 15)
+    # A format folder whose session folder carries no date tail: real archives
+    # have them (a notes/ or plots/ level) and inventing an order would be a lie.
+    stray = rig.root / "2O-Bdisc" / "notes" / "behavior.json"
+    stray.mkdir(parents=True)
+
+    payload = await rig.service.recent_sessions(limit=2)
+    assert [s["date"] for s in payload["sessions"]] == ["2026-07-03", "2026-07-02"]

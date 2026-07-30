@@ -174,6 +174,7 @@ class Application:
         self.server.register(Cmd.ANALYTICS_SUMMARY, self._analytics_summary)
         self.server.register(Cmd.ANALYTICS_SERIES, self._analytics_series)
         self.server.register(Cmd.ANALYTICS_RESCAN, self._analytics_rescan)
+        self.server.register(Cmd.ANALYTICS_RECENT_SESSIONS, self._analytics_recent_sessions)
         self.server.register(Cmd.SESSIONS_RECOVER, self._sessions_recover)
 
         self.server.on_client_ready(self._replay_state)
@@ -805,6 +806,11 @@ class Application:
                 )
             except AnalyticsBusy as exc:
                 raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
+
+    async def _analytics_recent_sessions(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """Folder-name recency across every active cohort — cheap on purpose,
+        so the Dashboard can ask without the rescan's cost or its ceremony."""
+        return await self._require_analytics().recent_sessions(_opt_int(args.get("limit")))
 
     async def _sessions_recover(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         """The crash-recovery backfill (`data-saving.md` §7.3, §11).

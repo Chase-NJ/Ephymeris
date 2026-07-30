@@ -176,6 +176,18 @@
   .attention-border {
     animation: attention-border 1.8s ease-in-out infinite;
   }
+
+  /* §2.4 HUD panels docked over a live 3D scene — the Dashboard's tile column,
+     following the treatment NodeDetail and StarPanel established. Translucent
+     so the sky reads through, blurred so the panel's own text stays legible.
+     Distinct from .vibrancy (persistent chrome + modals) and .surface (opaque
+     content cards): each of the three keeps its own rule. */
+  .hud {
+    background-color: color-mix(in srgb, var(--color-nebula) 78%, transparent);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--color-halo);
+  }
 }
 
 @keyframes attention-border {

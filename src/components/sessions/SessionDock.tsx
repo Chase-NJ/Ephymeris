@@ -285,7 +285,7 @@ function RunningCard({
   ).length;
 
   return (
-    <div className="surface rounded-md p-4">
+    <div className="hud rounded-md p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <div className="flex items-center gap-2">
           <span
@@ -345,7 +345,7 @@ function RunningCard({
 
 function SessionRow({ session, children }: { session: Session; children: React.ReactNode }) {
   return (
-    <div className="surface flex flex-wrap items-center justify-between gap-2 rounded-md px-3 py-2.5">
+    <div className="hud flex flex-wrap items-center justify-between gap-2 rounded-md px-3 py-2.5">
       <div className="min-w-0">
         <div className="font-mono text-[13px] text-starlight">{sessionName(session)}</div>
         <div className="mt-0.5 font-mono text-[11px] text-static">

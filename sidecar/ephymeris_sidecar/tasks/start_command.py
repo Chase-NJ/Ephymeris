@@ -12,6 +12,12 @@ from typing import Any
 
 from .profile import ConfigField, TaskProfile
 
+#: The wire key carrying the host-drawn trial seed (`data-saving.md` §6.4).
+#: Reserved across every profile rather than declared by any one of them: a
+#: profile that named `SEED` in its own `config` would collide with this and
+#: silently lose one of the two values.
+SEED_WIRE_KEY = "SEED"
+
 
 def _format_value(field: ConfigField, value: Any) -> str:
     """Render one config value for the wire.
@@ -71,3 +77,19 @@ def build_start_command(profile: TaskProfile | None, config: dict[str, Any]) -> 
         tokens.append(f"{field.wire_key}={rendered}")
 
     return "START " + " ".join(tokens) if tokens else "START"
+
+
+def with_trial_seed(command: str, seed: int) -> str:
+    """Append the run's `SEED=<int>` token to an already-built `START` line.
+
+    Separate from `build_start_command` on purpose, and the separation is the
+    whole point: the config half of the line is settled at
+    `sessions.confirmMapping`, minutes before the operator starts anything,
+    while the seed has to be drawn at the **start click** or it isn't per-run
+    entropy at all (`seed.py`). One command, two moments.
+
+    A sketch whose firmware predates the convention ignores the token — that is
+    what `parseStartCommand`'s unknown-key rule is for — and falls back to
+    seeding itself, so an un-reflashed box degrades rather than failing.
+    """
+    return f"{command} {SEED_WIRE_KEY}={seed}"

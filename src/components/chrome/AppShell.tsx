@@ -6,6 +6,7 @@ import { Sidebar } from "./Sidebar";
 import { Starfield } from "./Starfield";
 import { SvgDefs } from "./SvgDefs";
 import { Titlebar } from "./Titlebar";
+import { ConstellationStageProvider } from "@/components/constellation3d/SharedCanvas";
 import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
@@ -20,19 +21,29 @@ export function AppShell() {
 
   return (
     <MotionConfig reducedMotion={reduceMotion ? "always" : "never"}>
-      <div className="flex h-full flex-col bg-void">
-        <SvgDefs />
-        <Titlebar />
-        <div className="flex min-h-0 flex-1">
-          <Sidebar />
-          <div className="relative min-w-0 flex-1">
-            <Starfield />
-            <main className="relative h-full overflow-y-auto">
-              <RouteTransition />
-            </main>
+      {/* One WebGL canvas for every constellation view, mounted here so it
+          outlives route changes — the views adopt it in turn rather than each
+          building (and tearing down) a renderer of their own
+          (`constellation3d/SharedCanvas.tsx`). */}
+      <ConstellationStageProvider>
+        <div className="flex h-full flex-col bg-void">
+          <SvgDefs />
+          <Titlebar />
+          <div className="flex min-h-0 flex-1">
+            <Sidebar />
+            <div className="relative min-w-0 flex-1">
+              <Starfield />
+              {/* overflow-x hidden explicitly: with only overflow-y set, CSS
+                  computes overflow-x to auto, and the route transition's small
+                  horizontal travel would flash a bottom scrollbar on every
+                  guided-flow step. */}
+              <main className="relative h-full overflow-x-hidden overflow-y-auto">
+                <RouteTransition />
+              </main>
+            </div>
           </div>
         </div>
-      </div>
+      </ConstellationStageProvider>
     </MotionConfig>
   );
 }

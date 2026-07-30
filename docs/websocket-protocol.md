@@ -188,6 +188,7 @@ Designed in [analytics.md](analytics.md) §9, which carries the rationale. Imple
 | `analytics.summary` | `{cohortId, sessionIds?, animalIds?, minCountedTrials?}` | cohort table — sessions, animals, run summaries, profile groups, counts, warnings | One call per cohort; every session and animal selection filters it client-side. The heatmap and the strategy space are the same data, so they share one command. Run summaries are a **flat list, not a matrix** — a matrix has nowhere to put two runs for one animal and session, which really happens |
 | `analytics.series` | `{runIds: [], mode?, metricIds?}` | `{series: [RunSeries], warnings}` | Learning-curve data. **Plural** so "all six animals in this session" is one call; the list is capped server-side. The x-axis is the counted-trial index and is implicit. Each `RunSeries` also carries `trail` — the within-session walk through the strategy plane (`analytics.md` §4.4) as `[StrategyPoint]`. It rides here rather than in its own command because the file is already open and decoded, and it is **always rolling** whatever `mode` says. Empty unless the profile declares exactly two conditions, and **not** derivable client-side from `metrics`: those are indexed by each metric's own counted trials, which interleave |
 | `analytics.rescan` | `{cohortId, adoptOrphans?}` | `{scanned, adopted, orphans: [RescanOrphan], cohortId}` | The explicit archive walk, for files no run record points at. Same pattern as `sketches.refresh` and `backup.syncNow`: expensive reconciliation is a deliberate user action, never a side effect of opening a view |
+| `analytics.recentSessions` | `{limit?}` | `{sessions: [DiskSession]}` | The N most recent session folders across every active cohort's archive, ordered by folder-name date. **Directory names only — no file is ever opened**, which is what keeps this cheap enough for the Dashboard where the rescan deliberately is not. Each `DiskSession` carries the identity a folder name alone can assert (`sessions/paths.py`'s parsers, both date spellings): cohort, prefix, session number, ISO date, path, and `recorded` — whether this machine's database holds a session row for that folder. `recorded: false` is the point of the command: a session another Ephymeris machine wrote into the shared archive is real history and belongs on the landing page, but it has no run record here until a rescan adopts it |
 | `sessions.recover` | `{cohortId}` | `{scanned, recovered, failed, entries: [RecoveredTsv], cohortId, dataFolder, folderMissing}` (`RecoverResult`) | The crash-recovery backfill (`data-saving.md` §7.3, §11): rebuilds `.json`/`.mat` from orphaned write-ahead `.tsv` files — same traversal as the rescan's walk, same explicit-action discipline. Each `RecoveredTsv` entry is `{tsvPath, jsonPath, status, nEvents, stopReason, reason}`; a footer-carrying `.tsv` keeps its recorded `stop_reason`, a footer-less (crashed) one gets `"recovered after crash"`. Rejected with `SESSION_INVALID` while any box is running — a live run's `.tsv` has no `.json` yet and is not an orphan |
 
 A corrupt or missing file is **data, not an error** — it yields a run with a non-ok status plus a warning, and the command still succeeds. One unreadable `.json` must never blank a year of history.
@@ -321,6 +322,7 @@ Mirrors the `cohorts.md` §1 data model. Timestamps are ISO-8601 strings.
   "id": "…", "name": "R-14",
   "groupId": "…",                               // exactly one group
   "boxNumber": 3 | null,                        // abstract slot 1–6, NOT a live port
+  "cage": 2 | null,                             // home-cage number — cagemates share one (cohorts.md §2)
   "sex": "M" | "F" | "unknown" | null,
   "idNumber": "0421" | null,
   "notes": "…" | null
@@ -408,6 +410,24 @@ ISO-8601 strings.
 { "metricId": "p_r_odor1", "label": "P(R | Odor 1)",
   "triggerCode": 101,               // the code opening this condition's trials
   "outcomes": { /* <TrialOutcomes> */ } }
+
+// TrialEngagement — how far each OFFERED trial got (analytics.md §3.10).
+// Delimited on the trial light, not on odor onset: the firmware only strobes
+// odor-on after the animal has poked and held, so every other count in a run
+// summary is conditioned on engagement and none of them can measure it.
+// A ladder, not a partition — presented >= poked >= odorDelivered by
+// construction, and the two gaps are reported ready-made. Null (never zeroed)
+// when the profile declares no trial light.
+{ "presented": 312,                 // one per LIGHTS_ON — trials the box offered
+  "poked": 264,                     // of those, the animal engaged the odor port
+  "odorDelivered": 251,             // of those, reached odor delivery
+  "noPoke": 48,                     // presented - poked (LAZY_RAT, in practice)
+  "pokeAborted": 13,                // poked - odorDelivered: let go pre-odor.
+                                    // NOT TrialOutcomes.aborted, which received
+                                    // odor and left during sampling
+  "pEngaged": 0.846154,             // poked / presented
+  "pDelivered": 0.804487,           // odorDelivered / presented
+  "engagedLow": 0.802, "engagedHigh": 0.882 }   // Wilson on pEngaged
 
 // StrategyPoint — one sample of the within-session strategy walk (§4.4)
 { "trial": 84,                      // counted trials across BOTH conditions

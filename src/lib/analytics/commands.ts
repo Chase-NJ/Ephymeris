@@ -9,6 +9,7 @@ import type { SidecarClient } from "../ws/client";
 import { CMD, SidecarCommandError } from "../ws/protocol";
 import type {
   AnalyticsSummary,
+  DiskSession,
   RecoverResult,
   RescanResult,
   SeriesResult,
@@ -49,6 +50,23 @@ export async function getSeries(
   mode: "rolling" | "cumulative" = "rolling",
 ): Promise<SeriesResult> {
   return (await client.call(CMD.ANALYTICS_SERIES, { runIds, mode })) as SeriesResult;
+}
+
+/**
+ * The N most recent session folders across every active cohort's archive, by
+ * folder-name date — directory names only, so it is cheap enough for the
+ * Dashboard. Sees sessions other Ephymeris machines wrote into the shared
+ * archive (`recorded: false`), which `sessions.list` cannot.
+ */
+export async function recentSessions(
+  client: SidecarClient,
+  limit?: number,
+): Promise<DiskSession[]> {
+  const result = (await client.call(
+    CMD.ANALYTICS_RECENT_SESSIONS,
+    limit === undefined ? {} : { limit },
+  )) as { sessions: DiskSession[] };
+  return result.sessions;
 }
 
 /** The explicit archive walk — never a side effect of opening the view. */

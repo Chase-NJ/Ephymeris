@@ -132,6 +132,26 @@ def test_a_v1_database_is_upgraded_in_place(tmp_path: Path) -> None:
     assert {"prefixes", "sessions", "session_animal_runs"} <= tables(path)
 
 
+def test_a_v1_database_gains_the_columns_later_versions_added(tmp_path: Path) -> None:
+    """The column path, driven by the real registry rather than a stand-in.
+
+    v3 added `session_animal_runs.profile_hash` — but on a v1 file that table
+    is created whole by SCHEMA, so the one column an upgraded v1 database
+    genuinely gains by ALTER is v5's `animals.cage`.
+    """
+    path = tmp_path / "ephymeris.db"
+    write_v1_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        assert "cage" in table_columns(db.conn, "animals")
+        assert "profile_hash" in table_columns(db.conn, "session_animal_runs")
+        assert "duration_minutes" in table_columns(db.conn, "sessions")
+    finally:
+        db.close()
+
+
 def test_upgrading_preserves_existing_rows(tmp_path: Path) -> None:
     """A migration that loses the lab's cohorts is worse than one that fails."""
     path = tmp_path / "ephymeris.db"

@@ -67,6 +67,7 @@ export const CMD = {
   ANALYTICS_SUMMARY: "analytics.summary",
   ANALYTICS_SERIES: "analytics.series",
   ANALYTICS_RESCAN: "analytics.rescan",
+  ANALYTICS_RECENT_SESSIONS: "analytics.recentSessions",
 
   // Crash recovery (data-saving.md §7.3, §11)
   SESSIONS_RECOVER: "sessions.recover",
@@ -306,6 +307,11 @@ export interface Animal {
   groupId: string;
   /** Abstract slot 1–6, never a live port. */
   boxNumber: number | null;
+  /**
+   * Home-cage number — cagemates share one. A grouping label validated as ≥ 1 and nothing else;
+   * null means unassigned.
+   */
+  cage: number | null;
   sex: Sex | null;
   idNumber: string | null;
   notes: string | null;
@@ -621,6 +627,25 @@ export interface SessionListItem {
   runCount?: number;
 }
 
+/**
+ * One session folder found on disk, identified by name alone (`sessions/paths.py`). What the
+ * archive can assert without opening a file: identity and date, never runs or animals.
+ */
+export interface DiskSession {
+  cohortId: string;
+  cohortName: string;
+  prefixName: string;
+  sessionNumber: string;
+  /** ISO YYYY-MM-DD, parsed from the folder name — legacy spellings normalized. */
+  date: string;
+  folderPath: string;
+  /**
+   * True when this machine's database holds a session row for the folder — false for a session
+   * another Ephymeris machine wrote into the shared archive.
+   */
+  recorded: boolean;
+}
+
 /** One metric's whole-session result (`analytics.md` §3.2, §3.5). */
 export interface MetricSummary {
   id: string;
@@ -681,6 +706,42 @@ export interface TrialOutcomes {
 }
 
 /**
+ * How far each offered trial got before the animal dropped out (`analytics.md` §3.10). Delimited
+ * on the trial light, not on odor onset — the firmware only strobes odor-on after the animal has
+ * poked and held, so every other count in a run summary is silently conditioned on engagement and
+ * none of them can measure it. A ladder, not a partition: presented >= poked >= odorDelivered by
+ * construction.
+ */
+export interface TrialEngagement {
+  /** Every trial the box offered — one per trial light. */
+  presented: number;
+  /** Of those, the ones the animal poked the odor port on. */
+  poked: number;
+  /**
+   * Of those, the ones that reached odor delivery. Equals TrialOutcomes.trials on a well-formed
+   * stream — the same trials counted from the other end.
+   */
+  odorDelivered: number;
+  /**
+   * presented - poked. The animal never engaged the odor port (LAZY_RAT), plus at most one window
+   * a stop or drop truncated.
+   */
+  noPoke: number;
+  /**
+   * poked - odorDelivered. Engaged, then let go before the pre-odor hold cleared, so no odor was
+   * ever delivered. Distinct from TrialOutcomes.aborted, which received odor and left during
+   * sampling.
+   */
+  pokeAborted: number;
+  /** poked / presented. */
+  pEngaged: number | null;
+  /** odorDelivered / presented. */
+  pDelivered: number | null;
+  engagedLow: number | null;
+  engagedHigh: number | null;
+}
+
+/**
  * TrialOutcomes restricted to one declared condition (`analytics.md` §3.9), in authored
  * liveMetrics order. Answers 'how many trials of this kind were administered, and how many of
  * those paid out'.
@@ -734,6 +795,13 @@ export interface RunSummary {
    * task that can't express an outcome at all.
    */
   conditions: ConditionOutcomes[];
+  /**
+   * How many trials the box offered and how far each got (§3.10) — the layer above every other
+   * count here. Null when the profile declares no trial light, on the same rule as `outcomes`: a
+   * zeroed ladder would read as an animal that never engaged rather than as a task that can't
+   * say.
+   */
+  engagement: TrialEngagement | null;
   totalEvents: number;
   durationMs: number | null;
   stopReason: string | null;
@@ -748,6 +816,8 @@ export interface AnalyticsAnimal {
   name: string;
   groupId: string;
   boxNumber: number | null;
+  /** Home-cage number, same field as Animal.cage. */
+  cage: number | null;
 }
 
 export interface ProfileMetricInfo {
@@ -1000,6 +1070,7 @@ export interface CommandArgsMap {
   "analytics.summary": { cohortId: string; sessionIds?: string[]; animalIds?: string[]; minCountedTrials?: number };
   "analytics.series": { runIds: string[]; mode?: "rolling" | "cumulative"; metricIds?: string[] };
   "analytics.rescan": { cohortId: string; adoptOrphans?: boolean };
+  "analytics.recentSessions": { limit?: number };
   "sessions.recover": { cohortId: string };
 }
 
@@ -1047,6 +1118,7 @@ export interface CommandResultMap {
   "analytics.summary": AnalyticsSummary;
   "analytics.series": SeriesResult;
   "analytics.rescan": RescanResult;
+  "analytics.recentSessions": { sessions: DiskSession[] };
   "sessions.recover": RecoverResult;
 }
 

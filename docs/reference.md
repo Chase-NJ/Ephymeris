@@ -140,7 +140,7 @@ Talks to the sidecar over the WebSocket only.
 | `components/chrome/` | Persistent shell: sidebar, titlebar, starfield, constellation status widget |
 | `components/cohorts/` | Cohort grid, editor panels, procedural icon, Auto-Balance |
 | `components/config/` | The Config tab's pieces: setup wizard, interactive constellation board, zodiac picker, handshake indicator/list |
-| `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: camera/controls/reticle/nameplates/arrival (`Scene.tsx`), the seeded deep-sky backdrop — twinkle field, nebulae, supernovae (`Backdrop.tsx`) — and the assigned-animal satellites (`Orbiters.tsx`) |
+| `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view (`SharedCanvas.tsx`: the stage, its provider in `AppShell`, lazy creation, frameloop parked when no view owns it); camera/controls/reticle/nameplates/arrival plus claim-based camera-pose handoff (`Scene.tsx`), the seeded deep-sky backdrop — twinkle field, nebulae, supernovae — mounted permanently on the stage so it survives navigation (`Backdrop.tsx`), and the cage-ships — one lit craft per home cage, crewed by cagemates (`Orbiters.tsx`; star assignment in `lib/constellations/ships.ts`) |
 | `components/debug/` | The Debug views: constellation landing (`DebugConstellation`), per-box detail with the 3D star (`NodeDetail`, `Star3D`), scrollback, flash dialog, state badges, utility controls |
 | `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, task config form, journey rail, placement banner |
 

@@ -8,33 +8,37 @@ import { seededRandom } from "@/lib/prng";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * Animal satellites: one small craft in orbit around a box's star for each
- * animal assigned to that box, each carrying a mini name tag and a periodic
- * anti-collision strobe — the way you'd know a satellite was up there at all.
+ * Cage-ships: one small craft in orbit around a box's star per *home cage*,
+ * carrying every animal housed together as one crew (`ships.ts` decides which
+ * star a crew orbits — running member first, most recently ran member second).
+ * Each ship carries a mini crew tag and a periodic anti-collision strobe — the
+ * way you'd know a satellite was up there at all.
  *
- * The callers decide who orbits what. Mission Control puts the mapped animal
- * of the current group around its box's star; Debug Mode reads the running
- * session's mapping, so the rig view answers "who is in box 3 right now"
- * without leaving the hardware picture. Either way the satellite is an
- * *annotation* on the star, never a second star: the body is a fraction of the
- * star's radius and the tag is deliberately smaller and fainter than the
- * star's own nameplate.
+ * The craft reads as a made thing at annotation scale: a metal hull with a
+ * canopy and fins, *lit by its star* — the belt carries a point light at the
+ * star's centre, so a ship shows a day side and a night side as it orbits.
+ * That light touches only the ships (everything else in the scene is
+ * shader-or-basic material) and is the one place the scene does literal
+ * lighting; the ion engine adds a small green exhaust flicker while under way.
+ * None of it lands on Pulsar, whose matte flatness §2.2 protects.
  *
  * `active` follows each view's existing motion grammar — stillness is the
- * status. An active satellite orbits and strobes; an inactive one parks at its
- * seeded bearing with a steady faint light, saying "assigned, not running".
+ * status. An active ship orbits, burns its engine and strobes; an inactive one
+ * parks at its seeded bearing, engine cold, with a steady faint marker light,
+ * saying "assigned, not running".
  */
 export interface SceneOrbiter {
-  /** Stable identity — seeds this satellite's orbit, so it never reshuffles. */
+  /** Stable identity — seeds this ship's orbit, so it never reshuffles.
+   *  One per cage (`cage:N`) or per cageless animal (`solo:<id>`). */
   id: string;
-  /** The mini tag's text: the animal's name. */
+  /** The mini tag's text: the crew's names, e.g. `"R-14 · R-15"`. */
   name: string;
-  /** Orbit + strobe when true; park with a steady light when false. */
+  /** Orbit + engine + strobe when true; park with a steady light when false. */
   active: boolean;
 }
 
 /** Strobe timing: a quick double-flash, then dark — an aircraft beacon, not a
- *  pulse. Period is per-satellite seeded so a full rig never blinks in sync. */
+ *  pulse. Period is per-ship seeded so a full rig never blinks in sync. */
 const FLASH_SECONDS = 0.11;
 const SECOND_FLASH_AT = 0.32;
 
@@ -46,6 +50,8 @@ interface OrbitParams {
   bearing: number;
   blinkPeriod: number;
   blinkOffset: number;
+  /** Engine-flicker phase offset, so two burns never pulse in sync. */
+  burnOffset: number;
 }
 
 export function OrbiterBelt({
@@ -57,6 +63,16 @@ export function OrbiterBelt({
 }) {
   return (
     <group>
+      {/* The star lights its own fleet. A point light rather than an ambient:
+          the day/night line crawling across a hull as it orbits is what makes
+          the craft read as a body in space instead of a decal. Standard
+          materials exist only on the ships, so nothing else can catch this. */}
+      <pointLight
+        color={GL.starlight}
+        intensity={2.6}
+        distance={starRadius * 14}
+        decay={1.6}
+      />
       {orbiters.map((orbiter, index) => (
         <Orbiter
           key={orbiter.id}
@@ -81,20 +97,22 @@ function Orbiter({
   const reduceMotion = useReduceMotion();
   const carousel = useRef<THREE.Group>(null);
   const light = useRef<THREE.Mesh>(null);
+  const exhaust = useRef<THREE.Group>(null);
 
-  // Everything about this orbit is a permanent property of the animal's id —
+  // Everything about this orbit is a permanent property of the crew's id —
   // remount the scene, restart the app, same inclination, same bearing.
   const params = useMemo<OrbitParams>(() => {
     const rand = seededRandom(`orbiter:${orbiter.id}`);
     return {
-      // Successive satellites step outward so two animals on one box (a
-      // multi-animal task someday) ring the star rather than collide.
+      // Successive ships step outward so two cages anchored on one box ring
+      // the star rather than collide.
       reach: 2.6 + index * 0.7 + rand() * 0.35,
       tilt: [0.3 + rand() * 0.55, 0, (rand() - 0.5) * 0.8],
       speed: 0.22 + rand() * 0.26,
       bearing: rand() * Math.PI * 2,
       blinkPeriod: 2.6 + rand() * 2.2,
       blinkOffset: rand() * 5,
+      burnOffset: rand() * 7,
     };
   }, [orbiter.id, index]);
 
@@ -102,6 +120,24 @@ function Orbiter({
     const spin = carousel.current;
     if (spin && orbiter.active && !reduceMotion) {
       spin.rotation.y += delta * params.speed;
+    }
+
+    // The engine: a nervous ion flicker while under way, cold when parked.
+    const burn = exhaust.current;
+    if (burn) {
+      let level = 0;
+      if (orbiter.active && !reduceMotion) {
+        const t = clock.elapsedTime + params.burnOffset;
+        level = 0.72 + 0.18 * Math.sin(t * 21) + 0.1 * Math.sin(t * 47);
+      } else if (orbiter.active) {
+        level = 0.72; // reduced motion: a steady burn, no flicker
+      }
+      for (const child of burn.children) {
+        const mesh = child as THREE.Mesh;
+        const material = mesh.material as THREE.MeshBasicMaterial;
+        material.opacity = level * Number(mesh.userData["peak"] ?? 1);
+      }
+      burn.visible = level > 0;
     }
 
     const beacon = light.current;
@@ -120,27 +156,19 @@ function Orbiter({
     beacon.scale.setScalar(1 + flash * 1.4);
   });
 
-  const bodyOpacity = orbiter.active ? 0.9 : 0.4;
   const orbitRadius = starRadius * params.reach;
 
   return (
     <group rotation={params.tilt}>
       <group ref={carousel} rotation={[0, params.bearing, 0]}>
         <group position={[orbitRadius, 0, 0]}>
-          {/* The craft: a small matte octahedron — angular, so it reads as a
-              made thing next to the round star. */}
-          <mesh>
-            <octahedronGeometry args={[starRadius * 0.14, 0]} />
-            <meshBasicMaterial
-              color={GL.starlight}
-              transparent
-              opacity={bodyOpacity}
-            />
-          </mesh>
+          {/* Nose into the direction of travel: the carousel spins +y, which
+              moves a craft at +x toward −z. */}
+          <ShipHull starRadius={starRadius} active={orbiter.active} exhaust={exhaust} />
 
-          {/* The strobe: a tiny beacon just off the hull. */}
-          <mesh ref={light} position={[0, starRadius * 0.2, 0]}>
-            <sphereGeometry args={[starRadius * 0.055, 8, 8]} />
+          {/* The strobe: a tiny beacon on the spine. */}
+          <mesh ref={light} position={[0, starRadius * 0.12, starRadius * 0.02]}>
+            <sphereGeometry args={[starRadius * 0.045, 8, 8]} />
             <meshBasicMaterial
               color={GL.starlight}
               transparent
@@ -170,6 +198,111 @@ function Orbiter({
             </span>
           </Html>
         </group>
+      </group>
+    </group>
+  );
+}
+
+/**
+ * The craft itself, nose toward −z. Everything is sized off the star so the
+ * whole ship spans roughly the old octahedron's footprint — it must stay an
+ * annotation, never a second star.
+ *
+ * Hull and fins are standard material so the belt's star-light shades them;
+ * the low Halo emissive keeps the night side legible instead of vanishing.
+ * Canopy and nozzle stay basic-material accents, and the exhaust is the one
+ * additive element — an ion drive's glow, in Ion, animated by the parent.
+ */
+function ShipHull({
+  starRadius: s,
+  active,
+  exhaust,
+}: {
+  starRadius: number;
+  active: boolean;
+  exhaust: React.RefObject<THREE.Group | null>;
+}) {
+  const hullOpacity = active ? 0.96 : 0.45;
+
+  return (
+    <group>
+      {/* Fuselage: a capsule laid along z. */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <capsuleGeometry args={[s * 0.055, s * 0.2, 4, 10]} />
+        <meshStandardMaterial
+          color={GL.starlight}
+          metalness={0.45}
+          roughness={0.5}
+          emissive={GL.halo}
+          emissiveIntensity={0.55}
+          transparent
+          opacity={hullOpacity}
+        />
+      </mesh>
+
+      {/* Canopy: a small blister forward of midships. */}
+      <mesh position={[0, s * 0.045, -s * 0.06]}>
+        <sphereGeometry args={[s * 0.032, 10, 10]} />
+        <meshBasicMaterial color={GL.pulsar} transparent opacity={hullOpacity * 0.9} />
+      </mesh>
+
+      {/* Fins: two swept side planes and a tail, at the stern. */}
+      {[
+        { position: [s * 0.085, 0, s * 0.08], rotation: [0, -0.35, 0] },
+        { position: [-s * 0.085, 0, s * 0.08], rotation: [0, 0.35, 0] },
+        { position: [0, s * 0.085, s * 0.08], rotation: [0, 0, Math.PI / 2] },
+      ].map((fin, i) => (
+        <mesh
+          key={i}
+          position={fin.position as [number, number, number]}
+          rotation={fin.rotation as [number, number, number]}
+        >
+          <boxGeometry args={[s * 0.11, s * 0.012, s * 0.09]} />
+          <meshStandardMaterial
+            color={GL.starlight}
+            metalness={0.45}
+            roughness={0.55}
+            emissive={GL.halo}
+            emissiveIntensity={0.55}
+            transparent
+            opacity={hullOpacity}
+          />
+        </mesh>
+      ))}
+
+      {/* Engine nozzle, flaring aft. */}
+      <mesh position={[0, 0, s * 0.17]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[s * 0.05, s * 0.032, s * 0.05, 10]} />
+        <meshBasicMaterial color={GL.halo} transparent opacity={hullOpacity} />
+      </mesh>
+
+      {/* The burn: throat glow plus a tapering plume, additive so it reads as
+          light. Opacity is driven per-frame by the parent; `peak` is each
+          part's ceiling so throat and plume flicker in ratio. */}
+      <group ref={exhaust} visible={false}>
+        <mesh position={[0, 0, s * 0.2]} userData={{ peak: 1 }}>
+          <sphereGeometry args={[s * 0.028, 8, 8]} />
+          <meshBasicMaterial
+            color={GL.ion}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+          />
+        </mesh>
+        {/* +90° about x points the cone's apex aft, so the plume tapers away
+            from the nozzle. */}
+        <mesh position={[0, 0, s * 0.29]} rotation={[Math.PI / 2, 0, 0]} userData={{ peak: 0.45 }}>
+          <coneGeometry args={[s * 0.022, s * 0.16, 8, 1, true]} />
+          <meshBasicMaterial
+            color={GL.ion}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
       </group>
     </group>
   );

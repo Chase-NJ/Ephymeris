@@ -1,37 +1,43 @@
 import { motion } from "framer-motion";
-import { Children, useEffect, useState } from "react";
-import { ArrowRight, ChartLine, Rocket, Terminal, Users } from "lucide-react";
+import { Children, useEffect, useMemo, useReducer, useState } from "react";
+import { ArrowRight, ChartLine, Radio, Rocket, Users } from "lucide-react";
 import { useNavigate } from "react-router";
 import type { LucideIcon } from "lucide-react";
 
 import { NODE_FILL, useBoxHealth, type BoxHealth } from "@/components/chrome/ConstellationStatus";
+import { DebugConstellation } from "@/components/debug/DebugConstellation";
 import { SessionDock } from "@/components/sessions/SessionDock";
-import { listSessions } from "@/lib/analytics/commands";
-import type { SessionListItem } from "@/lib/analytics/types";
+import { recentSessions as fetchRecentSessions } from "@/lib/analytics/commands";
+import { useAnalyticsStore } from "@/lib/analytics/context";
+import type { DiskSession } from "@/lib/analytics/types";
+import { setRigSelection, useRigSelection } from "@/lib/constellations/viewMemory";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { useActiveCohorts, useCohortsLoaded } from "@/lib/cohorts/context";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useRunningSession } from "@/lib/sessions/context";
 import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
-import type { SessionStatus } from "@/lib/ws/protocol";
 
 /**
  * Dashboard / landing view (ephymeris_v1.0.md §3.3).
  *
- * A compact hero CTA — with the session dock beside it — over three summary
- * cards, each pairing a destination with its at-a-glance state: Cohorts lists
- * the active cohorts, Debug Mode lists the rig's boxes with live health, and
- * Analytics previews the most recent recorded session. The dock is the former
- * Launch page's content (`SessionDock`): the running session's status and way
- * back into Mission Control, plus unfinished and crash-orphaned set-ups —
- * the Dashboard is the hub for getting into a session now that the Launch
- * nav item is retired (§3.2). Everything reads state the app-level providers
- * already hold or a DB-only sidecar call (`sessions.list` never touches the
- * filesystem), so the landing page stays cheap and never shows a spinner.
- * Settings is intentionally not a card — it lives in one fixed,
- * always-reachable place in the sidebar rather than as browsable content
- * (§3.2).
+ * The rig's constellation is the page — the same 3D browser Debug flies, same
+ * shared camera and selection (`viewMemory.ts`), so moving between the two
+ * views reads as one continuous sky rather than two screens with similar
+ * wallpaper. Everything else docks over it as two columns of translucent HUD
+ * tiles: **command** on the left (the hero CTA, then whatever sessions are in
+ * flight, directly under it — "what do I do now" in one stack) and **overview**
+ * on the right (Cohorts, Rig, Analytics).
+ *
+ * Selecting a star here hands off to Debug, where the box's instrument panel
+ * lives — the selection and camera ride along, so the arrival flight lands in
+ * the other view mid-move. **That gesture is the rig's only entrance**, which
+ * is why the Rig tile is a readout with no header link: the sky on this page
+ * already *is* the rig, so a card offering to navigate to it was a third route
+ * to where the user was already standing. Its rows do what its stars do.
+ *
+ * Data stays cheap: providers the app already holds, the app-level analytics
+ * cache, and `analytics.recentSessions` (folder names only). No spinners.
  */
 export function Dashboard() {
   const navigate = useNavigate();
@@ -40,7 +46,9 @@ export function Dashboard() {
   const cohortsLoaded = useCohortsLoaded();
   const health = useBoxHealth();
   const running = useRunningSession();
-  const { latest, loaded: latestLoaded } = useLatestSession();
+  const selected = useRigSelection();
+  const rewardSeries = useCohortRewardSeries();
+  const recent = useRecentSessions();
 
   const cohortCount = cohorts.length;
   const boundBindings = settings.boxes.filter((b) => b.hardwareId !== null);
@@ -48,162 +56,225 @@ export function Dashboard() {
     (b) => (health[b.box] ?? "absent") !== "absent",
   ).length;
 
-  // §4.1: starting a session requires an existing cohort — now a live check
-  // against the real cohort count rather than a hardcoded always-zero.
-  //
-  // Deliberately still only an *existence* check. "Ready to run" is now defined
-  // (`starting-a-session.md` §1) but is a per-cohort property, and Step 1
-  // (`/session/new`) is where a cohort gets picked — so that's where the
-  // readiness check belongs and where it lives.
+  // §4.1: starting a session requires an existing cohort — still only an
+  // *existence* check; Step 1 (`/session/new`) owns per-cohort readiness.
   const hasCohorts = cohortCount > 0;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={springPanel}
-      className="mx-auto max-w-5xl px-10 py-9"
-    >
-      <h1 className="font-display text-[22px] text-starlight">Dashboard</h1>
+    <div className="relative h-full overflow-hidden">
+      {/* The sky. Bound boxes as temperature stars, cage-ships in orbit —
+          DebugConstellation, verbatim, including its camera.
 
-      <div className="mt-6 flex flex-wrap items-start gap-3">
-        <LaunchButton
-          running={running !== null}
-          hasCohorts={hasCohorts}
-          onClick={() => {
-            // Straight to the destination — the Launch waypoint is retired
-            // (§3.2): Mission Control while a session runs, Step 1 otherwise.
-            if (running) {
-              navigate(
-                `/session/${running.session.id}/control?cohort=${running.session.cohortId}`,
-              );
-            } else {
-              navigate(hasCohorts ? "/session/new" : "/cohorts");
-            }
+          **Deliberately outside the entrance animation.** The shared canvas
+          lives in this element (`SharedCanvas.tsx`), so fading this view in
+          would fade the sky in with it — and since Debug shows the same sky,
+          navigating between the two made the constellation blink out and back
+          on every arrival. Only the chrome animates; the sky holds still and is
+          simply handed over, which is the whole "one continuous sky" premise. */}
+      <div className="absolute inset-0">
+        <DebugConstellation
+          selected={selected}
+          onSelect={(box) => {
+            setRigSelection(box);
+            // The instrument panel lives in Debug; the shared camera makes
+            // the handoff read as one continuous flight, not a page change.
+            if (box !== null) navigate("/debug");
           }}
         />
-        <SessionDock />
       </div>
 
-      <div className="mt-5 grid grid-cols-1 items-start gap-3 md:grid-cols-2">
-        <SummaryCard
-          icon={Users}
-          label="Cohorts"
-          status={`${cohortCount} active`}
-          onOpen={() => navigate("/cohorts")}
-          empty={
-            cohortsLoaded && cohortCount === 0
-              ? "No cohorts yet — create one to start recording sessions."
-              : null
-          }
-        >
-          {cohorts.slice(0, MAX_ROWS).map((cohort) => (
-            <CardRow key={cohort.id} onClick={() => navigate(`/cohorts/${cohort.id}`)}>
-              <span className="min-w-0 flex-1 truncate text-[13px] text-starlight">
-                {cohort.name}
-              </span>
-              <span className="shrink-0 font-mono text-[11px] text-static">
-                {cohort.animalCount} animal{cohort.animalCount === 1 ? "" : "s"} ·{" "}
-                {cohort.groupCount} group{cohort.groupCount === 1 ? "" : "s"}
-              </span>
-            </CardRow>
-          ))}
-          {cohortCount > MAX_ROWS && (
-            <CardFooterLink onClick={() => navigate("/cohorts")}>
-              all {cohortCount} cohorts
-            </CardFooterLink>
-          )}
-        </SummaryCard>
+      {/* The chrome, and the only thing that animates. Opacity-only: a
+          y-offset on a full-height view transiently overflows the scroll
+          container and flashes the scrollbar. */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={springPanel}
+        className="pointer-events-none absolute inset-0"
+      >
+        {/* The command column: the page title, the hero CTA, and whatever
+            sessions are in flight, directly below it. Both columns ignore the
+            pointer so the sky between the tiles still orbits; the tiles
+            themselves take it back. The title rides inside the column (p-4 +
+            pt-3 = the shared 28px title line, pl-8 = the shared 32px indent)
+            so the stack clears it by layout rather than a hard-coded offset. */}
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-[392px] overflow-y-auto p-4 pl-8">
+          <h1 className="pb-4 pt-3 font-display text-[22px] text-starlight">Dashboard</h1>
+          <div className="pointer-events-auto flex flex-col gap-3">
+            <LaunchButton
+              running={running !== null}
+              hasCohorts={hasCohorts}
+              onClick={() => {
+                if (running) {
+                  navigate(
+                    `/session/${running.session.id}/control?cohort=${running.session.cohortId}`,
+                  );
+                } else {
+                  navigate(hasCohorts ? "/session/new" : "/cohorts");
+                }
+              }}
+            />
 
-        <SummaryCard
-          icon={Terminal}
-          label="Debug Mode"
-          status={
-            boundBindings.length === 0
-              ? "no boxes"
-              : `${connectedCount}/${boundBindings.length} connected`
-          }
-          onOpen={() => navigate("/debug")}
-          empty={
-            boundBindings.length === 0
-              ? "No boxes bound yet — box setup in Config binds each one to a board."
-              : null
-          }
-        >
-          {boundBindings.map((binding) => {
-            const state = health[binding.box] ?? "absent";
-            return (
-              <CardRow key={binding.box} onClick={() => navigate("/debug")}>
-                <span
-                  aria-hidden
-                  className="size-[7px] shrink-0 rounded-full"
-                  style={{ background: NODE_FILL[state] }}
-                />
-                <span className="shrink-0 font-mono text-[11px] text-static">
-                  Box {binding.box}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-[13px] text-starlight">
-                  {binding.label || `Box ${binding.box}`}
-                </span>
-                <span className="shrink-0 font-mono text-[11px] text-static">
-                  {HEALTH_LABEL[state]}
-                </span>
-              </CardRow>
-            );
-          })}
-        </SummaryCard>
-      </div>
+            <SessionDock />
+          </div>
+        </div>
 
-      <div className="mt-3">
-        <SummaryCard
-          icon={ChartLine}
-          label="Analytics"
-          status={latest ? "latest session" : latestLoaded ? "no sessions" : "view"}
-          onOpen={() => navigate("/analytics")}
-          empty={
-            latestLoaded && !latest
-              ? "No sessions recorded yet — the most recent one will preview here."
-              : null
-          }
-        >
-          {latest && (
-            <CardRow onClick={() => navigate("/analytics")}>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] text-starlight">
-                  {latest.session.prefixName} {latest.session.sessionNumber}
-                  <span className="text-static"> · {latest.cohortName}</span>
-                </span>
-                <span className="mt-0.5 block font-mono text-[11px] text-static">
-                  {latest.session.date}
-                </span>
-              </span>
-              <span className="flex shrink-0 items-center gap-6">
-                <Stat
-                  label="runs"
-                  value={latest.session.runCount != null ? String(latest.session.runCount) : "—"}
-                />
-                <Stat label="length" value={durationLabel(latest.session)} />
-                <span className="flex flex-col items-end">
-                  <span className="flex items-center gap-1.5">
+        {/* The overview column: where everything else is, at a glance. */}
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-[392px] overflow-y-auto p-4 pl-0">
+          <div className="pointer-events-auto flex flex-col gap-3">
+            <SummaryCard
+              icon={Users}
+              label="Cohorts"
+              status={`${cohortCount} active`}
+              onOpen={() => navigate("/cohorts")}
+              empty={
+                cohortsLoaded && cohortCount === 0
+                  ? "No cohorts yet — create one to start recording sessions."
+                  : null
+              }
+            >
+              {cohorts.slice(0, MAX_ROWS).map((cohort) => (
+                <CardRow key={cohort.id} onClick={() => navigate(`/cohorts/${cohort.id}`)}>
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-starlight">
+                    {cohort.name}
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] text-static">
+                    {cohort.animalCount} animal{cohort.animalCount === 1 ? "" : "s"} ·{" "}
+                    {cohort.groupCount} group{cohort.groupCount === 1 ? "" : "s"}
+                  </span>
+                </CardRow>
+              ))}
+              {cohortCount > MAX_ROWS && (
+                <CardFooterLink onClick={() => navigate("/cohorts")}>
+                  all {cohortCount} cohorts
+                </CardFooterLink>
+              )}
+            </SummaryCard>
+
+            {/* The rig, as a readout rather than a destination. The sky on this
+                page *is* the rig, and selecting a box — by clicking its star or
+                one of these rows — is what opens its instrument panel; a header
+                that also navigated to "Debug Mode" was offering a third route
+                to a place the page already was. So the header states rig health
+                and nothing more, and the rows carry the one real gesture. */}
+            <SummaryCard
+              icon={Radio}
+              label="Rig"
+              status={
+                boundBindings.length === 0
+                  ? "no boxes"
+                  : `${connectedCount}/${boundBindings.length} connected`
+              }
+              empty={
+                boundBindings.length === 0
+                  ? "No boxes bound yet — box setup in Config binds each one to a board."
+                  : null
+              }
+            >
+              {boundBindings.map((binding) => {
+                const state = health[binding.box] ?? "absent";
+                return (
+                  <CardRow
+                    key={binding.box}
+                    // Exactly what clicking the box's star does, from a list —
+                    // the selection is the rig's (`viewMemory.ts`), so the
+                    // camera flies to it and Debug's panel opens on arrival.
+                    onClick={() => {
+                      setRigSelection(binding.box);
+                      navigate("/debug");
+                    }}
+                  >
                     <span
                       aria-hidden
-                      className="size-[7px] rounded-full"
-                      style={{ background: SESSION_STATUS[latest.session.status].color }}
+                      className="size-[7px] shrink-0 rounded-full"
+                      style={{ background: NODE_FILL[state] }}
                     />
-                    <span className="font-mono text-[13px] text-starlight">
-                      {SESSION_STATUS[latest.session.status].label}
+                    <span className="shrink-0 font-mono text-[11px] text-static">
+                      Box {binding.box}
                     </span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-starlight">
+                      {binding.label || `Box ${binding.box}`}
+                    </span>
+                    <span className="shrink-0 font-mono text-[11px] text-static">
+                      {HEALTH_LABEL[state]}
+                    </span>
+                  </CardRow>
+                );
+              })}
+              {/* The one thing an unbound rig needs, and the one thing that
+                  isn't reachable by clicking the sky. */}
+              {boundBindings.length === 0 && (
+                <CardFooterLink onClick={() => navigate("/config")}>
+                  box setup in Config
+                </CardFooterLink>
+              )}
+            </SummaryCard>
+
+            <SummaryCard
+              icon={ChartLine}
+              label="Analytics"
+              status="reward accuracy"
+              onOpen={() => navigate("/analytics")}
+              empty={
+                cohortsLoaded && cohortCount === 0
+                  ? "Cohort accuracy will chart here once sessions are recorded."
+                  : null
+              }
+            >
+              {rewardSeries.map((cohort) => (
+                <CardRow key={cohort.id} onClick={() => navigate("/analytics")}>
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-starlight">
+                    {cohort.name}
                   </span>
-                  <span className="font-mono text-[10px] uppercase tracking-wide text-static">
-                    status
-                  </span>
-                </span>
-              </span>
-            </CardRow>
-          )}
-        </SummaryCard>
-      </div>
-    </motion.div>
+                  {cohort.values.length === 0 ? (
+                    <span className="shrink-0 font-mono text-[10px] text-static/60">
+                      no scored sessions
+                    </span>
+                  ) : (
+                    <>
+                      <Sparkline
+                        values={cohort.values}
+                        title={`${cohort.name}: reward accuracy across ${cohort.values.length} session${cohort.values.length === 1 ? "" : "s"}`}
+                      />
+                      <span className="w-9 shrink-0 text-right font-mono text-[11px] text-starlight">
+                        {Math.round(cohort.values[cohort.values.length - 1]! * 100)}%
+                      </span>
+                    </>
+                  )}
+                </CardRow>
+              ))}
+
+              {recent.sessions.length > 0 && (
+                <>
+                  <p className="mt-2 border-t border-halo pt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-static">
+                    Recent sessions
+                  </p>
+                  {recent.sessions.map((session) => (
+                    <CardRow key={session.folderPath} onClick={() => navigate("/analytics")}>
+                      <span className="shrink-0 font-mono text-[11px] text-static">
+                        {session.date}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-starlight">
+                        {session.prefixName} {session.sessionNumber}
+                        <span className="text-static"> · {session.cohortName}</span>
+                      </span>
+                      {!session.recorded && (
+                        <span
+                          className="shrink-0 font-mono text-[10px] text-static/60"
+                          title="Recorded by another Ephymeris machine — run a rescan in Analytics to index it here"
+                        >
+                          not indexed
+                        </span>
+                      )}
+                    </CardRow>
+                  ))}
+                </>
+              )}
+            </SummaryCard>
+          </div>
+        </div>
+      </motion.div>
+    </div>
   );
 }
 
@@ -219,87 +290,155 @@ const HEALTH_LABEL: Record<BoxHealth, string> = {
 };
 
 /**
- * Session status, in words and a dot colour. Semantic status colours mark
- * state only (§2.2); `completed` takes Pulsar because a finished session is a
- * result, not a condition needing attention.
+ * Per-cohort reward accuracy across sessions, for the Analytics tile's
+ * sparklines. One point per session in date order: rewarded over administered
+ * trials pooled across that session's runs — **the earned-drop rate, not
+ * choice accuracy** (`analytics.md` §3.8): a correct choice that failed the
+ * hold counts against it, which is what makes it the number the lab pays out
+ * on. Sessions whose task has no reward vocabulary contribute nothing.
+ *
+ * Rides the app-level analytics cache and triggers the same per-cohort loads
+ * the rig's star temperatures do, so the two never disagree about freshness.
  */
-const SESSION_STATUS: Record<SessionStatus, { label: string; color: string }> = {
-  running: { label: "running", color: "var(--color-status-ok)" },
-  completed: { label: "completed", color: "var(--color-pulsar)" },
-  configuring: { label: "unfinished", color: "var(--color-status-warning)" },
-  aborted: { label: "aborted", color: "var(--color-status-error)" },
-};
+function useCohortRewardSeries(): Array<{ id: string; name: string; values: number[] }> {
+  const { client, status } = useSidecar();
+  const store = useAnalyticsStore();
+  const cohorts = useActiveCohorts();
 
-/** Wall-clock length of a session, from its run record. */
-function durationLabel(session: SessionListItem): string {
-  if (!session.endedAt) return session.status === "running" ? "in progress" : "—";
-  const ms = Date.parse(session.endedAt) - Date.parse(session.startedAt);
-  if (!Number.isFinite(ms) || ms < 0) return "—";
-  const mins = Math.round(ms / 60_000);
-  const hours = Math.floor(mins / 60);
-  return hours > 0 ? `${hours}h ${mins % 60}m` : `${mins}m`;
-}
+  const [tick, bump] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => store.subscribe("data", bump), [store]);
 
-/** The sidecar's own ordering key for sessions: (date, startedAt). */
-function isLater(a: SessionListItem, b: SessionListItem): boolean {
-  if (a.date !== b.date) return a.date > b.date;
-  return a.startedAt > b.startedAt;
-}
+  useEffect(() => {
+    if (status !== "connected") return;
+    for (const cohort of cohorts) {
+      void store.load(client, cohort.id).catch(() => {
+        // An unreadable archive keeps its sparkline empty; the Analytics view
+        // is where the error itself is surfaced.
+      });
+    }
+  }, [client, status, store, cohorts, tick]);
 
-interface LatestSession {
-  session: SessionListItem;
-  cohortName: string;
+  return useMemo(
+    () =>
+      cohorts.map((cohort) => {
+        const summary = store.getSummary(cohort.id);
+        if (!summary) return { id: cohort.id, name: cohort.name, values: [] };
+
+        const bySession = new Map<string, { rewarded: number; administered: number }>();
+        for (const run of summary.runs) {
+          const outcomes = run.outcomes;
+          if (!outcomes || outcomes.administered <= 0) continue;
+          const acc = bySession.get(run.sessionId) ?? { rewarded: 0, administered: 0 };
+          acc.rewarded += outcomes.rewarded;
+          acc.administered += outcomes.administered;
+          bySession.set(run.sessionId, acc);
+        }
+
+        // `summary.sessions` is already date-ordered oldest-first and includes
+        // adopted archive sessions, so the line is the cohort's real history.
+        const values: number[] = [];
+        for (const session of summary.sessions) {
+          const acc = bySession.get(session.id);
+          if (acc && acc.administered > 0) values.push(acc.rewarded / acc.administered);
+        }
+        return { id: cohort.id, name: cohort.name, values };
+      }),
+    // `tick` stands in for the summaries' contents behind stable references.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cohorts, store, tick],
+  );
 }
 
 /**
- * The most recent session across all active cohorts, for the Analytics
- * preview. `sessions.list` is DB-only by construction (`analytics.md` §9), so
- * one call per cohort keeps the landing page's no-spinner rule intact. A
- * session starting or ending refetches, so the preview never shows a stale
- * "running".
+ * The N most recent session folders across the whole archive — including ones
+ * another Ephymeris machine wrote (`analytics.recentSessions`, names only).
+ * A session starting or ending refetches, so today's run appears without a
+ * reload.
  */
-function useLatestSession(): { latest: LatestSession | null; loaded: boolean } {
+function useRecentSessions(): { sessions: DiskSession[]; loaded: boolean } {
   const { client, status } = useSidecar();
-  const cohorts = useActiveCohorts();
-  const cohortsLoaded = useCohortsLoaded();
   const running = useRunningSession();
   const runningId = running?.session.id ?? null;
-  const [state, setState] = useState<{ latest: LatestSession | null; loaded: boolean }>({
-    latest: null,
+  const [state, setState] = useState<{ sessions: DiskSession[]; loaded: boolean }>({
+    sessions: [],
     loaded: false,
   });
 
   useEffect(() => {
-    if (status !== "connected" || !cohortsLoaded) return;
-    if (cohorts.length === 0) {
-      setState({ latest: null, loaded: true });
-      return;
-    }
+    if (status !== "connected") return;
     let cancelled = false;
-    void (async () => {
-      const results = await Promise.allSettled(
-        cohorts.map((cohort) => listSessions(client, cohort.id)),
-      );
-      if (cancelled) return;
-      let best: LatestSession | null = null;
-      results.forEach((result, i) => {
-        if (result.status !== "fulfilled") return;
-        // `sessions.list` orders oldest-first, so each cohort's candidate is
-        // its last element.
-        const last = result.value[result.value.length - 1];
-        if (!last) return;
-        if (!best || isLater(last, best.session)) {
-          best = { session: last, cohortName: cohorts[i]!.name };
-        }
+    fetchRecentSessions(client, 3)
+      .then((sessions) => {
+        if (!cancelled) setState({ sessions, loaded: true });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ sessions: [], loaded: true });
       });
-      setState({ latest: best, loaded: true });
-    })();
     return () => {
       cancelled = true;
     };
-  }, [client, status, cohortsLoaded, cohorts, runningId]);
+  }, [client, status, runningId]);
 
   return state;
+}
+
+/** Sparkline geometry — small enough to live in a row, wide enough to read. */
+const SPARK_W = 96;
+const SPARK_H = 22;
+const SPARK_PAD = 3;
+/**
+ * Domain floor. A fixed domain keeps every cohort's line comparable at a
+ * glance (per-row normalization would stretch noise into drama), but a 0-based
+ * floor spends most of the 16px of height on a range no real reward rate
+ * occupies — so the floor sits below chance, not at zero.
+ */
+const SPARK_MIN = 0.2;
+
+/**
+ * One cohort's reward-accuracy line, on the shared [SPARK_MIN, 1] domain. The
+ * dashed guide is chance (0.5); the dot is the latest session, whose value the
+ * row prints beside it, so the number is never color-alone.
+ */
+function Sparkline({ values, title }: { values: number[]; title: string }) {
+  const x = (i: number) =>
+    values.length === 1
+      ? SPARK_W / 2
+      : SPARK_PAD + (i * (SPARK_W - 2 * SPARK_PAD)) / (values.length - 1);
+  const y = (v: number) => {
+    const t = Math.max(0, (v - SPARK_MIN) / (1 - SPARK_MIN));
+    return SPARK_H - SPARK_PAD - t * (SPARK_H - 2 * SPARK_PAD);
+  };
+  const last = values[values.length - 1]!;
+
+  return (
+    <svg
+      width={SPARK_W}
+      height={SPARK_H}
+      className="shrink-0"
+      role="img"
+      aria-label={title}
+    >
+      <title>{title}</title>
+      <line
+        x1={SPARK_PAD}
+        y1={y(0.5)}
+        x2={SPARK_W - SPARK_PAD}
+        y2={y(0.5)}
+        stroke="var(--color-halo)"
+        strokeWidth="1"
+        strokeDasharray="2 3"
+      />
+      <polyline
+        points={values.map((v, i) => `${x(i)},${y(v)}`).join(" ")}
+        fill="none"
+        stroke="var(--color-pulsar)"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <circle cx={x(values.length - 1)} cy={y(last)} r="2" fill="var(--color-pulsar)" />
+    </svg>
+  );
 }
 
 /**
@@ -322,10 +461,11 @@ const EXHAUST: ReadonlyArray<{
 ];
 
 /**
- * The hero CTA — the screen's single most prominent element (§3.3), but
- * self-sized now rather than a full-width slab, so the summary cards get the
- * room. Hovering lifts the rocket toward its heading and lights the booster
- * trail; the trail loop stands down under reduced motion.
+ * The hero CTA — still the page's single most prominent element (§3.3), now
+ * the head of the command column at the column's shared width. Hovering lifts
+ * the rocket toward its heading and lights the booster trail; the trail loop
+ * stands down under reduced motion. Deliberately opaque: the one solid tile,
+ * because the primary action should not dissolve into the sky behind it.
  */
 function LaunchButton({
   running,
@@ -346,7 +486,7 @@ function LaunchButton({
       whileHover="hover"
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
-      className="group flex items-center gap-4 rounded-lg bg-pulsar py-4 pl-5 pr-6 text-left"
+      className="group flex w-full items-center gap-4 rounded-lg bg-pulsar py-4 pl-5 pr-6 text-left"
     >
       <span className="relative shrink-0" aria-hidden>
         <motion.span
@@ -379,7 +519,7 @@ function LaunchButton({
             />
           ))}
       </span>
-      <span>
+      <span className="min-w-0 flex-1">
         <span className="block font-display text-base font-semibold text-void">
           {running
             ? "Resume Session"
@@ -398,16 +538,23 @@ function LaunchButton({
       <ArrowRight
         size={18}
         strokeWidth={2}
-        className="ml-3 shrink-0 text-void transition-transform group-hover:translate-x-0.5"
+        className="shrink-0 text-void transition-transform group-hover:translate-x-0.5"
       />
     </motion.button>
   );
 }
 
 /**
- * One destination card: a clickable header (icon, label, live status, arrow —
- * the old tile) over that destination's at-a-glance rows (the old panel).
- * Header and rows navigate independently, so the merge loses no click target.
+ * One card: a header (icon, label, live status) over that subject's
+ * at-a-glance rows. HUD-styled — translucent over the scene, per the
+ * docked-panel treatment (§2.4) — since the whole column floats on the
+ * constellation.
+ *
+ * **`onOpen` is optional, and its absence is a statement.** A card with one is
+ * a destination: the header is a button and carries the arrow. A card without
+ * one is a *readout* — the Rig card, whose subject is the sky this page is
+ * already showing, so there is nowhere for a header to go. Its rows still act;
+ * the header just stops pretending to.
  */
 function SummaryCard({
   icon: Icon,
@@ -420,35 +567,50 @@ function SummaryCard({
   icon: LucideIcon;
   label: string;
   status: string;
-  onOpen: () => void;
+  onOpen?: () => void;
   empty: string | null;
   children?: React.ReactNode;
 }) {
-  return (
-    <section className="surface overflow-hidden rounded-md">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="group flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-halo/30"
-      >
-        <Icon size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
-        <span className="text-[13px] font-medium text-starlight">{label}</span>
-        <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-[11px] text-static">
-          {status}
+  const heading = (
+    <>
+      <Icon size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
+      <span className="text-[13px] font-medium text-starlight">{label}</span>
+      <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-[11px] text-static">
+        {status}
+        {onOpen && (
           <ArrowRight
             size={11}
             strokeWidth={2}
             className="transition-transform group-hover:translate-x-0.5"
           />
-        </span>
-      </button>
-      {(empty || Children.toArray(children).length > 0) && (
+        )}
+      </span>
+    </>
+  );
+
+  const hasRows = Children.toArray(children).length > 0;
+
+  return (
+    <section className="hud overflow-hidden rounded-md">
+      {onOpen ? (
+        <button
+          type="button"
+          onClick={onOpen}
+          className="group flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-halo/30"
+        >
+          {heading}
+        </button>
+      ) : (
+        // The same metrics as the button, so the column's rhythm doesn't break
+        // on the one card that isn't clickable.
+        <div className="flex w-full items-center gap-3 px-4 py-3.5">{heading}</div>
+      )}
+      {(empty || hasRows) && (
         <div className="border-t border-halo px-4 pb-3 pt-2">
-          {empty ? (
-            <p className="py-1 text-[12px] leading-relaxed text-static">{empty}</p>
-          ) : (
-            <div className="flex flex-col">{children}</div>
-          )}
+          {/* Both, not either: an empty state can still carry the one link that
+              would fix it (the Rig card's route to Config). */}
+          {empty && <p className="py-1 text-[12px] leading-relaxed text-static">{empty}</p>}
+          {hasRows && <div className="flex flex-col">{children}</div>}
         </div>
       )}
     </section>
@@ -493,15 +655,5 @@ function CardFooterLink({
         className="transition-transform group-hover:translate-x-0.5"
       />
     </button>
-  );
-}
-
-/** One right-aligned figure in the Analytics preview row. */
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="flex shrink-0 flex-col items-end">
-      <span className="font-mono text-[13px] text-starlight">{value}</span>
-      <span className="font-mono text-[10px] uppercase tracking-wide text-static">{label}</span>
-    </span>
   );
 }

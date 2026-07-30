@@ -46,6 +46,7 @@ function blankAnimal(name: string, groupId: string): Animal {
     name,
     groupId,
     boxNumber: null,
+    cage: null,
     sex: null,
     idNumber: null,
     notes: null,

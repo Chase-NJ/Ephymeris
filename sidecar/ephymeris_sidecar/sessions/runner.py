@@ -24,6 +24,8 @@ from typing import Any, Awaitable, Callable
 
 from ..tasks.metrics import MetricSet
 from ..tasks.profile import TaskProfile
+from ..tasks.seed import new_trial_seed
+from ..tasks.start_command import with_trial_seed
 from .models import SessionAnimalRun
 from .paths import AnimalFilePaths, resolve_animal_files
 from .writer import AnimalWriter
@@ -61,7 +63,15 @@ class ActiveRun:
     end_code: int | None = None
     resolved: bool = False
     files: AnimalFilePaths | None = None
+    #: What the board echoed back on its `SEED` line — the seed the firmware
+    #: actually ran on, whatever we asked for. `None` when it echoed nothing.
     seed: int | None = None
+    #: What this app drew and put on the `START` line (`tasks/seed.py`). Always
+    #: present, and recorded separately from `seed` so the two can be compared:
+    #: firmware predating the `SEED=` convention seeds itself and echoes a
+    #: different number, and that difference is the only signal a box is still
+    #: carrying an old sketch.
+    host_seed: int | None = None
     #: The scheduled auto-STOP when the session has a time limit (§2.4);
     #: cancelled on finalize so a box stopped early never gets a ghost STOP.
     deadline: asyncio.TimerHandle | None = None
@@ -177,6 +187,11 @@ class SessionRunner:
             raise KeyError(f"box {box} has no confirmed mapping")
 
         address = self._ports.resolve_address(box)
+        # Drawn *here*, on the click, and never at `configure` time: a seed
+        # settled with the mapping would be shared by every box in the group and
+        # would survive a Start → Stop → Start, which is exactly the
+        # reproducibility this exists to prevent (`tasks/seed.py`).
+        host_seed = new_trial_seed()
         run = ActiveRun(
             box=box,
             config=config,
@@ -185,6 +200,7 @@ class SessionRunner:
             address=address,
             session_id_label=self._session_id_label,
             end_code=config.profile.end_code if config.profile else None,
+            host_seed=host_seed,
         )
         self._active[box] = run
         # The time limit counts from this box's own start (§2.4). STOP is
@@ -197,7 +213,7 @@ class SessionRunner:
 
         self._ports.start_session(
             box,
-            config.start_command,
+            with_trial_seed(config.start_command, host_seed),
             on_ready=lambda seed, b=box: self._on_ready(b, seed),
             on_strobe=lambda code, ts, b=box: self._on_strobe(b, code, ts),
         )
@@ -220,7 +236,7 @@ class SessionRunner:
         )
         run.files = files
 
-        # §5 core fields, then flat task-profile config, then optional trial_seed.
+        # §5 core fields, then flat task-profile config, then the seeds.
         core = {
             "rat": run.config.animal_name,
             "serial_port": run.address,
@@ -229,7 +245,26 @@ class SessionRunner:
         }
         config_meta = dict(run.config.config_metadata)
         if seed is not None:
-            config_meta["trial_seed"] = seed  # §6.4 recognized wire convention
+            # §6.4: what the firmware reports it is *running on*. Recorded
+            # unchanged even when it disagrees with what we sent — the point of
+            # this field is to describe the session that happened.
+            config_meta["trial_seed"] = seed
+        if run.host_seed is not None:
+            config_meta["host_seed"] = run.host_seed
+        if seed is not None and run.host_seed is not None and seed != run.host_seed:
+            # Not an error — an old sketch seeding itself is exactly the case
+            # `with_trial_seed` degrades toward. But it means this box's trial
+            # sequence came from the board's own weak entropy, which is worth
+            # saying out loud once rather than leaving to be inferred from two
+            # numbers in a file nobody opens.
+            log.warning(
+                "box %d: firmware ignored the host trial seed (sent %d, board "
+                "reported %d) — reflash %s to pick up the SEED= convention",
+                box,
+                run.host_seed,
+                seed,
+                run.config.sketch_name,
+            )
 
         writer = AnimalWriter(files.tsv, files.json, files.mat, core, config_meta)
         try:

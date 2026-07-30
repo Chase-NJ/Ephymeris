@@ -30,7 +30,14 @@ from ..tasks.profile import LiveMetric, TaskProfile
 #: v4 split that tally per declared condition (§3.9), so "how many go-right
 #: trials were administered, and how many of those paid out" is answerable
 #: without re-reading the file.
-CODEC_VERSION = 4
+#: v5 fixed the pooled figure's trial counts: `triggered`/`excluded` now span
+#: every declared condition rather than only the ones that scored, so a
+#: condition the animal never answered stops vanishing from the denominator it
+#: was excluded from.
+#: v6 added the engagement ladder (§3.10), delimited on the trial light rather
+#: than on odor onset — the layer above every other count here, and the one
+#: that says how many trials the box offered at all.
+CODEC_VERSION = 6
 
 #: z for a 95% interval. Wilson rather than the normal approximation because
 #: this data lives at small n *and* at p near 1 — a trained animal sits around
@@ -129,7 +136,12 @@ class TrialOutcomes:
     real and separately interesting behaviour rather than noise.
     """
 
-    #: Every trial boundary seen — one per odor onset.
+    #: Every trial boundary seen — **one per odor onset**, which is not the same
+    #: as one per trial the box offered. The firmware fires its odor-on strobe
+    #: only after the animal has poked *and* held the odor port, so a trial the
+    #: animal ignored (`LAZY_RAT`) or bailed out of before odor delivery
+    #: produces no boundary and is invisible to every count in this class. This
+    #: is a tally of *engaged* trials; engagement itself is not measured here.
     trials: int = 0
     #: Odor sampled to completion; the denominator for both accuracies. A trial
     #: the animal never engaged is not evidence about discrimination.
@@ -139,8 +151,19 @@ class TrialOutcomes:
     hold_failed: int = 0
     wrong_well: int = 0
     #: Administered, but no well was ever answered before the next trial.
+    #:
+    #: On a **no-go** task this bucket also catches the *correct* answer — a
+    #: withhold looks exactly like a non-response from the strobes alone, since
+    #: the only thing distinguishing them (`WATER_POKE_NONE`) isn't part of the
+    #: recognised vocabulary. No sketch in this lab runs no-go trials today
+    #: (`GRGL`'s and shaping's trial types are all `isGo`), so nothing is
+    #: currently mis-scored; a no-go task would need its own bucket before
+    #: these numbers could be read.
     no_response: int = 0
-    #: Never administered: the odor port was left early, or never poked at all.
+    #: Odor was delivered and the animal left the port before sampling cleared.
+    #: **Not** every unengaged trial — see `trials` above: a trial the animal
+    #: never poked at all never reaches an odor onset and is not counted here,
+    #: or anywhere.
     aborted: int = 0
 
     @property
@@ -170,6 +193,78 @@ class TrialOutcomes:
             "rewardedHigh": _round(rewarded_interval[1] if rewarded_interval else None),
             "sideLow": _round(side_interval[0] if side_interval else None),
             "sideHigh": _round(side_interval[1] if side_interval else None),
+        }
+
+
+@dataclass(frozen=True)
+class TrialEngagement:
+    """How far each *offered* trial got before the animal dropped out (§3.10).
+
+    `TrialOutcomes` and every accuracy above it are delimited on **odor onset**,
+    and the firmware only reaches its odor-on strobe after the animal has poked
+    the odor port and held it. So a trial the animal ignored, or poked and
+    immediately abandoned, produces no boundary and is invisible to all of them.
+    Every rate in this module is therefore conditioned on engagement — and
+    without this class, engagement itself was measured nowhere. A rat that
+    skipped two thirds of its trials and answered the rest well read exactly
+    like one that worked steadily.
+
+    Delimited on the **trial light** instead, which is the first thing that
+    happens in a presentation and happens unconditionally: the firmware writes
+    `trialLight` HIGH and strobes `LIGHTS_ON` at the top of every attempt,
+    before the animal has had any opportunity to do anything at all.
+
+    The three counts are a **ladder**, not a partition: each is "how many
+    presentations reached this stage", so `presented >= poked >= odor_delivered`
+    holds by construction and the two gaps can't come out negative or fail to
+    account for a presentation. That is deliberate — a partition would need a
+    residual bucket for the one presentation a board drop can leave dangling,
+    and would invite reading a truncated stream as a behaviour.
+
+    What the gaps mean:
+
+    * `presented - poked` — the animal never engaged the odor port. `LAZY_RAT`
+      in practice; also, for at most one presentation per run, a session that
+      ended mid-window.
+    * `poked - odor_delivered` — engaged, then let go before the pre-odor hold
+      cleared, so no odor was ever delivered. Distinct from
+      `TrialOutcomes.aborted`, which is the animal that *did* receive odor and
+      left during sampling.
+    """
+
+    #: Every trial the box offered — one per `LIGHTS_ON`.
+    presented: int = 0
+    #: Of those, the ones the animal poked the odor port on.
+    poked: int = 0
+    #: Of those, the ones that reached odor delivery. Equals
+    #: `TrialOutcomes.trials` on any well-formed stream — the same trials
+    #: counted from the other end — and `test_analytics_derive` pins that
+    #: agreement rather than either side assuming it.
+    odor_delivered: int = 0
+
+    @property
+    def p_engaged(self) -> float | None:
+        """Share of offered trials the animal poked at all — the participation
+        rate the accuracy figures are silently conditioned on."""
+        return self.poked / self.presented if self.presented else None
+
+    @property
+    def p_delivered(self) -> float | None:
+        """Share of offered trials that got as far as odor delivery."""
+        return self.odor_delivered / self.presented if self.presented else None
+
+    def to_json(self) -> dict[str, Any]:
+        engaged_interval = wilson_interval(self.poked, self.presented)
+        return {
+            "presented": self.presented,
+            "poked": self.poked,
+            "odorDelivered": self.odor_delivered,
+            "noPoke": self.presented - self.poked,
+            "pokeAborted": self.poked - self.odor_delivered,
+            "pEngaged": _round(self.p_engaged),
+            "pDelivered": _round(self.p_delivered),
+            "engagedLow": _round(engaged_interval[0] if engaged_interval else None),
+            "engagedHigh": _round(engaged_interval[1] if engaged_interval else None),
         }
 
 
@@ -221,6 +316,11 @@ class RunSummary:
     #: when `outcomes` is None: there is no separate claim to make about a task
     #: whose vocabulary can't express an outcome at all.
     conditions: list[ConditionOutcomes] = field(default_factory=list)
+    #: How many trials the box *offered*, and how far each got (§3.10). None on
+    #: a profile that declares no trial light — same rule as `outcomes`, and for
+    #: the same reason: a zeroed ladder would read as an animal that never
+    #: engaged rather than as a task that can't say.
+    engagement: TrialEngagement | None = None
     total_events: int = 0
     duration_ms: int | None = None
     stop_reason: str | None = None
@@ -238,6 +338,7 @@ class RunSummary:
             "overall": self.overall.to_json() if self.overall else None,
             "outcomes": self.outcomes.to_json() if self.outcomes else None,
             "conditions": [c.to_json() for c in self.conditions],
+            "engagement": self.engagement.to_json() if self.engagement else None,
             "totalEvents": self.total_events,
             "durationMs": self.duration_ms,
             "stopReason": self.stop_reason,
@@ -315,6 +416,22 @@ def codes_of(document: dict[str, Any]) -> list[int]:
     return codes
 
 
+def _duration_ms(document: dict[str, Any]) -> int | None:
+    """Wall span of the recorded stream, or `None` under two events.
+
+    `max - min` rather than `last - first`. The board's clock is monotonic and a
+    finalized file is written in arrival order, so on real data the two agree
+    exactly — but a hand-edited or concatenated file need not be ordered, and
+    `last - first` on one of those yields a *negative* duration, which then
+    flows into a session tile as a nonsense figure rather than being caught.
+    A span can't be negative, which is the whole reason to compute it that way.
+    """
+    stamps = _timestamps(document)
+    if len(stamps) < 2:
+        return None
+    return max(stamps) - min(stamps)
+
+
 def _timestamps(document: dict[str, Any]) -> list[int]:
     raw = document.get("ts_data")
     if not isinstance(raw, list):
@@ -346,6 +463,14 @@ _WRONG_WELL = re.compile(r"^WATER_POKE_ERROR(_|$)", re.IGNORECASE)
 #: opposite event and must never match here.
 _SAMPLED = re.compile(r"^ODOR_UNPOKE$", re.IGNORECASE)
 
+#: The trial light going on: the top of a presentation, before the animal has
+#: had any chance to act (§3.10). Exact, so `LIGHTS_OFF` — the same word, the
+#: opposite edge — can never open a presentation window.
+_PRESENTED = re.compile(r"^LIGHTS_ON$", re.IGNORECASE)
+#: The animal poked the odor port. Exact for the same reason `_SAMPLED` is:
+#: `ODOR_POKE_*` variants, were any ever declared, would be different events.
+_ENGAGED = re.compile(r"^ODOR_POKE$", re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class _Vocabulary:
@@ -375,6 +500,71 @@ def _vocabulary(profile: TaskProfile) -> _Vocabulary:
         wrong_well=matching(_WRONG_WELL),
         sampled=matching(_SAMPLED),
     )
+
+
+def engagement_of(
+    codes: list[int], profile: TaskProfile | None
+) -> TrialEngagement | None:
+    """Walk the presentations and count how far each one got (§3.10).
+
+    One pass, one open window at a time, and each stage latched rather than
+    counted per occurrence — a presentation contributes at most one to each
+    rung whatever the animal did inside it. That is what keeps the ladder
+    monotone: a repeated `ODOR_POKE` inside one window (the firmware doesn't
+    emit one, but a hand-edited file can hold anything) can't push `poked` past
+    `presented`.
+
+    `None` when the profile declares neither the light nor the poke. Both are
+    needed together: the light alone gives a denominator with no numerator, and
+    "the box offered 300 trials and we can't say whether any were engaged" is
+    worse than saying nothing — it reads as zero engagement.
+    """
+    if profile is None:
+        return None
+    boundaries = boundaries_for(profile)
+    if not boundaries:
+        return None
+    lights = frozenset(
+        code for code, name in profile.strobes.items() if _PRESENTED.match(name.strip())
+    )
+    pokes = frozenset(
+        code for code, name in profile.strobes.items() if _ENGAGED.match(name.strip())
+    )
+    if not lights or not pokes:
+        return None
+
+    presented = poked = delivered = 0
+    open_window = False
+    saw_poke = saw_odor = False
+
+    def close() -> None:
+        nonlocal poked, delivered
+        poked += 1 if saw_poke else 0
+        delivered += 1 if saw_odor else 0
+
+    for code in codes:
+        if code in lights:
+            if open_window:
+                close()
+            presented += 1
+            open_window, saw_poke, saw_odor = True, False, False
+            continue
+        if not open_window:
+            # Strobes before the first trial light — `START_SESSION` and
+            # friends — belong to no presentation and are not one.
+            continue
+        if code in pokes:
+            saw_poke = True
+        elif code in boundaries:
+            # Odor delivery implies the poke that earned it, even if the poke
+            # strobe went missing: the firmware cannot reach its odor-on code
+            # without one, so inferring it here keeps the ladder monotone on a
+            # stream that dropped a line.
+            saw_poke = saw_odor = True
+
+    if open_window:
+        close()
+    return TrialEngagement(presented=presented, poked=poked, odor_delivered=delivered)
 
 
 def _classify_trials(
@@ -502,11 +692,10 @@ def summarize(
 ) -> RunSummary:
     """Score one recorded run (§3)."""
     codes = codes_of(document)
-    stamps = _timestamps(document)
     stop_reason = document.get("stop_reason")
     stop_reason = stop_reason if isinstance(stop_reason, str) else None
 
-    duration = (stamps[-1] - stamps[0]) if len(stamps) >= 2 else None
+    duration = _duration_ms(document)
     seed = document.get("trial_seed")
     seed = seed if isinstance(seed, int) and not isinstance(seed, bool) else None
 
@@ -525,16 +714,18 @@ def summarize(
         return RunSummary(status="no-metrics", **base)
 
     boundaries = boundaries_for(profile)
-    metrics = [
+    scored = [
         _summarize_metric(metric, codes, boundaries, min_counted)
         for metric in profile.live_metrics
     ]
+    metrics = [entry.summary for entry in scored]
     return RunSummary(
         status="ok",
         metrics=metrics,
-        overall=_overall(metrics, min_counted),
+        overall=_overall(scored, min_counted),
         outcomes=outcomes_of(codes, profile),
         conditions=conditions_of(codes, profile),
+        engagement=engagement_of(codes, profile),
         excluded_by_default=profile.kind == "utility",
         **base,
     )
@@ -545,7 +736,22 @@ def summarize(
 OVERALL_ID = "__overall__"
 
 
-def _overall(metrics: list[MetricSummary], min_counted: int) -> MetricSummary | None:
+@dataclass(frozen=True)
+class _Scored:
+    """One metric's summary plus the integer numerator behind it.
+
+    `MetricSummary` carries P(hit) as a float because that is what the wire
+    wants. Pooling needs the hit *count*, and recovering it as
+    `round(p * counted)` means reconstructing an integer from a quotient of
+    itself — correct at any n this app will ever see, and still a reconstruction
+    of something that was already known exactly. Carrying it costs a field.
+    """
+
+    summary: MetricSummary
+    hits: int
+
+
+def _overall(scored: list[_Scored], min_counted: int) -> MetricSummary | None:
     """Accuracy pooled across every metric — correct trials over scored trials.
 
     Why this exists, and why it is the heatmap's default: **a single metric
@@ -557,12 +763,24 @@ def _overall(metrics: list[MetricSummary], min_counted: int) -> MetricSummary | 
     Pooled by summing hits and trials rather than averaging the two
     proportions, so a session that scored 90 odor-1 trials and 10 odor-3 trials
     is weighted the way it actually happened.
+
+    **The rate pools only conditions that scored; the trial counts pool all of
+    them.** A condition that fired twenty times and was never answered
+    contributes nothing to P — there is no proportion to weight — but those
+    twenty trials are exactly what `triggered` and `excluded` exist to report,
+    and dropping them made the pooled row claim the animal was never offered
+    them. Counting all of them also keeps the identity
+    `triggered == counted + excluded` true of the pooled row, which is what
+    makes it readable next to the per-condition rows above it.
     """
-    scored = [m for m in metrics if m.p_session is not None and m.counted > 0]
-    if not scored:
+    with_trials = [
+        entry for entry in scored
+        if entry.summary.p_session is not None and entry.summary.counted > 0
+    ]
+    if not with_trials:
         return None
-    counted = sum(m.counted for m in scored)
-    hits = sum(round(m.p_session * m.counted) for m in scored)  # type: ignore[operator]
+    counted = sum(entry.summary.counted for entry in with_trials)
+    hits = sum(entry.hits for entry in with_trials)
     interval = wilson_interval(hits, counted)
     return MetricSummary(
         id=OVERALL_ID,
@@ -570,8 +788,8 @@ def _overall(metrics: list[MetricSummary], min_counted: int) -> MetricSummary | 
         p_session=hits / counted,
         p_window=None,
         counted=counted,
-        triggered=sum(m.triggered for m in scored),
-        excluded=sum(m.excluded for m in scored),
+        triggered=sum(entry.summary.triggered for entry in scored),
+        excluded=sum(entry.summary.excluded for entry in scored),
         window_size=0,
         wilson_low=interval[0] if interval else None,
         wilson_high=interval[1] if interval else None,
@@ -584,43 +802,50 @@ def _summarize_metric(
     codes: list[int],
     boundaries: frozenset[int],
     min_counted: int,
-) -> MetricSummary:
-    rolling = compute_series(metric, codes, boundaries)
+) -> _Scored:
+    """One replay of the stream through the live accumulator, read two ways.
 
-    # Whole-session P: the same accumulator with its window widened past the
-    # session length, so trial classification is byte-for-byte the live rules
-    # and only the averaging window differs. `deque(maxlen=…)` does not
-    # preallocate, so a large maxlen costs nothing.
-    unwindowed = replace(metric, window_size=max(1, len(codes) or 1))
-    whole = compute_series(unwindowed, codes, boundaries)
+    The rolling value is the accumulator's window — literally what Mission
+    Control displayed. The whole-session value is `hits / counted` over every
+    trial the same accumulator scored, so the two differ *only* in the
+    averaging window and cannot drift apart in how a trial is classified.
 
-    counted = len(rolling)
+    This used to replay the stream a second time through a window widened past
+    the session length to get the whole-session figure. Same number by
+    construction (a window that can't fill is no window), one less pass, and no
+    dependence on the widened window actually being wide enough.
+    """
+    accumulator = MetricAccumulator(metric, boundaries)
+    for code in codes:
+        accumulator.offer(code)
+
+    counted = accumulator.counted_total
+    hits = accumulator.hits_total
     triggered = codes.count(metric.trigger_code)
-    p_session = whole[-1] if whole else None
-    p_window = rolling[-1] if rolling else None
+    p_session = hits / counted if counted else None
+    p_window = accumulator.value().value
 
-    interval = (
-        wilson_interval(round(p_session * counted), counted)
-        if p_session is not None and counted > 0
-        else None
-    )
+    interval = wilson_interval(hits, counted) if counted else None
 
-    return MetricSummary(
-        id=metric.id,
-        label=metric.label,
-        p_session=p_session,
-        p_window=p_window,
-        counted=counted,
-        triggered=triggered,
-        # Trials where neither response arrived before the next boundary —
-        # lazy, invalid, or no-response. Meaningful in its own right: 200
-        # triggers with 90 counted is a very different session from 200 with
-        # 195, at identical P(correct).
-        excluded=max(0, triggered - counted),
-        window_size=metric.window_size,
-        wilson_low=interval[0] if interval else None,
-        wilson_high=interval[1] if interval else None,
-        low_confidence=counted < min_counted,
+    return _Scored(
+        summary=MetricSummary(
+            id=metric.id,
+            label=metric.label,
+            p_session=p_session,
+            p_window=p_window,
+            counted=counted,
+            triggered=triggered,
+            # Trials where neither response arrived before the next boundary —
+            # lazy, invalid, or no-response. Meaningful in its own right: 200
+            # triggers with 90 counted is a very different session from 200 with
+            # 195, at identical P(correct).
+            excluded=max(0, triggered - counted),
+            window_size=metric.window_size,
+            wilson_low=interval[0] if interval else None,
+            wilson_high=interval[1] if interval else None,
+            low_confidence=counted < min_counted,
+        ),
+        hits=hits,
     )
 
 
@@ -634,7 +859,12 @@ def series(
     """The within-session trajectory, one entry per counted trial (§5).
 
     `mode="cumulative"` widens the window to the whole session, so the curve
-    is the running whole-session average rather than the rolling one.
+    is the running whole-session average rather than the rolling one. Unlike
+    `_summarize_metric`, which only wants the endpoint and reads it off the
+    accumulator's totals, this needs the value *after every trial* — so the
+    widened window is the mechanism rather than a shortcut. `len(codes)` is a
+    safe width for it: a counted trial costs at least two codes (a trigger and
+    a response), so the window can never fill and never drops a trial.
     """
     if profile is None or not profile.live_metrics:
         return []

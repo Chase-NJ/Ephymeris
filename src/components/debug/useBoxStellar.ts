@@ -2,11 +2,13 @@ import { useEffect, useMemo, useReducer } from "react";
 
 import { useAnalyticsStore } from "@/lib/analytics/context";
 import { useActiveCohorts } from "@/lib/cohorts/context";
+import { lastRunsByAnimal, type ShipMember } from "@/lib/constellations/ships";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * What Debug's constellation knows about each box beyond its hardware state:
- * the animals assigned to it, and the temperature they have earned it.
+ * What Debug's constellation knows beyond hardware state: each box's earned
+ * temperature, and every animal of every active cohort as a candidate
+ * ship-crew member (`ships.ts`).
  */
 export interface BoxStellar {
   /**
@@ -15,8 +17,16 @@ export interface BoxStellar {
    * end of the ramp, same as Mission Control's unscored stars.
    */
   accuracy: number | null;
-  /** Every animal assigned to this box, across all active cohorts. */
-  crew: Array<{ id: string; name: string }>;
+}
+
+export interface RigStellar {
+  boxes: Partial<Record<number, BoxStellar>>;
+  /**
+   * Every animal across all active cohorts, ready for `assignShips` — home
+   * cage, standing box assignment, and its most recent recorded run. The
+   * caller layers live running state on top before assigning.
+   */
+  members: ShipMember[];
 }
 
 /**
@@ -35,7 +45,7 @@ export interface BoxStellar {
  * warm to their earned temperature as summaries arrive (`StellarSurface`
  * eases colour, so late data is an animation, not a pop).
  */
-export function useBoxStellar(): Partial<Record<number, BoxStellar>> {
+export function useBoxStellar(): RigStellar {
   const { client, status } = useSidecar();
   const store = useAnalyticsStore();
   const cohorts = useActiveCohorts();
@@ -61,7 +71,7 @@ export function useBoxStellar(): Partial<Record<number, BoxStellar>> {
 
   return useMemo(() => {
     const sums = new Map<number, { total: number; n: number }>();
-    const crews = new Map<number, Array<{ id: string; name: string }>>();
+    const members: ShipMember[] = [];
 
     for (const cohort of cohorts) {
       const summary = store.getSummary(cohort.id);
@@ -79,11 +89,19 @@ export function useBoxStellar(): Partial<Record<number, BoxStellar>> {
         pooled.set(run.animalId, acc);
       }
 
+      const lastRuns = lastRunsByAnimal(summary.runs);
       for (const animal of summary.animals) {
+        const lastRun = lastRuns.get(animal.id);
+        members.push({
+          id: animal.id,
+          name: animal.name,
+          cage: animal.cage,
+          box: animal.boxNumber,
+          running: false,
+          lastRunAt: lastRun?.at ?? null,
+          lastRunBox: lastRun?.box ?? null,
+        });
         if (animal.boxNumber === null) continue;
-        const crew = crews.get(animal.boxNumber) ?? [];
-        crew.push({ id: animal.id, name: animal.name });
-        crews.set(animal.boxNumber, crew);
 
         const scored = pooled.get(animal.id);
         if (!scored || scored.counted <= 0) continue;
@@ -94,15 +112,11 @@ export function useBoxStellar(): Partial<Record<number, BoxStellar>> {
       }
     }
 
-    const out: Partial<Record<number, BoxStellar>> = {};
-    for (const [box, crew] of crews) {
-      const sum = sums.get(box);
-      out[box] = {
-        accuracy: sum && sum.n > 0 ? sum.total / sum.n : null,
-        crew,
-      };
+    const boxes: Partial<Record<number, BoxStellar>> = {};
+    for (const [box, sum] of sums) {
+      boxes[box] = { accuracy: sum.n > 0 ? sum.total / sum.n : null };
     }
-    return out;
+    return { boxes, members };
     // `tick` stands in for the summaries' contents, which the store mutates
     // behind a stable reference map.
     // eslint-disable-next-line react-hooks/exhaustive-deps

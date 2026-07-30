@@ -11,6 +11,7 @@ import type {
   RunSeries,
   RunSummary,
   SessionListItem,
+  TrialEngagement,
   TrialOutcomes,
 } from "@/lib/analytics/types";
 import { OUTCOME_STYLE, declaredMetrics, poolOutcomes } from "@/lib/analytics/view";
@@ -28,7 +29,7 @@ import { springSnappy } from "@/lib/motion";
  * administered and rewarded counts, two trajectories and two bars is a row
  * nobody can read.
  *
- * Each card reads top to bottom as: the effort (trials, administered,
+ * Each card reads top to bottom as: the effort (offered, trials, administered,
  * aborted), then each declared condition's own administered/rewarded counts
  * with its trajectory, then the two accuracies as one bar, then how the
  * administered trials resolved. The accuracies come last of the numbers
@@ -170,7 +171,7 @@ function AnimalCard({
             {name}
           </span>
         </span>
-        <Effort outcomes={outcomes} />
+        <Effort outcomes={outcomes} engagement={run.engagement} />
       </div>
 
       {/* Per condition (§3.9): how many trials of this kind were administered,
@@ -203,22 +204,53 @@ function AnimalCard({
 }
 
 /**
- * Trials, administered, aborted — the header every rate below is a fraction of.
+ * Offered, trials, administered — the header every rate below is a fraction of.
  *
- * `trials` and `administered` are both shown because they are different facts:
- * 200 trials with 90 administered is a very different session from 200 with
- * 195 at identical accuracy (§3.8).
+ * All three are shown because they are different facts: 200 trials with 90
+ * administered is a very different session from 200 with 195 at identical
+ * accuracy (§3.8), and 300 *offered* with 200 reaching odor is different again
+ * (§3.10). `offered` leads because it is the outermost denominator — the one
+ * count nothing else on the card can reveal, since every other number here is
+ * delimited on odor onset and a trial the animal ignored never produces one.
+ * The title carries the two gaps, which are separate behaviours the line has
+ * no room for.
  */
-function Effort({ outcomes }: { outcomes: TrialOutcomes | null }) {
+function Effort({
+  outcomes,
+  engagement,
+}: {
+  outcomes: TrialOutcomes | null;
+  engagement: TrialEngagement | null;
+}) {
   if (!outcomes) {
     return <span className="font-mono text-[10px] text-static/50">no outcome data</span>;
   }
   return (
-    <span className="shrink-0 font-mono text-[10px] tabular-nums text-static/80">
+    <span
+      className="shrink-0 font-mono text-[10px] tabular-nums text-static/80"
+      title={engagement ? describeEngagement(engagement) : undefined}
+    >
+      {engagement && (
+        <>
+          <span className="text-starlight">{engagement.presented}</span> offered ·{" "}
+        </>
+      )}
       <span className="text-starlight">{outcomes.trials}</span> trials ·{" "}
       <span className="text-starlight">{outcomes.administered}</span> administered
       {outcomes.aborted > 0 && <> · {outcomes.aborted} aborted</>}
     </span>
+  );
+}
+
+/** The engagement ladder spelled out (§3.10) — the two gaps are different
+ *  behaviours, and the header line only has room for their endpoints. */
+function describeEngagement(engagement: TrialEngagement): string {
+  const rate =
+    engagement.pEngaged === null ? "—" : `${Math.round(engagement.pEngaged * 100)}%`;
+  return (
+    `${engagement.presented} trials offered · ${rate} engaged\n` +
+    `${engagement.noPoke} never poked the odor port\n` +
+    `${engagement.pokeAborted} poked, let go before odor delivery`
   );
 }
 

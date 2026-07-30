@@ -63,6 +63,9 @@ GRGL_FULL = {
     **GRGL,
     "strobes": {
         **GRGL["strobes"],
+        "222": "LIGHTS_ON",
+        "233": "LIGHTS_OFF",
+        "224": "ODOR_POKE",
         "226": "ODOR_UNPOKE",
         "225": "ODOR_UNPOKE_EARLY",
         "223": "LAZY_RAT",
@@ -89,6 +92,18 @@ WRONG_1 = [101, 226, 248, 257]
 NO_RESPONSE_1 = [101, 226]
 #: Odor 1, the animal left the odor port early — never administered.
 ABORTED_1 = [101, 225]
+
+# The presentation layer above all of those (§3.10). The firmware strobes the
+# trial light first and unconditionally, then the odor poke, and only reaches an
+# odor-on code once the pre-odor hold has cleared — so these prefix the trial
+# fixtures above rather than replacing them.
+#: Light on, animal engaged the odor port. Prefixes an engaged trial.
+ENGAGED = [222, 224]
+#: Light on, never poked. `LAZY_RAT`, then loop()'s `INVALID_TRIAL`.
+LAZY = [222, 223, 234]
+#: Light on, poked, then let go before the pre-odor hold cleared. No odor ever
+#: reaches the animal, so no trial boundary is emitted at all.
+POKE_BAIL = [222, 224, 225, 234]
 
 
 # --- §3.8 trial outcomes: rewarded vs side accuracy ------------------------
@@ -188,6 +203,147 @@ def test_rewarded_accuracy_is_independent_of_the_declared_metrics() -> None:
     assert summary2.overall is not None and summary2.overall.p_session == 0.5
     assert summary2.outcomes is not None and summary2.outcomes.p_rewarded == 0.0
     assert summary2.outcomes.p_side == 0.5
+
+
+# --- §3.10 the engagement ladder -------------------------------------------
+
+
+def test_the_ladder_counts_each_stage_a_presentation_reached() -> None:
+    codes = (
+        ENGAGED + REWARDED_1      # offered, poked, odor delivered, paid out
+        + ENGAGED + ABORTED_1     # offered, poked, odor delivered, left sampling
+        + POKE_BAIL               # offered, poked, no odor
+        + LAZY + LAZY             # offered, never poked
+    )
+    ladder = derive.engagement_of(codes, FULL_PROFILE)
+    assert ladder is not None
+    assert (ladder.presented, ladder.poked, ladder.odor_delivered) == (5, 3, 2)
+    assert ladder.p_engaged == 3 / 5
+    assert ladder.p_delivered == 2 / 5
+
+
+def test_the_ladder_measures_what_every_other_figure_is_conditioned_on() -> None:
+    """The failure this exists to close.
+
+    Two animals with identical, perfect accuracy: one worked every trial, the
+    other ignored four fifths of them. Nothing delimited on odor onset can tell
+    them apart, because the trials the second one skipped never produced a
+    boundary to be counted.
+    """
+    diligent = (ENGAGED + REWARDED_1) * 10
+    checked_out = (ENGAGED + REWARDED_1) * 10 + LAZY * 40
+
+    both = [derive.summarize(document(c), FULL_PROFILE) for c in (diligent, checked_out)]
+    assert both[0].outcomes == both[1].outcomes, "indistinguishable by outcome"
+    assert both[0].overall == both[1].overall, "and by accuracy"
+
+    assert both[0].engagement is not None and both[1].engagement is not None
+    assert both[0].engagement.p_engaged == 1.0
+    assert both[1].engagement.p_engaged == 0.2
+
+
+def test_a_pre_odor_bail_is_not_the_same_event_as_an_aborted_trial() -> None:
+    """Both are the animal letting go of the odor port, and they differ in the
+    one way that matters: whether it had smelled anything yet. `ODOR_UNPOKE_EARLY`
+    carries the same code in both, so only the presentation window separates
+    them."""
+    ladder = derive.engagement_of(POKE_BAIL + ENGAGED + ABORTED_1, FULL_PROFILE)
+    outcomes = derive.outcomes_of(POKE_BAIL + ENGAGED + ABORTED_1, FULL_PROFILE)
+    assert ladder is not None and outcomes is not None
+
+    assert ladder.poked - ladder.odor_delivered == 1, "bailed before odor"
+    assert outcomes.aborted == 1, "received odor, left during sampling"
+    # The pre-odor bail never reaches a trial boundary, so the outcome tally
+    # cannot see it at all — which is exactly why the ladder is needed.
+    assert outcomes.trials == 1
+
+
+def test_the_ladder_is_monotone() -> None:
+    """`presented >= poked >= odorDelivered` by construction, so the two
+    reported gaps can never come out negative however malformed the stream."""
+    for codes in (
+        [224, 224, 101, 226],                       # strobes before any light
+        ENGAGED + ENGAGED + REWARDED_1,             # a doubled poke in one window
+        LAZY + POKE_BAIL,
+        [222],                                      # a window nothing closed
+        [],
+    ):
+        ladder = derive.engagement_of(codes, FULL_PROFILE)
+        assert ladder is not None
+        assert ladder.presented >= ladder.poked >= ladder.odor_delivered
+        payload = ladder.to_json()
+        assert payload["noPoke"] >= 0 and payload["pokeAborted"] >= 0
+
+
+def test_odor_delivery_implies_the_poke_that_earned_it() -> None:
+    """The firmware cannot reach its odor-on code without a held odor poke, so a
+    stream that dropped the poke line must not report a delivery with no poke."""
+    ladder = derive.engagement_of([222, 101, 226, 249], FULL_PROFILE)
+    assert ladder is not None
+    assert (ladder.presented, ladder.poked, ladder.odor_delivered) == (1, 1, 1)
+
+
+def test_the_last_presentation_is_counted_even_if_nothing_closed_it() -> None:
+    """A board drop truncates the final window. It was still offered."""
+    ladder = derive.engagement_of(ENGAGED + REWARDED_1 + ENGAGED, FULL_PROFILE)
+    assert ladder is not None
+    assert (ladder.presented, ladder.poked, ladder.odor_delivered) == (2, 2, 1)
+
+
+def test_odor_delivered_agrees_with_the_outcome_tally() -> None:
+    """Two passes counting the same trials from opposite ends. They are not
+    derived from each other, so their agreement is worth asserting rather than
+    assuming — a disagreement means the stream isn't shaped the way both
+    passes believe."""
+    codes = (
+        ENGAGED + REWARDED_1 + ENGAGED + WRONG_1 + LAZY
+        + ENGAGED + REWARDED_3 + POKE_BAIL + ENGAGED + ABORTED_3
+    )
+    summary = derive.summarize(document(codes), FULL_PROFILE)
+    assert summary.engagement is not None and summary.outcomes is not None
+    assert summary.engagement.odor_delivered == summary.outcomes.trials
+
+
+def test_the_lights_going_off_never_opens_a_presentation() -> None:
+    """`LIGHTS_OFF` is the same word and the opposite edge. An unanchored match
+    would roughly double `presented` — and the number would still look
+    plausible, which is what makes it worth a test."""
+    ladder = derive.engagement_of([222, 224, 101, 226, 249, 233], FULL_PROFILE)
+    assert ladder is not None
+    assert ladder.presented == 1
+
+
+def test_a_profile_without_a_trial_light_reports_no_ladder() -> None:
+    """Null, not zeroed: a zeroed ladder reads as an animal that never engaged
+    rather than as a task that cannot say."""
+    assert derive.engagement_of(ENGAGED + REWARDED_1, PROFILE) is None
+    assert derive.engagement_of(ENGAGED, None) is None
+    # The light alone is a denominator with no numerator.
+    light_only = parse_profile(
+        {**GRGL, "strobes": {**GRGL["strobes"], "222": "LIGHTS_ON"}}
+    )
+    assert derive.engagement_of(ENGAGED + REWARDED_1, light_only) is None
+
+
+def test_the_ladder_rides_along_on_the_summary() -> None:
+    payload = derive.summarize(
+        document(ENGAGED + REWARDED_1 + LAZY + POKE_BAIL), FULL_PROFILE
+    ).to_json()["engagement"]
+    assert payload["presented"] == 3
+    assert payload["poked"] == 2
+    assert payload["odorDelivered"] == 1
+    assert payload["noPoke"] == 1 and payload["pokeAborted"] == 1
+    assert payload["pEngaged"] == round(2 / 3, 6)
+    assert 0.0 <= payload["engagedLow"] <= payload["pEngaged"] <= payload["engagedHigh"] <= 1.0
+    # And null on a profile that can't express it.
+    assert derive.summarize(document(HIT_1), PROFILE).to_json()["engagement"] is None
+
+
+def test_a_run_that_offered_nothing_reports_null_rates_not_zero() -> None:
+    ladder = derive.engagement_of([221], FULL_PROFILE)
+    assert ladder is not None
+    assert ladder.presented == 0
+    assert ladder.p_engaged is None and ladder.p_delivered is None
 
 
 # --- §3.9 the same tally, per condition ------------------------------------
@@ -443,6 +599,48 @@ def test_overall_pools_trials_rather_than_averaging_proportions() -> None:
     assert summary.overall.counted == 12
 
 
+def test_the_pooled_row_still_counts_a_condition_that_never_scored() -> None:
+    """Twenty odor-3 trials the animal never answered are twenty real trials.
+
+    They can't move the pooled rate — there is no proportion to weight — but
+    leaving them out of `triggered`/`excluded` made the pooled row assert the
+    animal was never offered them, which is a different and false claim.
+    """
+    codes = HIT_1 * 10 + [103, 103] * 10  # odor 3 fires 20 times, never answered
+    summary = derive.summarize(document(codes), PROFILE)
+    assert summary.overall is not None
+
+    assert summary.overall.p_session == 1.0, "only odor 1 scored, and it was perfect"
+    assert summary.overall.counted == 10
+    assert summary.overall.triggered == 30, "10 odor-1 + 20 odor-3 presentations"
+    assert summary.overall.excluded == 20
+
+
+def test_the_pooled_row_balances_its_own_trial_counts() -> None:
+    """`triggered == counted + excluded` — the identity that makes the pooled
+    row readable next to the per-condition rows it sits above."""
+    codes = HIT_1 * 4 + MISS_1 + [101, 103, 248] + HIT_3 * 3 + [103, 101, 249]
+    overall = derive.summarize(document(codes), PROFILE).overall
+    assert overall is not None
+    assert overall.triggered == overall.counted + overall.excluded
+
+
+def test_whole_session_p_is_the_exact_ratio_of_scored_trials() -> None:
+    """Computed independently of the module, so a refactor of how the two
+    probabilities are obtained can't quietly redefine one of them."""
+    trials = [HIT_1, MISS_1, HIT_1, HIT_1, MISS_1, HIT_1, HIT_1]
+    codes = [code for trial in trials for code in trial]
+    hits = sum(1 for trial in trials if trial is HIT_1)
+
+    metric = derive.summarize(document(codes), PROFILE).metrics[0]
+    assert metric.counted == len(trials)
+    assert metric.p_session == hits / len(trials)
+    # And the interval is the one for that exact integer numerator.
+    assert (metric.wilson_low, metric.wilson_high) == derive.wilson_interval(
+        hits, len(trials)
+    )
+
+
 def test_overall_is_absent_when_nothing_scored() -> None:
     assert derive.summarize(document([101, 101]), PROFILE).overall is None
 
@@ -547,6 +745,15 @@ def test_malformed_ts_data_rows_are_skipped_not_fatal() -> None:
     summary = derive.summarize(doc, PROFILE)
     assert summary.total_events == 2
     assert summary.metrics[0].counted == 1
+
+
+def test_duration_is_a_span_and_can_never_come_out_negative() -> None:
+    """A concatenated or hand-edited file need not be in arrival order, and
+    `last - first` on one of those puts a negative duration on a session tile."""
+    doc = {"stop_reason": "operator stop", "ts_data": [[101, 9000], [249, 1000]]}
+    assert derive.summarize(doc, PROFILE).duration_ms == 8000
+    # One event is a moment, not a span.
+    assert derive.summarize({"ts_data": [[101, 500]]}, PROFILE).duration_ms is None
 
 
 def test_a_document_with_no_ts_data_at_all() -> None:

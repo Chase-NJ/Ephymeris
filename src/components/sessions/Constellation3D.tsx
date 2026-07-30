@@ -7,6 +7,7 @@ import {
   type SceneNode,
 } from "@/components/constellation3d/Scene";
 import { StellarSurface } from "@/components/constellation3d/StellarSurface";
+import { assignShips } from "@/lib/constellations/ships";
 import { layoutFor } from "@/lib/constellations/slots";
 import { zodiacById } from "@/lib/constellations/zodiac";
 import { buildSky } from "@/lib/sessions/stars";
@@ -41,6 +42,11 @@ export interface ConstellationAnimal {
   accuracy?: number | null;
   /** The box this animal is mapped to, when it has one. */
   box?: number | null;
+  /** Home-cage number — cagemates share one ship (`ships.ts`). */
+  cage?: number | null;
+  /** Most recent recorded run, for anchoring a parked cage-ship. */
+  lastRunAt?: string | null;
+  lastRunBox?: number | null;
 }
 
 export function Constellation3D({
@@ -93,6 +99,29 @@ export function Constellation3D({
 
   const byId = useMemo(() => new Map(animals.map((a) => [a.animalId, a])), [animals]);
 
+  // Cagemates share one ship, and the ship orbits the box of its running —
+  // else most recently ran — crew member (`ships.ts`). Zodiac mode only:
+  // there a star *is* the box, so a ship says "this cage lives here". In the
+  // seeded fallback the star is the animal itself, and a craft orbiting its
+  // own namesake would just repeat the nameplate.
+  const ships = useMemo(
+    () =>
+      layout === null
+        ? null
+        : assignShips(
+            animals.map((a) => ({
+              id: a.animalId,
+              name: a.name,
+              cage: a.cage ?? null,
+              box: a.box ?? null,
+              running: a.lit,
+              lastRunAt: a.lastRunAt ?? null,
+              lastRunBox: a.lastRunBox ?? null,
+            })),
+          ),
+    [animals, layout],
+  );
+
   const nodes: SceneNode[] = sky.points.map((point, index) => {
     if (point.occupantId === null) {
       return {
@@ -112,19 +141,11 @@ export function Constellation3D({
       active: lit,
       name: animal?.name ?? "",
       badge: animal?.box ?? null,
-      // Every animal mapped to this box rides in orbit around its star, tagged
-      // by name — running animals orbit and strobe, assigned-but-idle ones
-      // park (`Orbiters.tsx`). Zodiac mode only: there a star *is* the box, so
-      // the satellite says "assigned here". In the seeded fallback the star is
-      // the animal itself, and a craft orbiting its own namesake would just
-      // repeat the nameplate. One animal per box per group means one
-      // satellite, but the shape holds if a task ever pairs animals.
+      // The cage-ships whose anchor rule chose this box ride in orbit around
+      // its star, each tagged with its whole crew — a running crew orbits and
+      // strobes, a parked one holds its bearing (`Orbiters.tsx`, `ships.ts`).
       orbiters:
-        layout === null || point.box === null
-          ? undefined
-          : animals
-              .filter((a) => a.box === point.box)
-              .map((a) => ({ id: a.animalId, name: a.name, active: a.lit })),
+        ships === null || point.box === null ? undefined : ships.get(point.box),
       body: lit ? (
         <StellarSurface radius={point.radius} accuracy={animal?.accuracy ?? null} />
       ) : (
@@ -150,6 +171,9 @@ export function Constellation3D({
       links={links}
       focusedId={focusedId}
       onFocus={onFocus}
+      // Keyed by cohort: navigating away from Mission Control mid-run and back
+      // returns to the same camera, not the overview (`viewMemory.ts`).
+      persistKey={`cohort:${cohortId}`}
     />
   );
 }

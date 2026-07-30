@@ -251,6 +251,12 @@ SHAPES = (
             f("name", STR),
             f("groupId", STR, doc="Exactly one group."),
             f("boxNumber", nullable(INT), doc="Abstract slot 1–6, never a live port."),
+            f(
+                "cage",
+                nullable(INT),
+                doc="Home-cage number — cagemates share one. A grouping label "
+                "validated as ≥ 1 and nothing else; null means unassigned.",
+            ),
             f("sex", nullable(Ref("Sex"))),
             f("idNumber", nullable(STR)),
             f("notes", nullable(STR)),
@@ -580,6 +586,25 @@ SHAPES = (
         doc="One session, from sessions.list or inside a summary.",
     ),
     Shape(
+        "DiskSession",
+        obj(
+            f("cohortId", STR),
+            f("cohortName", STR),
+            f("prefixName", STR),
+            f("sessionNumber", STR),
+            f("date", STR, doc="ISO YYYY-MM-DD, parsed from the folder name — legacy spellings normalized."),
+            f("folderPath", STR),
+            f(
+                "recorded",
+                BOOL,
+                doc="True when this machine's database holds a session row for the folder — "
+                "false for a session another Ephymeris machine wrote into the shared archive.",
+            ),
+        ),
+        doc="One session folder found on disk, identified by name alone (`sessions/paths.py`). "
+        "What the archive can assert without opening a file: identity and date, never runs or animals.",
+    ),
+    Shape(
         "MetricSummary",
         obj(
             f("id", STR),
@@ -649,6 +674,44 @@ SHAPES = (
         "score a detected poke whether or not the fluid hold cleared.",
     ),
     Shape(
+        "TrialEngagement",
+        obj(
+            f("presented", INT, doc="Every trial the box offered — one per trial light."),
+            f("poked", INT, doc="Of those, the ones the animal poked the odor port on."),
+            f(
+                "odorDelivered",
+                INT,
+                doc="Of those, the ones that reached odor delivery. Equals "
+                "TrialOutcomes.trials on a well-formed stream — the same trials "
+                "counted from the other end.",
+            ),
+            f(
+                "noPoke",
+                INT,
+                doc="presented - poked. The animal never engaged the odor port "
+                "(LAZY_RAT), plus at most one window a stop or drop truncated.",
+            ),
+            f(
+                "pokeAborted",
+                INT,
+                doc="poked - odorDelivered. Engaged, then let go before the "
+                "pre-odor hold cleared, so no odor was ever delivered. Distinct "
+                "from TrialOutcomes.aborted, which received odor and left during "
+                "sampling.",
+            ),
+            f("pEngaged", nullable(FLOAT), doc="poked / presented."),
+            f("pDelivered", nullable(FLOAT), doc="odorDelivered / presented."),
+            f("engagedLow", nullable(FLOAT)),
+            f("engagedHigh", nullable(FLOAT)),
+        ),
+        doc="How far each offered trial got before the animal dropped out "
+        "(`analytics.md` §3.10). Delimited on the trial light, not on odor "
+        "onset — the firmware only strobes odor-on after the animal has poked "
+        "and held, so every other count in a run summary is silently "
+        "conditioned on engagement and none of them can measure it. A ladder, "
+        "not a partition: presented >= poked >= odorDelivered by construction.",
+    ),
+    Shape(
         "ConditionOutcomes",
         obj(
             f("metricId", STR),
@@ -712,6 +775,15 @@ SHAPES = (
                 "separate claim to make about a task that can't express an "
                 "outcome at all.",
             ),
+            f(
+                "engagement",
+                nullable(Ref("TrialEngagement")),
+                doc="How many trials the box offered and how far each got "
+                "(§3.10) — the layer above every other count here. Null when "
+                "the profile declares no trial light, on the same rule as "
+                "`outcomes`: a zeroed ladder would read as an animal that never "
+                "engaged rather than as a task that can't say.",
+            ),
             f("totalEvents", INT),
             f("durationMs", nullable(FLOAT)),
             f("stopReason", nullable(STR)),
@@ -723,7 +795,13 @@ SHAPES = (
     ),
     Shape(
         "AnalyticsAnimal",
-        obj(f("id", STR), f("name", STR), f("groupId", STR), f("boxNumber", nullable(INT))),
+        obj(
+            f("id", STR),
+            f("name", STR),
+            f("groupId", STR),
+            f("boxNumber", nullable(INT)),
+            f("cage", nullable(INT), doc="Home-cage number, same field as Animal.cage."),
+        ),
     ),
     Shape("ProfileMetricInfo", obj(f("id", STR), f("label", STR), f("windowSize", INT))),
     Shape(
@@ -1258,6 +1336,17 @@ COMMANDS = (
         result=Ref("RescanResult"),
         doc="The explicit archive walk — expensive reconciliation is a "
         "deliberate user action, never a side effect of opening a view.",
+    ),
+    Command(
+        "analytics.recentSessions",
+        args=obj(f("limit", INT, optional=True)),
+        result=obj(f("sessions", ListOf(Ref("DiskSession")))),
+        doc="The N most recent session folders across every active cohort's "
+        "archive, by folder-name date — directory names only, no file is ever "
+        "opened, which is what keeps this cheap enough for a landing page where "
+        "the rescan is not. Sees sessions other Ephymeris machines wrote into "
+        "the shared archive, which sessions.list (this machine's database) "
+        "cannot.",
     ),
     # Crash recovery
     Command(

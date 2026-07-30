@@ -37,6 +37,10 @@ class Animal:
     name: str
     group_id: str
     box_number: int | None = None
+    #: Home-cage number — cagemates share one. A grouping label (≥ 1), not a
+    #: slot: any number of animals may share a cage, across groups included,
+    #: because housing and run order are independent facts.
+    cage: int | None = None
     sex: Sex | None = None
     id_number: str | None = None
     notes: str | None = None
@@ -47,6 +51,7 @@ class Animal:
             "name": self.name,
             "groupId": self.group_id,
             "boxNumber": self.box_number,
+            "cage": self.cage,
             "sex": self.sex,
             "idNumber": self.id_number,
             "notes": self.notes,

@@ -248,6 +248,8 @@ Alongside each declared metric, a run carries **`overall`**: correct trials over
 
 Pooled by summing hits and trials, **not** by averaging the two proportions, so a session that scored 90 trials of one condition and 10 of the other is weighted the way it actually ran. It carries its own Wilson interval over the pooled count.
 
+**The rate pools only conditions that scored; the trial counts pool all of them.** A condition that fired twenty times and was never answered contributes no proportion to weight — but those twenty trials are exactly what `triggered` and `excluded` exist to report, and leaving them out made the pooled row assert the animal was never offered them. Counting all of them also keeps `triggered == counted + excluded` true of the pooled row, which is what makes it readable directly beneath the per-condition rows.
+
 The pooled figure is a **summary, not a condition.** It never becomes a strategy-space axis (§4 needs two real conditions), and it has no within-session series: at trial resolution the conditions interleave, and pooling them into one rolling window would need an accumulator the live path does not have.
 
 ---
@@ -264,7 +266,7 @@ So each run also carries a tally of what happened per trial, classified from the
 | hold failed | `WATER_UNPOKE_EARLY_*` | correct well, released before the hold — no drop |
 | wrong well | `WATER_POKE_ERROR_*` | wrong side |
 | no response | administered, none of the above | engaged, never answered |
-| aborted | no `ODOR_UNPOKE` | odor port left early, or never poked |
+| aborted | no `ODOR_UNPOKE` | odor delivered, odor port left before sampling cleared |
 
 From which:
 
@@ -278,6 +280,11 @@ Three things this gets right on purpose:
 - **A task that declares no reward vocabulary reports `outcomes: null`**, not zeros. "This task has no notion of a reward delivery" and "this animal earned nothing" are different claims, and a shaping profile that scores one condition is the former.
 
 Trials are delimited by the same boundary union as the metrics (§3.1), so an abandoned trial closes at the next odor rather than stealing the next trial's outcome.
+
+Two limits of that delimitation are worth stating outright, because both are invisible in the numbers themselves:
+
+- **`trials` counts odor onsets, not trials the box offered.** The firmware fires its odor-on strobe only *after* the animal has poked and held the odor port, so a trial the animal ignored entirely (`LAZY_RAT`) or bailed out of before odor delivery produces no boundary and is counted nowhere — not even as `aborted`, which covers only the animal that received odor and left early. **Every figure in this section is conditioned on engagement**, and none of them can measure it; §3.10 is the layer that does.
+- **A no-go withhold would land in `no response`.** The correct answer on a no-go trial is to answer no well, which from the strobes alone is exactly what a non-response looks like; the one code distinguishing them (`WATER_POKE_NONE`) is not part of the recognised vocabulary. No sketch in this lab runs no-go trials today — GRGL's and shaping's trial types are all go — so nothing is currently mis-scored, but a no-go task needs its own bucket before these numbers can be read.
 
 ---
 
@@ -294,6 +301,33 @@ So each run also carries `conditions` — the identical tally restricted to the 
 - **Empty — not `null` — when `outcomes` is `null`.** There is no separate claim to make about a task whose vocabulary cannot express an outcome at all.
 
 Two metrics sharing a trigger code legitimately produce two entries over the same trials. The trigger is what delimits a condition; a profile declaring the same trials twice is asking for exactly that.
+
+---
+
+### 3.10 The engagement ladder — how many trials were offered at all
+
+Everything above this point is delimited on **odor onset**, and the firmware only reaches its odor-on strobe after the animal has poked the odor port and held it through the pre-odor hold. A trial the animal ignored, or poked and immediately abandoned, therefore produces no trial boundary and appears in no count in §3.7–§3.9 — not even in `aborted`, which is specifically the animal that *did* receive odor and left during sampling.
+
+The consequence is a blind spot with no symptom: **two animals with identical accuracy, one of which worked every trial and one of which skipped four fifths of them, produce identical numbers everywhere above.** Every rate in this document is silently conditioned on engagement, and until now nothing measured engagement.
+
+So each run also carries `engagement`, delimited on the **trial light** instead. `LIGHTS_ON` is the right boundary because it is the first thing that happens in a presentation and it happens unconditionally: the firmware writes `trialLight` HIGH and strobes it at the top of every attempt, before the animal has had any opportunity to do anything.
+
+| Rung | Reached when | Meaning |
+|---|---|---|
+| `presented` | `LIGHTS_ON` | the box offered a trial |
+| `poked` | `ODOR_POKE` within that presentation | the animal engaged the odor port |
+| `odorDelivered` | an odor-on code within that presentation | the pre-odor hold cleared and odor was delivered |
+
+From which `pEngaged = poked / presented` — the participation rate — with its own Wilson interval, and `pDelivered = odorDelivered / presented`.
+
+Four things this gets right on purpose:
+
+- **A ladder, not a partition.** Each rung is "how many presentations reached this stage", so `presented ≥ poked ≥ odorDelivered` holds by construction and the two gaps (`noPoke`, `pokeAborted`, both reported ready-made) can never come out negative. A partition would need a residual bucket for the one presentation a stop or a board drop can leave dangling, and would invite reading a truncated stream as a behaviour. That last window is still counted as presented — it *was* offered.
+- **`pokeAborted` is not `TrialOutcomes.aborted`.** Both are the animal letting go of the odor port, and they differ in the only way that matters: whether it had smelled anything yet. `ODOR_UNPOKE_EARLY` carries the same code in both cases, so nothing but the presentation window separates them.
+- **`odorDelivered` should equal `TrialOutcomes.trials`.** Two passes counting the same trials from opposite ends, neither derived from the other. Their agreement is asserted in the tests rather than assumed by either; a disagreement means the stream is not shaped the way both passes believe.
+- **Null, never zeroed, when the profile declares no trial light** — and the odor poke is required alongside it, since the light alone is a denominator with no numerator. Same rule as §3.8: a zeroed ladder reads as an animal that never engaged, rather than as a task that cannot say.
+
+Matched by anchored name like everything else in §3.8, and for a sharper reason here: `LIGHTS_OFF` is the same word and the opposite edge, and an unanchored match would roughly double `presented` while still looking plausible.
 
 ---
 
@@ -420,7 +454,7 @@ Each card answers, in this order:
 
 | | |
 |---|---|
-| **Trials · administered · aborted** | the effort header. Administered is every accuracy's denominator (§3.8), so it is stated before any rate. |
+| **Offered · trials · administered · aborted** | the effort header. Administered is every accuracy's denominator (§3.8), so it is stated before any rate — and `offered` (§3.10) leads, because it is the outermost denominator and the one count nothing else on the card can reveal: every other number here is delimited on odor onset, and a trial the animal ignored never produces one. Hovering spells out the two ladder gaps — never poked, and poked-then-let-go-before-odor — which are separate behaviours the header line has no room for. `offered` is absent for a task that declares no trial light. |
 | **Per condition** (§3.9) — one row each, in authored order | `administered`, then `rewarded` and `correct` each as `count · rate` over **that condition's** administered trials, beside that condition's within-session trajectory. `correct` is the reward-unconditional choice (`rewarded + holdFailed`, §3.8): the right well was reached whether or not the hold earned the drop. This is where "how many go-right trials, how many paid out, and how many chose right" is read off — the per-odor version of the card's two accuracies, sitting next to the per-odor trajectory they explain. |
 | **Rewarded vs side** | the two accuracies, as one bar, not two — headed by the whole-run fractions, counts and rates together (`64/108 · 59% → 82/108 · 76%`). |
 | **Outcome composition** | how the administered trials resolved. |
@@ -454,7 +488,9 @@ Why it earns a panel rather than a second line on §6.4: two lines on one axis i
 
 ### 6.6 Effort across sessions
 
-Every accuracy in the dashboard divides by `administered`, so a steady rewarded line over collapsing trial counts is a very different cohort from the same line over steady ones (§3.8) — and nothing above this panel can tell those apart. One bar per session: total height is the cohort's pooled `trials`, the filled span is `administered`, and the remainder — the aborted trials — draws as an **outline, not a fill**: disengagement is an absence, and a solid block would read as one more outcome category. The y scale is the cohort's own maximum trial count, the one across-session panel where a count axis rather than 0–1 is the honest choice.
+Every accuracy in the dashboard divides by `administered`, so a steady rewarded line over collapsing trial counts is a very different cohort from the same line over steady ones (§3.8) — and nothing above this panel can tell those apart. One bar per session: total height is the cohort's pooled `presented` (§3.10), the filled span is `administered`, and the remainder draws as an **outline, not a fill**: disengagement is an absence, and a solid block would read as one more outcome category. The y scale is the cohort's own maximum offered-trial count, the one across-session panel where a count axis rather than 0–1 is the honest choice. Hovering a bar spells out the ladder, since the outline is the sum of three different ways of not reaching a well and the bar can only show the total.
+
+> **The total is the trial light, not the odor onset — and this is where that mattered most.** It was `trials`, which counts odor onsets, and the firmware only reaches its odor-on strobe after the animal has poked and held. So a session the cohort largely ignored drew a *short* bar rather than a mostly-hollow one, and the panel whose entire job is to expose collapsing engagement was the one place engagement could hide. A profile that declares no trial light has no ladder and falls back to `trials` — an undercount, knowingly, since it is the most that profile can honestly support.
 
 ### 6.7 Outcome mix across sessions
 
@@ -639,6 +675,7 @@ The granularity follows from §2.1: selecting a cohort makes **one** summary cal
 | `analytics.summary` | `{cohortId, sessionIds?, animalIds?, minCountedTrials?}` | the cohort table — sessions, animals, run summaries, profile groups, counts, warnings |
 | `analytics.series` | `{runIds: [], mode?, metricIds?}` | `{series: [RunSeries], warnings: []}` — each `RunSeries` carries `metrics` and the §4.4 `trail` |
 | `analytics.rescan` | `{cohortId, adoptOrphans?}` | `{scanned, adopted, orphans, cohortId}` |
+| `analytics.recentSessions` | `{limit?}` | `{sessions: [DiskSession]}` — the N most recent session *folders* across every active cohort, by folder-name date. Directory names only, no file ever opened, which is what makes it cheap enough for the Dashboard where the rescan deliberately is not. Sees sessions other Ephymeris machines wrote into the shared archive (`recorded: false` — no session row on this machine until a rescan adopts them) |
 
 | Event | `data` |
 |---|---|

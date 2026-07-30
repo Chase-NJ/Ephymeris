@@ -62,6 +62,10 @@ class MetricAccumulator:
         #: caps at `windowSize`, so this is what distinguishes "a new trial
         #: landed" from "the window is just full".
         self._counted = 0
+        #: Hits among those, monotonic. Kept alongside the window rather than
+        #: recovered from it, so whole-session P(hit) is an exact integer ratio
+        #: instead of a proportion multiplied back out by its own denominator.
+        self._hits = 0
 
     @property
     def id(self) -> str:
@@ -71,9 +75,23 @@ class MetricAccumulator:
     def counted_total(self) -> int:
         return self._counted
 
+    @property
+    def hits_total(self) -> int:
+        """Hits over every counted trial — the whole-session numerator.
+
+        With `counted_total` this is whole-session P(hit) exactly, and the
+        window is irrelevant to it. `analytics.derive` uses the pair rather than
+        re-running the stream through a window widened past the session length:
+        both give the same number, but only this one gives an integer numerator
+        that Wilson can be handed without a round-trip through a float.
+        """
+        return self._hits
+
     def _record(self, outcome: bool) -> None:
         self._window.append(outcome)
         self._counted += 1
+        if outcome:
+            self._hits += 1
         self._pending = False
 
     def offer(self, code: int) -> None:

@@ -41,7 +41,8 @@ DB_FILENAME = "ephymeris.db"
 #: (analytics.md §10.2) — the first change to need a real migration.
 #: v4 added sessions.duration_minutes (`starting-a-session.md` §2.4) — the
 #: optional per-box time limit.
-SCHEMA_VERSION = 4
+#: v5 added animals.cage (`cohorts.md` §1) — the home-cage grouping label.
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS animals (
     group_id    TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
     box_number  INTEGER,
+    cage        INTEGER,
     sex         TEXT,
     id_number   TEXT,
     notes       TEXT
@@ -240,6 +242,15 @@ def _to_v4(conn: sqlite3.Connection) -> None:
     add_column(conn, "sessions", "duration_minutes", "INTEGER")
 
 
+def _to_v5(conn: sqlite3.Connection) -> None:
+    """v4 → v5: the home-cage grouping label (`cohorts.md` §1).
+
+    NULL means "cage unknown", which is true of every animal entered before
+    the field existed.
+    """
+    add_column(conn, "animals", "cage", "INTEGER")
+
+
 #: Migrations, keyed by the version they upgrade **to**, applied in ascending
 #: order.
 #:
@@ -252,6 +263,7 @@ def _to_v4(conn: sqlite3.Connection) -> None:
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     3: _to_v3,
     4: _to_v4,
+    5: _to_v5,
 }
 
 

@@ -109,14 +109,15 @@ class CohortRepository:
                 for animal in parsed_animals:
                     conn.execute(
                         "INSERT INTO animals"
-                        " (id, cohort_id, group_id, name, box_number, sex, id_number, notes)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        " (id, cohort_id, group_id, name, box_number, cage, sex, id_number, notes)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             animal.id,
                             cohort_id,
                             animal.group_id,
                             animal.name,
                             animal.box_number,
+                            animal.cage,
                             animal.sex,
                             animal.id_number,
                             animal.notes,
@@ -176,14 +177,15 @@ class CohortRepository:
                     for animal in animals:
                         conn.execute(
                             "INSERT INTO animals"
-                            " (id, cohort_id, group_id, name, box_number, sex, id_number, notes)"
-                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                            " (id, cohort_id, group_id, name, box_number, cage, sex, id_number, notes)"
+                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             (
                                 animal.id,
                                 cohort_id,
                                 animal.group_id,
                                 animal.name,
                                 animal.box_number,
+                                animal.cage,
                                 animal.sex,
                                 animal.id_number,
                                 animal.notes,
@@ -305,6 +307,7 @@ class CohortRepository:
                 name=a["name"],
                 group_id=a["group_id"],
                 box_number=a["box_number"],
+                cage=a["cage"],
                 sex=a["sex"],
                 id_number=a["id_number"],
                 notes=a["notes"],
@@ -353,6 +356,7 @@ def _parse_animals(raw: Any) -> list[Animal]:
         if not isinstance(item, dict):
             continue
         box = item.get("boxNumber")
+        cage = item.get("cage")
         sex = item.get("sex")
         animals.append(
             Animal(
@@ -360,6 +364,7 @@ def _parse_animals(raw: Any) -> list[Animal]:
                 name=str(item.get("name") or "").strip(),
                 group_id=str(item.get("groupId") or ""),
                 box_number=box if isinstance(box, int) and not isinstance(box, bool) else None,
+                cage=cage if isinstance(cage, int) and not isinstance(cage, bool) else None,
                 sex=sex if sex in VALID_SEX else None,
                 id_number=_opt_text(item.get("idNumber")),
                 notes=_opt_text(item.get("notes")),
@@ -398,6 +403,10 @@ def _validate(animals: list[Animal], groups: list[Group]) -> None:
 
         if animal.group_id not in group_ids:
             errors[field] = "This animal isn't in one of the cohort's groups."
+            continue
+
+        if animal.cage is not None and animal.cage < 1:
+            errors[field] = "Cage numbers start at 1."
             continue
 
         if animal.box_number is not None:

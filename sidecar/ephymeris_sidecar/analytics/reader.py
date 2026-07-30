@@ -304,6 +304,26 @@ def walk_orphaned_tsvs(cohort_folder: str | Path) -> list[Path]:
     return sorted(orphans)
 
 
+def walk_session_dirs(cohort_folder: str | Path) -> list[Path]:
+    """Every distinct session folder under one cohort's data folder.
+
+    A session folder is defined the same way `session_folder_of` defines it —
+    the *parent* of a format folder — so this is the §8.1 traversal reporting
+    directories instead of files. Names only, nothing opened: what
+    `analytics.recentSessions` needs, and all it is allowed to cost, since it
+    runs from the Dashboard where the rescan deliberately does not.
+    """
+    seen: set[str] = set()
+    dirs: list[Path] = []
+    for here, _filenames in _walk_format_dirs(cohort_folder):
+        parent = here.parent
+        key = str(parent)
+        if key not in seen:
+            seen.add(key)
+            dirs.append(parent)
+    return sorted(dirs)
+
+
 def _walk_format_dirs(cohort_folder: str | Path):
     """Yield every format folder under a cohort folder as `(path, filenames)`.
 

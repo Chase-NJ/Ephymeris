@@ -157,6 +157,7 @@ Every field below is taken directly from the sample file, not invented:
   "lazy_escalation": true,
   "stop_reason": "BF_END_SESSION received",
   "trial_seed": 288577176,
+  "host_seed": 288577176,
   "n_events": 2392,
   "ts_data": [[221, 0], [222, 1000], [223, 5001], /* … */ [246, 3523555]]
 }
@@ -170,7 +171,8 @@ Every field below is taken directly from the sample file, not invented:
 | `sketch` | The exact sketch name selected in `starting-a-session.md` §3 | Discovered via `arduino-directory.md`, not hand-typed |
 | `correction_left`, `correction_right`, `lazy_escalation` | **Task-specific** — from this sketch's Task Profile (§6) | Not present for a sketch with no Task Profile, or one that declares different fields |
 | `stop_reason` | Assigned by the sidecar at session end | An open, extensible set of strings — always includes the literal strobe-parser-observed reason (`"BF_END_SESSION received"`) when the board reports it cleanly; also covers operator stop, board disconnect, and sidecar-level errors — see `starting-a-session.md` §7 |
-| `trial_seed` | A recognized **optional wire convention**, not a Task Profile field — see §6.4 | Absent for a sketch that never emits a `SEED\t<value>` line |
+| `trial_seed` | A recognized **wire convention**, not a Task Profile field — see §6.4 | What the *board* reported. Absent for a sketch that never emits a `SEED\t<value>` line |
+| `host_seed` | The CSPRNG draw this app put on the `START` line, §6.4 | What the *app sent*. Present on every run this app started; differs from `trial_seed` only when the firmware ignored it |
 | `n_events` | `len(ts_data)` | Written once, at finalization |
 | `ts_data` | The raw strobe stream | `[code, timestamp_ms]` pairs, `timestamp_ms` elapsed since that animal's own `BF_START_SESSION` (`recordEvent()`'s own convention — untouched, not re-based to wall-clock) |
 
@@ -234,9 +236,23 @@ A sketch with **no `task.json`** is fully supported — no config form appears b
 
 Generic across any Task Profile: `START <wireKey1>=<value1> <wireKey2>=<value2> …` — space-separated, order-independent, matching `parseStartCommand()`'s actual grammar exactly (unknown keys ignored, missing keys keep the sketch's own defaults). The sketch's own header comment references a Python-side `protocol.build_start_command` — this section is that builder's spec, generalized from GRGL-specific to Task-Profile-driven.
 
-### 6.4 `SEED` — a Recognized Line, Not a Task Profile Field
+### 6.4 `SEED` — a Recognized Convention, Not a Task Profile Field
 
-`trial_seed` isn't declared in `config` — it's a recognized **optional wire convention**: any line matching `SEED\t<int>` immediately following `START` is captured as `trial_seed`, the same way `READY` is already a recognized non-strobe line (`hardware-interaction.md` §6 covers passthrough's dumb handling of arbitrary text; `IN_SESSION` parsing is stricter — see `starting-a-session.md` §7). A sketch that never emits a `SEED` line just doesn't get that field. This is a protocol-level convention available to any sketch, not something a Task Profile opts into.
+The trial seed travels in both directions, and neither half is declared in `config`. Both are protocol-level conventions available to any sketch, not something a Task Profile opts into — which is why `SEED` is a **reserved wire key** that no profile may claim for itself.
+
+**Host → board: `SEED=<uint32>` on the `START` line.** The app draws the seed and sends it; the sketch seeds its RNG from it and must do so before drawing a single random number. A sketch whose firmware predates the convention ignores the token under §6.3's unknown-key rule and seeds itself, so an un-reflashed box degrades rather than failing.
+
+**Board → host: `SEED\t<int>`.** Any line matching that form immediately following `START` is captured as `trial_seed`, the same way `READY` is already a recognized non-strobe line (`hardware-interaction.md` §6 covers passthrough's dumb handling of arbitrary text; `IN_SESSION` parsing is stricter — see `starting-a-session.md` §7). A sketch that never emits a `SEED` line just doesn't get that field.
+
+#### Why the host draws it
+
+The obvious answer is for the firmware to seed from `micros()` at `START`, and it is wrong in a way that reads as right. **Opening the serial port is both what begins the run and what pulls DTR, which resets the Mega** — so `micros()` is not measuring the operator's click, it is measuring the fixed interval from the board's own reset to the host's `START`, and the click cancels out of it exactly. What remains is boot time plus one serial round-trip: a few milliseconds, at the 4 µs `micros()` actually resolves, clustered around the same value every run. That is a few hundred reachable seeds, so two sessions drawing an identical trial order is a birthday problem over a very small space — a matter of when, not if. An AVR has nothing better to fall back on: no RNG peripheral, and a floating-ADC read is a folk remedy rather than a guarantee.
+
+So the seed is drawn on the host, from the OS CSPRNG, **at the instant the operator starts that box** — not when the mapping is confirmed, which would hand every box in the group the same value and would survive a Stop → Start. The value is held to `[1, 2^31 - 2]` for two firmware reasons: Arduino's `randomSeed(0)` is a documented no-op that leaves the generator at its default state, and avr-libc's `random()` is the Park–Miller generator, whose state space ends at `2^31 - 2`.
+
+#### Two recorded fields, on purpose
+
+`trial_seed` records what the **board reported it is running on**; `host_seed` records what the **app sent**. After a reflash they agree, and the pair is redundant. Before one they don't, and the difference is the only signal that a box is still carrying a sketch that seeds itself — the sidecar logs a warning when they diverge. Recording only the board's value would hide that a better seed was offered and refused; recording only the host's would put a number in the file that never reached the RNG.
 
 ### 6.5 Live Metric Computation (Precise Definition)
 

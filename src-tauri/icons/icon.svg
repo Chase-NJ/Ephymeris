@@ -1,0 +1,232 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Ephymeris app icon — themed to the v1.0 palette (docs/ephymeris_v1.0.md §2.2)
+
+    Tokens used directly:
+      Void      #0B0B10  all outlines
+      Halo      #2C2A3A  deepest shadow
+      Static    #948FA8  rat fur base
+      Starlight #EDEBF6  hull
+      Pulsar    #8B7EC8  structural accent: nose cone, fins, band, ears/nose/pads
+      Ion       #7CC98F  optics only: goggle lenses, porthole
+      series-5  #CBA23E  / series-6 #BE7031  flame
+
+    Three derived neutrals sit on the same OKLCH 285-295 axis as the rest of the
+    stack, per the palette's structural rule:
+      #C6C2D6  hull shadow      (Starlight -> Static)
+      #C0BBD0  fur light        (Static -> Starlight)
+      #6B6680  fur shadow       (Static -> Halo)
+      #55516A  fur deep         (tail, far-side parts)
+
+    No gradients anywhere: every form is flat cel shading, base + one shadow.
+    That satisfies the no-gradient/no-glow rule on Pulsar and reads cleanly small.
+    Depth is carried by overlap (the far foreleg passes behind the hull and its
+    paw reappears over the far contour), a flat cast shadow on the hull, a single
+    shadow plane per form, and far-side parts stepped one value darker.
+  -->
+
+  <defs>
+    <clipPath id="hullClip">
+      <path d="M306 44 C 274 68 266 130 262 168 L 262 432 L 350 432 L 350 168
+               C 346 130 338 68 306 44 Z"/>
+    </clipPath>
+  </defs>
+
+  <g transform="translate(256,256) rotate(45) scale(0.90) translate(-280,-312)">
+
+    <!-- ===== 1. SLIPSTREAM ===== -->
+    <g stroke="#948FA8" fill="none" stroke-linecap="round" opacity="0.45">
+      <path d="M232 140 C 220 218 214 300 216 372" stroke-width="10"/>
+      <path d="M404 160 C 416 238 420 318 416 390" stroke-width="10"/>
+      <path d="M450 232 C 456 292 458 344 454 396" stroke-width="8" opacity="0.7"/>
+    </g>
+
+    <!-- ===== 2. FLAME ===== -->
+    <g stroke="#0B0B10" stroke-width="10" stroke-linejoin="round">
+      <path d="M306 590
+               C 254 532 248 498 266 462
+               C 272 492 282 500 290 484
+               C 296 504 300 510 306 490
+               C 312 510 316 504 322 484
+               C 330 500 340 492 346 462
+               C 364 498 358 532 306 590 Z" fill="#BE7031"/>
+      <path d="M306 548
+               C 280 516 278 494 288 472
+               C 292 492 297 496 301 482
+               C 304 496 309 496 312 482
+               C 316 496 321 492 325 472
+               C 334 494 332 516 306 548 Z" fill="#CBA23E" stroke="none"/>
+      <path d="M306 512 C 296 500 295 488 300 478 C 302 488 304 490 306 483
+               C 308 490 310 488 312 478 C 317 488 316 500 306 512 Z"
+            fill="#E8C77A" stroke="none"/>
+    </g>
+
+    <!-- ===== 3. FINS — far fin one value darker (atmospheric) ===== -->
+    <g stroke="#0B0B10" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M350 356 C 388 380 406 416 400 456 C 370 448 348 426 342 394 Z"
+            fill="#6F63A6"/>
+      <path d="M262 356 C 224 380 206 416 212 456 C 242 448 264 426 270 394 Z"
+            fill="#8B7EC8"/>
+    </g>
+
+    <!-- ===== 4. NOZZLE ===== -->
+    <g stroke="#0B0B10" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M262 420 L 350 420 L 362 462 C 338 474 274 474 250 462 Z"
+            fill="#EDEBF6"/>
+      <path d="M318 420 L 350 420 L 362 462 C 352 467 340 470 328 472
+               C 334 456 336 436 334 420 Z" fill="#C6C2D6" stroke="none"/>
+      <path d="M250 462 C 274 474 338 474 362 462" stroke-width="10" fill="none"/>
+    </g>
+
+    <!-- ===== 5. HULL — flat base plus one shadow plane ===== -->
+    <g stroke="#0B0B10" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M306 44 C 274 68 266 130 262 168 L 262 426
+               C 262 430 266 434 270 434 L 342 434
+               C 346 434 350 430 350 426 L 350 168
+               C 346 130 338 68 306 44 Z" fill="#EDEBF6"/>
+
+      <g clip-path="url(#hullClip)">
+        <path d="M324 160 L 360 160 L 360 440 L 320 440
+                 C 330 400 332 320 332 264 C 332 212 328 180 324 160 Z"
+              fill="#C6C2D6" stroke="none"/>
+      </g>
+
+      <!-- nose cone: Pulsar, flat, with a single shadow plane -->
+      <path d="M306 44 C 274 68 266 130 262 168 C 278 154 334 154 350 168
+               C 346 130 338 68 306 44 Z" fill="#8B7EC8"/>
+      <path d="M306 44 C 318 58 330 106 334 158 C 340 159 346 163 350 168
+               C 346 130 338 68 306 44 Z" fill="#6F63A6" stroke="none"/>
+
+      <!-- livery band -->
+      <path d="M262 390 L 350 390" stroke-width="9"/>
+      <path d="M262 390 L 350 390 L 350 426 C 350 430 346 434 342 434 L 270 434
+               C 266 434 262 430 262 426 Z" fill="#8B7EC8" stroke="none"/>
+      <path d="M330 390 L 350 390 L 350 426 C 350 430 346 434 342 434 L 322 434
+               C 328 420 330 404 330 390 Z" fill="#6F63A6" stroke="none"/>
+      <path d="M262 426 C 262 430 266 434 270 434 L 342 434 C 346 434 350 430 350 426"
+            stroke-width="10" fill="none"/>
+
+      <!-- upper livery ring; balances the band and keeps the only green in
+           the piece on the goggles, where the eye should land -->
+      <path d="M263 196 L 349 196" stroke-width="9"/>
+      <path d="M263 196 L 349 196 L 349 220 L 263 220 Z" fill="#8B7EC8" stroke="none"/>
+      <path d="M331 196 L 349 196 L 349 220 L 331 220 Z" fill="#6F63A6" stroke="none"/>
+      <path d="M263 220 L 349 220" stroke-width="9"/>
+    </g>
+
+    <!-- ===== 6. FAR FORELEG — the limb is hidden behind the hull and only
+         the paw crests the far contour. This overlap is the main depth cue. ===== -->
+    <g stroke="#0B0B10" stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M336 264 C 346 252 366 252 375 265
+               C 382 279 374 296 356 297 C 342 298 336 282 336 264 Z"
+            fill="#6B6680"/>
+    </g>
+
+    <!-- ===== 7. CAST SHADOW — rat onto the hull, one flat shape ===== -->
+    <g clip-path="url(#hullClip)">
+      <path d="M276 226 C 310 220 328 254 326 298 C 324 344 314 394 306 440
+               L 268 446 C 286 382 294 322 288 282 C 285 258 282 240 276 226 Z"
+            fill="#ADA8BF"/>
+    </g>
+
+    <!-- ===== 8. TAIL ===== -->
+    <g stroke="#0B0B10" stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M234 402
+               C 214 448 180 490 140 516
+               C 120 528 108 542 114 552
+               C 126 538 136 534 152 526
+               C 202 500 242 456 262 422 Z"
+            fill="#55516A"/>
+    </g>
+
+    <!-- ===== 9. TORSO ===== -->
+    <g stroke="#0B0B10" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M244 292
+               C 204 296 182 330 186 374
+               C 190 416 218 438 252 433
+               C 286 428 302 396 298 354
+               C 294 314 282 288 244 292 Z"
+            fill="#948FA8"/>
+      <!-- belly -->
+      <path d="M238 318 C 214 322 202 348 206 376 C 210 402 228 415 248 411
+               C 268 407 278 386 274 360 C 270 332 258 314 238 318 Z"
+            fill="#C0BBD0" stroke="none"/>
+      <!-- single shadow plane -->
+      <path d="M280 306 C 294 324 300 340 298 356 C 295 398 278 428 252 433
+               C 274 412 284 376 282 344 C 280 324 281 314 280 306 Z"
+            fill="#6B6680" stroke="none"/>
+    </g>
+
+    <!-- ===== 10. GRIPPING LIMBS — one value lighter than the torso so the
+         limb separates without extra linework ===== -->
+    <g stroke="#0B0B10" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M248 320
+               C 254 292 272 272 294 264
+               C 306 260 316 266 318 278
+               C 320 292 310 300 296 304
+               C 280 309 266 320 260 332 Z"
+            fill="#C0BBD0"/>
+      <path d="M254 386
+               C 264 372 284 366 300 372
+               C 312 377 314 390 306 399
+               C 296 410 274 412 262 404 Z"
+            fill="#C0BBD0"/>
+    </g>
+
+    <!-- ===== 11. HEAD ===== -->
+    <g stroke="#0B0B10" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+      <!-- far ear, stepped darker -->
+      <circle cx="248" cy="196" r="27" fill="#6B6680"/>
+      <circle cx="250" cy="198" r="13" fill="#6F63A6" stroke="none"/>
+
+      <!-- near ear -->
+      <circle cx="176" cy="206" r="31" fill="#C0BBD0"/>
+      <circle cx="174" cy="207" r="16" fill="#8B7EC8" stroke="none"/>
+
+      <!-- skull -->
+      <path d="M216 190
+               C 180 194 160 224 163 258
+               C 166 292 194 314 228 311
+               C 262 308 282 282 279 248
+               C 276 214 252 186 216 190 Z"
+            fill="#948FA8"/>
+      <path d="M258 210 C 274 224 281 240 279 256 C 276 286 256 308 228 311
+               C 252 298 265 274 263 248 C 262 232 260 218 258 210 Z"
+            fill="#6B6680" stroke="none"/>
+
+      <!-- snout -->
+      <path d="M206 258
+               C 184 259 163 274 158 291
+               C 154 304 166 314 184 312
+               C 205 309 221 292 219 273
+               C 218 264 213 258 206 258 Z"
+            fill="#C0BBD0"/>
+      <ellipse cx="166" cy="291" rx="11" ry="9" fill="#6F63A6" stroke-width="6"
+               transform="rotate(-18 166 291)"/>
+      <path d="M173 304 C 183 313 199 311 206 302" stroke="#0B0B10" stroke-width="6"
+            fill="none" stroke-linecap="round"/>
+      <path d="M181 309 l13 -1.5 1.5 11 -6 5 -7 -4 z" fill="#EDEBF6" stroke-width="5"/>
+
+      <!-- goggle strap -->
+      <path d="M166 236 C 192 214 250 210 276 232" stroke="#8B7EC8" stroke-width="16"
+            fill="none" stroke-linecap="round"/>
+
+      <!-- goggles: optics in Ion, the only green in the piece -->
+      <circle cx="196" cy="252" r="26" fill="#0B0B10"/>
+      <circle cx="248" cy="246" r="25" fill="#0B0B10"/>
+      <circle cx="196" cy="252" r="18" fill="#7CC98F" stroke="none"/>
+      <circle cx="248" cy="246" r="17" fill="#7CC98F" stroke="none"/>
+      <path d="M188 245 C 192 239 201 238 206 241" stroke="#EDEBF6" stroke-width="6"
+            fill="none" stroke-linecap="round"/>
+      <path d="M240 239 C 244 233 253 232 258 235" stroke="#EDEBF6" stroke-width="6"
+            fill="none" stroke-linecap="round"/>
+    </g>
+
+    <!-- whiskers -->
+    <g stroke="#0B0B10" stroke-width="5" stroke-linecap="round" fill="none">
+      <path d="M168 301 C 156 308 148 319 145 332"/>
+      <path d="M163 283 C 150 282 139 285 130 291"/>
+    </g>
+
+  </g>
+</svg>

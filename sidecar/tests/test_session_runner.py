@@ -113,7 +113,9 @@ def make_runner(tmp_path: Path, profile_json=GRGL, duration_s=None):
 async def test_a_run_writes_its_tsv_with_the_seed_captured(tmp_path: Path) -> None:
     runner, ports, _events, _ended = make_runner(tmp_path)
     runner.start_box(1)
-    assert ports.started == [(1, "START CL=0 LAZY=1")]
+    box, command = ports.started[0]
+    assert box == 1
+    assert command.startswith("START CL=0 LAZY=1 SEED=")
 
     ports.on_ready(288577176)  # SEED arrived
     ports.on_strobe(101, 0)
@@ -130,6 +132,40 @@ async def test_a_run_writes_its_tsv_with_the_seed_captured(tmp_path: Path) -> No
     # Strobes in the board's exact format
     assert "101\t0" in text
     assert "249\t500" in text
+
+
+async def test_each_start_draws_its_own_seed(tmp_path: Path) -> None:
+    """Stop → Start on the same box must not replay the same trial sequence.
+
+    The seed is drawn on the click and not with the mapping, precisely so that
+    a box restarted after a false start gets a fresh stream rather than the one
+    the animal already ran through.
+    """
+    runner, ports, _events, _ended = make_runner(tmp_path)
+    runner.start_box(1)
+    ports.on_ready(None)
+    ports.on_strobe(246, 10)
+    await wait_until(lambda: not runner.running_boxes())
+
+    runner.start_box(1)
+    first, second = (command for _box, command in ports.started)
+    assert first != second
+
+
+async def test_both_seeds_are_recorded_when_the_board_disagrees(tmp_path: Path) -> None:
+    """Firmware predating the `SEED=` convention seeds itself and echoes its own
+    number. Recording only one of the two would leave the file claiming a seed
+    that never reached the RNG — or hiding that the host asked for a better one."""
+    runner, ports, _events, _ended = make_runner(tmp_path)
+    runner.start_box(1)
+    sent = int(ports.started[0][1].rsplit("SEED=", 1)[1])
+
+    ports.on_ready(4242)  # an old sketch's own micros()-derived value
+    ports.on_strobe(101, 0)
+
+    text = next((tmp_path / "behavior.tsv").glob("*.tsv")).read_text()
+    assert "# trial_seed: 4242" in text, "what the board actually ran on"
+    assert f"# host_seed: {sent}" in text, "what this app asked for"
 
 
 async def test_strobes_push_rolling_telemetry(tmp_path: Path) -> None:

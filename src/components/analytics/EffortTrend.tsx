@@ -13,15 +13,23 @@ import {
 
 /**
  * Cohort effort across sessions (`analytics.md` §6.6) — how many trials each
- * session ran, and how many the animals actually engaged with.
+ * session offered, and how many the animals actually engaged with.
  *
  * Every accuracy above this panel divides by `administered`, so a flat
  * rewarded line over collapsing trial counts is a very different cohort from
  * the same line over steady ones (§3.8) — this is the panel that tells those
- * apart. Each session is one bar: total height is `trials`, the filled span
- * is `administered`, and the outlined remainder is the aborted trials —
- * engagement that never happened, drawn as an absence rather than as another
- * solid category that could be misread as an outcome.
+ * apart. Each session is one bar: total height is `presented` (§3.10), the
+ * filled span is `administered`, and the outlined remainder is everything in
+ * between — drawn as an absence rather than as another solid category that
+ * could be misread as an outcome.
+ *
+ * **The total is the trial light, not the odor onset.** It used to be
+ * `trials`, which counts odor onsets — and the firmware only reaches its
+ * odor-on strobe once the animal has poked and held, so a session the cohort
+ * largely ignored drew a *short* bar rather than a mostly-hollow one. The
+ * panel that exists to show collapsing engagement was the one place engagement
+ * could hide. A profile with no declared trial light has no ladder and falls
+ * back to `trials`, which is the most that can honestly be drawn for it.
  *
  * Counts, not rates, so the y scale is the cohort's own maximum rather than
  * 0–1 — the one across-session panel where that is the honest axis.
@@ -55,13 +63,13 @@ function EffortBody({
 
   if (points.length === 0) return null;
 
-  const maxTrials = Math.max(...points.map((point) => point.outcomes.trials), 1);
+  const maxTrials = Math.max(...points.map(offered), 1);
   const totals = points.reduce(
     (sum, point) => ({
-      trials: sum.trials + point.outcomes.trials,
+      offered: sum.offered + offered(point),
       administered: sum.administered + point.outcomes.administered,
     }),
-    { trials: 0, administered: 0 },
+    { offered: 0, administered: 0 },
   );
   const width = barWidth(points.length);
 
@@ -72,7 +80,7 @@ function EffortBody({
           <span>
             Effort
             <span className="ml-2 text-static/70">
-              trials per session · filled = administered, outline = aborted
+              trials offered per session · filled = administered
             </span>
           </span>
         }
@@ -84,7 +92,7 @@ function EffortBody({
         // squeezes the two date labels either side of it into ellipses.
         footer={
           <span className="truncate text-static/70">
-            {totals.administered} of {totals.trials} administered
+            {totals.administered} of {totals.offered} administered
           </span>
         }
       >
@@ -125,8 +133,9 @@ function EffortBar({
   seen: boolean;
   delay: number;
 }) {
-  const { trials, administered } = point.outcomes;
-  const trialsTop = (1 - trials / max) * HEIGHT;
+  const { administered } = point.outcomes;
+  const total = offered(point);
+  const trialsTop = (1 - total / max) * HEIGHT;
   const administeredTop = (1 - administered / max) * HEIGHT;
 
   return (
@@ -136,7 +145,7 @@ function EffortBar({
       transition={{ duration: 0.28, delay }}
     >
       <title>{describeBar(point)}</title>
-      {trials > administered && (
+      {total > administered && (
         <rect
           x={x}
           y={trialsTop}
@@ -162,13 +171,31 @@ function EffortBar({
   );
 }
 
+/**
+ * The bar's total: trials the boxes offered (§3.10).
+ *
+ * Falls back to `trials` — odor onsets — for a profile that declares no trial
+ * light. That undercounts, and knowingly: it is the largest number such a
+ * profile can support, and drawing nothing would hide the session entirely.
+ */
+function offered(point: SessionOutcomePoint): number {
+  return point.engagement.known ? point.engagement.presented : point.outcomes.trials;
+}
+
 function describeBar(point: SessionOutcomePoint): string {
-  const { session, outcomes } = point;
-  return (
-    `${session.prefixName}_${session.sessionNumber} · ${session.date}\n` +
-    `${outcomes.trials} trials · ${outcomes.administered} administered · ` +
-    `${outcomes.aborted} aborted`
-  );
+  const { session, outcomes, engagement } = point;
+  // The full ladder when the profile can express it — the two gaps are
+  // different behaviours (never engaged vs let go before odor) and the bar
+  // itself can only show their sum.
+  const effort = engagement.known
+    ? `${engagement.presented} offered · ${engagement.poked} engaged · ` +
+      `${outcomes.administered} administered\n` +
+      `${engagement.presented - engagement.poked} never poked · ` +
+      `${engagement.poked - engagement.odorDelivered} left before odor · ` +
+      `${outcomes.aborted} aborted`
+    : `${outcomes.trials} trials · ${outcomes.administered} administered · ` +
+      `${outcomes.aborted} aborted`;
+  return `${session.prefixName}_${session.sessionNumber} · ${session.date}\n${effort}`;
 }
 
 /** Bar width in viewBox units — a slice of the slot spacing, capped so a

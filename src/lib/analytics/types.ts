@@ -11,8 +11,10 @@ import type { ProfileGroup, ProfileSource } from "@/lib/ws/protocol";
 
 export type {
   SessionListItem,
+  DiskSession,
   MetricSummary,
   TrialOutcomes,
+  TrialEngagement,
   ConditionOutcomes,
   RunStatus,
   ProfileSource,

@@ -13,6 +13,7 @@
 // ---- timing ----
 static unsigned long _ms = 0;
 inline unsigned long millis() { return _ms; }
+inline unsigned long micros() { return _ms * 1000UL; }
 inline void delay(unsigned long) {}
 inline void delayMicroseconds(unsigned long) {}
 

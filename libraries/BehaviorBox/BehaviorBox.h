@@ -193,15 +193,21 @@ struct TrialWeight
     weights imply. Generated in blocks of `blockSize`: within each block, exact
     proportional counts are placed first, any remainder slots are filled by
     weighted random draw, then the block is Fisher-Yates shuffled. (Moved here
-    verbatim from the shaping sketches so both share one copy.) */
+    verbatim from the shaping sketches so both share one copy.)
+
+    DRAWS FROM THE ALREADY-SEEDED STREAM. This used to take a `seed` and call
+    randomSeed() itself, which is why the shaping sketches ran an identical
+    trial sequence every session forever: the sketches passed a compile-time
+    constant, and the sequence was built in setup() before START had even
+    arrived. Seeding is beginSessionRng()'s job and happens exactly once per
+    run; call it first, then call this. Two seeding sites is how a fixed seed
+    creeps back in unnoticed. */
 inline void generateTrials(const TrialType *trials[], int numTrials, int blockSize,
-                           long seed, const TrialWeight pool[], int poolSize)
+                           const TrialWeight pool[], int poolSize)
 {
   int totalWeight = 0;
   for (int i = 0; i < poolSize; i++)
     totalWeight += pool[i].weight;
-
-  randomSeed(seed);
 
   for (int blockStart = 0; blockStart < numTrials; blockStart += blockSize)
   {
@@ -436,18 +442,25 @@ struct SessionConfig
   int correctionLeft = 0;            // CL: leading correction budget, LEFT-correct trials
   int correctionRight = 0;           // CR: leading correction budget, RIGHT-correct trials
   bool lazyEscalationEnabled = true; // LAZY: escalating lazy-rat penalty on/off
+  unsigned long trialSeed = 0;       // SEED: host-drawn RNG seed. 0 == the host
+                                     // sent none (an older app); beginSessionRng()
+                                     // falls back to the board's own clock.
 };
 
 /*  void parseStartCommand(const char* line, SessionConfig& cfg) ->
     Parse a START line into cfg. Grammar (mirrors the app's start-command builder):
 
-        START CL=<int> CR=<int> LAZY=<0|1>
+        START CL=<int> CR=<int> LAZY=<0|1> SEED=<uint32>
 
     Order-independent; unknown keys ignored; any missing key keeps cfg's default
     (CL=0 CR=0 LAZY=1), so a bare "START" reproduces the legacy behavior. */
 inline void parseStartCommand(const char *line, SessionConfig &cfg)
 {
-  char buf[64];
+  // Wide enough for every key at its longest, with room to spare: SEED alone is
+  // 15 characters. A caller's own line buffer has to be at least this big too --
+  // readLineInto() truncates at ITS cap, and a token lost there never reaches
+  // this function to be parsed.
+  char buf[96];
   strncpy(buf, line, sizeof(buf) - 1);
   buf[sizeof(buf) - 1] = '\0';
 
@@ -474,10 +487,56 @@ inline void parseStartCommand(const char *line, SessionConfig &cfg)
       {
         cfg.lazyEscalationEnabled = (atoi(val) != 0);
       }
+      else if (strcmp(key, "SEED") == 0)
+      {
+        // strtoul, not atoi: the seed spans the full 31-bit Park-Miller range
+        // and atoi() on AVR is a 16-bit int parse that would silently mangle it.
+        cfg.trialSeed = strtoul(val, NULL, 10);
+      }
       // unknown keys (and the leading "START" token) are ignored
     }
     tok = strtok(NULL, " ");
   }
+}
+
+/*  unsigned long beginSessionRng(const SessionConfig& cfg) ->
+    Seed this run's RNG and announce the seed. Call once, immediately after the
+    START line is parsed and BEFORE anything draws a random number.
+
+    THE SEED COMES FROM THE HOST. The app draws it from an OS CSPRNG at the
+    instant the operator starts the box (see the sidecar's tasks/seed.py) and
+    sends it as SEED=<n>. That is not a convenience -- a board cannot do this
+    job. Opening the serial port is both what starts the run and what resets the
+    Mega over DTR, so micros() here is NOT the operator's click: it is the fixed
+    interval from reset to START, the same few milliseconds every time, at 4 us
+    resolution. Seeding from it gives a few hundred reachable sequences, and two
+    sessions drawing the identical trial order is then a matter of when, not if.
+
+    The micros() fallback survives for exactly one case: an older app that sends
+    no SEED token. It is weak on purpose -- reproducing the old behavior beats
+    refusing to run -- and the app logs a warning when the echoed seed doesn't
+    match what it sent.
+
+    Held to [1, 2^31-2] either way. randomSeed(0) is a documented no-op in the
+    Arduino core (it skips srandom entirely, leaving the default state), and
+    avr-libc's random() is Park-Miller, whose state space ends at 2^31-2. The
+    value announced is therefore exactly the state the generator is running on. */
+inline unsigned long beginSessionRng(const SessionConfig &cfg)
+{
+  unsigned long seed = cfg.trialSeed;
+  if (seed == 0)
+    seed = micros();
+  // Fold into the Park-Miller state space. Modulus 2^31-1, so every value the
+  // host can legally send maps to ITSELF -- the clamp only ever moves an
+  // out-of-range micros() fallback, and never rewrites a seed we then log.
+  seed %= 2147483647UL;
+  if (seed == 0)
+    seed = 1UL;
+
+  randomSeed(seed);
+  Serial.print("SEED\t");
+  Serial.println(seed);
+  return seed;
 }
 
 /* Largest sliding bias window the selector's ring buffer can hold. */

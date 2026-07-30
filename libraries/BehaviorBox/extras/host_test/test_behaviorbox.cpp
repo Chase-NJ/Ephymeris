@@ -17,6 +17,24 @@ int main() {
   { SessionConfig c; parseStartCommand("START CL=-3", c);               // negative clamps
     assert(c.correctionLeft==0); }
 
+  // --- SEED: the host-drawn trial seed rides the same START line ---
+  { SessionConfig c; parseStartCommand("START", c);
+    assert(c.trialSeed==0UL); }                                         // absent -> "none sent"
+  { SessionConfig c; parseStartCommand("START CL=2 SEED=2147483646 LAZY=0", c);
+    // Full 31-bit range, parsed alongside everything else. atoi() would have
+    // wrapped this to garbage on a 16-bit int -- that is why it is strtoul.
+    assert(c.trialSeed==2147483646UL);
+    assert(c.correctionLeft==2 && !c.lazyEscalationEnabled); }
+  { SessionConfig c; parseStartCommand("START SEED=1", c);
+    assert(c.trialSeed==1UL); }
+
+  // --- beginSessionRng: announces exactly the state it seeded ---
+  { SessionConfig c; parseStartCommand("START SEED=123456789", c);
+    assert(beginSessionRng(c)==123456789UL); }                          // host seed used verbatim
+  { SessionConfig c;                                                    // no SEED -> clock fallback,
+    unsigned long s = beginSessionRng(c);                               // still never 0 and in range
+    assert(s >= 1UL && s <= 2147483646UL); }
+
   // --- CorrectionPolicy: per-side budgets, consumed by advances, not repeats ---
   { CorrectionPolicy p; p.configure(0,0);
     assert(!p.shouldRepeat(true) && !p.shouldRepeat(false)); }          // CL=CR=0 -> never repeat
@@ -60,10 +78,28 @@ int main() {
   // --- generateTrials: honors weights, fills exactly numTrials ---
   { TrialWeight pool[] = { {goR, 3}, {goL, 1} };
     const int N = 120; const TrialType* trials[N];
-    generateTrials(trials, N, 30, 42, pool, 2);
+    SessionConfig c; parseStartCommand("START SEED=42", c); beginSessionRng(c);
+    generateTrials(trials, N, 30, pool, 2);
     int r=0,l=0; for(int i=0;i<N;i++){ if(trials[i]==&goR) r++; else if(trials[i]==&goL) l++; }
     assert(r+l==N);                 // every slot filled
     assert(r > l); }                // 3:1 weighting favors right
+
+  // --- generateTrials draws from the seeded stream, so the seed decides the
+  //     sequence. Two different seeds must not produce the same trial order:
+  //     that equality is exactly what the shaping sketches used to guarantee.
+  { TrialWeight pool[] = { {goR, 1}, {goL, 1} };
+    const int N = 120; const TrialType* a[N]; const TrialType* b[N];
+    SessionConfig c1; parseStartCommand("START SEED=1", c1);
+    beginSessionRng(c1); generateTrials(a, N, 30, pool, 2);
+    SessionConfig c2; parseStartCommand("START SEED=987654321", c2);
+    beginSessionRng(c2); generateTrials(b, N, 30, pool, 2);
+    assert(memcmp(a, b, sizeof(a)) != 0); }
+  { TrialWeight pool[] = { {goR, 1}, {goL, 1} };   // and the same seed still replays
+    const int N = 120; const TrialType* a[N]; const TrialType* b[N];
+    SessionConfig c; parseStartCommand("START SEED=555", c);
+    beginSessionRng(c); generateTrials(a, N, 30, pool, 2);
+    beginSessionRng(c); generateTrials(b, N, 30, pool, 2);
+    assert(memcmp(a, b, sizeof(a)) == 0); }
 
   printf("ALL HEADER LOGIC TESTS PASSED\n");
   return 0;

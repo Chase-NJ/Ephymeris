@@ -56,6 +56,7 @@ inline int digitalRead(int pin)
 // ---- timing: delay() is what advances the clock ----
 static unsigned long bb_ms = 0;
 inline unsigned long millis() { return bb_ms; }
+inline unsigned long micros() { return bb_ms * 1000UL; }
 inline void delay(unsigned long ms) { bb_ms += ms; }
 inline void delayMicroseconds(unsigned long) {}
 

@@ -59,8 +59,6 @@ const int FluidPinTimes[] = {
 const int pollingRate = 5;     // Polling rate for our IR sensors (in ms)
 const int primingDelay = 1000; // Time odor is primed prior to trial light on (fixed, controlled latency)
 const int numTrials = 1000;    // Number of trials to be run (session cap)
-const long trialSeed = 12345;  // Reproducible-mode seed (used only when USE_FIXED_SEED)
-#define USE_FIXED_SEED 0       // 1 -> seed from trialSeed; 0 -> seed from micros() at START
 int currentTrial = 0;          // # of trials advanced this session
 bool sessionComplete = false;  // If rat somehow completes numTrials...
 int advanceCount = 0;          // # of COMPLETED (advancing) trials -- drives the shaping ramp
@@ -132,15 +130,18 @@ void setup()
      1. The host opens the port (which resets the Mega via DTR).
      2. We land here, announce READY so the GUI can arm its START button.
      3. Block until we receive a "START" line, optionally carrying runtime
-        config: "START CL=<int> CR=<int> LAZY=<0|1>" (per-side correction
-        budgets + lazy-escalation toggle). A bare "START" uses the defaults
-        (CL=0 CR=0 LAZY=1) -- the legacy behavior. parseStartCommand() mirrors
+        config: "START CL=<int> CR=<int> LAZY=<0|1> SEED=<uint32>" (per-side
+        correction budgets, the lazy-escalation toggle, and this run's RNG
+        seed). A bare "START" uses the defaults (CL=0 CR=0 LAZY=1) and a
+        self-seeded RNG -- the legacy behavior. parseStartCommand() mirrors
         protocol.build_start_command in the Python package. */
   digitalWrite(trialLight, HIGH); // Light on == armed, waiting for GO
   delay(50);                      // Let the post-reset serial settle
   Serial.println("READY");        // Tell the GUI we're ready to begin
 
-  char cmd[48]; // big enough for the key=value token form
+  char cmd[96]; // must hold the whole key=value line, SEED token included --
+                // readLineInto() truncates at this cap, and a SEED lost there
+                // silently drops the session back onto the weak clock fallback
   while (true)
   {
     if (readLineInto(cmd, sizeof(cmd)) && strncmp(cmd, "START", 5) == 0 && (cmd[5] == '\0' || cmd[5] == ' '))
@@ -152,13 +153,12 @@ void setup()
     }
   }
 
-  /* Seed the RNG the instant START arrives -- the entropy is the operator's
-     click timing, so every session draws a fresh trial stream. Emit the seed
-     on its own line so the host can log it and reconstruct the session. */
-  unsigned long sessionSeed = USE_FIXED_SEED ? (unsigned long)trialSeed : micros();
-  randomSeed(sessionSeed);
-  Serial.print("SEED\t");
-  Serial.println(sessionSeed);
+  /* Seed the RNG before anything draws from it, and echo the seed so the host
+     records the state this session actually ran on. The value comes from the
+     app (SEED=<n>, drawn from an OS CSPRNG at the start click); micros() is
+     only the fallback for an older host, and is weak for the reason spelled
+     out over beginSessionRng() in BehaviorBox.h. */
+  beginSessionRng(sessionCfg);
 
   digitalWrite(trialLight, LOW);
   beginNewSession(); // Start session! (stamps t=0, fires BF_START_SESSION)

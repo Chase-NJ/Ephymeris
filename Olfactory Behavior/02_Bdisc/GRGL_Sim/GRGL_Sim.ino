@@ -16,8 +16,9 @@ time limit both work against the sim.
 
 This build mirrors the firmware's two confound-closing changes so they can
 be validated off-rig:
-  - SEED line: emitted right after START (seed = micros()), so the host's
-    seed-capture / JSON+MAT logging path is exercised.
+  - SEED line: the host's SEED=<n> token is parsed off the START line, used
+    verbatim, and echoed back as "SEED<TAB>value", so the app's seed-issuing
+    and seed-capture paths are both exercised end to end.
   - Adaptive anti-bias selection: the SAME selectNextTrial() logic as the
     firmware chooses each trial's correct side against the rat's recent
     expressed bias. A configurable SIM_POLICY models the rat — the default
@@ -372,17 +373,22 @@ float abortProbAt(int i) {
   return ABORT_STEADY;
 }
 
-/* Mirror the real handshake: announce READY, block until a "START" line
-   (also accepts "START <n>" correction-trial form; the count is ignored). */
-void waitForStart() {
-  char buf[16];
+/* Mirror the real handshake: announce READY, block until a "START" line, and
+   parse its key=value config the way the real firmware does — including this
+   run's SEED, which is what the sim has to honour if it is to exercise the
+   host's seeding path rather than a private one. */
+void waitForStart(SessionConfig &cfg) {
+  char buf[96];   // same cap as the real sketches: a truncated line loses SEED
   size_t len = 0;
   Serial.println("READY");
   while (true) {
     while (Serial.available() == 0) delay(2);
     char c = (char)Serial.read();
     if (c == '\r' || c == '\n') {
-      if (len > 0 && strncmp(buf, "START", 5) == 0) return;
+      if (len > 0 && strncmp(buf, "START", 5) == 0) {
+        parseStartCommand(buf, cfg);
+        return;
+      }
       len = 0;
     } else if (len < sizeof(buf) - 1) {
       buf[len++] = c;
@@ -397,15 +403,16 @@ void waitForStart() {
    accumulates in the RX buffer until the next boundary drains it. */
 
 void setup() {
+  SessionConfig sessionCfg;
   Serial.begin(baudRate);
   delay(50);                 // let the post-reset serial settle
-  waitForStart();
+  waitForStart(sessionCfg);
 
-  // Seed and report it, exactly as the firmware does on START.
-  unsigned long sessionSeed = micros();
-  randomSeed(sessionSeed);
-  Serial.print("SEED\t");
-  Serial.println(sessionSeed);
+  // Seed and report it, exactly as the firmware does on START — host-supplied
+  // SEED, clock fallback, same echo (BehaviorBox.h). Sharing the real helper is
+  // the point: a sim that seeded itself would pass while the rig's seeding path
+  // was broken.
+  beginSessionRng(sessionCfg);
 
   sessionStart = millis();
   emit(BF_START_SESSION, REAL_PRIMING_DELAY);  // odor priming before the first lights-on

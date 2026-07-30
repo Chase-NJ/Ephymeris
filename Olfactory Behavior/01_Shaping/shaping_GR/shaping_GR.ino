@@ -20,9 +20,10 @@ Purpose:
 const int baudRate = 9600;    // Serial baud (matches the app)
 const int numTrials = 1000;   // Session cap (size of trials[])
 const int blockSize = 30;     // Trials per block (pool proportions enforced within each block)
-const long trialSeed = 12345; // Seed for a reproducible trial sequence
 int currentTrial = 0;         // Index into trials[]
 bool sessionComplete = false; // Session start / end guard
+
+SessionConfig sessionCfg; // populated from the START line in setup()
 
 ShapingTimings timing; // mutable holds/windows the stage schedule ramps (BehaviorBox.h)
 TrialClock clock;      // trial timestamps
@@ -70,25 +71,37 @@ void setup()
 {
   initBoxHardware(); // configure every box pin + land all outputs LOW
 
-  /* Build the trial sequence up front from the weighted pool. */
-  generateTrials(trials, numTrials, blockSize, trialSeed, pool, sizeof(pool) / sizeof(pool[0]));
-
   sessionComplete = true;
   Serial.begin(baudRate);
 
   /* Handshake with the app: announce READY, then block until a "START" line.
-     Shaping always advances on a completed trial, so any correction-trial token
-     the host appends (e.g. "START 10") is accepted and ignored. */
+     Shaping declares no config fields of its own, so the only token it reads is
+     the run's SEED; any other key the host appends is accepted and ignored. */
   digitalWrite(trialLight, HIGH); // armed, waiting for GO
   delay(50);                      // let the post-reset serial settle
   Serial.println("READY");
 
-  char cmd[16];
+  char cmd[96]; // must hold the whole line, SEED token included -- readLineInto()
+                // truncates at this cap, and a SEED lost there drops the session
+                // back onto the weak clock fallback
   while (true)
   {
     if (readLineInto(cmd, sizeof(cmd)) && strncmp(cmd, "START", 5) == 0 && (cmd[5] == '\0' || cmd[5] == ' '))
+    {
+      parseStartCommand(cmd, sessionCfg);
       break; // START received
+    }
   }
+
+  /* Seed FIRST, then build the sequence.
+     Both halves of that order matter, and both were wrong before. The seed came
+     from a compile-time constant (12345), and the sequence was generated in
+     setup() before START had even arrived -- so every shaping session ever run,
+     on every box, drew the identical trial order. The seed now comes from the
+     app on the START line (an OS CSPRNG draw taken at the operator's start
+     click) and the pool is sampled from that stream. */
+  beginSessionRng(sessionCfg);
+  generateTrials(trials, numTrials, blockSize, pool, sizeof(pool) / sizeof(pool[0]));
 
   digitalWrite(trialLight, LOW);
   beginNewSession(); // stamps t=0, fires BF_START_SESSION

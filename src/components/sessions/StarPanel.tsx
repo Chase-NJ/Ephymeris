@@ -3,6 +3,7 @@ import { ArrowLeft, ChevronDown, Play, RotateCcw, Square } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/common/controls";
+import { TaskGraph } from "@/components/task/TaskGraph";
 import { LivePanels } from "./LivePanels";
 import { useBoxOutput, usePortStatus } from "@/lib/hardware/context";
 import { springPanel, springSnappy } from "@/lib/motion";
@@ -11,25 +12,38 @@ import { useBoxEnded } from "@/lib/sessions/context";
 import { rollingAccuracy } from "@/lib/sessions/liveTrials";
 import { useLiveTrials } from "@/lib/sessions/useLiveTrials";
 import type { SessionBox, TaskProfile } from "@/lib/sessions/types";
+import { taskGraph } from "@/lib/tasks/topology";
+import { useLiveNode } from "@/lib/tasks/useLiveNode";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * The zoomed-in star view (`starting-a-session.md` §6.4).
+ * The zoomed-in star view (`dashboard.md` §9.4).
  *
  * Docked and translucent over the still-rendering scene rather than replacing
  * it — arrival means the camera is close to that star with an instrument panel
  * open, not a cut to a different screen (§6.3).
  *
- * The panel leads with the **live per-animal charts** — response curves,
- * outcome mix, well holds — because those are what an operator watches a run
- * for. The strobe feed remains underneath as a collapsible console: it is how
- * you check that the box is still talking, which matters exactly when
- * something looks wrong, and is noise the rest of the time.
+ * The panel leads with the **trial flow** — the task's own state machine with a
+ * token on the state this animal is in right now — then the **live per-animal
+ * charts**: response curves, outcome mix, well holds. The graph answers "what
+ * is it doing"; the charts answer "how is it doing". The strobe feed remains
+ * underneath as a collapsible console: it is how you check that the box is
+ * still talking, which matters exactly when something looks wrong, and is noise
+ * the rest of the time.
  */
 
 /** Trials the star's temperature averages over — the same window the task's
  *  own live metrics use, so the two readouts agree. */
 const ACCURACY_WINDOW = 20;
+
+/*
+ * Layout note: this panel positions nothing. It used to dock itself to the
+ * scene's right edge, which put it in the same place Mission Control's box rail
+ * now lives — two absolutely-positioned things claiming one column, with only
+ * z-index deciding. It is now a card in that rail's flow, so the rail owns the
+ * position and the scrolling and the two swap for each other instead of
+ * stacking.
+ */
 export function StarPanel({
   box,
   onStart,
@@ -53,6 +67,8 @@ export function StarPanel({
 
   const live = port.state === "IN_SESSION";
   const { state: trials, usable } = useLiveTrials(box.box, profile?.strobes);
+  const model = useMemo(() => taskGraph(profile), [profile]);
+  const liveNode = useLiveNode(box.box, model, profile?.strobes);
   const accuracy = useMemo(
     () => rollingAccuracy(trials.trials, ACCURACY_WINDOW),
     [trials.trials],
@@ -74,7 +90,7 @@ export function StarPanel({
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 24, opacity: 0 }}
       transition={springPanel}
-      className="pointer-events-auto absolute top-4 right-4 bottom-4 z-20 w-[380px] overflow-y-auto rounded-lg border border-halo bg-nebula/80 p-4 backdrop-blur-xl"
+      className="hud pointer-events-auto rounded-lg p-4"
     >
       <Button variant="ghost" onClick={onBack}>
         <ArrowLeft size={13} strokeWidth={2} />
@@ -122,6 +138,17 @@ export function StarPanel({
           </span>
         </span>
       </div>
+
+      {model.usable && (
+        <div className="mt-3 border-t border-halo pt-3">
+          <div className="mb-1 text-[11px] text-static">Trial flow</div>
+          {/* Counts are deliberately absent here. The recorded figures come
+              from derive.py over a finished run; showing a half-session's
+              partial tallies beside a moving token would invite reading them
+              as the run's result. */}
+          <TaskGraph model={model} liveNode={liveNode} />
+        </div>
+      )}
 
       <div className="mt-3 border-t border-halo pt-3">
         {usable ? (
@@ -183,7 +210,7 @@ const STROBE_LINE = /^(\d{1,3})\t(\d+)$/;
 
 /**
  * The five most recent strobes from this box, newest first, decoded to the
- * profile's human names (`data-saving.md` §6.4); a sketch with no profile
+ * profile's human names (`tasks.md` §6.4); a sketch with no profile
  * gets the raw code labeled as such. Rows arrive from the top with the
  * app's snappy spring and dim as they age down the frame.
  */

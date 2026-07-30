@@ -18,7 +18,7 @@ import { BAUD_RATES } from "@/lib/settings/schema";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * First-time box setup (ephymeris_v1.0.md §4.6).
+ * First-time box setup (settings.md §5).
  *
  * In-route rather than a modal: this is a multi-minute guided flow, not a
  * transient confirmation, and vibrancy is reserved for the sidebar and true

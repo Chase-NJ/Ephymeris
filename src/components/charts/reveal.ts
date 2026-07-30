@@ -2,7 +2,7 @@ import { useInView } from "framer-motion";
 import { useRef } from "react";
 
 /**
- * Arms a panel's draw-on reveal by visibility (`analytics.md` §2.7).
+ * Arms a panel's draw-on reveal by visibility (`data.md` §10.5).
  *
  * The reveal exists to be watched — a line that draws itself below the fold
  * plays to nobody, and the reader scrolls down to an already-finished chart.

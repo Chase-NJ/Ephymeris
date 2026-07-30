@@ -27,7 +27,7 @@ import {
 } from "@/lib/analytics/view";
 
 /**
- * Cohort mean **rewarded** accuracy across sessions (`analytics.md` §3.8).
+ * Cohort mean **rewarded** accuracy across sessions (`data.md` §9.8).
  *
  * Deliberately a separate panel from the learning curves rather than another
  * line on them: those plot the declared metrics, which are

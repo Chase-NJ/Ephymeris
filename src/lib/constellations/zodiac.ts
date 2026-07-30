@@ -1,6 +1,6 @@
 /**
  * The zodiac catalogue — hand-authored, simplified asterisms for the
- * box-status constellation (ephymeris_v1.0.md §2.7, §4.6).
+ * box-status constellation (dashboard.md §1.7, §4.6).
  *
  * Data, not code, on purpose: unlike the per-cohort icons (seeded PRNG in
  * `components/cohorts/CohortIcon.tsx`), these must be *recognizable* — Scorpius

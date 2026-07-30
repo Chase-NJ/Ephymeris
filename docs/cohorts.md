@@ -1,273 +1,298 @@
 # Cohorts
 
-> **Status** · Living spec — **Built and verified.** Data model, SQLite persistence, browser UI, procedural icons, the create/edit flow, Auto-Balance, data-folder resolution, and archive/delete are all live.
->
-> **Owns** · The Cohort → Animal → Group data model, its persistence, the Cohorts tab, and the procedural cohort icon.
->
-> **Read with** · [starting-a-session.md](starting-a-session.md) (runs boxes against this model) · [data-saving.md](data-saving.md) (writes beneath the `dataFolder` resolved here) · [websocket-protocol.md](websocket-protocol.md) (canonical for the commands §10 proposed)
->
-> **Still open** · three small editor rough edges (§12)
+![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![model](https://img.shields.io/badge/Cohort_→_Animal_→_Group-8B7EC8?style=flat-square)
 
-**Contents** — [1. Data Model](#1-data-model) · [2. Validation](#2-validation-rules) · [3. Persistence](#3-persistence) · [4. Browser UI](#4-cohort-browser-ui) · [5. Procedural Icon](#5-procedural-icon-generation) · [6. Create / Edit](#6-create--edit--manage-flow) · [7. Auto-Balance](#7-auto-balance--group-suggestion-tooling) · [8. Data Folder](#8-data-folder-resolution) · [9. Archive / Delete](#9-archive--delete-semantics) · [10. Wire Messages](#10-wire-messages-proposed) · [11. Resolved Decisions](#11-resolved-decisions) · [12. Open Items](#12-open-items--tbd)
+> **What this is** · The Cohort / Animal / Group data model and everything the Cohorts tab does with it.
+>
+> **Owns** · The data model and its validation · the cohort browser and procedural icon · the create/edit flow · Auto-Balance grouping · data-folder resolution · archive and delete semantics.
+>
+> **Read with** · [data.md](data.md) (the SQLite schema, and the folder written beneath) · [dashboard.md](dashboard.md) (what a session does with a cohort) · [settings.md](settings.md) (box bindings, which the editor gates on).
 
-**First of three interdependent documents** — Cohorts → Starting a Session → Data Saving. The other two consume the model defined here.
+**Contents** — [1. Data model](#1-data-model) · [2. Validation](#2-validation-rules) · [3. Persistence](#3-persistence) · [4. The browser](#4-the-cohort-browser) · [5. The icon](#5-procedural-icon-generation) · [6. Create / edit](#6-create--edit--manage) · [7. Auto-Balance](#7-auto-balance) · [8. Data folder](#8-data-folder-resolution) · [9. Archive & delete](#9-archive--delete-semantics)
 
 ---
 
-## 0. Scope
+## 1. Data model
 
-This doc defines the Cohort/Animal/Group data model, its persistence, the Cohorts tab UI (browsing, creating, editing, archiving), and the procedurally generated cohort icon. It does not define how a session actually runs against a cohort (next doc) or how session data gets written to disk (doc after that) — those consume what's specified here.
-
----
-
-## 1. Data Model
-
+```mermaid
+erDiagram
+    COHORT ||--o{ ANIMAL : holds
+    COHORT ||--|{ GROUP : "has ≥ 1"
+    GROUP  ||--o{ ANIMAL : "runs together"
+    COHORT {
+        uuid id
+        string name "unique among active"
+        string dataFolder "absolute, resolved once"
+        timestamp archivedAt "null = active"
+    }
+    ANIMAL {
+        uuid id
+        string name "unique within cohort"
+        int boxNumber "1-6 or null"
+        int cage "home cage, or null"
+        enum sex "M / F / unknown / null"
+        string idNumber "free text"
+        string notes
+    }
+    GROUP {
+        uuid id
+        string name
+        int order "run order"
+    }
 ```
+
+```ts
 Cohort {
   id: uuid
-  name: string                    // unique among active (non-archived) cohorts, see §2
+  name: string                    // unique among active (non-archived) cohorts
   animals: Animal[]
-  groups: Group[]                 // always ≥ 1 — see §2
-  dataFolder: string              // absolute path, resolved once at creation — see §8
-  iconSeed: id                    // the icon is derived from the cohort id itself, nothing extra stored
+  groups: Group[]                 // always ≥ 1
+  dataFolder: string              // absolute path, resolved once at creation
+  iconSeed: id                    // derived from the cohort id — nothing extra stored
   createdAt, updatedAt: timestamp
-  archivedAt: timestamp | null    // soft-delete, see §9
+  archivedAt: timestamp | null    // soft-delete
 }
 
 Animal {
   id: uuid
   name: string                    // unique within the cohort
-  boxNumber: 1–6 | null           // standing/default box assignment; nullable, see §2
-  cage: int | null                // home-cage number — cagemates share one; nullable, see §2
+  boxNumber: 1–6 | null           // standing/default box assignment
+  cage: int | null                // home-cage number — cagemates share one
   groupId: uuid                   // every animal belongs to exactly one group
-  sex: "M" | "F" | "unknown" | null   // enum rather than free text — needed for sex-balanced grouping, §7
-  idNumber: string | null         // tag/ear-notch/RFID/etc. — kept as free text since ID schemes vary by lab
-  notes: string | null            // freeform
+  sex: "M" | "F" | "unknown" | null   // an enum, because sex-balanced grouping needs it
+  idNumber: string | null         // tag/ear-notch/RFID — free text, ID schemes vary by lab
+  notes: string | null
 }
 
 Group {
   id: uuid
-  name: string                    // user-defined, or auto "Group 1" / "Group 2" if left blank
-  order: int                      // run order for consecutive execution — consumed by the session-start doc
+  name: string                    // user-defined, or auto "Group 1" / "Group 2"
+  order: int                      // run order for consecutive execution
 }
 ```
 
-A cohort can be created with zero animals and populated over following days — real lab setup is rarely a single sitting. Whether Starting a Session requires at least one populated, box-assigned group is that doc's gating concern, not a constraint enforced here.
+A cohort can be created with **zero animals** and populated over following days — real lab setup is rarely a single sitting.
 
 ---
 
-## 2. Validation Rules
+## 2. Validation rules
 
-- **Cohort name** unique among active (non-archived) cohorts. Archived cohorts don't block reuse of a name.
-- **Animal name** unique within its own cohort (not globally).
-- **`boxNumber`** is an abstract slot, `1`–`6`, **stored and validated against that fixed range and nothing else** — never against which boards happen to be bound right now. This decoupling is deliberate and load-bearing: the app runs on two lab machines with independent bindings against a shared data directory, so a cohort configured on one must stay loadable, editable and savable on the other. Narrowing what may be *stored* would make a cohort un-editable on whichever machine has fewer boxes.
+| Rule | Detail |
+|---|---|
+| **Cohort name** | Unique among **active** cohorts. Archived cohorts don't block reuse of a name |
+| **Animal name** | Unique within its own cohort, not globally |
+| **`boxNumber`** | An abstract slot `1`–`6`, validated against that fixed range **and nothing else** |
+| **`boxNumber` uniqueness** | Scoped to the **group**, not the cohort |
+| **`cage`** | An integer ≥ 1. No upper bound, no occupancy limit, **no interaction with groups** |
+| **Groups** | Always exist, implicitly if the user never makes one |
 
-  **The editor is a separate question, and it is opinionated.** It offers only boxes bound on *this* machine, because offering one that doesn't exist produced an assignment nobody could honour — discovered halfway down the session flash sequence rather than at the moment of the mistake. The two halves must stay distinct: `src/lib/cohorts/boxAvailability.ts` holds the machine-local opinion, the sidecar holds the range rule, and neither should be "fixed" into the other.
+> [!IMPORTANT]
+> **`boxNumber` is never validated against which boards happen to be bound right now.** The app runs on two lab machines with independent bindings against a shared data directory, so a cohort configured on one must stay loadable, editable, and savable on the other. Narrowing what may be *stored* would make a cohort un-editable on whichever machine has fewer boxes.
+>
+> **The editor is a separate question, and it is opinionated.** It offers only boxes bound on *this* machine, because offering one that doesn't exist produced an assignment nobody could honour — discovered halfway down the session flash sequence rather than at the moment of the mistake.
+>
+> **The two halves must stay distinct:** `src/lib/cohorts/boxAvailability.ts` holds the machine-local opinion, the sidecar holds the range rule, and neither should be "fixed" into the other.
 
-  A stored assignment the current machine can't honour is **kept and reported, never rewritten**. A box that is merely unplugged is still the box that animal belongs in; silently clearing it would turn a loose USB hub into data loss. The editor names the affected animals and the browser grid flags the cohort (via `CohortSummary.assignedBoxes`), and both fall silent when the sidecar is disconnected — detection is unknowable then, and reporting blindness as a fault is worse than saying nothing.
-- **`boxNumber` uniqueness is scoped to the group, not the cohort.** Two animals in *different* groups can share `boxNumber: 3` — groups run consecutively (§3, Groups), so the same physical box slot is legitimately reused across them. Two animals in the *same* group cannot share a box number. Animals with `boxNumber: null` don't collide with anything.
-- **`cage`** is a home-cage grouping label, validated as an integer ≥ 1 and nothing else — no upper bound, no occupancy limit, and **no interaction with groups**: cagemates legitimately land in different run groups, because housing and run order are independent facts. `null` means "cage unknown", which is true of every animal entered before the field existed. The 3D constellation is the consumer: cagemates share one satellite ("spaceship") in orbit, so the field changes what the sky draws, never what a session may do.
-- **Groups always exist, even implicitly.** If the user never creates an explicit group, all animals belong to a single default group created transparently. This keeps "grouped" and "ungrouped" cohorts the same code path rather than a special case — a cohort with 3 animals and 3 boxes just happens to have exactly one group.
+> [!CAUTION]
+> **A stored assignment this machine can't honour is kept and reported, never rewritten.** A box that is merely unplugged is still the box that animal belongs in; silently clearing it would turn a loose USB hub into data loss. The editor names the affected animals and the browser grid flags the cohort — and both fall silent when the sidecar is disconnected, because detection is unknowable then and reporting blindness as a fault is worse than saying nothing.
 
-### Groups, concretely
+**Why box uniqueness is per-group.** Two animals in *different* groups can share `boxNumber: 3` — groups run **consecutively**, so the same physical box slot is legitimately reused across them. Two animals in the *same* group cannot. Animals with `boxNumber: null` don't collide with anything.
 
-Groups exist to split a cohort larger than the available box count into consecutive runs — six rats, three working boxes, so two groups of three run back-to-back rather than simultaneously. Group membership and box assignment can be done by hand, or via the Auto-Balance tool (§7), which proposes a full grouping — including sex-balancing and box assignment — for the user to review and adjust rather than building one animal at a time.
+**Why groups always exist.** If the user never creates an explicit group, all animals belong to a single default group created transparently. That keeps "grouped" and "ungrouped" cohorts on **one code path** rather than a special case — a cohort with 3 animals and 3 boxes just happens to have exactly one group.
+
+**What groups are for.** Splitting a cohort larger than the available box count into consecutive runs — six rats, three working boxes, so two groups of three run back-to-back rather than simultaneously.
+
+**What `cage` is for.** Housing and run order are independent facts, so cagemates legitimately land in different run groups. `null` means "cage unknown," which is true of every animal entered before the field existed. The 3D constellation is the consumer: cagemates share one ship in orbit — so the field changes **what the sky draws, never what a session may do**.
 
 ---
 
 ## 3. Persistence
 
-Cohort/Animal/Group data lives in **SQLite**, owned by the Python sidecar — consistent with the storage layer being sidecar-owned throughout this project. Three tables (`cohorts`, `animals`, `groups`), foreign-keyed as the model above implies.
+Cohort / Animal / Group data lives in **SQLite**, owned by the Python sidecar. The database file lives in the **app's own data directory** — *not* inside the user-configured `dataDirectory`.
 
-The database file lives in the **app's own data directory** (e.g. `~/Library/Application Support/Ephymeris/ephymeris.db` on macOS, `%APPDATA%/Ephymeris/ephymeris.db` on Windows) — **not** inside the user-configured `dataDirectory` setting from `ephymeris_v1.0.md` §4.5. That setting is where behavioral session output lives and gets browsed by lab members; mixing an opaque `.db` file into it would be confusing and it's not a `.json`/`.mat`/`.tsv` session artifact. Backup of this file is built and specified in `data-saving.md` §8.3 (§12).
+> [!NOTE]
+> That setting is where behavioral session output lives and gets browsed by lab members; mixing an opaque `.db` file into it would be confusing, and it is not a `.json`/`.mat`/`.tsv` session artifact.
 
-The schema has grown past these three tables: `prefixes`, `sessions`, and `session_animal_runs` were added for `data-saving.md` §3–§4, and `analytics.md` §10.2 added two more (`task_profiles`, `run_metrics_cache`) plus a nullable `session_animal_runs.profile_hash` at schema v3. `sidecar/ephymeris_sidecar/cohorts/db.py` holds the whole schema regardless of which document motivated each table.
+The schema has grown well past the three cohort tables. **The full schema, the migration rules, and how the database is backed up all live in [data.md §6](data.md#6-the-sqlite-database)** — including the one rule that bites:
 
-> **Read this before changing the schema.** Adding a *table* needs nothing but a `CREATE TABLE IF NOT EXISTS` in `SCHEMA` — it covers the fresh and the existing case alike. Adding a **column** does not work that way: the same statement leaves an existing table untouched, so the column would appear only on databases created after the change. `db.py` carries a migration branch for exactly this (`analytics.md` §10.1) — bump `SCHEMA_VERSION`, update `SCHEMA` to the final shape, **and** add a `MIGRATIONS` entry. Either half alone leaves one class of database wrong.
-
----
-
-## 4. Cohort Browser UI
-
-Replaces the `<PlaceholderView>` currently stubbed at `/cohorts` (`ephymeris_v1.0.md` §4.2) — this is that section's first real implementation, and it also makes the dashboard's "N active" tile stat (previously placeholder text) real.
-
-- **Layout:** a responsive card grid, not a list — "visualizing and selecting" calls for something you scan visually, not read top to bottom.
-- **Card material:** `Nebula` surface, `Halo` hairline border, standard `md` radius — consistent with every other elevated surface in the app.
-- **Card contents:** the procedural icon (§5), cohort name (Inter, not Space Grotesk — that face stays confined to section headers per the typography rule), and a small stat line in `JetBrains Mono` (animal count, group count if >1) — mono is already the app's convention for compact data readouts.
-- **Motion:** spring-based hover/press (scale up slightly, icon's twinkle animation subtly accelerates on hover) — same spring-physics convention as the rest of the app, not a new motion language.
-- **Search/sort:** a simple text filter and name/recency sort above the grid. Not a design decision worth its own section — any list that can grow past a dozen items needs this, same as it would in any other app.
-- **Archived cohorts are hidden by default**, behind a small "Show Archived" toggle — the main grid is for *available* cohorts, per your own framing, and archived ones would just be clutter in the common case.
-
-### The "create new cohort" tile
-
-Always first in the grid, visually distinct rather than just another card: dashed `Halo` border instead of solid, a single dim, slowly pulsing star instead of a full generated system — a nebula that hasn't collapsed into a star system yet — with a "+ New Cohort" label. Hover brightens the pulse. This is the "special indication" you asked for, and it's a genuine extension of the astronomy metaphor already in use for the hardware status widget, not a new visual language bolted on.
+> [!CAUTION]
+> Adding a **table** needs nothing but a `CREATE TABLE IF NOT EXISTS`. Adding a **column** needs a `MIGRATIONS` entry as well, or it appears only on freshly-created databases. See [data.md §6.3](data.md#63-changing-the-schema).
 
 ---
 
-## 5. Procedural Icon Generation
+## 4. The cohort browser
 
-Rather than requiring uploaded artwork (not asked for, and it'd need storage/migration handling), each cohort's icon is **derived, not stored** — computed client-side from the cohort's `id` every time it's rendered, the same instinct already used for passthrough scrollback not being persisted. Nothing about the icon needs a database column beyond the id that already exists.
+Route `/cohorts`.
 
-**Algorithm:**
-1. Seed a small deterministic PRNG from the cohort `id` (e.g. a string hash into a `mulberry32`-style generator — cheap, dependency-free, trivially portable to TypeScript).
-2. **Node count** = number of animals in the cohort, capped at 8 for visual sanity. Above 8, render a denser "cluster" glyph rather than placing nodes individually.
-3. **Layout:** nodes placed at seeded angle + radius within a bounded circle, angularly spaced (`360° / nodeCount`) plus small seeded jitter so it doesn't look mechanically even.
-4. **Connections:** each node links to its nearest neighbor(s), rendered as thin `Pulsar` lines at reduced opacity — reusing the exact line treatment already established for the hardware constellation status widget (`hardware-interaction.md`/`ephymeris_v1.0.md` §2.7), so the two features read as the same visual family rather than two different ideas.
-5. **Star color/size:** primarily `Pulsar`, with seeded per-node size/opacity variation for texture. Exactly one node per icon (seeded selection) renders in `Ion` green instead — a single "hero star" for a bit of visual pop without introducing a new hue outside the established six-token palette.
-6. **No glow, no gradients** — flat, matte fills only, per the theme's explicit "protect against scope-creep-by-gradient" rule.
-7. **Animation:** gentle independent twinkle per node (seeded phase/period opacity oscillation) — subtle, not distracting, and respects `prefers-reduced-motion` by falling back to a static render, same as every other ambient motion in the app.
+- **A responsive card grid, not a list** — "visualizing and selecting" calls for something you scan visually, not read top to bottom.
+- **Card material:** `Nebula` surface, `Halo` hairline border, standard `md` radius.
+- **Card contents:** the procedural icon, the cohort name in Inter (**not** Space Grotesk — that face stays confined to section headers), and a small stat line in JetBrains Mono (animal count, group count if > 1).
+- **Motion:** spring-based hover/press; the icon's twinkle subtly accelerates on hover.
+- **Search and sort:** a text filter and a name/recency sort above the grid.
+- **Archived cohorts are hidden by default**, behind a *Show archived* toggle. Restore and permanent-delete live only there.
 
-Group membership is **not** encoded into the icon — it stays a pure "how many animals" glyph, with group count left to the text stat line. Trying to make the icon also convey grouping risks turning a fun identifier into a dense infographic, which isn't what was asked for.
+**The "+ New Cohort" tile** is always first in the grid and visually distinct rather than just another card: a dashed `Halo` border instead of solid, and a single dim, slowly pulsing star instead of a full generated system — *a nebula that hasn't collapsed into a star system yet*. Hover brightens the pulse.
 
 ---
 
-## 6. Create / Edit / Manage Flow
+## 5. Procedural icon generation
 
-Opened either from the "+ New Cohort" tile (create) or by clicking an existing card (edit) — one component, two shapes.
+Each cohort's icon is **derived, not stored** — computed client-side from the cohort's `id` every time it renders. Nothing about it needs a database column beyond the id that already exists.
 
-**Creating is a flow; editing is a form.** A new cohort reveals its sections in order — name, then roster, then groups and boxes — each arriving as the one above it is satisfied, so there is exactly one thing to do at a time and the order needs no explaining. An existing cohort shows everything at once: you came back to change one thing, and being walked past the other three would be an obstacle. The reveal is the height-spring idiom used elsewhere in the app, and collapses to a plain conditional under reduced motion — the *ordering* is the information and survives without the movement.
+1. Seed a small deterministic PRNG (`mulberry32`) from the cohort `id`.
+2. **Node count** = number of animals, capped at 8. Above 8, render a denser "cluster" glyph rather than placing nodes individually.
+3. **Layout:** nodes at seeded angle + radius within a bounded circle, angularly spaced (`360° / nodeCount`) plus small seeded jitter so it doesn't look mechanically even.
+4. **Connections:** each node links to its nearest neighbour(s), as thin `Pulsar` lines at reduced opacity — the exact line treatment the hardware status widget uses, so the two read as one visual family.
+5. **Colour:** primarily `Pulsar`, with seeded per-node size and opacity variation. **Exactly one node** per icon renders in `Ion` — a single hero star for visual pop without introducing a hue outside the palette.
+6. **No glow, no gradients.** Flat matte fills only.
+7. **Animation:** gentle independent twinkle per node, falling back to a static render under reduced motion.
 
-The readiness strip doubles as the flow's spine. Its three checkpoints (named / has animals / session-ready) each correspond to a section below, so it reads as "where am I" as well as "what's missing". It remains **coaching, never a gate** — a cohort can be saved incomplete at any point (§1), the sole exception being that Create is disabled without a name, since that request is one the sidecar would only reject.
+> [!NOTE]
+> **Group membership is deliberately not encoded.** The icon stays a pure "how many animals" glyph, with group count left to the text stat line. Making it also convey grouping would turn a fun identifier into a dense infographic.
 
-- **Name** — text field, autofocused on a new cohort and carrying the attention pulse until filled.
-- **Data folder** — §8's resolution. Only asked for when no `dataDirectory` is configured; otherwise it is derived and asking would be noise mid-flow.
-- **Animals** — biographical data only: name, sex (M/F/Unknown), ID number, notes. **Bulk entry is the primary way in**: one field takes a comma-, newline- or tab-separated list (a spreadsheet column pastes straight in) or a prefix and a count (`R- × 8` → `R-1`…`R-8`). Names already in the cohort are skipped rather than added, because duplicates are a §2 validation failure and a double paste otherwise turns the whole roster red. A single blank-row button stays for the afterthought animal.
-- **Cages & spaceships** — §2's `cage` field as a boarding scene: every animal is a draggable crew chip, every cage a "spaceship" card, plus a dashed dock holding the unassigned. Drag a chip aboard (or click the chip, then the ship — the trackpad fallback for the same move), add ships as the rack grows, scrap an empty one. Optional at every point and never a gate: an animal left on the dock flies solo in the constellation, exactly as every animal did before cages existed. Empty ships live only in component state — a cage with no animals isn't a fact the roster can carry, since `cage` lives on the animal.
-- **Groups & boxes** — one card per group, each showing its full membership: add/remove/rename, reorder with up/down to set `order`, move an animal between groups, and assign its box. Box assignment lives **here, not in the Animals list**, because uniqueness is scoped per group (§2) — it is a property of a membership, not of an animal, and only makes sense with the whole group visible at once. The panel is always present, since assignment has to happen somewhere regardless of group count; a single group renders as a quiet unlabeled card rather than exposing rename/reorder chrome nobody needs yet.
-- **Box selectors offer only boxes bound on this machine** (§2), labelling any that isn't currently connected. A box already taken within the same group isn't offered at all — prevention rather than a save-time error.
-- **The panel points at the one misconfiguration that actually bites**: more animals in a single group than the rig has boxes. That can't be fixed by assigning more carefully, so the panel says so, pre-fills the split count, and opens Auto-Balance rather than leaving it to be discovered one empty dropdown at a time. A per-group **Fill boxes** button handles the opposite case — eight dropdowns for a decision nobody has a preference about.
-- Standard save/cancel; validation errors (§2) surface inline against the offending row, not as a toast after the fact.
-
-Colour carries the severity distinction and nothing else: **error** for what will fail on save (missing or duplicate name, duplicate box in a group), **warning** for preconditions that still save fine (a box not connected or not set up, a group larger than the rig), **Ion** only for completed readiness checkpoints. The attention pulse marks the single control the flow is waiting on and is never applied to two things at once.
+> [!TIP]
+> This is the **second** of the three constellations in the app, and its link rule is nearest-neighbour — unlike the status widget's declared adjacency and unlike Mission Control's asterism. See [dashboard.md §1.7](dashboard.md#17-the-signature-element--the-constellation-status-widget).
 
 ---
 
-## 7. Auto-Balance / Group Suggestion Tooling
+## 6. Create / edit / manage
 
-A tool inside the Groups sub-panel (§6) that proposes a full grouping rather than requiring animal-by-animal manual placement. It's a **suggestion the user reviews and can hand-edit**, not a silent bulk mutation — consistent with this project's general caution around anything that rewrites existing configuration.
+One component, two shapes: `/cohorts/new` and `/cohorts/:id`.
+
+> [!IMPORTANT]
+> **Creating is a flow; editing is a form.** A new cohort reveals its sections in order — name, then roster, then groups and boxes — each arriving as the one above it is satisfied, so there is exactly one thing to do at a time and the order needs no explaining. An existing cohort shows everything at once: you came back to change one thing, and being walked past the other three would be an obstacle.
+>
+> The reveal collapses to a plain conditional under reduced motion — **the *ordering* is the information, and it survives without the movement.**
+
+The readiness strip doubles as the flow's spine. Its three checkpoints (*named* / *has animals* / *session-ready*) each correspond to a section below, so it reads as "where am I" as well as "what's missing." It remains **coaching, never a gate** — a cohort can be saved incomplete at any point. The sole exception is that Create is disabled without a name, since that is a request the sidecar would only reject.
+
+### Sections
+
+| Section | Contents |
+|---|---|
+| **Name** | Autofocused on a new cohort, carrying the attention pulse until filled |
+| **Data folder** | Only asked for when no `dataDirectory` is configured; otherwise derived, and asking would be noise mid-flow |
+| **Animals** | Biographical data only — name, sex, ID number, notes |
+| **Cages & spaceships** | Every animal is a draggable crew chip, every cage a "spaceship" card, plus a dashed dock holding the unassigned |
+| **Groups & boxes** | One card per group showing full membership: add/remove/rename, reorder to set `order`, move an animal between groups, assign its box |
+
+**Bulk entry is the primary way into the roster.** One field takes a comma-, newline- or tab-separated list (a spreadsheet column pastes straight in) **or** a prefix and a count (`R- × 8` → `R-1`…`R-8`).
+
+> [!TIP]
+> **Names already in the cohort are skipped rather than added**, because duplicates are a validation failure and a double paste would otherwise turn the whole roster red. A single blank-row button stays for the afterthought animal.
+
+**Cages are optional at every point and never a gate.** An animal left on the dock flies solo in the constellation, exactly as every animal did before cages existed. Empty ships live only in component state — *a cage with no animals isn't a fact the roster can carry*, since `cage` lives on the animal.
+
+> [!IMPORTANT]
+> **Box assignment lives in the Groups panel, not the Animals list**, because uniqueness is scoped per group — it is a property of a *membership*, not of an animal, and only makes sense with the whole group visible at once.
+
+The panel is always present, since assignment has to happen somewhere regardless of group count; a single group renders as a quiet unlabeled card rather than exposing rename/reorder chrome nobody needs yet.
+
+**Box selectors offer only boxes bound on this machine**, labelling any that isn't currently connected. **A box already taken within the same group isn't offered at all** — prevention rather than a save-time error.
+
+**The panel points at the one misconfiguration that actually bites**: more animals in a single group than the rig has boxes. That can't be fixed by assigning more carefully, so the panel says so, pre-fills the split count, and opens Auto-Balance rather than leaving it to be discovered one empty dropdown at a time. A per-group **Fill boxes** button handles the opposite case.
+
+### Colour and severity
+
+| | Used for |
+|---|---|
+| 🔴 **error** | What will fail on save — missing or duplicate name, duplicate box within a group |
+| 🟡 **warning** | Preconditions that still save fine — a box not connected or not set up, a group larger than the rig |
+| 🟢 **Ion** | Completed readiness checkpoints, and nothing else |
+
+The attention pulse marks the single control the flow is waiting on, and is **never applied to two things at once**.
+
+Validation errors surface **inline against the offending row**, not as a toast after the fact.
+
+---
+
+## 7. Auto-Balance
+
+A tool inside the Groups panel that proposes a full grouping rather than requiring animal-by-animal placement. It is **a suggestion the user reviews and can hand-edit, not a silent bulk mutation.**
 
 ### 7.1 Inputs
 
-The user chooses one of two equivalent ways to express the target split:
-- **Number of groups**, or
-- **Max group size**
+Either **number of groups** or **max group size** — whichever isn't chosen is derived from the other.
 
-Whichever isn't chosen is derived from the other. A **"Balance by sex"** checkbox is available whenever at least one animal in the cohort has `sex` set to `M` or `F` (not `unknown`/null) — otherwise it's disabled, since there's nothing to balance against.
+A **Balance by sex** checkbox is available whenever at least one animal has `sex` set to `M` or `F`; otherwise it is disabled, since there is nothing to balance against.
 
-As a courtesy default, group size pre-fills with the number of boxes **bound on this machine** — editable, not enforced. Bound rather than currently detected, matching what the box selectors offer (§2): a box that is merely unplugged is still one this cohort can be planned around, and a default that changed as USB re-enumerated would be worse than useless. When the panel is opened because a roster outgrew the rig, the group count arrives pre-filled with `ceil(animals / boxes)` rather than a generic 2 the user has to correct.
+> [!NOTE]
+> Group size pre-fills with the number of boxes **bound** on this machine — editable, not enforced. Bound rather than currently *detected*, matching what the box selectors offer: a box that is merely unplugged is still one this cohort can be planned around, and a default that changed as USB re-enumerated would be worse than useless.
+>
+> When the panel is opened because a roster outgrew the rig, the group count arrives pre-filled with `ceil(animals / boxes)` rather than a generic 2 the user has to correct.
 
-### 7.2 Hard Constraint
+### 7.2 The hard constraint
 
-**No group may exceed 6 animals** — `boxNumber` only spans 1–6, so a larger group could never get fully, uniquely assigned within itself regardless of grouping strategy. If the requested configuration would violate this (e.g. "1 group" requested for 10 animals), the tool rejects the request and suggests the minimum viable group count instead: `ceil(animalCount / 6)`.
+> [!IMPORTANT]
+> **No group may exceed 6 animals.** `boxNumber` only spans 1–6, so a larger group could never get fully and uniquely assigned within itself regardless of grouping strategy. A request that would violate this is **rejected**, with the minimum viable group count suggested instead: `ceil(animalCount / 6)`.
 
-### 7.3 Algorithm
+### 7.3 The algorithm
 
-A balanced round-robin, not an optimization search — simple, deterministic, and easy to reason about:
+A **balanced round-robin**, not an optimization search — simple, deterministic, and easy to reason about.
+
+```mermaid
+flowchart LR
+    A["all animals"] --> B["partition by sex<br/>M · F · unknown"]
+    B --> C["walk each bucket in turn,<br/>assign round-robin<br/>across N groups"]
+    C --> D["within each group,<br/>assign boxes 1, 2, 3 …<br/>in landing order"]
+```
 
 1. Partition animals into buckets by `sex`: `M`, `F`, `unknown`/`null`.
-2. Walk each bucket in turn, assigning animals to the N target groups round-robin (group index cycles 0, 1, …, N-1, 0, 1, …) so each bucket spreads as evenly as possible across groups.
-3. This naturally keeps group sizes within 1 of each other, and — when sex data is present — keeps each group's sex ratio as close to the cohort's overall ratio as the numbers allow. Animals with no sex data don't skew the balance; they just fill in size-wise after the known buckets are distributed.
-4. Within each resulting group, **box numbers are auto-assigned sequentially** (1, 2, 3, …) in the order animals landed in that group — turning what's normally tedious manual bookkeeping into a byproduct of grouping, rather than a separate step.
+2. Walk each bucket in turn, assigning animals to the N target groups round-robin (group index cycles 0, 1, … N−1, 0, 1, …) so each bucket spreads as evenly as possible.
+3. This naturally keeps group sizes **within 1 of each other**, and — when sex data is present — keeps each group's sex ratio as close to the cohort's overall ratio as the numbers allow. Animals with no sex data don't skew the balance; they fill in size-wise after the known buckets are distributed.
+4. Within each resulting group, **box numbers are auto-assigned sequentially** in the order animals landed there — turning tedious manual bookkeeping into a byproduct of grouping rather than a separate step.
 
 ### 7.4 Flow
 
-**Always a full re-proposal, not an incremental fill-in.** Auto-Balance considers the complete current animal roster and proposes an entirely new grouping from scratch; it doesn't try to preserve or merge with whatever grouping already exists. This is simpler to reason about than partial-merge logic, and since the result is shown as a preview before anything is written, there's no ambiguity about what changes.
+> [!IMPORTANT]
+> **Always a full re-proposal, never an incremental fill-in.** Auto-Balance considers the complete current roster and proposes an entirely new grouping from scratch; it does not preserve or merge with whatever grouping already exists. That is simpler to reason about than partial-merge logic — and since the result is shown as a preview before anything is written, there is no ambiguity about what changes.
 
-1. User opens Auto-Balance, sets group count/size and (optionally) sex-balancing.
-2. Tool computes and displays a **preview**: proposed groups, their animals, and auto-assigned box numbers — using the same card/list treatment as the regular Groups sub-panel, so it's not a jarring separate UI.
-3. User can hand-adjust the preview (drag an animal to a different group, change a box number) before committing — the suggestion is a starting point, not a final answer.
-4. **Apply** commits the preview as the cohort's new grouping via the existing `cohorts.update` command (§10) — no separate "apply" command needed, since it's just a groups/animals patch like any other edit.
-5. **Cancel** discards the preview with no changes made.
-
----
-
-## 8. Data Folder Resolution
-
-- **On creation**, if the user doesn't override it: `dataFolder = <Settings.dataDirectory>/<sanitized cohort name>`. If that path already exists on disk, a numeric suffix is appended (`-2`, `-3`, …) until unique.
-- **The resolved path is persisted verbatim** — it is computed once, not re-derived from the current name on every read.
-- **Renaming a cohort does not move its data folder.** Name and `dataFolder` are deliberately decoupled after creation — an automatic move-on-rename is exactly the kind of implicit file operation this project has avoided elsewhere (e.g. `hardware-interaction.md`'s explicit-confirmation stance on destructive actions). The cohort detail view surfaces the real `dataFolder` path plainly at all times so there's never ambiguity about where the data actually lives.
-- **Relocating is a separate, explicit action** ("Change data folder…" in the edit view) — distinct from renaming. It carries **two intents**, chosen by the "Move existing contents" toggle, and they have opposite requirements for the destination:
-
-  | Toggle | Meaning | Destination |
-  |---|---|---|
-  | **On** | Move this cohort's data to the new folder | **Must be empty.** Refuses rather than merging into or overwriting |
-  | **Off** | Point this cohort at data that is already there | **Expected to be full.** Nothing is moved or written; only the recorded path changes |
-
-  The "off" case is how a cohort attaches to an archive written before this app existed, which is the whole reason orphan adoption exists (`analytics.md` §8.1). Enforcing the empty-destination rule in *both* cases made that intent impossible to express — the only control for it rejected exactly the folders it was meant to accept, and because the field then re-rendered the unchanged path, it read as the setting silently reverting. The rule protects against merge collisions, and there are none when nothing is being written.
+1. Set group count/size and (optionally) sex-balancing.
+2. The tool displays a **preview** — proposed groups, their animals, and auto-assigned box numbers — using the same card treatment as the regular Groups panel, so it isn't a jarring separate UI.
+3. **Hand-adjust the preview** before committing: drag an animal to a different group, change a box number.
+4. **Apply** commits it as an ordinary groups/animals patch — no separate "apply" command.
+5. **Cancel** discards it with no changes made.
 
 ---
 
-## 9. Archive / Delete Semantics
+## 8. Data folder resolution
 
-Two distinct actions, not one:
+**On creation**, if the user doesn't override it: `dataFolder = <dataDirectory>/<sanitized cohort name>`. If that path already exists on disk, a numeric suffix is appended (`-2`, `-3`, …) until unique.
 
-- **Archive** (soft-delete) — the everyday "delete a cohort" action. Removes it from the active grid, keeps the record and its `dataFolder` fully intact, reversible via "Show Archived" → Restore. This matches the caution already shown elsewhere in this project toward anything that could destroy real data.
-- **Permanent delete** — only available *from* the archived view, on an already-archived cohort. A two-step guard (archive, then separately delete) rather than a single destructive button on a live cohort. Deleting the cohort record never touches its `dataFolder` on disk — the app removes its own bookkeeping, never a user's actual data files, without a much more explicit and separate confirmation than anything specified here.
+**The resolved path is persisted verbatim** — computed once, not re-derived from the current name on every read.
 
----
+> [!IMPORTANT]
+> **Renaming a cohort does not move its data folder.** Name and `dataFolder` are deliberately decoupled after creation — an automatic move-on-rename is exactly the kind of implicit file operation this project avoids everywhere else. The detail view surfaces the real path plainly at all times, so there is never ambiguity about where the data actually lives.
 
-## 10. Wire Messages (proposed)
+**Relocating is a separate, explicit action** — *Change data folder…* — distinct from renaming. It carries **two intents**, chosen by the *Move existing contents* toggle, and they have **opposite** requirements for the destination:
 
-`websocket-protocol.md` is the single source of truth for the wire schema (with `protocol/schema.py` as the machine-readable shape authority the code mirrors are generated from). These were proposed for merge into that document rather than treated as canonical here.
-
-> **Merged.** These now live in `websocket-protocol.md` §3.1 (commands), §4 (the `cohorts.updated` event and the `CohortSummary`/`Cohort`/`Animal`/`Group`/`GroupProposal` payload shapes), and §6 (error codes). That document is canonical; the tables below are retained as the design rationale for *why* each command exists. The contract test enforces that the generated mirrors and the spec never drift.
-
-**Commands:**
-
-| Command | Args | Result |
+| Toggle | Meaning | Destination |
 |---|---|---|
-| `cohorts.list` | — | `{cohorts: [CohortSummary]}` |
-| `cohorts.get` | `{id}` | full `Cohort` |
-| `cohorts.create` | `{name, dataFolder?}` | `{cohort}` |
-| `cohorts.update` | `{id, patch}` | `{cohort}` |
-| `cohorts.archive` | `{id}` | `{cohort}` |
-| `cohorts.restore` | `{id}` | `{cohort}` |
-| `cohorts.delete` | `{id, confirm: true}` | `{deleted: true}` — rejected unless already archived |
-| `cohorts.setDataFolder` | `{id, path, moveExisting: bool}` | `{cohort}` |
+| **On** | Move this cohort's data to the new folder | **Must be empty.** Refuses rather than merging into or overwriting |
+| **Off** | Point this cohort at data that is already there | **Expected to be full.** Nothing is moved or written; only the recorded path changes |
 
-**Events:**
-
-| Event | `data` | Notes |
-|---|---|---|
-| `cohorts.updated` | `{cohorts: [CohortSummary]}` | Pushed whenever the list changes — same push-on-change pattern as `sketches.updated`, keeping the dashboard tile and the grid in sync without polling |
-
-`CohortSummary` = `{id, name, animalCount, groupCount, archived}` — enough for the grid and dashboard tile without shipping full animal/group detail until a card is actually opened.
+> [!WARNING]
+> **The "off" case is how a cohort attaches to an archive written before this app existed** — the whole reason [orphan adoption](data.md#82-what-adoption-handles) exists. Enforcing the empty-destination rule in *both* cases made that intent impossible to express: the only control for it rejected exactly the folders it was meant to accept, and because the field then re-rendered the unchanged path, it read as the setting silently reverting.
+>
+> The rule protects against merge collisions, and **there are none when nothing is being written.**
 
 ---
 
-## 11. Resolved Decisions
+## 9. Archive & delete semantics
 
-| Decision | Outcome |
+Two distinct actions, not one.
+
+| Action | Meaning |
 |---|---|
-| Dangling bullet | Typo — the five-item property list was complete |
-| Name uniqueness scope | Active (non-archived) cohorts only |
-| Delete semantics | Archive-by-default, permanent delete gated behind it (§9) |
-| Rename/data-folder decoupling | Confirmed — renaming never moves files; relocating is a separate explicit action (§8) |
-| Animal metadata | Extended with `sex`, `idNumber`, `notes` (§1) |
-| Editor presentation (§6 was silent) | **Dedicated route** — `/cohorts/new` and `/cohorts/:id` rather than a modal. The roster, groups panel, and Auto-Balance preview together are more than a dialog holds comfortably. The card's icon shares a `layoutId` with the editor header, so opening one morphs the icon into place rather than cutting |
-| Data folder when `dataDirectory` is unset (§8 gap) | **Explicit choice required in the create form.** Pre-filled from `Settings.dataDirectory` when set — the sidecar derives and collision-suffixes it — and required, with inline validation, when it isn't. `dataFolder` is never null, and no location is ever guessed at |
-| Group reordering / animal→group assignment | **Dropdowns + up/down buttons.** §6 offers "dropdown, *or* drag" and "drag *or* up/down"; the non-drag branch satisfies the spec with no drag-and-drop dependency |
-| Create-failure cleanup | **The cohort record is written before its folder is created.** Reversing that order meant a rejected duplicate name left an orphaned directory in the user's data directory (found during implementation). A folder that then fails to create rolls the record back |
-| Which boxes the editor offers | **Bound, not detected.** Bindings are shell-owned settings that load from disk with no sidecar involved, so the editor keeps working with the backend down and the rig unplugged — configuring a cohort at a desk is a real workflow. Live detection only downgrades a label and raises a warning; it never removes an option, because a box blinking out as USB re-enumerates must not pull a control out from under a click |
-| A stored box the machine can't honour | **Kept and reported, never rewritten** (§2). Clearing it would let a loose USB hub erase a cohort's box layout. It stays selectable on its own animal, labelled with the reason, and both the editor and the grid fall silent about it while the sidecar is disconnected |
-| Adding animals | **Bulk field first, rows second.** A roster already exists in a spreadsheet or a naming scheme; retyping it a blank row at a time was the slowest part of setting a cohort up. Accepts separated names or `prefix × count`, and skips names the cohort already has rather than minting §2 violations |
-| Creation atomicity | **`cohorts.create` takes the roster.** Two round trips meant two ways to fail, and the second failing left a named, empty cohort. Validation now runs before any row is written |
+| 🗄 **Archive** (soft-delete) | The everyday "delete a cohort." Removes it from the active grid, keeps the record and its `dataFolder` fully intact, reversible via *Show archived* → Restore |
+| 🗑 **Permanent delete** | Available **only from the archived view**, on an already-archived cohort. A two-step guard rather than a single destructive button on a live cohort |
 
-No open questions remaining as of this revision.
+> [!IMPORTANT]
+> **Deleting the cohort record never touches its `dataFolder` on disk.** The app removes its own bookkeeping, never a user's actual data files.
+
+> [!NOTE]
+> **Archive has no confirmation, deliberately** — it is the reversible everyday action, and only permanent delete is gated. Worth revisiting if it proves too easy to trigger on a large cohort.
 
 ---
 
-## 12. Open Items / TBD
-
-- [x] ~~Merge §10's proposed commands/events into `websocket-protocol.md` as the canonical source once reviewed — including a `cohorts.suggestGroups` command for §7's preview step~~ — **done**; nine commands, one event, five error codes, and the shared payload shapes now live there, with the contract test covering all three sources
-- [ ] Custom/uploaded cohort icons as an alternative to the generated one (§5) — deferred, not asked for
-- [x] ~~Ensure the Data Saving doc's backup strategy includes `ephymeris.db` (§3), not just per-session output files~~ — **built**, `data-saving.md` §8.3. Backed up to the mirror on **every commit**, debounced 5 s, plus one dated snapshot per day with the newest 14 retained. The trigger ended up broader than this item asked for: "after every cohort-affecting write" would have missed `session_animal_runs`, written at finalization during an unattended run, so the hook sits on `commit` itself and no write path can forget it. The dated snapshots exist because a single overwritten mirror would faithfully reproduce an accidental cohort deletion — §9's permanent delete removes bookkeeping only, but the bookkeeping *is* what this file holds
-- [x] ~~Starting a Session doc must define what "ready to run" means against this model~~ — resolved in `starting-a-session.md` §1: **at least one group with at least one animal that has a `boxNumber` assigned.** A group with zero box-assigned animals is skipped automatically rather than blocking the cohort
-- [x] ~~**Animals added before a cohort's first save** are written in a follow-up `cohorts.update`… worth revisiting if `cohorts.create` ever accepts an initial roster~~ — **done.** `cohorts.create` now takes optional `animals` and `groups`, validated before anything is written, so creation is one call and a rejected roster leaves no cohort and no folder. The premise that the roster needed a server-minted group id was already false: the editor seeds its own group locally and the sidecar keeps whatever ids it is given
-- [x] ~~**Groups can only be added from the editor once a cohort exists**, because §6 hides the groups panel while only the implicit default group is present~~ — **stale, and was already false.** The editor seeds its one group client-side from the start and the groups panel is always rendered (a single group as a quiet unlabeled card), so a brand-new cohort can be split before its first save
-- [ ] **No confirmation on archive.** §9 makes archive the reversible everyday action and gates only permanent delete, so archiving is one click. Revisit if it proves too easy to trigger accidentally on a large cohort
-
----
-
-**Next:** [starting-a-session.md](starting-a-session.md) — what happens when you actually run this cohort.
-[Documentation index](README.md) · [Open items register](TODO.md)
+**Where to next** — [dashboard.md](dashboard.md) (running a session against a cohort) · [data.md](data.md) (what gets written beneath the data folder) · [settings.md](settings.md) · [README.md](README.md)

@@ -23,7 +23,7 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * fill still comes from the six tokens (white rat = Starlight, gloves =
  * Pulsar, equipment = Nebula/Halo, depth = Void, success = Ion) and stays
  * flat and matte — depth comes from face shading and a travelling ground
- * shadow, never from gradients or glow (`ephymeris_v1.0.md` §2.2).
+ * shadow, never from gradients or glow (`dashboard.md` §1.2).
  *
  * Under reduced motion the scene is a still of the finished move — placed in
  * the chamber, or home in the cage, by mode.

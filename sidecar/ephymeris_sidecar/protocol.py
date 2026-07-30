@@ -39,7 +39,7 @@ class Cmd:
     PORT_RESET: Final = "port.reset"
     PORT_ERROR_ACK: Final = "port.error.ack"
 
-    # Hardware utility baseline (hardware-interaction.md §8)
+    # Hardware utility baseline (settings.md §8)
     UTILITY_STATUS: Final = "utility.status"
     UTILITY_ENSURE: Final = "utility.ensure"
     UTILITY_IDENTIFY: Final = "utility.identify"
@@ -55,7 +55,7 @@ class Cmd:
     COHORTS_SET_DATA_FOLDER: Final = "cohorts.setDataFolder"
     COHORTS_SUGGEST_GROUPS: Final = "cohorts.suggestGroups"
 
-    # Prefixes, Task Profiles & sessions (data-saving.md §9, starting-a-session.md §9)
+    # Prefixes, Task Profiles & sessions
     PREFIXES_LIST: Final = "prefixes.list"
     PREFIXES_CREATE: Final = "prefixes.create"
     PREFIXES_DELETE: Final = "prefixes.delete"
@@ -72,17 +72,17 @@ class Cmd:
     PORT_START_SESSION: Final = "port.startSession"
     PORT_STOP_SESSION: Final = "port.stopSession"
 
-    # Backup (data-saving.md §8)
+    # Backup (data.md §7)
     BACKUP_SYNC_NOW: Final = "backup.syncNow"
 
-    # Analytics (analytics.md §9)
+    # Analytics (websocket-protocol.md §3.4)
     SESSIONS_LIST: Final = "sessions.list"
     ANALYTICS_SUMMARY: Final = "analytics.summary"
     ANALYTICS_SERIES: Final = "analytics.series"
     ANALYTICS_RESCAN: Final = "analytics.rescan"
     ANALYTICS_RECENT_SESSIONS: Final = "analytics.recentSessions"
 
-    # Crash recovery (data-saving.md §7.3, §11)
+    # Crash recovery (data.md §12, §11)
     SESSIONS_RECOVER: Final = "sessions.recover"
 
 
@@ -166,7 +166,7 @@ SHAPES: Final[dict[str, Any]] = {
     "SkippedEntry": ('obj', (('path', 'str', False), ('reason', 'str', False))),
     "SketchDiscovery": ('obj', (('directory', ('ref', 'DirectoryStatus'), False), ('sketches', ('list', ('ref', 'SketchEntry')), False), ('skipped', ('list', ('ref', 'SkippedEntry')), False), ('skippedCount', 'int', False), ('libraries', ('list', 'str'), False), ('librariesPath', ('union', ('str', 'null')), False))),
     "BoxBinding": ('obj', (('box', 'int', False), ('hardwareId', ('union', ('str', 'null')), False), ('label', 'str', False))),
-    "EphymerisSettings": ('obj', (('dataDirectory', ('union', ('str', 'null')), False), ('backupDirectory', ('union', ('str', 'null')), False), ('arduinoDirectory', ('union', ('str', 'null')), False), ('arduinoCliPath', ('union', ('str', 'null')), False), ('utilitySketchPath', ('union', ('str', 'null')), False), ('defaultBaud', 'int', False), ('boxes', ('list', ('ref', 'BoxBinding')), False), ('reducedMotion', 'bool', False), ('constellation', ('union', ('str', 'null')), False), ('constellationSlots', ('map', 'int'), False), ('boxSetupComplete', 'bool', False))),
+    "EphymerisSettings": ('obj', (('dataDirectory', ('union', ('str', 'null')), False), ('backupDirectory', ('union', ('str', 'null')), False), ('arduinoDirectory', ('union', ('str', 'null')), False), ('arduinoCliPath', ('union', ('str', 'null')), False), ('utilitySketchPath', ('union', ('str', 'null')), False), ('defaultBaud', 'int', False), ('boxes', ('list', ('ref', 'BoxBinding')), False), ('reducedMotion', 'bool', False), ('constellation', ('union', ('str', 'null')), False), ('constellationSlots', ('map', 'int'), False), ('boxSetupComplete', 'bool', False), ('taskDefaults', ('map', ('map', 'any')), False))),
     "UtilityBaselineState": ('lit', ('unknown', 'restoring', 'ready', 'busy', 'held', 'unavailable', 'failed')),
     "UtilityBoxState": ('obj', (('box', 'int', False), ('state', ('ref', 'UtilityBaselineState'), False), ('detail', ('union', ('str', 'null')), False), ('identifying', 'bool', False))),
     "UtilityStatus": ('obj', (('configured', 'bool', False), ('sketchPath', ('union', ('str', 'null')), False), ('sketchName', ('union', ('str', 'null')), False), ('canIdentify', 'bool', False), ('held', 'bool', False), ('message', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'UtilityBoxState')), False))),
@@ -188,7 +188,7 @@ SHAPES: Final[dict[str, Any]] = {
     "GroupRun": ('obj', (('groupId', 'str', False), ('order', 'int', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False))),
     "Session": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('groupRuns', ('list', ('ref', 'GroupRun')), False), ('durationMinutes', ('union', ('int', 'null')), False))),
     "ConfigFieldType": ('lit', ('int', 'float', 'bool', 'string')),
-    "ConfigField": ('obj', (('metadataKey', 'str', False), ('wireKey', 'str', False), ('label', 'str', False), ('type', ('ref', 'ConfigFieldType'), False), ('default', 'any', False))),
+    "ConfigField": ('obj', (('metadataKey', 'str', False), ('wireKey', 'str', False), ('label', 'str', False), ('type', ('ref', 'ConfigFieldType'), False), ('default', 'any', False), ('group', 'str', True), ('unit', 'str', True), ('min', ('union', ('int', 'float')), True), ('max', ('union', ('int', 'float')), True), ('step', ('union', ('int', 'float')), True), ('help', 'str', True), ('advanced', 'bool', True))),
     "LiveMetric": ('obj', (('id', 'str', False), ('label', 'str', False), ('triggerCode', 'int', False), ('successCode', 'int', False), ('alternateCode', 'int', False), ('windowSize', 'int', False))),
     "ProfileKind": ('lit', ('behavior', 'utility')),
     "ControlOption": ('obj', (('label', 'str', False), ('command', 'str', False))),
@@ -213,7 +213,7 @@ SHAPES: Final[dict[str, Any]] = {
     "ConditionOutcomes": ('obj', (('metricId', 'str', False), ('label', 'str', False), ('triggerCode', 'int', False), ('outcomes', ('ref', 'TrialOutcomes'), False))),
     "RunStatus": ('lit', ('ok', 'no-metrics', 'missing', 'unreadable')),
     "ProfileSource": ('lit', ('snapshot', 'sketch-current', 'unavailable')),
-    "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False))),
+    "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('paramsHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False))),
     "AnalyticsAnimal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('cage', ('union', ('int', 'null')), False))),
     "ProfileMetricInfo": ('obj', (('id', 'str', False), ('label', 'str', False), ('windowSize', 'int', False))),
     "ProfileGroup": ('obj', (('hash', 'str', False), ('taskName', ('union', ('str', 'null')), False), ('kind', ('union', ('str', 'null')), False), ('metrics', ('list', ('ref', 'ProfileMetricInfo')), False), ('runCount', 'int', False))),

@@ -1,4 +1,4 @@
-"""Crash-recovery backfill — `data-saving.md` §7.3, §11.
+"""Crash-recovery backfill — `data.md` §12, §11.
 
 If the machine loses power mid-session, every strobe up to that moment is
 durably on disk in the write-ahead `.tsv` — but `.json`/`.mat` are built only
@@ -22,7 +22,7 @@ Two honesty rules:
   lines actually read, never copied from a footer, so the document can't
   claim more events than it holds.
 
-Discovery reuses the same archive walker as `analytics.md` §8.1's orphan
+Discovery reuses the same archive walker as `data.md` §8.1's orphan
 adoption (`reader.walk_orphaned_tsvs`) — both must see every legacy layout a
 real archive has, so they are one traversal by decision (§11).
 """
@@ -45,7 +45,7 @@ log = logging.getLogger(__name__)
 RECOVERED_STOP_REASON = "recovered after crash"
 
 #: The board's exact line format — the same strict rule the live session
-#: parser applies (`starting-a-session.md` §7), so recovery can't admit a
+#: parser applies (`dashboard.md` §10), so recovery can't admit a
 #: line the session wouldn't have.
 _STROBE = re.compile(r"^(\d{1,3})\t(\d+)$")
 

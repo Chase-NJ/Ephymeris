@@ -6,7 +6,7 @@
  * so the two read as one visual family. Both import these rather than each
  * carrying its own literals, which is the only way that stays true over time.
  *
- * Flat, matte fills only — no glow, no gradients (`ephymeris_v1.0.md` §2.2).
+ * Flat, matte fills only — no glow, no gradients (`dashboard.md` §1.2).
  */
 
 /** Links between nodes are always Pulsar, only their opacity varies. */
@@ -38,7 +38,7 @@ export const NODE_PRIMARY = "var(--color-pulsar)";
  * Literal values of the same tokens, for WebGL.
  *
  * three.js materials take colors, not CSS custom properties, so the 3D
- * constellation (`starting-a-session.md` §6) can't read the variables above.
+ * constellation (`dashboard.md` §9) can't read the variables above.
  * These are declared here, beside them, so the duplication is visible and the
  * two can't quietly diverge — they must match `styles/index.css` §2.2.
  */
@@ -54,7 +54,7 @@ export const GL = {
  * Box health as a WebGL colour — the 3D counterpart of `NODE_FILL`.
  *
  * Debug's constellation now shares Mission Control's temperature ramp for the
- * star surfaces themselves (revised 2026-07-29, `ephymeris_v1.0.md` §4.3), so
+ * star surfaces themselves (revised 2026-07-29, `dashboard.md` §4), so
  * of these only `fault` still reaches the 3D scene — the error ring around a
  * faulted box's star, the one status that must keep its colour.
  *

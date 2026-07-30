@@ -25,6 +25,7 @@ import {
   animalsInGroup,
   defaultConfig,
   populatedGroups,
+  sketchName,
   type BoxMapping,
   type Session,
   type TaskProfile,
@@ -35,7 +36,7 @@ import { NODE_ACCENT, NODE_PRIMARY } from "@/components/chrome/constellationStyl
 
 /**
  * Step 2 — animal→box mapping confirmation, the guided placement walk, then
- * the flash sequence (`starting-a-session.md` §3–§4).
+ * the flash sequence (`dashboard.md` §7.3–§4).
  *
  * Edits here are **session-local**: they never write back to the cohort's
  * stored mapping (§3). Permanent changes go through Cohort management.
@@ -158,30 +159,37 @@ export function SessionMapping() {
     }
   }
 
-  // Load each chosen sketch's Task Profile and seed its config defaults (§3).
-  // Rows are identified by animal, not by box — box numbers are editable here
-  // and may collide mid-edit.
+  /**
+   * This rig's saved defaults for a sketch (`tasks.md` §6.1) — the layer
+   * a box starts on, and what its overrides are measured against.
+   */
+  const rigDefaults = useCallback(
+    (sketchPath: string | null) => settings.taskDefaults[sketchName(sketchPath)] ?? {},
+    [settings.taskDefaults],
+  );
+
+  // Load each chosen sketch's Task Profile and seed its config from the merged
+  // defaults (§6.9: profile, then rig). Rows are identified by animal, not by
+  // box — box numbers are editable here and may collide mid-edit.
   const loadProfile = useCallback(
     async (animalId: string, sketchPath: string | null) => {
       if (!sketchPath) return;
-      if (profiles[sketchPath] !== undefined) {
+      const seed = (profile: TaskProfile | null) =>
         setMappings((prev) =>
           prev.map((m) =>
             m.animalId === animalId
-              ? { ...m, config: defaultConfig(profiles[sketchPath] ?? null) }
+              ? { ...m, config: defaultConfig(profile, rigDefaults(sketchPath)) }
               : m,
           ),
         );
+      if (profiles[sketchPath] !== undefined) {
+        seed(profiles[sketchPath] ?? null);
         return;
       }
       try {
         const profile = await getTaskProfile(client, sketchPath);
         setProfiles((prev) => ({ ...prev, [sketchPath]: profile }));
-        setMappings((prev) =>
-          prev.map((m) =>
-            m.animalId === animalId ? { ...m, config: defaultConfig(profile) } : m,
-          ),
-        );
+        seed(profile);
       } catch (err) {
         // A malformed task.json is surfaced but doesn't block: the sketch is
         // treated as profile-less (bare START).
@@ -189,7 +197,7 @@ export function SessionMapping() {
         setProfiles((prev) => ({ ...prev, [sketchPath]: null }));
       }
     },
-    [client, profiles],
+    [client, profiles, rigDefaults],
   );
 
   const names = useMemo(
@@ -214,7 +222,7 @@ export function SessionMapping() {
     duplicateBox === null;
 
   // A failed flash leaves its box in `ERROR`, and `ERROR → FLASHING` is
-  // refused (`hardware-interaction.md` §3) — so without an ack here, the most
+  // refused (`dashboard.md` §5) — so without an ack here, the most
   // likely place to *hit* a flash failure was also the one place you couldn't
   // recover from it without a detour through Debug Mode.
   const erroredBoxes = useMemo(
@@ -366,7 +374,7 @@ export function SessionMapping() {
         : // Before "pick a sketch": with an unset or moved Arduino Directory
           // there are none to pick, and the picker alone cannot say so.
           sketches.length === 0
-          ? "No sketches found — set the Arduino Directory in Config."
+          ? "No sketches found — set the Arduino Directory on the Task tab."
           : erroredBoxes.length > 0
             ? `Box ${erroredBoxes.join(", ")} needs acknowledging before it can flash.`
             : duplicateBox !== null
@@ -449,7 +457,7 @@ export function SessionMapping() {
             </p>
           </div>
           <div className="shrink-0">
-            <Button onClick={() => navigate("/config")}>Open Config</Button>
+            <Button onClick={() => navigate("/task")}>Open Task</Button>
           </div>
         </div>
       )}
@@ -472,38 +480,35 @@ export function SessionMapping() {
             </p>
           </div>
           <div className="shrink-0">
-            <Button onClick={() => navigate("/config")}>Open Config</Button>
+            <Button onClick={() => navigate("/task")}>Open Task</Button>
           </div>
         </div>
       )}
 
-      {mappings.length === 0 ? (
+      {mappings.length === 0 && (
         <p className="mt-6 text-[13px] text-static">
           No box-assigned animals in this group.
         </p>
-      ) : (
-        // Mid-walk the drawing stops being a general illustration and becomes
-        // the instruction: one animal, one chamber, the number the operator is
-        // looking for.
+      )}
+
+      {/* The drawing is the walk's instruction, not decoration: one animal, one
+          chamber, the number the operator is looking for. Outside the walk it
+          has nothing to say and would only pull attention off the settings
+          being edited, so it isn't rendered at all. */}
+      {current !== null && (
         <RatPlacementBanner
-          boxes={current !== null ? [current.box] : mappings.map((m) => m.box)}
-          {...(current !== null
-            ? {
-                caption: `Lift ${names[current.animalId]?.name ?? "this animal"} into box ${current.box}, then close the enclosure.`,
-              }
-            : phase === "placed"
-              ? {
-                  caption:
-                    "Every animal is in its box. Confirm and flash to load the tasks.",
-                }
-              : {})}
+          boxes={[current.box]}
+          caption={`Lift ${names[current.animalId]?.name ?? "this animal"} into box ${current.box}, then close the enclosure.`}
         />
       )}
 
       {mappings.length > 0 && (
         // `items-start`: a card growing its config form must not stretch the
-        // compact cards sharing its row.
-        <div className="mt-3 grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
+        // compact cards sharing its row. The top margin picks up the slack the
+        // banner leaves behind when it isn't rendered.
+        <div
+          className={`${current !== null ? "mt-3" : "mt-6"} grid grid-cols-1 items-start gap-3 lg:grid-cols-2`}
+        >
           {mappings.map((mapping) => {
             const animal = names[mapping.animalId];
             const profile = mapping.sketchPath
@@ -665,9 +670,12 @@ export function SessionMapping() {
                   </div>
                 )}
 
-                {/* Per-run parameters slide the tile open with the app's
+                {/* Per-run overrides slide the tile open with the app's
                     snappy spring; only a chosen sketch with a profile has
-                    any — an unchosen tile never expands. */}
+                    any — an unchosen tile never expands. The form itself is
+                    collapsed within that: it holds forty-odd fields now, and
+                    six of those open at once would bury this screen's actual
+                    job (§6.9). */}
                 <AnimatePresence initial={false}>
                   {profile && profile.config.length > 0 && (
                     <motion.div
@@ -681,6 +689,8 @@ export function SessionMapping() {
                       <TaskConfigForm
                         profile={profile}
                         config={mapping.config}
+                        baseline={defaultConfig(profile, rigDefaults(mapping.sketchPath))}
+                        disabled={phase !== "review"}
                         onChange={(config) =>
                           setMappings((prev) =>
                             prev.map((m) =>

@@ -55,7 +55,7 @@ export function useFlashedSketch(box: number): FlashedSketch | null {
 }
 
 /**
- * Boards the out-of-band poll can currently see (`hardware-interaction.md` §7).
+ * Boards the out-of-band poll can currently see (`settings.md` §7).
  * Feeds the Settings binding table, the console panels, and the constellation
  * widget from the same cache — including the on-connect replay, so a component
  * mounting between polls still sees the current picture.
@@ -67,7 +67,7 @@ export function useBoardPresence(): DetectedBoard[] {
 }
 
 /**
- * The hardware utility baseline (`hardware-interaction.md` §8) — which boxes
+ * The hardware utility baseline (`settings.md` §8) — which boxes
  * are back on the utility sketch, and whether one can be asked to point at
  * itself. Pushed, not polled: restores happen on the sidecar's own schedule.
  */

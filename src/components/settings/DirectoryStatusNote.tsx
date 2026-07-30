@@ -6,7 +6,7 @@ import { springPanel } from "@/lib/motion";
 import type { SketchDiscovery } from "@/lib/settings/schema";
 
 /**
- * Surfaces the four Arduino Directory states from `arduino-directory.md` §6 as
+ * Surfaces the four Arduino Directory states from `tasks.md` §2.4 as
  * four distinct treatments rather than one generic "error".
  *
  * "Partial" is derived: state `ok` with a non-zero skipped count. It's

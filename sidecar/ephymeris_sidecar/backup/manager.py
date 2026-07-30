@@ -1,4 +1,4 @@
-"""Backup Directory mirroring — `data-saving.md` §8.
+"""Backup Directory mirroring — `data.md` §7.
 
 Two guarantees protect two different failures, and conflating them is the
 mistake this module exists to avoid:
@@ -44,7 +44,7 @@ from .paths import MirrorLayout
 log = logging.getLogger(__name__)
 
 #: Seconds between `.tsv` mirror passes, measured from the end of the previous
-#: pass (`data-saving.md` §8). At the real session rate of well under one event
+#: pass (`data.md` §7). At the real session rate of well under one event
 #: per second this leaves at most ~10 strobes unmirrored, against a local file
 #: that is already `fsync`'d per line.
 MIRROR_INTERVAL_S = 10.0

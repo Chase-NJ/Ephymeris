@@ -31,7 +31,10 @@ export interface SceneOrbiter {
   /** Stable identity — seeds this ship's orbit, so it never reshuffles.
    *  One per cage (`cage:N`) or per cageless animal (`solo:<id>`). */
   id: string;
-  /** The mini tag's text: the crew's names, e.g. `"R-14 · R-15"`. */
+  /** The mini tag's text: the crew members still in orbit, e.g. `"R-14 · R-15"`.
+   *  Whoever is running in the box below is omitted — they are at the star, not
+   *  riding — so this is **empty** for a solo animal that is running, and no tag
+   *  is drawn at all (`ships.ts`'s `assignShips`). */
   name: string;
   /** Orbit + engine + strobe when true; park with a steady light when false. */
   active: boolean;
@@ -179,24 +182,31 @@ function Orbiter({
 
           {/* The mini tag. DOM, like the nameplates, so it stays crisp — but a
               step smaller and fainter: this labels an annotation, and it must
-              never outrank the star's own plate. */}
-          <Html
-            center
-            position={[0, starRadius * 0.55, 0]}
-            style={{ pointerEvents: "none", userSelect: "none" }}
-            zIndexRange={[10, 0]}
-          >
-            <span
-              className="whitespace-nowrap font-mono text-[8px] leading-none"
-              style={{
-                color: "var(--color-static)",
-                opacity: orbiter.active ? 0.9 : 0.55,
-                textShadow: "0 0 4px var(--color-void), 0 0 2px var(--color-void)",
-              }}
+              never outrank the star's own plate.
+
+              Skipped entirely when the crew has nobody left in orbit (a solo
+              animal, running, is at the star): `Html` mounts a real DOM overlay
+              per instance and keeps it positioned every frame, so an empty one
+              is a cost paid for nothing on every star in the rig. */}
+          {orbiter.name !== "" && (
+            <Html
+              center
+              position={[0, starRadius * 0.55, 0]}
+              style={{ pointerEvents: "none", userSelect: "none" }}
+              zIndexRange={[10, 0]}
             >
-              {orbiter.name}
-            </span>
-          </Html>
+              <span
+                className="whitespace-nowrap font-mono text-[8px] leading-none"
+                style={{
+                  color: "var(--color-static)",
+                  opacity: orbiter.active ? 0.9 : 0.55,
+                  textShadow: "0 0 4px var(--color-void), 0 0 2px var(--color-void)",
+                }}
+              >
+                {orbiter.name}
+              </span>
+            </Html>
+          )}
         </group>
       </group>
     </group>

@@ -6,12 +6,12 @@ import { useSidecar } from "@/lib/ws/context";
 import { CMD, EVT, SidecarCommandError } from "@/lib/ws/protocol";
 
 /**
- * The Config serial handshake test (ephymeris_v1.0.md §4.6).
+ * The Config serial handshake test (settings.md §5).
  *
  * Composed entirely from existing wire primitives — no handshake command
  * exists on the sidecar, deliberately. Opening a passthrough port asserts DTR,
  * which resets the Mega, and the boot output is captured into `port.output`
- * (`hardware-interaction.md` §6). So the test is: open, listen, close.
+ * (`dashboard.md` §6.3). So the test is: open, listen, close.
  * `port.reset` is unsuitable: its DTR pulse uses a throwaway unread handle, so
  * its own boot output is unobservable — and it would reset the board twice.
  *
@@ -36,7 +36,7 @@ export interface HandshakeState {
 /** Mirrors the sidecar's own READY budget (`SESSION_READY_TIMEOUT_S`). */
 const LISTEN_MS = 10_000;
 
-/** The same token the session path awaits (`hardware-interaction.md` §3.5). */
+/** The same token the session path awaits (`dashboard.md` §10). */
 const READY_RE = /^READY\b/;
 
 const FAILED_DETAIL: Record<string, string> = {

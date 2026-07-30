@@ -69,7 +69,11 @@ def ts_type(ty: Ty) -> str:
     if isinstance(ty, MapOf):
         return f"Record<string, {ts_type(ty.value)}>"
     if isinstance(ty, UnionOf):
-        return " | ".join(ts_type(o) for o in ty.options)
+        # De-duplicate on the RENDERED form, not the schema node: the Python
+        # validator keeps int and float distinct but TypeScript has only
+        # `number`, so `union(INT, FLOAT)` would otherwise emit `number | number`.
+        rendered = list(dict.fromkeys(ts_type(o) for o in ty.options))
+        return " | ".join(rendered)
     if isinstance(ty, Ref):
         return ty.name
     if isinstance(ty, Obj):

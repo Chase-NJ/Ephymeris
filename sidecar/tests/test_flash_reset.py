@@ -1,4 +1,4 @@
-"""Flash and reset orchestration — `hardware-interaction.md` §4, §5, §3.3."""
+"""Flash and reset orchestration — `dashboard.md` §6.1, §5, §3.3."""
 
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ async def test_flash_from_passthrough_auto_resumes_at_prior_baud(fake_serial) ->
 
 
 async def test_suppress_passthrough_resume_forces_idle(fake_serial) -> None:
-    """`starting-a-session.md` §4 — the session flash sequence needs IDLE.
+    """`dashboard.md` §7.4 — the session flash sequence needs IDLE.
 
     Without this the port would auto-resume PASSTHROUGH and the runner could
     never claim it, since IN_SESSION entry requires IDLE.

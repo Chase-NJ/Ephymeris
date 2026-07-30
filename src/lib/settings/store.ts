@@ -1,6 +1,6 @@
 /**
  * Persistence for settings — `tauri-plugin-store`, JSON on disk in the app data
- * dir (ephymeris_v1.0.md §4.5).
+ * dir (settings.md §3).
  *
  * Shell-owned rather than sidecar-owned on purpose: the fields most likely to
  * be *wrong* when something is misconfigured (save paths, `arduino-cli` path)

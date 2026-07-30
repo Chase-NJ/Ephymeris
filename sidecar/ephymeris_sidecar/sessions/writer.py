@@ -1,4 +1,4 @@
-"""Per-animal session file writer — `data-saving.md` §5, §7.
+"""Per-animal session file writer — `data.md` §4, §7.
 
 The `.tsv` is the **write-ahead log** that makes the durability guarantee real
 (§7), not a redundant export. Every strobe is appended and `flush()` +

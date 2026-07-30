@@ -1,4 +1,4 @@
-"""The hardware utility baseline — `hardware-interaction.md` §8.
+"""The hardware utility baseline — `settings.md` §8.
 
 Exercised against the real `PortManager` and a fake board tool, because the
 rules that matter here are all about the port state machine: which states a

@@ -7,7 +7,7 @@ import type { AnalyticsSummary, ProfileGroup } from "@/lib/analytics/types";
 import { chronological, pickMetric, runsInProfile } from "@/lib/analytics/view";
 
 /**
- * The roster, grouped, with each animal's trend (`analytics.md` §2.3).
+ * The roster, grouped, with each animal's trend (`data.md` §10.3).
  *
  * Doubles as the highlight selector — hover previews, click pins — and every
  * row carries that animal's identity colour, which is the same colour its

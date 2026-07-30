@@ -1,6 +1,6 @@
 /**
- * Star placement for the 3D constellation views (`starting-a-session.md` §6.1,
- * `ephymeris_v1.0.md` §4.3).
+ * Star placement for the 3D constellation views (`dashboard.md` §9.1,
+ * `dashboard.md` §4).
  *
  * An **occupant** is whatever is standing on a star: an animal in Mission
  * Control, a box in Debug Mode. The placement maths is identical for both,

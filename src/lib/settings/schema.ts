@@ -1,5 +1,5 @@
 /**
- * Settings schema (ephymeris_v1.0.md §4.5).
+ * Settings schema (settings.md §2).
  *
  * The shell owns settings and is the source of truth; the sidecar receives a
  * push and reads only the keys it needs. The wire shapes themselves live in
@@ -23,7 +23,7 @@ export type {
   SketchDiscovery,
 } from "@/lib/ws/protocol";
 
-/** Hardware ceiling: six Mega2560s (`hardware-interaction.md` §1). */
+/** Hardware ceiling: six Mega2560s (`dashboard.md` §5). */
 export const BOX_COUNT = 6;
 /**
  * Every sketch in the lab's Arduino Directory opens at 9600 (each declares its
@@ -59,10 +59,10 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
   dataDirectory: null,
   backupDirectory: null,
   // No default is shipped or assumed — the user sets it explicitly
-  // (arduino-directory.md §2).
+  // (tasks.md §2.1).
   arduinoDirectory: null,
   arduinoCliPath: null,
-  // No baseline until the user names a utility sketch (`hardware-interaction.md`
+  // No baseline until the user names a utility sketch (`dashboard.md`
   // §8) — there is no safe sketch to guess, and guessing would flash the rig.
   utilitySketchPath: null,
   defaultBaud: DEFAULT_BAUD,
@@ -73,6 +73,9 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
   constellation: null,
   constellationSlots: {},
   boxSetupComplete: false,
+  // No rig defaults until someone sets one on Config; every sketch starts on
+  // the values its own task.json declares (`tasks.md` §6.1).
+  taskDefaults: {},
 };
 
 function optString(value: unknown): string | null {
@@ -118,6 +121,27 @@ function normalizeSlots(value: unknown): Record<string, number> {
   return slots;
 }
 
+/**
+ * `{sketchName: {metadataKey: value}}` — this rig's saved task parameters
+ * (`tasks.md` §6.1).
+ *
+ * Values are carried through unexamined on purpose: what a key means is the
+ * sketch's `task.json` to say, and this file has never seen one. A stored key
+ * the profile no longer declares is dropped later, at the merge, where the
+ * profile is actually in hand.
+ */
+function normalizeTaskDefaults(value: unknown): Record<string, Record<string, unknown>> {
+  if (typeof value !== "object" || value === null) return {};
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [sketch, config] of Object.entries(value as Record<string, unknown>)) {
+    if (!sketch || typeof config !== "object" || config === null || Array.isArray(config)) {
+      continue;
+    }
+    out[sketch] = { ...(config as Record<string, unknown>) };
+  }
+  return out;
+}
+
 export function normalizeSettings(raw: unknown): EphymerisSettings {
   if (typeof raw !== "object" || raw === null) return { ...DEFAULT_SETTINGS };
   const value = raw as Record<string, unknown>;
@@ -141,6 +165,7 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
         : null,
     constellationSlots: normalizeSlots(value["constellationSlots"]),
     boxSetupComplete: value["boxSetupComplete"] === true,
+    taskDefaults: normalizeTaskDefaults(value["taskDefaults"]),
   };
 }
 

@@ -7,7 +7,7 @@ import type { AnalyticsSummary, ProfileGroup } from "@/lib/analytics/types";
 import { binFor, cellAt, labelColor, pivotRuns, type Cell } from "@/lib/analytics/view";
 
 /**
- * Animals × sessions (`analytics.md` §6).
+ * Animals × sessions (`data.md` §11.3).
  *
  * The fastest way to see a whole cohort: who is learning, who is stuck. Also
  * the navigator — clicking a cell selects that animal *and* that session.

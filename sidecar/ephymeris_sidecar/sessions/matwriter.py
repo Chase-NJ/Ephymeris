@@ -1,6 +1,6 @@
 """Minimal MATLAB Level-5 MAT-file writer — pure Python, no numpy/scipy.
 
-`data-saving.md` §5.1 names `scipy.io.savemat`, but scipy pulls in numpy and is
+`data.md` §4.3 names `scipy.io.savemat`, but scipy pulls in numpy and is
 the single heaviest dependency the sidecar would carry — a real setup-error risk
 for a non-technical lab and a burden on the eventual Windows packaging. Since the
 session file needs only a handful of value shapes (an `N×2` double array plus

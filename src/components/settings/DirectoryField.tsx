@@ -6,7 +6,7 @@ import { Button } from "@/components/common/controls";
 /**
  * Native OS directory picker, provided by the shell — one of the reasons
  * settings live on the Tauri side rather than in the sidecar
- * (ephymeris_v1.0.md §4.5).
+ * (settings.md §4).
  */
 export function DirectoryField({
   value,

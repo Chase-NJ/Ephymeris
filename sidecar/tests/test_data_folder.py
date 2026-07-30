@@ -124,7 +124,7 @@ def test_relocate_attaches_to_an_archive_that_is_already_full(tmp_path: Path) ->
     """§8 — the *other* intent: point a cohort at data that is already there.
 
     This is how a cohort adopts an archive written before this app existed
-    (`analytics.md` §8.1), so the destination is *expected* to be full.
+    (`data.md` §8.1), so the destination is *expected* to be full.
     Refusing a non-empty destination here made that impossible to express: the
     only control for it rejected exactly the folders it was meant to accept.
     """

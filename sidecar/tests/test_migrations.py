@@ -1,4 +1,4 @@
-"""Schema migration — `analytics.md` §10.1.
+"""Schema migration — `data.md` §6.3.
 
 The bug this file exists to prevent: `connect()` used to stamp
 `PRAGMA user_version` without ever reading it, and `SCHEMA` is entirely
@@ -146,8 +146,11 @@ def test_a_v1_database_gains_the_columns_later_versions_added(tmp_path: Path) ->
     db.connect()
     try:
         assert "cage" in table_columns(db.conn, "animals")
-        assert "profile_hash" in table_columns(db.conn, "session_animal_runs")
+        runs = table_columns(db.conn, "session_animal_runs")
+        assert "profile_hash" in runs
+        assert "config_json" in runs and "params_hash" in runs
         assert "duration_minutes" in table_columns(db.conn, "sessions")
+        assert "cage" in table_columns(db.conn, "animals")
     finally:
         db.close()
 
@@ -325,7 +328,7 @@ def write_v2_database(path: Path) -> None:
 
 
 def test_v2_gains_the_profile_hash_column(tmp_path: Path) -> None:
-    """The first change that actually needed this branch (`analytics.md` §10.2).
+    """The first change that actually needed this branch (`data.md` §6.1).
 
     Before the migration branch existed, `CREATE TABLE IF NOT EXISTS` would
     have silently skipped this column on every existing database while
@@ -410,7 +413,7 @@ def write_v3_database(path: Path) -> None:
 
 
 def test_v3_gains_the_duration_minutes_column(tmp_path: Path) -> None:
-    """The per-box time limit (`starting-a-session.md` §2.3)."""
+    """The per-box time limit (`dashboard.md` §7.2)."""
     path = tmp_path / "ephymeris.db"
     write_v3_database(path)
 
@@ -444,6 +447,98 @@ def test_upgrading_from_v3_leaves_old_sessions_unlimited(tmp_path: Path) -> None
     assert row["duration_minutes"] is None
 
 
+# --- the real v5 -> v6 migration ------------------------------------------
+
+
+def write_v5_database(path: Path) -> None:
+    """A v5 file: everything through `animals.cage`, with **no** `config_json` /
+    `params_hash`. Pinned as a literal like its siblings above.
+    """
+    write_v3_database(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN duration_minutes INTEGER")
+        conn.execute("ALTER TABLE animals ADD COLUMN cage INTEGER")
+        conn.execute("PRAGMA user_version = 5")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_v5_gains_the_run_parameter_columns(tmp_path: Path) -> None:
+    """The task parameters a run used (`tasks.md` §6.1).
+
+    Two columns in one migration, so this checks both -- a half-applied
+    migration would leave finalization raising `OperationalError` on the second.
+    """
+    path = tmp_path / "ephymeris.db"
+    write_v5_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        columns = table_columns(db.conn, "session_animal_runs")
+        assert "config_json" in columns
+        assert "params_hash" in columns
+        # Writable, not merely present in the metadata.
+        db.conn.execute(
+            "UPDATE session_animal_runs SET config_json = ?, params_hash = ? WHERE id = 'r1'",
+            ('{"odor_poke_hold": 500}', "abc123"),
+        )
+        row = db.conn.execute(
+            "SELECT config_json, params_hash FROM session_animal_runs"
+        ).fetchone()
+        assert row["config_json"] == '{"odor_poke_hold": 500}'
+        assert row["params_hash"] == "abc123"
+    finally:
+        db.close()
+
+    assert user_version(path) == SCHEMA_VERSION
+
+
+def test_upgrading_from_v5_leaves_old_runs_without_parameters(tmp_path: Path) -> None:
+    """NULL on a pre-existing run is honest: it ran on firmware constants, so
+    there are no per-run parameters to record. Defaulting it to `{}` instead
+    would claim the run is comparable to a modern default-valued one."""
+    path = tmp_path / "ephymeris.db"
+    write_v5_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        row = db.conn.execute(
+            "SELECT config_json, params_hash FROM session_animal_runs"
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert row["config_json"] is None
+    assert row["params_hash"] is None
+
+
+def test_the_params_index_applies_after_the_migration(tmp_path: Path) -> None:
+    """Indexes live in their own block applied AFTER migrations, and this is the
+    case that proves why: `idx_runs_params` names a column that v6 is adding, so
+    creating it with the rest of `SCHEMA` would fail on exactly the databases the
+    migration exists for."""
+    path = tmp_path / "ephymeris.db"
+    write_v5_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        names = {
+            row["name"]
+            for row in db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+    finally:
+        db.close()
+
+    assert "idx_runs_params" in names
+
+
 def test_a_v2_database_gets_both_column_migrations(tmp_path: Path) -> None:
     """A lab machine two versions behind runs the chain in one startup."""
     path = tmp_path / "ephymeris.db"
@@ -452,8 +547,11 @@ def test_a_v2_database_gets_both_column_migrations(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        assert "profile_hash" in table_columns(db.conn, "session_animal_runs")
+        runs = table_columns(db.conn, "session_animal_runs")
+        assert "profile_hash" in runs
+        assert "config_json" in runs and "params_hash" in runs
         assert "duration_minutes" in table_columns(db.conn, "sessions")
+        assert "cage" in table_columns(db.conn, "animals")
     finally:
         db.close()
 
@@ -502,7 +600,7 @@ def test_a_newer_database_does_not_run_migrations(
 
 
 def test_startup_commits_at_most_once(tmp_path: Path) -> None:
-    """Each commit marks the database dirty for backup (`data-saving.md` §8.3).
+    """Each commit marks the database dirty for backup (`data.md` §7.3).
 
     A migration committing per step would trigger repeated whole-file copies to
     a possibly-networked target before the app has finished starting.

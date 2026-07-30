@@ -1,4 +1,4 @@
-"""Live metric computation — `data-saving.md` §6.5.
+"""Live metric computation — `tasks.md` §5.
 
 This is the actual scientific output, not a UI detail, so the definition is
 followed to the letter:
@@ -20,7 +20,7 @@ last `windowSize` **counted** (hit-or-miss) trials, not the last `windowSize`
 strobe events.
 
 The accumulator is incremental so the live runner feeds it one strobe at a time
-(`starting-a-session.md` §7 step 7); `compute_series` replays a whole stream for
+(`dashboard.md` §10 step 7); `compute_series` replays a whole stream for
 testing and for building the final file's metric view.
 """
 

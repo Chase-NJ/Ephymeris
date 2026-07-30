@@ -1,4 +1,4 @@
-"""The hardware utility baseline — `hardware-interaction.md` §8.
+"""The hardware utility baseline — `settings.md` §8.
 
 The baseline is one idea: **a box that isn't doing anything else is a box
 Ephymeris can talk to.** The operator picks a utility sketch once
@@ -12,7 +12,7 @@ Two rules keep this from being hostile:
 
 * **A restore only ever takes an `IDLE` port.** Never a console the user has
   open, never a flash, never a running session. Entering `FLASHING` would
-  happily force-release `PASSTHROUGH` (`hardware-interaction.md` §3.3) — that
+  happily force-release `PASSTHROUGH` (`dashboard.md` §5.3) — that
   is exactly what must not happen here, so the check is on `IDLE` rather than
   on the transition being legal.
 * **A confirmed session mapping holds the whole rig.** Between
@@ -21,7 +21,7 @@ Two rules keep this from being hostile:
   runner is about to start. `hold()`/`release()` bracket that window.
 
 The payoff is `identify()`: with a known sketch on the board, the app can ask
-one box to point at itself (`starting-a-session.md` §3.5). The commands come
+one box to point at itself (`dashboard.md` §7.3). The commands come
 from the profile's `identify` pair, never from anything hardcoded here.
 """
 

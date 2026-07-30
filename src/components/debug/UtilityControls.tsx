@@ -10,7 +10,7 @@ import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 
 /**
- * Debug-Mode controls + live status for a **utility** sketch (`data-saving.md`
+ * Debug-Mode controls + live status for a **utility** sketch (`data.md`
  * §6.6). Driven entirely by the sketch's Task Profile:
  *
  *  - `controls` render as buttons / selects; each sends its serial command over

@@ -14,7 +14,7 @@ import { buildSky } from "@/lib/sessions/stars";
 import { useBoundBoxes, useSettings } from "@/lib/settings/context";
 
 /**
- * The 3D constellation (`starting-a-session.md` §6).
+ * The 3D constellation (`dashboard.md` §9).
  *
  * **The scene is the rig's own asterism.** Whatever zodiac Box Setup chose, and
  * whichever star each box was slotted onto, is exactly what gets drawn here —

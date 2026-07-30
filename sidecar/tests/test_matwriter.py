@@ -1,4 +1,4 @@
-"""Pure-Python MAT-5 writer — `data-saving.md` §5.1 (scipy-free deviation).
+"""Pure-Python MAT-5 writer — `data.md` §4.3 (scipy-free deviation).
 
 No scipy at runtime, so these assert the file's own structural invariants: a
 valid 128-byte header, 8-byte-aligned elements, and correct dimensions/values

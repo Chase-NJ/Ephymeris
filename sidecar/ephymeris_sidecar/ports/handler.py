@@ -1,7 +1,7 @@
 """Per-port handler: state machine, reader thread, ring buffer, write path.
 
 One instance per box. Deliberately a *single* object owning both the read loop
-and `write()` — `hardware-interaction.md` §6.3 requires that reads and writes
+and `write()` — `dashboard.md` §6.4 requires that reads and writes
 are never split across separate objects for the same port, so state transitions
 can't race a queued write.
 """
@@ -23,7 +23,7 @@ from .states import IllegalTransition, PortState, assert_transition
 
 log = logging.getLogger(__name__)
 
-#: `IN_SESSION` line recognition (`starting-a-session.md` §7 step 6). Stricter
+#: `IN_SESSION` line recognition (`dashboard.md` §10 step 6). Stricter
 #: than PASSTHROUGH's opaque text: a data line is exactly `<code>\t<timestamp>`,
 #: code 1–3 digits. Anything else is logged but not treated as data.
 STROBE_RE = re.compile(r"^(\d{1,3})\t(\d+)$")
@@ -199,7 +199,7 @@ class PortHandler:
             self._set_state(next_state, reason)
             return was_passthrough
 
-    # --- session (starting-a-session.md §7) -------------------------------
+    # --- session (dashboard.md §10) -------------------------------
 
     def start_session(
         self,
@@ -217,7 +217,7 @@ class PortHandler:
 
         `on_ready(seed)` fires once the handshake resolves, *before* the first
         strobe, so the caller can open the session file and write its header
-        (`data-saving.md` §7.1). `on_strobe(code, ts)` fires for each parsed
+        (`data.md` §5.1). `on_strobe(code, ts)` fires for each parsed
         strobe. Both run on the session thread, so the caller's file I/O stays
         off the event loop.
         """
@@ -239,7 +239,7 @@ class PortHandler:
         """Write a raw line to the board mid-session (e.g. `STOP`).
 
         Doesn't force a transition — the board's own end-of-session strobe does
-        (`starting-a-session.md` §5.3). Permitted only in `IN_SESSION`.
+        (`dashboard.md` §8.3). Permitted only in `IN_SESSION`.
         """
         with self._lock:
             if self._state != PortState.IN_SESSION or self._serial is None:

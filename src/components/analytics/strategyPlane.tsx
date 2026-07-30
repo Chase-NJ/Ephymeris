@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { ProfileMetricInfo } from "@/lib/analytics/types";
 
 /**
- * The plane both strategy panels draw in (`analytics.md` §4).
+ * The plane both strategy panels draw in (`data.md` §11.1).
  *
  * Two panels occupy it — one point per *session* across a cohort (§4.1), one
  * point per *trial* within a single session (§4.4) — and they must agree on

@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X } from "lucide-react";
 
 /**
- * App-drawn titlebar (ephymeris_v1.0.md §3.1, §5).
+ * App-drawn titlebar (dashboard.md §2.1, §5).
  *
  * Native decorations are off on both platforms — macOS does not keep its
  * traffic lights — so the chrome is identical on the dev machine and the lab

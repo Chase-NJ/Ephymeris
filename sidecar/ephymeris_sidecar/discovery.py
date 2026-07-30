@@ -1,6 +1,6 @@
 """Arduino Directory validation and sketch discovery.
 
-Implements `arduino-directory.md` §3–§6. Owned by the sidecar because
+Implements `tasks.md` §2.2–§6. Owned by the sidecar because
 filesystem work and `arduino-cli` interaction already live here.
 
 The two rules most worth preserving:

@@ -24,7 +24,7 @@ import { firstGroupToRun, isReadyToRun } from "@/lib/sessions/types";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Step 1 — Configuration (`starting-a-session.md` §2).
+ * Step 1 — Configuration (`dashboard.md` §7.2).
  *
  * Cohort is picked from the same card grid as the Cohorts tab (§2.1) rather
  * than a dropdown, since that's how the user already knows to pick one. All
@@ -320,8 +320,7 @@ export function SessionConfig() {
           </div>
         )}
 
-        {/* §2.2 — soft warning only. Reusing a number is legal (data-saving.md
-            §1): it appends into the same folder, which is how an interrupted
+        {/* §2.2 — soft warning only. Reusing a number is legal (data.md §1): it appends into the same folder, which is how an interrupted
             run is resumed. It's just usually accidental. */}
         {sameDayReuse && (
           <div className="px-4 pb-3.5">

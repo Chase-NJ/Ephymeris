@@ -1,5 +1,5 @@
 /**
- * Slot logic — which box sits on which star (ephymeris_v1.0.md §4.6).
+ * Slot logic — which box sits on which star (settings.md §5).
  *
  * Pure functions, no React. `reconcileSlots` is the single authority for slot
  * hygiene; everything that mutates boxes or switches constellations funnels

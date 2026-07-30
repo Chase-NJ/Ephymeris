@@ -2,7 +2,7 @@ import * as THREE from "three";
 
 /**
  * The stellar-surface material for Mission Control's constellation
- * (`starting-a-session.md` §6.2).
+ * (`dashboard.md` §9.2).
  *
  * A deliberate, bounded exception to §2.2's flat-matte rule: these are stars
  * standing in for animals, and a star that looks like a star carries real

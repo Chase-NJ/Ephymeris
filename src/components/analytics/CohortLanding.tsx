@@ -6,7 +6,7 @@ import type { CohortSummary } from "@/lib/cohorts/types";
 import { springPanel, springSnappy } from "@/lib/motion";
 
 /**
- * The Analytics entry point (`analytics.md` §2).
+ * The Analytics entry point (`data.md` §10).
  *
  * Deliberately the Cohorts view's card grid rather than a dropdown: picking
  * which cohort to study is the same act as picking one to manage, and the

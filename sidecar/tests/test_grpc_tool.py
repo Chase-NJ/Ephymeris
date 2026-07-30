@@ -1,4 +1,4 @@
-"""The arduino-cli gRPC daemon backend — `hardware-interaction.md` §2.
+"""The arduino-cli gRPC daemon backend — `README.md` §4.1.
 
 Unit tests build protobuf messages directly, so the mapping and streaming
 logic is exercised without a daemon. The invariant most worth pinning: the

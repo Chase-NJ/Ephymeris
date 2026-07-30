@@ -1,4 +1,4 @@
-"""Settings payload parsing — `ephymeris_v1.0.md` §4.5."""
+"""Settings payload parsing — `settings.md` §4."""
 
 from __future__ import annotations
 

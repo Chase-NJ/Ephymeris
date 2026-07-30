@@ -441,7 +441,7 @@ function Reveal({
 
 /**
  * Lightweight coaching, not a gate — three quiet checkpoints against what a
- * cohort actually needs before it can start a session (`starting-a-session.md`
+ * cohort actually needs before it can start a session (`dashboard.md §7`
  * §1: at least one group with at least one box-assigned animal). A cohort can
  * still be saved and left incomplete at any point (`cohorts.md` §1 — real lab
  * setup rarely happens in one sitting); this just orients the user on what's

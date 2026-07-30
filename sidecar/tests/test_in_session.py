@@ -1,4 +1,4 @@
-"""`IN_SESSION` entry/exit and strobe parsing — `starting-a-session.md` §7, §10.
+"""`IN_SESSION` entry/exit and strobe parsing — `dashboard.md` §10, §10.
 
 Driven through a scripted fake serial port, so the handshake sequence and the
 `^\\d{1,3}\\t\\d+$` line-recognition rule are exercised without hardware.

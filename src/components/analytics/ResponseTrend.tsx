@@ -27,13 +27,13 @@ import {
 } from "@/lib/analytics/view";
 
 /**
- * Cohort mean **response** accuracy across sessions (`analytics.md` §6.5).
+ * Cohort mean **response** accuracy across sessions (`data.md` §11.5).
  *
  * The same question as the rewarded-accuracy panel above, asked of the
  * *choice* instead of the *drop*: a trial where the animal answered the
  * correct well counts here whether or not it held long enough to earn fluid.
  * `derive.py` calls this figure `pSide`, and the tally it comes from
- * (`analytics.md` §3.8) exists precisely to keep the two apart — the declared
+ * (`data.md` §9.8) exists precisely to keep the two apart — the declared
  * live metrics are reward-unconditional, so scoring them against fluid
  * delivery would quietly answer neither question.
  *

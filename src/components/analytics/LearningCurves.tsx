@@ -26,7 +26,7 @@ import {
 } from "@/lib/analytics/view";
 
 /**
- * P(correct) over time (`analytics.md` §5).
+ * P(correct) over time (`data.md` §11.2).
  *
  * Two resolutions, chosen by the session selector: across sessions it is one
  * point per session at whole-session P; within one session it is the rolling

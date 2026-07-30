@@ -190,7 +190,7 @@ class Application:
         )
         # Every commit marks the database for backup — no write path can forget
         # to, and `session_animal_runs` written overnight counts just as much as
-        # a cohort edit (`data-saving.md` §8).
+        # a cohort edit (`data.md` §7).
         self.db.on_commit(self.backup.mark_db_dirty)
         self.backup.start()
         self.analytics = AnalyticsService(
@@ -344,7 +344,7 @@ class Application:
     async def _settings_push(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         """Accept the shell's settings and immediately validate the directory.
 
-        `arduino-directory.md` §2 requires validation on receipt rather than
+        `tasks.md` §2.1 requires validation on receipt rather than
         deferred until Debug Mode opens, so a broken path is reported while the
         user is still looking at the field they just changed.
         """
@@ -417,7 +417,7 @@ class Application:
         path = args.get("sketchPath")
 
         # The configured Arduino Directory is the only source of flashable
-        # sketches (`arduino-directory.md` §5) — enforced here, not just by the
+        # sketches (`tasks.md` §2.3) — enforced here, not just by the
         # picker only listing discovered sketches.
         sketch = next((s for s in self.discovery.sketches if s.path == path), None)
         if sketch is None:
@@ -474,7 +474,7 @@ class Application:
             state = self._require_ports().acknowledge_error(box)
         return {"state": state.value}
 
-    # --- utility baseline (hardware-interaction.md §8) --------------------
+    # --- utility baseline (settings.md §8) --------------------
 
     def _require_utility(self) -> UtilityBaseline:
         if self.utility is None:
@@ -638,7 +638,7 @@ class Application:
             event(Evt.COHORTS_UPDATED, {"cohorts": await self._cohort_summaries()})
         )
 
-    # --- prefixes (data-saving.md §3) -------------------------------------
+    # --- prefixes (data.md §3.1) -------------------------------------
 
     async def _prefixes_list(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
         return {"prefixes": await self._prefix_list()}
@@ -671,7 +671,7 @@ class Application:
             event(Evt.PREFIXES_UPDATED, {"prefixes": await self._prefix_list()})
         )
 
-    # --- task profiles (data-saving.md §6) --------------------------------
+    # --- task profiles (tasks.md §3) --------------------------------
 
     async def _tasks_get_profile(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         sketch_path = _str_arg(args, "sketchPath")
@@ -687,7 +687,7 @@ class Application:
             ) from exc
         return profile.to_json() if profile is not None else {"profile": None}
 
-    # --- backup (data-saving.md §8) ---------------------------------------
+    # --- backup (data.md §7) ---------------------------------------
 
     async def _backup_sync_now(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
         """Copy anything the mirror is missing, on demand.
@@ -704,7 +704,7 @@ class Application:
         except BackupNotConfigured as exc:
             raise CommandError(ErrCode.BACKUP_UNAVAILABLE, str(exc)) from exc
 
-    # --- analytics (analytics.md §9) --------------------------------------
+    # --- analytics (websocket-protocol.md §3.4) --------------------------------------
 
     def _require_analytics(self) -> AnalyticsService:
         if self.analytics is None:
@@ -714,11 +714,11 @@ class Application:
     def _sketch_path_for_name(self, name: str) -> str | None:
         """A document's `sketch` field resolved against the current Arduino
         Directory — how an adopted orphan finds a `task.json` to decode with
-        (`analytics.md` §8.1). Name collisions across categories are possible
+        (`data.md` §8.1). Name collisions across categories are possible
         in principle; first discovery-order match wins, same as the picker.
 
         Falls back to profiles that *declare* the name in `legacyNames`
-        (`data-saving.md` §6.7), which is how a run recorded by older software
+        (`tasks.md` §3.7), which is how a run recorded by older software
         under a human label ("Shape - L") reaches the sketch that can decode it.
         Declared, never inferred: resemblance is not evidence, and decoding
         real data with the wrong strobe map is worse than not decoding it.
@@ -753,7 +753,7 @@ class Application:
             self.sessions.list_sessions, cohort_id, include_aborted=include_aborted
         )
         counts = await asyncio.to_thread(self.sessions.run_counts_by_session, cohort_id)
-        # Adopted orphans (analytics.md §8.1) appear as payload-only synthetic
+        # Adopted orphans (data.md §8.1) appear as payload-only synthetic
         # sessions so the Analytics selectors cover the whole archive. Both
         # sources are database reads — the no-filesystem rule holds.
         synthetic, synthetic_counts = await asyncio.to_thread(
@@ -813,7 +813,7 @@ class Application:
         return await self._require_analytics().recent_sessions(_opt_int(args.get("limit")))
 
     async def _sessions_recover(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        """The crash-recovery backfill (`data-saving.md` §7.3, §11).
+        """The crash-recovery backfill (`data.md` §12, §11).
 
         Guarded against a running session: a live box's `.tsv` legitimately
         has no `.json` yet, and "recovering" it would mint a half-session
@@ -832,7 +832,7 @@ class Application:
         result = await asyncio.to_thread(recovery.recover_cohort, cohort.data_folder)
         return {**result, "cohortId": cohort_id}
 
-    # --- sessions (starting-a-session.md §9) ------------------------------
+    # --- sessions (websocket-protocol.md §3) ------------------------------
 
     def _require_runner(self) -> SessionRunner:
         if self.runner is None:
@@ -959,6 +959,16 @@ class Application:
                 profile = await asyncio.to_thread(task_profile.load_profile, sketch_path)
             except task_profile.TaskProfileError:
                 profile = None  # profile-less: bare START, raw log
+            try:
+                start_command = build_start_command(profile, config)
+            except task_profile.TaskProfileError as exc:
+                # The profile declares more than the firmware's line buffer can
+                # hold. Refusing the mapping is the point: the board cannot
+                # report a truncated START, so letting this through would run
+                # the session on whichever parameters happened to fit.
+                raise CommandError(
+                    ErrCode.TASK_PROFILE_INVALID, str(exc), {"box": box}
+                ) from exc
             box_configs.append(
                 BoxConfig(
                     box=box,
@@ -966,7 +976,7 @@ class Application:
                     animal_name=names[animal_id],
                     sketch_path=sketch_path,
                     sketch_name=Path(sketch_path).name,
-                    start_command=build_start_command(profile, config),
+                    start_command=start_command,
                     config_metadata=dict(config),
                     profile=profile,
                 )
@@ -1126,6 +1136,12 @@ class Application:
                     )
                 except Exception:  # noqa: BLE001 - never fail a finalization over this
                     log.exception("couldn't snapshot the task profile for box %d", run.box)
+            # The parameters this run actually ran on (§6.9). They already reach
+            # the session file; recording them here is what makes them
+            # queryable, and what lets Analytics tell two differently-tuned runs
+            # of the same sketch apart — `profile_hash` cannot, it covers only
+            # the declaration.
+            run_config = dict(run.config.config_metadata) or None
             await asyncio.to_thread(
                 self.sessions.record_animal_run,
                 SessionAnimalRun(
@@ -1139,6 +1155,8 @@ class Application:
                     ended_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     stop_reason=reason,
                     profile_hash=profile_hash,
+                    config=run_config,
+                    params_hash=task_profile.params_hash(run_config),
                 ),
             )
         await self.server.broadcast(
@@ -1168,7 +1186,7 @@ class Application:
 
 
 def _is_ready_to_run(cohort: Any) -> bool:
-    """`starting-a-session.md` §1 — ready if any group holds a box-assigned animal."""
+    """`dashboard.md` §7.1 — ready if any group holds a box-assigned animal."""
     return any(a.box_number is not None for a in cohort.animals)
 
 
@@ -1284,7 +1302,7 @@ class _mapped_errors:
     """Translate hardware-layer exceptions into typed protocol errors.
 
     The frontend renders whatever comes back here; it never decides for itself
-    whether an operation was legal (`hardware-interaction.md` §3.3).
+    whether an operation was legal (`dashboard.md` §5.3).
     """
 
     def __init__(self, box: int) -> None:

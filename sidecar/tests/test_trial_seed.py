@@ -1,4 +1,4 @@
-"""The per-run trial seed — `data-saving.md` §6.4.
+"""The per-run trial seed — `tasks.md` §6.4.
 
 The property under test is a negative one: **no two runs draw the same trial
 sequence**. That can't be proven by a test, but the three ways it has actually

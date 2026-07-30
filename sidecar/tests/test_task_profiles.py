@@ -1,4 +1,4 @@
-"""Task Profiles — `data-saving.md` §6."""
+"""Task Profiles — `tasks.md` §3."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from ephymeris_sidecar.tasks.profile import (
     load_profile,
     parse_profile,
 )
-from ephymeris_sidecar.tasks.start_command import build_start_command
+from ephymeris_sidecar.tasks.start_command import START_LINE_MAX, build_start_command
 
 # The exact task.json the user supplied for GRGL_2-Odor.
 GRGL = {
@@ -406,3 +406,149 @@ def test_one_broken_task_json_does_not_hide_the_others() -> None:
         [_Sketch("broken"), _Sketch("profileless"), _Sketch("good")], load=load
     )
     assert index == {"Shape - R": "good"}
+
+
+# --- §6.2 presentation metadata ------------------------------------------
+
+
+def _field(**overrides: object) -> dict:
+    base = {"metadataKey": "odor_poke_hold", "wireKey": "S0P", "label": "Poke hold", "type": "int", "default": 500}
+    base.update(overrides)
+    return base
+
+
+def test_presentation_metadata_round_trips() -> None:
+    """§6.2 — group/unit/min/max/step/help/advanced ride through to the wire."""
+    profile = parse_profile({"taskName": "T", "config": [_field(
+        group="Stage 0", unit="ms", min=0, max=5000, step=10,
+        help="Hold required before odor delivery.", advanced=True)]})
+    field = profile.config[0]
+    assert (field.group, field.unit, field.min, field.max, field.step) == ("Stage 0", "ms", 0, 5000, 10)
+    assert field.help == "Hold required before odor delivery."
+    assert field.advanced is True
+    assert profile.to_json()["config"][0]["group"] == "Stage 0"
+
+
+def test_a_profile_declaring_no_metadata_is_unchanged() -> None:
+    """The whole point of making these optional: every profile written before
+    they existed must serialize exactly as it did, with no null-valued keys.
+    The wire declares them *absent*, not nullable, and the validator enforces
+    the difference."""
+    emitted = parse_profile(GRGL).to_json()["config"][0]
+    assert set(emitted) == {"metadataKey", "wireKey", "label", "type", "default"}
+
+
+def test_metadata_is_type_checked() -> None:
+    for bad in ({"group": 7}, {"unit": ""}, {"min": "0"}, {"step": True}, {"help": 3}):
+        with pytest.raises(TaskProfileError):
+            parse_profile({"taskName": "T", "config": [_field(**bad)]})
+
+
+def test_min_above_max_is_rejected() -> None:
+    """A range no value can satisfy would make every entry unclampable."""
+    with pytest.raises(TaskProfileError, match="min is above max"):
+        parse_profile({"taskName": "T", "config": [_field(min=500, max=10)]})
+
+
+# --- §6.2 the four silent-failure guards ----------------------------------
+
+
+def test_a_profile_cannot_claim_the_reserved_seed_key() -> None:
+    """§6.4 — the app appends SEED itself, so a profile claiming it would put
+    two SEED tokens on one line and the firmware would keep whichever parsed
+    last. Nothing downstream would report the lost value."""
+    with pytest.raises(TaskProfileError, match="reserved wire key"):
+        parse_profile({"taskName": "T", "config": [_field(wireKey="SEED")]})
+
+
+@pytest.mark.parametrize("core", ["rat", "sketch", "session_id", "trial_seed", "n_events"])
+def test_a_metadata_key_cannot_collide_with_a_core_field(core: str) -> None:
+    """§5 — config is merged into the session file FLAT at the top level, so a
+    collision overwrites the core field instead of sitting beside it. A run
+    whose `rat` field held a poke-hold duration would be unrecoverable."""
+    with pytest.raises(TaskProfileError, match="collides with a core"):
+        parse_profile({"taskName": "T", "config": [_field(metadataKey=core)]})
+
+
+def test_duplicate_keys_are_rejected() -> None:
+    """Two entries sharing a key means one silently wins -- on the wire for a
+    duplicate wireKey, in the file for a duplicate metadataKey."""
+    with pytest.raises(TaskProfileError, match="metadataKey"):
+        parse_profile({"taskName": "T", "config": [_field(), _field(wireKey="S1P")]})
+    with pytest.raises(TaskProfileError, match="wireKey"):
+        parse_profile({"taskName": "T", "config": [_field(), _field(metadataKey="other")]})
+
+
+@pytest.mark.parametrize(
+    "typ,default",
+    [("int", "500"), ("int", True), ("bool", 1), ("float", "x"), ("string", 5)],
+)
+def test_a_default_must_match_its_declared_type(typ: str, default: object) -> None:
+    """`true` for an int used to be accepted -- bool is an int subclass in
+    Python, so an unguarded isinstance let it through and the START builder
+    then rendered it as `1`."""
+    with pytest.raises(TaskProfileError, match="is not a"):
+        parse_profile({"taskName": "T", "config": [_field(type=typ, default=default)]})
+
+
+def test_a_whole_number_is_a_valid_float_default() -> None:
+    """0 is a legal float default and must not be caught by the check above."""
+    profile = parse_profile({"taskName": "T", "config": [_field(type="float", default=0)]})
+    assert profile.config[0].default == 0
+
+
+def test_a_string_default_cannot_contain_whitespace() -> None:
+    """The START grammar is space-separated, so this would split into two
+    tokens and the firmware would drop the tail as a bare word."""
+    with pytest.raises(TaskProfileError, match="whitespace"):
+        parse_profile({"taskName": "T", "config": [_field(type="string", default="two words")]})
+
+
+# --- §6.3 the START line length cap ---------------------------------------
+
+
+def _wide_profile(n: int) -> dict:
+    """A profile with `n` int fields, each rendering a ~10-character token."""
+    return {"taskName": "Wide", "config": [
+        {"metadataKey": f"field_{i}", "wireKey": f"W{i:03d}", "label": "x", "type": "int", "default": 20000}
+        for i in range(n)
+    ]}
+
+
+def test_a_realistically_wide_profile_fits() -> None:
+    """The lab's widest real profile is ~48 fields. That has to fit with the
+    seed token still to come, or the feature doesn't ship."""
+    cmd = build_start_command(parse_profile(_wide_profile(48)), {})
+    assert len(cmd) < START_LINE_MAX
+
+
+def test_an_over_declared_profile_is_refused_rather_than_truncated() -> None:
+    """The firmware CANNOT report this: readLineInto() truncates an overlong
+    line and drops the rest, so the session would run on whichever parameters
+    happened to fit. Refusing to build the line is the only place it is visible."""
+    with pytest.raises(TaskProfileError, match="over the firmware"):
+        build_start_command(parse_profile(_wide_profile(200)), {})
+
+
+def test_the_cap_reserves_room_for_the_seed_appended_later() -> None:
+    """The seed is drawn at the start click, minutes after the config half of
+    the line is settled, so the budget has to account for a token that does not
+    exist yet -- a line that fits alone but not with SEED is still too long."""
+    from ephymeris_sidecar.tasks.start_command import with_trial_seed
+
+    for n in range(56, 64):
+        profile = parse_profile(_wide_profile(n))
+        try:
+            cmd = build_start_command(profile, {})
+        except TaskProfileError:
+            continue
+        assert len(with_trial_seed(cmd, 2**31 - 2)) <= START_LINE_MAX
+
+
+def test_a_value_with_whitespace_falls_back_to_the_default() -> None:
+    """A string value the operator typed a space into can't ride the wire; the
+    builder already degrades to the sketch's own default rather than emitting
+    a token the firmware would misparse."""
+    profile = parse_profile({"taskName": "T", "config": [
+        {"metadataKey": "mode", "wireKey": "MD", "label": "Mode", "type": "string", "default": "fast"}]})
+    assert build_start_command(profile, {"mode": "not fast"}) == "START MD=fast"

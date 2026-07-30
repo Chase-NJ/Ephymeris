@@ -1,79 +1,96 @@
-import { Select, TextInput, Toggle } from "@/components/common/controls";
-import type { ConfigField, TaskProfile } from "@/lib/sessions/types";
+import { AnimatePresence, motion } from "framer-motion";
+import { ChevronRight } from "lucide-react";
+import { useState } from "react";
+
+import { Select } from "@/components/common/controls";
+import { ConfigFields } from "@/components/sessions/ConfigFields";
+import { springSnappy } from "@/lib/motion";
+import type { TaskProfile } from "@/lib/sessions/types";
 
 /**
- * Per-box pre-flight config form (`starting-a-session.md` §3).
+ * Per-box pre-flight config form (`dashboard.md` §7.3).
  *
  * Fields, labels and defaults come straight from the sketch's Task Profile
- * `config` array (`data-saving.md` §6.2) — the app knows nothing task-specific.
+ * `config` array (`tasks.md` §3.2) — the app knows nothing task-specific.
  * A sketch with no profile renders nothing at all, and gets a bare `START`.
+ *
+ * Collapsed by default, and that is the point: this is the *override* layer
+ * (§6.9). A behaviour sketch now declares forty-odd fields, and six of those
+ * expanded inline would bury the mapping step's actual job — choosing a sketch
+ * per animal — under two hundred inputs. The summary line says how many values
+ * differ from the rig's defaults for this animal, which is the only thing an
+ * operator needs to see at a glance.
  */
 export function TaskConfigForm({
   profile,
   config,
+  baseline,
   onChange,
+  disabled = false,
 }: {
   profile: TaskProfile | null;
   config: Record<string, unknown>;
+  /** This rig's saved defaults for the sketch — what "overridden" is measured against. */
+  baseline: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
+  disabled?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   if (!profile || profile.config.length === 0) return null;
 
-  function set(key: string, value: unknown) {
-    onChange({ ...config, [key]: value });
-  }
+  const overridden = profile.config.filter(
+    (f) => f.metadataKey in config && !Object.is(config[f.metadataKey], baseline[f.metadataKey]),
+  ).length;
 
   return (
     <div className="mt-2 flex flex-col gap-1.5 border-t border-halo pt-2">
-      <div className="font-mono text-[10px] text-static">{profile.taskName}</div>
-      {profile.config.map((field) => (
-        <Field
-          key={field.metadataKey}
-          field={field}
-          value={config[field.metadataKey] ?? field.default}
-          onChange={(v) => set(field.metadataKey, v)}
-        />
-      ))}
-    </div>
-  );
-}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 text-left"
+      >
+        <motion.span animate={{ rotate: open ? 90 : 0 }} transition={springSnappy} className="flex">
+          <ChevronRight size={11} strokeWidth={1.75} className="text-static" />
+        </motion.span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-static">
+          {profile.taskName}
+        </span>
+        <span className={`text-[10px] ${overridden > 0 ? "text-pulsar" : "text-static/70"}`}>
+          {overridden > 0
+            ? `${overridden} overridden`
+            : `${profile.config.length} parameters`}
+        </span>
+      </button>
 
-function Field({
-  field,
-  value,
-  onChange,
-}: {
-  field: ConfigField;
-  value: unknown;
-  onChange: (next: unknown) => void;
-}) {
-  return (
-    <label className="flex items-center justify-between gap-3">
-      <span className="min-w-0 truncate text-[11px] text-static" title={field.label}>
-        {field.label}
-      </span>
-      {field.type === "bool" ? (
-        <Toggle label={field.label} checked={value === true} onChange={onChange} />
-      ) : field.type === "int" || field.type === "float" ? (
-        <TextInput
-          label={field.label}
-          mono
-          value={String(value ?? "")}
-          onChange={(v) => {
-            const parsed = field.type === "int" ? parseInt(v, 10) : parseFloat(v);
-            onChange(v.trim() === "" ? field.default : Number.isNaN(parsed) ? v : parsed);
-          }}
-          className="w-[76px]"
-        />
-      ) : (
-        <TextInput
-          label={field.label}
-          value={String(value ?? "")}
-          onChange={onChange}
-          className="w-[120px]"
-        />
-      )}
-    </label>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={springSnappy}
+            className="overflow-hidden"
+          >
+            {/* Capped and scrolled, not grown. Forty fields open inline made the
+                tile as tall as its contents, so one animal's overrides pushed
+                the rest of the group's cards off the screen — on the step whose
+                whole job is comparing them. The height animation is unchanged:
+                Framer measures this pane, and the pane is never taller than the
+                cap. The hairline edges are what make a list cut mid-field read
+                as a scroll region rather than a clipping bug. */}
+            <div className="my-1 max-h-[min(46vh,380px)] overflow-y-auto border-y border-halo py-2 pr-1">
+              <ConfigFields
+                profile={profile}
+                config={config}
+                baseline={baseline}
+                onChange={onChange}
+                disabled={disabled}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 

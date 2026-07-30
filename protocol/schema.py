@@ -45,6 +45,9 @@ from wire_dsl import (
 
 VERSION = 1
 
+#: A bound/step on a numeric config field, which may be int- or float-typed.
+NUMBER = union(INT, FLOAT)
+
 
 # --- Named payload shapes --------------------------------------------------
 
@@ -53,7 +56,7 @@ SHAPES = (
     Shape(
         "PortStateName",
         lit("IDLE", "PASSTHROUGH", "FLASHING", "RESETTING", "IN_SESSION", "ERROR"),
-        doc="Per-port state machine names (`hardware-interaction.md` §3.1).",
+        doc="Per-port state machine names (`dashboard.md` §5.1).",
     ),
     Shape(
         "OutputLine",
@@ -77,7 +80,7 @@ SHAPES = (
     Shape(
         "DirectoryState",
         lit("not_configured", "invalid", "empty", "ok"),
-        doc="The four Arduino Directory states of `arduino-directory.md` §6.",
+        doc="The four Arduino Directory states of `tasks.md` §2.4.",
     ),
     Shape(
         "DirectoryStatus",
@@ -102,11 +105,11 @@ SHAPES = (
             f("directory", Ref("DirectoryStatus")),
             f("sketches", ListOf(Ref("SketchEntry"))),
             f("skipped", ListOf(Ref("SkippedEntry"))),
-            f("skippedCount", INT, doc='Drives the "Partial" note (`arduino-directory.md` §6).'),
+            f("skippedCount", INT, doc='Drives the "Partial" note (`tasks.md` §2.4).'),
             f("libraries", ListOf(STR)),
             f("librariesPath", nullable(STR)),
         ),
-        doc="The full result of an Arduino Directory scan (`arduino-directory.md` §4).",
+        doc="The full result of an Arduino Directory scan (`tasks.md` §2.3).",
     ),
     # Settings (pushed Tauri → sidecar; the shell owns them — §4 of the doc)
     Shape(
@@ -128,7 +131,7 @@ SHAPES = (
                 "utilitySketchPath",
                 nullable(STR),
                 doc="The hardware utility sketch every idle box is returned to "
-                "(`hardware-interaction.md` §8). Null turns the baseline off.",
+                "(`settings.md` §8). Null turns the baseline off.",
             ),
             f("defaultBaud", INT),
             f("boxes", ListOf(Ref("BoxBinding"))),
@@ -151,11 +154,22 @@ SHAPES = (
                 doc="First-run box setup finished or explicitly skipped; gates "
                 "the Config wizard. Shell-only.",
             ),
+            f(
+                "taskDefaults",
+                MapOf(MapOf(ANY)),
+                doc="Sketch folder name → this rig's default task parameters for "
+                "it, keyed by `metadataKey` (`tasks.md` §6.1). Keyed by "
+                "NAME, not path: the two lab machines keep their Arduino "
+                "Directories in different places, and the name is what the "
+                "session file already records. Shell-only — the frontend merges "
+                "these under the profile's own defaults and sends the result at "
+                "`sessions.confirmMapping`, so the sidecar never reads them.",
+            ),
         ),
         doc="The Tauri-side store's schema. The sidecar reads the keys it needs "
         "and ignores the rest, so adding a setting is deliberately a non-event.",
     ),
-    # Hardware utility baseline (hardware-interaction.md §8)
+    # Hardware utility baseline (settings.md §8)
     Shape(
         "UtilityBaselineState",
         lit("unknown", "restoring", "ready", "busy", "held", "unavailable", "failed"),
@@ -202,7 +216,7 @@ SHAPES = (
         doc="The whole baseline picture — one snapshot, shared by the command "
         "and the event, so a client never merges two shapes.",
     ),
-    # Backup Directory mirroring (data-saving.md §8)
+    # Backup Directory mirroring (data.md §7)
     Shape(
         "BackupState",
         lit("disabled", "pending", "ok", "failed"),
@@ -334,7 +348,7 @@ SHAPES = (
         ),
         doc="An Auto-Balance preview. Nothing is written; apply via cohorts.update.",
     ),
-    # Prefixes, sessions, Task Profiles (data-saving.md §3–§6)
+    # Prefixes, sessions, Task Profiles (data.md §3.1–§6)
     Shape("Prefix", obj(f("id", STR), f("name", STR)), doc="Global — shared across cohorts."),
     Shape("SessionStatus", lit("configuring", "running", "completed", "aborted")),
     Shape(
@@ -377,7 +391,29 @@ SHAPES = (
             f("label", STR),
             f("type", Ref("ConfigFieldType")),
             f("default", ANY),
+            f(
+                "group",
+                STR,
+                optional=True,
+                doc="Section heading the form files this field under. Absent = "
+                "ungrouped, which is how every pre-existing profile renders.",
+            ),
+            f("unit", STR, optional=True, doc='Suffix shown after the input, e.g. "ms".'),
+            f("min", NUMBER, optional=True, doc="Inclusive bound the form clamps to."),
+            f("max", NUMBER, optional=True, doc="Inclusive bound the form clamps to."),
+            f("step", NUMBER, optional=True, doc="Stepper increment; presentation only."),
+            f("help", STR, optional=True, doc="One-line explanation shown with the field."),
+            f(
+                "advanced",
+                BOOL,
+                optional=True,
+                doc="Collapsed behind a disclosure by default. For fields a "
+                "session should rarely need to touch.",
+            ),
         ),
+        doc="One operator-tunable parameter. Everything past `default` is "
+        "presentation metadata and optional — a profile that declares none "
+        "renders exactly as it did before these keys existed.",
     ),
     Shape(
         "LiveMetric",
@@ -442,7 +478,7 @@ SHAPES = (
         "IdentifySpec",
         obj(f("on", STR), f("off", STR)),
         doc="The two commands that make a box announce itself — a trial light, "
-        "a buzzer, whatever the rig has (`hardware-interaction.md` §8.3). "
+        "a buzzer, whatever the rig has (`settings.md` §8.3). "
         "Declared by the sketch so the app never has to know that a Hart-lab "
         "box says `ON LIGHT`.",
     ),
@@ -464,7 +500,7 @@ SHAPES = (
                 "legacyNames",
                 ListOf(STR),
                 doc="Names older software wrote for this same task, so the archive "
-                "walk can decode historical runs (`data-saving.md` §6.7). Declared, "
+                "walk can decode historical runs (`tasks.md` §3.7). Declared, "
                 "never inferred.",
             ),
             f("telemetry", Ref("TelemetrySpec"), optional=True, doc="Utility profiles only."),
@@ -488,7 +524,7 @@ SHAPES = (
             f("sketchPath", STR),
             f("config", MapOf(ANY), doc="Keyed by `metadataKey`, per the Task Profile."),
         ),
-        doc="One box's session-local mapping + task config (`starting-a-session.md` §3).",
+        doc="One box's session-local mapping + task config (`dashboard.md` §7.3).",
     ),
     Shape(
         "SessionBox",
@@ -525,7 +561,7 @@ SHAPES = (
         obj(
             f("box", INT),
             f("animalId", STR),
-            f("stopReason", STR, doc="`starting-a-session.md` §8's stop-reason set."),
+            f("stopReason", STR, doc="`dashboard.md` §10.4's stop-reason set."),
             f("filePath", nullable(STR)),
         ),
     ),
@@ -562,7 +598,7 @@ SHAPES = (
         doc="Everything unfinished, discoverable with no prior knowledge of ids. "
         "Also the session.lifecycle payload — one shape, one emitter.",
     ),
-    # Analytics (analytics.md §9)
+    # Analytics (websocket-protocol.md §3.4)
     Shape(
         "SessionListItem",
         obj(
@@ -629,7 +665,7 @@ SHAPES = (
             f("wilsonHigh", nullable(FLOAT)),
             f("lowConfidence", BOOL),
         ),
-        doc="One metric's whole-session result (`analytics.md` §3.2, §3.5).",
+        doc="One metric's whole-session result (`data.md` §9.2, §3.5).",
     ),
     Shape(
         "TrialOutcomes",
@@ -669,7 +705,7 @@ SHAPES = (
             f("sideLow", nullable(FLOAT)),
             f("sideHigh", nullable(FLOAT)),
         ),
-        doc="What actually happened per trial (`analytics.md` §3.8). Distinct "
+        doc="What actually happened per trial (`data.md` §9.8). Distinct "
         "from the declared metrics, which are reward-*unconditional* — they "
         "score a detected poke whether or not the fluid hold cleared.",
     ),
@@ -705,7 +741,7 @@ SHAPES = (
             f("engagedHigh", nullable(FLOAT)),
         ),
         doc="How far each offered trial got before the animal dropped out "
-        "(`analytics.md` §3.10). Delimited on the trial light, not on odor "
+        "(`data.md` §9.10). Delimited on the trial light, not on odor "
         "onset — the firmware only strobes odor-on after the animal has poked "
         "and held, so every other count in a run summary is silently "
         "conditioned on engagement and none of them can measure it. A ladder, "
@@ -725,7 +761,7 @@ SHAPES = (
             ),
             f("outcomes", Ref("TrialOutcomes")),
         ),
-        doc="TrialOutcomes restricted to one declared condition (`analytics.md` "
+        doc="TrialOutcomes restricted to one declared condition (`data.md` "
         "§3.9), in authored liveMetrics order. Answers 'how many trials of this "
         "kind were administered, and how many of those paid out'.",
     ),
@@ -751,6 +787,15 @@ SHAPES = (
             f("endedAt", nullable(STR)),
             f("sketchPath", STR),
             f("profileHash", nullable(STR)),
+            f(
+                "paramsHash",
+                nullable(STR),
+                doc="Hash of the task parameters this run used (`data.md` "
+                "§6.9). Comparability is the PAIR with `profileHash` — that one "
+                "covers the profile declaration, which is identical across every "
+                "run of a sketch however it was tuned. Null for a run recorded "
+                "before parameters were operator-set.",
+            ),
             f("profileSource", Ref("ProfileSource")),
             f("stale", BOOL, doc="The file is gone but this is its last known-good summary."),
             f("status", Ref("RunStatus")),
@@ -873,7 +918,7 @@ SHAPES = (
             f("y", FLOAT),
             f("n", INT, doc="The smaller of the two rolling window lengths."),
         ),
-        doc="One sample of the within-session strategy walk (`analytics.md` §4.4).",
+        doc="One sample of the within-session strategy walk (`data.md` §11.1).",
     ),
     Shape(
         "RunSeries",
@@ -1037,12 +1082,12 @@ COMMANDS = (
         args=obj(f("settings", Ref("EphymerisSettings"))),
         result=obj(f("arduinoDirectory", Ref("DirectoryStatus"))),
         doc="Sent on every connect and change, Tauri → sidecar only. The reply "
-        "carries the immediate directory validation (`arduino-directory.md` §2).",
+        "carries the immediate directory validation (`tasks.md` §2.1).",
     ),
     Command(
         "sketches.refresh",
         result=Ref("SketchDiscovery"),
-        doc="Manual Refresh and Debug Mode mount (`arduino-directory.md` §4).",
+        doc="Manual Refresh and Debug Mode mount (`tasks.md` §2.3).",
     ),
     Command(
         "port.passthrough.open",
@@ -1070,7 +1115,7 @@ COMMANDS = (
                 BOOL,
                 optional=True,
                 doc="Default false. The session flash sequence sets it so boxes "
-                "land in IDLE for the runner to claim (`starting-a-session.md` §4).",
+                "land in IDLE for the runner to claim (`dashboard.md` §7.4).",
             ),
         ),
         result=obj(f("state", Ref("PortStateName")), f("resumedPassthrough", BOOL)),
@@ -1080,20 +1125,20 @@ COMMANDS = (
         "port.reset",
         args=obj(f("box", INT)),
         result=obj(f("state", Ref("PortStateName")), f("resumedPassthrough", BOOL)),
-        doc="DTR toggle (`hardware-interaction.md` §5).",
+        doc="DTR toggle (`dashboard.md` §6.2).",
     ),
     Command(
         "port.error.ack",
         args=obj(f("box", INT)),
         result=_STATE,
-        doc="ERROR → IDLE (`hardware-interaction.md` §3.2).",
+        doc="ERROR → IDLE (`dashboard.md` §5.2).",
     ),
     Command(
         "utility.status",
         result=Ref("UtilityStatus"),
         doc="The baseline picture on demand — the same snapshot `utility.updated` "
         "pushes, for a client that just mounted.",
-        section="Hardware utility baseline (hardware-interaction.md §8)",
+        section="Hardware utility baseline (settings.md §8)",
     ),
     Command(
         "utility.ensure",
@@ -1117,7 +1162,7 @@ COMMANDS = (
         args=obj(f("box", INT), f("on", BOOL)),
         result=obj(f("delivered", BOOL), f("state", Ref("UtilityBoxState"))),
         doc="Make one box point at itself, using its profile's `identify` pair "
-        "(`starting-a-session.md` §3.5). `delivered: false` is the ordinary "
+        "(`dashboard.md` §7.3). `delivered: false` is the ordinary "
         "answer for a box that isn't at baseline — the caller carries on "
         "without the light rather than failing.",
     ),
@@ -1193,7 +1238,7 @@ COMMANDS = (
     Command(
         "prefixes.list",
         result=obj(f("prefixes", ListOf(Ref("Prefix")))),
-        section="Prefixes, Task Profiles & sessions (data-saving.md §9, starting-a-session.md §9)",
+        section="Prefixes, Task Profiles & sessions",
     ),
     Command(
         "prefixes.create",
@@ -1301,7 +1346,7 @@ COMMANDS = (
         result=Ref("SyncResult"),
         doc="The explicit backfill — setting a directory deliberately doesn't "
         "copy what's already on disk. Long-running; client raises its timeout.",
-        section="Backup (data-saving.md §8)",
+        section="Backup (data.md §7)",
     ),
     # Analytics
     Command(
@@ -1309,7 +1354,7 @@ COMMANDS = (
         args=obj(f("cohortId", STR), f("includeAborted", BOOL, optional=True)),
         result=obj(f("sessions", ListOf(Ref("SessionListItem")))),
         doc="Must never touch the filesystem, so selectors populate instantly.",
-        section="Analytics (analytics.md §9)",
+        section="Analytics (websocket-protocol.md §3.4)",
     ),
     Command(
         "analytics.summary",
@@ -1353,12 +1398,12 @@ COMMANDS = (
         "sessions.recover",
         args=obj(f("cohortId", STR)),
         result=Ref("RecoverResult"),
-        doc="The crash-recovery backfill (`data-saving.md` §7.3, §11): "
+        doc="The crash-recovery backfill (`data.md` §12, §11): "
         "rebuilds .json/.mat from orphaned write-ahead .tsv files. Same "
         "traversal as analytics.rescan's walk, and same discipline — an "
         "explicit user action, never a side effect. Rejected while any box "
         "is running: a live run's .tsv has no .json yet and is not an orphan.",
-        section="Crash recovery (data-saving.md §7.3, §11)",
+        section="Crash recovery (data.md §12, §11)",
     ),
 )
 

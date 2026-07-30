@@ -1,6 +1,6 @@
 """Session runner integration — strobes → `.tsv` + metrics + telemetry.
 
-Ties `starting-a-session.md` §7 step 7 to `data-saving.md` §7: each parsed
+Ties `dashboard.md` §10 step 7 to `data.md` §5: each parsed
 strobe must land durably in the write-ahead log *and* update the rolling live
 metric pushed to the frontend.
 """

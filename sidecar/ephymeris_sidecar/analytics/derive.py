@@ -1,4 +1,4 @@
-"""Metrics derived from a recorded session — `analytics.md` §3.
+"""Metrics derived from a recorded session — `data.md` §9.
 
 **Pure.** No I/O, no database, no clock. `(document, profile)` in, summary or
 series out — which is what makes it assertable against the live path over a
@@ -25,7 +25,7 @@ from ..tasks.profile import LiveMetric, TaskProfile
 #: Bumped whenever the maths below changes. Cached summaries carry the version
 #: they were computed under and are recomputed when it moves — without this, a
 #: fixed bug would keep serving numbers from the old definition forever, with
-#: no symptom anywhere (`analytics.md` §8.3).
+#: no symptom anywhere (`data.md` §8.4).
 #: v3 added the trial-outcome tally (§3.8) — rewarded vs side accuracy.
 #: v4 split that tally per declared condition (§3.9), so "how many go-right
 #: trials were administered, and how many of those paid out" is answerable
@@ -399,7 +399,7 @@ DEFAULT_MIN_COUNTED = 10
 def codes_of(document: dict[str, Any]) -> list[int]:
     """The strobe codes out of `ts_data`, skipping malformed rows.
 
-    `ts_data` is `[[code, timestamp], …]` (`data-saving.md` §5), but a
+    `ts_data` is `[[code, timestamp], …]` (`data.md` §4), but a
     hand-edited or recovery-produced file can hold anything, and an
     `IndexError` escaping from a worker thread would take out an indexing pass
     over an entire cohort.
@@ -448,7 +448,7 @@ def _timestamps(document: dict[str, Any]) -> list[int]:
 # --- trial outcomes (§3.8) --------------------------------------------------
 #
 # Recognised by **name** out of the profile's `strobes` map, not by hard-coded
-# codes: `data-saving.md` §6 makes that map the sketch's own declaration of its
+# codes: `tasks.md` §3 makes that map the sketch's own declaration of its
 # vocabulary, and a code number means nothing without it. A task that doesn't
 # declare these names simply reports no outcomes — which is why every pattern
 # below is anchored rather than a loose substring.
@@ -707,7 +707,7 @@ def summarize(
         "seed": seed,
     }
 
-    # A sketch with no Task Profile is fully supported (`data-saving.md` §6.1)
+    # A sketch with no Task Profile is fully supported (`tasks.md` §3)
     # and still worth listing — it has a real duration, event count and stop
     # reason. Inventing a default metric for it would be worse than saying so.
     if profile is None or not profile.live_metrics:

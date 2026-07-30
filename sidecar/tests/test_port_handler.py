@@ -1,7 +1,7 @@
 """PortHandler — line splitting, ring buffer, batching, and send guards.
 
 Exercises the handler against a fake serial port so the parsing and buffering
-rules from `hardware-interaction.md` §6 can be checked without hardware.
+rules from `dashboard.md` §6.3 can be checked without hardware.
 """
 
 from __future__ import annotations

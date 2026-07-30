@@ -4,7 +4,7 @@ import { mulberry32 } from "@/lib/prng";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * Ambient drifting starfield (ephymeris_v1.0.md §2.5).
+ * Ambient drifting starfield (dashboard.md §1.5).
  *
  * Deliberately constrained: a very slow loop at very low opacity, sitting
  * behind content. Two rules from the spec are load-bearing rather than polish —

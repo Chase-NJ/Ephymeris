@@ -19,7 +19,7 @@ import { useSidecar } from "@/lib/ws/context";
 import { BOX_IDS, type PortStateName } from "@/lib/hardware/store";
 
 /**
- * The signature element (ephymeris_v1.0.md §2.7).
+ * The signature element (dashboard.md §1.7).
  *
  * Box-status nodes joined by thin Pulsar lines. The layout is the user's
  * chosen zodiac constellation (§4.6) — boxes occupy stars, unoccupied stars

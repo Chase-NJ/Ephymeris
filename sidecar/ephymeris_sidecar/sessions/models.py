@@ -1,4 +1,4 @@
-"""Session data model — `data-saving.md` §3–§4.
+"""Session data model — `data.md` §3.1–§4.
 
 `to_json` produces exactly the payload shapes documented in
 `websocket-protocol.md` §4 (Session & prefix payload shapes).
@@ -59,7 +59,7 @@ class Session:
     folder_path: str
     ended_at: str | None = None
     group_runs: list[GroupRun] = field(default_factory=list)
-    #: Per-box time limit in whole minutes (`starting-a-session.md` §2.4);
+    #: Per-box time limit in whole minutes (`dashboard.md` §7.2);
     #: None means the session runs until stopped by the operator or board.
     duration_minutes: int | None = None
 
@@ -115,11 +115,19 @@ class SessionAnimalRun:
     file_path: str | None = None
     ended_at: str | None = None
     stop_reason: str | None = None
-    #: The Task Profile this run actually used (`analytics.md` §8.2). `None`
+    #: The Task Profile this run actually used (`data.md` §8.3). `None`
     #: for runs recorded before snapshotting existed — which is exactly the
     #: flag Analytics needs to mark them decoded with a possibly-changed
     #: profile, so it is meaningful rather than merely absent.
     profile_hash: str | None = None
+    #: The task parameters this run actually ran on (`tasks.md` §6.1),
+    #: keyed by `metadataKey`, and a hash of them. `profile_hash` covers the
+    #: profile DECLARATION only, so two runs of one sketch on wildly different
+    #: parameters hash identically — which stopped being a safe assumption the
+    #: moment those parameters became operator-set. `None` on runs recorded
+    #: before this existed, which is honest: they ran on firmware constants.
+    config: dict[str, Any] | None = None
+    params_hash: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -133,6 +141,8 @@ class SessionAnimalRun:
             "endedAt": self.ended_at,
             "stopReason": self.stop_reason,
             "profileHash": self.profile_hash,
+            "config": self.config,
+            "paramsHash": self.params_hash,
         }
 
 

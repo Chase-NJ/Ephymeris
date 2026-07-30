@@ -10,11 +10,11 @@ import { useSidecar } from "@/lib/ws/context";
 import { CMD, EVT } from "@/lib/ws/protocol";
 
 /**
- * The flashing flow (`hardware-interaction.md` §4): pick a sketch from the
+ * The flashing flow (`dashboard.md` §6.1): pick a sketch from the
  * categorized list discovered in the configured Arduino Directory, then watch
  * compile/upload progress stream in — not a spinner-until-done.
  *
- * The list is the only path to a flashable sketch (`arduino-directory.md` §5),
+ * The list is the only path to a flashable sketch (`tasks.md` §2.3),
  * and all four directory states from §6 render distinctly here. The sidecar
  * enforces list membership too; this UI is the convenient face of that rule,
  * not the rule itself.
@@ -174,8 +174,9 @@ export function FlashDialog({
               message={discovery.directory.message}
               onSettings={() => {
                 onClose();
-                // The Arduino Directory setting lives in Config now.
-                navigate("/config");
+                // The Arduino Directory setting lives on the Task tab, beside
+                // the sketch picker it feeds.
+                navigate("/task");
               }}
               onRefresh={() => void refreshSketches()}
             />

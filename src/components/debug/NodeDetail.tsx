@@ -38,7 +38,7 @@ import type { UtilityBaselineState } from "@/lib/ws/protocol";
 import type { TaskProfile } from "@/lib/sessions/types";
 
 /**
- * One box, up close (ephymeris_v1.0.md §4.3).
+ * One box, up close (dashboard.md §4).
  *
  * Docked and translucent over the still-rendering constellation rather than
  * replacing it, exactly as Mission Control's `StarPanel` is: arrival means the
@@ -63,7 +63,7 @@ import type { TaskProfile } from "@/lib/sessions/types";
  * Connection group rather than swallowed (§6.3).
  *
  * **The panel widens on request.** A utility sketch declares its own controls
- * (`data-saving.md` §6.6), and a box with eighteen controllable outputs has
+ * (`tasks.md` §3.5), and a box with eighteen controllable outputs has
  * eighteen named channels — at the docked width those names are the first
  * thing to be truncated, which turns a fluid rig's control surface into a
  * column of ellipses. Widening is a deliberate toggle rather than something
@@ -99,7 +99,7 @@ export function NodeDetail({
   const utility = useUtilityStatus();
   const health = useBoxHealth()[box] ?? "absent";
 
-  // What the board is actually carrying (`hardware-interaction.md` §8): the
+  // What the board is actually carrying (`settings.md` §8): the
   // baseline keeps every idle bound box on the configured utility sketch, so
   // a box the sidecar reports `ready` has that sketch on it *now* — no manual
   // flash needed for its controls and telemetry to be live. The sidecar's

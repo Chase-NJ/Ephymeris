@@ -75,7 +75,7 @@ export function usePinnedAnimal(): string | null {
 
 /**
  * Whether *this* animal is the highlighted one — deliberately not "which
- * animal is highlighted" (`analytics.md` §2.1).
+ * animal is highlighted" (`data.md` §10.1).
  *
  * A hover change notifies every subscriber across all five panels, but
  * `useSyncExternalStore` compares the derived **boolean** with `Object.is`, so

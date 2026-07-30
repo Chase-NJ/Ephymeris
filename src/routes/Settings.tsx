@@ -11,9 +11,9 @@ import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Settings (ephymeris_v1.0.md §4.5) — storage and interface.
+ * Settings (settings.md §4) — storage and interface.
  *
- * Everything hardware-shaped (boxes, baud, Arduino Directory, arduino-cli)
+ * Everything hardware-shaped (boxes, baud, arduino-cli)
  * lives in Config (§4.6); this screen is what's left. Deliberately usable
  * while the sidecar is down — that's the whole reason settings are
  * shell-owned. Nothing here is gated on the WebSocket; only the backup

@@ -19,7 +19,7 @@ import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Dashboard / landing view (ephymeris_v1.0.md §3.3).
+ * Dashboard / landing view (dashboard.md §3).
  *
  * The rig's constellation is the page — the same 3D browser Debug flies, same
  * shared camera and selection (`viewMemory.ts`), so moving between the two
@@ -208,6 +208,16 @@ export function Dashboard() {
                   box setup in Config
                 </CardFooterLink>
               )}
+              {/* Debug has no sidebar entry — it is this page with the camera
+                  flown in, and a tab for it was a second door to a room you are
+                  already standing in. But removing it also removed the only
+                  standing sign that per-box consoles exist, so the gesture is
+                  named here instead: one quiet line at the foot of the tile
+                  whose rows perform it, rather than a callout competing with
+                  the rig's health for attention. */}
+              {boundBindings.length > 0 && (
+                <CardFooterNote>select a box for its console</CardFooterNote>
+              )}
             </SummaryCard>
 
             <SummaryCard
@@ -222,7 +232,14 @@ export function Dashboard() {
               }
             >
               {rewardSeries.map((cohort) => (
-                <CardRow key={cohort.id} onClick={() => navigate("/analytics")}>
+                <CardRow
+                  key={cohort.id}
+                  // A row names something specific, so clicking it opens that
+                  // thing — the same arrival Analytics already handles when a
+                  // session ends (§2.5), rather than the picker the reader has
+                  // just answered by clicking.
+                  onClick={() => navigate("/analytics", { state: { cohortId: cohort.id } })}
+                >
                   <span className="min-w-0 flex-1 truncate text-[13px] text-starlight">
                     {cohort.name}
                   </span>
@@ -250,7 +267,19 @@ export function Dashboard() {
                     Recent sessions
                   </p>
                   {recent.sessions.map((session) => (
-                    <CardRow key={session.folderPath} onClick={() => navigate("/analytics")}>
+                    <CardRow
+                      key={session.folderPath}
+                      // The folder, not a session id: these rows come from a
+                      // walk of directory names (`analytics.recentSessions`),
+                      // and one this machine hasn't indexed has no id to send.
+                      // Analytics resolves it against the cohort's session list
+                      // once that loads, and lands on the cohort either way.
+                      onClick={() =>
+                        navigate("/analytics", {
+                          state: { cohortId: session.cohortId, sessionFolder: session },
+                        })
+                      }
+                    >
                       <span className="shrink-0 font-mono text-[11px] text-static">
                         {session.date}
                       </span>
@@ -293,7 +322,7 @@ const HEALTH_LABEL: Record<BoxHealth, string> = {
  * Per-cohort reward accuracy across sessions, for the Analytics tile's
  * sparklines. One point per session in date order: rewarded over administered
  * trials pooled across that session's runs — **the earned-drop rate, not
- * choice accuracy** (`analytics.md` §3.8): a correct choice that failed the
+ * choice accuracy** (`data.md` §9.8): a correct choice that failed the
  * hold counts against it, which is what makes it the number the lab pays out
  * on. Sessions whose task has no reward vocabulary contribute nothing.
  *
@@ -632,6 +661,13 @@ function CardRow({
     >
       {children}
     </button>
+  );
+}
+
+/** A footer line that names a gesture rather than offering a destination. */
+function CardFooterNote({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="mt-1 self-start font-mono text-[11px] text-static/70">{children}</span>
   );
 }
 

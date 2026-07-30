@@ -91,7 +91,7 @@ def relocate(current: str | Path, destination: str | Path, move_existing: bool) 
     * **Point this cohort at data that is already there** (`move_existing=False`)
       — the destination is *expected* to be full. This is how a cohort attaches
       to an archive written before this app existed, which is the entire reason
-      orphan adoption exists (`analytics.md` §8.1).
+      orphan adoption exists (`data.md` §8.1).
 
     Refusing a non-empty destination in both cases made the second intent
     impossible to express: the only control for it rejected exactly the folders

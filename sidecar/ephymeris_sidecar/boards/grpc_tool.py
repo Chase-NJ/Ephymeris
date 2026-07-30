@@ -1,4 +1,4 @@
-"""`arduino-cli` gRPC daemon backend — `hardware-interaction.md` §2.
+"""`arduino-cli` gRPC daemon backend — `README.md` §4.1.
 
 One long-lived `arduino-cli daemon` child replaces the per-call subprocess:
 board presence stops paying a process spawn per poll, and compile/upload
@@ -8,7 +8,7 @@ fact — the two things the migration was committed to buy.
 
 The subprocess backend is not deleted; it is this backend's **fallback**.
 That is what squares the migration with the dependency policy
-(`reference.md`): `grpcio`/`protobuf` are now runtime dependencies, but a lab
+(`README.md`): `grpcio`/`protobuf` are now runtime dependencies, but a lab
 machine where they failed to install — or where the daemon won't start —
 degrades to the proven `--format json` path instead of losing flashing.
 Every fallback is logged loudly; it is a degradation, not a mode.
@@ -147,7 +147,7 @@ class GrpcBoardTool(BoardTool):
             instance=daemon.instance,
             fqbn=fqbn,
             sketch_path=sketch_dir,
-            # One shared libraries folder for every sketch (arduino-directory.md §4).
+            # One shared libraries folder for every sketch (tasks.md §2.3).
             libraries=[libraries_path] if libraries_path else [],
         )
         err_lines: list[str] = []
@@ -376,7 +376,7 @@ def _boards_from_response(response: Any) -> list[DetectedBoard]:
     Serial protocol only, a non-blank hardware id (falling back to the
     `serialNumber` property), a truthy vendor id, a non-empty address — and
     deliberately no allow-list of Arduino vendor ids, so CH340/FTDI clones
-    still appear (`hardware-interaction.md` §7).
+    still appear (`settings.md` §7).
     """
     boards: list[DetectedBoard] = []
     for detected in response.ports:

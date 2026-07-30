@@ -6,7 +6,7 @@ import { springModal } from "@/lib/motion";
 
 /**
  * Transient overlay surface. One of exactly two places vibrancy is permitted
- * (ephymeris_v1.0.md §2.4): persistent chrome (the sidebar) and this. Content
+ * (dashboard.md §1.4): persistent chrome (the sidebar) and this. Content
  * cards stay opaque.
  */
 export function Modal({

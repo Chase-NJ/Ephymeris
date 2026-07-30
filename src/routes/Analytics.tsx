@@ -32,11 +32,17 @@ import { useRunSeries } from "@/lib/analytics/series";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
 import type {
   AnalyticsSummary,
+  DiskSession,
   RecoverResult,
   RescanResult,
   RunSummary,
 } from "@/lib/analytics/types";
-import { buildAnimalColors, dominantProfile, runsInProfile } from "@/lib/analytics/view";
+import {
+  buildAnimalColors,
+  dominantProfile,
+  findSessionByFolder,
+  runsInProfile,
+} from "@/lib/analytics/view";
 import { useCohorts } from "@/lib/cohorts/context";
 import { springPanel } from "@/lib/motion";
 import { useSidecar } from "@/lib/ws/context";
@@ -46,7 +52,7 @@ const NO_PROFILES: AnalyticsSummary["profileGroups"] = [];
 const NO_RUNS: RunSummary[] = [];
 
 /**
- * The Analytics dashboard — the "Observatory" (`analytics.md` §2).
+ * The Analytics dashboard — the "Observatory" (`data.md` §10).
  *
  * One route, no tabs. Cohort, session and animal are persistent selectors, and
  * **selection is a filter, not navigation**: picking a session narrows every
@@ -80,9 +86,16 @@ export function Analytics() {
 
   // §2.5 — ending a session lands here with that cohort and session already
   // selected, so the guided flow's last step is a payoff rather than an
-  // acknowledgement.
+  // acknowledgement. A Dashboard row arrives the same way, naming a session by
+  // its folder rather than its id (`sessionFolder`) because the rows it comes
+  // from are a walk of directory names.
   const landing = location.state as
-    | { endedSession?: string | null; cohortId?: string; sessionId?: string }
+    | {
+        endedSession?: string | null;
+        cohortId?: string;
+        sessionId?: string;
+        sessionFolder?: DiskSession;
+      }
     | null;
   const [banner, setBanner] = useState<string | null>(landing?.endedSession ?? null);
 
@@ -101,6 +114,13 @@ export function Analytics() {
   // the run that just finished is precisely what the cache predates. §2.4 —
   // the reload shows the reading notice rather than the old numbers.
   const handledArrival = useRef<string | null>(null);
+  // A folder is parked here by the arrival and resolved to a session id below,
+  // once the cohort's session list exists to resolve it against. Tagged with
+  // the cohort it arrived for, which is load-bearing: the resolver runs once in
+  // the same commit as the arrival, when `cohortId` is still the PREVIOUS
+  // selection and its list is the previous cohort's. Untagged, that pass would
+  // consume the folder against the wrong list.
+  const pendingFolder = useRef<{ cohortId: string; folder: DiskSession } | null>(null);
   useEffect(() => {
     if (!landing?.cohortId || handledArrival.current === location.key) return;
     // Not marked handled until the socket is up, so a cold start retries
@@ -108,12 +128,45 @@ export function Analytics() {
     if (!connected) return;
     handledArrival.current = location.key;
     store.selectCohort(landing.cohortId);
-    if (landing.sessionId) store.selectSession(landing.sessionId);
+    // The scope is set explicitly, never left alone. `selectCohort` clears it
+    // only when the cohort actually changes, so arriving on the cohort you were
+    // already looking at would otherwise keep whichever session was filtered —
+    // and a Dashboard *cohort* row means the across-session view. A pending
+    // folder starts here too and narrows once it resolves, which is also where
+    // it should rest if this machine hasn't indexed that folder.
+    store.selectSession(landing.sessionId ?? ALL_SESSIONS);
+    pendingFolder.current = landing.sessionFolder
+      ? { cohortId: landing.cohortId, folder: landing.sessionFolder }
+      : null;
     setMetricId(null);
     setProfileHash(null);
     setReveal((n) => n + 1);
     void store.refresh(client, landing.cohortId);
-  }, [location.key, landing?.cohortId, landing?.sessionId, connected, client, store]);
+  }, [
+    location.key,
+    landing?.cohortId,
+    landing?.sessionId,
+    landing?.sessionFolder,
+    connected,
+    client,
+    store,
+  ]);
+
+  // A folder can only become a session id once the cohort's session list is
+  // here, which is after the refresh above resolves — so the arrival parks the
+  // folder and this picks it up.
+  //
+  // Cleared on the first attempt either way. A folder another Ephymeris machine
+  // wrote has no row on this one until a rescan adopts it (the "not indexed"
+  // hint on the Dashboard row), and retrying forever would mean a later manual
+  // session pick got yanked back the moment anything refreshed.
+  useEffect(() => {
+    const pending = pendingFolder.current;
+    if (!pending || pending.cohortId !== cohortId || state !== "ready") return;
+    pendingFolder.current = null;
+    const match = findSessionByFolder(sessions, pending.folder);
+    if (match) store.selectSession(match.id);
+  }, [sessions, state, cohortId, store]);
 
   // `version` is what makes an invalidation actionable: it is the only one of
   // these that changes when a cached summary is dropped out from under a

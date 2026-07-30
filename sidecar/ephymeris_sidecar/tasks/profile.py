@@ -1,4 +1,4 @@
-"""Parse and validate a sketch's `task.json` — `data-saving.md` §6.2.
+"""Parse and validate a sketch's `task.json` — `tasks.md` §3.2.
 
 Kept lenient in one specific way: a **missing** `task.json` is not an error —
 it's the fully-supported profile-less case (§6.1). A **malformed** one is an
@@ -35,6 +35,37 @@ PROFILE_KINDS = {"behavior", "utility"}
 #: Control widget types a utility profile can declare (§6.6).
 CONTROL_TYPES = {"button", "select", "grid"}
 
+#: Reserved across every profile (§6.4). The host appends the run's seed itself,
+#: so a profile claiming this key would collide and silently lose one of the two.
+RESERVED_WIRE_KEYS = {"SEED"}
+
+#: The §5 core fields. Config is merged into the session file FLAT at the top
+#: level, so a `metadataKey` matching one of these would overwrite it rather than
+#: sit beside it — and nothing downstream would report the loss.
+CORE_METADATA_KEYS = frozenset(
+    {
+        "rat",
+        "serial_port",
+        "session_id",
+        "sketch",
+        "stop_reason",
+        "n_events",
+        "ts_data",
+        "trial_seed",
+        "host_seed",
+    }
+)
+
+#: Python types a declared `default` may have, per the field's `type` (§6.2).
+#: `bool` is checked before `int` everywhere below: in Python `bool` IS an `int`,
+#: so an unguarded isinstance would accept `true` as a valid int default.
+_DEFAULT_TYPES: dict[str, tuple[type, ...]] = {
+    "int": (int,),
+    "float": (int, float),  # 0 is a legal float default
+    "bool": (bool,),
+    "string": (str,),
+}
+
 
 class TaskProfileError(Exception):
     """`task.json` exists but couldn't be parsed or is structurally invalid."""
@@ -47,15 +78,39 @@ class ConfigField:
     label: str
     type: str
     default: Any
+    # Presentation metadata (§6.2) — all optional, all inert on the wire. A
+    # profile that declares none renders exactly as it did before these existed.
+    group: str | None = None
+    unit: str | None = None
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
+    help: str | None = None
+    advanced: bool = False
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "metadataKey": self.metadata_key,
             "wireKey": self.wire_key,
             "label": self.label,
             "type": self.type,
             "default": self.default,
         }
+        # Omitted rather than emitted as null: the wire shape declares these
+        # optional (absent), not nullable, and the validator enforces that.
+        for key, value in (
+            ("group", self.group),
+            ("unit", self.unit),
+            ("min", self.min),
+            ("max", self.max),
+            ("step", self.step),
+            ("help", self.help),
+        ):
+            if value is not None:
+                payload[key] = value
+        if self.advanced:
+            payload["advanced"] = True
+        return payload
 
 
 @dataclass(frozen=True)
@@ -192,7 +247,7 @@ class TaskProfile:
     telemetry: Telemetry | None = None
     identify: Identify | None = None
     #: Names older software wrote into a run document's `sketch` field for this
-    #: same task (`data-saving.md` §6.7). Only the archive walk reads these, to
+    #: same task (`tasks.md` §3.7). Only the archive walk reads these, to
     #: decode historical runs whose recorded name isn't a folder name. Declared
     #: rather than inferred on purpose: matching "Shape - L" to `shaping_GL`
     #: by resemblance would be a guess, and a wrong guess decodes real data
@@ -219,7 +274,7 @@ class TaskProfile:
 
     @property
     def end_code(self) -> int | None:
-        """The strobe that marks a clean session end (`starting-a-session.md` §7).
+        """The strobe that marks a clean session end (`dashboard.md` §10).
 
         Identified by name in the strobes map — the code whose name contains
         `END_SESSION` (GRGL's `246 → END_SESSION`). A sketch that declares no
@@ -232,7 +287,7 @@ class TaskProfile:
 
 
 def profile_hash(profile: TaskProfile) -> str:
-    """A stable content address for a profile (`analytics.md` §8.2).
+    """A stable content address for a profile (`data.md` §8.3).
 
     Hashes the canonical JSON with sorted keys, so two profiles that mean the
     same thing hash the same regardless of authoring order. Used to snapshot
@@ -243,6 +298,25 @@ def profile_hash(profile: TaskProfile) -> str:
     holds a `dict` and lists, so the object itself is unhashable.
     """
     canonical = json.dumps(profile.to_json(), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def params_hash(config: dict[str, Any] | None) -> str | None:
+    """A stable content address for one run's task parameters (§6.9).
+
+    The companion to `profile_hash`, and needed for the same reason it was:
+    that hash covers the profile *declaration*, which is identical across every
+    run of a sketch. Once the values became operator-set, two runs on a 10 ms
+    and a 500 ms poke hold started hashing the same — so Analytics would pool
+    them onto one axis and call them comparable. Comparability is the pair.
+
+    `None` in, `None` out: a run with no recorded parameters is not the same
+    thing as a run recorded with none, and flattening the two would claim a
+    pre-v6 run was comparable to a modern default-valued one.
+    """
+    if config is None:
+        return None
+    canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
@@ -350,12 +424,33 @@ def _parse_kind(raw: Any) -> str:
     return raw
 
 
+def _opt_str(entry: dict[str, Any], key: str, where: str) -> str | None:
+    value = entry.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise TaskProfileError(f"config entry {where}: {key} must be a non-empty string")
+    return value
+
+
+def _opt_num(entry: dict[str, Any], key: str, where: str) -> float | None:
+    value = entry.get(key)
+    if value is None:
+        return None
+    # bool first: it is an int subclass, so `"min": true` would otherwise pass.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TaskProfileError(f"config entry {where}: {key} must be a number")
+    return value
+
+
 def _parse_config(raw: Any) -> list[ConfigField]:
     if raw is None:
         return []
     if not isinstance(raw, list):
         raise TaskProfileError("config must be an array")
     fields: list[ConfigField] = []
+    seen_metadata: set[str] = set()
+    seen_wire: set[str] = set()
     for entry in raw:
         if not isinstance(entry, dict):
             raise TaskProfileError("each config entry must be an object")
@@ -370,13 +465,66 @@ def _parse_config(raw: Any) -> list[ConfigField]:
             raise TaskProfileError(
                 f"config entry {metadata_key} has unknown type {field_type!r}"
             )
+
+        # Four ways a profile can be wrong that all fail SILENTLY downstream —
+        # a lost value or an overwritten one, with nothing raised at the point
+        # the data goes bad. Cheaper to reject the profile here.
+        if wire_key in RESERVED_WIRE_KEYS:
+            raise TaskProfileError(
+                f"config entry {metadata_key} claims the reserved wire key "
+                f"{wire_key!r} (§6.4) — the app supplies it"
+            )
+        if metadata_key in CORE_METADATA_KEYS:
+            raise TaskProfileError(
+                f"config entry {metadata_key} collides with a core session-file "
+                f"field (§5); config is merged in flat and would overwrite it"
+            )
+        if metadata_key in seen_metadata:
+            raise TaskProfileError(f"config declares metadataKey {metadata_key!r} twice")
+        if wire_key in seen_wire:
+            raise TaskProfileError(f"config declares wireKey {wire_key!r} twice")
+        seen_metadata.add(metadata_key)
+        seen_wire.add(wire_key)
+
+        default = entry.get("default")
+        if default is not None and not isinstance(default, _DEFAULT_TYPES[field_type]):
+            raise TaskProfileError(
+                f"config entry {metadata_key}: default {default!r} is not a {field_type}"
+            )
+        if field_type != "bool" and isinstance(default, bool):
+            raise TaskProfileError(
+                f"config entry {metadata_key}: default {default!r} is not a {field_type}"
+            )
+        if isinstance(default, str) and any(c.isspace() for c in default):
+            # The START grammar is space-separated, so this would split into two
+            # tokens on the wire and the firmware would drop the tail as a bare
+            # word. Rejected here so the *fallback* path in the START builder --
+            # which reaches for the default when a user value is unusable --
+            # always has something safe to reach for.
+            raise TaskProfileError(
+                f"config entry {metadata_key}: default {default!r} contains "
+                f"whitespace, which the space-separated START grammar cannot carry"
+            )
+
+        low = _opt_num(entry, "min", metadata_key)
+        high = _opt_num(entry, "max", metadata_key)
+        if low is not None and high is not None and low > high:
+            raise TaskProfileError(f"config entry {metadata_key}: min is above max")
+
         fields.append(
             ConfigField(
                 metadata_key=metadata_key,
                 wire_key=wire_key,
                 label=str(entry.get("label") or metadata_key),
                 type=field_type,
-                default=entry.get("default"),
+                default=default,
+                group=_opt_str(entry, "group", metadata_key),
+                unit=_opt_str(entry, "unit", metadata_key),
+                min=low,
+                max=high,
+                step=_opt_num(entry, "step", metadata_key),
+                help=_opt_str(entry, "help", metadata_key),
+                advanced=entry.get("advanced") is True,
             )
         )
     return fields

@@ -1,6 +1,6 @@
 """Board tooling interface.
 
-`hardware-interaction.md` §2 specifies `arduino-cli` in gRPC daemon mode. v1
+`README.md` §4.1 specifies `arduino-cli` in gRPC daemon mode. v1
 ships the subprocess backend behind this interface and swaps the daemon in
 later without the callers noticing — see §8 for why that migration is deferred
 rather than abandoned.
@@ -24,7 +24,7 @@ class FlashFailed(Exception):
 
     Carries which phase failed and the tool output that explains why, so the
     frontend gets a parsed message rather than a bare exit code
-    (`hardware-interaction.md` §4).
+    (`dashboard.md` §6.1).
     """
 
     def __init__(self, phase: str, message: str, detail: str | None = None) -> None:
@@ -94,7 +94,7 @@ class BoardTool(ABC):
         """Upload a compiled sketch to `address`, streaming progress.
 
         The caller owns the state machine and must have released the port
-        (`hardware-interaction.md` §3.3) before calling. Raises `FlashFailed`
+        (`dashboard.md` §5.3) before calling. Raises `FlashFailed`
         on error.
         """
 

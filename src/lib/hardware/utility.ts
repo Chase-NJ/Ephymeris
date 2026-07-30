@@ -1,5 +1,5 @@
 /**
- * Presentation for the hardware utility baseline (`hardware-interaction.md` §8).
+ * Presentation for the hardware utility baseline (`settings.md` §8).
  *
  * The baseline is meant to be invisible while it works, so these labels are
  * written for the moment it *doesn't*: each one says what the operator would

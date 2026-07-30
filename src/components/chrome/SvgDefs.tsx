@@ -2,7 +2,7 @@
  * Document-level SVG defs, mounted once by the app shell.
  *
  * Holds the continuous-corner (squircle) clip path referenced by `.squircle`
- * (ephymeris_v1.0.md §2.4). Declared in `objectBoundingBox` units so a single
+ * (dashboard.md §1.4). Declared in `objectBoundingBox` units so a single
  * definition scales to whatever size the mark is drawn at.
  */
 export function SvgDefs() {

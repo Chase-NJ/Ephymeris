@@ -21,7 +21,7 @@ import {
 } from "./strategyPlane";
 
 /**
- * The strategy plane, walked **within one session** (`analytics.md` §4.4).
+ * The strategy plane, walked **within one session** (`data.md` §11.1).
  *
  * `StrategySpace` plots one point per session, so a session is an endpoint
  * there and its shape is invisible: an animal that answered the same port for

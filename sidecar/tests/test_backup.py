@@ -1,4 +1,4 @@
-"""Backup Directory mirroring — `data-saving.md` §8.
+"""Backup Directory mirroring — `data.md` §7.
 
 Two things are worth stating about what these tests are for, because the
 mechanism is easy to test shallowly:

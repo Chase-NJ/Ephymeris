@@ -5,7 +5,7 @@ import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * The animated handshake status dot (ephymeris_v1.0.md §4.6).
+ * The animated handshake status dot (settings.md §5).
  *
  * Flat matte fills only — no glow, no gradient (§2.2). While a test runs the
  * dot breathes on a mirrored spring (springs-only rule, §2.5); results settle

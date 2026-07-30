@@ -1,4 +1,4 @@
-"""Mirror path resolution — `data-saving.md` §8.
+"""Mirror path resolution — `data.md` §7.
 
 A cohort's data folder can be relocated anywhere via `cohorts.setDataFolder`
 (`cohorts.md` §8), so a mirror path **cannot** be derived by subtracting

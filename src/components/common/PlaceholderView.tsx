@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { springPanel } from "@/lib/motion";
 
 /**
- * Shared stub for the three unwired sections (ephymeris_v1.0.md §4).
+ * Shared stub for the three unwired sections (dashboard.md §2).
  *
  * The point of this component is that clicking a nav item should still feel
  * like the app responded — an honest "not yet" rather than a dead button. It

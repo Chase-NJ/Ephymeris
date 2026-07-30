@@ -2,7 +2,7 @@
 
 Two loops run here:
 
-* **Presence poll** (`hardware-interaction.md` §7) — out-of-band, never opens a
+* **Presence poll** (`settings.md` §7) — out-of-band, never opens a
   port, so it takes no part in the per-port state machine and can run
   regardless of what any port is doing.
 * **Output flush** (§6.2) — batches accumulated lines and pushes them at a
@@ -29,7 +29,7 @@ from .states import PortState
 
 log = logging.getLogger(__name__)
 
-#: `hardware-interaction.md` §2 — all six boxes are Mega2560 R3s.
+#: `README.md` §4.1 — all six boxes are Mega2560 R3s.
 FQBN = "arduino:avr:mega"
 
 #: Progress callback for flash/reset: (phase, stream, text).
@@ -163,7 +163,7 @@ class PortManager:
         on_progress: PhaseProgress,
         suppress_passthrough_resume: bool = False,
     ) -> tuple[PortState, bool]:
-        """Compile + upload (`hardware-interaction.md` §4).
+        """Compile + upload (`dashboard.md` §6.1).
 
         Entering FLASHING force-releases PASSTHROUGH first, and on success the
         prior passthrough is auto-resumed at its old baud so the user sees the
@@ -172,7 +172,7 @@ class PortManager:
 
         `suppress_passthrough_resume` forces the port to IDLE afterward instead,
         so the session flash sequence can claim it for `IN_SESSION`
-        (`starting-a-session.md` §4).
+        (`dashboard.md` §7.4).
         """
         address = self.resolve_address(box)
         handler = self.handler(box)
@@ -207,7 +207,7 @@ class PortManager:
                               f"flashed {sketch_name}")
 
     async def reset(self, box: int) -> tuple[PortState, bool]:
-        """DTR-toggle reset (`hardware-interaction.md` §5).
+        """DTR-toggle reset (`dashboard.md` §6.2).
 
         A serial-layer operation, deliberately not routed through arduino-cli.
         Auto-resumes passthrough afterward if that was the prior state (§3.3).
@@ -233,7 +233,7 @@ class PortManager:
         on_ready: "Callable[[int | None], None]",
         on_strobe: "Callable[[int, int], None]",
     ) -> PortState:
-        """Enter `IN_SESSION` on one box (`starting-a-session.md` §7).
+        """Enter `IN_SESSION` on one box (`dashboard.md` §10).
 
         The box must be `IDLE` (the flash sequence leaves it there via
         `suppressPassthroughResume`). Baud is the session default.

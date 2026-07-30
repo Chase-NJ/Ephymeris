@@ -26,7 +26,7 @@ export const CMD = {
   PORT_RESET: "port.reset",
   PORT_ERROR_ACK: "port.error.ack",
 
-  // Hardware utility baseline (hardware-interaction.md §8)
+  // Hardware utility baseline (settings.md §8)
   UTILITY_STATUS: "utility.status",
   UTILITY_ENSURE: "utility.ensure",
   UTILITY_IDENTIFY: "utility.identify",
@@ -42,7 +42,7 @@ export const CMD = {
   COHORTS_SET_DATA_FOLDER: "cohorts.setDataFolder",
   COHORTS_SUGGEST_GROUPS: "cohorts.suggestGroups",
 
-  // Prefixes, Task Profiles & sessions (data-saving.md §9, starting-a-session.md §9)
+  // Prefixes, Task Profiles & sessions
   PREFIXES_LIST: "prefixes.list",
   PREFIXES_CREATE: "prefixes.create",
   PREFIXES_DELETE: "prefixes.delete",
@@ -59,17 +59,17 @@ export const CMD = {
   PORT_START_SESSION: "port.startSession",
   PORT_STOP_SESSION: "port.stopSession",
 
-  // Backup (data-saving.md §8)
+  // Backup (data.md §7)
   BACKUP_SYNC_NOW: "backup.syncNow",
 
-  // Analytics (analytics.md §9)
+  // Analytics (websocket-protocol.md §3.4)
   SESSIONS_LIST: "sessions.list",
   ANALYTICS_SUMMARY: "analytics.summary",
   ANALYTICS_SERIES: "analytics.series",
   ANALYTICS_RESCAN: "analytics.rescan",
   ANALYTICS_RECENT_SESSIONS: "analytics.recentSessions",
 
-  // Crash recovery (data-saving.md §7.3, §11)
+  // Crash recovery (data.md §12, §11)
   SESSIONS_RECOVER: "sessions.recover",
 } as const;
 
@@ -129,7 +129,7 @@ export type ErrorCode = (typeof ERR)[keyof typeof ERR];
 
 // --- Payload shapes --------------------------------------------------------
 
-/** Per-port state machine names (`hardware-interaction.md` §3.1). */
+/** Per-port state machine names (`dashboard.md` §5.1). */
 export type PortStateName = "IDLE" | "PASSTHROUGH" | "FLASHING" | "RESETTING" | "IN_SESSION" | "ERROR";
 
 /** One passthrough console line. Debug output, never persisted (§5.4). */
@@ -149,7 +149,7 @@ export interface DetectedBoard {
   boxId: number | null;
 }
 
-/** The four Arduino Directory states of `arduino-directory.md` §6. */
+/** The four Arduino Directory states of `tasks.md` §2.4. */
 export type DirectoryState = "not_configured" | "invalid" | "empty" | "ok";
 
 export interface DirectoryStatus {
@@ -171,12 +171,12 @@ export interface SkippedEntry {
   reason: string;
 }
 
-/** The full result of an Arduino Directory scan (`arduino-directory.md` §4). */
+/** The full result of an Arduino Directory scan (`tasks.md` §2.3). */
 export interface SketchDiscovery {
   directory: DirectoryStatus;
   sketches: SketchEntry[];
   skipped: SkippedEntry[];
-  /** Drives the "Partial" note (`arduino-directory.md` §6). */
+  /** Drives the "Partial" note (`tasks.md` §2.4). */
   skippedCount: number;
   libraries: string[];
   librariesPath: string | null;
@@ -199,8 +199,8 @@ export interface EphymerisSettings {
   arduinoDirectory: string | null;
   arduinoCliPath: string | null;
   /**
-   * The hardware utility sketch every idle box is returned to (`hardware-interaction.md` §8).
-   * Null turns the baseline off.
+   * The hardware utility sketch every idle box is returned to (`settings.md` §8). Null turns the
+   * baseline off.
    */
   utilitySketchPath: string | null;
   defaultBaud: number;
@@ -215,6 +215,14 @@ export interface EphymerisSettings {
   constellationSlots: Record<string, number>;
   /** First-run box setup finished or explicitly skipped; gates the Config wizard. Shell-only. */
   boxSetupComplete: boolean;
+  /**
+   * Sketch folder name → this rig's default task parameters for it, keyed by `metadataKey`
+   * (`tasks.md` §6.1). Keyed by NAME, not path: the two lab machines keep their Arduino
+   * Directories in different places, and the name is what the session file already records.
+   * Shell-only — the frontend merges these under the profile's own defaults and sends the result
+   * at `sessions.confirmMapping`, so the sidecar never reads them.
+   */
+  taskDefaults: Record<string, Record<string, unknown>>;
 }
 
 /**
@@ -424,6 +432,10 @@ export interface Session {
 
 export type ConfigFieldType = "int" | "float" | "bool" | "string";
 
+/**
+ * One operator-tunable parameter. Everything past `default` is presentation metadata and optional
+ * — a profile that declares none renders exactly as it did before these keys existed.
+ */
 export interface ConfigField {
   /** The `.json`/`.mat` field name the form collects under. */
   metadataKey: string;
@@ -432,6 +444,23 @@ export interface ConfigField {
   label: string;
   type: ConfigFieldType;
   default: unknown;
+  /**
+   * Section heading the form files this field under. Absent = ungrouped, which is how every
+   * pre-existing profile renders.
+   */
+  group?: string;
+  /** Suffix shown after the input, e.g. "ms". */
+  unit?: string;
+  /** Inclusive bound the form clamps to. */
+  min?: number;
+  /** Inclusive bound the form clamps to. */
+  max?: number;
+  /** Stepper increment; presentation only. */
+  step?: number;
+  /** One-line explanation shown with the field. */
+  help?: string;
+  /** Collapsed behind a disclosure by default. For fields a session should rarely need to touch. */
+  advanced?: boolean;
 }
 
 export interface LiveMetric {
@@ -497,8 +526,8 @@ export interface TelemetrySpec {
 
 /**
  * The two commands that make a box announce itself — a trial light, a buzzer, whatever the rig
- * has (`hardware-interaction.md` §8.3). Declared by the sketch so the app never has to know that
- * a Hart-lab box says `ON LIGHT`.
+ * has (`settings.md` §8.3). Declared by the sketch so the app never has to know that a Hart-lab
+ * box says `ON LIGHT`.
  */
 export interface IdentifySpec {
   on: string;
@@ -523,7 +552,7 @@ export interface TaskProfile {
   controls: Control[];
   /**
    * Names older software wrote for this same task, so the archive walk can decode historical runs
-   * (`data-saving.md` §6.7). Declared, never inferred.
+   * (`tasks.md` §3.7). Declared, never inferred.
    */
   legacyNames: string[];
   /** Utility profiles only. */
@@ -535,7 +564,7 @@ export interface TaskProfile {
   identify?: IdentifySpec;
 }
 
-/** One box's session-local mapping + task config (`starting-a-session.md` §3). */
+/** One box's session-local mapping + task config (`dashboard.md` §7.3). */
 export interface SessionBoxMapping {
   box: number;
   animalId: string;
@@ -576,7 +605,7 @@ export interface BoxTelemetry {
 export interface AnimalEnded {
   box: number;
   animalId: string;
-  /** `starting-a-session.md` §8's stop-reason set. */
+  /** `dashboard.md` §10.4's stop-reason set. */
   stopReason: string;
   filePath: string | null;
 }
@@ -646,7 +675,7 @@ export interface DiskSession {
   recorded: boolean;
 }
 
-/** One metric's whole-session result (`analytics.md` §3.2, §3.5). */
+/** One metric's whole-session result (`data.md` §9.2, §3.5). */
 export interface MetricSummary {
   id: string;
   label: string;
@@ -670,9 +699,8 @@ export interface MetricSummary {
 }
 
 /**
- * What actually happened per trial (`analytics.md` §3.8). Distinct from the declared metrics,
- * which are reward-*unconditional* — they score a detected poke whether or not the fluid hold
- * cleared.
+ * What actually happened per trial (`data.md` §9.8). Distinct from the declared metrics, which
+ * are reward-*unconditional* — they score a detected poke whether or not the fluid hold cleared.
  */
 export interface TrialOutcomes {
   /** Every trial boundary seen — one per odor onset. */
@@ -706,8 +734,8 @@ export interface TrialOutcomes {
 }
 
 /**
- * How far each offered trial got before the animal dropped out (`analytics.md` §3.10). Delimited
- * on the trial light, not on odor onset — the firmware only strobes odor-on after the animal has
+ * How far each offered trial got before the animal dropped out (`data.md` §9.10). Delimited on
+ * the trial light, not on odor onset — the firmware only strobes odor-on after the animal has
  * poked and held, so every other count in a run summary is silently conditioned on engagement and
  * none of them can measure it. A ladder, not a partition: presented >= poked >= odorDelivered by
  * construction.
@@ -742,9 +770,9 @@ export interface TrialEngagement {
 }
 
 /**
- * TrialOutcomes restricted to one declared condition (`analytics.md` §3.9), in authored
- * liveMetrics order. Answers 'how many trials of this kind were administered, and how many of
- * those paid out'.
+ * TrialOutcomes restricted to one declared condition (`data.md` §3.9), in authored liveMetrics
+ * order. Answers 'how many trials of this kind were administered, and how many of those paid
+ * out'.
  */
 export interface ConditionOutcomes {
   metricId: string;
@@ -775,6 +803,13 @@ export interface RunSummary {
   endedAt: string | null;
   sketchPath: string;
   profileHash: string | null;
+  /**
+   * Hash of the task parameters this run used (`data.md` §6.9). Comparability is the PAIR with
+   * `profileHash` — that one covers the profile declaration, which is identical across every run
+   * of a sketch however it was tuned. Null for a run recorded before parameters were
+   * operator-set.
+   */
+  paramsHash: string | null;
   profileSource: ProfileSource;
   /** The file is gone but this is its last known-good summary. */
   stale: boolean;
@@ -875,7 +910,7 @@ export interface MetricSeries {
   windowSize: number;
 }
 
-/** One sample of the within-session strategy walk (`analytics.md` §4.4). */
+/** One sample of the within-session strategy walk (`data.md` §11.1). */
 export interface StrategyPoint {
   /**
    * Counted trials resolved across *both* conditions at this sample — the only shared clock the

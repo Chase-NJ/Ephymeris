@@ -1,4 +1,4 @@
-"""Crash-recovery backfill — `data-saving.md` §7.3, §11.
+"""Crash-recovery backfill — `data.md` §12, §11.
 
 The invariant these protect: recovery is the inverse of `writer.AnimalWriter`.
 A `.json` backfilled from an orphaned `.tsv` must match what `finalize` would
@@ -200,7 +200,7 @@ def test_recover_cohort_says_nowhere_to_look(tmp_path: Path) -> None:
 
 
 def test_a_recovered_orphan_is_adoptable_by_the_rescan_walk(tmp_path: Path) -> None:
-    """The end-to-end handoff (§11 ↔ analytics.md §8.1): recovery writes the
+    """The end-to-end handoff (§11 ↔ data.md §8.1): recovery writes the
     `.json`, and the adoption walk — the same traversal — then finds it."""
     session = tmp_path / "2O-Bdisc" / "2O-Bdisc_25_2026-07-22"
     tsv = crash_a_run(session)

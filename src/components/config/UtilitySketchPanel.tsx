@@ -8,7 +8,7 @@ import type { UtilityStatus } from "@/lib/ws/protocol";
 
 /**
  * The hardware utility sketch and what the baseline is currently doing
- * (`hardware-interaction.md` §8).
+ * (`settings.md` §8).
  *
  * The restores themselves are silent by design — this panel exists so that
  * "silent" never means "unaccountable". It answers the two questions a silent

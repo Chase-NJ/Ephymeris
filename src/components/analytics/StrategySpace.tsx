@@ -18,7 +18,7 @@ import {
 } from "./strategyPlane";
 
 /**
- * Discrimination versus bias, **across sessions** (`analytics.md` §4.1).
+ * Discrimination versus bias, **across sessions** (`data.md` §11.1).
  *
  * Both axes are "fraction correct for this condition", plotted **as authored**
  * — x is `liveMetrics[0]`, y is `liveMetrics[1]`. `strategyPlane.tsx` owns the

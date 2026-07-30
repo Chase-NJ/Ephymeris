@@ -1,4 +1,4 @@
-"""Per-port state machine — `hardware-interaction.md` §3.
+"""Per-port state machine — `dashboard.md` §5.
 
 The table is transcribed from the §3.2 diagram, so these tests assert the
 diagram rather than the implementation: every legal edge is spelled out

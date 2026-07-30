@@ -78,7 +78,7 @@ export async function rescan(
 }
 
 /**
- * The crash-recovery backfill (`data-saving.md` §7.3): rebuild `.json`/`.mat`
+ * The crash-recovery backfill (`data.md` §12): rebuild `.json`/`.mat`
  * from orphaned write-ahead `.tsv` files. Same explicit-action discipline as
  * the rescan — and its natural follow-up, since a recovered file is an orphan
  * the rescan can then adopt.

@@ -41,12 +41,21 @@ import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Mission Control (`starting-a-session.md` §5–§6).
+ * Mission Control (`dashboard.md` §8–§6).
  *
- * The 3D constellation is the centerpiece (§6); the per-box cards stay below it
- * because §6.2 makes an unlit star deliberately inert — Start for a box that
- * isn't running yet has to be reachable somewhere, and §6.4 describes the
- * panel's controls as the same actions "just reachable from here too".
+ * The 3D constellation is the centerpiece (§6), so it is the whole view: a
+ * full-bleed sky with the chrome in two HUD rails over it, the same stage the
+ * Dashboard is (`dashboard.md` §2.1). The cards used to sit in a grid
+ * *below* the sky, which meant six boxes pushed the constellation off the top of
+ * the screen — the one thing this view exists to show, scrolled away by the
+ * boxes it is showing. Now nothing scrolls but the rails themselves.
+ *
+ * Left rail: what this session is, and the three things you can do to it whole.
+ * Right rail: one tile per box, which the focused star's panel swaps in for.
+ * The tiles still exist alongside the stars because §6.2 makes an unlit star
+ * deliberately inert — Start for a box that isn't running has to be reachable
+ * somewhere — and §6.4 describes the panel's controls as the same actions "just
+ * reachable from here too".
  */
 
 /** Trials the star temperatures average over — matches `StarPanel`'s readout
@@ -98,10 +107,16 @@ export function MissionControl() {
   const session = snapshot?.session ?? null;
   const boxes = useMemo(() => snapshot?.boxes ?? [], [snapshot]);
 
-  // Reached with a mapping that was never confirmed — a deep link, a reload
-  // mid-setup, or Back from a partial flash. Nothing has run and nothing is
-  // recording, so the running-session chrome (elapsed clock, Switch Group)
-  // would all be describing a session that doesn't exist yet.
+  /*
+   * `configuring` is NOT "the mapping was never confirmed", tempting as the name
+   * is. The sidecar only leaves that status in `sessions.startAll` (`app.py`), so
+   * a session sits in it through confirmation, flashing, and every per-box Start
+   * — the whole normal arrival at this screen. Reading it as "unconfirmed" told
+   * the operator to go finish a step they had just finished, and made End
+   * Session offer to *discard* runs that had actually recorded.
+   *
+   * So the two questions it was standing in for are asked directly, below.
+   */
   const configuring = session?.status === "configuring";
 
   // §6.2 — every animal in the cohort gets a star; only those whose box is
@@ -157,11 +172,25 @@ export function MissionControl() {
     return { index: i + 1, count: groups.length, name: found.name };
   }, [cohort, snapshot]);
 
+  /*
+   * Reached with a mapping that was never confirmed — a deep link, a reload
+   * mid-setup, or Back from a partial flash. The runner holds no boxes for this
+   * session, which is the fact that distinguishes it from a session that IS
+   * confirmed and merely hasn't been started yet.
+   */
+  const neverConfirmed = configuring && boxes.length === 0;
+  /*
+   * Whether anything has actually recorded. The only fact discard-vs-end may
+   * rest on: a session whose boxes were started one at a time never reaches
+   * `running` status, and discarding it would throw away real data.
+   */
+  const hasRun = runningCount > 0 || endedCount > 0;
+
   const lastGroup = groupInfo === null || groupInfo.index === groupInfo.count;
   const journeyStep = groupDone && lastGroup ? ("finish" as const) : ("run" as const);
   const hint = !connected
     ? "Waiting for the hardware service…"
-    : configuring
+    : neverConfirmed
       ? "This session hasn't started — finish box confirmation first."
       : boxes.length === 0
         // Only name actions that exist: Switch Group is a multi-group control.
@@ -238,195 +267,247 @@ export function MissionControl() {
   }
 
   return (
-    <motion.section
-      // Opacity-only, like every view that arrives over the sky: a y-offset
-      // transiently overflows the scroll container and flashes the scrollbar,
-      // and the route transition already owns whatever travel the guided flow
-      // wants (`AppShell.tsx`).
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={springPanel}
-      // pt-7 puts the header on the same 28px title line the Dashboard and
-      // Debug overlays use — one grid, three views.
-      className="mx-auto max-w-6xl px-8 pb-8 pt-7"
-    >
-      <SessionJourney step={journeyStep} hint={hint} group={groupInfo} />
-      <Header
-        name={sessionName ?? "—"}
-        date={session?.date ?? ""}
-        // A configuring session's startedAt is its *creation* time — showing
-        // "started 11:49" with a ticking elapsed counter would be describing
-        // a recording that never began.
-        startedAt={configuring ? null : (session?.startedAt ?? null)}
-        groupName={groupInfo?.name ?? null}
-      />
-
-      {error && (
-        <div
-          className="mt-4 flex items-start gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
-          style={{ color: "var(--color-status-error)" }}
-        >
-          <CircleAlert size={14} strokeWidth={1.75} className="mt-px shrink-0" />
-          {error}
-        </div>
-      )}
-
-      <div className="mt-5 flex items-center gap-2">
-        <Button
-          variant="primary"
-          disabled={busy || !connected || boxes.length === 0 || allRunning}
-          onClick={() =>
-            void run(async () => {
-              await startAll(client, sessionId!);
-              sessionStore.resetFinishedBoxes();
-            })
-          }
-        >
-          <Play size={13} strokeWidth={2} />
-          Start All
-        </Button>
-        {/* Not while configuring: "switch" implies a group already ran, and
-            the sidecar would refuse it — Resume setup below is the real path. */}
-        {multiGroup && !configuring && (
-          <Button
-            disabled={busy || !connected}
-            title="Ends this group's runs, then returns to box confirmation for the next group"
-            onClick={doSwitchGroup}
-          >
-            <Users size={13} strokeWidth={1.75} />
-            Switch Group
-          </Button>
+    <div className="relative h-full overflow-hidden">
+      {/* The sky, full-bleed and **outside the entrance animation** — the shared
+          WebGL canvas lives in this element (`SharedCanvas.tsx`), so fading the
+          view in would fade the constellation in with it, and the Dashboard we
+          arrive from is showing the same sky. Only the chrome animates; the sky
+          is handed over. Unframed for the same reason it always was: the canvas
+          is transparent and fades at its edges, so it belongs to the page. */}
+      <div className="absolute inset-0">
+        {cohort && (
+          <Constellation3D
+            cohortId={cohort.id}
+            animals={constellationAnimals}
+            focusedId={focusedId}
+            onFocus={setFocusedId}
+          />
         )}
-        <Button
-          variant="ghost"
-          disabled={busy || !connected}
-          onClick={() =>
-            void run(async () => {
-              // A never-started session is discarded, not "ended": nothing was
-              // recorded, so marking it completed would seed Analytics with an
-              // empty session — same rule as the session dock's Discard.
-              if (configuring) {
-                await abandonSession(client, sessionId!);
-                navigate("/");
-                return;
-              }
-              await endSession(client, sessionId!);
-              navigate("/analytics", {
-                state: {
-                  endedSession: sessionName,
-                  cohortId: session?.cohortId,
-                  sessionId,
-                },
-              });
-            })
-          }
-        >
-          {configuring ? "Discard session" : "End Session"}
-        </Button>
       </div>
 
-      {/* §5.5 — the group-swap prompt: every box in this group has finished
-          and another group is waiting, so the operator's next physical act is
-          returning animals to their cages. The placement scene walked
-          backwards says so better than a sentence would. */}
-      <AnimatePresence>
-        {groupDone && !lastGroup && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={springPanel}
-          >
-            <RatPlacementBanner
-              mode="return"
-              boxes={boxes.map((b) => b.box)}
-              caption="All boxes finished — return each animal to its home cage, then switch groups."
-              footer={
+      {/* The chrome, over the sky in two rails (`dashboard.md` §2.1, the
+          Dashboard's layout). Both rails ignore the pointer so the sky between
+          the tiles still orbits; the tiles themselves take it back. */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={springPanel}
+        className="pointer-events-none absolute inset-0"
+      >
+        {/* The session column: what this session IS, and the three things you
+            can do to it as a whole. The title rides inside the rail (p-4 + pt-3
+            = the shared 28px title line, pl-8 = the shared 32px indent). */}
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-[392px] overflow-y-auto p-4 pl-8">
+          <div className="pointer-events-auto flex flex-col gap-3 pt-3">
+            <Header
+              name={sessionName ?? "—"}
+              date={session?.date ?? ""}
+              // startedAt is the record's *creation* time and is never
+              // restamped, so it only means anything once something is
+              // recording — until then, "started 11:49" with a ticking counter
+              // describes a run that never began. Gated on a box having
+              // actually run rather than on the session status, which per-box
+              // Start never advances.
+              startedAt={hasRun ? (session?.startedAt ?? null) : null}
+              groupName={groupInfo?.name ?? null}
+            />
+
+            <SessionJourney step={journeyStep} hint={hint} group={groupInfo} />
+
+            {error && (
+              <div
+                className="flex items-start gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
+                style={{ color: "var(--color-status-error)" }}
+              >
+                <CircleAlert size={14} strokeWidth={1.75} className="mt-px shrink-0" />
+                {error}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="primary"
+                disabled={busy || !connected || boxes.length === 0 || allRunning}
+                onClick={() =>
+                  void run(async () => {
+                    await startAll(client, sessionId!);
+                    sessionStore.resetFinishedBoxes();
+                  })
+                }
+              >
+                <Play size={13} strokeWidth={2} />
+                Start All
+              </Button>
+              {/* Only once a group is under way: "switch" implies one already
+                  ran, and before that Resume setup (or Start All) is the real
+                  path. */}
+              {multiGroup && hasRun && (
                 <Button
-                  variant="primary"
                   disabled={busy || !connected}
+                  title="Ends this group's runs, then returns to box confirmation for the next group"
                   onClick={doSwitchGroup}
                 >
                   <Users size={13} strokeWidth={1.75} />
                   Switch Group
                 </Button>
-              }
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {boxes.length === 0 ? (
-        configuring ? (
-          // The hint above says what's wrong; this is the way back. Same
-          // derivation as the session dock's "Resume setup" — Step 2 needs a
-          // group and the record doesn't carry one.
-          <div className="mt-6 flex flex-col items-start gap-3">
-            <p className="text-[13px] text-static">
-              Boxes were never confirmed for this session, so there is nothing
-              to run yet. Pick sketches and flash from box confirmation.
-            </p>
-            <Button variant="primary" disabled={busy || !connected || !cohort} onClick={resumeSetup}>
-              Resume setup
-            </Button>
-          </div>
-        ) : (
-          <p className="mt-6 text-[13px] text-static">
-            No boxes are configured for this session yet.
-          </p>
-        )
-      ) : (
-        <>
-          {/* The centrepiece (§6), and sized like one: the constellation is
-              the view's subject, not a thumbnail above the real controls. It
-              takes the viewport's height rather than a fixed pixel box so a
-              large lab monitor gets a genuinely cinematic scene, with a floor
-              that keeps it usable on a laptop. Unframed on purpose — the
-              canvas is transparent and fades out at its edges (SharedCanvas.tsx), so
-              the sky belongs to the page rather than sitting in a tile; a
-              border here would put the wall back. */}
-          <div className="relative mt-5 h-[min(64vh,720px)] min-h-[460px] overflow-hidden">
-            {cohort && (
-              <Constellation3D
-                cohortId={cohort.id}
-                animals={constellationAnimals}
-                focusedId={focusedId}
-                onFocus={setFocusedId}
-              />
-            )}
-            <AnimatePresence>
-              {focusedBox && (
-                <StarPanel
-                  key={focusedBox.box}
-                  box={focusedBox}
-                  busy={busy || !connected}
-                  onStart={() => void run(() => startOne(focusedBox.box))}
-                  onStop={() => void run(() => stopBox(client, focusedBox.box))}
-                  onReset={() =>
-                    void run(() => client.call(CMD.PORT_RESET, { box: focusedBox.box }))
-                  }
-                  onBack={() => setFocusedId(null)}
-                />
               )}
-            </AnimatePresence>
+              <Button
+                variant="ghost"
+                disabled={busy || !connected}
+                onClick={() =>
+                  void run(async () => {
+                    // A session that never recorded anything is discarded, not
+                    // "ended": marking it completed would seed Analytics with an
+                    // empty session — the same rule as the session dock's
+                    // Discard. Keyed on whether a box ever ran, NOT on the
+                    // session status: boxes started one at a time leave the
+                    // status at `configuring` forever, and discarding on that
+                    // basis threw away real runs.
+                    if (!hasRun) {
+                      await abandonSession(client, sessionId!);
+                      navigate("/");
+                      return;
+                    }
+                    await endSession(client, sessionId!);
+                    navigate("/analytics", {
+                      state: {
+                        endedSession: sessionName,
+                        cohortId: session?.cohortId,
+                        sessionId,
+                      },
+                    });
+                  })
+                }
+              >
+                {hasRun ? "End Session" : "Discard session"}
+              </Button>
+            </div>
           </div>
+        </div>
 
-          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-            {boxes.map((box) => (
-              <BoxCard
-                key={box.box}
-                box={box}
+        {/* The box column: one tile per box, or the focused star's instrument
+            panel. They SWAP rather than stack — the panel is that box's tile
+            opened up, and two absolutely-positioned columns fighting for one
+            edge is what the panel's old self-docking amounted to. Six tiles
+            scroll inside this rail; the window itself never scrolls. */}
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-[392px] overflow-y-auto p-4 pr-8">
+          {/* `popLayout`, never `wait` — the same call `AppShell`'s route
+              transition makes and for the same reason: `wait` holds the
+              incoming child until the outgoing one has finished exiting, so
+              anything that stalls an exit stalls the swap itself and the panel
+              simply never arrives. Here the new child mounts at once and the old
+              one is lifted out of flow to leave. */}
+          <AnimatePresence mode="popLayout" initial={false}>
+            {focusedBox ? (
+              <StarPanel
+                key={`panel-${focusedBox.box}`}
+                box={focusedBox}
                 busy={busy || !connected}
-                durationMinutes={session?.durationMinutes ?? null}
-                onStart={() => void run(() => startOne(box.box))}
-                onStop={() => void run(() => stopBox(client, box.box))}
-                onReset={() => void run(() => client.call(CMD.PORT_RESET, { box: box.box }))}
+                onStart={() => void run(() => startOne(focusedBox.box))}
+                onStop={() => void run(() => stopBox(client, focusedBox.box))}
+                onReset={() =>
+                  void run(() => client.call(CMD.PORT_RESET, { box: focusedBox.box }))
+                }
+                onBack={() => setFocusedId(null)}
               />
-            ))}
-          </div>
-        </>
-      )}
-    </motion.section>
+            ) : boxes.length > 0 ? (
+              <motion.div
+                key="boxes"
+                initial={{ opacity: 0, x: 12 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 12 }}
+                transition={springPanel}
+                className="pointer-events-auto flex flex-col gap-3 pt-3"
+              >
+                {boxes.map((box) => (
+                  <BoxCard
+                    key={box.box}
+                    box={box}
+                    busy={busy || !connected}
+                    durationMinutes={session?.durationMinutes ?? null}
+                    onOpen={() => setFocusedId(box.animalId)}
+                    onStart={() => void run(() => startOne(box.box))}
+                    onStop={() => void run(() => stopBox(client, box.box))}
+                    onReset={() => void run(() => client.call(CMD.PORT_RESET, { box: box.box }))}
+                  />
+                ))}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
+
+        {/* Centre stage, between the rails: the moments that are about the
+            whole rig rather than one box, and that the operator has to act on
+            before anything else means much. */}
+        <div className="pointer-events-none absolute inset-y-0 left-[392px] right-[392px] flex items-center justify-center p-6">
+          <AnimatePresence mode="popLayout">
+            {groupDone && !lastGroup ? (
+              /* §5.5 — the group-swap prompt: every box in this group has
+                 finished and another group is waiting, so the operator's next
+                 physical act is returning animals to their cages. The placement
+                 scene walked backwards says so better than a sentence would. */
+              <motion.div
+                key="swap"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={springPanel}
+                className="hud pointer-events-auto max-h-full w-full max-w-[520px] overflow-y-auto rounded-lg p-4"
+              >
+                <RatPlacementBanner
+                  mode="return"
+                  boxes={boxes.map((b) => b.box)}
+                  caption="All boxes finished — return each animal to its home cage, then switch groups."
+                  footer={
+                    <Button
+                      variant="primary"
+                      disabled={busy || !connected}
+                      onClick={doSwitchGroup}
+                    >
+                      <Users size={13} strokeWidth={1.75} />
+                      Switch Group
+                    </Button>
+                  }
+                />
+              </motion.div>
+            ) : boxes.length === 0 ? (
+              <motion.div
+                key="empty"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={springPanel}
+                className="hud pointer-events-auto w-full max-w-[420px] rounded-lg p-4"
+              >
+                {neverConfirmed ? (
+                  // The hint in the left rail says what's wrong; this is the way
+                  // back. Same derivation as the session dock's "Resume setup" —
+                  // Step 2 needs a group and the record doesn't carry one.
+                  <div className="flex flex-col items-start gap-3">
+                    <p className="text-[13px] leading-relaxed text-static">
+                      Boxes were never confirmed for this session, so there is
+                      nothing to run yet. Pick sketches and flash from box
+                      confirmation.
+                    </p>
+                    <Button
+                      variant="primary"
+                      disabled={busy || !connected || !cohort}
+                      onClick={resumeSetup}
+                    >
+                      Resume setup
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-[13px] text-static">
+                    No boxes are configured for this session yet.
+                  </p>
+                )}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
+      </motion.div>
+    </div>
   );
 }
 
@@ -482,7 +563,7 @@ function Header({
 }
 
 /**
- * Mirroring state, mid-run (`data-saving.md` §8).
+ * Mirroring state, mid-run (`data.md` §7).
  *
  * Deliberately near-silent when healthy — a session screen shouldn't spend
  * attention on something that's working. But a backup target dying during an
@@ -515,10 +596,20 @@ function clock24(when: Date): string {
   return when.toLocaleTimeString("en-GB", { hour12: false });
 }
 
+/**
+ * One box, as a tile in the right rail.
+ *
+ * `.hud` rather than `.surface`: these sit over the sky now, and an opaque card
+ * there would punch a hole in it (`dashboard.md` §1.4). Clicking the tile
+ * flies to that box's star and opens its panel — the rail swaps to it, so the
+ * tile and the panel are one object at two sizes rather than two places the
+ * same controls live.
+ */
 function BoxCard({
   box,
   busy,
   durationMinutes,
+  onOpen,
   onStart,
   onStop,
   onReset,
@@ -526,6 +617,7 @@ function BoxCard({
   box: SessionBox;
   busy: boolean;
   durationMinutes: number | null;
+  onOpen: () => void;
   onStart: () => void;
   onStop: () => void;
   onReset: () => void;
@@ -536,10 +628,15 @@ function BoxCard({
   const live = port.state === "IN_SESSION";
 
   return (
-    <div className="surface rounded-md p-4">
+    <section className="hud rounded-md p-3.5">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[13px] font-medium text-starlight">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="min-w-0 text-left"
+          title="Open this box's panel"
+        >
+          <div className="truncate text-[13px] font-medium text-starlight">
             Box {box.box} · {box.animalName}
           </div>
           <div className="truncate font-mono text-[11px] text-static">
@@ -550,13 +647,13 @@ function BoxCard({
             live={live}
             durationMinutes={durationMinutes}
           />
-        </div>
+        </button>
         <StateChip state={port.state} reason={port.reason} />
       </div>
 
       {/* §5.3 — Stop is a request the firmware honours at a trial boundary, so
           it stays available while the box is live and doesn't force a state. */}
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button variant="primary" disabled={busy || live} onClick={onStart}>
           <Play size={12} strokeWidth={2} />
           Start
@@ -578,7 +675,7 @@ function BoxCard({
       ) : (
         <MetricStrip box={box.box} metrics={metrics} />
       )}
-    </div>
+    </section>
   );
 }
 

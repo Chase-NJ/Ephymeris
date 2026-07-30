@@ -11,7 +11,7 @@ import { ZODIAC, type ZodiacConstellation } from "@/lib/constellations/zodiac";
 import { springSnappy } from "@/lib/motion";
 
 /**
- * The zodiac catalogue picker (ephymeris_v1.0.md §4.6).
+ * The zodiac catalogue picker (settings.md §5).
  *
  * Star counts are shown honestly, and a constellation with fewer stars than
  * the rig has boxes is disabled rather than distorted — Aries genuinely

@@ -7,7 +7,7 @@ import { springPanel } from "@/lib/motion";
 import { BOX_COUNT, nextAvailableBox, newBinding, type BoxBinding } from "@/lib/settings/schema";
 
 /**
- * Box → board bindings (ephymeris_v1.0.md §5).
+ * Box → board bindings (README.md §1).
  *
  * Bound by `hardware_id` — the board's USB serial number — rather than port
  * address, because Windows renumbers COM ports across reboots and

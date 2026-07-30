@@ -1,5 +1,5 @@
 /**
- * Session and prefix types — `data-saving.md` §3–§6.
+ * Session and prefix types — `data.md` §3.1–§6.
  *
  * The wire shapes live in the generated protocol module (`protocol/schema.py`
  * is their authority) and are re-exported here so callers keep one import
@@ -43,7 +43,7 @@ export type ActiveSessions = CommandResultMap["sessions.active"];
 
 // --- Configuration flow ---------------------------------------------------
 
-/** One box's session-local mapping + task config (`starting-a-session.md` §3). */
+/** One box's session-local mapping + task config (`dashboard.md` §7.3). */
 export interface BoxMapping {
   box: number;
   animalId: string;
@@ -83,8 +83,51 @@ export function animalsInGroup(cohort: Cohort, groupId: string): Animal[] {
     .sort((a, b) => (a.boxNumber ?? 0) - (b.boxNumber ?? 0));
 }
 
-/** Defaults from a profile's `config`, used to seed the pre-flight form (§3). */
-export function defaultConfig(profile: TaskProfile | null): Record<string, unknown> {
+/**
+ * The values a box starts on, merged across the three layers of
+ * `tasks.md` §6.1: the profile's own defaults, then this rig's saved
+ * defaults for the sketch, then anything already set on the box.
+ *
+ * The rig layer is filtered through the profile rather than spread over it, so
+ * a saved default for a field the sketch no longer declares can't survive an
+ * edit to `task.json` and reappear on the wire as a stale token.
+ */
+export function defaultConfig(
+  profile: TaskProfile | null,
+  rigDefaults: Record<string, unknown> = {},
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   if (!profile) return {};
-  return Object.fromEntries(profile.config.map((f) => [f.metadataKey, f.default]));
+  return Object.fromEntries(
+    profile.config.map((f) => {
+      const key = f.metadataKey;
+      if (key in overrides) return [key, overrides[key]];
+      if (key in rigDefaults) return [key, rigDefaults[key]];
+      return [key, f.default];
+    }),
+  );
+}
+
+/**
+ * This rig's saved defaults for one sketch. Keyed by folder name rather than
+ * path — the two lab machines keep their Arduino Directories in different
+ * places, and the name is what the session file already records.
+ */
+export function sketchName(sketchPath: string | null): string {
+  if (!sketchPath) return "";
+  const parts = sketchPath.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
+/** Which fields differ from what the rig would have supplied on its own. */
+export function overriddenKeys(
+  profile: TaskProfile | null,
+  rigDefaults: Record<string, unknown>,
+  config: Record<string, unknown>,
+): string[] {
+  if (!profile) return [];
+  const base = defaultConfig(profile, rigDefaults);
+  return profile.config
+    .map((f) => f.metadataKey)
+    .filter((key) => key in config && !Object.is(config[key], base[key]));
 }

@@ -3,7 +3,7 @@ import { useMetricHistory } from "@/lib/sessions/context";
 import type { TelemetryMetric } from "@/lib/sessions/types";
 
 /**
- * Live rolling metrics for one box (`data-saving.md` §6.5).
+ * Live rolling metrics for one box (`tasks.md` §5).
  *
  * A sketch with no Task Profile has no metrics to show — the doc's fallback is
  * the raw strobe log, which Debug Mode already provides, so this says so rather

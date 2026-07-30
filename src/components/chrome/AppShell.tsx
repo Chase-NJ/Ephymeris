@@ -11,7 +11,7 @@ import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * Two-region layout per ephymeris_v1.0.md §3.1: custom titlebar across the top,
+ * Two-region layout per dashboard.md §2.1: custom titlebar across the top,
  * persistent sidebar on the left, content on the right. The starfield sits
  * behind the content region only — not behind the sidebar, whose frosted
  * surface would blur it into noise.
@@ -50,7 +50,7 @@ export function AppShell() {
 
 /**
  * The guided flow's steps are a sequence, so moving between them travels
- * (`starting-a-session.md` §6.5): a step slides in from the side it came from
+ * (`dashboard.md` §8.6): a step slides in from the side it came from
  * and leaves toward the side you're going, which makes Back read as going
  * back rather than as another arrival. Everything outside the flow crossfades
  * instead — a lateral slide between unrelated destinations would imply an

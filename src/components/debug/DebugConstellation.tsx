@@ -22,7 +22,7 @@ import { useBoundBoxes, useSettings } from "@/lib/settings/context";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * The Debug landing constellation (`ephymeris_v1.0.md` §4.3).
+ * The Debug landing constellation (`dashboard.md` §4).
  *
  * The same 3D browser as Mission Control — same camera, same orbit/pan/zoom,
  * same hover reticle, nameplates and arrival flight, all from

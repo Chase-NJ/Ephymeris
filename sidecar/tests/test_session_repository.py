@@ -1,4 +1,4 @@
-"""Prefix / session persistence — `data-saving.md` §3–§4."""
+"""Prefix / session persistence — `data.md` §3.1–§4."""
 
 from __future__ import annotations
 

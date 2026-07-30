@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import type { ConsoleLine } from "@/lib/hardware/store";
 
 /**
- * The console scrollback (`hardware-interaction.md` §6.2): batched output with
+ * The console scrollback (`dashboard.md` §6.3): batched output with
  * sent commands interleaved, pinned to the bottom only while the user is at
  * the bottom — scrolling up to read must not be fought by the autoscroll.
  *
@@ -15,7 +15,7 @@ import type { ConsoleLine } from "@/lib/hardware/store";
 const PIN_THRESHOLD_PX = 24;
 
 /**
- * A sketch's live telemetry lines (`data-saving.md` §6.6): received lines
+ * A sketch's live telemetry lines (`tasks.md` §3.5): received lines
  * beginning with the profile's `telemetry.match`, conventionally `STATUS`.
  *
  * These are emitted on every state change *plus* a ~1 s heartbeat, so on a

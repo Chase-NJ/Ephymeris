@@ -81,10 +81,21 @@ export function assignShips(members: ShipMember[]): Map<number, SceneOrbiter[]> 
   for (const [key, crew] of crews) {
     const box = anchorBox(crew);
     if (box === null) continue;
+    /*
+     * Whoever is running in THIS box is *at* the star, not orbiting it, and
+     * leaving their name off the tag is what says so: the ship reads as the
+     * cage-mates still waiting their turn. A solo runner therefore leaves the
+     * tag empty, which `Orbiters` renders as no tag at all.
+     *
+     * Matched on the anchor box rather than on `running` alone, because a
+     * cage-mate running at some *other* star is not at this one — it still
+     * belongs on this tag, since the crew rides a single craft.
+     */
+    const inOrbit = crew.filter((m) => !(m.running && m.box === box));
     const ships = byBox.get(box) ?? [];
     ships.push({
       id: key,
-      name: crew.map((m) => m.name).join(" · "),
+      name: inOrbit.map((m) => m.name).join(" · "),
       active: crew.some((m) => m.running),
     });
     byBox.set(box, ships);

@@ -1,4 +1,4 @@
-"""Analytics orchestration — `analytics.md` §8, §9.
+"""Analytics orchestration — `data.md` §8, §9.
 
 Where `test_analytics_derive.py` covers the maths, this covers everything
 around it: which profile decodes a run, what happens when a file is missing or

@@ -1,4 +1,4 @@
-"""Prefix and session persistence — `data-saving.md` §3–§4.
+"""Prefix and session persistence — `data.md` §3.1–§4.
 
 Synchronous; callers wrap in `asyncio.to_thread`. Shares the cohort database
 and its lock, so a session write is atomic against a concurrent cohort edit.
@@ -12,6 +12,7 @@ import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from ..cohorts.db import Database
 from .models import (
@@ -39,7 +40,26 @@ def _hydrate_run(row: sqlite3.Row) -> SessionAnimalRun:
         ended_at=row["ended_at"],
         stop_reason=row["stop_reason"],
         profile_hash=row["profile_hash"],
+        config=_load_config(row["config_json"]),
+        params_hash=row["params_hash"],
     )
+
+
+def _load_config(raw: str | None) -> dict[str, Any] | None:
+    """Decode a run's stored task parameters (§6.9).
+
+    A row written before v6, or by a build that stored something unreadable,
+    reads back as `None` rather than raising: this is a record of what a run
+    used, and a corrupt one must not take the run's whole history with it.
+    """
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        log.warning("run has unreadable config_json; treating it as absent")
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _now() -> str:
@@ -119,7 +139,7 @@ class SessionRepository:
         """Session numbers already used for this prefix on `date` (§2.2).
 
         Feeds the *soft* same-day warning only. Reusing a number is legal
-        (`data-saving.md` §1) — appending to an existing folder is a supported
+        (`data.md` §1) — appending to an existing folder is a supported
         way to resume an interrupted run — so this never blocks. Aborted
         sessions are excluded: they wrote nothing, so there is no folder the
         warning could truthfully be about.
@@ -216,8 +236,9 @@ class SessionRepository:
             self._db.conn.execute(
                 "INSERT OR REPLACE INTO session_animal_runs"
                 " (id, session_id, animal_id, box_number, sketch_path, file_path,"
-                "  started_at, ended_at, stop_reason, profile_hash)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  started_at, ended_at, stop_reason, profile_hash, config_json,"
+                "  params_hash)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.id,
                     run.session_id,
@@ -229,6 +250,8 @@ class SessionRepository:
                     run.ended_at,
                     run.stop_reason,
                     run.profile_hash,
+                    None if run.config is None else json.dumps(run.config, sort_keys=True),
+                    run.params_hash,
                 ),
             )
             self._db.conn.commit()
@@ -242,7 +265,7 @@ class SessionRepository:
         return [_hydrate_run(r) for r in rows]
 
     def runs_for_cohort(self, cohort_id: str) -> list[SessionAnimalRun]:
-        """Every run across every session of one cohort (`analytics.md` §9).
+        """Every run across every session of one cohort (`websocket-protocol.md` §3.4).
 
         One join rather than a query per session: the whole cohort table is a
         single `analytics.summary` payload, and per-session calls would mean a
@@ -258,7 +281,7 @@ class SessionRepository:
             ).fetchall()
         return [_hydrate_run(r) for r in rows]
 
-    # --- listing (analytics.md §9) ----------------------------------------
+    # --- listing (websocket-protocol.md §3.4) ----------------------------------------
 
     def list_sessions(
         self, cohort_id: str, *, include_aborted: bool = False

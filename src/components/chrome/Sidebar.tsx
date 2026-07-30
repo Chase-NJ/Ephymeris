@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ChartLine, Orbit, Radio, Settings, Terminal, Users } from "lucide-react";
+import { ChartLine, Orbit, Radio, Settings, Users, Workflow } from "lucide-react";
 import { NavLink, useLocation } from "react-router";
 import type { LucideIcon } from "lucide-react";
 
@@ -8,7 +8,7 @@ import { springSnappy } from "@/lib/motion";
 import { useRunningSession } from "@/lib/sessions/context";
 
 /**
- * Persistent sidebar (ephymeris_v1.0.md §3.2).
+ * Persistent sidebar (dashboard.md §2.2).
  *
  * Frosted `Nebula` (§2.4 vibrancy — one of only two places it's allowed).
  * Two groups: the working destinations at the top, and the configuration
@@ -36,10 +36,15 @@ const NAV_MAIN: readonly NavItem[] = [
     to: "/",
     label: "Dashboard",
     icon: Orbit,
-    match: (p) => p === "/" || p.startsWith("/session"),
+    // `/debug` counts as Dashboard, not as a destination of its own. Debug has
+    // no nav entry: it is reached only by selecting a box on the Dashboard's
+    // sky, and it *is* that sky with the camera flown in — so the tab the user
+    // came from should stay lit rather than nothing being selected at all. The
+    // same reasoning `/session/*` already gets.
+    match: (p) => p === "/" || p.startsWith("/session") || p.startsWith("/debug"),
   },
   { to: "/cohorts", label: "Cohorts", icon: Users },
-  { to: "/debug", label: "Debug", icon: Terminal },
+  { to: "/task", label: "Task", icon: Workflow },
   { to: "/analytics", label: "Analytics", icon: ChartLine },
 ];
 

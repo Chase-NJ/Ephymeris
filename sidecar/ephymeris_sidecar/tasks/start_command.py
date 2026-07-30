@@ -1,4 +1,4 @@
-"""Build the `START` command from a Task Profile — `data-saving.md` §6.3.
+"""Build the `START` command from a Task Profile — `tasks.md` §6.2.
 
 Generic across any profile: `START <wireKey>=<value> <wireKey>=<value> …`,
 space-separated and order-independent, matching the firmware's
@@ -10,13 +10,30 @@ from __future__ import annotations
 
 from typing import Any
 
-from .profile import ConfigField, TaskProfile
+from .profile import ConfigField, TaskProfile, TaskProfileError
 
-#: The wire key carrying the host-drawn trial seed (`data-saving.md` §6.4).
+#: The wire key carrying the host-drawn trial seed (`tasks.md` §6.4).
 #: Reserved across every profile rather than declared by any one of them: a
 #: profile that named `SEED` in its own `config` would collide with this and
 #: silently lose one of the two values.
 SEED_WIRE_KEY = "SEED"
+
+#: Hard cap on a `START` line, mirroring `START_LINE_MAX` in the Arduino repo's
+#: `libraries/BehaviorBox/BehaviorBox.h`. There is no shared source across the
+#: two repos, so the two constants must be changed together.
+#:
+#: This is checked rather than trusted because the firmware CANNOT report the
+#: failure: `readLineInto()` truncates an overlong line and drops the rest of the
+#: bytes, so an over-declared profile would run the session on whichever values
+#: happened to fit, with the board none the wiser. Refusing to build the line is
+#: the only place the problem is visible.
+START_LINE_MAX = 640
+
+#: Room reserved for the seed token appended later by `with_trial_seed`. The
+#: config half of the line is built minutes before the seed is drawn, so the
+#: budget has to account for a token that does not exist yet: a space plus
+#: `SEED=` plus the largest value `seed.py` can draw (2**31 - 2, ten digits).
+_SEED_TOKEN_BUDGET = len(f" {SEED_WIRE_KEY}={2**31 - 2}")
 
 
 def _format_value(field: ConfigField, value: Any) -> str:
@@ -31,7 +48,13 @@ def _format_value(field: ConfigField, value: Any) -> str:
         return str(int(value))
     if field.type == "float":
         return _trim_float(float(value))
-    return str(value)
+    rendered = str(value)
+    if rendered != rendered.strip() or any(c.isspace() for c in rendered):
+        # The grammar is space-separated, so an embedded space would split one
+        # value into two tokens -- the firmware would then parse the tail as a
+        # bare word and drop it, silently.
+        raise ValueError(f"string value for {field.wire_key} contains whitespace")
+    return rendered
 
 
 def _as_bool(value: Any) -> bool:
@@ -57,6 +80,9 @@ def build_start_command(profile: TaskProfile | None, config: dict[str, Any]) -> 
     A field absent from `config` falls back to the profile's declared default;
     a field the profile doesn't declare is ignored, so stale UI state can't leak
     unknown tokens onto the wire.
+
+    Raises `TaskProfileError` when the profile declares more than the firmware's
+    line buffer can hold — see `START_LINE_MAX`.
     """
     if profile is None or not profile.config:
         return "START"
@@ -76,7 +102,17 @@ def build_start_command(profile: TaskProfile | None, config: dict[str, Any]) -> 
             rendered = _format_value(field, field.default)
         tokens.append(f"{field.wire_key}={rendered}")
 
-    return "START " + " ".join(tokens) if tokens else "START"
+    if not tokens:
+        return "START"
+    command = "START " + " ".join(tokens)
+    if len(command) + _SEED_TOKEN_BUDGET > START_LINE_MAX:
+        raise TaskProfileError(
+            f"{profile.task_name}: the START line this profile builds is "
+            f"{len(command) + _SEED_TOKEN_BUDGET} characters, over the firmware's "
+            f"{START_LINE_MAX}-character limit. Shorten some wire keys or declare "
+            f"fewer fields -- the board would truncate the line without reporting it."
+        )
+    return command
 
 
 def with_trial_seed(command: str, seed: int) -> str:

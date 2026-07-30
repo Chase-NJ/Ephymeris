@@ -1,5 +1,5 @@
 """Live session runner — ties `IN_SESSION` serial I/O to file writing and
-telemetry (`starting-a-session.md` §7, `data-saving.md` §7).
+telemetry (`dashboard.md` §10, `data.md` §5).
 
 Owns the per-box run state that the port handler doesn't: which animal is in
 each box, its writer, its rolling metrics, and its `SessionAnimalRun` record.
@@ -282,7 +282,7 @@ class SessionRunner:
         run.writer = writer
         run.metrics = MetricSet(run.config.profile)
         # From here the `.tsv` grows on every strobe; the mirror picks it up on
-        # its own cadence and never on this thread (`data-saving.md` §8).
+        # its own cadence and never on this thread (`data.md` §7).
         if self._backup is not None:
             self._backup.track(files.tsv)
 

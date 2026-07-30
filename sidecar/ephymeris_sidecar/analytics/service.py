@@ -1,4 +1,4 @@
-"""Analytics orchestration — `analytics.md` §8, §9.
+"""Analytics orchestration — `data.md` §8, §9.
 
 What the four commands actually call. Owns the indexing lock, the profile
 resolution ladder, the cache, and the explicit archive walk.
@@ -157,6 +157,7 @@ class AnalyticsService:
                     "endedAt": run.ended_at,
                     "sketchPath": run.sketch_path,
                     "profileHash": entry.profile_hash,
+                    "paramsHash": run.params_hash,
                     "profileSource": entry.profile_source,
                     "stale": entry.stale,
                     **entry.summary,
@@ -185,6 +186,7 @@ class AnalyticsService:
 
         meta = await asyncio.to_thread(self._repo.profile_meta, hashes)
         groups = _profile_groups(payload_runs, meta)
+        warnings.extend(_parameter_mismatches(payload_runs, meta))
 
         return {
             "cohortId": cohort_id,
@@ -786,6 +788,46 @@ def _profile_groups(
     ]
 
 
+def _parameter_mismatches(
+    runs: list[dict[str, Any]], meta: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Warn where one comparability set holds differently-tuned runs (§8.2).
+
+    A profile hash covers the profile *declaration*, which is identical across
+    every run of a sketch. Once the timings became operator-set (§6.9), that
+    stopped being enough to call two runs comparable: a rat run at a 10 ms poke
+    hold and one run at 500 ms share a hash and would be plotted on one axis as
+    though the task had not changed underneath them.
+
+    A warning rather than a split. Splitting would fragment a cohort's history
+    the first time anyone nudged a timeout, and most parameter edits genuinely
+    don't invalidate a comparison -- but the reader is the one who can judge
+    that, and silence denies them the chance.
+
+    Runs with no recorded parameters (pre-§6.9) are ignored rather than counted
+    as a distinct set: they ran on firmware constants, so an unknown is not
+    evidence of a difference.
+    """
+    seen: dict[str, set[str]] = {}
+    for run in runs:
+        digest = run.get("profileHash")
+        params = run.get("paramsHash")
+        if digest and params:
+            seen.setdefault(digest, set()).add(params)
+    return [
+        {
+            "code": "parameter-mismatch",
+            "runId": "",
+            "message": (
+                f"{meta.get(digest, {}).get('taskName') or digest}: "
+                f"{len(variants)} different parameter sets across these runs"
+            ),
+        }
+        for digest, variants in seen.items()
+        if len(variants) > 1
+    ]
+
+
 def _normalize(path: str) -> str:
     try:
         return str(Path(path).expanduser().resolve()).casefold()
@@ -833,7 +875,7 @@ def _animal_from_filename(
 
     This is not the guessing §8.1 rules out. The filename and the `rat` field
     are two independent recordings of the same fact by the same program at the
-    same moment, and the stem has to be *exactly* what `data-saving.md` §2
+    same moment, and the stem has to be *exactly* what `data.md` §2
     prescribes — `<animal>_<the session folder this file is actually sitting
     in>_<HHMMSS>` — checked against the folder on disk rather than assumed. A
     file that doesn't follow the convention contributes nothing. The token that

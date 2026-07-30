@@ -1,4 +1,4 @@
-"""Task Profiles — `data-saving.md` §6.
+"""Task Profiles — `tasks.md` §3.
 
 The mechanism that lets a sketch declare its own START-command config, strobe
 vocabulary, and live-metric visualization, so the app isn't hardcoded to any one

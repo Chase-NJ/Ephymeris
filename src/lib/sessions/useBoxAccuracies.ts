@@ -15,7 +15,7 @@ import { useSidecar } from "@/lib/ws/context";
 
 /**
  * Pooled rolling accuracy per animal, for the constellation's star
- * temperatures (`starting-a-session.md` §6.2).
+ * temperatures (`dashboard.md` §9.2).
  *
  * Derives every box in one pass rather than mounting a hook per box: React
  * forbids hooks in a loop, and a probe component per box to work around that

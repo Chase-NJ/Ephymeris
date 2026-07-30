@@ -2,7 +2,7 @@ import { useCallback, useSyncExternalStore } from "react";
 
 /**
  * Where the constellation browser was left — per subject, across views
- * (`ephymeris_v1.0.md` §3.3, §4.3).
+ * (`dashboard.md` §3, §4.3).
  *
  * The 3D constellation now appears on more than one page (Dashboard and Debug
  * both browse the rig), and the illusion those views sell is that they are

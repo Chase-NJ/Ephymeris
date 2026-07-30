@@ -1,4 +1,4 @@
-"""Profile snapshots and the derived-metrics cache — `analytics.md` §8.2, §8.3.
+"""Profile snapshots and the derived-metrics cache — `data.md` §8.3, §8.3.
 
 Synchronous, like every other repository here; callers wrap in
 `asyncio.to_thread`. Shares the cohort database and its lock.
@@ -161,7 +161,7 @@ class AnalyticsRepository:
                 )
         return out
 
-    # --- adopted orphans (analytics.md §8.1) --------------------------------
+    # --- adopted orphans (data.md §8.1) --------------------------------
 
     def store_adopted(self, entries: list["AdoptedRun"]) -> None:
         """Record adoptions in one transaction — same commit discipline as
@@ -215,7 +215,7 @@ class AnalyticsRepository:
         """Write cache rows in **one transaction**.
 
         Every commit marks the whole database dirty for backup
-        (`data-saving.md` §8.3), so committing per row would trigger repeated
+        (`data.md` §7.3), so committing per row would trigger repeated
         whole-file copies to a possibly-networked target during a single
         indexing pass.
         """
@@ -250,7 +250,7 @@ class AnalyticsRepository:
 
 @dataclass(frozen=True)
 class AdoptedRun:
-    """A file the archive walk matched to an animal (`analytics.md` §8.1).
+    """A file the archive walk matched to an animal (`data.md` §8.1).
 
     Deliberately not a `sessions` or `session_animal_runs` row — a fabricated
     session row would corrupt session-number suggestion and the same-day

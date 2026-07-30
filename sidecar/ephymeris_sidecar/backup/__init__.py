@@ -1,4 +1,4 @@
-"""Backup Directory mirroring — `data-saving.md` §8."""
+"""Backup Directory mirroring — `data.md` §7."""
 
 from .manager import BackupManager, BackupNotConfigured
 

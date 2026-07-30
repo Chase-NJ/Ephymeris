@@ -1,4 +1,4 @@
-"""Derived metrics — `analytics.md` §3.
+"""Derived metrics — `data.md` §9.
 
 These numbers are the scientific output, so the tests are written against the
 definition rather than against the implementation. The most important one is

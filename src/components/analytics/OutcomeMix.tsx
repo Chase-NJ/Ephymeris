@@ -18,7 +18,7 @@ import {
 } from "@/lib/analytics/view";
 
 /**
- * How each session's administered trials resolved (`analytics.md` §6.7).
+ * How each session's administered trials resolved (`data.md` §11.7).
  *
  * The rewarded line above answers "how often was fluid earned"; this panel
  * answers "and what happened instead" — whether the misses were hold

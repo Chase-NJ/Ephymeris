@@ -1,5 +1,7 @@
 # Ephymeris
 
+![status](https://img.shields.io/badge/status-v1.0-8B7EC8?style=flat-square) ![platform](https://img.shields.io/badge/target-Windows_11-16151F?style=flat-square) ![boxes](https://img.shields.io/badge/boxes-6_×_Mega2560-2C2A3A?style=flat-square) ![tests](https://img.shields.io/badge/sidecar_tests-671-7CC98F?style=flat-square)
+
 A lab desktop app for running rodent behavior sessions on up to six Arduino Mega2560 R3 boards ("boxes").
 
 Ephymeris covers the whole loop of a behavior session. It discovers your sketches and flashes them to the right boards, opens the serial ports and streams live data while animals run, parses the boards' strobe protocol into per-animal data files as trials arrive, and keeps the cohort, animal, group, and session bookkeeping that surrounds all of it. A built-in Analytics dashboard then reads the recorded archive back and derives learning curves, per-condition accuracy, and strategy plots.
@@ -10,11 +12,11 @@ Three things shape how it works:
 - **Boxes are numbered, not addressed.** A box is 1–6, bound to a physical board by its USB hardware id — so a box keeps pointing at the same board after Windows renumbers COM ports.
 - **Data is written as it arrives.** Every parsed trial is flushed and `fsync`'d to that animal's `.tsv` immediately, so a crash mid-session costs nothing already recorded. The `.json`/`.mat` files are built at clean finalization.
 
-Sketches stay data-driven: a sketch can ship a `task.json` describing its start-command fields, strobe codes, and live metrics, and the app builds its config form and live charts from that. No task is special-cased in app code.
+**Sketches stay data-driven.** A sketch can ship a `task.json` describing its start-command fields, strobe vocabulary, and live metrics — and from that alone the app builds its configuration form, **derives and draws its trial-flow state machine**, builds its `START` line, and scores it live. No task is special-cased in app code. See [docs/tasks.md](docs/tasks.md), which includes a step-by-step guide to defining your own.
 
 Built for two Windows 11 lab machines; developed on macOS and Windows.
 
-**Status: v1.0.** Cohorts, Config, Debug Mode, Settings, Backup Directory mirroring, and the complete session flow (config → mapping → flash → Mission Control → 3D constellation) are implemented, and everything but the mirroring is verified against real hardware. Analytics is built and decodes the lab's real archive end to end. A Windows installer builds via `npm run package`; macOS packaging and CI builds remain open. See [docs/TODO.md](docs/TODO.md) for the full register.
+**Status: v1.0.** Cohorts, Config, Task, Debug Mode, Settings, Backup Directory mirroring, and the complete session flow (config → mapping → flash → Mission Control → 3D constellation) are implemented, and everything but the mirroring is verified against real hardware. Analytics is built and decodes two of the lab's real archives end to end. A Windows installer builds via `npm run package`; macOS packaging and CI builds remain open. The open register is [docs/README.md §7](docs/README.md#7-open-issues).
 
 ---
 
@@ -27,9 +29,9 @@ This is the path for a machine that will *run* Ephymeris, not develop it. The in
 3. Launch Ephymeris from the Start menu. On the very first launch the app copies its bundled Arduino toolchain into place; boards may take a few extra seconds to appear that one time.
 4. Do the first-launch setup, same as ever:
    - **Config** opens the box-setup wizard — plug in the boards, bind each box 1–6 to its board, nickname them, pick a constellation.
-   - **Config → Hardware → Arduino Directory** — the folder holding your sketch categories and shared `libraries/`. Copy it onto the machine first if it isn't there already.
+   - **Task → Arduino Directory** — the folder holding your sketch categories and shared `libraries/`. Copy it onto the machine first if it isn't there already.
    - **Settings → Data directory** — where session files are written; optionally a **Backup directory** on another drive or share.
-5. Create or import cohorts under **Cohorts**, then run sessions from **Launch**.
+5. Create or import cohorts under **Cohorts**, then start a run from the **Dashboard**.
 
 Where things live on an installed machine: the app is in `%LOCALAPPDATA%\Ephymeris`, and its own state (cohort database, settings, the writable Arduino toolchain copy) is in `%APPDATA%\edu.hartlab.ephymeris`. Session data goes wherever the Data directory points. Uninstalling from Windows Settings removes the app but touches neither the app-data folder nor any session data.
 
@@ -144,10 +146,10 @@ That builds the Rust shell, starts the Vite dev server on port 1420, spawns the 
 Nothing is guessed or shipped with defaults — point the app at your own folders and hardware:
 
 1. **Config** opens a five-step box setup wizard on first launch. Add a row per behavior box, bind each to a connected board (boards are listed by USB serial number), give them nicknames, optionally run the handshake test, and pick a constellation for the status display. You can skip it and do the same things from the Config screen directly.
-2. **Config → Hardware → Arduino Directory** — the root folder holding your sketch category folders and a shared `libraries/` folder. The screen reports how many sketches and libraries it found.
+2. **Task → Arduino Directory** — the root folder holding your sketch category folders and a shared `libraries/` folder. The screen reports how many sketches and libraries it found, and picking a sketch draws its trial flow.
 3. **Settings → Data directory** — where session data is written. Optionally set a **Backup directory** too, on a different drive or share, to mirror session files and the cohort database.
 
-Then create a cohort under **Cohorts**, and start a run from **Launch**.
+Then create a cohort under **Cohorts**, and start a run from the **Dashboard**.
 
 ### If something doesn't work
 
@@ -195,16 +197,23 @@ The **React frontend** talks to the sidecar over the WebSocket only. It never to
 
 The **Rust shell** is thin. It spawns the sidecar, owns settings persistence, and pushes settings over the wire. It holds no hardware or session logic.
 
-A fuller version of this, including a file-by-file module map, is in [docs/reference.md](docs/reference.md).
+A fuller version of this, including a file-by-file module map, is in **[docs/README.md](docs/README.md)**.
 
 ## Documentation
 
-Start at the **[documentation index](docs/README.md)**, which says which document answers which question. The two entry points most people want:
+**Seven documents under `docs/`.** They are living specifications and are more authoritative than inferring behavior from code.
 
-- **[docs/reference.md](docs/reference.md)** — the consolidated engineering reference: architecture, module map, the complete wire surface, and per-area implementation status.
-- **[docs/TODO.md](docs/TODO.md)** — every known gap and open decision in one prioritized register.
+| Read | For |
+|---|---|
+| **[docs/README.md](docs/README.md)** | **Start here.** Developer setup, architecture, the module map, the test map, and every open issue |
+| [docs/dashboard.md](docs/dashboard.md) | The theme, every screen, the port state machine, the session flow, the 3D constellation |
+| [docs/cohorts.md](docs/cohorts.md) | The Cohort/Animal/Group model, the cohort UI, Auto-Balance grouping |
+| [docs/tasks.md](docs/tasks.md) | The Arduino Directory, `task.json`, the derived trial-flow state machine, **and how to define your own task** |
+| [docs/data.md](docs/data.md) | On-disk layout, the SQLite schema, crash safety, backup, and the derived metrics behind Analytics |
+| [docs/settings.md](docs/settings.md) | Every settings key, box bindings, board discovery, the hardware utility baseline |
+| [docs/websocket-protocol.md](docs/websocket-protocol.md) | The exact shape of any command, event, payload, or error code |
 
-The eight documents under `docs/` are living specifications and are more authoritative than inferring behavior from code. For the wire schema, `docs/websocket-protocol.md` carries the prose and `protocol/schema.py` is the machine-readable shape authority; the two code mirrors are generated from it.
+For the wire schema, `docs/websocket-protocol.md` carries the prose and `protocol/schema.py` is the machine-readable shape authority; the two code mirrors are generated from it.
 
 ## Contributing
 

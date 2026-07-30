@@ -1,6 +1,6 @@
 """Settings received from the Tauri shell.
 
-The shell owns settings (`ephymeris_v1.0.md` §4.5) and pushes the full payload
+The shell owns settings (`settings.md` §4) and pushes the full payload
 here on every connect and every change. This module is the receiving end: it
 holds the last payload and reads the handful of keys the sidecar actually
 needs.
@@ -30,7 +30,7 @@ class BoxBinding:
 
     Bound by `hardware_id` (the board's USB serial number) rather than port
     address, because Windows renumbers COM ports across reboots and
-    re-enumeration — see `ephymeris_v1.0.md` §5.
+    re-enumeration — see `README.md` §1.
     """
 
     box: int
@@ -42,7 +42,7 @@ class BoxBinding:
 class SidecarSettings:
     arduino_directory: str | None = None
     arduino_cli_path: str | None = None
-    #: The sketch every idle box is returned to (`hardware-interaction.md` §8).
+    #: The sketch every idle box is returned to (`settings.md` §8).
     #: `None` turns the baseline off entirely — the app is fully usable without
     #: one, it just can't ask a box to point at itself.
     utility_sketch_path: str | None = None
@@ -50,7 +50,7 @@ class SidecarSettings:
     #: folders (`cohorts.md` §8) — distinct from the app data directory that
     #: holds the cohort database (§3).
     data_directory: str | None = None
-    #: Where session data and `ephymeris.db` are mirrored (`data-saving.md`
+    #: Where session data and `ephymeris.db` are mirrored (`data.md`
     #: §8). Protects against losing `data_directory` entirely — a different
     #: failure from the one the `.tsv` write-ahead log covers. `None` turns
     #: mirroring off; the app is fully usable without it.

@@ -13,7 +13,7 @@ import {
 } from "@/lib/sessions/liveTrials";
 
 /**
- * The live per-animal panels (`starting-a-session.md` §6.4).
+ * The live per-animal panels (`dashboard.md` §9.4).
  *
  * Three views of the one trial record, rebuilding what the lab's previous
  * software showed per animal — response probability, outcome composition, and
@@ -26,7 +26,7 @@ import {
 /** Rolling window for the response curves, matching the profile default. */
 const P_WINDOW = 20;
 
-/** Series colours, from the analytics ramp (`analytics.md` §7.1). */
+/** Series colours, from the analytics ramp (`data.md` §11.8). */
 const ODOR_COLORS = ["#8B7EC8", "#CBA23E", "#52B79D", "#9E9FF6", "#BE7031", "#229582"];
 
 const OUTCOME_STYLE: Record<TrialOutcome, { fill: string; label: string }> = {

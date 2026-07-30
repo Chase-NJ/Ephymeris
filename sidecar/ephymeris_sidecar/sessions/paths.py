@@ -1,4 +1,4 @@
-"""Session directory and file naming — `data-saving.md` §1–§2.
+"""Session directory and file naming — `data.md` §1–§2.
 
 Pure string/path construction, no I/O, so the naming scheme is testable on its
 own. The scheme itself does the collision-avoidance work: the per-animal

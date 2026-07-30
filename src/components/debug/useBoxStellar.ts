@@ -31,12 +31,12 @@ export interface RigStellar {
 
 /**
  * Star temperatures and crews for the Debug constellation
- * (`ephymeris_v1.0.md` §4.3).
+ * (`dashboard.md` §4).
  *
  * A box's temperature is the **mean accuracy of the animals assigned to it**,
  * each animal's own accuracy pooled across *all* of its scored sessions —
  * hits over counted trials of the run-level `overall` metric, the pooled
- * accuracy that can tell learning from a side bias (`analytics.md` §3.7).
+ * accuracy that can tell learning from a side bias (`data.md` §9.7).
  * Assignment comes from the same summaries, so one fetch per active cohort
  * covers both facts, through the app-level analytics cache the Analytics view
  * shares — browsing the rig after checking a cohort costs nothing extra.

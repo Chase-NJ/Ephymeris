@@ -8,7 +8,7 @@ export interface SettingsContextValue {
   update: (patch: Partial<EphymerisSettings>) => Promise<void>;
   /** Latest Arduino Directory scan, from the settings push or a refresh. */
   discovery: SketchDiscovery;
-  /** Re-run discovery on demand (`arduino-directory.md` §4). */
+  /** Re-run discovery on demand (`tasks.md` §2.3). */
   refreshSketches: () => Promise<void>;
   loaded: boolean;
   saveError: string | null;

@@ -36,13 +36,15 @@ DB_FILENAME = "ephymeris.db"
 #: Bumped when the schema changes. `PRAGMA user_version` records what a given
 #: file is at, and `connect` reads it before touching anything so migrations
 #: have something to branch on.
-#: v2 added prefixes / sessions / session_animal_runs (data-saving.md §3–4).
+#: v2 added prefixes / sessions / session_animal_runs (data.md §3.1–4).
 #: v3 added task_profiles / run_metrics_cache and session_animal_runs.profile_hash
-#: (analytics.md §10.2) — the first change to need a real migration.
-#: v4 added sessions.duration_minutes (`starting-a-session.md` §2.4) — the
+#: (data.md §6.1) — the first change to need a real migration.
+#: v4 added sessions.duration_minutes (`dashboard.md` §7.2) — the
 #: optional per-box time limit.
 #: v5 added animals.cage (`cohorts.md` §1) — the home-cage grouping label.
-SCHEMA_VERSION = 5
+#: v6 added session_animal_runs.config_json / params_hash (`tasks.md` §6.1)
+#: — the task parameters a run actually used, now that they are operator-set.
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -73,7 +75,7 @@ CREATE TABLE IF NOT EXISTS animals (
     notes       TEXT
 );
 
--- Session prefixes (data-saving.md §3): global, shared across all cohorts.
+-- Session prefixes (data.md §3.1): global, shared across all cohorts.
 -- Delete is non-destructive on disk — it only removes the dropdown entry — so
 -- there's no soft-delete column, just a hard row delete.
 CREATE TABLE IF NOT EXISTS prefixes (
@@ -81,7 +83,7 @@ CREATE TABLE IF NOT EXISTS prefixes (
     name  TEXT NOT NULL UNIQUE COLLATE NOCASE
 );
 
--- One Starting-a-Session invocation (data-saving.md §4).
+-- One Starting-a-Session invocation (data.md §3.2).
 CREATE TABLE IF NOT EXISTS sessions (
     id             TEXT PRIMARY KEY,
     cohort_id      TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
@@ -96,12 +98,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     status         TEXT NOT NULL,
     folder_path    TEXT NOT NULL,
     group_runs     TEXT NOT NULL DEFAULT '[]',  -- JSON array, small and read whole
-    -- Optional per-box time limit (starting-a-session.md §2.4). NULL = no
+    -- Optional per-box time limit (dashboard.md §7.2). NULL = no
     -- limit; the runner STOPs each box this many minutes after ITS OWN start.
     duration_minutes INTEGER
 );
 
--- One animal's run within a session (data-saving.md §4). Forward-looking
+-- One animal's run within a session (data.md §3.2). Forward-looking
 -- infrastructure for Analytics; written at finalization.
 CREATE TABLE IF NOT EXISTS session_animal_runs (
     id          TEXT PRIMARY KEY,
@@ -113,13 +115,24 @@ CREATE TABLE IF NOT EXISTS session_animal_runs (
     started_at  TEXT NOT NULL,
     ended_at    TEXT,
     stop_reason TEXT,
-    -- Which Task Profile actually decoded this run (analytics.md §8.2). NULL
+    -- Which Task Profile actually decoded this run (data.md §8.3). NULL
     -- means the run predates snapshotting and must fall back to whatever
     -- task.json currently sits at its sketch_path — which may have changed.
-    profile_hash TEXT
+    profile_hash TEXT,
+    -- The task parameters this run actually ran on, as authored JSON
+    -- (tasks.md §6.1), plus a hash of them for indexed comparison.
+    --
+    -- profile_hash alone stopped being enough to say two runs are comparable
+    -- once parameters became operator-set: the profile is the DECLARATION, so
+    -- a 10 ms poke hold and a 500 ms one hash identically and would be pooled
+    -- onto one axis. The values are already written into every session file;
+    -- these two columns are what make them queryable. NULL on any run that
+    -- predates the change, which is honest — those values are only on disk.
+    config_json TEXT,
+    params_hash TEXT
 );
 
--- Content-addressed Task Profile snapshots (analytics.md §8.2, §10.2). Keyed by
+-- Content-addressed Task Profile snapshots (data.md §8.3, §10.2). Keyed by
 -- a hash of the canonical JSON, so identical profiles across hundreds of runs
 -- store once and comparability is an indexed equality test rather than a blob
 -- comparison.
@@ -131,7 +144,7 @@ CREATE TABLE IF NOT EXISTS task_profiles (
     first_seen_at TEXT NOT NULL
 );
 
--- Derived per-run metrics (analytics.md §8.3). Pure cache: every row can be
+-- Derived per-run metrics (data.md §8.4). Pure cache: every row can be
 -- recomputed from the .json on disk, so losing it costs time and nothing else.
 -- Deliberately NO foreign key on run_id — adopted orphans (§8.1) have no
 -- session_animal_runs row and carry a synthetic id instead.
@@ -149,7 +162,7 @@ CREATE TABLE IF NOT EXISTS run_metrics_cache (
     summary_json   TEXT NOT NULL
 );
 
--- Orphans adopted by the archive walk (analytics.md §8.1) — files no
+-- Orphans adopted by the archive walk (data.md §8.1) — files no
 -- session_animal_runs row points at, matched to an animal by the document's
 -- `rat` name. Deliberately NOT a sessions or session_animal_runs row: a
 -- fabricated session row would corrupt session-number suggestion and the
@@ -188,12 +201,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cohorts_active_name
     ON cohorts(name COLLATE NOCASE) WHERE archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_cohort ON sessions(cohort_id);
 CREATE INDEX IF NOT EXISTS idx_runs_session    ON session_animal_runs(session_id);
--- Per-animal cross-session history was a full scan before this (analytics.md
+-- Per-animal cross-session history was a full scan before this (data.md
 -- §10.2). An index, never a foreign key: `cohorts.update` deletes and
 -- re-inserts the whole animal set on every roster edit, so ON DELETE CASCADE
 -- would destroy every historical run on a single rename.
 CREATE INDEX IF NOT EXISTS idx_runs_animal     ON session_animal_runs(animal_id);
 CREATE INDEX IF NOT EXISTS idx_runs_profile    ON session_animal_runs(profile_hash);
+-- Comparability is (profile_hash, params_hash) now, so the pair is what gets
+-- looked up (data.md §8.3).
+CREATE INDEX IF NOT EXISTS idx_runs_params     ON session_animal_runs(profile_hash, params_hash);
 -- The chronological session axis, index-ordered rather than sorted per read.
 CREATE INDEX IF NOT EXISTS idx_sessions_cohort_dt ON sessions(cohort_id, date);
 CREATE INDEX IF NOT EXISTS idx_adopted_cohort ON adopted_runs(cohort_id);
@@ -225,7 +241,7 @@ def add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> 
 
 
 def _to_v3(conn: sqlite3.Connection) -> None:
-    """v2 → v3: the Task Profile snapshot link (`analytics.md` §8.2).
+    """v2 → v3: the Task Profile snapshot link (`data.md` §8.3).
 
     `task_profiles` and `run_metrics_cache` are new *tables*, so `SCHEMA`'s
     `CREATE TABLE IF NOT EXISTS` already made them — only the column needs
@@ -235,11 +251,21 @@ def _to_v3(conn: sqlite3.Connection) -> None:
 
 
 def _to_v4(conn: sqlite3.Connection) -> None:
-    """v3 → v4: the per-box session time limit (`starting-a-session.md` §2.4).
+    """v3 → v4: the per-box session time limit (`dashboard.md` §7.2).
 
     NULL on every pre-existing session is exactly right — they ran without one.
     """
     add_column(conn, "sessions", "duration_minutes", "INTEGER")
+
+
+def _to_v6(conn: sqlite3.Connection) -> None:
+    """v5 → v6: the task parameters a run used (`tasks.md` §6.1).
+
+    NULL on every pre-existing run and correct that way: those runs took their
+    parameters from firmware constants, so there is nothing per-run to record.
+    """
+    add_column(conn, "session_animal_runs", "config_json", "TEXT")
+    add_column(conn, "session_animal_runs", "params_hash", "TEXT")
 
 
 def _to_v5(conn: sqlite3.Connection) -> None:
@@ -264,6 +290,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     3: _to_v3,
     4: _to_v4,
     5: _to_v5,
+    6: _to_v6,
 }
 
 
@@ -271,7 +298,7 @@ class _TrackedConnection(sqlite3.Connection):
     """A connection that reports every successful commit.
 
     Backup triggering hangs off this rather than off a call in each repository
-    method (`data-saving.md` §8). Two reasons: there is no write path that can
+    method (`data.md` §7). Two reasons: there is no write path that can
     forget to announce itself, and the trigger is genuinely "the database
     changed" rather than the narrower "a cohort changed" — `session_animal_runs`
     is written at finalization during an unattended overnight run, and is not a
@@ -366,7 +393,7 @@ class Database:
         conn.executescript(INDEXES)
 
         # One commit for the whole of startup. Each `commit()` marks the
-        # database dirty for backup (`data-saving.md` §8.3), so a migration
+        # database dirty for backup (`data.md` §7.3), so a migration
         # committing per step would trigger repeated whole-file copies to a
         # possibly-networked target before the app has even finished starting.
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

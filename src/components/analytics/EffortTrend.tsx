@@ -12,7 +12,7 @@ import {
 } from "@/lib/analytics/view";
 
 /**
- * Cohort effort across sessions (`analytics.md` §6.6) — how many trials each
+ * Cohort effort across sessions (`data.md` §11.6) — how many trials each
  * session offered, and how many the animals actually engaged with.
  *
  * Every accuracy above this panel divides by `administered`, so a flat

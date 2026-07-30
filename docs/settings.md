@@ -1,0 +1,275 @@
+# Settings
+
+![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![keys](https://img.shields.io/badge/settings_keys-12-8B7EC8?style=flat-square) ![owner](https://img.shields.io/badge/owner-Tauri_shell-16151F?style=flat-square)
+
+> **What this is** · Every configurable value, where it is edited, and the rig-level machinery those values drive.
+>
+> **Owns** · The Config / Settings / Task split · all twelve settings keys · persistence and the push to the sidecar · box→board bindings · board discovery · **the hardware utility baseline** · the handshake test.
+>
+> **Read with** · [dashboard.md](dashboard.md) (the port state machine these values feed) · [tasks.md](tasks.md) (the Arduino Directory and rig task defaults) · [data.md](data.md) (what the data and backup directories mean).
+
+**Contents** — [1. The split](#1-the-split) · [2. The twelve keys](#2-the-twelve-keys) · [3. Persistence & push](#3-persistence--push) · [4. The Settings screen](#4-the-settings-screen) · [5. The Config screen](#5-the-config-screen) · [6. Box bindings](#6-box-bindings) · [7. Board discovery](#7-board-discovery) · [8. **The utility baseline**](#8-the-hardware-utility-baseline) · [9. The handshake test](#9-the-handshake-test)
+
+---
+
+## 1. The split
+
+Three screens edit settings. **The split is by subject, not by shape.**
+
+| Screen | Answers | Owns |
+|---|---|---|
+| ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
+| 📡 **Config** (`/config`) | *How is this rig wired?* | Constellation layout, box→board bindings, handshake test, utility baseline, default baud, `arduino-cli` path |
+| 🔀 **Task** (`/task`) | *What is the animal doing?* | Arduino Directory, per-sketch task parameters |
+
+> [!NOTE]
+> **This row has been decided twice.** The first split (Settings → Config) was by *shape*: hardware-ish vs storage-ish. The second (Config → Task) is by *subject*, and the forcing function was volume — making every firmware parameter operator-tunable turned a three-field panel into forty-odd fields, which is not a row on a hardware page.
+>
+> **Ownership never moved.** The settings *store* still holds every field in one place; only where each field is edited changed. All three screens write through the same `useSettings().update`.
+
+---
+
+## 2. The twelve keys
+
+Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/settings/schema.ts); the shape is generated into `src/lib/ws/protocol.ts`.
+
+| Key | Type | Default | Edited on | Effect |
+|---|---|---|---|---|
+| `dataDirectory` | `string \| null` | `null` | **Settings** → Storage | Where session data is written ([data.md §1](data.md#1-directory-structure)). Blank/whitespace normalizes to `null` |
+| `backupDirectory` | `string \| null` | `null` | **Settings** → Storage | Second copy of session files and the cohort database on another drive or share ([data.md §7](data.md#7-backup-mirroring)). Setting it does **not** backfill |
+| `arduinoDirectory` | `string \| null` | `null` | **Task** | Root folder holding sketch categories and a shared `libraries/` ([tasks.md §2](tasks.md#2-the-arduino-directory)). No default is shipped or guessed |
+| `arduinoCliPath` | `string \| null` | `null` | **Config** → Hardware | Override for the bundled `arduino-cli`. Empty string coerces to `null` |
+| `utilitySketchPath` | `string \| null` | `null` | **Config** → Hardware | The baseline every idle box is returned to ([§8](#8-the-hardware-utility-baseline)). `null` turns the baseline off |
+| `defaultBaud` | `number` | **`9600`** | **Config** → Hardware, and the setup wizard | Starting baud for each console. Debug Mode allows a per-box override. Options: 9600, 19200, 38400, 57600, 115200, 230400, 250000 |
+| `boxes` | `BoxBinding[]` | `[]` | **Config** → Boxes, and the wizard | The user-managed box list — see [§6](#6-box-bindings) |
+| `reducedMotion` | `boolean` | `false` | **Settings** → Interface | Forces reduced motion on regardless of the system setting (which is always respected on top). **Shell-only** |
+| `constellation` | `string \| null` | `null` | **Config** → Constellation | Zodiac layout id for the box-status constellation. `null` = the legacy fixed layout. **Shell-only** |
+| `constellationSlots` | `Record<string, number>` | `{}` | **Config** → Constellation (drag) | Which star each box sits on, box number as a string key. **Shell-only** |
+| `boxSetupComplete` | `boolean` | `false` | Set by the wizard | Gates the first-run wizard on `/config`. **Shell-only** |
+| `taskDefaults` | `Record<string, Record<string, unknown>>` | `{}` | **Task** | This rig's default task parameters, per sketch. **Shell-only** |
+
+> [!IMPORTANT]
+> **The sidecar reads only seven of these** — `arduinoDirectory`, `arduinoCliPath`, `utilitySketchPath`, `dataDirectory`, `backupDirectory`, `defaultBaud`, `boxes` — and ignores the rest. That is why adding a settings field is deliberately a **non-event**: the four shell-only keys needed no sidecar change at all.
+
+**Normalization rules worth knowing:**
+
+- `defaultBaud` accepts any `number > 0`, else falls back to 9600.
+- `constellationSlots` requires an integer `>= 0`, with first-wins dedupe in box-number order. Star-index *range* validation is deliberately left to `reconcileSlots`, so a stale persisted map can never render a node off the chart.
+- `constellation` is validated against the zodiac catalogue on load, so a corrupt store degrades to the legacy layout rather than breaking the widget.
+- `taskDefaults` values are carried through unexamined; only values **diverging** from a sketch's own `task.json` defaults are stored, and an empty diff deletes the sketch's entry entirely.
+
+> [!TIP]
+> **`taskDefaults` is keyed by sketch folder *name*, not path**, because the two lab machines keep their Arduino Directories in different places — and the name is what the session file already records in `sketch`.
+
+---
+
+## 3. Persistence & push
+
+```mermaid
+flowchart LR
+    U["user edits<br/><i>any of 3 screens</i>"] --> P["useSettings().update"]
+    P --> S["tauri-plugin-store<br/><code>settings.json</code>"]
+    P --> W["<code>settings.push</code><br/><i>full payload</i>"]
+    W --> D["🐍 sidecar"]
+    C["WS connect /<br/>reconnect"] --> W
+```
+
+**The Tauri shell owns settings**, not the Python sidecar. Two reasons:
+
+1. **Settings must work even when the sidecar doesn't.** Most of these fields — save paths, baud, the `arduino-cli` path — are exactly the values most likely to be *wrong* when something is misconfigured, and a wrong `arduino-cli` path or a bad save directory is a plausible cause of the sidecar failing to start. If the sidecar owned settings, a bad config could lock the user out of the one screen that fixes it.
+2. The store plugin is simple and gives **native OS directory pickers** for free from the shell layer.
+
+> [!IMPORTANT]
+> **The sync is one-directional, Tauri → sidecar.** The full payload is pushed on every WebSocket connect/reconnect **and** on every change. The sidecar is never the source of truth. Worst case it is briefly running on stale values until the next push, rather than being unreachable entirely.
+
+**Storage details.** `settings.json` in the app data directory, a single `"settings"` key, opened with `autoSave: false` and an explicit `save()` after every `set`. A *rejected* open promise is deliberately never cached, so one transient IO failure doesn't poison the session. Load failures fall back to the defaults so the screens stay usable.
+
+Save failures surface as a persistent note on both Config and Settings: *"Couldn't save to disk — your change may not survive a restart."*
+
+> [!NOTE]
+> The sidecar's own settings parser is **deliberately lenient** — an unknown key is a non-event, and a malformed value degrades to a default rather than killing the process that owns the ports.
+
+---
+
+## 4. The Settings screen
+
+Two groups. Nothing here is gated on the WebSocket; only the backup readout goes quiet when disconnected.
+
+### Storage
+
+- **Data directory** — a native directory picker with a live status note.
+- **Backup directory** — the same, plus a mirroring status line reporting queue depth or a failure, and a **Sync now** action (gated on the sidecar being connected).
+
+> [!WARNING]
+> **Setting a backup directory mirrors from that moment on; it does not backfill.** Automatic backfill could mean an unannounced multi-gigabyte copy to a network share the instant someone picks a folder, and it would fire again on every repoint. **Sync now** is the explicit version, and it doubles as the way to prove a target actually works before trusting it with anything.
+
+### Interface
+
+- **Reduced motion** — forces it on. The system preference is always respected on top, so this only ever adds restraint.
+
+---
+
+## 5. The Config screen
+
+Three groups, plus a **Run setup again** action in the header.
+
+| Group | Contents |
+|---|---|
+| **Constellation** | The interactive board (drag a box to a star) and the zodiac picker |
+| **Boxes** | The bindings table, plus the per-box handshake test |
+| **Hardware** | The utility sketch panel (with **Reflash boxes**), the default baud select, and the `arduino-cli` path override |
+
+### 5.1 The first-run wizard
+
+Opens instead of the normal view until `boxSetupComplete` is set. **Five linear steps:** map hardware → nickname boxes → per-box handshake → pick a constellation → done.
+
+In-route rather than a modal — a multi-minute guided flow is not "transient," and vibrancy stays reserved for the sidebar and true modals.
+
+> [!IMPORTANT]
+> **The wizard never traps.** Back always works, **Skip setup** is always visible and just sets the flag, and a failed handshake never blocks advancing — the hardware may simply be off.
+
+Steps 1–2 write through to settings immediately; the constellation choice is **local until Finish**, so an abandoned run leaves no half-chosen layout. The gate renders nothing until settings are `loaded`, or the wizard would flash for every configured user on every launch. "Run setup again" re-opens it without clearing the flag.
+
+### 5.2 Zodiac layouts
+
+Twelve **hand-authored, simplified asterisms** — data, not generated, because they must be recognizable.
+
+- **Star counts are honest** (Aries has four), and the picker **disables any constellation with fewer stars than configured boxes** rather than distorting the shape.
+- **Slots follow boxes.** Deleting a box frees its star; a new box takes the lowest free star; switching constellations keeps star indices that still exist. `reconcileSlots` is the single authority, and `layoutFor` runs it defensively.
+- **Drag is snap-to-star** — raw pointer events with viewBox-space hit-testing, a ghost node while dragging, snap to the nearest star within radius or revert, and **swap** when the target is occupied. **One settings write per completed drag, never per pointer move.**
+
+---
+
+## 6. Box bindings
+
+```ts
+BoxBinding = { box: number; hardwareId: string | null; label: string }
+```
+
+> [!IMPORTANT]
+> **Box number 1–6 is the key everywhere** — in the UI, on the wire, and in the data model. A COM port address is **never** a key, because Windows renumbers COM ports across reboots. The sidecar resolves `box → hardware_id → current address` internally, where `hardware_id` is the board's USB serial number.
+
+| Rule | Detail |
+|---|---|
+| `box` range | An integer 1–6. Duplicates collapse (the list is Map-keyed) and is sorted by box number |
+| Not padded | The list holds only the boxes the user created — a two-box rig has two rows, not six |
+| **"Bound"** | `hardwareId !== null`. This is the single definition of a real box, and what every "is there a box here" check gates on |
+| `label` | Defaults to `Box N`. The per-box nickname |
+
+> [!NOTE]
+> **Gates are on *bound*, not *detected*.** Detection only downgrades a label. A cohort can be fully configured — animals assigned to boxes 1–6 — before any hardware is connected, and the sidecar validates a cohort's `boxNumber` against the bare 1–6 range only, never against which boards happen to be bound right now. That is what keeps a cohort editable on the other lab machine.
+
+**Re-binding.** A board swap is a routine lab event. Bindings live in Config with a re-runnable wizard and a per-box handshake test to confirm a swap took. What is still open is proactive surfacing — *"a new board appeared, bind it to box 3?"* — rather than the user knowing to open Config.
+
+> [!WARNING]
+> **A stale handler must never survive a rebind.** Close the port before rebinding, or rebind only while `IDLE`. This is the same rule that makes the handshake test close a box already in `PASSTHROUGH` before running.
+
+---
+
+## 7. Board discovery
+
+**Board presence and identity are checked without ever opening the port** — via the arduino-cli daemon's board-list RPC, backed by the OS's serial port enumeration, on a continuous **1.5 s** interval. Since the gRPC migration this costs no process spawn at all.
+
+> [!IMPORTANT]
+> **Because it never opens a port, presence polling does not participate in the per-port state machine at all** and never contends with `PASSTHROUGH`, `FLASHING`, `RESETTING`, or `IN_SESSION` for ownership. A box reports "connected" and "flashing" as **two independent facts**.
+
+**Filtering.** Board-list output includes non-Arduino serial ports (Bluetooth, debug consoles), so the poller keeps only entries with `protocol == "serial"`, a non-blank `hardware_id` (falling back to `properties.serialNumber`), a truthy vendor id, and a non-empty address.
+
+> [!NOTE]
+> It deliberately does **not** allow-list specific vendor ids — CH340 and FTDI clones are common in the lab and must still appear, even though they report no FQBN.
+
+Both backends (daemon and subprocess fallback) apply identical filters, pinned against each other by `test_grpc_tool.py`.
+
+---
+
+## 8. The hardware utility baseline
+
+**The rig has a resting state, and the app maintains it.** A box that isn't flashing, isn't in a console, and isn't running a session should be sitting on the operator's chosen *hardware utility sketch* — the one that speaks Ephymeris's own vocabulary. That is what "baseline" means here: **not a mode the user enters, but the firmware a free box is expected to be carrying.**
+
+The reason to want it is concrete. Before this, the state of a board between sessions was whatever the last thing to touch it happened to leave behind — a task sketch from three weeks ago, a half-finished prime, an unflashed board fresh out of a drawer. Nothing could be asked of a box without first asking the operator to flash something, so every small piece of hardware assistance had to begin with a detour. Maintaining the baseline pays that cost once, in the background, and turns those into things the app can simply do.
+
+### 8.1 When a restore happens
+
+**The trigger is always *a box becoming free*, never a clock.**
+
+| Trigger | Notes |
+|---|---|
+| **On startup** | When the presence poll first reports the rig. The cold case: nothing is known about any board, so every bound box is a candidate |
+| **When a board appears** | Replugged, or newly bound in Config |
+| **When a port falls back to `IDLE`** | A run finishing, a console closing, an error acknowledged. Hooking the **transition** rather than each command means every path to idleness is covered by one rule, including ones added later |
+| **When a session lets go** | `sessions.end`, `sessions.switchGroup`, or `sessions.abandon`. Switch Group restores *immediately* rather than waiting for the whole session, because the operator's very next act is walking the rig to swap animals — and that walk is what wants the lights |
+| **On demand** | Config's **Reflash boxes** button, the only path that passes `force` |
+
+Restores run **one box at a time, sequentially**, for the same reason the session flash sequence does.
+
+> [!WARNING]
+> **Cold start is six sequential flashes.** The first presence poll after launch triggers a restore of every bound box, so a fresh launch has the rig busy for a minute or two. If that proves annoying the fix is to **defer** the cold restore until something needs a box — **not** to parallelise it, which would fight the one-owner-per-port rule.
+
+### 8.2 What it will never do
+
+Two exclusions carry the whole design, and both are about not being clever.
+
+> [!CAUTION]
+> **Only an `IDLE` port is ever touched.** Entering `FLASHING` would happily force-release a `PASSTHROUGH` console — correct when a *user* asks to flash, and unacceptable when a background restore does. **The check is on the port already being idle, not on the transition being legal.**
+
+> [!CAUTION]
+> **A confirmed session mapping holds the entire rig.** Between `sessions.confirmMapping` and the session ending, boxes carry task sketches and fall idle constantly — between the flash sequence and Start All, and again after each animal finishes. A restore in that window would **erase the sketch the runner is about to start**. The hold is not an optimisation; it is the difference between this feature working and it destroying sessions.
+>
+> If any path out of a session ever fails to release the hold, the rig quietly stops returning to baseline. If a release ever landed *early*, a restore would erase a task sketch mid-setup.
+
+**A failed restore is reported and then acknowledged back out of `ERROR`.** A failed flash normally leaves the port in `ERROR` awaiting a manual ack, which is right when the operator asked for the flash and wrong when they didn't: a broken `arduino-cli` would otherwise put all six boxes into a state needing individual clearing before anything else could run. The fault is surfaced in Config instead, and **the failure is sticky per box** so the acknowledgement can't bounce straight into another doomed attempt.
+
+### 8.3 Identify — asking a box to point at itself
+
+With a known sketch on the board, *"which box is box 3?"* becomes answerable in hardware. The utility sketch's profile may declare an [`identify` pair](tasks.md#36-identify) — two commands, on and off.
+
+The sequence: open `PASSTHROUGH` → wait for the board's boot line → send the *on* command → **wait for the sketch's own telemetry line as confirmation**. The matching *off* sends the counterpart and closes the console again — but **only if this layer was the one that opened it.** A box the user has open in Debug Mode keeps its console.
+
+> [!IMPORTANT]
+> **Waiting for the reply rather than assuming it is what makes this trustworthy.** The most likely silent failure is a **baud mismatch**, and the difference between "the light is on" and "we sent something into the void" is exactly the difference the operator needs to know about. When no reply comes, the box is reported failed with that cause named.
+>
+> Building this is what surfaced that `defaultBaud` shipped as 115200 while every sketch in the lab's directory opens at 9600 — the check found a real misconfiguration on its first read-through, before it ever ran.
+
+> [!WARNING]
+> **The confirmation assumes `telemetry`.** A utility sketch declaring `identify` but no `telemetry` gets no confirmation and is trusted on the send alone.
+
+Its first consumer is the [guided placement walk](dashboard.md#73-step-2--mapping-and-the-guided-placement-walk-sessionidmapping), which deliberately runs **before** the session flash sequence — the boxes are still at baseline then, and that is the only firmware that can be asked to light one.
+
+The `identify` commands come from the profile, **never from anything hardcoded**. That is why the walk works on a rig whose boxes signal with a buzzer, an LED on a different pin, or not at all.
+
+### 8.4 What a baseline sketch owes the rig
+
+A sketch nominated as the baseline is held to two rules a merely-useful utility sketch isn't — because of what the baseline *is*: the firmware sitting on every box the rest of the time, **including while animals are being placed into them.**
+
+1. **Announce `READY` on boot**, exactly as a task sketch does. It is what the handshake test looks for to report the top tier, and it is the app's only evidence that the board on the far end speaks its protocol at all. It does **not** then block for a `START` the way a task sketch does — there is no session, and the app begins sending commands the moment the port opens.
+
+2. **Do nothing on its own.**
+
+> [!CAUTION]
+> **`BOX_Utility` inherited a convenience from `TEST_Box`, where an odor poke while idle started the full self-test.** That was reasonable for a sketch you flashed by hand when you wanted to test a box. It is **not** reasonable for the resting firmware: **an animal placed in a chamber nose-pokes**, and the self-test fires all twelve odor lines and pulses every fluid line. Removed. **A baseline sketch reacts to the app and to nothing else.**
+
+---
+
+## 9. The handshake test
+
+Config's per-box handshake test is composed from existing wire primitives, deliberately **with no new command**:
+
+1. `port.passthrough.open` — the open asserts DTR, which resets the Mega, and its boot output lands in `port.output` because the reader thread is attached by then.
+2. Listen up to **10 s** (the sidecar's own `READY` budget) for a `READY` line, or any output at all.
+3. Always close in a `finally`, including on unmount.
+
+| Tier | Meaning | Colour |
+|---|---|---|
+| 🟢 `ready` | `READY` line seen — speaks the Ephymeris protocol | Ion |
+| 🟣 `output` | Some output — wiring and port good, but not an Ephymeris task sketch | Pulsar |
+| 🟡 `silent` | Port opened, nothing heard — **wrong baud**, or a mute sketch | status-warning |
+| 🔴 `failed` | Port never opened — unbound box, missing or busy port | status-error |
+
+> [!CAUTION]
+> **`port.reset` is unsuitable for this and the test must never use it.** Its DTR pulse opens a throwaway handle that is never read, so the boot output it provokes is **unobservable** — and from `PASSTHROUGH` it would reset the board twice.
+
+A box already in `PASSTHROUGH` is closed before the test, since re-opening is what causes the observable reset.
+
+---
+
+**Where to next** — [dashboard.md](dashboard.md) (the state machine these values drive) · [tasks.md](tasks.md) (the Arduino Directory and rig defaults) · [data.md](data.md) (the directories) · [README.md](README.md)

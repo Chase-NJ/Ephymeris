@@ -18,7 +18,7 @@ import { OUTCOME_STYLE, declaredMetrics, poolOutcomes } from "@/lib/analytics/vi
 import { springSnappy } from "@/lib/motion";
 
 /**
- * One session, per animal (`analytics.md` §3.8, §3.9, §6.3).
+ * One session, per animal (`data.md` §9.8, §3.9, §6.3).
  *
  * The panel answers "what happened in this session" at a glance, which the
  * cohort-scale views deliberately cannot: they compare sessions, this one

@@ -1,4 +1,4 @@
-"""Reading finalized session files back off disk — `analytics.md` §8.
+"""Reading finalized session files back off disk — `data.md` §8.
 
 The sidecar has never done this before: `writer.finalize` returns its document
 in memory precisely so callers *don't* re-read it. Analytics is the first
@@ -22,7 +22,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 #: Sibling format folders, so a missing `.json` can be checked against the
-#: write-ahead log that may still hold the data (`data-saving.md` §1).
+#: write-ahead log that may still hold the data (`data.md` §1).
 TSV_DIR = "behavior.tsv"
 JSON_DIR = "behavior.json"
 
@@ -135,7 +135,7 @@ def is_sidecar_file(path: Path) -> bool:
 def run_identity(path: Path) -> str:
     """What makes two files the same run, regardless of where they sit.
 
-    The per-animal filename (`data-saving.md` §2) is
+    The per-animal filename (`data.md` §2) is
     `<animal>_<prefix>_<number>_<date>_<HHMMSS>` — animal plus session plus
     start time. That is precisely a run's identity, which is what makes the
     stem usable as one. Two copies of a run in different folders are one run;
@@ -169,8 +169,7 @@ def stat_run(path: str | Path) -> StatResult:
     Two of `read_run`'s three outcomes are decided here:
 
     * **missing** — nothing at that path. When the sibling `.tsv` *is* there,
-      say so: that is the disk-full-at-finalization case (`data-saving.md`
-      §7.2 writes `.json` best-effort and only logs an `OSError`), the data is
+      say so: that is the disk-full-at-finalization case (`data.md` §5.2 writes `.json` best-effort and only logs an `OSError`), the data is
       not lost, and the crash-recovery utility is what fixes it.
     * **unreadable** — the path itself can't be interrogated.
     * **ok** — with the stat the cache key is built from.
@@ -278,7 +277,7 @@ def walk_session_files(cohort_folder: str | Path) -> list[Path]:
 def walk_orphaned_tsvs(cohort_folder: str | Path) -> list[Path]:
     """Every `.tsv` under one cohort's data folder with no `.json` sibling.
 
-    The crash-recovery backfill's discovery pass (`data-saving.md` §7.3, §11)
+    The crash-recovery backfill's discovery pass (`data.md` §12, §11)
     — the same traversal as `walk_session_files`, looking at the *other*
     format folders. A `.tsv` whose structured copy never got written is
     precisely a run that ended in a crash (no finalization at all) or in a
@@ -327,12 +326,11 @@ def walk_session_dirs(cohort_folder: str | Path) -> list[Path]:
 def _walk_format_dirs(cohort_folder: str | Path):
     """Yield every format folder under a cohort folder as `(path, filenames)`.
 
-    The one traversal both walks share (`analytics.md` §8.1's adoption and the
-    crash-recovery backfill — built to share it by decision, `data-saving.md`
-    §11): format folders matched **by name at any depth**, pruned at the
-    format folder, dotted/`__MACOSX` folders skipped, depth floored at
-    `MAX_FORMAT_DEPTH`. A directory that can't be read costs a warning and its
-    own contents, never the cohort.
+    The one traversal both walks share — `data.md` §8.1's adoption and the
+    crash-recovery backfill of `data.md` §12. Format folders are matched **by
+    name at any depth**, pruned at the format folder, dotted/`__MACOSX` folders
+    skipped, depth floored at `MAX_FORMAT_DEPTH`. A directory that can't be read
+    costs a warning and its own contents, never the cohort.
     """
     base = Path(cohort_folder).expanduser()
     try:

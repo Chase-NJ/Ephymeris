@@ -1,4 +1,4 @@
-"""Arduino Directory discovery — `arduino-directory.md` §3, §4, §6."""
+"""Arduino Directory discovery — `tasks.md` §2.2, §4, §6."""
 
 from __future__ import annotations
 

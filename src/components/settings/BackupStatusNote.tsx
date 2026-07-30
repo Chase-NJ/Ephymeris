@@ -6,7 +6,7 @@ import { springPanel } from "@/lib/motion";
 import type { BackupStatus, SyncResult } from "@/lib/backup/useBackupStatus";
 
 /**
- * What the Backup Directory is actually doing (`data-saving.md` §8).
+ * What the Backup Directory is actually doing (`data.md` §7).
  *
  * The reason this exists at all: a setting that silently does nothing is a
  * promise the app doesn't keep — and so is a backup that silently stopped

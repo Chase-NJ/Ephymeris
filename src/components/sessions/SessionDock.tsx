@@ -17,7 +17,7 @@ import { useSidecar } from "@/lib/ws/context";
 
 /**
  * The session dock — everything `sessions.active` reports, docked beside the
- * Dashboard's hero CTA (ephymeris_v1.0.md §3.3). This is the former Launch
+ * Dashboard's hero CTA (dashboard.md §3). This is the former Launch
  * page's content in panel form: the running session with its way back into
  * Mission Control, set-ups still in `configuring` with Resume/Discard, and
  * crash-orphaned `stale` rows shown read-only. The dock renders whatever the

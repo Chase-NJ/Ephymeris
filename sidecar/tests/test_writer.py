@@ -1,4 +1,4 @@
-"""Per-animal session writer — `data-saving.md` §5, §7.
+"""Per-animal session writer — `data.md` §4, §7.
 
 Includes the crash-durability kill test §7.3 asks for: hard-kill a live writer
 mid-session and prove the `.tsv` is intact up to the last flushed line.
@@ -165,7 +165,7 @@ def test_a_write_to_a_bad_path_raises_writeerror(tmp_path: Path) -> None:
 def test_tsv_survives_a_mid_session_hard_kill(tmp_path: Path) -> None:
     """Hard-kill a live writer; the .tsv must hold every flushed line, no footer.
 
-    This is the guarantee `data-saving.md` §7 exists to make real: if the lab PC
+    This is the guarantee `data.md` §5 exists to make real: if the lab PC
     loses power mid-session, everything up through the last completed line is
     already on disk.
 

@@ -1,4 +1,4 @@
-"""Per-port state machine — `hardware-interaction.md` §3.
+"""Per-port state machine — `dashboard.md` §5.
 
 Each of the six ports has its own independent state machine, and a port can
 only be in one state at a time. That single-owner invariant is the core of the

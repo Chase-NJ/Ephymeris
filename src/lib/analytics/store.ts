@@ -1,5 +1,5 @@
 /**
- * Client-side analytics cache and selection state (`analytics.md` §2.1).
+ * Client-side analytics cache and selection state (`data.md` §10.1).
  *
  * Unlike the other slices this is request/response rather than event-mirrored,
  * but the *consumption* problem is identical — five panels, one shared cache,

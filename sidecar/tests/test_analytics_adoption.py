@@ -1,4 +1,4 @@
-"""Orphan adoption against a legacy, hand-managed archive — `analytics.md` §8.1.
+"""Orphan adoption against a legacy, hand-managed archive — `data.md` §8.1.
 
 Models the lab's real pre-Ephymeris layout, which differs from the current
 writer's in every way that matters: format folders named `behavior_json` /
@@ -567,7 +567,7 @@ async def test_a_declared_legacy_name_makes_an_old_run_scorable(
     rig: LegacyRig, tmp_path: Path
 ) -> None:
     """`legacyNames` is the declared bridge from an old human label to the
-    sketch that can decode it (`data-saving.md` §6.7) — the lab's shaping
+    sketch that can decode it (`tasks.md` §3.7) — the lab's shaping
     archive is recorded as "Shape - L", not `shaping_GL`."""
     shaping = tmp_path / "sketches" / "shaping_GL"
     shaping.mkdir(parents=True, exist_ok=True)
@@ -641,7 +641,7 @@ async def test_a_cache_hit_pass_leaves_no_open_transaction(rig: LegacyRig) -> No
     assert not rig.db.conn.in_transaction
 
 
-# --- a real archive's shape (see docs/analytics.md §8.1) -------------------
+# --- a real archive's shape (see docs/data.md §8.1) -------------------
 
 
 def test_applesingle_sidecars_are_not_data(rig: LegacyRig) -> None:

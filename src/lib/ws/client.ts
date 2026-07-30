@@ -4,7 +4,7 @@
  * Owns endpoint discovery (via the Tauri shell), authentication, request/reply
  * correlation, event fan-out, and reconnection with backoff. Consumers observe
  * `onStatus` and react to `connected` — that is the hook the settings push
- * required by `ephymeris_v1.0.md` §4.5 hangs off.
+ * required by `settings.md` §4 hangs off.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -67,7 +67,7 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   // A first sync can be an entire archive copied to a network share.
   [CMD.BACKUP_SYNC_NOW]: 600_000,
   // A cold first index reads every historical session file, and every one of
-  // them takes the slow fallback-decode path (`analytics.md` §9).
+  // them takes the slow fallback-decode path (`websocket-protocol.md` §3.4).
   [CMD.ANALYTICS_SUMMARY]: 120_000,
   [CMD.ANALYTICS_RESCAN]: 300_000,
   // Same walk as the rescan, plus a .json/.mat write per orphan found.

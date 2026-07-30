@@ -20,7 +20,7 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
  * The shared 3D constellation browser — camera, controls, and the animation
- * grammar (`starting-a-session.md` §6.2–§6.3, `ephymeris_v1.0.md` §4.3).
+ * grammar (`dashboard.md` §9.2–§6.3, `dashboard.md` §4).
  *
  * Two views use it and they are deliberately the *same instrument*: Mission
  * Control browses a cohort's animals, Debug Mode browses the rig's boxes. Both

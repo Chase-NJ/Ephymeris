@@ -10,8 +10,6 @@ import { HandshakeList } from "@/components/config/HandshakeList";
 import { SetupWizard } from "@/components/config/SetupWizard";
 import { UtilitySketchPanel } from "@/components/config/UtilitySketchPanel";
 import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
-import { DirectoryField } from "@/components/settings/DirectoryField";
-import { DirectoryStatusNote } from "@/components/settings/DirectoryStatusNote";
 import { SettingGroup, SettingRow } from "@/components/settings/SettingRow";
 import { reconcileSlots } from "@/lib/constellations/slots";
 import { zodiacById } from "@/lib/constellations/zodiac";
@@ -24,18 +22,22 @@ import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Config — everything box-related in one place (ephymeris_v1.0.md §4.6).
+ * Config — everything box-related in one place (settings.md §5).
  *
- * Hardware config moved here from Settings: box→board bindings, the zodiac
- * constellation layout, the handshake test, default baud, the Arduino
- * Directory, and the arduino-cli path. Settings keeps storage and interface.
+ * Wiring, and only wiring: box→board bindings, the zodiac constellation
+ * layout, the handshake test, the hardware utility baseline, default baud, and
+ * the arduino-cli path. Settings keeps storage and interface.
+ *
+ * The Arduino Directory and a sketch's task parameters live on the Task tab
+ * instead — they are about the task rather than about this rig's hardware, and
+ * a behaviour profile's forty-odd parameters swamped this page.
  *
  * First visit runs the setup wizard, gated on the persisted
  * `boxSetupComplete` flag — and on `loaded`, because before the store loads
  * every flag reads false and the wizard would flash for everyone.
  */
 export function Config() {
-  const { settings, update, discovery, refreshSketches, loaded, saveError } = useSettings();
+  const { settings, update, discovery, loaded, saveError } = useSettings();
   const { client, status } = useSidecar();
   const health = useBoxHealth();
   const handshake = useHandshakeTest();
@@ -181,29 +183,6 @@ export function Config() {
         </SettingGroup>
 
         <SettingGroup title="Hardware">
-          <div className="border-b border-halo px-4 py-3.5">
-            <div className="flex items-start justify-between gap-8">
-              <div className="min-w-0 pt-0.5">
-                <div className="text-[13px] font-medium text-starlight">Arduino Directory</div>
-                <p className="mt-0.5 text-[12px] leading-relaxed text-static">
-                  Root folder holding your sketch categories and a shared{" "}
-                  <code className="font-mono">libraries/</code> folder. Each machine
-                  configures its own.
-                </p>
-              </div>
-              <DirectoryField
-                value={settings.arduinoDirectory}
-                onChange={(next) => void update({ arduinoDirectory: next })}
-                title="Choose the Arduino Directory"
-              />
-            </div>
-            <DirectoryStatusNote
-              discovery={discovery}
-              onRefresh={() => void refreshSketches()}
-              canRefresh={connected}
-            />
-          </div>
-
           <UtilitySketchPanel
             sketches={discovery.sketches}
             boxes={settings.boxes}

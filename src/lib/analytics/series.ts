@@ -1,5 +1,5 @@
 /**
- * The within-session trajectories for a set of runs (`analytics.md` §5, §4.4).
+ * The within-session trajectories for a set of runs (`data.md` §11.2, §4.4).
  *
  * One hook rather than one per panel: selecting a session puts the learning
  * curves, the strategy walk and the summary tile on screen together, and every

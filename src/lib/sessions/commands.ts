@@ -30,7 +30,7 @@ export async function deletePrefix(client: SidecarClient, id: string): Promise<v
 
 /**
  * A sketch's Task Profile, or null when it has none — which is fully supported
- * (`data-saving.md` §6.1): bare `START`, raw strobe log instead of charts.
+ * (`tasks.md` §3): bare `START`, raw strobe log instead of charts.
  */
 export async function getTaskProfile(
   client: SidecarClient,

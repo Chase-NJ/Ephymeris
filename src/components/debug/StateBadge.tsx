@@ -4,7 +4,7 @@ import { springSnappy } from "@/lib/motion";
 import type { PortStateName } from "@/lib/hardware/store";
 
 /**
- * Per-box state badge (`hardware-interaction.md` §3.4).
+ * Per-box state badge (`dashboard.md` §4.1).
  *
  * Driven by two independent inputs: the port's own state-machine state and the
  * out-of-band presence check (§7) — hence `detected` arriving separately, so

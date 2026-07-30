@@ -11,22 +11,24 @@ import { MissionControl } from "./routes/MissionControl";
 import { SessionConfig } from "./routes/SessionConfig";
 import { SessionMapping } from "./routes/SessionMapping";
 import { Settings } from "./routes/Settings";
+import { Task } from "./routes/Task";
 
 export default function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<Dashboard />} />
-        {/* /launch is retired (ephymeris_v1.0.md §3.2) — the Dashboard's hero
+        {/* /launch is retired (dashboard.md §2.2) — the Dashboard's hero
             and session dock absorbed it, and old paths fall through to `*`. */}
         <Route path="/cohorts" element={<Cohorts />} />
         <Route path="/cohorts/new" element={<CohortEditor />} />
         <Route path="/cohorts/:id" element={<CohortEditor />} />
         <Route path="/debug" element={<DebugMode />} />
+        <Route path="/task" element={<Task />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/config" element={<Config />} />
         <Route path="/settings" element={<Settings />} />
-        {/* Two-step session setup (`starting-a-session.md` §2–§4); the runner
+        {/* Two-step session setup (`dashboard.md` §7.2–§4); the runner
             takes over at /session/:id/control. */}
         <Route path="/session/new" element={<SessionConfig />} />
         <Route path="/session/:id/mapping" element={<SessionMapping />} />

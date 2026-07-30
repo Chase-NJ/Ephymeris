@@ -3,7 +3,7 @@
 Uses `board list --format json`. One call covers all six ports, so the 1–2s
 presence poll costs roughly one process spawn per second rather than six —
 which is what makes deferring the gRPC daemon tolerable
-(`hardware-interaction.md` §2).
+(`README.md` §4.1).
 """
 
 from __future__ import annotations
@@ -150,7 +150,7 @@ class ArduinoCliTool(BoardTool):
     ) -> None:
         args = ["compile", "--fqbn", fqbn, "--format", "json"]
         if libraries_path:
-            # One shared libraries folder for every sketch (arduino-directory.md §4).
+            # One shared libraries folder for every sketch (tasks.md §2.3).
             args += ["--libraries", libraries_path]
         args.append(sketch_dir)
 
@@ -207,7 +207,7 @@ class ArduinoCliTool(BoardTool):
         stdout carries the `--format json` result and is parsed at the end;
         stderr is whatever the tool says while working, forwarded as it
         arrives so the frontend shows progress, not a spinner-until-done
-        (`hardware-interaction.md` §4).
+        (`dashboard.md` §6.1).
         """
         try:
             proc = await asyncio.create_subprocess_exec(

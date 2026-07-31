@@ -336,7 +336,7 @@ export function NodeDetail({
       </p>
 
       <div className="mt-3 flex flex-col gap-3">
-        <section className="surface rounded-md">
+        <section className="surface-inset rounded-md">
           <IdentityRow
             label="Board"
             value={binding?.hardwareId ?? "not bound"}
@@ -472,7 +472,7 @@ export function NodeDetail({
             )}
           </Group>
 
-          <section className="surface overflow-hidden rounded-md">
+          <section className="surface-inset overflow-hidden rounded-md">
             <div className="flex items-center gap-1 border-b border-halo px-2 py-1.5">
               <ConsoleTab
                 label="Console"
@@ -627,7 +627,7 @@ function baselineWord(state: UtilityBaselineState | undefined): string {
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="surface overflow-hidden rounded-md">
+    <section className="surface-inset overflow-hidden rounded-md">
       <h3 className="border-b border-halo px-3 py-2 text-[11px] font-medium tracking-[0.08em] text-static uppercase">
         {title}
       </h3>

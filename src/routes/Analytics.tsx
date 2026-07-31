@@ -1,5 +1,9 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  DENSE_SKY_OPACITY,
+  SkyBackdrop,
+} from "@/components/constellation3d/SkyBackdrop";
+import {
   ArchiveRestore,
   ChartLine,
   CircleAlert,
@@ -11,7 +15,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
 
 import { AnimalRail } from "@/components/analytics/AnimalRail";
-import { ChangeCohort, CohortLanding } from "@/components/analytics/CohortLanding";
+import {
+  ChangeCohort,
+  CohortLanding,
+} from "@/components/analytics/CohortLanding";
 import { CohortHeatmap } from "@/components/analytics/CohortHeatmap";
 import type { ReportInput } from "@/components/analytics/report/ReportSheet";
 import {
@@ -102,15 +109,15 @@ export function Analytics() {
   // acknowledgement. A Dashboard row arrives the same way, naming a session by
   // its folder rather than its id (`sessionFolder`) because the rows it comes
   // from are a walk of directory names.
-  const landing = location.state as
-    | {
-        endedSession?: string | null;
-        cohortId?: string;
-        sessionId?: string;
-        sessionFolder?: DiskSession;
-      }
-    | null;
-  const [banner, setBanner] = useState<string | null>(landing?.endedSession ?? null);
+  const landing = location.state as {
+    endedSession?: string | null;
+    cohortId?: string;
+    sessionId?: string;
+    sessionFolder?: DiskSession;
+  } | null;
+  const [banner, setBanner] = useState<string | null>(
+    landing?.endedSession ?? null,
+  );
 
   const active = cohorts.find((cohort) => cohort.id === cohortId) ?? null;
   const connected = status === "connected";
@@ -133,7 +140,10 @@ export function Analytics() {
   // the same commit as the arrival, when `cohortId` is still the PREVIOUS
   // selection and its list is the previous cohort's. Untagged, that pass would
   // consume the folder against the wrong list.
-  const pendingFolder = useRef<{ cohortId: string; folder: DiskSession } | null>(null);
+  const pendingFolder = useRef<{
+    cohortId: string;
+    folder: DiskSession;
+  } | null>(null);
   useEffect(() => {
     if (!landing?.cohortId || handledArrival.current === location.key) return;
     // Not marked handled until the socket is up, so a cold start retries
@@ -197,10 +207,14 @@ export function Analytics() {
   const profiles = summary?.profileGroups ?? NO_PROFILES;
   const profile = useMemo(
     () =>
-      profiles.find((group) => group.hash === profileHash) ?? dominantProfile(summary),
+      profiles.find((group) => group.hash === profileHash) ??
+      dominantProfile(summary),
     [profiles, profileHash, summary],
   );
-  const colors = useMemo(() => buildAnimalColors(summary?.animals ?? []), [summary]);
+  const colors = useMemo(
+    () => buildAnimalColors(summary?.animals ?? []),
+    [summary],
+  );
   const activeMetric = metricId ?? profile?.metrics[0]?.id ?? null;
   const revealKey = `${cohortId ?? ""}:${reveal}`;
   const selectedSession = useMemo(
@@ -257,9 +271,12 @@ export function Analytics() {
     ],
   );
 
-  const folderWarning = summary?.warnings.find((w) => w.code === "data-folder-missing");
+  const folderWarning = summary?.warnings.find(
+    (w) => w.code === "data-folder-missing",
+  );
   const runWarnings = useMemo(
-    () => summary?.warnings.filter((w) => w.code !== "data-folder-missing") ?? [],
+    () =>
+      summary?.warnings.filter((w) => w.code !== "data-folder-missing") ?? [],
     [summary],
   );
 
@@ -309,306 +326,368 @@ export function Analytics() {
   // The picker is the landing state; a cohort is only chosen deliberately.
   if (!cohortId) {
     return (
-      <motion.section className="mx-auto max-w-6xl px-8 py-8">
-        {!connected ? (
-          <Notice>
-            Waiting for the backend — Analytics reads recorded sessions from it.
-          </Notice>
-        ) : (
-          <CohortLanding
-            cohorts={cohorts}
-            onPick={(next) => {
-              setMetricId(null);
-              setProfileHash(null);
-              setReveal((n) => n + 1);
-              store.selectCohort(next);
-            }}
-          />
-        )}
-      </motion.section>
+      // Every route sits on the rig's sky, dimmed here so a drifting nebula never
+      // competes with a learning curve (`SkyBackdrop`, `dashboard.md` §2.5). It is
+      // mounted rather than omitted because a route with no constellation is the
+      // one thing that releases the shared canvas.
+      <div className="relative h-full">
+        <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
+
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          transition={springPanel}
+          className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
+        >
+          <section className="pointer-events-auto mx-auto max-w-6xl px-8 py-8">
+            {!connected ? (
+              <Notice>
+                Waiting for the backend — Analytics reads recorded sessions from
+                it.
+              </Notice>
+            ) : (
+              <CohortLanding
+                cohorts={cohorts}
+                onPick={(next) => {
+                  setMetricId(null);
+                  setProfileHash(null);
+                  setReveal((n) => n + 1);
+                  store.selectCohort(next);
+                }}
+              />
+            )}
+          </section>
+        </motion.div>
+      </div>
     );
   }
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={springPanel}
-      className="mx-auto max-w-6xl px-8 py-8"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
-            <ChartLine size={18} strokeWidth={1.75} className="text-pulsar" />
-          </span>
-          <div>
-            <h1 className="font-display text-[22px] text-starlight">Analytics</h1>
-            <ChangeCohort
-              name={active?.name ?? "All cohorts"}
-              onBack={() => {
-                setMetricId(null);
-                setProfileHash(null);
-                store.selectCohort(null);
-              }}
-            />
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {profiles.length > 1 && (
-            <Select
-              label="Task"
-              value={profile?.hash ?? ""}
-              options={profiles.map((group) => ({
-                value: group.hash,
-                label: `${group.taskName ?? "Unnamed task"} · ${group.runCount}`,
-              }))}
-              onChange={(next) => {
-                // Metrics are declared per task, so the current selection
-                // usually doesn't exist on the incoming one.
-                setMetricId(null);
-                setProfileHash(next);
-              }}
-            />
-          )}
-          {profile && profile.metrics.length > 1 && (
-            <Select
-              label="Metric"
-              value={activeMetric ?? ""}
-              options={profile.metrics.map((metric) => ({
-                value: metric.id,
-                label: metric.label,
-              }))}
-              onChange={(next) => setMetricId(next)}
-            />
-          )}
-          <Button
-            variant="outline"
-            onClick={() => void runRescan()}
-            disabled={!connected || !cohortId || rescanning || recovering}
-            title="Look for session files no run record points at"
-          >
-            <RefreshCw size={13} strokeWidth={1.75} />
-            {rescanning ? "Scanning…" : "Rescan"}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => void runRecover()}
-            disabled={!connected || !cohortId || rescanning || recovering}
-            title="Rebuild .json/.mat from write-ahead .tsv files a crash left behind"
-          >
-            <ArchiveRestore size={13} strokeWidth={1.75} />
-            {recovering ? "Recovering…" : "Recover"}
-          </Button>
-          {/* One button, following the scope, rather than two side by side:
+    // Every route sits on the rig's sky, dimmed here so a drifting nebula never
+    // competes with a learning curve (`SkyBackdrop`, `dashboard.md` §2.5). It is
+    // mounted rather than omitted because a route with no constellation is the
+    // one thing that releases the shared canvas.
+    <div className="relative h-full">
+      <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
+
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0 }}
+        transition={springPanel}
+        className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
+      >
+        <section className="pointer-events-auto mx-auto max-w-6xl px-8 py-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
+                <ChartLine
+                  size={18}
+                  strokeWidth={1.75}
+                  className="text-pulsar"
+                />
+              </span>
+              <div>
+                <h1 className="font-display text-[22px] text-starlight">
+                  Analytics
+                </h1>
+                <ChangeCohort
+                  name={active?.name ?? "All cohorts"}
+                  onBack={() => {
+                    setMetricId(null);
+                    setProfileHash(null);
+                    store.selectCohort(null);
+                  }}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {profiles.length > 1 && (
+                <Select
+                  label="Task"
+                  value={profile?.hash ?? ""}
+                  options={profiles.map((group) => ({
+                    value: group.hash,
+                    label: `${group.taskName ?? "Unnamed task"} · ${group.runCount}`,
+                  }))}
+                  onChange={(next) => {
+                    // Metrics are declared per task, so the current selection
+                    // usually doesn't exist on the incoming one.
+                    setMetricId(null);
+                    setProfileHash(next);
+                  }}
+                />
+              )}
+              {profile && profile.metrics.length > 1 && (
+                <Select
+                  label="Metric"
+                  value={activeMetric ?? ""}
+                  options={profile.metrics.map((metric) => ({
+                    value: metric.id,
+                    label: metric.label,
+                  }))}
+                  onChange={(next) => setMetricId(next)}
+                />
+              )}
+              <Button
+                variant="outline"
+                onClick={() => void runRescan()}
+                disabled={!connected || !cohortId || rescanning || recovering}
+                title="Look for session files no run record points at"
+              >
+                <RefreshCw size={13} strokeWidth={1.75} />
+                {rescanning ? "Scanning…" : "Rescan"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void runRecover()}
+                disabled={!connected || !cohortId || rescanning || recovering}
+                title="Rebuild .json/.mat from write-ahead .tsv files a crash left behind"
+              >
+                <ArchiveRestore size={13} strokeWidth={1.75} />
+                {recovering ? "Recovering…" : "Recover"}
+              </Button>
+              {/* One button, following the scope, rather than two side by side:
               which sheet you get is already answered by what you are looking
               at, and the label says so outright. */}
-          <Button
-            variant="outline"
-            onClick={() => {
-              if (reportInput) void exporter.run(reportInput, reportFilename(reportInput));
-            }}
-            disabled={!reportInput || exporter.busy || rescanning || recovering}
-            title={
-              selectedSession
-                ? "Save this session's panels as one PNG"
-                : "Save the across-session panels as one PNG"
-            }
-          >
-            <Download size={13} strokeWidth={1.75} />
-            {exporter.busy
-              ? "Exporting…"
-              : selectedSession
-                ? "Export session PNG"
-                : "Export cohort PNG"}
-          </Button>
-        </div>
-      </div>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (reportInput)
+                    void exporter.run(reportInput, reportFilename(reportInput));
+                }}
+                disabled={
+                  !reportInput || exporter.busy || rescanning || recovering
+                }
+                title={
+                  selectedSession
+                    ? "Save this session's panels as one PNG"
+                    : "Save the across-session panels as one PNG"
+                }
+              >
+                <Download size={13} strokeWidth={1.75} />
+                {exporter.busy
+                  ? "Exporting…"
+                  : selectedSession
+                    ? "Export session PNG"
+                    : "Export cohort PNG"}
+              </Button>
+            </div>
+          </div>
 
-      {exporter.portal}
+          {exporter.portal}
 
-      {banner && (
-        <button
-          type="button"
-          onClick={() => setBanner(null)}
-          className="mt-4 flex w-full items-center gap-1.5 rounded-sm border border-halo px-3 py-2 text-left font-mono text-[12px]"
-          style={{ color: "var(--color-status-ok)" }}
-        >
-          <CircleCheck size={14} strokeWidth={1.75} className="shrink-0" />
-          {banner} ended and saved.
-          <span className="ml-auto text-static/70">dismiss</span>
-        </button>
-      )}
+          {banner && (
+            <button
+              type="button"
+              onClick={() => setBanner(null)}
+              className="mt-4 flex w-full items-center gap-1.5 rounded-sm border border-halo px-3 py-2 text-left font-mono text-[12px]"
+              style={{ color: "var(--color-status-ok)" }}
+            >
+              <CircleCheck size={14} strokeWidth={1.75} className="shrink-0" />
+              {banner} ended and saved.
+              <span className="ml-auto text-static/70">dismiss</span>
+            </button>
+          )}
 
-      {!connected && (
-        <Notice>
-          Waiting for the backend — Analytics reads recorded sessions from it.
-        </Notice>
-      )}
+          {!connected && (
+            <Notice>
+              Waiting for the backend — Analytics reads recorded sessions from
+              it.
+            </Notice>
+          )}
 
-      {connected && loadError && (
-        <div
-          className="mt-4 flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
-          style={{ color: "var(--color-status-error)" }}
-        >
-          <CircleAlert size={14} strokeWidth={1.75} />
-          {loadError}
-        </div>
-      )}
+          {connected && loadError && (
+            <div
+              className="mt-4 flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
+              style={{ color: "var(--color-status-error)" }}
+            >
+              <CircleAlert size={14} strokeWidth={1.75} />
+              {loadError}
+            </div>
+          )}
 
-      {connected && state === "loading" && (
-        <Notice>
-          {progress
-            ? `Reading session files — ${progress.done} of ${progress.total}…`
-            : "Loading…"}
-        </Notice>
-      )}
+          {connected && state === "loading" && (
+            <Notice>
+              {progress
+                ? `Reading session files — ${progress.done} of ${progress.total}…`
+                : "Loading…"}
+            </Notice>
+          )}
 
-      {rescanNote && <p className="mt-3 font-mono text-[11px] text-static">{rescanNote}</p>}
+          {rescanNote && (
+            <p className="mt-3 font-mono text-[11px] text-static">
+              {rescanNote}
+            </p>
+          )}
 
-      {exporter.note && (
-        <button
-          type="button"
-          onClick={() => exporter.setNote(null)}
-          className="mt-3 block text-left font-mono text-[11px] text-static"
-        >
-          {exporter.note}
-        </button>
-      )}
+          {exporter.note && (
+            <button
+              type="button"
+              onClick={() => exporter.setNote(null)}
+              className="mt-3 block text-left font-mono text-[11px] text-static"
+            >
+              {exporter.note}
+            </button>
+          )}
 
-      {connected && summary && (
-        <div className="mt-5 flex flex-col gap-3">
-          <SessionRail sessions={sessions} summary={summary} selected={sessionScope} />
+          {connected && summary && (
+            <div className="mt-5 flex flex-col gap-3">
+              <SessionRail
+                sessions={sessions}
+                summary={summary}
+                selected={sessionScope}
+              />
 
-          {/* A cohort whose folder is gone isn't a damaged run — it's the whole
+              {/* A cohort whose folder is gone isn't a damaged run — it's the whole
               archive being unreachable, and calling it "1 run could not be read"
               would point the reader at exactly the wrong thing. */}
-          {folderWarning && (
-            <p className="px-1 text-[11px] leading-relaxed text-static">
-              <span style={{ color: "var(--color-status-warning)" }}>
-                Can&rsquo;t reach this cohort&rsquo;s data folder
-              </span>{" "}
-              — <span className="font-mono">{folderWarning.message}</span>.
-              Anything below is the last successful read. Reconnect the drive, or
-              change the folder in the cohort editor.
-            </p>
-          )}
+              {folderWarning && (
+                <p className="px-1 text-[11px] leading-relaxed text-static">
+                  <span style={{ color: "var(--color-status-warning)" }}>
+                    Can&rsquo;t reach this cohort&rsquo;s data folder
+                  </span>{" "}
+                  — <span className="font-mono">{folderWarning.message}</span>.
+                  Anything below is the last successful read. Reconnect the
+                  drive, or change the folder in the cohort editor.
+                </p>
+              )}
 
-          {runWarnings.length > 0 && (
-            <p className="px-1 text-[11px] leading-relaxed text-static">
-              <span style={{ color: "var(--color-status-warning)" }}>
-                {runWarnings.length} run
-                {runWarnings.length === 1 ? "" : "s"} could not be read
-              </span>{" "}
-              — everything else is unaffected. {runWarnings[0]!.message}
-            </p>
-          )}
+              {runWarnings.length > 0 && (
+                <p className="px-1 text-[11px] leading-relaxed text-static">
+                  <span style={{ color: "var(--color-status-warning)" }}>
+                    {runWarnings.length} run
+                    {runWarnings.length === 1 ? "" : "s"} could not be read
+                  </span>{" "}
+                  — everything else is unaffected. {runWarnings[0]!.message}
+                </p>
+              )}
 
-          {/* The rail shares a row with the strategy tile and nothing else.
+              {/* The rail shares a row with the strategy tile and nothing else.
               It used to be one grid item beside the whole stack, which — grid
               items stretching by default — drew it as tall as every panel to
               its right combined, most of it empty. Everything below is now a
               full-width sibling instead of being indented behind it. */}
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,224px)_minmax(0,1fr)]">
-            {/* Stretches to the row so the rail has a height to cap against —
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,224px)_minmax(0,1fr)]">
+                {/* Stretches to the row so the rail has a height to cap against —
                 see `AnimalRail`'s `scroll`. */}
-            <div className="lg:relative">
-              <AnimalRail
-                summary={summary}
-                profile={profile}
-                colors={colors}
-                metricId={activeMetric}
-              />
-            </div>
-            <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
-              {/* §4.4 — the two strategy panels share one plane and swap,
+                <div className="lg:relative">
+                  <AnimalRail
+                    summary={summary}
+                    profile={profile}
+                    colors={colors}
+                    metricId={activeMetric}
+                  />
+                </div>
+                <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
+                  {/* §4.4 — the two strategy panels share one plane and swap,
                   never coexist: a line in one spans weeks and a line in the
                   other spans an hour, and the frame cannot tell them apart. */}
-              {selectedSession ? (
-                <SessionStrategy
-                  summary={summary}
-                  profile={profile}
-                  colors={colors}
-                  runs={sessionRuns}
-                  series={sessionSeries}
-                  revealKey={revealKey}
-                />
-              ) : (
-                <StrategySpace summary={summary} profile={profile} colors={colors} />
-              )}
-              <LearningCurves
-                summary={summary}
-                profile={profile}
-                colors={colors}
-                sessionScope={sessionScope}
-                series={sessionSeries}
-              />
-            </div>
-          </div>
+                  {selectedSession ? (
+                    <SessionStrategy
+                      summary={summary}
+                      profile={profile}
+                      colors={colors}
+                      runs={sessionRuns}
+                      series={sessionSeries}
+                      revealKey={revealKey}
+                    />
+                  ) : (
+                    <StrategySpace
+                      summary={summary}
+                      profile={profile}
+                      colors={colors}
+                    />
+                  )}
+                  <LearningCurves
+                    summary={summary}
+                    profile={profile}
+                    colors={colors}
+                    sessionScope={sessionScope}
+                    series={sessionSeries}
+                  />
+                </div>
+              </div>
 
-          {/* Full width, and directly under the rail: it is the one panel whose
+              {/* Full width, and directly under the rail: it is the one panel whose
               width is set by how much archive there is rather than by its
               container, so it is the one with something to do with the room. */}
-          <CohortHeatmap
-            summary={summary}
-            profile={profile}
-            metricId={activeMetric}
-            sessionScope={sessionScope}
-            revealKey={revealKey}
-          />
+              <CohortHeatmap
+                summary={summary}
+                profile={profile}
+                metricId={activeMetric}
+                sessionScope={sessionScope}
+                revealKey={revealKey}
+              />
 
-          {/* The outcome trends are across-session by nature: one session
+              {/* The outcome trends are across-session by nature: one session
               has a single pooled figure, and the summary below shows that
               per animal instead of flattening it to a dot. All three share
               x slots (`sessionOutcomePoints`), so a session sits above
               itself in every panel — which is why these four stay a single
               unbroken run and nothing may be inserted between them. */}
-          {sessionScope === ALL_SESSIONS && (
-            <>
-              <RewardedTrend
-                summary={summary}
-                profile={profile}
-                colors={colors}
-                revealKey={revealKey}
-              />
-              {/* Directly below rewarded accuracy, and full width like it:
+              {sessionScope === ALL_SESSIONS && (
+                <>
+                  <RewardedTrend
+                    summary={summary}
+                    profile={profile}
+                    colors={colors}
+                    revealKey={revealKey}
+                  />
+                  {/* Directly below rewarded accuracy, and full width like it:
                   the two share x slots and a denominator, so the gap
                   between the curves is the hold-failure rate — a reading
                   that only survives if a session sits above itself and
                   both plots are the same shape. */}
-              <ResponseTrend
-                summary={summary}
-                profile={profile}
-                colors={colors}
-                revealKey={revealKey}
-              />
-              <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
-                <EffortTrend summary={summary} profile={profile} revealKey={revealKey} />
-                <OutcomeMix summary={summary} profile={profile} revealKey={revealKey} />
-              </div>
-            </>
-          )}
+                  <ResponseTrend
+                    summary={summary}
+                    profile={profile}
+                    colors={colors}
+                    revealKey={revealKey}
+                  />
+                  <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
+                    <EffortTrend
+                      summary={summary}
+                      profile={profile}
+                      revealKey={revealKey}
+                    />
+                    <OutcomeMix
+                      summary={summary}
+                      profile={profile}
+                      revealKey={revealKey}
+                    />
+                  </div>
+                </>
+              )}
 
-          {/* Selecting a session opens it up: the cohort views compare
+              {/* Selecting a session opens it up: the cohort views compare
               sessions, this one is the inside of a single one. */}
-          <AnimatePresence mode="wait">
-            {selectedSession && (
-              <SessionSummary
-                key={selectedSession.id}
-                summary={summary}
-                profile={profile}
-                colors={colors}
-                session={selectedSession}
-                runs={sessionRuns}
-                series={sessionSeries}
-                revealKey={revealKey}
-              />
-            )}
-          </AnimatePresence>
+              <AnimatePresence mode="wait">
+                {selectedSession && (
+                  <SessionSummary
+                    key={selectedSession.id}
+                    summary={summary}
+                    profile={profile}
+                    colors={colors}
+                    session={selectedSession}
+                    runs={sessionRuns}
+                    series={sessionSeries}
+                    revealKey={revealKey}
+                  />
+                )}
+              </AnimatePresence>
 
-          <Footnote summary={summary} cohortName={active?.name ?? ""} scope={sessionScope} />
-        </div>
-      )}
-    </motion.section>
+              <Footnote
+                summary={summary}
+                cohortName={active?.name ?? ""}
+                scope={sessionScope}
+              />
+            </div>
+          )}
+        </section>
+      </motion.div>
+    </div>
   );
 }
 
@@ -626,7 +705,9 @@ function describeRescan(result: RescanResult): string {
   if (result.folderMissing) {
     return `Can't reach ${result.dataFolder} — nothing was scanned. Reconnect the drive, or change this cohort's data folder.`;
   }
-  const parts = [`Scanned ${result.scanned} file${result.scanned === 1 ? "" : "s"}`];
+  const parts = [
+    `Scanned ${result.scanned} file${result.scanned === 1 ? "" : "s"}`,
+  ];
   if (result.adopted > 0) {
     parts.push(`adopted ${result.adopted} that no run record pointed at`);
   }
@@ -637,16 +718,21 @@ function describeRescan(result: RescanResult): string {
   }
   const unmatched = result.orphans.filter((o) => o.animalId === null).length;
   if (unmatched > 0) {
-    parts.push(`${unmatched} matched no animal on the roster and were left alone`);
+    parts.push(
+      `${unmatched} matched no animal on the roster and were left alone`,
+    );
   }
   // A correction the operator can't see is one they can't check.
-  const byName = result.orphans.filter((o) => o.animalSource === "filename").length;
+  const byName = result.orphans.filter(
+    (o) => o.animalSource === "filename",
+  ).length;
   if (byName > 0) {
     parts.push(
       `${byName} named an animal the roster doesn't have and ${byName === 1 ? "was" : "were"} matched on ${byName === 1 ? "its" : "their"} filename instead`,
     );
   }
-  if (parts.length === 1) return `${parts[0]} — everything on disk is already indexed.`;
+  if (parts.length === 1)
+    return `${parts[0]} — everything on disk is already indexed.`;
   return `${parts.join("; ")}.`;
 }
 
@@ -674,5 +760,9 @@ function describeRecover(result: RecoverResult): string {
 }
 
 function Notice({ children }: { children: ReactNode }) {
-  return <p className="mt-4 max-w-prose text-[13px] leading-relaxed text-static">{children}</p>;
+  return (
+    <p className="mt-4 max-w-prose text-[13px] leading-relaxed text-static">
+      {children}
+    </p>
+  );
 }

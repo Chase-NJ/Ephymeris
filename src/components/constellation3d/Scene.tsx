@@ -1,4 +1,5 @@
 import { Billboard, Html } from "@react-three/drei";
+import { MAX_FRAME_SECONDS } from "./CameraRig";
 import { useFrame } from "@react-three/fiber";
 import { motion } from "framer-motion";
 import { Crosshair, Move } from "lucide-react";
@@ -360,7 +361,11 @@ function StarNode({
   // sphere makes that jump frequent. Frame-rate independent, so it feels the
   // same on a 60Hz lab monitor as on a 144Hz one.
   const scaleTo = active && hovered ? 1.5 : 1;
-  useFrame((_state, delta) => {
+  useFrame((_state, raw) => {
+    // Bounded like every other time-integrated animation: an unclamped
+    // `delta` is wall-clock, so one stalled frame jumps this forward by the
+    // whole stall (`CameraRig`'s `MAX_FRAME_SECONDS`).
+    const delta = Math.min(raw, MAX_FRAME_SECONDS);
     const group = visual.current;
     if (!group) return;
     if (reduceMotion) {
@@ -434,7 +439,11 @@ function HoverReticle({ radius, active }: { radius: number; active: boolean }) {
   const materials = useRef<THREE.MeshBasicMaterial[]>([]);
   const reduceMotion = useReduceMotion();
 
-  useFrame((_state, delta) => {
+  useFrame((_state, raw) => {
+    // Bounded like every other time-integrated animation: an unclamped
+    // `delta` is wall-clock, so one stalled frame jumps this forward by the
+    // whole stall (`CameraRig`'s `MAX_FRAME_SECONDS`).
+    const delta = Math.min(raw, MAX_FRAME_SECONDS);
     const g = group.current;
     if (!g) return;
     const k = reduceMotion ? 1 : 1 - Math.exp(-delta * 16);
@@ -556,7 +565,11 @@ function ArrivalRings({ radius }: { radius: number }) {
   const elapsed = useRef(0);
   const reduceMotion = useReduceMotion();
 
-  useFrame((_state, delta) => {
+  useFrame((_state, raw) => {
+    // Bounded like every other time-integrated animation: an unclamped
+    // `delta` is wall-clock, so one stalled frame jumps this forward by the
+    // whole stall (`CameraRig`'s `MAX_FRAME_SECONDS`).
+    const delta = Math.min(raw, MAX_FRAME_SECONDS);
     if (reduceMotion) return;
     elapsed.current += delta;
     if (group.current) group.current.rotation.z += delta * 0.25;

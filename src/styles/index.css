@@ -155,8 +155,37 @@
 
 @layer components {
   /* §2.4 Elevation: 1px Halo hairline + a subtle shadow. Flat and matte beats
-     skeuomorphic depth for this theme. */
+     skeuomorphic depth for this theme.
+
+     **Frosted, because there is no longer any page without sky behind it.** This
+     was opaque Nebula, which was right while Cohorts, Config, Task, Analytics and
+     Settings were plain scrolling documents. Every route now sits on the rig's
+     constellation (`SkyBackdrop` — for a reason that is about the shared canvas's
+     lifecycle, not about looks), and an opaque card over that punches a hole in
+     it. One definition here rather than a `.hud` swap in eighteen files.
+
+     `.surface` and `.hud` have converged to within a box-shadow, and that is
+     honest: they are the same material. What still separates them is *what they
+     dock over* — `.hud` sits on a live, close-up scene where a star can fill the
+     frame, `.surface` on the ambient sky. Keep both names; the distinction is
+     about intent and it is what tells you which one a new panel wants. */
   .surface {
+    background-color: color-mix(in srgb, var(--color-nebula) 55%, transparent);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--color-halo);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  }
+
+  /* A card nested *inside* a frosted panel — `NodeDetail`'s sections, and
+     anything else that sits on `.hud` rather than on the sky.
+
+     Frosting inside frosting is not a stronger frost: `backdrop-filter` samples
+     whatever is already composited behind it, so a nested one blurs an
+     already-blurred backdrop, costs a second full-panel filter pass, and reads
+     muddier than either surface alone. What a nested card actually wants is what
+     `.surface` used to be — a flat lift off its parent. */
+  .surface-inset {
     background-color: var(--color-nebula);
     border: 1px solid var(--color-halo);
     box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);

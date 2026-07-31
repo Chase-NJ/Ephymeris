@@ -158,7 +158,12 @@ Selection is one shared `layoutId` pill, so the highlight glides between the two
 
 The selected box still persists in `lib/constellations/viewMemory.ts`, so navigating Dashboard ↔ Debug keeps the same star selected. That memory is **per-sitting** by design — a fresh launch starts at the overview.
 
-**The sky spans the whole guided flow.** Dashboard, both session setup steps, Mission Control and Debug all show the one rig asterism (§9.1), so the constellation never unmounts between them. The two setup steps show it as **backdrop rather than instrument**: it draws and turns behind their frosted panels, but offers no orbit, no zoom, no pan pad and no clickable stars, because the operator is meant to be looking at the form.
+**The sky is behind every route.** Every screen in the app shows the one rig asterism (§9.1) — the three constellation views browse it, and everything else has it as **backdrop rather than instrument**: it draws and turns behind frosted panels, but offers no orbit, no zoom, no pan pad and no clickable stars.
+
+> [!CAUTION]
+> **This is a correctness requirement, not a look.** A route that mounts no constellation is the only thing that makes `ConstellationStage.release()` do real work — between two constellation views the incoming one steals the canvas first and the outgoing release is a no-op. A genuine release unmounts the whole scene graph, which destroys three's refcounted shader programs, so returning recompiles the star shader and `MeshStandardMaterial`'s physical chain on the first frame; r3f additionally leaves the canvas blank and the frameloop parked for ~50 ms while a debounced ResizeObserver reports the new size.
+>
+> The symptom was not the gap. It was the frame after it: `delta` is wall-clock, so the stall was integrated into whatever was mid-animation, and a 300 ms stall spends half of a 1.5 s cubic ease-out in a single frame. That is the camera "lingering, then jumping" on a sidebar round trip. **A new route that wants a plain background should mount `SkyBackdrop` at `opacity: 0`, not omit it.**
 
 Only the **pose** is shared. Selection is separate state (`rigSelection`) belonging to the rig alone, so a focused box never leaks in as a focused animal; the saved `focusedId` exists only to let a restored view skip the fly-to-overview a bare mount would otherwise perform.
 

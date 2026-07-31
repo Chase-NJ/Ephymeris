@@ -1,4 +1,5 @@
 import { Billboard } from "@react-three/drei";
+import { MAX_FRAME_SECONDS } from "./CameraRig";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -131,7 +132,8 @@ function TwinkleField() {
       amps[i] = grade > 0.93 ? 0.45 + rand() * 0.3 : 0.2 + rand() * 0.3;
 
       const tintRoll = rand();
-      const tint = tintRoll > 0.85 ? violet : tintRoll > 0.75 ? green : starlight;
+      const tint =
+        tintRoll > 0.85 ? violet : tintRoll > 0.75 ? green : starlight;
       colors[i * 3] = tint.r;
       colors[i * 3 + 1] = tint.g;
       colors[i * 3 + 2] = tint.b;
@@ -158,7 +160,11 @@ function TwinkleField() {
 
   uniforms.uPixelRatio.value = dpr;
 
-  useFrame((_state, delta) => {
+  useFrame((_state, raw) => {
+    // Bounded like every other time-integrated animation: an unclamped
+    // `delta` is wall-clock, so one stalled frame jumps this forward by the
+    // whole stall (`CameraRig`'s `MAX_FRAME_SECONDS`).
+    const delta = Math.min(raw, MAX_FRAME_SECONDS);
     // Frozen under reduced motion: each star holds its seeded brightness.
     if (!reduceMotion) uniforms.uTime.value += delta;
   });
@@ -292,7 +298,11 @@ function NebulaField() {
     [textures],
   );
 
-  useFrame((_state, delta) => {
+  useFrame((_state, raw) => {
+    // Bounded like every other time-integrated animation: an unclamped
+    // `delta` is wall-clock, so one stalled frame jumps this forward by the
+    // whole stall (`CameraRig`'s `MAX_FRAME_SECONDS`).
+    const delta = Math.min(raw, MAX_FRAME_SECONDS);
     if (reduceMotion) return;
     placements.forEach((p, i) => {
       const mesh = meshes.current[i];
@@ -341,7 +351,14 @@ function makeFlashTexture(): THREE.CanvasTexture {
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d")!;
-  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  const g = ctx.createRadialGradient(
+    size / 2,
+    size / 2,
+    0,
+    size / 2,
+    size / 2,
+    size / 2,
+  );
   g.addColorStop(0, "rgba(255,255,255,1)");
   g.addColorStop(0.25, "rgba(237,235,246,0.7)");
   g.addColorStop(1, "rgba(237,235,246,0)");
@@ -374,7 +391,11 @@ function Supernovae() {
   const flashTexture = useMemo(() => makeFlashTexture(), []);
   useEffect(() => () => flashTexture.dispose(), [flashTexture]);
 
-  useFrame((_state, delta) => {
+  useFrame((_state, raw) => {
+    // Bounded like every other time-integrated animation: an unclamped
+    // `delta` is wall-clock, so one stalled frame jumps this forward by the
+    // whole stall (`CameraRig`'s `MAX_FRAME_SECONDS`).
+    const delta = Math.min(raw, MAX_FRAME_SECONDS);
     const group = anchor.current;
     if (!group) return;
     const s = state.current;

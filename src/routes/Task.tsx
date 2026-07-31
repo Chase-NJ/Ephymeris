@@ -1,6 +1,14 @@
 import { motion } from "framer-motion";
+import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { ChevronUp, CircleAlert, Workflow } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 
 import { Button } from "@/components/common/controls";
 import { ParameterTiles } from "@/components/task/ParameterTiles";
@@ -12,9 +20,17 @@ import { DirectoryStatusNote } from "@/components/settings/DirectoryStatusNote";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { springPanel } from "@/lib/motion";
 import { getTaskProfile } from "@/lib/sessions/commands";
-import { defaultConfig, sketchName, type TaskProfile } from "@/lib/sessions/types";
+import {
+  defaultConfig,
+  sketchName,
+  type TaskProfile,
+} from "@/lib/sessions/types";
 import { useSettings } from "@/lib/settings/context";
-import { nodesGovernedBy, taskGraph, type TaskNode } from "@/lib/tasks/topology";
+import {
+  nodesGovernedBy,
+  taskGraph,
+  type TaskNode,
+} from "@/lib/tasks/topology";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -45,7 +61,8 @@ import { useSidecar } from "@/lib/ws/context";
  * cursor mid-scroll.
  */
 export function Task() {
-  const { settings, update, discovery, refreshSketches, loaded } = useSettings();
+  const { settings, update, discovery, refreshSketches, loaded } =
+    useSettings();
   const { client, status } = useSidecar();
   const connected = status === "connected";
 
@@ -68,11 +85,17 @@ export function Task() {
   const [railHeight, setRailHeight] = useState(0);
 
   const name = sketchName(sketchPath);
-  const saved = useMemo(() => settings.taskDefaults[name] ?? {}, [settings.taskDefaults, name]);
+  const saved = useMemo(
+    () => settings.taskDefaults[name] ?? {},
+    [settings.taskDefaults, name],
+  );
   // The layer underneath these defaults is the sketch author's own, so that is
   // what "changed" is measured against and what Reset returns to.
   const authored = useMemo(() => defaultConfig(profile), [profile]);
-  const current = useMemo(() => defaultConfig(profile, saved), [profile, saved]);
+  const current = useMemo(
+    () => defaultConfig(profile, saved),
+    [profile, saved],
+  );
   const model = useMemo(() => taskGraph(profile), [profile]);
 
   /** Nodes the hovered tile's parameters govern. Empty = nothing dimmed. */
@@ -88,7 +111,9 @@ export function Task() {
     // "nearest" rather than "center": a tile already in view shouldn't jump,
     // and the tiles' own scroll-margin clears the pinned rail for one that is
     // scrolled to. Centring a tile taller than the viewport hides its header.
-    tiles.current.get(group)!.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    tiles.current
+      .get(group)!
+      .scrollIntoView({ behavior: "smooth", block: "nearest" });
     setHoverGroup(group);
   }, []);
 
@@ -182,230 +207,251 @@ export function Task() {
   if (!loaded) return null;
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={springPanel}
-      className="mx-auto max-w-5xl px-8 py-8"
-    >
-      <div className="flex items-center gap-3">
-        <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
-          <Workflow size={18} strokeWidth={1.75} className="text-pulsar" />
-        </span>
-        <h1 className="font-display text-[22px] text-starlight">Task</h1>
-      </div>
+    // Every route sits on the rig's sky. Not decoration: a route that mounts no
+    // constellation is the only thing that releases the shared canvas, and that
+    // teardown is what made a sidebar round trip snap (`SkyBackdrop`).
+    <div className="relative h-full">
+      <SkyBackdrop />
 
-      {/* The directory the picker draws from, so it sits beside the picker
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        // Owns its own exit: the shell holds every page opaque on the way out
+        // now, so anything that should fade has to say so (`AppShell`).
+        exit={{ opacity: 0 }}
+        transition={springPanel}
+        className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
+      >
+        <section className="pointer-events-auto mx-auto max-w-5xl px-8 py-8">
+          <div className="flex items-center gap-3">
+            <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
+              <Workflow size={18} strokeWidth={1.75} className="text-pulsar" />
+            </span>
+            <h1 className="font-display text-[22px] text-starlight">Task</h1>
+          </div>
+
+          {/* The directory the picker draws from, so it sits beside the picker
           rather than on Config with the box wiring. */}
-      <section className="surface mt-6 rounded-md">
-        <div className="border-b border-halo px-4 py-3.5">
-          <div className="flex items-start justify-between gap-8">
-            <div className="min-w-0 pt-0.5">
-              <div className="text-[13px] font-medium text-starlight">
-                Arduino Directory
-              </div>
-              <p className="mt-0.5 text-[12px] leading-relaxed text-static">
-                Root folder holding your sketch categories and a shared{" "}
-                <code className="font-mono">libraries/</code> folder. Each
-                machine configures its own.
-              </p>
-            </div>
-            <DirectoryField
-              value={settings.arduinoDirectory}
-              onChange={(next) => void update({ arduinoDirectory: next })}
-              title="Choose the Arduino Directory"
-            />
-          </div>
-          <DirectoryStatusNote
-            discovery={discovery}
-            onRefresh={() => void refreshSketches()}
-            canRefresh={connected}
-          />
-        </div>
-
-        <div className="flex items-start justify-between gap-8 px-4 py-3.5">
-          <div className="min-w-0 pt-0.5">
-            <div className="text-[13px] font-medium text-starlight">Sketch</div>
-            <p className="mt-0.5 text-[12px] leading-relaxed text-static">
-              Its task profile drives the flow below and the parameters this rig
-              runs it with.
-            </p>
-          </div>
-          <SketchPicker
-            label="Sketch to inspect"
-            sketches={discovery.sketches}
-            value={sketchPath}
-            onChange={(path) => {
-              setSketchPath(path);
-              void load(path);
-            }}
-            disabled={!connected}
-            className="w-[260px] shrink-0"
-          />
-        </div>
-      </section>
-
-      {error && (
-        <div
-          className="mt-4 flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
-          style={{ color: "var(--color-status-error)" }}
-        >
-          <CircleAlert size={14} strokeWidth={1.75} />
-          {error}
-        </div>
-      )}
-
-      {!sketchPath && !error && (
-        <p className="mt-6 max-w-prose text-[13px] leading-relaxed text-static">
-          Choose a sketch to see the trial it runs and the parameters it
-          exposes.
-        </p>
-      )}
-
-      {loading && (
-        <p className="mt-6 text-[13px] text-static">
-          Reading the task profile…
-        </p>
-      )}
-
-      {sketchPath && !loading && !error && (
-        <>
-          <motion.section
-            key={`${sketchPath}-graph`}
-            ref={graphCard}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={springPanel}
-            className="surface mt-4 rounded-md p-4"
-          >
-            <div className="mb-1 flex items-baseline justify-between gap-3">
-              <span className="text-[11px] text-static">
-                Trial flow
-                {profile && (
-                  <span className="ml-2 text-static/70">
-                    {profile.taskName}
-                  </span>
-                )}
-              </span>
-              {model.usable && (
-                <span className="font-mono text-[10px] text-static/70">
-                  {model.conditions.length} condition
-                  {model.conditions.length === 1 ? "" : "s"}
-                </span>
-              )}
-            </div>
-
-            {model.usable ? (
-              <>
-                <TaskGraph
-                  model={model}
-                  highlighted={highlighted}
-                  onNodeClick={revealTile}
-                  className="max-h-[42vh]"
+          <section className="surface mt-6 rounded-md">
+            <div className="border-b border-halo px-4 py-3.5">
+              <div className="flex items-start justify-between gap-8">
+                <div className="min-w-0 pt-0.5">
+                  <div className="text-[13px] font-medium text-starlight">
+                    Arduino Directory
+                  </div>
+                  <p className="mt-0.5 text-[12px] leading-relaxed text-static">
+                    Root folder holding your sketch categories and a shared{" "}
+                    <code className="font-mono">libraries/</code> folder. Each
+                    machine configures its own.
+                  </p>
+                </div>
+                <DirectoryField
+                  value={settings.arduinoDirectory}
+                  onChange={(next) => void update({ arduinoDirectory: next })}
+                  title="Choose the Arduino Directory"
                 />
-                <p className="mt-2 text-[11px] leading-relaxed text-static/70">
-                  Derived from this sketch&rsquo;s declared strobe vocabulary —
-                  the branches it draws are the ones the firmware can actually
-                  report. Left to right is the order the firmware strobes them.
-                </p>
-              </>
-            ) : (
-              <p className="text-[12px] leading-relaxed text-static">
-                {profile
-                  ? `${profile.taskName} declares no behavioural strobes, so there is no trial flow to draw. Utility sketches are driven from Debug Mode instead.`
-                  : "This sketch has no task.json, so it runs a bare START and reports nothing the app can chart."}
-              </p>
-            )}
-          </motion.section>
+              </div>
+              <DirectoryStatusNote
+                discovery={discovery}
+                onRefresh={() => void refreshSketches()}
+                canRefresh={connected}
+              />
+            </div>
 
-          {/* One wrapper for the rail and the tiles: a sticky element can only
+            <div className="flex items-start justify-between gap-8 px-4 py-3.5">
+              <div className="min-w-0 pt-0.5">
+                <div className="text-[13px] font-medium text-starlight">
+                  Sketch
+                </div>
+                <p className="mt-0.5 text-[12px] leading-relaxed text-static">
+                  Its task profile drives the flow below and the parameters this
+                  rig runs it with.
+                </p>
+              </div>
+              <SketchPicker
+                label="Sketch to inspect"
+                sketches={discovery.sketches}
+                value={sketchPath}
+                onChange={(path) => {
+                  setSketchPath(path);
+                  void load(path);
+                }}
+                disabled={!connected}
+                className="w-[260px] shrink-0"
+              />
+            </div>
+          </section>
+
+          {error && (
+            <div
+              className="mt-4 flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
+              style={{ color: "var(--color-status-error)" }}
+            >
+              <CircleAlert size={14} strokeWidth={1.75} />
+              {error}
+            </div>
+          )}
+
+          {!sketchPath && !error && (
+            <p className="mt-6 max-w-prose text-[13px] leading-relaxed text-static">
+              Choose a sketch to see the trial it runs and the parameters it
+              exposes.
+            </p>
+          )}
+
+          {loading && (
+            <p className="mt-6 text-[13px] text-static">
+              Reading the task profile…
+            </p>
+          )}
+
+          {sketchPath && !loading && !error && (
+            <>
+              <motion.section
+                key={`${sketchPath}-graph`}
+                ref={graphCard}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={springPanel}
+                className="surface mt-4 rounded-md p-4"
+              >
+                <div className="mb-1 flex items-baseline justify-between gap-3">
+                  <span className="text-[11px] text-static">
+                    Trial flow
+                    {profile && (
+                      <span className="ml-2 text-static/70">
+                        {profile.taskName}
+                      </span>
+                    )}
+                  </span>
+                  {model.usable && (
+                    <span className="font-mono text-[10px] text-static/70">
+                      {model.conditions.length} condition
+                      {model.conditions.length === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </div>
+
+                {model.usable ? (
+                  <>
+                    <TaskGraph
+                      model={model}
+                      highlighted={highlighted}
+                      onNodeClick={revealTile}
+                      className="max-h-[42vh]"
+                    />
+                    <p className="mt-2 text-[11px] leading-relaxed text-static/70">
+                      Derived from this sketch&rsquo;s declared strobe
+                      vocabulary — the branches it draws are the ones the
+                      firmware can actually report. Left to right is the order
+                      the firmware strobes them.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-[12px] leading-relaxed text-static">
+                    {profile
+                      ? `${profile.taskName} declares no behavioural strobes, so there is no trial flow to draw. Utility sketches are driven from Debug Mode instead.`
+                      : "This sketch has no task.json, so it runs a bare START and reports nothing the app can chart."}
+                  </p>
+                )}
+              </motion.section>
+
+              {/* One wrapper for the rail and the tiles: a sticky element can only
               travel inside its own containing block, so this is what lets the
               rail stay pinned for the whole length of the tiles. It also carries
               the measured rail height for their scroll-margin. */}
-          <div style={{ "--task-rail-h": `${railHeight + 12}px` } as CSSProperties}>
-            {model.usable && (
-              <>
-                {/* Watched, not drawn — see the observer above. */}
-                <div ref={sentinel} aria-hidden className="h-px" />
-                {/* Opaque at rest as well as pinned: the tiles scroll underneath
+              <div
+                style={
+                  { "--task-rail-h": `${railHeight + 12}px` } as CSSProperties
+                }
+              >
+                {model.usable && (
+                  <>
+                    {/* Watched, not drawn — see the observer above. */}
+                    <div ref={sentinel} aria-hidden className="h-px" />
+                    {/* Opaque at rest as well as pinned: the tiles scroll underneath
                   it, and fading a background in on pin left the strip briefly
                   see-through with tile text reading through the node names. */}
-                <div
-                  ref={rail}
-                  className={`surface sticky top-0 z-10 mt-3 rounded-md px-4 py-2.5 ${
-                    pinned ? "shadow-[0_4px_12px_rgb(0_0_0/0.45)]" : ""
-                  }`}
-                >
-                  <div className="mb-1.5 flex items-baseline justify-between gap-3">
-                    <span className="text-[10px] text-static">
-                      {hoverGroup ? (
-                        <>
-                          <span className="text-starlight">{hoverGroup}</span>{" "}
-                          governs
-                        </>
-                      ) : (
-                        "Hover a parameter group to light the states it governs"
-                      )}
-                    </span>
-                    {pinned && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          graphCard.current?.scrollIntoView({
-                            behavior: "smooth",
-                            block: "start",
-                          })
-                        }
-                        className="flex shrink-0 items-center gap-1 text-[10px] text-static transition-colors hover:text-starlight"
-                      >
-                        <ChevronUp size={11} strokeWidth={1.75} />
-                        Diagram
-                      </button>
-                    )}
-                  </div>
-                  <TaskRail
-                    model={model}
-                    highlighted={highlighted}
-                    onNodeClick={revealTile}
-                  />
-                </div>
-              </>
-            )}
+                    <div
+                      ref={rail}
+                      className={`surface sticky top-0 z-10 mt-3 rounded-md px-4 py-2.5 ${
+                        pinned ? "shadow-[0_4px_12px_rgb(0_0_0/0.45)]" : ""
+                      }`}
+                    >
+                      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                        <span className="text-[10px] text-static">
+                          {hoverGroup ? (
+                            <>
+                              <span className="text-starlight">
+                                {hoverGroup}
+                              </span>{" "}
+                              governs
+                            </>
+                          ) : (
+                            "Hover a parameter group to light the states it governs"
+                          )}
+                        </span>
+                        {pinned && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              graphCard.current?.scrollIntoView({
+                                behavior: "smooth",
+                                block: "start",
+                              })
+                            }
+                            className="flex shrink-0 items-center gap-1 text-[10px] text-static transition-colors hover:text-starlight"
+                          >
+                            <ChevronUp size={11} strokeWidth={1.75} />
+                            Diagram
+                          </button>
+                        )}
+                      </div>
+                      <TaskRail
+                        model={model}
+                        highlighted={highlighted}
+                        onNodeClick={revealTile}
+                      />
+                    </div>
+                  </>
+                )}
 
-            {profile && profile.config.length > 0 && (
-              <>
-                <div className="mt-6 mb-2 flex items-baseline justify-between gap-3 px-1">
-                  <h2 className="font-display text-[13px] font-medium tracking-wide text-static uppercase">
-                    Parameters
-                  </h2>
-                  {Object.keys(saved).length > 0 && (
-                    <Button variant="ghost" onClick={() => save({})}>
-                      Reset all {Object.keys(saved).length}
-                    </Button>
-                  )}
-                </div>
-                <ParameterTiles
-                  profile={profile}
-                  model={model}
-                  config={current}
-                  baseline={authored}
-                  onChange={save}
-                  onHoverGroup={setHoverGroup}
-                  registerTile={registerTile}
-                />
-                <p className="mt-4 px-1 text-[11px] leading-relaxed text-static/70">
-                  These are this rig&rsquo;s defaults. Only values that differ
-                  from the sketch&rsquo;s own are stored, so editing{" "}
-                  <code className="font-mono">task.json</code> later still moves
-                  everything you haven&rsquo;t deliberately changed here — and
-                  the mapping step can still override any of them for one
-                  animal.
-                </p>
-              </>
-            )}
-          </div>
-        </>
-      )}
-    </motion.section>
+                {profile && profile.config.length > 0 && (
+                  <>
+                    <div className="mt-6 mb-2 flex items-baseline justify-between gap-3 px-1">
+                      <h2 className="font-display text-[13px] font-medium tracking-wide text-static uppercase">
+                        Parameters
+                      </h2>
+                      {Object.keys(saved).length > 0 && (
+                        <Button variant="ghost" onClick={() => save({})}>
+                          Reset all {Object.keys(saved).length}
+                        </Button>
+                      )}
+                    </div>
+                    <ParameterTiles
+                      profile={profile}
+                      model={model}
+                      config={current}
+                      baseline={authored}
+                      onChange={save}
+                      onHoverGroup={setHoverGroup}
+                      registerTile={registerTile}
+                    />
+                    <p className="mt-4 px-1 text-[11px] leading-relaxed text-static/70">
+                      These are this rig&rsquo;s defaults. Only values that
+                      differ from the sketch&rsquo;s own are stored, so editing{" "}
+                      <code className="font-mono">task.json</code> later still
+                      moves everything you haven&rsquo;t deliberately changed
+                      here — and the mapping step can still override any of them
+                      for one animal.
+                    </p>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      </motion.div>
+    </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useFrame } from "@react-three/fiber";
+import { MAX_FRAME_SECONDS } from "./CameraRig";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
@@ -85,7 +86,10 @@ export function StellarSurface({
   // Shares the *same* Color instance as the surface, so the rim tracks the
   // temperature for free — lerping one below updates both.
   const coronaUniforms = useMemo(
-    () => ({ uCore: { value: uniforms.uCore.value }, uStrength: { value: 0.5 } }),
+    () => ({
+      uCore: { value: uniforms.uCore.value },
+      uStrength: { value: 0.5 },
+    }),
     [uniforms],
   );
 
@@ -119,7 +123,11 @@ export function StellarSurface({
     body.current?.scale.setScalar(sizeRef.current);
   }, []);
 
-  useFrame((_state, delta) => {
+  useFrame((_state, raw) => {
+    // Bounded like every other time-integrated animation: an unclamped
+    // `delta` is wall-clock, so one stalled frame jumps this forward by the
+    // whole stall (`CameraRig`'s `MAX_FRAME_SECONDS`).
+    const delta = Math.min(raw, MAX_FRAME_SECONDS);
     const active = churn && !reduceMotion;
     if (active) uniforms.uTime.value += delta;
     uniforms.uActivity.value = active ? 1 : 0;
@@ -128,7 +136,8 @@ export function StellarSurface({
     // which is the status carried into the photosphere itself, and reduced
     // motion stills every star regardless. A rotating star that had stopped
     // boiling would say two different things about the same box.
-    if (active && spin.current) spin.current.rotation.y += delta * rotation.rate;
+    if (active && spin.current)
+      spin.current.rotation.y += delta * rotation.rate;
 
     // Ease toward the earned temperature — fast enough to notice within a few
     // trials, slow enough that one lucky trial doesn't recolour the star.

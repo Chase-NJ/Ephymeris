@@ -54,6 +54,9 @@ const ARRIVAL_DISTANCE = 3.6;
 const STAR_FRAME_BIAS = 0.2;
 /** §6.3 — the fly takes this long; short enough not to feel like waiting. */
 const FLIGHT_SECONDS = 1.5;
+/** Longest `delta` any time-integrated animation will honour — see the frame
+ *  callback in `CameraRig`. Two frames at 60fps. */
+export const MAX_FRAME_SECONDS = 1 / 30;
 /** How far one arrow press moves the camera, as a fraction of the visible
  *  half-frame. Small enough to nudge, large enough to be worth a click. */
 const PAN_STEP = 0.22;
@@ -100,7 +103,9 @@ export function CameraRig() {
 
   const flight = useRef<FlightMove | null>(null);
   const target = useRef(OVERVIEW_TARGET.clone());
-  const biasMove = useRef<{ from: number; to: number; elapsed: number } | null>(null);
+  const biasMove = useRef<{ from: number; to: number; elapsed: number } | null>(
+    null,
+  );
   /** The camera's framing bias, as a fraction of a half-frame. A plain ref now
    *  that one component owns the camera for the whole session. */
   const frameBias = useRef(0);
@@ -132,7 +137,14 @@ export function CameraRig() {
       if (Math.abs(bias) < 0.001) {
         perspective.clearViewOffset();
       } else {
-        perspective.setViewOffset(width, height, (width / 2) * bias, 0, width, height);
+        perspective.setViewOffset(
+          width,
+          height,
+          (width / 2) * bias,
+          0,
+          width,
+          height,
+        );
       }
       perspective.updateProjectionMatrix();
     },
@@ -218,7 +230,6 @@ export function CameraRig() {
 
     flyTo(OVERVIEW_POSITION.clone(), OVERVIEW_TARGET.clone());
   }, [attached, camera, flyTo]);
-
 
   /*
    * Composing the focused frame: slide the rendered window right, which puts
@@ -340,7 +351,9 @@ export function CameraRig() {
       : null;
     const toPosition =
       starPoint && approach
-        ? starPoint.clone().add(approach.clone().multiplyScalar(ARRIVAL_DISTANCE))
+        ? starPoint
+            .clone()
+            .add(approach.clone().multiplyScalar(ARRIVAL_DISTANCE))
         : OVERVIEW_POSITION.clone();
 
     // Aim at the star itself. The star is placed left of frame by shifting the
@@ -352,7 +365,29 @@ export function CameraRig() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusKey, camera, flyTo]);
 
-  useFrame((_state, delta) => {
+  useFrame((_state, raw) => {
+    /*
+     * > [!CAUTION]
+     * > **Clamp before integrating.** Neither r3f nor three bounds `delta` — it
+     * > is wall-clock time since the last frame, so a single stalled frame
+     * > advances an eased move by however long the stall was. Against a 1.5 s
+     * > cubic ease-out that is not a stutter, it is a teleport: a 300 ms stall
+     * > yields `1 − (1 − 0.2)³ ≈ 49%` of the move in one frame, and an ease-out
+     * > spends its distance early, so the camera visibly lurches half way and
+     * > then glides the rest.
+     * >
+     * > That was the "focused star lingers, then jumps" report. Its cause is
+     * > fixed elsewhere — the shared canvas is no longer torn down and rebuilt
+     * > on routes without a constellation (`SkyBackdrop`), which is what
+     * > produced the stall — but stalls have other sources this cannot fix:
+     * > a backgrounded window, a GC pause, a driver hiccup. So the integration
+     * > is bounded regardless of who stalled it.
+     *
+     * Two frames' worth at 60fps: long enough to absorb ordinary jitter without
+     * slowing the move, short enough that nothing perceptible survives it.
+     */
+    const delta = Math.min(raw, MAX_FRAME_SECONDS);
+
     /*
      * The framing bias, advanced **independently of the flight**. It shares the
      * flight's curve and duration so the two arrive together, but not its ref:

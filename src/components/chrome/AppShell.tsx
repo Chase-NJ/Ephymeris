@@ -91,21 +91,20 @@ export function AppShell() {
  * Only the **travel** lives here. Each route already fades its own content in
  * on mount; animating opacity here too would double every entrance.
  *
- * The exit fade has one exception: **every view of the rig's sky**. They are the
- * same constellation with different chrome around it, and the shared canvas is
- * *handed over* rather than redrawn (`SharedCanvas.tsx`), so a page-wide fade
- * dissolves a page that is mostly still on screen — and it washes out the one
+ * **The page is never faded here, only moved.** Every route now sits on the rig's
+ * sky (`SkyBackdrop`), and the shared canvas physically lives in the active
+ * route's subtree — so a page-wide opacity animation fades the constellation
+ * along with the chrome, and since every route shows the same sky that made it
+ * blink out and back on every single navigation. It also washes out the one
  * thing that should read: one chrome leaving as another arrives in its place.
- * Between two of them, each page fades its own chrome and the sky carries on.
  *
  * > [!IMPORTANT]
- * > **A sky route must own its `exit`.** Nothing else will fade it, because this
- * > holds the page at `opacity: 1` on the way out. Every route named here has an
- * > `exit` on its chrome wrapper; adding one without is how a page ends up
- * > sitting fully opaque over its successor for the length of the transition.
+ * > **Every route must own its `exit`.** Nothing else will fade it. This used to
+ * > be conditional — a `SKY_ROUTES` set, holding only the constellation views
+ * > opaque — and the condition disappeared when the sky went behind everything.
+ * > A route added without an `exit` on its chrome wrapper sits fully opaque over
+ * > its successor for the length of the transition.
  */
-const isSkyRoute = (pathname: string): boolean =>
-  pathname === "/" || pathname === "/debug" || pathname.startsWith("/session/");
 
 function RouteTransition() {
   const location = useLocation();
@@ -122,11 +121,6 @@ function RouteTransition() {
   // Direction only means something when both ends are in the flow.
   const direction = step !== null && from !== null ? Math.sign(step - from) : 0;
   const travel = direction * TRAVEL;
-  // This element's *own* path, closed over so the exit variant below can name
-  // the page that is leaving. `location.pathname` is no use for that at exit
-  // time: AnimatePresence re-renders the cached previous element, but hooks
-  // inside it read live context and would report the page that replaced it.
-  const path = location.pathname;
 
   return (
     // `popLayout`, never `wait`: `wait` holds the incoming page until the
@@ -136,24 +130,14 @@ function RouteTransition() {
     // lifted out of layout flow to leave, so a transition can slow down but
     // can never block.
     //
-    // `custom` carries the **incoming** pathname to exiting children. That is
-    // what `custom` is for: an exiting child's own props are frozen at the
-    // render that mounted it, so a plain `exit` object could only ever describe
-    // the navigation that brought the page *in*, not the one taking it out.
-    <AnimatePresence mode="popLayout" initial={false} custom={location.pathname}>
+    <AnimatePresence mode="popLayout" initial={false}>
       <motion.div
         key={location.pathname}
         initial={{ x: travel }}
         animate={{ x: 0 }}
-        exit="exit"
-        variants={{
-          exit: (incoming: string) => ({
-            x: -travel,
-            // Held opaque only when both ends are the rig's sky; every other
-            // navigation still crossfades.
-            opacity: isSkyRoute(path) && isSkyRoute(incoming) ? 1 : 0,
-          }),
-        }}
+        // Travel only — never opacity. See the note above: the sky lives in this
+        // subtree, and fading the page fades the constellation with it.
+        exit={{ x: -travel }}
         // Deliberately only animatable values. The exiting page also has to
         // stop taking clicks — `popLayout` pins it absolutely, so it paints
         // *above* the page that replaced it and its `pointer-events-auto` tiles

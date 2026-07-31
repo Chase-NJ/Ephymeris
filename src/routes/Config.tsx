@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { CircleAlert, Radio, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -64,7 +65,9 @@ export function Config() {
 
   /** Box edits keep the slot map honest in the same settings write. */
   function onBoxesChange(boxes: BoxBinding[]) {
-    const nextBound = boxes.filter((b) => b.hardwareId !== null).map((b) => b.box);
+    const nextBound = boxes
+      .filter((b) => b.hardwareId !== null)
+      .map((b) => b.box);
     const constellation = zodiacById(settings.constellation);
     void update(
       constellation
@@ -110,123 +113,157 @@ export function Config() {
   }
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={springPanel}
-      className="mx-auto max-w-3xl px-10 py-9"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
-            <Radio size={18} strokeWidth={1.75} className="text-pulsar" />
-          </span>
-          <h1 className="font-display text-[22px] text-starlight">Config</h1>
-        </div>
-        <Button variant="ghost" onClick={() => setWizardOpen(true)}>
-          <RefreshCw size={13} strokeWidth={1.75} />
-          Run setup again
-        </Button>
-      </div>
+    // Every route sits on the rig's sky. Not decoration: a route that mounts no
+    // constellation is the only thing that releases the shared canvas, and that
+    // teardown is what made a sidebar round trip snap (`SkyBackdrop`).
+    <div className="relative h-full">
+      <SkyBackdrop />
 
-      {saveError && (
-        <div
-          className="mt-4 flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
-          style={{ color: "var(--color-status-error)" }}
-        >
-          <CircleAlert size={14} strokeWidth={1.75} />
-          {saveError}
-        </div>
-      )}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        // Owns its own exit: the shell holds every page opaque on the way out
+        // now, so anything that should fade has to say so (`AppShell`).
+        exit={{ opacity: 0 }}
+        transition={springPanel}
+        className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
+      >
+        <section className="pointer-events-auto mx-auto max-w-3xl px-10 py-9">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
+                <Radio size={18} strokeWidth={1.75} className="text-pulsar" />
+              </span>
+              <h1 className="font-display text-[22px] text-starlight">
+                Config
+              </h1>
+            </div>
+            <Button variant="ghost" onClick={() => setWizardOpen(true)}>
+              <RefreshCw size={13} strokeWidth={1.75} />
+              Run setup again
+            </Button>
+          </div>
 
-      <fieldset disabled={!loaded} className="contents">
-        <SettingGroup title="Constellation">
-          <div className="px-4 py-3.5">
-            {chosen ? (
-              <>
-                <div className="mx-auto max-w-[460px]">
-                  <ConstellationBoard
-                    constellation={chosen}
-                    slots={settings.constellationSlots}
-                    boxes={boundNumbers}
-                    labels={labels}
-                    health={health}
-                    onSlotsChange={(constellationSlots) => void update({ constellationSlots })}
+          {saveError && (
+            <div
+              className="mt-4 flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
+              style={{ color: "var(--color-status-error)" }}
+            >
+              <CircleAlert size={14} strokeWidth={1.75} />
+              {saveError}
+            </div>
+          )}
+
+          <fieldset disabled={!loaded} className="contents">
+            <SettingGroup title="Constellation">
+              <div className="px-4 py-3.5">
+                {chosen ? (
+                  <>
+                    <div className="mx-auto max-w-[460px]">
+                      <ConstellationBoard
+                        constellation={chosen}
+                        slots={settings.constellationSlots}
+                        boxes={boundNumbers}
+                        labels={labels}
+                        health={health}
+                        onSlotsChange={(constellationSlots) =>
+                          void update({ constellationSlots })
+                        }
+                      />
+                    </div>
+                    <p className="mt-1 text-center text-[11px] text-static">
+                      {chosen.name} — drag a box to a different star to
+                      rearrange.
+                    </p>
+                  </>
+                ) : (
+                  <p className="pb-2 text-[12px] leading-relaxed text-static">
+                    No constellation chosen yet — the status display uses the
+                    plain layout. Pick one below.
+                  </p>
+                )}
+                <div className="mt-3">
+                  <ConstellationPicker
+                    selected={settings.constellation}
+                    boxCount={boundNumbers.length}
+                    onSelect={onPickConstellation}
                   />
                 </div>
-                <p className="mt-1 text-center text-[11px] text-static">
-                  {chosen.name} — drag a box to a different star to rearrange.
-                </p>
-              </>
-            ) : (
-              <p className="pb-2 text-[12px] leading-relaxed text-static">
-                No constellation chosen yet — the status display uses the plain
-                layout. Pick one below.
-              </p>
-            )}
-            <div className="mt-3">
-              <ConstellationPicker
-                selected={settings.constellation}
-                boxCount={boundNumbers.length}
-                onSelect={onPickConstellation}
+              </div>
+            </SettingGroup>
+
+            <SettingGroup title="Boxes">
+              <BoxBindingsTable
+                boxes={settings.boxes}
+                onChange={onBoxesChange}
               />
-            </div>
-          </div>
-        </SettingGroup>
+              <div className="border-t border-halo px-4 py-3.5">
+                <div className="pb-2 text-[13px] font-medium text-starlight">
+                  Handshake test
+                </div>
+                <HandshakeList
+                  bound={bound}
+                  handshake={handshake}
+                  connected={connected}
+                />
+              </div>
+            </SettingGroup>
 
-        <SettingGroup title="Boxes">
-          <BoxBindingsTable boxes={settings.boxes} onChange={onBoxesChange} />
-          <div className="border-t border-halo px-4 py-3.5">
-            <div className="pb-2 text-[13px] font-medium text-starlight">Handshake test</div>
-            <HandshakeList bound={bound} handshake={handshake} connected={connected} />
-          </div>
-        </SettingGroup>
+            <SettingGroup title="Hardware">
+              <UtilitySketchPanel
+                sketches={discovery.sketches}
+                boxes={settings.boxes}
+                value={settings.utilitySketchPath}
+                status={utility}
+                busy={reflashing}
+                connected={connected}
+                onChange={(utilitySketchPath) =>
+                  void update({ utilitySketchPath })
+                }
+                onReflash={() => void reflashBaseline()}
+              />
 
-        <SettingGroup title="Hardware">
-          <UtilitySketchPanel
-            sketches={discovery.sketches}
-            boxes={settings.boxes}
-            value={settings.utilitySketchPath}
-            status={utility}
-            busy={reflashing}
-            connected={connected}
-            onChange={(utilitySketchPath) => void update({ utilitySketchPath })}
-            onReflash={() => void reflashBaseline()}
-          />
+              <SettingRow
+                label="Default baud rate"
+                description="Starting value for each console. Debug Mode allows a per-box override."
+              >
+                <Select
+                  label="Default baud rate"
+                  value={settings.defaultBaud}
+                  options={BAUD_RATES.map((b) => ({
+                    value: b,
+                    label: String(b),
+                  }))}
+                  onChange={(defaultBaud) => void update({ defaultBaud })}
+                />
+              </SettingRow>
 
-          <SettingRow
-            label="Default baud rate"
-            description="Starting value for each console. Debug Mode allows a per-box override."
-          >
-            <Select
-              label="Default baud rate"
-              value={settings.defaultBaud}
-              options={BAUD_RATES.map((b) => ({ value: b, label: String(b) }))}
-              onChange={(defaultBaud) => void update({ defaultBaud })}
-            />
-          </SettingRow>
+              <SettingRow
+                label="arduino-cli path"
+                description="Leave empty to use the bundled binary. Override only if you need a specific install."
+              >
+                <TextInput
+                  label="arduino-cli path override"
+                  mono
+                  value={settings.arduinoCliPath ?? ""}
+                  placeholder="bundled"
+                  onChange={(v) =>
+                    void update({ arduinoCliPath: v.trim() === "" ? null : v })
+                  }
+                  className="w-[280px]"
+                />
+              </SettingRow>
+            </SettingGroup>
+          </fieldset>
 
-          <SettingRow
-            label="arduino-cli path"
-            description="Leave empty to use the bundled binary. Override only if you need a specific install."
-          >
-            <TextInput
-              label="arduino-cli path override"
-              mono
-              value={settings.arduinoCliPath ?? ""}
-              placeholder="bundled"
-              onChange={(v) => void update({ arduinoCliPath: v.trim() === "" ? null : v })}
-              className="w-[280px]"
-            />
-          </SettingRow>
-        </SettingGroup>
-      </fieldset>
-
-      <p className="mt-6 px-1 text-[11px] leading-relaxed text-static/70">
-        Hardware settings are stored by the app shell and pushed to the backend
-        whenever they change, so this screen keeps working even when the backend
-        doesn&rsquo;t. Only the handshake test and directory scan need it.
-      </p>
-    </motion.section>
+          <p className="mt-6 px-1 text-[11px] leading-relaxed text-static/70">
+            Hardware settings are stored by the app shell and pushed to the
+            backend whenever they change, so this screen keeps working even when
+            the backend doesn&rsquo;t. Only the handshake test and directory
+            scan need it.
+          </p>
+        </section>
+      </motion.div>
+    </div>
   );
 }

@@ -6,7 +6,7 @@ import { useNavigate } from "react-router";
 import { Button, Select, TextInput } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
 import { CohortIcon } from "@/components/cohorts/CohortIcon";
-import { DebugConstellation } from "@/components/debug/DebugConstellation";
+import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { SettingGroup } from "@/components/settings/SettingRow";
 import { errorMessage } from "@/lib/cohorts/commands";
@@ -159,23 +159,7 @@ export function SessionConfig() {
     // reaches left under the sidebar (`Scene.tsx`) and clipping here would cut it
     // back to the content region.
     <div className="relative h-full">
-      {/* The sky. **Outside the entrance animation**, exactly as on the
-          Dashboard: the shared canvas lives in this element
-          (`SharedCanvas.tsx`), so fading the view in would fade the
-          constellation in with it — and the view we arrived from is showing the
-          same sky. Only the chrome animates; the sky is handed over.
-
-          Inert here (`interactive={false}`): this is a backdrop, and a star that
-          offered a hover reticle and a click that went nowhere would be worse
-          than one that offers neither. */}
-      <div className="absolute inset-0">
-        <DebugConstellation
-          selected={null}
-          docksPanel={false}
-          interactive={false}
-          onSelect={() => {}}
-        />
-      </div>
+      <SkyBackdrop />
 
       {/* The chrome, floating over it. `pointer-events-none` on the scroller so
           the sky behind stays orbitable where the panels don't cover it; the

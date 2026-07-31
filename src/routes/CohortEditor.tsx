@@ -1,4 +1,8 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import {
+  DENSE_SKY_OPACITY,
+  SkyBackdrop,
+} from "@/components/constellation3d/SkyBackdrop";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Archive,
@@ -10,7 +14,13 @@ import {
   Radio,
   RotateCcw,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useNavigate, useParams } from "react-router";
 
 import { Button, TextInput } from "@/components/common/controls";
@@ -104,7 +114,9 @@ export function CohortEditor() {
    * shouldn't yank the roster out from under the cursor.
    */
   const [reached, setReached] = useState(0);
-  const stage = isNew ? Math.max(reached, named ? (animals.length > 0 ? 2 : 1) : 0) : 2;
+  const stage = isNew
+    ? Math.max(reached, named ? (animals.length > 0 ? 2 : 1) : 0)
+    : 2;
   useEffect(() => {
     setReached((r) => Math.max(r, stage));
   }, [stage]);
@@ -189,7 +201,9 @@ export function CohortEditor() {
       // there's no basis for a default, so an explicit choice is required
       // rather than guessed at.
       if (!dataFolder && !settings.dataDirectory) {
-        setErrors({ dataFolder: "Choose where this cohort's data should live." });
+        setErrors({
+          dataFolder: "Choose where this cohort's data should live.",
+        });
         return;
       }
       const created = await run(async () => {
@@ -210,7 +224,11 @@ export function CohortEditor() {
 
     if (!cohort) return;
     const ok = await run(async () => {
-      const saved = await updateCohort(client, cohort.id, { name, animals, groups });
+      const saved = await updateCohort(client, cohort.id, {
+        name,
+        animals,
+        groups,
+      });
       adopt(saved);
     });
     if (ok) setMessage("Saved.");
@@ -220,214 +238,248 @@ export function CohortEditor() {
   const iconId = cohort?.id ?? "new-cohort";
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={springPanel}
-      className="mx-auto max-w-5xl px-8 py-8"
-    >
-      <Button variant="ghost" onClick={() => navigate("/cohorts")}>
-        <ArrowLeft size={13} strokeWidth={1.75} />
-        All cohorts
-      </Button>
+    // Every route sits on the rig's sky. Not decoration: a route that mounts no
+    // constellation is the only thing that releases the shared canvas, and that
+    // teardown is what made a sidebar round trip snap (`SkyBackdrop`).
+    <div className="relative h-full">
+      <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
 
-      <div className="mt-3 flex items-center gap-4">
-        <motion.span layoutId={`cohort-icon-${iconId}`} transition={springSnappy}>
-          <CohortIcon cohortId={iconId} animalCount={animals.length} size={64} />
-        </motion.span>
-        <div className="min-w-0">
-          <h1 className="font-display text-[22px] text-starlight">{heading}</h1>
-          <p className="font-mono text-[11px] text-static">
-            {animals.length} {animals.length === 1 ? "animal" : "animals"}
-            {groups.length > 1 && ` · ${groups.length} groups`}
-            {cohort?.archivedAt && " · archived"}
-          </p>
-        </div>
-      </div>
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        // Owns its own exit: the shell holds every page opaque on the way out
+        // now, so anything that should fade has to say so (`AppShell`).
+        exit={{ opacity: 0 }}
+        transition={springPanel}
+        className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
+      >
+        <section className="pointer-events-auto mx-auto max-w-5xl px-8 py-8">
+          <Button variant="ghost" onClick={() => navigate("/cohorts")}>
+            <ArrowLeft size={13} strokeWidth={1.75} />
+            All cohorts
+          </Button>
 
-      {!cohort?.archivedAt && (
-        <ReadinessStrip named={named} animalCount={animals.length} readyToRun={readyToRun} />
-      )}
-
-      {loadError && <Banner tone="error">{loadError}</Banner>}
-      {!connected && (
-        <Banner tone="error">
-          The backend isn't connected — cohort changes can't be saved right now.
-        </Banner>
-      )}
-      {message && <Banner tone="info">{message}</Banner>}
-      {errors["name"] && <Banner tone="error">{errors["name"]}</Banner>}
-      {errors["_"] && <Banner tone="error">{errors["_"]}</Banner>}
-
-      <SettingGroup title="Cohort">
-        <div className="flex items-start justify-between gap-8 px-4 py-3.5">
-          <div className="min-w-0 pt-0.5">
-            <div className="text-[13px] font-medium text-starlight">Name</div>
-            <p className="mt-0.5 text-[12px] leading-relaxed text-static">
-              Must be unique among active cohorts.
-            </p>
+          <div className="mt-3 flex items-center gap-4">
+            <motion.span
+              layoutId={`cohort-icon-${iconId}`}
+              transition={springSnappy}
+            >
+              <CohortIcon
+                cohortId={iconId}
+                animalCount={animals.length}
+                size={64}
+              />
+            </motion.span>
+            <div className="min-w-0">
+              <h1 className="font-display text-[22px] text-starlight">
+                {heading}
+              </h1>
+              <p className="font-mono text-[11px] text-static">
+                {animals.length} {animals.length === 1 ? "animal" : "animals"}
+                {groups.length > 1 && ` · ${groups.length} groups`}
+                {cohort?.archivedAt && " · archived"}
+              </p>
+            </div>
           </div>
-          <TextInput
-            label="Cohort name"
-            value={name}
-            placeholder="Batch A"
-            autoFocus={isNew}
-            attention={isNew && !named}
-            onChange={setName}
-            className="w-[280px]"
-          />
-        </div>
 
-        {isNew ? (
-          // Only a rig with no configured data directory has a decision to make
-          // here — otherwise §8 derives the folder and asking would be noise in
-          // the middle of the flow.
-          <Reveal open={stage >= 1 && settings.dataDirectory === null} still={reduceMotion}>
-            <NewCohortFolder
-              value={dataFolder}
-              error={errors["dataFolder"]}
-              dataDirectory={settings.dataDirectory}
-              onChange={setDataFolderPath}
+          {!cohort?.archivedAt && (
+            <ReadinessStrip
+              named={named}
+              animalCount={animals.length}
+              readyToRun={readyToRun}
             />
+          )}
+
+          {loadError && <Banner tone="error">{loadError}</Banner>}
+          {!connected && (
+            <Banner tone="error">
+              The backend isn't connected — cohort changes can't be saved right
+              now.
+            </Banner>
+          )}
+          {message && <Banner tone="info">{message}</Banner>}
+          {errors["name"] && <Banner tone="error">{errors["name"]}</Banner>}
+          {errors["_"] && <Banner tone="error">{errors["_"]}</Banner>}
+
+          <SettingGroup title="Cohort">
+            <div className="flex items-start justify-between gap-8 px-4 py-3.5">
+              <div className="min-w-0 pt-0.5">
+                <div className="text-[13px] font-medium text-starlight">
+                  Name
+                </div>
+                <p className="mt-0.5 text-[12px] leading-relaxed text-static">
+                  Must be unique among active cohorts.
+                </p>
+              </div>
+              <TextInput
+                label="Cohort name"
+                value={name}
+                placeholder="Batch A"
+                autoFocus={isNew}
+                attention={isNew && !named}
+                onChange={setName}
+                className="w-[280px]"
+              />
+            </div>
+
+            {isNew ? (
+              // Only a rig with no configured data directory has a decision to make
+              // here — otherwise §8 derives the folder and asking would be noise in
+              // the middle of the flow.
+              <Reveal
+                open={stage >= 1 && settings.dataDirectory === null}
+                still={reduceMotion}
+              >
+                <NewCohortFolder
+                  value={dataFolder}
+                  error={errors["dataFolder"]}
+                  dataDirectory={settings.dataDirectory}
+                  onChange={setDataFolderPath}
+                />
+              </Reveal>
+            ) : (
+              cohort && (
+                <DataFolderField
+                  path={cohort.dataFolder}
+                  onRelocate={(destination, moveExisting) =>
+                    void run(async () => {
+                      const moved = await setDataFolder(
+                        client,
+                        cohort.id,
+                        destination,
+                        moveExisting,
+                      );
+                      adopt(moved);
+                      setMessage("Data folder changed.");
+                    })
+                  }
+                />
+              )
+            )}
+          </SettingGroup>
+
+          <Reveal open={stage >= 1} still={reduceMotion}>
+            <SettingGroup title="Animals">
+              <AnimalTable
+                animals={animals}
+                defaultGroupId={defaultGroupId}
+                errors={errors}
+                attention={isNew && stage === 1}
+                onChange={setAnimals}
+              />
+            </SettingGroup>
           </Reveal>
-        ) : (
-          cohort && (
-            <DataFolderField
-              path={cohort.dataFolder}
-              onRelocate={(destination, moveExisting) =>
-                void run(async () => {
-                  const moved = await setDataFolder(
-                    client,
-                    cohort.id,
-                    destination,
-                    moveExisting,
-                  );
-                  adopt(moved);
-                  setMessage("Data folder changed.");
-                })
-              }
-            />
-          )
-        )}
-      </SettingGroup>
 
-      <Reveal open={stage >= 1} still={reduceMotion}>
-        <SettingGroup title="Animals">
-          <AnimalTable
-            animals={animals}
-            defaultGroupId={defaultGroupId}
-            errors={errors}
-            attention={isNew && stage === 1}
-            onChange={setAnimals}
-          />
-        </SettingGroup>
-      </Reveal>
-
-      <Reveal open={stage >= 2} still={reduceMotion}>
-        {/* Housing, not scheduling: cagemates share a spaceship in the 3D
+          <Reveal open={stage >= 2} still={reduceMotion}>
+            {/* Housing, not scheduling: cagemates share a spaceship in the 3D
             constellation, and this is where they board. Optional at every
             point — the dock is a fine place to live. */}
-        <SettingGroup title="Cages & spaceships">
-          <CageAssignment animals={animals} onChange={setAnimals} />
-        </SettingGroup>
-      </Reveal>
+            <SettingGroup title="Cages & spaceships">
+              <CageAssignment animals={animals} onChange={setAnimals} />
+            </SettingGroup>
+          </Reveal>
 
-      <Reveal open={stage >= 2} still={reduceMotion}>
-        {/* Above the section that fixes it, not at the top of the page: the
+          <Reveal open={stage >= 2} still={reduceMotion}>
+            {/* Above the section that fixes it, not at the top of the page: the
             remedy is a box selector twelve inches below this sentence. */}
-        {problems.length > 0 && (
-          <div className="mt-7 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
-            <div className="min-w-0">
-              <p className="text-[12px]" style={{ color: "var(--color-status-warning)" }}>
-                {problemSummary(problems)}.
-              </p>
-              <p className="mt-0.5 text-[12px] leading-relaxed text-static">
-                {problems.length === 1
-                  ? `${problems[0]!.animalName} is assigned to it`
-                  : `${problems.length} animals are assigned to ${
-                      problems.length === 2 ? "them" : "those"
-                    }`}
-                {" — "}
-                {problems
-                  .slice(0, 4)
-                  .map((p) => `${p.animalName} (box ${p.box})`)
-                  .join(", ")}
-                {problems.length > 4 && `, and ${problems.length - 4} more`}. A session
-                can't start those animals until the boxes are back, or they're moved to
-                boxes that are.
-              </p>
-            </div>
-            <div className="shrink-0">
-              <Button onClick={() => navigate("/config")}>
-                <Radio size={13} strokeWidth={1.75} />
-                Open Config
+            {problems.length > 0 && (
+              <div className="mt-7 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
+                <div className="min-w-0">
+                  <p
+                    className="text-[12px]"
+                    style={{ color: "var(--color-status-warning)" }}
+                  >
+                    {problemSummary(problems)}.
+                  </p>
+                  <p className="mt-0.5 text-[12px] leading-relaxed text-static">
+                    {problems.length === 1
+                      ? `${problems[0]!.animalName} is assigned to it`
+                      : `${problems.length} animals are assigned to ${
+                          problems.length === 2 ? "them" : "those"
+                        }`}
+                    {" — "}
+                    {problems
+                      .slice(0, 4)
+                      .map((p) => `${p.animalName} (box ${p.box})`)
+                      .join(", ")}
+                    {problems.length > 4 && `, and ${problems.length - 4} more`}
+                    . A session can't start those animals until the boxes are
+                    back, or they're moved to boxes that are.
+                  </p>
+                </div>
+                <div className="shrink-0">
+                  <Button onClick={() => navigate("/config")}>
+                    <Radio size={13} strokeWidth={1.75} />
+                    Open Config
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <SettingGroup title="Groups & boxes">
+              <GroupsPanel
+                groups={groups}
+                animals={animals}
+                onChange={(nextGroups, nextAnimals) => {
+                  setGroups(nextGroups);
+                  setAnimals(nextAnimals);
+                }}
+              />
+            </SettingGroup>
+          </Reveal>
+
+          <div className="mt-6 flex items-center justify-between">
+            <div className="flex gap-2">
+              {/* A nameless cohort is rejected server-side, so the round trip only
+              exists to deliver news we already have. */}
+              <Button
+                variant="primary"
+                onClick={() => void save()}
+                disabled={busy || !connected || !named}
+                {...(!named ? { title: "Give the cohort a name first" } : {})}
+              >
+                {busy ? "Saving…" : isNew ? "Create cohort" : "Save changes"}
+              </Button>
+              <Button variant="ghost" onClick={() => navigate("/cohorts")}>
+                Cancel
               </Button>
             </div>
-          </div>
-        )}
 
-        <SettingGroup title="Groups & boxes">
-          <GroupsPanel
-            groups={groups}
-            animals={animals}
-            onChange={(nextGroups, nextAnimals) => {
-              setGroups(nextGroups);
-              setAnimals(nextAnimals);
-            }}
-          />
-        </SettingGroup>
-      </Reveal>
-
-      <div className="mt-6 flex items-center justify-between">
-        <div className="flex gap-2">
-          {/* A nameless cohort is rejected server-side, so the round trip only
-              exists to deliver news we already have. */}
-          <Button
-            variant="primary"
-            onClick={() => void save()}
-            disabled={busy || !connected || !named}
-            {...(!named ? { title: "Give the cohort a name first" } : {})}
-          >
-            {busy ? "Saving…" : isNew ? "Create cohort" : "Save changes"}
-          </Button>
-          <Button variant="ghost" onClick={() => navigate("/cohorts")}>
-            Cancel
-          </Button>
-        </div>
-
-        {/* §9 — archive is the everyday action; permanent delete lives only in
+            {/* §9 — archive is the everyday action; permanent delete lives only in
             the archived view, never on a live cohort. */}
-        {cohort &&
-          (cohort.archivedAt ? (
-            <Button
-              onClick={() =>
-                void run(async () => {
-                  adopt(await restoreCohort(client, cohort.id));
-                  setMessage("Restored.");
-                })
-              }
-              disabled={busy || !connected}
-            >
-              <RotateCcw size={13} strokeWidth={1.75} />
-              Restore
-            </Button>
-          ) : (
-            <Button
-              onClick={() =>
-                void run(async () => {
-                  await archiveCohort(client, cohort.id);
-                  navigate("/cohorts");
-                })
-              }
-              disabled={busy || !connected}
-              title="Keeps the record and its data folder intact"
-            >
-              <Archive size={13} strokeWidth={1.75} />
-              Archive
-            </Button>
-          ))}
-      </div>
-    </motion.section>
+            {cohort &&
+              (cohort.archivedAt ? (
+                <Button
+                  onClick={() =>
+                    void run(async () => {
+                      adopt(await restoreCohort(client, cohort.id));
+                      setMessage("Restored.");
+                    })
+                  }
+                  disabled={busy || !connected}
+                >
+                  <RotateCcw size={13} strokeWidth={1.75} />
+                  Restore
+                </Button>
+              ) : (
+                <Button
+                  onClick={() =>
+                    void run(async () => {
+                      await archiveCohort(client, cohort.id);
+                      navigate("/cohorts");
+                    })
+                  }
+                  disabled={busy || !connected}
+                  title="Keeps the record and its data folder intact"
+                >
+                  <Archive size={13} strokeWidth={1.75} />
+                  Archive
+                </Button>
+              ))}
+          </div>
+        </section>
+      </motion.div>
+    </div>
   );
 }
 
@@ -498,7 +550,9 @@ function ReadinessStrip({
       done: animalCount > 0,
     },
     {
-      label: readyToRun ? "Ready to run" : "Assign a box to make it session-ready",
+      label: readyToRun
+        ? "Ready to run"
+        : "Assign a box to make it session-ready",
       done: readyToRun,
     },
   ];
@@ -530,7 +584,12 @@ function ReadinessStrip({
               className="h-1.5 rounded-full"
             />
           ) : (
-            <Circle size={7} strokeWidth={0} fill="currentColor" className="opacity-50" />
+            <Circle
+              size={7}
+              strokeWidth={0}
+              fill="currentColor"
+              className="opacity-50"
+            />
           )}
           {item.label}
         </span>
@@ -573,7 +632,9 @@ function NewCohortFolder({
     <div className="px-4 py-3.5">
       <div className="flex items-start justify-between gap-8">
         <div className="min-w-0 pt-0.5">
-          <div className="text-[13px] font-medium text-starlight">Data folder</div>
+          <div className="text-[13px] font-medium text-starlight">
+            Data folder
+          </div>
           <p className="mt-0.5 text-[12px] leading-relaxed text-static">
             {dataDirectory
               ? "Defaults to a folder named after the cohort inside your data directory."
@@ -596,7 +657,10 @@ function NewCohortFolder({
         </div>
       </div>
       {error && (
-        <p className="mt-2 text-[11px]" style={{ color: "var(--color-status-error)" }}>
+        <p
+          className="mt-2 text-[11px]"
+          style={{ color: "var(--color-status-error)" }}
+        >
           {error}
         </p>
       )}

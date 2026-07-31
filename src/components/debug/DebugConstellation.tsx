@@ -1,8 +1,12 @@
 import { useFrame } from "@react-three/fiber";
+import { MAX_FRAME_SECONDS } from "@/components/constellation3d/CameraRig";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 
-import { useBoxHealth, type BoxHealth } from "@/components/chrome/ConstellationStatus";
+import {
+  useBoxHealth,
+  type BoxHealth,
+} from "@/components/chrome/ConstellationStatus";
 import { GL, GL_HEALTH } from "@/components/chrome/constellationStyle";
 import {
   ConstellationScene,
@@ -229,7 +233,11 @@ function BoxStar({
   const detected = health === "nominal" || health === "idle";
   const open = health === "nominal";
 
-  useFrame((_state, delta) => {
+  useFrame((_state, raw) => {
+    // Bounded like every other time-integrated animation: an unclamped
+    // `delta` is wall-clock, so one stalled frame jumps this forward by the
+    // whole stall (`CameraRig`'s `MAX_FRAME_SECONDS`).
+    const delta = Math.min(raw, MAX_FRAME_SECONDS);
     if (reduceMotion) return;
     if (mote.current) mote.current.rotation.y += delta * (open ? 0.9 : 0.45);
     if (ring.current) ring.current.rotation.z += delta * 0.26;
@@ -260,7 +268,14 @@ function BoxStar({
           {[0, 1, 2, 3, 4, 5].map((segment) => (
             <mesh key={segment} rotation={[0, 0, (segment * Math.PI) / 3]}>
               <ringGeometry
-                args={[radius * 2.2, radius * 2.2 + 0.02, 16, 1, 0, Math.PI / 4.6]}
+                args={[
+                  radius * 2.2,
+                  radius * 2.2 + 0.02,
+                  16,
+                  1,
+                  0,
+                  Math.PI / 4.6,
+                ]}
               />
               <meshBasicMaterial
                 color={GL.pulsar}
@@ -298,7 +313,11 @@ function BoxStar({
         <group ref={mote} rotation={[0.4, 0, 0.15]}>
           <mesh position={[radius * 2.5, 0, 0]}>
             <sphereGeometry args={[radius * 0.2, 10, 10]} />
-            <meshBasicMaterial color={GL.starlight} transparent opacity={0.85} />
+            <meshBasicMaterial
+              color={GL.starlight}
+              transparent
+              opacity={0.85}
+            />
           </mesh>
         </group>
       )}

@@ -41,11 +41,33 @@ import { CameraRig, SceneControls } from "./CameraRig";
  *    scenery, identical in every view, and by mounting it beside (not inside)
  *    the swapped content its point-field geometry, nebula textures and
  *    shaders survive every navigation.
- *  - **An empty stage costs nothing.** With no view attached the host div is
- *    out of the document and the frameloop is parked (`frameloop="never"`),
- *    so pages without a constellation don't pay for one. The canvas is also
- *    created lazily on first use, so the app never builds a GL context it
- *    hasn't needed yet.
+ *  - **The release path exists but is not meant to run.** With no view attached
+ *    the host div comes out of the document and the frameloop parks
+ *    (`frameloop="never"`), which was once a saving on pages without a
+ *    constellation. Every route now mounts one (`SkyBackdrop`), so the only
+ *    release that ever fires is the no-op kind above, and that is deliberate:
+ *
+ *    > [!CAUTION]
+ *    > A **genuine** release is expensive in a way that is invisible until it
+ *    > isn't. It unmounts the whole scene graph, which disposes every material,
+ *    > which drops three's refcounted shader programs to zero and destroys them
+ *    > — so coming back recompiles the star shader, the corona, and
+ *    > `MeshStandardMaterial`'s entire physical chain, blocking the first frame.
+ *    > It also regenerates ~1.2 MB of sphere geometry and a drei React root per
+ *    > nameplate. Worse, r3f gates its configure/render on a measured width, a
+ *    > detached host measures 0, and the ResizeObserver that reports otherwise
+ *    > is debounced 50 ms — during which the canvas is blank and the frameloop
+ *    > stays parked.
+ *    >
+ *    > The visible symptom was none of that directly. It was the *next* frame's
+ *    > `delta` carrying the compile stall into whatever was mid-animation: a
+ *    > 300 ms stall spends half of a 1.5 s cubic ease-out in one frame, which is
+ *    > the camera "lingering, then jumping" that took five attempts to place.
+ *    > `CameraRig` now clamps delta as a second line of defence, but the first
+ *    > is simply never releasing.
+ *
+ *    The canvas is still created lazily on first use, so the app never builds a
+ *    GL context it hasn't needed yet.
  */
 
 /** What a view holds while it owns the stage. Opaque outside this module. */
@@ -136,7 +158,9 @@ const StageContext = createContext<ConstellationStage | null>(null);
 export function useConstellationStage(): ConstellationStage {
   const stage = useContext(StageContext);
   if (!stage) {
-    throw new Error("constellation views must be used inside <ConstellationStageProvider>");
+    throw new Error(
+      "constellation views must be used inside <ConstellationStageProvider>",
+    );
   }
   return stage;
 }
@@ -147,7 +171,9 @@ export function useConstellationStage(): ConstellationStage {
  * renders `content`. Attach/steal/release are layout effects, so the canvas
  * has moved before the frame paints.
  */
-export function useConstellationView(content: ReactNode): (el: HTMLDivElement | null) => void {
+export function useConstellationView(
+  content: ReactNode,
+): (el: HTMLDivElement | null) => void {
   const stage = useConstellationStage();
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const token = useRef<StageToken | null>(null);
@@ -193,7 +219,11 @@ const EDGE_FADE_MASK = [
  * Mount once, above everything that might show a constellation. Renders the
  * children untouched plus the stage's canvas, portalled into the movable host.
  */
-export function ConstellationStageProvider({ children }: { children: ReactNode }) {
+export function ConstellationStageProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const [stage] = useState(() => new ConstellationStage());
   return (
     <StageContext.Provider value={stage}>

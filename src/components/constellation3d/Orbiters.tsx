@@ -1,4 +1,5 @@
 import { Html } from "@react-three/drei";
+import { MAX_FRAME_SECONDS } from "./CameraRig";
 import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -157,13 +158,23 @@ function Orbiter({
    *  callback below for why not `clock.elapsedTime`. */
   const clockRef = useRef(0);
 
-  useFrame((_state, delta) => {
+  useFrame((_state, raw) => {
+    // Bounded like every other time-integrated animation: an unclamped
+    // `delta` is wall-clock, so one stalled frame jumps this forward by the
+    // whole stall (`CameraRig`'s `MAX_FRAME_SECONDS`).
+    const delta = Math.min(raw, MAX_FRAME_SECONDS);
     /*
      * **Local time, not `clock.elapsedTime`.** r3f zeroes the clock on *every*
-     * `frameloop` transition, and the shared canvas parks its loop whenever no
-     * view is showing the constellation (`SharedCanvas.tsx`). Read straight, the
-     * clock therefore restarts at 0 on every return from Cohorts or Settings,
-     * and every phase below — engine flicker, beacon, strobe — jumps.
+     * `frameloop` transition, so anything reading it as monotonic jumps when the
+     * loop parks and restarts.
+     *
+     * Worth knowing what this does and does not buy. It keeps the phases below
+     * — engine flicker, beacon, strobe — continuous across a frameloop
+     * transition, but it cannot survive this component unmounting, because
+     * `clockRef` dies with it. Ships live in the *swapped* scene content, so the
+     * teardown they used to face on a route without a constellation reset them
+     * anyway. Nothing tears the scene down now (`SkyBackdrop`), which is what
+     * actually made this defence hold.
      */
     clockRef.current += delta;
     const elapsed = clockRef.current;
@@ -226,7 +237,8 @@ function Orbiter({
         (0.12 + flash * 0.88) * level;
       beacon.scale.setScalar(1 + flash * 0.9);
       if (bloom) {
-        (bloom.material as THREE.MeshBasicMaterial).opacity = flash * 0.45 * level;
+        (bloom.material as THREE.MeshBasicMaterial).opacity =
+          flash * 0.45 * level;
         bloom.scale.setScalar(0.7 + flash * 2.1);
       }
     }
@@ -246,7 +258,8 @@ function Orbiter({
     const starboardLamp = starboard.current;
     if (starboardLamp) {
       (starboardLamp.material as THREE.MeshBasicMaterial).opacity =
-        (0.42 + 0.34 * breathe(params.navOffset + Math.PI / BREATHE_RATE)) * level;
+        (0.42 + 0.34 * breathe(params.navOffset + Math.PI / BREATHE_RATE)) *
+        level;
     }
   });
 
@@ -258,13 +271,20 @@ function Orbiter({
         <group position={[orbitRadius, 0, 0]}>
           {/* Nose into the direction of travel: the carousel spins +y, which
               moves a craft at +x toward −z. */}
-          <ShipHull starRadius={starRadius} active={orbiter.active} exhaust={exhaust} />
+          <ShipHull
+            starRadius={starRadius}
+            active={orbiter.active}
+            exhaust={exhaust}
+          />
 
           {/* The anti-collision beacon on the spine: the lamp itself, plus an
               additive bloom around it that only exists while the strobe fires.
               Both are `depthWrite={false}` so neither punches a hole in the
               hull it sits on. */}
-          <mesh ref={light} position={[0, starRadius * 0.12, starRadius * 0.02]}>
+          <mesh
+            ref={light}
+            position={[0, starRadius * 0.12, starRadius * 0.02]}
+          >
             <sphereGeometry args={[starRadius * 0.042, 8, 8]} />
             <meshBasicMaterial
               color={GL.starlight}
@@ -288,7 +308,10 @@ function Orbiter({
               the left of travel, starboard green to the right. The nose points
               −z and up is +y, so left is −x. Smaller than the beacon — they
               mark the hull's extent, they don't announce it. */}
-          <mesh ref={port} position={[-starRadius * 0.088, 0, starRadius * 0.03]}>
+          <mesh
+            ref={port}
+            position={[-starRadius * 0.088, 0, starRadius * 0.03]}
+          >
             <sphereGeometry args={[starRadius * 0.034, 8, 8]} />
             <meshBasicMaterial
               color={GL_NAV.port}
@@ -298,7 +321,10 @@ function Orbiter({
               depthWrite={false}
             />
           </mesh>
-          <mesh ref={starboard} position={[starRadius * 0.088, 0, starRadius * 0.03]}>
+          <mesh
+            ref={starboard}
+            position={[starRadius * 0.088, 0, starRadius * 0.03]}
+          >
             <sphereGeometry args={[starRadius * 0.034, 8, 8]} />
             <meshBasicMaterial
               color={GL_NAV.starboard}
@@ -329,7 +355,8 @@ function Orbiter({
                 style={{
                   color: "var(--color-static)",
                   opacity: orbiter.active ? 0.9 : 0.55,
-                  textShadow: "0 0 4px var(--color-void), 0 0 2px var(--color-void)",
+                  textShadow:
+                    "0 0 4px var(--color-void), 0 0 2px var(--color-void)",
                 }}
               >
                 {orbiter.name}
@@ -382,7 +409,11 @@ function ShipHull({
       {/* Canopy: a small blister forward of midships. */}
       <mesh position={[0, s * 0.045, -s * 0.06]}>
         <sphereGeometry args={[s * 0.032, 10, 10]} />
-        <meshBasicMaterial color={GL.pulsar} transparent opacity={hullOpacity * 0.9} />
+        <meshBasicMaterial
+          color={GL.pulsar}
+          transparent
+          opacity={hullOpacity * 0.9}
+        />
       </mesh>
 
       {/* Fins: two swept side planes and a tail, at the stern. */}
@@ -431,7 +462,11 @@ function ShipHull({
         </mesh>
         {/* +90° about x points the cone's apex aft, so the plume tapers away
             from the nozzle. */}
-        <mesh position={[0, 0, s * 0.29]} rotation={[Math.PI / 2, 0, 0]} userData={{ peak: 0.45 }}>
+        <mesh
+          position={[0, 0, s * 0.29]}
+          rotation={[Math.PI / 2, 0, 0]}
+          userData={{ peak: 0.45 }}
+        >
           <coneGeometry args={[s * 0.022, s * 0.16, 8, 1, true]} />
           <meshBasicMaterial
             color={GL.ion}

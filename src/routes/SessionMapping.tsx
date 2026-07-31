@@ -12,7 +12,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { Button, Select } from "@/components/common/controls";
 import { RatPlacementBanner } from "@/components/sessions/RatPlacementBanner";
-import { DebugConstellation } from "@/components/debug/DebugConstellation";
+import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import {
   SketchPicker,
@@ -499,18 +499,7 @@ export function SessionMapping() {
     // Same scaffold as the Dashboard and step 1: the sky is continuous across
     // the whole guided flow, and only the chrome over it changes.
     <div className="relative h-full">
-      {/* The sky — outside the entrance animation, so the shared canvas is
-          handed over rather than faded in (`SharedCanvas.tsx`). Inert: this step
-          is about the physical rig in front of the operator, and a clickable
-          star would be a second thing competing for the same attention. */}
-      <div className="absolute inset-0">
-        <DebugConstellation
-          selected={null}
-          docksPanel={false}
-          interactive={false}
-          onSelect={() => {}}
-        />
-      </div>
+      <SkyBackdrop />
 
       <motion.div
         initial={{ opacity: 0, y: 8 }}

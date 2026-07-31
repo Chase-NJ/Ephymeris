@@ -59,7 +59,10 @@ Two data-visualization ramps were added for Analytics and change nothing above; 
 
 - **Radius scale:** `6 / 10 / 16 / 24px` (sm/md/lg/xl), applied consistently — no ad hoc radii.
 - **Elevation:** subtle shadow + a 1 px `Halo` hairline border, not heavy drop shadows.
-- **Vibrancy:** sidebar and modal surfaces use a translucent `Nebula` tint with `backdrop-filter: blur(20px)` — used **only** on persistent chrome and transient overlays, never on primary content cards.
+- **Vibrancy:** sidebar and modal surfaces use a translucent `Nebula` tint — used **only** on persistent chrome and transient overlays, never on primary content cards. Two tunings, chosen by what is *behind* the surface:
+  - `.vibrancy` — 72% tint, `backdrop-filter: blur(20px)`. **Modals**, which float over dense tables and forms and need the blur to stay readable.
+  - `.vibrancy-sky` — 52% tint, **no blur**. The **sidebar**, which floats over the constellation ([§2.1](#21-layout)). The blur is omitted deliberately, not forgotten: a starfield is 1 px points on near-black, so even a 4 px blur spreads every star below visibility and the panel merely reads darker. Frost needs something with area to frost; here the tint alone is what makes it glass, and legibility holds because the backdrop is almost entirely `Void` to begin with.
+- **HUD panels** docked over the sky (`.hud`, 55% `Nebula` + `blur(20px)`) are a third, separate material. Blur works there where it doesn't on the sidebar, because the tiles sit over the *middle* of the scene, where the nebula clouds have area to frost.
 - **Squircle, used once:** the app mark uses a continuous-corner shape via `clip-path`. Not applied to buttons or cards generally — this is the one place it is spent.
 
 ### 1.5 Motion
@@ -99,7 +102,20 @@ This is the one place the astronomy metaphor is spent deliberately — it isn't 
 
 ### 2.1 Layout
 
-Two regions: a persistent left sidebar (frosted glass, translucent `Nebula`) and a main content area. **No top menu bar** beyond the custom titlebar — all navigation lives in the sidebar. The titlebar is app-drawn on **both** platforms; native window decorations are disabled and minimize/maximize/close are rendered by the app. The bar itself is a drag region.
+Two regions: a persistent left sidebar (translucent `Nebula` glass) and a main content area. **No top menu bar** beyond the custom titlebar — all navigation lives in the sidebar. The titlebar is app-drawn on **both** platforms; native window decorations are disabled and minimize/maximize/close are rendered by the app. The bar itself is a drag region.
+
+**The sidebar overlays the content region rather than sitting beside it.** Its glass is thin enough to read the sky through ([§1.4](#14-layout--materials)), which is only worth anything if there is sky behind it — so the content region spans the full window width and the sidebar floats on top. Three things have to agree on the sidebar's width, and all three read the single `--spacing-sidebar` token:
+
+| | |
+|---|---|
+| The sidebar's own width | `w-sidebar` |
+| `main`'s left padding | keeps every ordinary in-flow route clear of the overlay without the route knowing it exists |
+| The shared canvas's negative left offset | `Scene.tsx` — cancels that padding so the constellation reaches back underneath the glass |
+
+> [!WARNING]
+> The three constellation routes must **not** clip their root (`overflow-hidden`). The shared canvas deliberately extends past the content region's left edge, and clipping at the route root cuts it back — silently, and only in the 200 px strip under the sidebar, which looks like the glass simply being dark rather than like a bug. `main`'s own `overflow-x-hidden` still clips, at its *padding* box, which includes that strip.
+>
+> Only the canvas reaches under the sidebar — not the views' sky *layers*. Scene chrome that shares that layer (`ViewControls`, the pan pad and gesture legend) stays in the content region, where it can be seen.
 
 ### 2.2 The sidebar
 
@@ -108,11 +124,11 @@ Two groups, 200 px wide:
 | | Item | Route |
 |---|---|---|
 | 1 | 🛰 **Dashboard** | `/` — default. Active for `/`, `/session/*` **and `/debug`**; carries a matte status dot while a session runs |
-| 2 | 👥 **Cohorts** | `/cohorts` |
-| 3 | 🔀 **Task** | `/task` |
-| 4 | 📈 **Analytics** | `/analytics` |
+| 2 | 📡 **Config** | `/config` — directly under Dashboard: it is how *this rig* is wired, so it sits beside the sky it describes |
+| 3 | 👥 **Cohorts** | `/cohorts` |
+| 4 | 🔀 **Task** | `/task` |
+| 5 | 📈 **Analytics** | `/analytics` |
 | — | *(pinned to the bottom)* | |
-| 5 | 📡 **Config** | `/config` |
 | 6 | ⚙️ **Settings** | `/settings` |
 
 Then a hairline divider and the constellation status widget ([§1.7](#17-the-signature-element--the-constellation-status-widget)) at the very bottom — always visible regardless of which section is active, since box connectivity is something the user should never have to navigate to check.
@@ -130,10 +146,26 @@ Selection is one shared `layoutId` pill, so the highlight glides between the two
 
 **The rig's 3D constellation is the Dashboard page**, and Debug renders the same sky with the camera flown in. There is **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view.
 
-The camera pose and the selected box persist in `lib/constellations/viewMemory.ts`, keyed by subject (`"rig"`; Mission Control keys per cohort), so navigating Dashboard ↔ Debug lands exactly where the other view left off, selection included. Memory is **per-sitting** by design — a fresh launch starts at the overview; it is the within-session snap-back that would read as a glitch.
+> [!IMPORTANT]
+> **The camera is not something a view owns.** `CameraRig` and the orbit controls are mounted *once*, for the app's lifetime, beside the backdrop in `SharedCanvas.tsx`. Views never mount, claim, hand over or restore a camera — they publish a subject (`constellation3d/sceneIntent.ts`) and the camera reacts. A route change is a prop change on a live component.
+>
+> Only two rules govern it, and they are the whole of it:
+>
+> - **Focus changes fly.** A published focus names a star; the camera eases to it, or back to the overview when the focus clears.
+> - **Arriving unfocused off-centre eases home.** When a view attaches and nothing is focused, a camera that isn't at the overview eases there. Otherwise nothing happens: the camera is simply where the last view left it, because it is the same object.
+>
+> This replaced a design in which the camera was a baton — a module-level holder, a pose saved on unmount and restored on mount, and an in-flight move banked for the next rig to adopt. It was correct only if mounts and unmounts interleaved in an assumed order, **across two React reconcilers** (the DOM tree and r3f's, joined by a store and a portal). Four separate attempts to stop the camera snapping on a sidebar round trip each fixed a real defect and none fixed that one, because each was a prediction about that interleaving. **Do not reintroduce per-view camera state**; if the camera needs to know something new, it belongs in the intent snapshot.
+
+The selected box still persists in `lib/constellations/viewMemory.ts`, so navigating Dashboard ↔ Debug keeps the same star selected. That memory is **per-sitting** by design — a fresh launch starts at the overview.
+
+**The sky spans the whole guided flow.** Dashboard, both session setup steps, Mission Control and Debug all show the one rig asterism (§9.1), so the constellation never unmounts between them. The two setup steps show it as **backdrop rather than instrument**: it draws and turns behind their frosted panels, but offers no orbit, no zoom, no pan pad and no clickable stars, because the operator is meant to be looking at the form.
+
+Only the **pose** is shared. Selection is separate state (`rigSelection`) belonging to the rig alone, so a focused box never leaks in as a focused animal; the saved `focusedId` exists only to let a restored view skip the fly-to-overview a bare mount would otherwise perform.
 
 > [!IMPORTANT]
-> **The sky is never animated, in either view.** Both routes keep the canvas host *outside* their entrance transition and fade only their chrome. The shared canvas physically lives in the active view's subtree, so a view-level opacity animation fades the constellation with it — and because both views show the same sky, navigating between them made it blink out and back on every arrival. **Chrome crossfades, sky holds still. Any new view that hosts the constellation must follow the same rule.**
+> **The sky is never animated, in any view.** Every route that hosts it keeps the canvas host *outside* its entrance transition and fades only its chrome. The shared canvas physically lives in the active view's subtree, so a view-level opacity animation fades the constellation with it — and because they all show the same sky, navigating between them made it blink out and back on every arrival. **Chrome crossfades, sky holds still. Any new view that hosts the constellation must follow the same rule.**
+>
+> The corollary, which is easy to miss: a route the shell treats as a sky route is held at `opacity: 1` on the way out, so **it must fade its own chrome**. A sky route added without an `exit` sits fully opaque over its successor for the length of the transition.
 
 > [!IMPORTANT]
 > **Debug is the Dashboard's twin, pixel for pixel.** Full-bleed sky, header overlaid on the same title grid (32 px indent, 28 px down), detail panel docked at the same 16 px insets. That is what makes the handoff seamless: the two views hand the one shared canvas an **identical rectangle**, so the transition needs no resize, aspect change, or reflow. The old layout gave it a different rectangle and every handoff resized the renderer mid-navigation.
@@ -175,16 +207,18 @@ The same sky, with a box selected and the camera flown in. **Every bound box is 
 
 ### 4.1 Star colour and motion
 
-**Colour is temperature here too.** A box's star takes the same stellar ramp Mission Control uses, and its temperature is the **mean recorded accuracy of the animals assigned to that box** — each animal pooled across *all* of its scored sessions. A box with nothing scored sits at the cool end rather than claiming warmth.
+**Colour is temperature here too**, and so is size (§9.2). A box's star takes the same stellar ramp Mission Control uses, and its temperature is the **mean recorded accuracy of the animals assigned to that box** — each animal pooled across *all* of its scored sessions. A box with nothing scored sits at the cool end rather than claiming warmth, which makes it both the reddest star and the smallest.
 
-**Status moved fully into motion**, which is what lets colour carry performance:
+**Status moved into motion and brightness**, which is what lets *hue* carry performance:
 
 | State | Reads as |
 |---|---|
-| **Detected** | The surface churns, and a mote orbits |
-| **Undetected** | The photosphere is **frozen** — stillness is the status, written into the star itself |
+| **Detected** | The surface churns and the star turns (§9.2), and a mote orbits |
+| **Undetected** | The photosphere is **frozen and burned down** to a fraction of its earned brightness — the rotation stops with the churn |
 | **Open** (passthrough or in session) | A slow dashed instrument ring |
 | **Faulted** | A thin steady error-red ring — status colour's one holdout, because a fault must not be readable as merely a cool star |
+
+Undetected is deliberately **two** readings of one fact. The dim carries at overview range, where a stopped churn is far too subtle to notice across six stars; the churn carries up close, where a single star fills the frame. Neither is a hue, so a *cool* star and a *dark* one can never be mistaken for each other. The dim is a scale on the ramp colours rather than an opacity, so the corona dims with the surface for free and the existing colour lerp turns connect/disconnect into a fade rather than a pop.
 
 ### 4.2 The node detail panel
 
@@ -482,17 +516,33 @@ Built with `three.js` / `react-three-fiber`. The camera, controls, hover reticle
 - **Links are the catalogue's own edges**, not nearest-neighbour. The traditional stick figure is what makes Scorpius read as the fishhook. *(The 2D cohort icon still uses nearest-neighbour — it has no asterism to be faithful to.)*
 - **Scaling is uniform.** A per-axis fit would stretch the tail and turn the Teapot into a bowl. Depth is a small seeded jitter per star — enough that orbiting reveals a sky rather than a poster, small enough that near stars don't occlude the shape.
 
-**Animals with no star** — no box mapped in the running group, or a box never bound — keep the original seeded placement, pushed onto a wider shell **outside** the asterism. Every animal in the cohort must be present, but putting them in a figure they are not part of would misreport the rig.
+- **Size is seeded per star, never per occupant.** Size is texture, and texture belongs to the slot. Seeded per occupant, box 3 was one size with an animal standing on it and another size as itself in Debug, so the same star changed size under the camera on every navigation between the two. The same goes for a star's rotation (§9.2).
 
-**The seeded fallback remains** for an install that never ran Box Setup. There, each star's position is seeded from `(cohortId, animalId)` **together** — not just the cohort id — so an animal added later doesn't reshuffle everyone else's star.
+**Animals with no box in the running group have no star.** The sky is the rig; an animal that is not on the rig is not in it. There is nowhere sensible to put one — a rig cannot run more animals than it has boxes, so the roster never needs places the rig does not have.
+
+> [!CAUTION]
+> **There is exactly one sky, and it is built in exactly one place** — `useRigSky`. Every 3D view resolves its layout, its seed and its `box → star` mapping through that hook.
+>
+> This was not always so, and the cost of the drift is the reason for the rule. Mission Control used to resolve its own layout and fall back to a **seeded per-animal scatter** whenever no constellation had been chosen, plus a wider shell outside the asterism for animals with no box. It therefore held different stars, at different coordinates, under a different camera key, with a different seed for per-star depth. Since one camera serves every view (§3.1), a navigation between them could only ever cut — no amount of easing fixes a camera arriving in a sky whose stars are somewhere else — and animals with no box left stray stars in the field with nothing on screen to explain them.
+>
+> Both fallbacks are gone. Don't reintroduce a second placement mode: the failure it produces is a camera artifact several files away from its cause.
 
 ### 9.2 The orbit view
 
 Camera starts pulled back with the full constellation visible. **Orbit** is left-drag, **pan** is right-drag or two-finger drag, **zoom** is the wheel — panning in the *screen* plane rather than a ground plane, since a sky has no floor.
 
+**Once a star is focused the view narrows to orbit alone.** Arrival composes a frame — the star centred at a fixed distance, the detail panel docked beside it — and orbiting is the one gesture that turns the view *around* the selected star while preserving that composition. Pan and zoom can only break it: panning slides the star back under the sidebar's glass ([§2.1](#21-layout)), zooming pushes it out of the frame the panel was placed against. So neither is offered while focused, and the gesture legend drops to `drag to orbit`. The controls go fully dead only for the duration of an eased flight, since the flight is driving the camera itself.
+
+> [!IMPORTANT]
+> **The star's off-centre framing is a projection shift, not an aiming offset.** The camera is aimed *at* the star and the rendered window is slid right by `STAR_FRAME_BIAS` of a half-frame (`setViewOffset`), which places the star left of centre — clear of the right-docked panel, without reaching the sidebar's glass.
+>
+> Doing it by aiming past the star instead — which is what the old world-unit `PANEL_OFFSET` did — puts the orbit **pivot beside the star rather than on it**. Because that offset is fixed in world space and not to the camera, half an orbit swings the star across the frame and behind the panel. It was invisible while focusing disabled the controls outright; it is not now that focusing leaves orbit live. The bias is a *fraction of a half-frame* rather than scene units so the composition is identical on a lab laptop and a wide monitor, and the effect restates it on resize (r3f updates `aspect` but leaves `camera.view` alone).
+
 Panning also has on-screen controls: a four-arrow pad with a recentre button, plus a one-line gesture legend. **The bindings alone are not enough** — this app is run by lab members who use it infrequently, and right-drag-to-pan is not something an infrequent user discovers. Each arrow moves a fixed fraction of the visible frame, so one press covers the same apparent distance at any zoom. A press **supersedes an in-progress camera flight** rather than being ignored: the operator asking to move means now, and a flight only advances while frames are being delivered, so a backgrounded window would otherwise wedge the controls until it was focused again.
 
-**Stars for animals currently `IN_SESSION` are illuminated**; everyone else is present but dim. **Only illuminated stars are interactive** — an unlit star has no live view to show, and gets neither the hover reticle nor the click.
+**Stars for animals currently `IN_SESSION` are illuminated**; every other box of the rig is present but burned down and still. **Only illuminated stars are interactive** — an unlit star has no live view to show, and gets neither the hover reticle nor the click.
+
+"Everyone else" means *every other box*, not every other animal: the sky is the rig, so an animal with no box in the running group has no star (§9.1). Its box is still drawn — unoccupied and faint — because the asterism is the subject.
 
 #### Star temperature
 
@@ -510,9 +560,23 @@ Panning also has on-screen controls: a four-arrow pad with a recentre button, pl
 - **Chance is the floor, not zero.** Below chance an animal isn't "colder," it's doing something other than the task; stretching the ramp to zero would spend half the visible range on a distinction nobody reads. An animal that has scored nothing shows at the cool end.
 
 > [!NOTE]
-> **This is a deliberate, bounded exception to the flat-matte rule.** It buys real information — the overview answers "who is working" without opening a panel — and it is confined to this 3D scene. An **unlit** star stays a flat matte dot: it has no performance to report, and giving it a surface would imply it were running. **Nothing in the 2D chrome gains a gradient or a glow.**
+> **This is a deliberate, bounded exception to the flat-matte rule.** It buys real information — the overview answers "who is working" without opening a panel — and it is confined to this 3D scene. **Nothing in the 2D chrome gains a gradient or a glow.**
+>
+> An **unlit** star gets the surface too, **burned down and frozen**, exactly as Debug draws a box that is bound but not on the bus (§4.1). It used to be a flat matte dot, on the reasoning that a surface would imply it were running — but stillness and dimness already say "not running" without discarding the temperature the box earned, and in practice a sky of dots was what the whole setup phase looked like before Start All. It also made this the *only* view where a given box was not a star, so navigating to or from it changed what the object was rather than just how it was lit (§9.1).
 
 The colour eases toward its target rather than snapping, so a run of good trials warms a star visibly instead of flickering between classes trial by trial. Reduced motion stills the granulation; the temperature still reads.
+
+**Temperature also sets size** — hotter is bigger, as on the main sequence, so the two readings agree instead of competing and a sky sorts at a glance by size as well as by colour. The range is deliberately modest (0.82× at chance to 1.18× at the hot end): the star has to stay inside its hover reticle and above its nameplate at both ends. It eases on the same curve as the colour, so warming and swelling are one change rather than two.
+
+Only the *visible* star scales. The layout radius each star was placed with ([`sessions/stars.ts`](../src/lib/sessions/stars.ts)) is untouched, because everything else in the scene derives from it — the hit sphere, the reticle, the nameplate's drop, the arrival rings, and how far the cage-ships orbit. Sizing those by accuracy would make a cool star harder to click, which is backwards.
+
+#### Star rotation
+
+**Every star turns**, slowly, about a slightly inclined axis — the better part of two minutes for a full revolution. It has to be unmistakable when the camera has flown in and the star fills the frame, and unobtrusive at overview range where six of them share the sky with orbiting cage-ships; anything faster stops reading as a star and starts reading as a loading spinner.
+
+The rate and the axis tilt are **seeded from the star's own identity** (the box number in Debug, the animal id in Mission Control), so six stars don't turn in lockstep — which would read as one mechanism rather than six independent objects — and a box turns the same way every time the app is opened.
+
+Rotation is **not** a status. It is gated on exactly the same flag as the granulation, so an undetected box's star is frozen *and* dark (§4.1) and reduced motion stills every star; a star that had stopped boiling but kept turning would say two things about one box. The granulation rides the rotation for free because the shader samples object-space position, while limb darkening works off the transformed normal and so keeps the lit side facing the camera.
 
 #### Hover, nameplates, and cage-ships
 
@@ -522,7 +586,17 @@ The colour eases toward its target rather than snapping, so a run of good trials
 
 **Cage-ships ride the stars.** One small spaceship circles a box's star per **home cage** — cagemates share a single craft, crewed together on its mini mono tag; an animal with no cage flies solo. Which star a ship orbits: the box of a currently *running* crew member, else the box its most *recently ran* member actually ran on, else wherever a member is slated to go. Inclination, bearing, orbit speed and blink phase are all seeded from the cage's id, so no two ships move alike and a full rig never blinks in sync.
 
-The motion follows the app's grammar: a crew with a running member **orbits, burns and strobes**; a parked crew holds its seeded bearing with a steady faint light, engine cold — *"assigned here, not running."* Zodiac mode only: there a star *is* the box, so the ship says whose cage lives there; in the seeded fallback the star is the animal itself and a craft orbiting its own namesake would just repeat the nameplate.
+> [!CAUTION]
+> **A crew is identified by cohort *and* cage, never by cage alone.** Cage numbers restart at 1 in every cohort, and the rig views pool every active cohort into a single fleet — so keying on the cage number by itself silently merged unrelated cohorts' "cage 3" onto one hull, and the crew tag then listed animals that share no cohort. It looks like a rendering quirk, not a data error, which is what makes it worth pinning here. `ShipMember.cohortId` carries the other half of the key.
+
+**Every ship orbits, always** — whether or not its crew is running, and whether or not the box is even connected. Ships used to park to say so, on the app's "stillness is the status" grammar, but the fleet is the wrong place for hardware state: a rig with most boxes unplugged then read as a still image rather than a sky. Connectivity is the *star's* to report, by burning down ([§4.1](#41-the-rig-constellation)).
+
+**Every ship keeps its lights, too** — a white anti-collision beacon double-flashing on the spine, plus port-red and starboard-green navigation lamps swelling slowly on the hull sides. A dark satellite reads as debris, and a crew waiting its turn is not debris. The beacon strobes (sharp attack, quadratic falloff, an uneven double-flash, with an additive bloom that flares wider than the lamp so it reads as *emitted light*); the nav lamps stay steady with a slow breathe, which is both the aviation convention and the calmer choice — a rig can carry a dozen ships, and three blinkers apiece would be a disco rather than an instrument.
+
+> [!NOTE]
+> The port/starboard red and green (`GL_NAV`) are a **deliberate, bounded exception** to "status colours are state only, never decorative" ([§1.2](#12-colour)). Red is safe here only because it arrives as half of a red/green *pair*, on a hull, at annotation scale — where a fault is a ring around a *star*. A lone red never appears on a ship. Do not extend this to a third colour or use these anywhere but a hull.
+
+So `active` — a running crew — is a matter of **degree**, not on/off: a running ship travels at full speed, burns its ion engine and carries its lights at full brightness; a coasting one still travels, still blinks, still swells, just slower and dimmer with the engine cold. Every view carries ships, because in every view a star *is* the box and the ship says whose cage lives there. *(Mission Control used to stand them down in the seeded fallback, where the star was the animal itself and a craft orbiting its own namesake would just have repeated the nameplate. That fallback is gone — see §9.1.)*
 
 #### The deep sky
 

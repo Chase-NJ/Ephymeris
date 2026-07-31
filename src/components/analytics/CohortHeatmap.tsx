@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 
 import { useRevealOnView } from "@/components/charts/reveal";
 import { useAnalyticsStore, useIsHighlighted } from "@/lib/analytics/context";
@@ -37,6 +37,17 @@ export function CohortHeatmap(props: {
   sessionScope: string;
   /** Changes when the data does — replays the column-by-column reveal. */
   revealKey: string;
+  /**
+   * Whether the grid may scroll sideways when it outgrows its column.
+   *
+   * On the dashboard it must — the SVG is sized in fixed pixels per column
+   * (see `MIN_PX_PER_COLUMN`) because `meet` scaling would otherwise turn a
+   * five-session, twenty-animal cohort into a chart thousands of pixels tall.
+   * A report sheet passes `false` instead and grows to fit: a scroll container
+   * rasterizes to whatever was visible, which would silently crop the most
+   * recent sessions — the ones the reader is looking for (`data.md` §10.6).
+   */
+  scroll?: boolean;
 }) {
   // Keyed on the reveal, so new data remounts the body and its visibility
   // gate re-arms — the column fill waits to be seen all over again (§2.7).
@@ -49,15 +60,21 @@ function HeatmapBody({
   metricId,
   sessionScope,
   revealKey,
+  scroll = true,
 }: {
   summary: AnalyticsSummary;
   profile: ProfileGroup | null;
   metricId: string | null;
   sessionScope: string;
   revealKey: string;
+  scroll?: boolean;
 }) {
   const store = useAnalyticsStore();
   const { ref, seen } = useRevealOnView();
+  // Per instance, because a report sheet is mounted alongside the live
+  // dashboard: two `<pattern>`s sharing one id in a document means every
+  // `url(#…)` resolves to whichever came first.
+  const patternId = `analytics-too-few-${useId()}`;
 
   const rows = useMemo(() => layoutRows(summary), [summary]);
 
@@ -127,7 +144,7 @@ function HeatmapBody({
       </div>
 
       <div className="mt-2">
-        <div className="min-w-0 overflow-x-auto">
+        <div className={scroll ? "min-w-0 overflow-x-auto" : "min-w-0"}>
           <svg
             viewBox={`0 0 ${width} ${height}`}
             width={Math.max(LABEL_W * MIN_PX_PER_COLUMN + columns * MIN_PX_PER_COLUMN, 200)}
@@ -139,7 +156,7 @@ function HeatmapBody({
             <defs>
               {/* One pattern, referenced by every too-few cell. */}
               <pattern
-                id="analytics-too-few"
+                id={patternId}
                 width={0.3}
                 height={0.3}
                 patternUnits="userSpaceOnUse"
@@ -166,6 +183,7 @@ function HeatmapBody({
                   x={LABEL_W + column * (CELL + GAP)}
                   y={row.y}
                   scoped={profile !== null}
+                  patternId={patternId}
                   // The surface fills in the order the sessions happened, so
                   // the reveal reads as history being laid down rather than as
                   // a grid switching on.
@@ -216,6 +234,7 @@ function HeatCell({
   x,
   y,
   scoped,
+  patternId,
   reveal,
   seen,
   delay,
@@ -230,6 +249,8 @@ function HeatCell({
   y: number;
   /** Whether the grid is filtered to one task profile. */
   scoped: boolean;
+  /** This grid's own hatch pattern — see `HeatmapBody`. */
+  patternId: string;
   reveal: string;
   /** The grid is on screen — until then the fill holds at nothing (§2.7). */
   seen: boolean;
@@ -284,7 +305,7 @@ function HeatCell({
           y={y}
           width={CELL}
           height={CELL}
-          fill="url(#analytics-too-few)"
+          fill={`url(#${patternId})`}
           stroke="var(--color-halo)"
           strokeWidth={0.04}
           rx={0.1}

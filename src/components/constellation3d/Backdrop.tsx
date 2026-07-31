@@ -366,6 +366,7 @@ function Supernovae() {
 
   const state = useRef({
     rand: mulberry32(SKY_SEED ^ 0x5f), // one stream: sites and lulls together
+    elapsed: 0, // seconds of rendered time, accumulated locally
     nextAt: 6, // first flare arrives soon after the scene settles
     startedAt: null as number | null,
   });
@@ -373,11 +374,25 @@ function Supernovae() {
   const flashTexture = useMemo(() => makeFlashTexture(), []);
   useEffect(() => () => flashTexture.dispose(), [flashTexture]);
 
-  useFrame(({ clock }) => {
+  useFrame((_state, delta) => {
     const group = anchor.current;
     if (!group) return;
     const s = state.current;
-    const now = clock.elapsedTime;
+    /*
+     * **Local time, not `clock.elapsedTime`.** This compares `now` against a
+     * `nextAt` and a `startedAt` recorded on earlier frames, so it needs a clock
+     * that only ever goes forwards — and r3f zeroes `elapsedTime` on *every*
+     * `frameloop` transition, which the shared canvas triggers whenever no view
+     * is showing the constellation (`SharedCanvas.tsx`).
+     *
+     * Read straight, that was not a glitch but a stall: after a park, `now`
+     * restarts at 0 while `nextAt` keeps a large value from the previous epoch,
+     * so **no supernova fires again** until elapsed time climbs back past it. A
+     * park landing mid-flare is worse — `t` goes negative and never reaches 1,
+     * so the flare is stuck invisible and `startedAt` is never cleared.
+     */
+    s.elapsed += delta;
+    const now = s.elapsed;
 
     if (reduceMotion) {
       group.visible = false;

@@ -11,6 +11,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { SceneBackdrop } from "./Backdrop";
+import { CameraRig, SceneControls } from "./CameraRig";
 
 /**
  * The shared constellation stage: **one** WebGL canvas for the whole app.
@@ -80,12 +81,26 @@ export class ConstellationStage {
     this.host.style.inset = "0";
   }
 
-  /** Adopt the stage into `container`. Steals from any current owner. */
-  acquire(container: HTMLElement): StageToken {
+  /**
+   * Adopt the stage into `container`, with the scene graph it should render.
+   *
+   * **`content` is not optional, and must not be deferred to `setContent`.**
+   * Attaching with an empty stage produces a live canvas whose scene has no
+   * `CameraRig` in it — so it renders the backdrop from whatever pose the
+   * *previous* view left the shared camera in, for however many frames it takes
+   * the content to arrive. What that looks like is the last view's close-up
+   * lingering on screen and then snapping to the new view's framing; it reads
+   * as a camera jump, and nothing inside the scene can fix it because the code
+   * that places the camera is precisely the code that isn't mounted yet.
+   *
+   * Passing the content here collapses that to a single update, so the first
+   * frame the canvas draws after re-attaching is already this view's.
+   */
+  acquire(container: HTMLElement, content: ReactNode): StageToken {
     const token: StageToken = { id: this.nextId++ };
     this.current = token;
     container.appendChild(this.host);
-    this.update({ attached: true, everAttached: true, content: null });
+    this.update({ attached: true, everAttached: true, content });
     return token;
   }
 
@@ -137,9 +152,16 @@ export function useConstellationView(content: ReactNode): (el: HTMLDivElement | 
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const token = useRef<StageToken | null>(null);
 
+  // The live content, so `acquire` below can attach *with* it. Read through a
+  // ref rather than taken as a dependency: the acquire effect must fire on
+  // gaining the container and nothing else, or every render would re-steal the
+  // stage from itself.
+  const contentRef = useRef(content);
+  contentRef.current = content;
+
   useLayoutEffect(() => {
     if (!container) return;
-    token.current = stage.acquire(container);
+    token.current = stage.acquire(container, contentRef.current);
     return () => {
       if (token.current) stage.release(token.current);
       token.current = null;
@@ -213,6 +235,18 @@ function StageCanvas({ stage }: { stage: ConstellationStage }) {
           seeded point fields and painted nebula textures. Living beside the
           swapped content, it survives every navigation. */}
       <SceneBackdrop />
+
+      {/* **The camera and its controls are permanent too**, and for a stronger
+          reason than cost. Mounted inside the swapped content, the camera was a
+          baton — claimed, banked, restored — whose correctness depended on how
+          mounts and unmounts interleaved across this portal, i.e. across two
+          reconcilers. Four attempts to stop it snapping on a sidebar round trip
+          each fixed something real and none fixed that, because each was a
+          prediction about that interleaving. Here there is nothing to hand over:
+          views declare a subject (`sceneIntent.ts`) and the camera reacts. */}
+      <CameraRig />
+      <SceneControls />
+
       {snapshot.content}
     </Canvas>,
     stage.host,

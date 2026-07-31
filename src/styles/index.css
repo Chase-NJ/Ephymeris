@@ -63,6 +63,14 @@
   --radius-md: 10px;
   --radius-lg: 16px;
   --radius-xl: 24px;
+
+  /* §2.2 The sidebar's width, as a spacing token rather than a literal.
+     The sidebar floats *over* the content region so the constellation runs
+     full-bleed beneath its glass, which means three places have to agree on
+     this number: the sidebar's own width, the left padding that keeps
+     ordinary routes clear of it, and the negative offset the sky views use to
+     reach back underneath it. One token, so they cannot drift apart. */
+  --spacing-sidebar: 200px;
 }
 
 @layer base {
@@ -157,10 +165,26 @@
   /* §2.4 Vibrancy: translucent Nebula + backdrop blur. Persistent chrome
      (sidebar) and transient overlays (modals) ONLY — never primary content
      cards. Applying this to cards is the failure mode to guard against. */
+  /* §1.4 Frosted chrome, for a backdrop of *content* — i.e. modals, which float
+     over dense tables and forms and need the blur to stay readable. */
   .vibrancy {
     background-color: color-mix(in srgb, var(--color-nebula) 72%, transparent);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
+  }
+
+  /* The same treatment tuned for a backdrop of *sky*. The sidebar floats over
+     the constellation (see `AppShell`), and there its blur was worse than
+     useless: a starfield is 1px points on near-black, so even a 4px blur
+     spreads every star past visibility and the panel just reads darker. Frost
+     needs something with area to frost. So this one is tint alone — thin
+     enough that the sky shows through, and legible without the blur because
+     what's behind it is almost entirely Void to begin with.
+
+     Reserved, like `.vibrancy`, to exactly one surface. Anything docked over
+     the sky that isn't the shell wants `.hud`. */
+  .vibrancy-sky {
+    background-color: color-mix(in srgb, var(--color-nebula) 52%, transparent);
   }
 
   /* §2.4 The squircle nod, spent exactly once: the app mark. Not buttons,
@@ -177,15 +201,53 @@
     animation: attention-border 1.8s ease-in-out infinite;
   }
 
+  /* A route on its way out must not still be clickable.
+     `AnimatePresence mode="popLayout"` stamps this attribute on the exiting
+     child and pins it `position: absolute`, which makes it paint *above* the
+     page that replaced it — so its `pointer-events-auto` tiles stay hit-testable
+     while they fade, sitting invisibly over the incoming page.
+     Done here rather than in the route's `exit` target on purpose:
+     `pointer-events` is not an animatable value, and the attribute framer
+     already stamps describes exactly the state we want to style — so this needs
+     no React state, covers every `popLayout` exit in the app at once, and
+     applies for precisely the lifetime of the exit. */
+  [data-motion-pop-id] {
+    pointer-events: none;
+  }
+
+  /* A scroller with no scrollbar at all — for the HUD rails floating over the
+     sky (the Dashboard's two tile columns, Mission Control's two).
+
+     The rule above gives every scroller in the app a classic 10px scrollbar,
+     which is right for a document and wrong for these: the rails are
+     `pointer-events-none` so the sky between their tiles stays orbitable, which
+     means their scrollbars cannot be grabbed even in principle. All they do is
+     take 10px off the content box the moment a rail overflows, shrinking every
+     tile inside it and — in Mission Control, whose journey bar spaces itself
+     across the rail — visibly resizing chrome that has no business resizing.
+     Wheel and trackpad scrolling are untouched, which is the only way these
+     ever scrolled.
+
+     Deliberately *not* `scrollbar-gutter: stable` like `main`: that reserves the
+     10px permanently instead of transiently, which is the right trade for a page
+     whose scrollbar is real and the wrong one for a rail whose scrollbar is
+     decoration. */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
   /* §2.4 HUD panels docked over a live 3D scene — the Dashboard's tile column,
      following the treatment NodeDetail and StarPanel established. Translucent
      so the sky reads through, blurred so the panel's own text stays legible.
      Distinct from .vibrancy (persistent chrome + modals) and .surface (opaque
      content cards): each of the three keeps its own rule. */
   .hud {
-    background-color: color-mix(in srgb, var(--color-nebula) 78%, transparent);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    background-color: color-mix(in srgb, var(--color-nebula) 55%, transparent);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--color-halo);
   }
 }

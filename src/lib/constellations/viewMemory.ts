@@ -1,38 +1,20 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 /**
- * Where the constellation browser was left — per subject, across views
+ * What the rig has selected, shared across the views that browse it
  * (`dashboard.md` §3, §4.3).
  *
- * The 3D constellation now appears on more than one page (Dashboard and Debug
- * both browse the rig), and the illusion those views sell is that they are
- * windows onto *one* sky. A camera that snapped back to the overview on every
- * navigation would break that instantly — so the camera pose and the selected
- * star live here, keyed by what the scene is *of* ("rig", or a cohort id), and
- * every view showing that subject reads and writes the same entry.
+ * > [!NOTE]
+ * > **This used to hold the camera pose as well**, keyed by what the scene was
+ * > *of*, so an arriving view could restore where the last one left off. It
+ * > doesn't any more, and the field should not come back: the camera is a single
+ * > permanent object that no view mounts or unmounts
+ * > (`constellation3d/Scene.tsx`), so there is nothing to save and nothing to
+ * > restore. It simply stays where it was.
  *
  * Module state, deliberately not persisted to disk: continuity is a property
- * of one sitting. A fresh app launch starting at the overview is correct — it
- * is the *within-session* snap-back that would read as a glitch.
+ * of one sitting.
  */
-
-export interface SavedView {
-  position: [number, number, number];
-  target: [number, number, number];
-  /** What was focused when the view was left — lets the scene skip the
-   *  fly-to-overview a bare mount would otherwise perform. */
-  focusedId: string | null;
-}
-
-const views = new Map<string, SavedView>();
-
-export function saveView(key: string, view: SavedView): void {
-  views.set(key, view);
-}
-
-export function loadView(key: string): SavedView | null {
-  return views.get(key) ?? null;
-}
 
 /**
  * The rig's selected box — shared by every view that browses the rig, so a

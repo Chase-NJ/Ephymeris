@@ -18,11 +18,33 @@ export function AnimalRail({
   profile,
   colors,
   metricId,
+  scroll = true,
 }: {
   summary: AnalyticsSummary;
   profile: ProfileGroup | null;
   colors: Map<string, string>;
   metricId: string | null;
+  /**
+   * Whether the rail caps at its row's height and scrolls, or grows to fit.
+   *
+   * Capped, it is lifted out of flow (`absolute`) inside a stretched wrapper.
+   * That is what makes the cap possible without measuring anything: the
+   * wrapper takes its height from the strategy tile beside it, `max-h-full`
+   * resolves against that, and a rail contributing **zero** height can never
+   * stretch the row it is trying to match. Under the cap the height stays
+   * `auto`, so a two-animal cohort gets a compact card rather than a tall
+   * empty one.
+   *
+   * A report sheet passes `false`, for the reason `CohortHeatmap`'s `scroll`
+   * prop documents: a rasterizer captures a scroll container as whatever was
+   * in view, so a long roster would lose animals off the bottom of the PNG
+   * with nothing to show it had happened.
+   *
+   * Only applied from `lg` up. Below it the two-column grid collapses, and an
+   * absolute rail whose wrapper has no sibling to give it height would fall to
+   * zero and sit on top of the panel beneath.
+   */
+  scroll?: boolean;
 }) {
   const trends = useMemo(
     () => buildTrends(summary, profile, metricId),
@@ -41,24 +63,39 @@ export function AnimalRail({
   }, [summary]);
 
   return (
-    <div className="surface flex flex-col gap-3 rounded-md p-4">
-      <span className="text-[11px] text-static">Animals</span>
-      {grouped.map(({ group, animals }) => (
-        <div key={group.id} className="flex flex-col gap-0.5">
-          {grouped.length > 1 && (
-            <span className="mb-0.5 font-mono text-[10px] text-static/70">{group.name}</span>
-          )}
-          {animals.map((animal) => (
-            <AnimalRow
-              key={animal.id}
-              animalId={animal.id}
-              name={animal.name}
-              color={colors.get(animal.id) ?? "var(--color-series-1)"}
-              trend={trends.get(animal.id) ?? []}
-            />
-          ))}
-        </div>
-      ))}
+    <div
+      className={`surface flex flex-col gap-3 rounded-md p-4 ${
+        scroll ? "lg:absolute lg:inset-x-0 lg:top-0 lg:max-h-full" : ""
+      }`}
+    >
+      <span className="shrink-0 text-[11px] text-static">Animals</span>
+      {/* The groups live in their own box so the heading stays put while they
+          scroll, and so spacing is identical either way — the root's `gap-3`
+          used to separate the heading and every group, and this now owns the
+          second half of that job. `pr-1` is the gutter for the 10px scrollbar
+          `styles/index.css` gives every scroller. */}
+      <div
+        className={`flex flex-col gap-3 ${
+          scroll ? "min-h-0 flex-1 overflow-y-auto pr-1" : ""
+        }`}
+      >
+        {grouped.map(({ group, animals }) => (
+          <div key={group.id} className="flex flex-col gap-0.5">
+            {grouped.length > 1 && (
+              <span className="mb-0.5 font-mono text-[10px] text-static/70">{group.name}</span>
+            )}
+            {animals.map((animal) => (
+              <AnimalRow
+                key={animal.id}
+                animalId={animal.id}
+                name={animal.name}
+                color={colors.get(animal.id) ?? "var(--color-series-1)"}
+                trend={trends.get(animal.id) ?? []}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

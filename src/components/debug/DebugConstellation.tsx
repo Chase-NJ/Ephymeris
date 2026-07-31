@@ -2,11 +2,7 @@ import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 
-import {
-  resolveLayout,
-  useBoxHealth,
-  type BoxHealth,
-} from "@/components/chrome/ConstellationStatus";
+import { useBoxHealth, type BoxHealth } from "@/components/chrome/ConstellationStatus";
 import { GL, GL_HEALTH } from "@/components/chrome/constellationStyle";
 import {
   ConstellationScene,
@@ -14,10 +10,10 @@ import {
   type SceneNode,
 } from "@/components/constellation3d/Scene";
 import { StellarSurface } from "@/components/constellation3d/StellarSurface";
+import { useRigSky } from "@/components/constellation3d/useRigSky";
 import { assignShips } from "@/lib/constellations/ships";
 import { useBoxStellar } from "./useBoxStellar";
 import { useRunningSession } from "@/lib/sessions/context";
-import { buildSky } from "@/lib/sessions/stars";
 import { useBoundBoxes, useSettings } from "@/lib/settings/context";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
@@ -57,35 +53,45 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
 export function DebugConstellation({
   selected,
   onSelect,
+  docksPanel = true,
+  interactive = true,
 }: {
   selected: number | null;
   onSelect: (box: number | null) => void;
+  /**
+   * False on the Dashboard, which shows this same sky but opens no panel —
+   * selecting a star there navigates to Debug instead. See
+   * `ConstellationScene`: it gates the focused-state restrictions, which all
+   * exist to protect a frame composed around a panel.
+   */
+  docksPanel?: boolean;
+  /**
+   * False where the sky is **backdrop only** — the guided session steps, which
+   * show the rig behind their frosted panels so the flow reads as one continuous
+   * scene rather than three screens.
+   *
+   * Every bound box is normally inspectable, so without this a star there would
+   * offer a hover reticle and a click that goes nowhere. Inert is not the same
+   * as hidden: the constellation still draws, still turns, still carries its
+   * temperatures. It just isn't a control.
+   */
+  interactive?: boolean;
 }) {
   const { settings } = useSettings();
   const bound = useBoundBoxes();
   const health = useBoxHealth();
   const stellar = useBoxStellar();
 
-  const layout = useMemo(
-    () => resolveLayout(settings.constellation, settings.constellationSlots, bound),
-    [settings.constellation, settings.constellationSlots, bound],
-  );
-
   // Boxes are their own occupants here — a star *is* a box, so the two ids are
-  // the same fact. Keyed on the bound set alone: health and temperature arrive
-  // from their own stores and must never move a star.
+  // the same fact. Everything about placement comes from `useRigSky`, which
+  // Mission Control also goes through: same asterism, same seed, same sizes.
   const boundKey = bound.join(",");
-  const sky = useMemo(
-    () =>
-      buildSky(
-        "debug",
-        bound.map((box) => ({ occupantId: String(box), box })),
-        layout,
-        settings.constellation ?? "legacy",
-      ),
+  const occupants = useMemo(
+    () => bound.map((box) => ({ occupantId: String(box), box })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [boundKey, layout, settings.constellation],
+    [boundKey],
   );
+  const sky = useRigSky(occupants);
 
   const labels = useMemo(
     () => new Map(settings.boxes.map((b) => [b.box, b.label])),
@@ -111,6 +117,7 @@ export function DebugConstellation({
         members.push({
           id: b.animalId,
           name: b.animalName,
+          cohortId: running?.session.cohortId ?? null,
           cage: null,
           box: b.box,
           running: b.running,
@@ -120,10 +127,10 @@ export function DebugConstellation({
     return assignShips(members);
   }, [stellar, running]);
 
-  const nodes: SceneNode[] = sky.points.map((point, index) => {
+  const nodes: SceneNode[] = sky.points.map((point) => {
     if (point.occupantId === null) {
       return {
-        id: `star-${point.star ?? index}`,
+        id: `star-${point.star}`,
         position: point.position,
         radius: point.radius,
         active: false,
@@ -140,8 +147,9 @@ export function DebugConstellation({
       // Every bound box is inspectable, however sick — an absent or faulted box
       // is precisely the one you came here to open. This is the deliberate
       // difference from Mission Control, where an unlit star has no live view
-      // to show and is inert by construction.
-      active: true,
+      // to show and is inert by construction. `interactive` is the other
+      // exception: on the guided steps the sky is backdrop, not instrument.
+      active: interactive,
       name: labels.get(box) ?? `Box ${box}`,
       badge: box,
       // The anonymous mote stands down while any satellite is up — crossing
@@ -153,6 +161,9 @@ export function DebugConstellation({
           health={state}
           accuracy={stellar.boxes[box]?.accuracy ?? null}
           crewed={!!crew?.length}
+          // Keyed the same way Mission Control keys it, so box 3's star turns
+          // the same way in both — see the note on `seed` there.
+          seed={`box:${box}`}
         />
       ),
       orbiters: crew,
@@ -171,9 +182,8 @@ export function DebugConstellation({
       links={links}
       focusedId={selected === null ? null : String(selected)}
       onFocus={(id) => onSelect(id === null ? null : Number(id))}
-      // One sky, wherever it appears: Dashboard and Debug both browse the rig,
-      // so they share one remembered camera and selection (`viewMemory.ts`).
-      persistKey="rig"
+      docksPanel={docksPanel}
+      interactive={interactive}
     />
   );
 }
@@ -201,6 +211,7 @@ function BoxStar({
   health,
   accuracy,
   crewed = false,
+  seed,
 }: {
   radius: number;
   health: BoxHealth;
@@ -208,6 +219,8 @@ function BoxStar({
   accuracy: number | null;
   /** A named animal satellite is in orbit — the anonymous mote stands down. */
   crewed?: boolean;
+  /** Seeds this star's rotation (`StellarSurface`) — the box number here. */
+  seed?: string | undefined;
 }) {
   const reduceMotion = useReduceMotion();
   const mote = useRef<THREE.Group>(null);
@@ -224,9 +237,20 @@ function BoxStar({
 
   return (
     <group>
-      {/* The surface churns only while the box is detected — stillness is the
-          status, now written into the photosphere itself. */}
-      <StellarSurface radius={radius} accuracy={accuracy} churn={detected} />
+      {/* An undetected box's star is **dark and still**: burned down to a
+          fraction of its earned brightness, its surface frozen. Two readings of
+          one fact on purpose — the dim carries at overview range where a
+          stopped churn is too subtle to notice, the churn carries up close
+          where every star fills the frame — and neither is a colour, so a cool
+          star and a dark one never trade places. This is where hardware state
+          lives now; the cage-ships overhead orbit regardless (`Orbiters.tsx`). */}
+      <StellarSurface
+        radius={radius}
+        accuracy={accuracy}
+        churn={detected}
+        dim={!detected}
+        seed={seed}
+      />
 
       {/* Open box: the slow dashed instrument ring. Built from short arc
           segments rather than a dashed material, which needs line distances

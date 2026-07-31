@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { CircleAlert, Play, RotateCcw, Square, Users } from "lucide-react";
+import { ArrowLeft, CircleAlert, Play, RotateCcw, Square, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
@@ -14,6 +14,7 @@ import { errorMessage, getCohort } from "@/lib/cohorts/commands";
 import type { Cohort } from "@/lib/cohorts/types";
 import { useAllPortStatuses, usePortStatus } from "@/lib/hardware/context";
 import { springPanel } from "@/lib/motion";
+import { useDeparture } from "@/lib/nav/departure";
 import {
   abandonSession,
   endSession,
@@ -153,6 +154,21 @@ export function MissionControl() {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const focusedBox = boxes.find((b) => b.animalId === focusedId) ?? null;
 
+  /*
+   * **Leaving flies out first** (`lib/nav/departure.ts`).
+   *
+   * Clearing the focus in the same commit as the navigation starts the eased
+   * move while this page is still on screen, so leaving a star reads as flying
+   * out of it rather than as arriving somewhere else already pulled back. The
+   * camera is permanent (`constellation3d/CameraRig.tsx`), so that move simply
+   * carries on across the route change — there is nothing to hand over.
+   *
+   * Shared by the sidebar and by this view's own Dashboard button below, so the
+   * two doors out agree.
+   */
+  const flyOut = useCallback(() => setFocusedId(null), []);
+  useDeparture(flyOut);
+
   // --- guided-flow state ---------------------------------------------------
 
   const endedCount = useEndedCount();
@@ -267,7 +283,9 @@ export function MissionControl() {
   }
 
   return (
-    <div className="relative h-full overflow-hidden">
+    // No `overflow-hidden`: it would clip the shared canvas back out of the
+    // strip it reaches under the sidebar (`Scene.tsx`).
+    <div className="relative h-full">
       {/* The sky, full-bleed and **outside the entrance animation** — the shared
           WebGL canvas lives in this element (`SharedCanvas.tsx`), so fading the
           view in would fade the constellation in with it, and the Dashboard we
@@ -275,9 +293,27 @@ export function MissionControl() {
           is handed over. Unframed for the same reason it always was: the canvas
           is transparent and fades at its edges, so it belongs to the page. */}
       <div className="absolute inset-0">
-        {cohort && (
+        {/*
+          **Mounted on the URL's `cohortId` alone — never on a fetch.**
+
+          This view's scene has to claim the shared canvas (`SharedCanvas.tsx`)
+          before anything else can, because until it does, the canvas is still
+          owned by the view we just left and still rendering *that* camera. Wait
+          on `getCohort` and `sessions.status` first and you get exactly that:
+          the previous page's sky — its camera, its star colours — held on
+          screen for the length of two round trips, then the whole sky cutting
+          over at once the moment this scene finally mounts. It reads as a
+          camera jump and it is really a late handoff.
+
+          Rendering immediately is safe because the *asterism* comes from
+          settings, not from either fetch: with no animals yet the constellation
+          draws its unoccupied stars at exactly the positions the occupied ones
+          will use, so animals arriving later light up slots rather than moving
+          anything.
+        */}
+        {cohortId && (
           <Constellation3D
-            cohortId={cohort.id}
+            cohortId={cohortId}
             animals={constellationAnimals}
             focusedId={focusedId}
             onFocus={setFocusedId}
@@ -291,14 +327,45 @@ export function MissionControl() {
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
+        // Owns its own exit: this is a sky route, so the shell holds the page
+        // opaque on the way out and anything that should fade has to say so
+        // (`AppShell`). Without it the rails sit fully opaque over the incoming
+        // page for the length of the transition.
+        exit={{ opacity: 0 }}
         transition={springPanel}
         className="pointer-events-none absolute inset-0"
       >
         {/* The session column: what this session IS, and the three things you
             can do to it as a whole. The title rides inside the rail (p-4 + pt-3
             = the shared 28px title line, pl-8 = the shared 32px indent). */}
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-[392px] overflow-y-auto p-4 pl-8">
+        <div className="scrollbar-none pointer-events-none absolute inset-y-0 left-0 w-[392px] overflow-y-auto p-4 pl-8">
           <div className="pointer-events-auto flex flex-col gap-3 pt-3">
+            {/* The way out. Mission Control is reached from the Dashboard's
+                hero CTA but had no route back short of the sidebar, which reads
+                as abandoning the run — so the one control that says otherwise
+                belongs here, in the rail that owns the session as a whole.
+                **Leaving does not stop anything**: the runner is sidecar-side
+                and telemetry keeps accumulating (`SessionsProvider` is mounted
+                at the app root for exactly this), and the Dashboard's session
+                dock is the way back in. The title says so, because "back" on a
+                running session is otherwise a fair thing to hesitate over. */}
+            <span className="self-start">
+              <Button
+                variant="ghost"
+                title="The session keeps running — pick it up again from the Dashboard"
+                // Clears the focus on the way out for the same reason the
+                // sidebar does — one commit, so the fly-out is still in the air
+                // when the Dashboard's rig claims the camera.
+                onClick={() => {
+                  flyOut();
+                  navigate("/");
+                }}
+              >
+                <ArrowLeft size={13} strokeWidth={1.75} />
+                Dashboard
+              </Button>
+            </span>
+
             <Header
               name={sessionName ?? "—"}
               date={session?.date ?? ""}
@@ -312,7 +379,7 @@ export function MissionControl() {
               groupName={groupInfo?.name ?? null}
             />
 
-            <SessionJourney step={journeyStep} hint={hint} group={groupInfo} />
+            <SessionJourney step={journeyStep} hint={hint} group={groupInfo} compact />
 
             {error && (
               <div
@@ -325,19 +392,26 @@ export function MissionControl() {
             )}
 
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="primary"
-                disabled={busy || !connected || boxes.length === 0 || allRunning}
-                onClick={() =>
-                  void run(async () => {
-                    await startAll(client, sessionId!);
-                    sessionStore.resetFinishedBoxes();
-                  })
-                }
-              >
-                <Play size={13} strokeWidth={2} />
-                Start All
-              </Button>
+              {/* Gone, not greyed, once every box is already running: a disabled
+                  primary button is the loudest thing in the rail and it is
+                  advertising the one action that has nothing left to do. The
+                  per-box Start controls remain for a box that later finishes,
+                  and this returns the moment one does. */}
+              {!allRunning && (
+                <Button
+                  variant="primary"
+                  disabled={busy || !connected || boxes.length === 0}
+                  onClick={() =>
+                    void run(async () => {
+                      await startAll(client, sessionId!);
+                      sessionStore.resetFinishedBoxes();
+                    })
+                  }
+                >
+                  <Play size={13} strokeWidth={2} />
+                  Start All
+                </Button>
+              )}
               {/* Only once a group is under way: "switch" implies one already
                   ran, and before that Resume setup (or Start All) is the real
                   path. */}
@@ -390,14 +464,21 @@ export function MissionControl() {
             opened up, and two absolutely-positioned columns fighting for one
             edge is what the panel's old self-docking amounted to. Six tiles
             scroll inside this rail; the window itself never scrolls. */}
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-[392px] overflow-y-auto p-4 pr-8">
+        <div className="scrollbar-none pointer-events-none absolute inset-y-0 right-0 w-[392px] overflow-y-auto p-4 pr-8">
           {/* `popLayout`, never `wait` — the same call `AppShell`'s route
               transition makes and for the same reason: `wait` holds the
               incoming child until the outgoing one has finished exiting, so
               anything that stalls an exit stalls the swap itself and the panel
               simply never arrives. Here the new child mounts at once and the old
-              one is lifted out of flow to leave. */}
-          <AnimatePresence mode="popLayout" initial={false}>
+              one is lifted out of flow to leave.
+
+              **No `initial={false}`.** That suppressed the enter animation on
+              the presence's first render, which is precisely the arrival from
+              box mapping — so the tiles that slide in and out beautifully when a
+              star is focused simply appeared on the way into the session. The
+              swap grammar was already written; it was only switched off for the
+              one entrance the operator sees first. */}
+          <AnimatePresence mode="popLayout">
             {focusedBox ? (
               <StarPanel
                 key={`panel-${focusedBox.box}`}

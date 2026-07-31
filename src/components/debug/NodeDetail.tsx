@@ -13,7 +13,7 @@ import {
   Send,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useBoxHealth } from "@/components/chrome/ConstellationStatus";
 import { Button, Select } from "@/components/common/controls";
@@ -28,7 +28,7 @@ import {
   usePortStatus,
   useUtilityStatus,
 } from "@/lib/hardware/context";
-import { springPanel, springSnappy } from "@/lib/motion";
+import { PANEL_TRAVEL, springPanel, springSnappy } from "@/lib/motion";
 import { getTaskProfile } from "@/lib/sessions/commands";
 import { useSettings } from "@/lib/settings/context";
 import { BAUD_RATES } from "@/lib/settings/schema";
@@ -190,6 +190,33 @@ export function NodeDetail({
 
   const openPort = () => void run(() => client.call(CMD.PORT_PASSTHROUGH_OPEN, { box, baud }));
   const closePort = () => void run(() => client.call(CMD.PORT_PASSTHROUGH_CLOSE, { box }));
+
+  /*
+   * **A console left open must not outlive the panel that opened it.**
+   *
+   * Passthrough is opened from this panel and, until now, only ever closed
+   * from it — so navigating away with a console open left the port in
+   * `PASSTHROUGH` indefinitely. That is invisible from anywhere else and wrong
+   * twice over: the box's star keeps wearing the "open box" instrument ring on
+   * the Dashboard, and the port stays claimed by a panel nobody can see.
+   *
+   * The same shape as `useHandshakeTest`'s cleanup, which already closes
+   * in-flight ports on unmount for exactly this reason. Best-effort: a failed
+   * close on the way out is no worse than the leak it replaces, and there is
+   * no longer a panel to report it to.
+   *
+   * Reads the live state through a ref so the effect runs on unmount only —
+   * depending on `port.state` would close the port every time it changed.
+   */
+  const openStateRef = useRef(port.state);
+  openStateRef.current = port.state;
+  useEffect(() => {
+    return () => {
+      if (openStateRef.current === "PASSTHROUGH") {
+        void client.call(CMD.PORT_PASSTHROUGH_CLOSE, { box }).catch(() => {});
+      }
+    };
+  }, [client, box]);
   const ackError = () => void run(() => client.call(CMD.PORT_ERROR_ACK, { box }));
   const resetBoard = () => void run(() => client.call(CMD.PORT_RESET, { box }));
 
@@ -247,17 +274,27 @@ export function NodeDetail({
 
   return (
     <motion.aside
-      initial={{ opacity: 0, x: 24 }}
+      // `PANEL_TRAVEL`, shared with the Dashboard's overview column so the
+      // column this panel replaces leaves by exactly the distance this one
+      // arrives from — the two read as one surface being swapped.
+      initial={{ opacity: 0, x: PANEL_TRAVEL }}
       animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 24 }}
+      exit={{ opacity: 0, x: PANEL_TRAVEL }}
       transition={springPanel}
+      // `.hud`, the one docked-over-sky material — the same glass Mission
+      // Control's rails and the session StarPanel are made of. This panel used
+      // to mix its own (an opaque-ish `bg-nebula/80` with `backdrop-blur-xl`),
+      // which read as a heavier, different surface in the one view where the
+      // user is most likely to compare it against the others. Both widths share
+      // it, so expanding the panel changes its size and nothing else.
+      //
       // Above the nameplates, which drei renders as DOM at z-index <= 10. A
       // crisp plate drifting over a control would be worse than the star it
       // labels being hidden.
       //
       // The wide width is capped against the scene rather than fixed, so on a
       // laptop it becomes "nearly the whole frame" instead of overflowing it.
-      className={`pointer-events-auto absolute top-4 right-4 bottom-4 z-20 overflow-y-auto rounded-lg border border-halo bg-nebula/80 p-4 backdrop-blur-xl ${
+      className={`hud pointer-events-auto absolute top-4 right-4 bottom-4 z-20 overflow-y-auto rounded-lg p-4 ${
         wide ? "w-[min(820px,calc(100%-2rem))]" : "w-[420px]"
       }`}
       // The width is a layout change, not a decorative one — animating it lets

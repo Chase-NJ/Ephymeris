@@ -66,3 +66,24 @@ export const GL_HEALTH = {
   absent: GL.halo,
   fault: "#c96c6c", // --color-status-error's literal, matte
 } as const;
+
+/**
+ * Navigation lights on a cage-ship's hull (`dashboard.md` §9.5) — port red,
+ * starboard green, the aviation convention that is the entire reason a lit
+ * hull reads as a *craft* rather than a glowing dot.
+ *
+ * **This is a deliberate, bounded exception to "status colours are state only,
+ * never decorative" (§1.2).** Red earns its keep here only because it arrives
+ * as half of a red/green *pair*, on a hull, at annotation scale — and a fault
+ * is a ring around a *star*. The two cannot be read for one another, and a lone
+ * red never appears on a ship. Reusing the existing literals rather than
+ * inventing two more reds is the lesser of the two evils; a second, nearly
+ * identical red in the palette would be the worse one.
+ *
+ * Do not extend this to a third colour, and do not use these anywhere but a
+ * ship hull.
+ */
+export const GL_NAV = {
+  port: GL_HEALTH.fault,
+  starboard: GL.ion,
+} as const;

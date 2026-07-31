@@ -54,6 +54,31 @@ export function temperatureFor(accuracy: number | null): number {
   return Math.min(1, Math.max(0, above));
 }
 
+/**
+ * Temperature also sets **size**, the way it does on the main sequence: a hot
+ * B-star is a giant next to an M-dwarf, so the two readings agree rather than
+ * competing, and a rig sorts at a glance by how big its stars are as well as by
+ * what colour they are.
+ *
+ * A scale on the *visible* star only — the layout radius each star was placed
+ * with (`sessions/stars.ts`) stays exactly what it was, because everything else
+ * in the scene is derived from it: the hit sphere, the hover reticle, the
+ * nameplate's drop, the arrival rings, and how far the cage-ships orbit. Sizing
+ * those by accuracy would make a cool star harder to click, which is precisely
+ * backwards.
+ *
+ * Modest for the same reason. The star has to stay inside its reticle and above
+ * its nameplate at both ends of the ramp, so this is a legible difference side
+ * by side rather than a dramatic one.
+ */
+const SIZE_AT_CHANCE = 0.82;
+const SIZE_AT_HOTTEST = 1.18;
+
+/** Ramp position → a scale on the star's visible body. */
+export function sizeFor(t: number): number {
+  return SIZE_AT_CHANCE + (SIZE_AT_HOTTEST - SIZE_AT_CHANCE) * t;
+}
+
 export function rampColors(t: number): { core: THREE.Color; edge: THREE.Color } {
   let lower = RAMP[0]!;
   let upper = RAMP[RAMP.length - 1]!;
@@ -79,6 +104,14 @@ export function rampColors(t: number): { core: THREE.Color; edge: THREE.Color } 
  * bundling, and a licence, and six animated spheres of this size cost nothing
  * either way. The noise scrolls slowly along one axis so the surface churns
  * without appearing to spin independently of the mesh.
+ *
+ * **`vPos` is object space, and that is what lets the mesh rotate.** The
+ * granulation is sampled from the untransformed vertex position, so it is
+ * rigidly attached to the sphere and simply rides any rotation applied to it
+ * (`StellarSurface.tsx` spins the photosphere). Limb darkening is the deliberate
+ * exception — it works off `vNormal`, which *is* transformed, so the bright side
+ * keeps facing the camera as the star turns instead of rotating away with the
+ * cells.
  */
 export const STAR_VERTEX = /* glsl */ `
   varying vec3 vPos;
@@ -131,8 +164,11 @@ export const STAR_FRAGMENT = /* glsl */ `
 
   void main() {
     // Two drifting noise fields: coarse convection cells over a finer churn.
+    // Half what it was, now that the mesh itself rotates: convection and
+    // rotation are different phenomena, but at the old rate they composed into
+    // one smeared shear rather than reading as cells boiling on a turning star.
     vec3 p = normalize(vPos) * 3.4;
-    float drift = uTime * 0.05 * uActivity;
+    float drift = uTime * 0.025 * uActivity;
     float cells = fbm(p + vec3(0.0, drift, 0.0));
     float fine  = fbm(p * 2.7 - vec3(0.0, drift * 1.7, 0.0));
     float g = mix(cells, fine, 0.35);

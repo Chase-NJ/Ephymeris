@@ -16,11 +16,27 @@ import type { SceneOrbiter } from "@/components/constellation3d/Orbiters";
  * cages looking exactly as it did before cages existed. A crew none of whose
  * members has ever run and none of whose members is mapped anywhere simply has
  * no ship — there is no star to hang it on.
+ *
+ * A crew is identified by **cohort *and* cage**, never cage alone: cage numbers
+ * restart at 1 in each cohort, and the rig views (Dashboard, Debug) pool every
+ * active cohort into one fleet, so the cage number by itself is not a unique
+ * crew. See `ShipMember.cohortId`.
  */
 export interface ShipMember {
   id: string;
   name: string;
-  /** Home-cage number, or null for a solo craft. */
+  /**
+   * Which cohort this animal belongs to.
+   *
+   * **Load-bearing for crew identity, not decoration.** Cage numbers are only
+   * unique *within* a cohort — every cohort numbers its cages from 1 — and the
+   * rig views pool animals from every active cohort into one fleet. Keying a
+   * crew on the cage number alone therefore merged "cage 3" of one cohort with
+   * "cage 3" of another into a single ship, whose tag then listed animals that
+   * have never met.
+   */
+  cohortId: string | null;
+  /** Home-cage number, or null for a solo craft. Unique per cohort only. */
   cage: number | null;
   /** The box this member is mapped/assigned to right now, or null. */
   box: number | null;
@@ -71,7 +87,15 @@ export function assignShips(members: ShipMember[]): Map<number, SceneOrbiter[]> 
   for (const member of members) {
     // A solo key per cageless animal: null is "cage unknown", and pooling all
     // the unknowns into one mega-ship would invent a housing fact.
-    const key = member.cage === null ? `solo:${member.id}` : `cage:${member.cage}`;
+    //
+    // A caged animal's key is **cohort *and* cage**. Cage numbers restart at 1
+    // in every cohort, and the rig views pool every active cohort into one
+    // fleet, so `cage:3` alone put unrelated animals from different cohorts on
+    // one hull — visible as a crew tag listing names that share no cohort.
+    const key =
+      member.cage === null
+        ? `solo:${member.id}`
+        : `cage:${member.cohortId ?? "?"}:${member.cage}`;
     const crew = crews.get(key) ?? [];
     crew.push(member);
     crews.set(key, crew);

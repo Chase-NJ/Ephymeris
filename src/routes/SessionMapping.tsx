@@ -1,12 +1,23 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Check, CircleAlert, Lightbulb, Undo2, Zap } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  CircleAlert,
+  Lightbulb,
+  Undo2,
+  Zap,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { Button, Select } from "@/components/common/controls";
 import { RatPlacementBanner } from "@/components/sessions/RatPlacementBanner";
+import { DebugConstellation } from "@/components/debug/DebugConstellation";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
-import { SketchPicker, TaskConfigForm } from "@/components/sessions/TaskConfigForm";
+import {
+  SketchPicker,
+  TaskConfigForm,
+} from "@/components/sessions/TaskConfigForm";
 import { errorMessage, getCohort } from "@/lib/cohorts/commands";
 import type { Cohort } from "@/lib/cohorts/types";
 import { useAllPortStatuses, useUtilityStatus } from "@/lib/hardware/context";
@@ -32,7 +43,10 @@ import {
 } from "@/lib/sessions/types";
 import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
-import { NODE_ACCENT, NODE_PRIMARY } from "@/components/chrome/constellationStyle";
+import {
+  NODE_ACCENT,
+  NODE_PRIMARY,
+} from "@/components/chrome/constellationStyle";
 
 /**
  * Step 2 — animal→box mapping confirmation, the guided placement walk, then
@@ -53,7 +67,11 @@ type FlashState = "idle" | "flashing" | "done" | "failed";
 type Phase = "review" | "placing" | "placed";
 
 /** What the current box's identify light is doing, as far as we know. */
-type Light = { box: number; status: "pending" | "on" | "failed"; note: string | null };
+type Light = {
+  box: number;
+  status: "pending" | "on" | "failed";
+  note: string | null;
+};
 
 export function SessionMapping() {
   const { id: sessionId } = useParams<{ id: string }>();
@@ -68,8 +86,12 @@ export function SessionMapping() {
   const [cohort, setCohort] = useState<Cohort | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [mappings, setMappings] = useState<BoxMapping[]>([]);
-  const [profiles, setProfiles] = useState<Record<string, TaskProfile | null>>({});
-  const [flashStates, setFlashStates] = useState<Record<number, FlashState>>({});
+  const [profiles, setProfiles] = useState<Record<string, TaskProfile | null>>(
+    {},
+  );
+  const [flashStates, setFlashStates] = useState<Record<number, FlashState>>(
+    {},
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<Phase>("review");
@@ -87,7 +109,10 @@ export function SessionMapping() {
    * has never had, so they are not evidence that a board exists.
    */
   const configuredBoxes = useMemo(
-    () => new Set(settings.boxes.filter((b) => b.hardwareId !== null).map((b) => b.box)),
+    () =>
+      new Set(
+        settings.boxes.filter((b) => b.hardwareId !== null).map((b) => b.box),
+      ),
     [settings.boxes],
   );
 
@@ -137,14 +162,50 @@ export function SessionMapping() {
   // `configuring`. Best-effort — a failed abandon is no worse than the
   // orphan it replaces, so it never blocks leaving the step.
   async function backToConfig() {
-    if (sessionId) await abandonSession(client, sessionId).catch(() => undefined);
+    handledExit.current = true;
+    if (sessionId)
+      await abandonSession(client, sessionId).catch(() => undefined);
     navigate("/session/new");
   }
+
+  /*
+   * **Leaving by any other door abandons the record too.**
+   *
+   * `/session/new` creates the session server-side *before* navigating here, so
+   * until this step confirms a mapping the record exists in `configuring` with
+   * nothing behind it. Back handles that above — but a sidebar click doesn't,
+   * and the orphan is permanent: it reappears under "Set-up in progress" on the
+   * Dashboard forever, and every Continue-then-leave cycle adds another.
+   *
+   * Deliberately narrow. It abandons only a record we *positively know* is
+   * still `configuring` and that this component never confirmed — never on a
+   * failed status fetch, where `session` is null and the truth is unknown, and
+   * never once `confirmMapping` has succeeded, because the fetched status is
+   * from mount and would still read `configuring` for a session that now holds
+   * the rig. Guessing in either direction ends a session someone is running.
+   */
+  const handledExit = useRef(false);
+  const abandonOnExit = useRef<{ id: string | null; abandonable: boolean }>({
+    id: null,
+    abandonable: false,
+  });
+  abandonOnExit.current = {
+    id: sessionId ?? null,
+    abandonable: session?.status === "configuring",
+  };
+  useEffect(() => {
+    return () => {
+      const { id, abandonable } = abandonOnExit.current;
+      if (handledExit.current || !id || !abandonable) return;
+      void abandonSession(client, id).catch(() => undefined);
+    };
+  }, [client]);
 
   // Re-entry via Switch Group: the previous groups already ran, so the only
   // honest exits are onward (flash) or ending the session outright.
   async function endFromHere() {
     if (!sessionId) return;
+    handledExit.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -164,7 +225,8 @@ export function SessionMapping() {
    * a box starts on, and what its overrides are measured against.
    */
   const rigDefaults = useCallback(
-    (sketchPath: string | null) => settings.taskDefaults[sketchName(sketchPath)] ?? {},
+    (sketchPath: string | null) =>
+      settings.taskDefaults[sketchName(sketchPath)] ?? {},
     [settings.taskDefaults],
   );
 
@@ -178,7 +240,10 @@ export function SessionMapping() {
         setMappings((prev) =>
           prev.map((m) =>
             m.animalId === animalId
-              ? { ...m, config: defaultConfig(profile, rigDefaults(sketchPath)) }
+              ? {
+                  ...m,
+                  config: defaultConfig(profile, rigDefaults(sketchPath)),
+                }
               : m,
           ),
         );
@@ -226,7 +291,10 @@ export function SessionMapping() {
   // likely place to *hit* a flash failure was also the one place you couldn't
   // recover from it without a detour through Debug Mode.
   const erroredBoxes = useMemo(
-    () => mappings.filter((m) => portStates[m.box]?.state === "ERROR").map((m) => m.box),
+    () =>
+      mappings
+        .filter((m) => portStates[m.box]?.state === "ERROR")
+        .map((m) => m.box),
     [mappings, portStates],
   );
 
@@ -253,13 +321,15 @@ export function SessionMapping() {
     () => [...mappings].sort((a, b) => a.box - b.box),
     [mappings],
   );
-  const current = phase === "placing" ? (placementOrder[placeIndex] ?? null) : null;
+  const current =
+    phase === "placing" ? (placementOrder[placeIndex] ?? null) : null;
   const currentBox = current?.box ?? null;
 
   // A rig with no utility sketch still gets the guided walk — it just names the
   // box instead of lighting it. The lights are the better version of the same
   // instruction, not a prerequisite for giving it.
-  const canLight = utility.configured && utility.canIdentify && utility.message === null;
+  const canLight =
+    utility.configured && utility.canIdentify && utility.message === null;
 
   /**
    * One serial queue for identify calls. Command handlers run concurrently
@@ -303,7 +373,12 @@ export function SessionMapping() {
         });
       })
       .catch((err) => {
-        if (active) setLight({ box: currentBox, status: "failed", note: errorMessage(err) });
+        if (active)
+          setLight({
+            box: currentBox,
+            status: "failed",
+            note: errorMessage(err),
+          });
       });
     return () => {
       active = false;
@@ -368,7 +443,7 @@ export function SessionMapping() {
   const hint = busy
     ? "Flashing each box in turn — keep the boards plugged in."
     : phase === "placing"
-      ? `Placing ${placeIndex + 1} of ${placementOrder.length} — ${current ? names[current.animalId]?.name ?? "this animal" : ""} into box ${currentBox}.`
+      ? `Placing ${placeIndex + 1} of ${placementOrder.length} — ${current ? (names[current.animalId]?.name ?? "this animal") : ""} into box ${currentBox}.`
       : phase === "placed"
         ? "Every animal is placed. Confirm and flash to start."
         : // Before "pick a sketch": with an unset or moved Arduino Directory
@@ -389,6 +464,10 @@ export function SessionMapping() {
     setError(null);
     try {
       await confirmMapping(client, sessionId, groupId, mappings);
+      // Past this point the record is no longer an abandonable orphan: it holds
+      // the rig. The unmount cleanup must not touch it even if a flash below
+      // fails and the operator leaves from here.
+      handledExit.current = true;
 
       // A confirmed mapping begins a fresh group run — drop the previous
       // group's telemetry and finished-run messages so Mission Control
@@ -406,7 +485,9 @@ export function SessionMapping() {
           throw err;
         }
       }
-      navigate(`/session/${sessionId}/control?cohort=${cohort?.id ?? ""}&group=${groupId}`);
+      navigate(
+        `/session/${sessionId}/control?cohort=${cohort?.id ?? ""}&group=${groupId}`,
+      );
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -415,369 +496,460 @@ export function SessionMapping() {
   }
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={springPanel}
-      className="mx-auto max-w-5xl px-8 py-8"
-    >
-      <SessionJourney step="boxes" hint={hint} group={groupInfo} />
-      <h1 className="font-display text-[22px] text-starlight">
-        {phase === "placing" ? "Place the animals" : "Confirm boxes"}
-      </h1>
-      <p className="mt-1 text-[12px] text-static">
-        {phase === "placing"
-          ? "One at a time, in box order. The mapping is locked while you walk the rig."
-          : "Changes here apply to this run only."}
-      </p>
+    // Same scaffold as the Dashboard and step 1: the sky is continuous across
+    // the whole guided flow, and only the chrome over it changes.
+    <div className="relative h-full">
+      {/* The sky — outside the entrance animation, so the shared canvas is
+          handed over rather than faded in (`SharedCanvas.tsx`). Inert: this step
+          is about the physical rig in front of the operator, and a clickable
+          star would be a second thing competing for the same attention. */}
+      <div className="absolute inset-0">
+        <DebugConstellation
+          selected={null}
+          docksPanel={false}
+          interactive={false}
+          onSelect={() => {}}
+        />
+      </div>
 
-      {error && (
-        <div
-          className="mt-4 flex items-start gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
-          style={{ color: "var(--color-status-error)" }}
-        >
-          <CircleAlert size={14} strokeWidth={1.75} className="mt-px shrink-0" />
-          {error}
-        </div>
-      )}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        // Owns its own exit — between sky routes the shell holds the page
+        // opaque (`AppShell`).
+        exit={{ opacity: 0 }}
+        transition={springPanel}
+        className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
+      >
+        <section className="pointer-events-auto mx-auto max-w-5xl px-8 py-8">
+          <SessionJourney step="boxes" hint={hint} group={groupInfo} />
+          <h1 className="font-display text-[22px] text-starlight">
+            {phase === "placing" ? "Place the animals" : "Confirm boxes"}
+          </h1>
+          <p className="mt-1 text-[12px] text-static">
+            {phase === "placing"
+              ? "One at a time, in box order. The mapping is locked while you walk the rig."
+              : "Changes here apply to this run only."}
+          </p>
 
-      {/* A dead end otherwise: the picker can only show "— select a sketch —",
+          {error && (
+            <div
+              className="mt-4 flex items-start gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
+              style={{ color: "var(--color-status-error)" }}
+            >
+              <CircleAlert
+                size={14}
+                strokeWidth={1.75}
+                className="mt-px shrink-0"
+              />
+              {error}
+            </div>
+          )}
+
+          {/* A dead end otherwise: the picker can only show "— select a sketch —",
           the flow keeps asking for a sketch, and nothing says where sketches
           come from. This is the ordinary first-run state, and the state after
           the Arduino Directory moves. */}
-      {connected && sketches.length === 0 && (
-        <div className="mt-4 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
-          <div className="min-w-0">
-            <p className="text-[12px]" style={{ color: "var(--color-status-warning)" }}>
-              No sketches found.
-            </p>
-            <p className="mt-0.5 text-[12px] text-static">
-              Set the Arduino Directory to the folder holding your sketch
-              categories, then come back — there is nothing to flash until then.
-            </p>
-          </div>
-          <div className="shrink-0">
-            <Button onClick={() => navigate("/task")}>Open Task</Button>
-          </div>
-        </div>
-      )}
+          {connected && sketches.length === 0 && (
+            <div className="mt-4 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
+              <div className="min-w-0">
+                <p
+                  className="text-[12px]"
+                  style={{ color: "var(--color-status-warning)" }}
+                >
+                  No sketches found.
+                </p>
+                <p className="mt-0.5 text-[12px] text-static">
+                  Set the Arduino Directory to the folder holding your sketch
+                  categories, then come back — there is nothing to flash until
+                  then.
+                </p>
+              </div>
+              <div className="shrink-0">
+                <Button onClick={() => navigate("/task")}>Open Task</Button>
+              </div>
+            </div>
+          )}
 
-      {/* The cohort's stored box numbers are planning data; this rig may never
+          {/* The cohort's stored box numbers are planning data; this rig may never
           have had those boxes. Flashing is sequential, so an unbound box fails
           only after the boxes before it have already been reflashed. */}
-      {unconfiguredBoxes.length > 0 && (
-        <div className="mt-4 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
-          <div className="min-w-0">
-            <p className="text-[12px]" style={{ color: "var(--color-status-warning)" }}>
-              {unconfiguredBoxes.length === 1
-                ? `Box ${unconfiguredBoxes[0]} has no board bound to it.`
-                : `Boxes ${unconfiguredBoxes.join(", ")} have no board bound to them.`}
-            </p>
-            <p className="mt-0.5 text-[12px] text-static">
-              Flashing stops at the first one that fails, after the boxes before
-              it have already been flashed. Bind them in Config, or move these
-              animals to boxes that are set up.
-            </p>
-          </div>
-          <div className="shrink-0">
-            <Button onClick={() => navigate("/task")}>Open Task</Button>
-          </div>
-        </div>
-      )}
+          {unconfiguredBoxes.length > 0 && (
+            <div className="mt-4 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
+              <div className="min-w-0">
+                <p
+                  className="text-[12px]"
+                  style={{ color: "var(--color-status-warning)" }}
+                >
+                  {unconfiguredBoxes.length === 1
+                    ? `Box ${unconfiguredBoxes[0]} has no board bound to it.`
+                    : `Boxes ${unconfiguredBoxes.join(", ")} have no board bound to them.`}
+                </p>
+                <p className="mt-0.5 text-[12px] text-static">
+                  Flashing stops at the first one that fails, after the boxes
+                  before it have already been flashed. Bind them in Config, or
+                  move these animals to boxes that are set up.
+                </p>
+              </div>
+              <div className="shrink-0">
+                <Button onClick={() => navigate("/task")}>Open Task</Button>
+              </div>
+            </div>
+          )}
 
-      {mappings.length === 0 && (
-        <p className="mt-6 text-[13px] text-static">
-          No box-assigned animals in this group.
-        </p>
-      )}
+          {mappings.length === 0 && (
+            <p className="mt-6 text-[13px] text-static">
+              No box-assigned animals in this group.
+            </p>
+          )}
 
-      {/* The drawing is the walk's instruction, not decoration: one animal, one
+          {/* The drawing is the walk's instruction, not decoration: one animal, one
           chamber, the number the operator is looking for. Outside the walk it
           has nothing to say and would only pull attention off the settings
           being edited, so it isn't rendered at all. */}
-      {current !== null && (
-        <RatPlacementBanner
-          boxes={[current.box]}
-          caption={`Lift ${names[current.animalId]?.name ?? "this animal"} into box ${current.box}, then close the enclosure.`}
-        />
-      )}
+          {current !== null && (
+            <RatPlacementBanner
+              boxes={[current.box]}
+              caption={`Lift ${names[current.animalId]?.name ?? "this animal"} into box ${current.box}, then close the enclosure.`}
+            />
+          )}
 
-      {mappings.length > 0 && (
-        // `items-start`: a card growing its config form must not stretch the
-        // compact cards sharing its row. The top margin picks up the slack the
-        // banner leaves behind when it isn't rendered.
-        <div
-          className={`${current !== null ? "mt-3" : "mt-6"} grid grid-cols-1 items-start gap-3 lg:grid-cols-2`}
-        >
-          {mappings.map((mapping) => {
-            const animal = names[mapping.animalId];
-            const profile = mapping.sketchPath
-              ? (profiles[mapping.sketchPath] ?? null)
-              : null;
-            const isCurrent = current?.animalId === mapping.animalId;
-            // Everything that isn't the one tile being pointed at recedes, and
-            // stops accepting clicks: mid-walk, changing a box the operator has
-            // already filled would silently invalidate the animals behind them.
-            const dimmed = phase === "placing" && !isCurrent;
-            const placed = phase === "placed" || (phase === "placing" &&
-              placementOrder.findIndex((m) => m.animalId === mapping.animalId) < placeIndex);
-            return (
-              <motion.div
-                key={mapping.animalId}
-                animate={{ opacity: dimmed ? 0.4 : 1 }}
-                transition={springSnappy}
-                className={`surface rounded-md p-4 ${isCurrent ? "attention-border" : ""}`}
-                style={{ pointerEvents: dimmed ? "none" : "auto" }}
-                aria-current={isCurrent ? "step" : undefined}
-              >
-                {/* Identity line: the animal's full name is the point of the
+          {mappings.length > 0 && (
+            // `items-start`: a card growing its config form must not stretch the
+            // compact cards sharing its row. The top margin picks up the slack the
+            // banner leaves behind when it isn't rendered.
+            //
+            // **Leaves the way Mission Control's tiles arrive.** These cards and
+            // the box tiles that replace them on the next screen are the same
+            // six boxes; sliding one set out to the right as the other slides in
+            // from it makes that continuity legible, where a plain crossfade
+            // just reads as one screen replacing another. Same offset and same
+            // spring as the tile ↔ star-panel swap, so the whole session flow
+            // uses one gesture for "these boxes, seen another way".
+            <motion.div
+              initial={{ opacity: 0, x: 12 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 12 }}
+              transition={springPanel}
+              className={`${current !== null ? "mt-3" : "mt-6"} grid grid-cols-1 items-start gap-3 lg:grid-cols-2`}
+            >
+              {mappings.map((mapping) => {
+                const animal = names[mapping.animalId];
+                const profile = mapping.sketchPath
+                  ? (profiles[mapping.sketchPath] ?? null)
+                  : null;
+                const isCurrent = current?.animalId === mapping.animalId;
+                // Everything that isn't the one tile being pointed at recedes, and
+                // stops accepting clicks: mid-walk, changing a box the operator has
+                // already filled would silently invalidate the animals behind them.
+                const dimmed = phase === "placing" && !isCurrent;
+                const placed =
+                  phase === "placed" ||
+                  (phase === "placing" &&
+                    placementOrder.findIndex(
+                      (m) => m.animalId === mapping.animalId,
+                    ) < placeIndex);
+                return (
+                  <motion.div
+                    key={mapping.animalId}
+                    animate={{ opacity: dimmed ? 0.4 : 1 }}
+                    transition={springSnappy}
+                    className={`hud rounded-md p-4 ${isCurrent ? "attention-border" : ""}`}
+                    style={{ pointerEvents: dimmed ? "none" : "auto" }}
+                    aria-current={isCurrent ? "step" : undefined}
+                  >
+                    {/* Identity line: the animal's full name is the point of the
                     card, so it never truncates — an unusually long one wraps
                     instead. */}
-                <div className="flex items-start gap-3">
-                  <BoxStar state={flashStates[mapping.box] ?? "idle"} />
-                  <div className="min-w-0 flex-1 break-words text-[15px] font-semibold leading-snug text-starlight">
-                    {animal?.name ?? "—"}
-                    {animal?.sex && animal.sex !== "unknown" && (
-                      <span className="ml-2 align-middle font-mono text-[11px] font-normal text-static">
-                        {animal.sex}
-                      </span>
-                    )}
-                  </div>
-                  {/* The walk's only persistent record of itself: which
+                    <div className="flex items-start gap-3">
+                      <BoxStar state={flashStates[mapping.box] ?? "idle"} />
+                      <div className="min-w-0 flex-1 break-words text-[15px] font-semibold leading-snug text-starlight">
+                        {animal?.name ?? "—"}
+                        {animal?.sex && animal.sex !== "unknown" && (
+                          <span className="ml-2 align-middle font-mono text-[11px] font-normal text-static">
+                            {animal.sex}
+                          </span>
+                        )}
+                      </div>
+                      {/* The walk's only persistent record of itself: which
                       animals are already in their boxes. Without it, coming
                       back to the screen means counting tiles. */}
-                  {placed && (
-                    <Check
-                      size={15}
-                      strokeWidth={2}
-                      className="mt-1 shrink-0"
-                      style={{ color: "var(--color-ion)" }}
-                      aria-label="placed"
-                    />
-                  )}
-                </div>
+                      {placed && (
+                        <Check
+                          size={15}
+                          strokeWidth={2}
+                          className="mt-1 shrink-0"
+                          style={{ color: "var(--color-ion)" }}
+                          aria-label="placed"
+                        />
+                      )}
+                    </div>
 
-                {/* Mapping line, reading left to right: sketch → arrow → box.
+                    {/* Mapping line, reading left to right: sketch → arrow → box.
                     The picker takes the slack and ellipsizes long sketch
                     names; the arrow's slot is reserved so its arrival moves
                     nothing. */}
-                <div className="mt-3 flex items-center gap-3">
-                  <SketchPicker
-                    label={`Sketch for ${animal?.name ?? `box ${mapping.box}`}`}
-                    sketches={sketches}
-                    value={mapping.sketchPath}
-                    onChange={(path) => {
-                      setMappings((prev) =>
-                        prev.map((m) =>
-                          m.animalId === mapping.animalId
-                            ? { ...m, sketchPath: path, config: {} }
-                            : m,
-                        ),
-                      );
-                      void loadProfile(mapping.animalId, path);
-                    }}
-                    disabled={phase !== "review"}
-                    className="min-w-0 flex-1 truncate"
-                  />
-                  <div className="flex w-5 shrink-0 items-center justify-center">
-                    {mapping.sketchPath !== null && <FlowArrow />}
-                  </div>
-                  <Select
-                    label={`Box for ${animal?.name ?? "animal"}`}
-                    value={String(mapping.box)}
-                    // All six stay selectable — a box can be assigned before
-                    // its board is bound — but an unbound one says so here
-                    // rather than only failing at flash time.
-                    options={[1, 2, 3, 4, 5, 6].map((n) => ({
-                      value: String(n),
-                      label: configuredBoxes.has(n) ? `Box ${n}` : `Box ${n} · unbound`,
-                    }))}
-                    disabled={phase !== "review"}
-                    onChange={(v) =>
-                      setMappings((prev) =>
-                        prev.map((m) =>
-                          m.animalId === mapping.animalId ? { ...m, box: Number(v) } : m,
-                        ),
-                      )
-                    }
-                  />
-                </div>
+                    <div className="mt-3 flex items-center gap-3">
+                      <SketchPicker
+                        label={`Sketch for ${animal?.name ?? `box ${mapping.box}`}`}
+                        sketches={sketches}
+                        value={mapping.sketchPath}
+                        onChange={(path) => {
+                          setMappings((prev) =>
+                            prev.map((m) =>
+                              m.animalId === mapping.animalId
+                                ? { ...m, sketchPath: path, config: {} }
+                                : m,
+                            ),
+                          );
+                          void loadProfile(mapping.animalId, path);
+                        }}
+                        disabled={phase !== "review"}
+                        className="min-w-0 flex-1 truncate"
+                      />
+                      <div className="flex w-5 shrink-0 items-center justify-center">
+                        {mapping.sketchPath !== null && <FlowArrow />}
+                      </div>
+                      <Select
+                        label={`Box for ${animal?.name ?? "animal"}`}
+                        value={String(mapping.box)}
+                        // All six stay selectable — a box can be assigned before
+                        // its board is bound — but an unbound one says so here
+                        // rather than only failing at flash time.
+                        options={[1, 2, 3, 4, 5, 6].map((n) => ({
+                          value: String(n),
+                          label: configuredBoxes.has(n)
+                            ? `Box ${n}`
+                            : `Box ${n} · unbound`,
+                        }))}
+                        disabled={phase !== "review"}
+                        onChange={(v) =>
+                          setMappings((prev) =>
+                            prev.map((m) =>
+                              m.animalId === mapping.animalId
+                                ? { ...m, box: Number(v) }
+                                : m,
+                            ),
+                          )
+                        }
+                      />
+                    </div>
 
-                {/* The instruction itself, on the tile it is about. It sits
+                    {/* The instruction itself, on the tile it is about. It sits
                     below the mapping line so the eye reads name → box → "put
                     it there", which is the order the sentence is spoken in. */}
-                {isCurrent && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={springSnappy}
-                    className="mt-3 flex items-center justify-between gap-3 rounded-sm border border-halo px-3 py-2.5"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-[13px] leading-snug text-starlight">
-                        Place this animal in{" "}
-                        <span className="font-mono text-pulsar">box {mapping.box}</span>
-                      </p>
-                      <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-static">
-                        <Lightbulb
-                          size={12}
-                          strokeWidth={1.75}
+                    {isCurrent && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={springSnappy}
+                        className="mt-3 flex items-center justify-between gap-3 rounded-sm border border-halo px-3 py-2.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[13px] leading-snug text-starlight">
+                            Place this animal in{" "}
+                            <span className="font-mono text-pulsar">
+                              box {mapping.box}
+                            </span>
+                          </p>
+                          <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-static">
+                            <Lightbulb
+                              size={12}
+                              strokeWidth={1.75}
+                              className="shrink-0"
+                              style={
+                                light?.status === "on"
+                                  ? { color: "var(--color-ion)" }
+                                  : undefined
+                              }
+                            />
+                            {lightHint(light, canLight)}
+                          </p>
+                        </div>
+                        <Button
+                          variant="primary"
+                          disabled={busy}
+                          onClick={advancePlacement}
                           className="shrink-0"
-                          style={
-                            light?.status === "on"
-                              ? { color: "var(--color-ion)" }
-                              : undefined
-                          }
-                        />
-                        {lightHint(light, canLight)}
-                      </p>
-                    </div>
-                    <Button
-                      variant="primary"
-                      disabled={busy}
-                      onClick={advancePlacement}
-                      className="shrink-0"
-                    >
-                      <Check size={13} strokeWidth={2} />
-                      Enclosure closed
-                    </Button>
-                  </motion.div>
-                )}
+                        >
+                          <Check size={13} strokeWidth={2} />
+                          Enclosure closed
+                        </Button>
+                      </motion.div>
+                    )}
 
-                {/* Recovery in place: a box left in `ERROR` (usually by the
+                    {/* Recovery in place: a box left in `ERROR` (usually by the
                     flash that just failed) can't be flashed again until the
                     fault is acknowledged, so the ack lives on the card that
                     is stuck rather than only in Debug Mode. Same shape as
                     `NodeDetail`'s row. */}
-                {portStates[mapping.box]?.state === "ERROR" && (
-                  <div
-                    className="mt-3 flex items-center gap-2 rounded-sm border border-halo px-2.5 py-2 text-[11px]"
-                    style={{ color: "var(--color-status-error)" }}
-                  >
-                    <CircleAlert size={13} strokeWidth={1.75} className="shrink-0" />
-                    <span
-                      className="min-w-0 flex-1 truncate"
-                      title={faultReason(portStates[mapping.box]?.reason)}
-                    >
-                      {faultReason(portStates[mapping.box]?.reason)}
-                    </span>
-                    <Button
-                      disabled={busy || !connected}
-                      onClick={() => void acknowledge(mapping.box)}
-                    >
-                      Acknowledge
-                    </Button>
-                  </div>
-                )}
+                    {portStates[mapping.box]?.state === "ERROR" && (
+                      <div
+                        className="mt-3 flex items-center gap-2 rounded-sm border border-halo px-2.5 py-2 text-[11px]"
+                        style={{ color: "var(--color-status-error)" }}
+                      >
+                        <CircleAlert
+                          size={13}
+                          strokeWidth={1.75}
+                          className="shrink-0"
+                        />
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={faultReason(portStates[mapping.box]?.reason)}
+                        >
+                          {faultReason(portStates[mapping.box]?.reason)}
+                        </span>
+                        <Button
+                          disabled={busy || !connected}
+                          onClick={() => void acknowledge(mapping.box)}
+                        >
+                          Acknowledge
+                        </Button>
+                      </div>
+                    )}
 
-                {/* Per-run overrides slide the tile open with the app's
+                    {/* Per-run overrides slide the tile open with the app's
                     snappy spring; only a chosen sketch with a profile has
                     any — an unchosen tile never expands. The form itself is
                     collapsed within that: it holds forty-odd fields now, and
                     six of those open at once would bury this screen's actual
                     job (§6.9). */}
-                <AnimatePresence initial={false}>
-                  {profile && profile.config.length > 0 && (
-                    <motion.div
-                      key="task-config"
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={springSnappy}
-                      className="overflow-hidden"
-                    >
-                      <TaskConfigForm
-                        profile={profile}
-                        config={mapping.config}
-                        baseline={defaultConfig(profile, rigDefaults(mapping.sketchPath))}
-                        disabled={phase !== "review"}
-                        onChange={(config) =>
-                          setMappings((prev) =>
-                            prev.map((m) =>
-                              m.animalId === mapping.animalId ? { ...m, config } : m,
-                            ),
-                          )
-                        }
-                      />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </motion.div>
-            );
-          })}
-        </div>
-      )}
+                    <AnimatePresence initial={false}>
+                      {profile && profile.config.length > 0 && (
+                        <motion.div
+                          key="task-config"
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={springSnappy}
+                          className="overflow-hidden"
+                        >
+                          <TaskConfigForm
+                            profile={profile}
+                            config={mapping.config}
+                            baseline={defaultConfig(
+                              profile,
+                              rigDefaults(mapping.sketchPath),
+                            )}
+                            disabled={phase !== "review"}
+                            onChange={(config) =>
+                              setMappings((prev) =>
+                                prev.map((m) =>
+                                  m.animalId === mapping.animalId
+                                    ? { ...m, config }
+                                    : m,
+                                ),
+                              )
+                            }
+                          />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                );
+              })}
+            </motion.div>
+          )}
 
-      {duplicateBox !== null && (
-        <p
-          className="mt-4 text-[12px]"
-          style={{ color: "var(--color-status-warning)" }}
-        >
-          Two animals are assigned to box {duplicateBox}. Give one of them a
-          different box before continuing.
-        </p>
-      )}
+          {duplicateBox !== null && (
+            <p
+              className="mt-4 text-[12px]"
+              style={{ color: "var(--color-status-warning)" }}
+            >
+              Two animals are assigned to box {duplicateBox}. Give one of them a
+              different box before continuing.
+            </p>
+          )}
 
-      <div className="mt-6 flex items-center gap-2">
-        {/* Placement sits between confirming the mapping and flashing on
+          <div className="mt-6 flex items-center gap-2">
+            {/* Placement sits between confirming the mapping and flashing on
             purpose: the boxes are still carrying the utility sketch, which is
             the only firmware that can be asked to light one (§3.5). Flashing
             first would put the tasks on and the lights out of reach. */}
-        {phase === "review" && (
-          <Button
-            variant="primary"
-            onClick={startPlacement}
-            disabled={!allChosen || busy || !connected || mappings.length === 0}
-          >
-            Place the animals
-            <ArrowRight size={13} strokeWidth={2} />
-          </Button>
-        )}
+            {phase === "review" && (
+              <Button
+                variant="primary"
+                onClick={startPlacement}
+                disabled={
+                  !allChosen || busy || !connected || mappings.length === 0
+                }
+              >
+                Place the animals
+                <ArrowRight size={13} strokeWidth={2} />
+              </Button>
+            )}
 
-        {phase === "placing" && (
-          <>
-            <Button variant="ghost" disabled={busy} onClick={retreatPlacement}>
-              {placeIndex === 0 ? "Back to boxes" : "Previous animal"}
-            </Button>
-            <Button variant="ghost" disabled={busy} onClick={advancePlacement}>
-              Skip this box
-            </Button>
-          </>
-        )}
+            {phase === "placing" && (
+              <>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={retreatPlacement}
+                >
+                  {placeIndex === 0 ? "Back to boxes" : "Previous animal"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={advancePlacement}
+                >
+                  Skip this box
+                </Button>
+              </>
+            )}
 
-        {phase === "placed" && (
-          <>
-            <Button
-              variant="primary"
-              onClick={() => void confirmAndFlash()}
-              disabled={!allChosen || busy || !connected || erroredBoxes.length > 0}
-              {...(erroredBoxes.length > 0
-                ? { title: "Acknowledge the box error first — a box in ERROR can't be flashed" }
-                : {})}
-            >
-              <Zap size={13} strokeWidth={1.75} />
-              {busy ? "Flashing…" : "Confirm and flash"}
-              {!busy && <ArrowRight size={13} strokeWidth={2} />}
-            </Button>
-            <Button variant="ghost" disabled={busy} onClick={startPlacement}>
-              <Undo2 size={13} strokeWidth={1.75} />
-              Walk the boxes again
-            </Button>
-          </>
-        )}
+            {phase === "placed" && (
+              <>
+                <Button
+                  variant="primary"
+                  onClick={() => void confirmAndFlash()}
+                  disabled={
+                    !allChosen || busy || !connected || erroredBoxes.length > 0
+                  }
+                  {...(erroredBoxes.length > 0
+                    ? {
+                        title:
+                          "Acknowledge the box error first — a box in ERROR can't be flashed",
+                      }
+                    : {})}
+                >
+                  <Zap size={13} strokeWidth={1.75} />
+                  {busy ? "Flashing…" : "Confirm and flash"}
+                  {!busy && <ArrowRight size={13} strokeWidth={2} />}
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={startPlacement}
+                >
+                  <Undo2 size={13} strokeWidth={1.75} />
+                  Walk the boxes again
+                </Button>
+              </>
+            )}
 
-        {phase !== "placing" &&
-          (midSession ? (
-            <Button variant="ghost" disabled={busy} onClick={() => void endFromHere()}>
-              End session
-            </Button>
-          ) : (
-            <Button variant="ghost" disabled={busy} onClick={() => void backToConfig()}>
-              Back
-            </Button>
-          ))}
-      </div>
-    </motion.section>
+            {phase !== "placing" &&
+              (midSession ? (
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => void endFromHere()}
+                >
+                  End session
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => void backToConfig()}
+                >
+                  Back
+                </Button>
+              ))}
+          </div>
+        </section>
+      </motion.div>
+    </div>
   );
 }
 
@@ -794,8 +966,11 @@ function lightHint(light: Light | null, canLight: boolean): string {
     return "Match the number on the chamber — no utility sketch is set up to light it.";
   }
   if (light?.status === "pending") return "Lighting the box…";
-  if (light?.status === "on") return "Its light is on, and goes out when you confirm.";
-  return light?.note ?? "Couldn't light this box — go by the number on the chamber.";
+  if (light?.status === "on")
+    return "Its light is on, and goes out when you confirm.";
+  return (
+    light?.note ?? "Couldn't light this box — go by the number on the chamber."
+  );
 }
 
 /**
@@ -837,7 +1012,11 @@ function FlowArrow() {
  */
 function BoxStar({ state }: { state: FlashState }) {
   const fill =
-    state === "done" ? NODE_ACCENT : state === "failed" ? "var(--color-status-error)" : NODE_PRIMARY;
+    state === "done"
+      ? NODE_ACCENT
+      : state === "failed"
+        ? "var(--color-status-error)"
+        : NODE_PRIMARY;
   return (
     <svg viewBox="0 0 40 40" width={28} height={28} aria-hidden>
       <motion.circle

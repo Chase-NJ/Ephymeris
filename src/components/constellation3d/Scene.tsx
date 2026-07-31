@@ -1,5 +1,6 @@
-import { Billboard, Html, OrbitControls } from "@react-three/drei";
-import { useFrame, useThree } from "@react-three/fiber";
+import { Billboard, Html } from "@react-three/drei";
+import { useFrame } from "@react-three/fiber";
+import { motion } from "framer-motion";
 import { Crosshair, Move } from "lucide-react";
 import {
   useCallback,
@@ -14,8 +15,14 @@ import * as THREE from "three";
 
 import { GL } from "@/components/chrome/constellationStyle";
 import { OrbiterBelt, type SceneOrbiter } from "./Orbiters";
+import {
+  clearSceneIntent,
+  panView,
+  recenterView,
+  setSceneIntent,
+} from "./sceneIntent";
 import { useConstellationView } from "./SharedCanvas";
-import { loadView, saveView, type SavedView } from "@/lib/constellations/viewMemory";
+import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
@@ -24,8 +31,9 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  *
  * Two views use it and they are deliberately the *same instrument*: Mission
  * Control browses a cohort's animals, Debug Mode browses the rig's boxes. Both
- * orbit, pan and zoom identically, both hover with the same reticle, both fly
- * to a star on selection and dock a panel over the still-rendering scene. An
+ * orbit, pan and zoom identically at the overview, both narrow to **orbit
+ * alone** once a star is focused, both hover with the same reticle, both fly to
+ * a star on selection and dock a panel over the still-rendering scene. An
  * operator who learns one has learned the other.
  *
  * What the two do **not** share is what a star *says*. That is the `body` of
@@ -34,22 +42,6 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * core whose colour is the box's health. Colour means different things in the
  * two views on purpose, so it is the one thing this module refuses to own.
  */
-
-/** Where the camera sits when nothing is focused. */
-export const OVERVIEW_POSITION = new THREE.Vector3(0, 4, 18);
-export const OVERVIEW_TARGET = new THREE.Vector3(0, 0, 0);
-/** How far from a star the camera settles on arrival. */
-const ARRIVAL_DISTANCE = 3.6;
-/**
- * How far to aim past the star, so it lands left of centre instead of behind
- * the panel docked to the right (§6.3/§6.4).
- */
-const PANEL_OFFSET = 1.15;
-/** §6.3 — the fly takes this long; short enough not to feel like waiting. */
-const FLIGHT_SECONDS = 1.5;
-/** How far one arrow press moves the camera, as a fraction of the visible
- *  half-frame. Small enough to nudge, large enough to be worth a click. */
-const PAN_STEP = 0.22;
 
 /**
  * One drawable point.
@@ -82,47 +74,59 @@ export interface SceneLink {
   live: boolean;
 }
 
-/**
- * The camera actions the DOM overlay can invoke.
- *
- * An imperative handle rather than lifted state because the camera lives inside
- * the `Canvas` reconciler and the buttons live outside it: passing target
- * coordinates down as props would make every pan a React render of the whole
- * scene, for a value only three.js ever reads.
- */
-interface ViewApi {
-  /** Pan by a fraction of the visible frame; +x right, +y up. */
-  pan: (dx: number, dy: number) => void;
-  /** Return to the pulled-back overview, on the same eased move as §6.3. */
-  recenter: () => void;
-}
-
 export function ConstellationScene({
   nodes,
   links,
   focusedId,
   onFocus,
-  persistKey,
+  docksPanel = true,
+  interactive = true,
 }: {
   nodes: SceneNode[];
   links: SceneLink[];
   focusedId: string | null;
   onFocus: (id: string | null) => void;
   /**
-   * Remember the camera and focus under this key (`viewMemory.ts`), so every
-   * view of the same subject — the rig on the Dashboard and in Debug — reads
-   * as one continuous sky rather than restarting at the overview.
+   * Whether this view docks a detail panel over the scene when a star is
+   * focused. Every focused-state *restriction* exists to protect the frame that
+   * panel is composed against — so a view that docks nothing has no composition
+   * to protect, and keeps the full control set and a centred star.
+   *
+   * The Dashboard is the one such view: selecting a star there navigates to
+   * Debug rather than opening anything in place.
    */
-  persistKey?: string;
+  docksPanel?: boolean;
+  /** False where the sky is backdrop, not instrument — see `SceneIntent`. */
+  interactive?: boolean;
 }) {
-  const view = useRef<ViewApi | null>(null);
+  /*
+   * **Tell the permanent camera what this view is** (`sceneIntent.ts`).
+   *
+   * Published in a layout effect rather than during render so it lands with the
+   * commit, and torn down on unmount so the rig knows when nothing is on screen
+   * — the false → true edge of `attached` is its whole arrival rule.
+   *
+   * `focusKey` is derived here because this is where both halves live: the
+   * focused id and the node it names. Folding them into one primitive is what
+   * keeps a 20 Hz telemetry rebuild of `nodes` from re-triggering a flight.
+   */
+  const focused =
+    focusedId === null ? undefined : nodes.find((n) => n.id === focusedId);
+  const focusKey = focused ? `${focusedId}@${focused.position.join(",")}` : "";
+
+  useLayoutEffect(() => {
+    setSceneIntent(
+      { attached: true, focusKey, focusedId, docksPanel, interactive },
+      nodes,
+    );
+  });
+  useLayoutEffect(() => clearSceneIntent, []);
 
   // The scene graph this view wants on the shared stage (`SharedCanvas.tsx`).
-  // The backdrop is not here — it is permanent scenery the stage itself owns.
+  // Neither the backdrop nor the camera is here — both are permanent, and
+  // outlive every navigation between views.
   const content = (
     <>
-      <CameraRig nodes={nodes} focusedId={focusedId} view={view} persistKey={persistKey} />
-
       {links.map(({ a, b, live }) => (
         <Link
           key={`${a}-${b}`}
@@ -146,24 +150,6 @@ export function ConstellationScene({
       <mesh onPointerMissed={() => onFocus(null)} visible={false}>
         <boxGeometry args={[0.01, 0.01, 0.01]} />
       </mesh>
-
-      <OrbitControls
-        makeDefault
-        enablePan
-        // Pan along the screen plane rather than the ground plane: the scene
-        // is a sky with no floor, so "up" means up the screen.
-        screenSpacePanning
-        enableZoom
-        minDistance={1.5}
-        maxDistance={40}
-        enabled={focusedId === null}
-        mouseButtons={{
-          LEFT: THREE.MOUSE.ROTATE,
-          MIDDLE: THREE.MOUSE.DOLLY,
-          RIGHT: THREE.MOUSE.PAN,
-        }}
-        touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
-      />
     </>
   );
 
@@ -174,15 +160,36 @@ export function ConstellationScene({
       {/* Where the shared canvas lives while this view owns it — the stage's
           host div is adopted into this element, so the canvas sits in this
           view's own layout and stacking context, exactly as an owned canvas
-          did. Sized like the `<Canvas>` wrapper it replaced. */}
-      <div ref={trackRef} className="relative h-full w-full" />
+          did.
 
-      {/* Hidden while a star is focused: the controls are disabled during
-          arrival anyway, and the panel owns the frame at that point. */}
-      {focusedId === null && (
+          **Reaches left under the sidebar** (`-left-sidebar`, cancelling the
+          shell's matching padding): the sidebar is translucent glass floating
+          over the sky, so the sky has to exist behind it. This is the one place
+          that knows the shell overlays the sidebar — every consumer of this
+          component is a full-bleed backdrop view (Dashboard, Debug, Mission
+          Control), so the canvas is always the page's background. Deliberately
+          the *canvas* and not the view's whole sky layer: `ViewControls` below
+          is chrome, and it stays in the content region where it can be seen. */}
+      <div
+        ref={trackRef}
+        className="absolute inset-y-0 right-0 -left-sidebar"
+      />
+
+      {/* The pad stands down while a star is focused — it drives pan and
+          recentre, and neither is on offer there — but the orbit gesture
+          survives arrival, so its half of the legend stays. A gesture with no
+          standing sign is a gesture this app's infrequent users don't find,
+          which is the whole reason the legend exists. Gated on `docksPanel` for
+          the same reason the controls are: the pad stands down because the panel
+          took over the frame, so a view with no panel keeps it.
+
+          Gone entirely where the sky is a backdrop: a pan pad over a scene that
+          does not pan is an offer the view cannot keep. */}
+      {interactive && (
         <ViewControls
-          onPan={(dx, dy) => view.current?.pan(dx, dy)}
-          onRecenter={() => view.current?.recenter()}
+          focused={focusedId !== null && docksPanel}
+          onPan={panView}
+          onRecenter={recenterView}
         />
       )}
     </>
@@ -202,55 +209,73 @@ export function ConstellationScene({
  * than none.
  */
 function ViewControls({
+  focused,
   onPan,
   onRecenter,
 }: {
+  focused: boolean;
   onPan: (dx: number, dy: number) => void;
   onRecenter: () => void;
 }) {
   return (
-    <div className="pointer-events-none absolute bottom-3 left-3 flex items-end gap-2">
-      <div
-        className="pointer-events-auto grid grid-cols-3 grid-rows-3 gap-px rounded-md border border-halo p-1"
-        style={{ background: "color-mix(in srgb, var(--color-void) 82%, transparent)" }}
-      >
-        <span className="col-start-2 row-start-1">
-          <PanButton label="Pan up" onPan={() => onPan(0, 1)}>
-            ↑
-          </PanButton>
-        </span>
-        <span className="col-start-1 row-start-2">
-          <PanButton label="Pan left" onPan={() => onPan(-1, 0)}>
-            ←
-          </PanButton>
-        </span>
-        <span className="col-start-2 row-start-2">
-          <button
-            type="button"
-            title="Recentre the view"
-            aria-label="Recentre the view"
-            onClick={onRecenter}
-            className="flex size-6 items-center justify-center rounded-sm text-static transition-colors hover:bg-halo hover:text-starlight"
-          >
-            <Crosshair size={12} strokeWidth={1.75} />
-          </button>
-        </span>
-        <span className="col-start-3 row-start-2">
-          <PanButton label="Pan right" onPan={() => onPan(1, 0)}>
-            →
-          </PanButton>
-        </span>
-        <span className="col-start-2 row-start-3">
-          <PanButton label="Pan down" onPan={() => onPan(0, -1)}>
-            ↓
-          </PanButton>
-        </span>
-      </div>
+    // Owns its own exit: this chrome lives in the *sky* layer, which no route
+    // fades — and between Dashboard and Debug the route no longer fades the
+    // page either (`AppShell`). Without this the pad and its legend would sit
+    // fully opaque over the incoming page for the length of the transition,
+    // doubled against that page's own legend.
+    <motion.div
+      exit={{ opacity: 0 }}
+      transition={springSnappy}
+      className="pointer-events-none absolute bottom-3 left-3 flex items-end gap-2"
+    >
+      {!focused && (
+        <div
+          className="pointer-events-auto grid grid-cols-3 grid-rows-3 gap-px rounded-md border border-halo p-1"
+          style={{
+            background:
+              "color-mix(in srgb, var(--color-void) 82%, transparent)",
+          }}
+        >
+          <span className="col-start-2 row-start-1">
+            <PanButton label="Pan up" onPan={() => onPan(0, 1)}>
+              ↑
+            </PanButton>
+          </span>
+          <span className="col-start-1 row-start-2">
+            <PanButton label="Pan left" onPan={() => onPan(-1, 0)}>
+              ←
+            </PanButton>
+          </span>
+          <span className="col-start-2 row-start-2">
+            <button
+              type="button"
+              title="Recentre the view"
+              aria-label="Recentre the view"
+              onClick={onRecenter}
+              className="flex size-6 items-center justify-center rounded-sm text-static transition-colors hover:bg-halo hover:text-starlight"
+            >
+              <Crosshair size={12} strokeWidth={1.75} />
+            </button>
+          </span>
+          <span className="col-start-3 row-start-2">
+            <PanButton label="Pan right" onPan={() => onPan(1, 0)}>
+              →
+            </PanButton>
+          </span>
+          <span className="col-start-2 row-start-3">
+            <PanButton label="Pan down" onPan={() => onPan(0, -1)}>
+              ↓
+            </PanButton>
+          </span>
+        </div>
+      )}
       <span className="flex items-center gap-1 pb-1 font-mono text-[10px] leading-none text-static/70">
         <Move size={11} strokeWidth={1.75} />
-        drag to orbit · right-drag to pan · scroll to zoom
+        {focused
+          ? "drag to orbit"
+          : "drag to orbit · right-drag to pan · scroll to zoom"}
       </span>
-    </div>
+    </motion.div>
   );
 }
 
@@ -306,262 +331,6 @@ function PanButton({
       {children}
     </button>
   );
-}
-
-/**
- * Ownership of the one shared camera (`SharedCanvas.tsx`).
- *
- * With every view rendering through a single canvas, the camera outlives any
- * one view — so pose memory can no longer hang off unmount alone. Route
- * transitions overlap mounts (`AnimatePresence` keeps the outgoing page alive
- * while it exits), and by the time the outgoing rig unmounted, the incoming
- * view would already have repositioned the shared camera — an unmount-time
- * save would file the *new* view's pose under the *old* view's key.
- *
- * Instead the pose is banked at the moment ownership changes hands: a
- * mounting rig claims the camera, and the claim itself saves the outgoing
- * holder's pose (read through its own live refs) under the outgoing key.
- * Release still saves — but only for the holder that actually still owns the
- * camera, which is the "navigated away to a page with no constellation" case.
- */
-interface CameraHolder {
-  key: string | null;
-  getPose: () => SavedView;
-}
-
-let cameraHolder: CameraHolder | null = null;
-
-function claimCamera(next: CameraHolder): void {
-  if (cameraHolder && cameraHolder !== next && cameraHolder.key) {
-    saveView(cameraHolder.key, cameraHolder.getPose());
-  }
-  cameraHolder = next;
-}
-
-function releaseCamera(holder: CameraHolder): void {
-  if (cameraHolder !== holder) return;
-  if (holder.key) saveView(holder.key, holder.getPose());
-  cameraHolder = null;
-}
-
-/**
- * §6.3 — the eased cinematic move, and the one acknowledged exception to the
- * app's spring-physics convention: a camera flythrough reads as cinematic
- * rather than mechanical, and a spring would fight that.
- */
-function CameraRig({
-  nodes,
-  focusedId,
-  view,
-  persistKey,
-}: {
-  nodes: SceneNode[];
-  focusedId: string | null;
-  view: React.RefObject<ViewApi | null>;
-  persistKey?: string | undefined;
-}) {
-  const { camera, controls } = useThree();
-  const reduceMotion = useReduceMotion();
-
-  const nodesRef = useRef(nodes);
-  nodesRef.current = nodes;
-
-  const flight = useRef<{
-    fromPosition: THREE.Vector3;
-    fromTarget: THREE.Vector3;
-    toPosition: THREE.Vector3;
-    toTarget: THREE.Vector3;
-    elapsed: number;
-  } | null>(null);
-  const target = useRef(OVERVIEW_TARGET.clone());
-
-  // Restoring an *unfocused* view must skip the mount flight below —
-  // otherwise the first effect run flies the restored camera straight back to
-  // the overview, which is exactly the snap-back persistence exists to remove.
-  // A restored *focused* view keeps its flight: it re-derives the arrival from
-  // wherever the camera is, so a navigation mid-approach simply continues.
-  // Set by the placement effect, which runs first on mount.
-  const skipMountFlight = useRef(false);
-
-  const focusedIdRef = useRef(focusedId);
-  focusedIdRef.current = focusedId;
-
-  // Claim the shared camera and place it. Reading the memory *after* the
-  // claim matters: for a rig→rig navigation the claim just banked the
-  // outgoing view's live pose, so the load below picks it up and the handoff
-  // is seamless rather than one visit stale. Layout effect, so the camera is
-  // placed before the stage's first frame of this view paints.
-  useLayoutEffect(() => {
-    const holder: CameraHolder = {
-      key: persistKey ?? null,
-      getPose: () => ({
-        position: camera.position.toArray() as [number, number, number],
-        target: target.current.toArray() as [number, number, number],
-        focusedId: focusedIdRef.current,
-      }),
-    };
-    claimCamera(holder);
-
-    const restored = persistKey ? loadView(persistKey) : null;
-    camera.position.copy(
-      restored ? new THREE.Vector3(...restored.position) : OVERVIEW_POSITION,
-    );
-    target.current.copy(
-      restored ? new THREE.Vector3(...restored.target) : OVERVIEW_TARGET,
-    );
-    camera.lookAt(target.current);
-    if (restored && focusedIdRef.current === null) skipMountFlight.current = true;
-
-    return () => releaseCamera(holder);
-  }, [camera, persistKey]);
-
-  // The orbit controls mount after the camera and reset their pivot to the
-  // origin; hand them this view's pivot as soon as they exist.
-  useEffect(() => {
-    const orbit = controls as unknown as {
-      target?: THREE.Vector3;
-      update?: () => void;
-    } | null;
-    if (!orbit?.target) return;
-    orbit.target.copy(target.current);
-    orbit.update?.();
-    camera.lookAt(target.current);
-  }, [controls, camera]);
-
-  // Panning moves the camera and its orbit target by the same vector, so the
-  // view slides without the constellation swinging around a moved pivot.
-  useEffect(() => {
-    const orbit = controls as unknown as {
-      target?: THREE.Vector3;
-      update?: () => void;
-    } | null;
-
-    view.current = {
-      pan(dx, dy) {
-        // A press supersedes an in-progress flight rather than being swallowed
-        // by it. Ignoring the press while flying was the obvious reading, and
-        // it is wrong twice: the operator asking to move now means now, and a
-        // flight only advances while frames are being delivered — a window left
-        // in the background stops receiving them mid-move, and the controls
-        // would stay dead until it was focused again.
-        flight.current = null;
-        const perspective = camera as THREE.PerspectiveCamera;
-        const pivot = orbit?.target ?? target.current;
-        // Half-height of the frustum at the pivot's distance — the unit that
-        // makes one press cover the same visible fraction at any zoom.
-        const reach =
-          camera.position.distanceTo(pivot) *
-          Math.tan(((perspective.fov ?? 45) / 2) * (Math.PI / 180));
-        const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
-        const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
-        const move = new THREE.Vector3()
-          .addScaledVector(right, dx * PAN_STEP * reach)
-          .addScaledVector(up, dy * PAN_STEP * reach);
-        camera.position.add(move);
-        target.current.add(move);
-        orbit?.target?.copy(target.current);
-        orbit?.update?.();
-      },
-      recenter() {
-        if (reduceMotion) {
-          camera.position.copy(OVERVIEW_POSITION);
-          target.current.copy(OVERVIEW_TARGET);
-          camera.lookAt(target.current);
-          orbit?.target?.copy(target.current);
-          orbit?.update?.();
-          return;
-        }
-        flight.current = {
-          fromPosition: camera.position.clone(),
-          fromTarget: target.current.clone(),
-          toPosition: OVERVIEW_POSITION.clone(),
-          toTarget: OVERVIEW_TARGET.clone(),
-          elapsed: 0,
-        };
-      },
-    };
-    return () => {
-      view.current = null;
-    };
-  }, [camera, controls, reduceMotion, view]);
-
-  // The flight is triggered by *where we are going*, not by the array it was
-  // read out of — `nodes` is rebuilt whenever the roster or health changes, and
-  // a camera that re-flew on array identity would fight every orbit and pan the
-  // operator made. A primitive key means the effect fires on a real change of
-  // destination and nothing else.
-  const focused = focusedId === null ? undefined : nodesRef.current.find((n) => n.id === focusedId);
-  const focusKey = focused ? `${focusedId}@${focused.position.join(",")}` : "";
-
-  useEffect(() => {
-    if (skipMountFlight.current) {
-      skipMountFlight.current = false;
-      return;
-    }
-    const star = focusedId === null ? undefined : nodesRef.current.find((n) => n.id === focusedId);
-    const starPoint = star ? new THREE.Vector3(...star.position) : null;
-
-    // Approach along the current view direction, so the move never swings the
-    // constellation around behind the camera.
-    const approach = starPoint
-      ? camera.position.clone().sub(starPoint).normalize()
-      : null;
-    const toPosition =
-      starPoint && approach
-        ? starPoint.clone().add(approach.clone().multiplyScalar(ARRIVAL_DISTANCE))
-        : OVERVIEW_POSITION.clone();
-
-    // Aim past the star, to its right — which puts the star itself on the left
-    // of the frame, clear of the docked panel.
-    const toTarget = starPoint ? starPoint.clone() : OVERVIEW_TARGET.clone();
-    if (starPoint && approach) {
-      const right = new THREE.Vector3()
-        .crossVectors(camera.up, approach)
-        .normalize()
-        .multiplyScalar(PANEL_OFFSET);
-      toTarget.add(right);
-    }
-
-    if (reduceMotion) {
-      camera.position.copy(toPosition);
-      target.current.copy(toTarget);
-      camera.lookAt(toTarget);
-      return;
-    }
-
-    flight.current = {
-      fromPosition: camera.position.clone(),
-      fromTarget: target.current.clone(),
-      toPosition,
-      toTarget,
-      elapsed: 0,
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusKey, camera, reduceMotion]);
-
-  useFrame((_state, delta) => {
-    const move = flight.current;
-    if (!move) return;
-
-    move.elapsed += delta;
-    const t = Math.min(1, move.elapsed / FLIGHT_SECONDS);
-    const eased = 1 - (1 - t) ** 3; // cubic ease-out
-
-    camera.position.lerpVectors(move.fromPosition, move.toPosition, eased);
-    target.current.lerpVectors(move.fromTarget, move.toTarget, eased);
-    camera.lookAt(target.current);
-
-    if (t >= 1) {
-      flight.current = null;
-      // Hand the orbit controls the target we arrived at, so re-enabling them
-      // doesn't snap the view back to the origin.
-      const orbit = controls as unknown as { target?: THREE.Vector3; update?: () => void };
-      orbit?.target?.copy(target.current);
-      orbit?.update?.();
-    }
-  });
-
-  return null;
 }
 
 function StarNode({
@@ -687,7 +456,14 @@ function HoverReticle({ radius, active }: { radius: number; active: boolean }) {
             {/* A short arc centred on its quadrant, with a hair of thickness —
                 thin enough to stay an annotation at overview distance. */}
             <ringGeometry
-              args={[radius * 2.1, radius * 2.1 + 0.02, 24, 1, -Math.PI / 12, Math.PI / 6]}
+              args={[
+                radius * 2.1,
+                radius * 2.1 + 0.02,
+                24,
+                1,
+                -Math.PI / 12,
+                Math.PI / 6,
+              ]}
             />
             <meshBasicMaterial
               ref={(material) => {
@@ -751,13 +527,18 @@ function Nameplate({
           className="flex items-center gap-1 whitespace-nowrap rounded-sm border px-1.5 py-[1px] transition-colors duration-200"
           style={{
             borderColor: hovered ? "var(--color-pulsar)" : "var(--color-halo)",
-            background: "color-mix(in srgb, var(--color-void) 82%, transparent)",
+            background:
+              "color-mix(in srgb, var(--color-void) 82%, transparent)",
           }}
         >
           {badge !== null && (
-            <span className="font-mono text-[9px] leading-none text-pulsar">{badge}</span>
+            <span className="font-mono text-[9px] leading-none text-pulsar">
+              {badge}
+            </span>
           )}
-          <span className="font-mono text-[10px] leading-none text-starlight">{name}</span>
+          <span className="font-mono text-[10px] leading-none text-starlight">
+            {name}
+          </span>
         </span>
       </div>
     </Html>
@@ -783,7 +564,10 @@ function ArrivalRings({ radius }: { radius: number }) {
     rings.current.forEach((ring, index) => {
       if (!ring) return;
       // Each ring expands from the star and settles, staggered.
-      const t = Math.min(1, Math.max(0, (elapsed.current - index * 0.18) / 0.9));
+      const t = Math.min(
+        1,
+        Math.max(0, (elapsed.current - index * 0.18) / 0.9),
+      );
       const eased = 1 - (1 - t) ** 3;
       ring.scale.setScalar(0.25 + eased * 0.75);
       const material = ring.material as THREE.MeshBasicMaterial;
@@ -832,7 +616,10 @@ function Link({
 }) {
   const geometry = useMemo(() => {
     const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.Float32BufferAttribute([...from, ...to], 3));
+    g.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute([...from, ...to], 3),
+    );
     return g;
   }, [from, to]);
 
@@ -841,7 +628,11 @@ function Link({
   return (
     <line>
       <primitive object={geometry} attach="geometry" />
-      <lineBasicMaterial color={GL.pulsar} transparent opacity={live ? 0.55 : 0.1} />
+      <lineBasicMaterial
+        color={GL.pulsar}
+        transparent
+        opacity={live ? 0.55 : 0.1}
+      />
     </line>
   );
 }

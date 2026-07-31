@@ -1,6 +1,8 @@
 import { useInView } from "framer-motion";
 import { useRef } from "react";
 
+import { useIsReport } from "@/components/analytics/report/context";
+
 /**
  * Arms a panel's draw-on reveal by visibility (`data.md` §10.5).
  *
@@ -18,6 +20,13 @@ import { useRef } from "react";
  * a gate that can never arm would leave a chart permanently blank — a far
  * worse outcome than a chart that simply appears without drawing itself. With
  * no `IntersectionObserver` to ask, the answer is therefore "shown".
+ *
+ * That is also why a report sheet forces it (`data.md` §10.6). The sheet is
+ * laid out off-screen so a capture doesn't depend on where the reader had
+ * scrolled to, and an honest `useInView` there answers "no" forever — which
+ * would export a page of empty panels rather than an unanimated one. Note this
+ * fixes the animation *target* only; the sheet still needs
+ * `MotionConfig skipAnimations` to collapse the durations and staggers.
  */
 /**
  * Seconds a **highlight** reveal takes — one animal's line tracing itself in
@@ -36,11 +45,14 @@ export const HIGHLIGHT_DRAW = 1.6;
 export function useRevealOnView() {
   const ref = useRef<HTMLDivElement | null>(null);
   const observable = typeof IntersectionObserver !== "undefined";
+  // Called unconditionally, above the early return: hook order is fixed, and
+  // `useInView` below must run on every render whatever the answer here is.
+  const isReport = useIsReport();
   // Armed by a margin, not by a visible *fraction*: a fraction is measured
   // against the panel's own height, so a tall one — a heatmap of twenty
   // animals — could need more of itself on screen than the viewport can hold
   // and would never arm. Pulling the viewport's bottom edge up instead means
   // "a strip of this panel has genuinely cleared the fold", whatever its size.
   const inView = useInView(ref, { once: true, margin: "0px 0px -80px 0px" });
-  return { ref, seen: observable ? inView : true };
+  return { ref, seen: isReport || !observable ? true : inView };
 }

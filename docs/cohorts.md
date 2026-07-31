@@ -174,7 +174,7 @@ The readiness strip doubles as the flow's spine. Its three checkpoints (*named* 
 | **Data folder** | Only asked for when no `dataDirectory` is configured; otherwise derived, and asking would be noise mid-flow |
 | **Animals** | Biographical data only — name, sex, ID number, notes |
 | **Cages & spaceships** | Every animal is a draggable crew chip, every cage a "spaceship" card, plus a dashed dock holding the unassigned |
-| **Groups & boxes** | One card per group showing full membership: add/remove/rename, reorder to set `order`, move an animal between groups, assign its box |
+| **Groups & boxes** | One card per group: a run-order badge, a **rack of box slots**, and a bench for members without one. Chips drag between slots and between groups |
 
 **Bulk entry is the primary way into the roster.** One field takes a comma-, newline- or tab-separated list (a spreadsheet column pastes straight in) **or** a prefix and a count (`R- × 8` → `R-1`…`R-8`).
 
@@ -183,14 +183,28 @@ The readiness strip doubles as the flow's spine. Its three checkpoints (*named* 
 
 **Cages are optional at every point and never a gate.** An animal left on the dock flies solo in the constellation, exactly as every animal did before cages existed. Empty ships live only in component state — *a cage with no animals isn't a fact the roster can carry*, since `cage` lives on the animal.
 
+> [!CAUTION]
+> **Every drag-and-drop in the cohort editor depends on `dragDropEnabled: false` in `src-tauri/tauri.conf.json`.** Tauri defaults it to `true`, which routes the webview's drag-and-drop to the OS-level file-drop handler and swallows HTML5 DnD — its own schema says disabling it "is required to use HTML5 drag and drop on the frontend on Windows", which is what the lab machines run.
+>
+> The failure is quiet and *partial*, which is what makes it worth pinning: `dragstart` and `dragover` still fire, so a chip looks draggable and the target even highlights, but `drop` never arrives and the chip springs back. It presents as a CSS or React bug and is neither. Click-to-carry is unaffected, so the symptom is "only clicking works". A JSON config file can't carry a comment — if drag silently stops working, check that key first.
+
 > [!IMPORTANT]
 > **Box assignment lives in the Groups panel, not the Animals list**, because uniqueness is scoped per group — it is a property of a *membership*, not of an animal, and only makes sense with the whole group visible at once.
 
-The panel is always present, since assignment has to happen somewhere regardless of group count; a single group renders as a quiet unlabeled card rather than exposing rename/reorder chrome nobody needs yet.
+The panel is always present, since assignment has to happen somewhere regardless of group count; a single group hides its rename/reorder/remove chrome rather than exposing chrome nobody needs yet.
 
-**Box selectors offer only boxes bound on this machine**, labelling any that isn't currently connected. **A box already taken within the same group isn't offered at all** — prevention rather than a save-time error.
+**Membership and box assignment are one gesture, and it is the same gesture as the cages panel above.** A group is a **rack** — one slot per box the rig offers — plus a **bench** for members that don't hold a box yet. Dragging a chip onto a slot assigns that box; dragging it into another card moves the animal between groups; dragging it to a bench takes its box away. Click-to-carry (click the chip, then its destination) is the trackpad-friendly fallback, identical to `CageAssignment`.
 
-**The panel points at the one misconfiguration that actually bites**: more animals in a single group than the rig has boxes. That can't be fixed by assigning more carefully, so the panel says so, pre-fills the split count, and opens Auto-Balance rather than leaving it to be discovered one empty dropdown at a time. A per-group **Fill boxes** button handles the opposite case.
+> [!NOTE]
+> This replaced a row-per-animal layout carrying two `<select>`s. Both halves fought the task, and the failure was structural rather than cosmetic: moving an animal between groups meant opening a dropdown **inside the group it was leaving**, after which the row vanished from under the cursor and reappeared in a card further down the page — so filling a new group was N round trips, each one losing your place. An empty group's own copy read "move some in below" while offering nothing to do it with, because the control that fills it lived in the *other* card. Two panels on one screen also taught two different interaction languages for the identical task of putting animals into buckets.
+
+**Dropping onto an occupied slot displaces rather than refuses** — a drop that silently does nothing reads as a broken control. Where the occupant goes depends on where the incoming animal came from: a move *within* one group is a true swap into the slot just vacated, while a move *across* groups only bumps the occupant off its box, because dragging one animal must never quietly move a second one into a different group.
+
+**The rack only draws boxes bound on this machine**, marking any that isn't currently connected — plus any box a member is *already* holding that the rig no longer offers, since dropping that slot would hide a real assignment because a binding changed. Box uniqueness within a group is structural here: a slot holds one animal, so a duplicate can't be expressed.
+
+**The panel points at the one misconfiguration that actually bites**: more animals in a single group than the rig has boxes. That can't be fixed by assigning more carefully, so the panel says so, pre-fills the split count, and opens Auto-Balance rather than leaving it to be discovered one empty slot at a time. A per-group **Fill boxes** button handles the opposite case.
+
+**Removing a group rehomes its members into the first remaining group, without their boxes.** The box belonged to the group that went away, and carrying the number over could collide with whoever already holds it where they land.
 
 ### Colour and severity
 

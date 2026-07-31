@@ -11,7 +11,7 @@ import { recentSessions as fetchRecentSessions } from "@/lib/analytics/commands"
 import { useAnalyticsStore } from "@/lib/analytics/context";
 import type { DiskSession } from "@/lib/analytics/types";
 import { setRigSelection, useRigSelection } from "@/lib/constellations/viewMemory";
-import { springPanel, springSnappy } from "@/lib/motion";
+import { PANEL_TRAVEL, springPanel, springSnappy } from "@/lib/motion";
 import { useActiveCohorts, useCohortsLoaded } from "@/lib/cohorts/context";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useRunningSession } from "@/lib/sessions/context";
@@ -60,8 +60,29 @@ export function Dashboard() {
   // *existence* check; Step 1 (`/session/new`) owns per-cohort readiness.
   const hasCohorts = cohortCount > 0;
 
+  /*
+   * **The Dashboard never renders a focused sky.** Selecting a star here
+   * navigates to Debug (below), so a focused Dashboard is a state nothing in
+   * this view can explain: the rig selection is module-level and survives
+   * navigation (`viewMemory.ts`), so leaving Debug by any route *other* than
+   * its own Back — a sidebar click to Cohorts, then back to the Dashboard —
+   * used to arrive parked in a star's close-up with no panel to say why.
+   *
+   * Cleared on the **incoming** side rather than on Debug's unmount: route
+   * transitions overlap mounts, so an outgoing view's cleanup can run after the
+   * incoming view has already acted. This runs on mount, so the forward
+   * handoff — where the selection is set and navigated in one commit — is
+   * untouched.
+   */
+  useEffect(() => {
+    setRigSelection(null);
+  }, []);
+
   return (
-    <div className="relative h-full overflow-hidden">
+    // No `overflow-hidden`: the shared canvas reaches left under the sidebar
+    // (`Scene.tsx`) and clipping here would cut it back to the content region.
+    // `main` still clips at its padding box, which includes that strip.
+    <div className="relative h-full">
       {/* The sky. Bound boxes as temperature stars, cage-ships in orbit —
           DebugConstellation, verbatim, including its camera.
 
@@ -73,7 +94,14 @@ export function Dashboard() {
           simply handed over, which is the whole "one continuous sky" premise. */}
       <div className="absolute inset-0">
         <DebugConstellation
-          selected={selected}
+          // Always null, never the store value: the clearing effect above runs
+          // *after* this child's own effects, so passing the live selection
+          // would leave a one-commit window in which the rig starts a flight
+          // the clear then reverses.
+          selected={null}
+          // No panel docks here, so the focused-state restrictions don't apply
+          // (`ConstellationScene`) — the sky keeps pan, zoom and its pad.
+          docksPanel={false}
           onSelect={(box) => {
             setRigSelection(box);
             // The instrument panel lives in Debug; the shared camera makes
@@ -83,22 +111,36 @@ export function Dashboard() {
         />
       </div>
 
-      {/* The chrome, and the only thing that animates. Opacity-only: a
-          y-offset on a full-height view transiently overflows the scroll
-          container and flashes the scrollbar. */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={springPanel}
-        className="pointer-events-none absolute inset-0"
-      >
+      {/* The chrome. A plain wrapper: the two columns animate *individually*
+          now, because they are doing different jobs during a star click — the
+          left one crossfades with Debug's title on the shared title grid, while
+          the right one is handing its place to Debug's docked panel. The sky
+          stays outside either, which is the rule this split narrows rather than
+          bends. */}
+      <div className="pointer-events-none absolute inset-0">
         {/* The command column: the page title, the hero CTA, and whatever
             sessions are in flight, directly below it. Both columns ignore the
             pointer so the sky between the tiles still orbits; the tiles
             themselves take it back. The title rides inside the column (p-4 +
             pt-3 = the shared 28px title line, pl-8 = the shared 32px indent)
-            so the stack clears it by layout rather than a hard-coded offset. */}
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-[392px] overflow-y-auto p-4 pl-8">
+            so the stack clears it by layout rather than a hard-coded offset.
+
+            Opacity-only, and no `exit`: a y-offset on a full-height column
+            transiently overflows the scroll container and flashes the
+            scrollbar, and there is nothing on the left being replaced —
+            Debug's title lands on the same grid, so a crossfade reads as a
+            word being swapped. */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          // Owns its own exit: between Dashboard and Debug the route stops
+          // fading the page (`AppShell`), so anything that should fade has to
+          // say so. Opacity only — Debug's title lands on the same title grid,
+          // so a crossfade reads as a word being swapped.
+          exit={{ opacity: 0 }}
+          transition={springPanel}
+          className="scrollbar-none pointer-events-none absolute inset-y-0 left-0 w-[392px] overflow-y-auto p-4 pl-8"
+        >
           <h1 className="pb-4 pt-3 font-display text-[22px] text-starlight">Dashboard</h1>
           <div className="pointer-events-auto flex flex-col gap-3">
             <LaunchButton
@@ -117,10 +159,30 @@ export function Dashboard() {
 
             <SessionDock />
           </div>
-        </div>
+        </motion.div>
 
-        {/* The overview column: where everything else is, at a glance. */}
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-[392px] overflow-y-auto p-4 pl-0">
+        {/* The overview column: where everything else is, at a glance — and,
+            on a star click, the thing Debug's `NodeDetail` replaces.
+
+            So it travels the panel's distance on the panel's spring
+            (`PANEL_TRAVEL`, `springPanel`, matching `NodeDetail`): it leaves
+            toward the right edge as the panel arrives from it, which reads as
+            one surface being swapped rather than one blinking out and another
+            appearing. Horizontal is safe where vertical isn't — `main` sets
+            `overflow-x: hidden` explicitly, which is why the no-y rule above
+            doesn't apply here.
+
+            The exit travel is gated on a selection actually being in flight.
+            Leaving the Dashboard *forward* into the guided flow moves the whole
+            page −26px, and a column drifting +24px against that would read as
+            stuck rather than as a handoff. */}
+        <motion.div
+          initial={{ opacity: 0, x: PANEL_TRAVEL }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: selected !== null ? PANEL_TRAVEL : 0 }}
+          transition={springPanel}
+          className="scrollbar-none pointer-events-none absolute inset-y-0 right-0 w-[392px] overflow-y-auto p-4 pl-0"
+        >
           <div className="pointer-events-auto flex flex-col gap-3">
             <SummaryCard
               icon={Users}
@@ -301,8 +363,8 @@ export function Dashboard() {
               )}
             </SummaryCard>
           </div>
-        </div>
-      </motion.div>
+        </motion.div>
+      </div>
     </div>
   );
 }

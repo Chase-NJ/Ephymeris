@@ -650,6 +650,15 @@ A session that recorded nothing is drawn **hollow**, not grey: "nothing to score
 
 One row per animal, grouped by the cohort's groups — since groups are usually the experimental conditions and the comparison is usually between them. Each row carries the animal's identity colour, a sparkline of its across-session trend, and its latest value in JetBrains Mono. Hover previews, click pins.
 
+**The rail shares its row with the strategy tile and nothing else, and it caps at that tile's height.** It used to be a single grid item beside the *whole* panel stack, and grid items stretch, so a twelve-animal list ending around 450px was drawn on a card that kept going for another 1200px of empty surface. Everything below now spans the full content width instead of being indented behind it — which is what freed the space §11.3's heatmap moved up into.
+
+The cap is CSS, not measurement. The strategy tile has no pixel height — its plane is a square viewBox at `w-full`, so its height is its column width plus chrome and changes with the window and with whether a session is selected. Rather than observe it, the rail is lifted out of flow inside a wrapper that stretches to the row: `max-height: 100%` then resolves against a height the tile has already set, and a rail contributing **zero** height cannot stretch the row it is trying to match. Under the cap the height stays `auto`, so a two-animal cohort gets a compact card and a ragged bottom edge rather than a tall empty one. Past the cap the list scrolls, with the "Animals" heading staying put.
+
+Two consequences worth knowing:
+
+- **Only from `lg` up.** Below that the two-column grid collapses, and an absolutely-positioned rail whose wrapper has no sibling to give it height would fall to zero and sit on top of the panel beneath. Below `lg` it is an ordinary card at natural height.
+- **A report sheet turns it off** (§10.6), for the reason `CohortHeatmap`'s `scroll` prop already documents: a rasterizer captures a scroll container as whatever was in view, so a long roster would lose animals off the bottom of the PNG with nothing to show it had happened. Unbounded, the rail may make that row taller than the tile beside it — the right trade for a figure nobody can scroll.
+
 ### 10.4 Landings
 
 **Cold arrival shows a cohort picker, not a dashboard** — the same procedural-icon card grid the Cohorts view uses, because choosing a cohort to study is the same act as choosing one to manage. This replaced auto-selecting the most recent cohort, which put an answer on screen before the reader had asked a question.
@@ -671,6 +680,8 @@ This is not decoration. **The heatmap's x-axis *is* time, so filling it in time 
 
 The reveal is **armed by visibility**: a panel below the fold holds its initial state until it is on screen, then plays once. A line that draws itself where nobody is looking plays to an empty room.
 
+Since the heatmap was promoted to just under the rail row (§11.3) it is usually on screen at arrival, so its column-by-column fill now plays alongside the strategy tile and learning curves rather than waiting to be scrolled to. Nothing had to change for that — the gate is "is it visible", and now it is — but it does mean the panel most worth watching fill is the one the reader is most likely to catch.
+
 > [!WARNING]
 > **A line draws on by being wiped, never with `pathLength`** (`components/charts/DrawOn.tsx`). Framer Motion implements `pathLength` by normalising the path to length 1 and animating `stroke-dasharray`, which the browser resolves in *user* space — while `vector-effect="non-scaling-stroke"`, which every chart here needs, paints that dash in *screen* space. An upscaled chart therefore **finishes** its animation holding a dash far shorter than the line it should cover, settling as disconnected chunks whose gaps fall in arbitrary places.
 >
@@ -679,6 +690,38 @@ The reveal is **armed by visibility**: a panel below the fold holds its initial 
 > The wipe also reads better on a time axis: `pathLength` advances along arc length, so a jagged stretch crawls while a flat one races. The one panel that cannot use it is the **within-session strategy walk**, whose x is a probability — a left-to-right wipe would assert a chronology a 2D trajectory doesn't have. It fades instead.
 
 **Highlighting an animal replays its own history, in session order**, and runs **slower** than the arrival reveal — an arrival reveal has to get out of the way before the reader can start; a highlight reveal *is* the reading. Only the hovered animal animates. Each hop is delayed by its **session ordinal**, not by its position among the sessions the animal actually ran, so a trail with sessions missing from the middle *pauses* over the gap rather than closing it up.
+
+### 10.6 Exporting a sheet
+
+One **Export PNG** button in the header action row saves the panels on screen as a single composed image. It follows the scope rather than offering two controls — viewing all sessions exports the cohort sheet, viewing one session exports that session's — and its label says which (`Export cohort PNG` / `Export session PNG`), so what you get is never a guess. This is §10.1's rule applied to export: selection is a filter, and the export is a picture of the filtered view.
+
+The sheets live in `components/analytics/report/` and **mount the existing panel components with the existing props**. They choose arrangement and nothing else; there is no second implementation of any chart, so an exported figure cannot drift away from the screen it claims to depict.
+
+- **Cohort sheet** — the animal rail beside the strategy space and learning curves, then the heatmap on its own full-width row, then rewarded and response accuracy stacked full width (§11.5's vertical comparison only survives if a session sits above itself), then effort and outcome mix. Same order as the screen, which is the point.
+- **Session sheet** — the animal rail beside the within-session strategy walk and the trial-axis learning curves, then the per-animal session summary two-up. No across-session trends and no heatmap: "just this session" is what it is for. The rail stays because it is the colour→animal legend the other panels depend on, and its sparklines place the session in each animal's history.
+
+Both carry a masthead (cohort, task, metric, date range, export timestamp), `summary.warnings`, and the §10.4 footnote. A figure that outlives the app needs its provenance more than the screen does — a sheet generated while the cohort's data folder was unreachable is showing the last good read, and one that doesn't say so is a lie on paper.
+
+Saving is shell-side — `plugin-dialog`'s `save()` plus `plugin-fs`'s `writeFile()`, needing `fs:allow-write-file` in the capabilities — for the same reason the debug-log save is (`debug/NodeDetail.tsx`). Nothing about it belongs in the data pipeline.
+
+Five things are load-bearing, and getting any of them wrong yields a **plausible-looking wrong picture rather than an error**:
+
+> [!CAUTION]
+> **The sheet renders off-screen, not hidden.** `display: none` has no layout to measure and `visibility: hidden` is faithfully copied onto the rasterizer's clone; both capture as nothing. It is positioned off the side of the window instead, and stays a React portal so the panels keep the analytics store and sidecar client they expect.
+>
+> **`useRevealOnView` is forced true inside a sheet** (via `report/context.ts`). Panels gate their *data* on `seen`, not just their motion, so an honest `useInView` off-screen answers "no" forever and exports a page of empty panels.
+>
+> **`MotionConfig skipAnimations`, never `MotionConfig transition`.** Every reveal here sets its transition *inline* — the heatmap staggers per column, `ChartDots` delays each dot by its x, `DrawOn` runs a 0.9s wipe — and an inline transition wins the merge against a `transition` default, so that lever cannot make the sheet settle. `skipAnimations` is checked at the animation driver after transitions resolve and zeroes `delay` as well as duration. It is the other half of forcing `seen`, not a substitute: `seen` picks what to animate *towards*, this collapses how long getting there takes.
+>
+> **A pinned animal is cleared for the duration and restored after.** `getHighlightedAnimal()` falls back to the pin, which — unlike a hover — survives. With one live, the strategy planes and learning curves drop every other animal to `opacity 0.18` and the accuracy trends fade the pooled figure: the export would come out mostly blank while looking deliberate.
+>
+> **Rasterizing is 1×.** These charts stroke with `vector-effect="non-scaling-stroke"`, which resolves weight in screen space; scaling the raster is precisely the operation that makes screen and user space disagree (see §10.5). A 1280-wide sheet is already thousands of pixels tall, so there is nothing to buy by risking it.
+
+Two smaller details that were each a bug first. Tailwind breakpoints are **viewport** queries, so `SessionSummary` takes an explicit `columns` prop rather than its `xl:` default — left on auto, an export from a narrow window silently comes out one card wide. And `CohortHeatmap` takes `scroll={false}`, because it sizes itself in fixed pixels per session and its normal `overflow-x-auto` would rasterize to whatever was in view, cropping the most recent sessions off the right edge. The sheet is measured once after mount and widened to fit when that happens.
+
+Fonts are inlined as data URLs at build time (`report/fonts.ts`) rather than left to the rasterizer, which by default walks `document.styleSheets` and fetches every `@font-face` URL it finds. That is ~80 files for eight faces of latin text, and its failure mode is silent: a font it cannot load is simply dropped, so the PNG comes out in Times New Roman. Development is macOS over `http://localhost` and the lab machines are Windows over `http://tauri.localhost`, so **neither routine loop exercises the custom-scheme fetch in the direction that breaks**.
+
+One robustness note: `requestAnimationFrame` does not fire while the window is hidden, and framer's frame loop is what applies the settled values. The settle wait therefore races each frame against a short timer, so alt-tabbing away during an export cannot leave the button stuck on "Exporting…" forever.
 
 ---
 
@@ -756,6 +799,8 @@ Rows are animals grouped by group; columns are sessions in chronological order; 
 **Columns are scoped to the selected task profile**, not to every session the cohort ever ran. Sessions with no run on that task are dropped from the axis, and the count dropped is stated in the header — a filter that silently removes columns is indistinguishable from an archive that never had them. Without this the surface put a shaping column beside a discrimination column on one colour scale, and **a change of *task* read as a collapse in *performance***.
 
 The heatmap is also a selector: clicking a cell selects that animal and that session, a row header selects the animal across all sessions, a column header selects the whole session.
+
+**It sits directly under the rail row, spanning the full content width.** It is the one panel whose width is set by how much archive there is rather than by its container — fixed pixels per session — so it is the one with something to do with the room, and the ~236px the capped rail freed (§10.3) is real. That is a delay, not a reprieve: the width still grows with session count, so a fifty-session cohort scrolls sideways regardless. It also means the heatmap's columns never lined up with the four trend panels' x slots and nothing was lost by moving it away from them — its columns are task-scoped and drop sessions, theirs are not.
 
 **Four cell states that must never be confused:**
 

@@ -272,6 +272,7 @@ Talks to the sidecar over the WebSocket only.
 | `components/debug/` | Constellation landing, per-box detail, scrollback, flash dialog, state badges, utility controls |
 | `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, journey rail, placement banner, and `ConfigFields` (the one grouped renderer for a profile's `config`) |
 | `components/analytics/` | The Observatory's panels: rails, heatmap, learning curves, strategy space, trends, summaries |
+| `components/analytics/report/` | The PNG export: composed cohort/session sheets built from the panels above, and the capture and save path ([data.md §10.6](data.md)) |
 | `components/charts/` | Shared chart primitives (`UnitChart`, `ChartFrame`, `ChartDots`, `DrawOn`) |
 
 > [!NOTE]
@@ -377,7 +378,7 @@ Payload shapes are guarded from both sides: the generated `CommandArgsMap`/`Comm
 - **`port.output` is batched at ~20 Hz**, not one message per line, and is never persisted beyond a capped in-memory ring buffer (~2000 lines/port).
 - **Client-side timeouts don't cancel sidecar work.** Default 15 s; `port.flash` gets 300 s and `sketches.refresh` 60 s. The sidecar remains the authority on what actually happened.
 
-### 6.3 The four that silently corrupt
+### 6.3 The five that silently corrupt
 
 Each is documented in place with a `[!CAUTION]` in the owning document. They share a property: getting them wrong produces plausible output rather than an error.
 
@@ -387,6 +388,7 @@ Each is documented in place with a `[!CAUTION]` in the owning document. They sha
 | `START_LINE_MAX` is checked, not trusted | [tasks.md §6.3](tasks.md#63-the-line-length-cap) | Firmware truncates and runs on whichever values fit |
 | A new **column** needs a `MIGRATIONS` entry, a new table does not | [data.md §6.3](data.md#63-changing-the-schema) | The column appears only on freshly-created databases |
 | `CODEC_VERSION` must be bumped when the maths changes | [data.md §9](data.md#9-derived-metrics) | Cached summaries keep serving the old definition with no symptom |
+| The PNG export's five rules — off-screen not hidden, forced `seen`, `skipAnimations`, cleared pin, 1× scale | [data.md §10.6](data.md) | A figure that looks deliberate but is blank, dimmed, half-drawn or cropped |
 
 ### 6.4 Dependency policy
 
@@ -394,7 +396,7 @@ Sidecar runtime dependencies were **deliberately just `pyserial` and `websockets
 
 **One exception has been granted, with its risk fenced:** `grpcio` + `protobuf`, for the arduino-cli daemon backend. The policy's concern — an install that fails and takes a feature with it — is answered structurally: the subprocess backend remains as the fallback, and `create_board_tool` degrades to it (loudly, in the log) when `grpcio` doesn't import or the daemon won't start. A lab machine where the wheel failed loses live compiler streaming, never flashing. `grpcio-tools` is dev-only.
 
-Frontend dependencies are less constrained (the 3D stack is `three` + `@react-three/fiber` + `@react-three/drei`) because npm install failures don't happen on the lab machines.
+Frontend dependencies are less constrained (the 3D stack is `three` + `@react-three/fiber` + `@react-three/drei`, and `modern-screenshot` rasterizes the Analytics PNG export) because they are bundled at build time — npm install never runs on the lab machines, so the failure mode this policy exists to prevent doesn't reach them.
 
 > [!IMPORTANT]
 > Don't add a sidecar runtime dependency without strong justification — and when one is granted, follow the `grpcio` pattern: the feature it powers must **degrade, not disappear**, when the dependency is absent.

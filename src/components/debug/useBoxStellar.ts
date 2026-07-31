@@ -95,6 +95,9 @@ export function useBoxStellar(): RigStellar {
         members.push({
           id: animal.id,
           name: animal.name,
+          // Without this, two cohorts' "cage 3" merge into one ship — this
+          // loop is exactly where animals from every active cohort meet.
+          cohortId: cohort.id,
           cage: animal.cage,
           box: animal.boxNumber,
           running: false,

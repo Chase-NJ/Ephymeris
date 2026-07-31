@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, ChevronDown, Play, RotateCcw, Square } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Ref } from "react";
 
 import { Button } from "@/components/common/controls";
 import { TaskGraph } from "@/components/task/TaskGraph";
@@ -51,6 +51,7 @@ export function StarPanel({
   onReset,
   onBack,
   busy,
+  ref,
 }: {
   box: SessionBox;
   onStart: () => void;
@@ -58,6 +59,24 @@ export function StarPanel({
   onReset: () => void;
   onBack: () => void;
   busy: boolean;
+  /**
+   * **Required by `AnimatePresence mode="popLayout"`, which is how this panel
+   * leaves.** On exit, framer clones the child with a ref, measures the element
+   * behind it, and injects a stylesheet pinning it `position: absolute` at the
+   * box it just vacated. That is the whole mechanism by which an exiting child
+   * stops taking up space while it animates out.
+   *
+   * A function component that swallows the ref reads back as `null`, framer's
+   * insertion effect bails, **no pinning style is ever written**, and the panel
+   * stays in the rail's normal flow for the length of its exit — shoving the
+   * box tiles down the column and letting them snap up when it finally
+   * unmounts. That is a silent failure: nothing errors, the exit still
+   * animates, and only the layout underneath gives it away.
+   *
+   * So this is not decoration. Anything rendered directly inside a `popLayout`
+   * presence has to be able to hold a ref.
+   */
+  ref?: Ref<HTMLElement>;
 }) {
   const { client } = useSidecar();
   const port = usePortStatus(box.box);
@@ -86,6 +105,7 @@ export function StarPanel({
 
   return (
     <motion.aside
+      ref={ref}
       initial={{ x: 24, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 24, opacity: 0 }}

@@ -120,7 +120,7 @@ export function RatPlacementBanner({
   ).includes(phase);
 
   return (
-    <div className="surface mt-5 rounded-md px-4 pb-2.5 pt-2">
+    <div className="hud mt-5 rounded-md px-4 pb-2.5 pt-2">
       <svg
         viewBox="0 -72 640 185"
         className="mx-auto block h-[132px] w-full max-w-[560px]"

@@ -18,6 +18,21 @@ import { springSnappy } from "@/lib/motion";
  * Assignment is optional and never gates anything. An animal left on the dock
  * simply flies solo, exactly as every animal did before cages existed.
  *
+ * > [!IMPORTANT]
+ * > **The drag half of this only works because `dragDropEnabled` is `false`**
+ * > in `src-tauri/tauri.conf.json`. Tauri defaults it to `true`, which hands
+ * > the webview's drag-and-drop to the OS-level file-drop handler and swallows
+ * > HTML5 DnD entirely — Tauri's own schema says disabling it "is required to
+ * > use HTML5 drag and drop on the frontend on Windows", which is what the lab
+ * > runs. The failure is quiet and *partial*: `dragstart` and `dragover` still
+ * > fire, so the chip looks draggable and the ship even highlights, but `drop`
+ * > never arrives and the animal springs back. It reads as a CSS or React bug
+ * > and is neither. The click-to-board path below is unaffected, which is
+ * > exactly why it kept working while this didn't.
+ * >
+ * > A JSON config file can't carry a comment, hence this one. If drag ever
+ * > silently stops working again, check that key first.
+ *
  * Ships are identified by their cage *number*, which is the stored fact; an
  * empty ship (just added, or just emptied) exists only in this component's
  * state, because a cage with no animals in it isn't a fact the roster can

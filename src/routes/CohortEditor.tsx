@@ -37,6 +37,7 @@ import {
 } from "@/lib/cohorts/commands";
 import type { Animal, Cohort, Group } from "@/lib/cohorts/types";
 import { springPanel, springSnappy } from "@/lib/motion";
+import { useRegisterUnsaved } from "@/lib/nav/unsavedGuard";
 import { useSettings } from "@/lib/settings/context";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useSidecar } from "@/lib/ws/context";
@@ -113,6 +114,32 @@ export function CohortEditor() {
     () => assignmentProblems(animals, groups, statusOf),
     [animals, groups, statusOf],
   );
+
+  /*
+   * Unsaved work, announced to the sidebar (`lib/nav/unsavedGuard.ts`).
+   *
+   * Everything on this screen lives in local state until Save, and a sidebar
+   * click unmounts unconditionally — so one mis-click used to discard a whole
+   * roster silently, with nothing to refetch for a cohort that was never
+   * created. The sidebar asks before leaving when this is true.
+   *
+   * Compared against the adopted server copy rather than tracked with a
+   * "touched" flag, so typing a name and deleting it again is correctly *not*
+   * dirty. A new cohort counts as dirty as soon as it has anything in it at
+   * all — there is no server copy for it to differ from.
+   */
+  const isDirty = useMemo(() => {
+    if (isNew) return name.trim() !== "" || animals.length > 0;
+    if (!cohort) return false;
+    return (
+      name !== cohort.name ||
+      dataFolder !== cohort.dataFolder ||
+      JSON.stringify(animals) !== JSON.stringify(cohort.animals) ||
+      JSON.stringify(groups) !== JSON.stringify(cohort.groups)
+    );
+  }, [isNew, cohort, name, dataFolder, animals, groups]);
+
+  useRegisterUnsaved(`cohort-editor:${id ?? "new"}`, isDirty);
 
   const adopt = useCallback((next: Cohort) => {
     setCohort(next);

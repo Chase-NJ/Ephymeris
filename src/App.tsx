@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router";
+import { Navigate, Route, Routes } from "react-router";
 
 import { AppShell } from "./components/chrome/AppShell";
 import { Analytics } from "./routes/Analytics";
@@ -33,8 +33,13 @@ export default function App() {
         <Route path="/session/new" element={<SessionConfig />} />
         <Route path="/session/:id/mapping" element={<SessionMapping />} />
         <Route path="/session/:id/control" element={<MissionControl />} />
-        {/* Unknown routes fall back to the dashboard rather than a blank pane. */}
-        <Route path="*" element={<Dashboard />} />
+        {/* Unknown routes **redirect** to the dashboard rather than rendering
+            it under a foreign URL. Rendering it in place left the URL, the
+            route and the sidebar disagreeing: `Sidebar`'s Dashboard match is
+            `pathname === "/"`, so no tab lit — and the selection pill is a
+            shared `layoutId`, so it didn't just move, it unmounted. `replace`
+            keeps the dead URL out of history. */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
   );

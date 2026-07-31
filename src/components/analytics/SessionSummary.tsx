@@ -44,6 +44,7 @@ export function SessionSummary({
   runs,
   series,
   revealKey,
+  columns = "auto",
 }: {
   summary: AnalyticsSummary;
   profile: ProfileGroup | null;
@@ -52,6 +53,15 @@ export function SessionSummary({
   runs: RunSummary[];
   series: RunSeries[];
   revealKey: string;
+  /**
+   * How many animal cards sit side by side.
+   *
+   * `"auto"` is the dashboard's `xl:` breakpoint, which is a **viewport**
+   * query — fine on screen, wrong for a report sheet, whose own width has
+   * nothing to do with the window's. Left on auto, an export taken from a
+   * narrow window would silently come out one card wide (`data.md` §10.6).
+   */
+  columns?: 1 | 2 | "auto";
 }) {
   const names = useMemo(
     () => new Map(summary.animals.map((animal) => [animal.id, animal.name])),
@@ -101,7 +111,7 @@ export function SessionSummary({
         </span>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-2 xl:grid-cols-2">
+      <div className={`mt-3 grid gap-2 ${CARD_GRID[columns]}`}>
         {runs.map((run, index) => (
           <AnimalCard
             key={run.runId}
@@ -253,6 +263,14 @@ function describeEngagement(engagement: TrialEngagement): string {
     `${engagement.pokeAborted} poked, let go before odor delivery`
   );
 }
+
+/** Card columns per `SessionSummary`'s `columns` prop. Spelled out as whole
+ *  literals so Tailwind's scanner can see them. */
+const CARD_GRID = {
+  1: "grid-cols-1",
+  2: "grid-cols-2",
+  auto: "grid-cols-1 xl:grid-cols-2",
+} as const;
 
 /** Shared column template for the per-condition header and rows. */
 const CONDITION_GRID =

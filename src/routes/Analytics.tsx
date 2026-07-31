@@ -1,12 +1,25 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { ArchiveRestore, ChartLine, CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
+import {
+  ArchiveRestore,
+  ChartLine,
+  CircleAlert,
+  CircleCheck,
+  Download,
+  RefreshCw,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
 
 import { AnimalRail } from "@/components/analytics/AnimalRail";
 import { ChangeCohort, CohortLanding } from "@/components/analytics/CohortLanding";
 import { CohortHeatmap } from "@/components/analytics/CohortHeatmap";
+import type { ReportInput } from "@/components/analytics/report/ReportSheet";
+import {
+  reportFilename,
+  useExportReport,
+} from "@/components/analytics/report/useExportReport";
 import { EffortTrend } from "@/components/analytics/EffortTrend";
+import { Footnote } from "@/components/analytics/Footnote";
 import { LearningCurves } from "@/components/analytics/LearningCurves";
 import { OutcomeMix } from "@/components/analytics/OutcomeMix";
 import { ResponseTrend } from "@/components/analytics/ResponseTrend";
@@ -211,6 +224,39 @@ export function Analytics() {
   );
   const sessionSeries = useRunSeries(client, sessionRuns);
 
+  // §10.6 — the export composes the very panels above out of these same props,
+  // which is what keeps the PNG and the screen from drifting apart. The scope
+  // decides which sheet: exporting is a picture of what you are looking at, in
+  // the same spirit as §10.1's "selection is a filter, not navigation".
+  const exporter = useExportReport();
+  const reportInput = useMemo<ReportInput | null>(
+    () =>
+      summary
+        ? {
+            summary,
+            profile,
+            colors,
+            metricId: activeMetric,
+            cohortName: active?.name ?? "All cohorts",
+            revealKey,
+            session: selectedSession,
+            sessionRuns,
+            sessionSeries,
+          }
+        : null,
+    [
+      summary,
+      profile,
+      colors,
+      activeMetric,
+      active?.name,
+      revealKey,
+      selectedSession,
+      sessionRuns,
+      sessionSeries,
+    ],
+  );
+
   const folderWarning = summary?.warnings.find((w) => w.code === "data-folder-missing");
   const runWarnings = useMemo(
     () => summary?.warnings.filter((w) => w.code !== "data-folder-missing") ?? [],
@@ -353,8 +399,32 @@ export function Analytics() {
             <ArchiveRestore size={13} strokeWidth={1.75} />
             {recovering ? "Recovering…" : "Recover"}
           </Button>
+          {/* One button, following the scope, rather than two side by side:
+              which sheet you get is already answered by what you are looking
+              at, and the label says so outright. */}
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (reportInput) void exporter.run(reportInput, reportFilename(reportInput));
+            }}
+            disabled={!reportInput || exporter.busy || rescanning || recovering}
+            title={
+              selectedSession
+                ? "Save this session's panels as one PNG"
+                : "Save the across-session panels as one PNG"
+            }
+          >
+            <Download size={13} strokeWidth={1.75} />
+            {exporter.busy
+              ? "Exporting…"
+              : selectedSession
+                ? "Export session PNG"
+                : "Export cohort PNG"}
+          </Button>
         </div>
       </div>
+
+      {exporter.portal}
 
       {banner && (
         <button
@@ -395,6 +465,16 @@ export function Analytics() {
 
       {rescanNote && <p className="mt-3 font-mono text-[11px] text-static">{rescanNote}</p>}
 
+      {exporter.note && (
+        <button
+          type="button"
+          onClick={() => exporter.setNote(null)}
+          className="mt-3 block text-left font-mono text-[11px] text-static"
+        >
+          {exporter.note}
+        </button>
+      )}
+
       {connected && summary && (
         <div className="mt-5 flex flex-col gap-3">
           <SessionRail sessions={sessions} summary={summary} selected={sessionScope} />
@@ -423,77 +503,90 @@ export function Analytics() {
             </p>
           )}
 
+          {/* The rail shares a row with the strategy tile and nothing else.
+              It used to be one grid item beside the whole stack, which — grid
+              items stretching by default — drew it as tall as every panel to
+              its right combined, most of it empty. Everything below is now a
+              full-width sibling instead of being indented behind it. */}
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,224px)_minmax(0,1fr)]">
-            <AnimalRail
-              summary={summary}
-              profile={profile}
-              colors={colors}
-              metricId={activeMetric}
-            />
-            <div className="flex min-w-0 flex-col gap-3">
-              <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
-                {/* §4.4 — the two strategy panels share one plane and swap,
-                    never coexist: a line in one spans weeks and a line in the
-                    other spans an hour, and the frame cannot tell them apart. */}
-                {selectedSession ? (
-                  <SessionStrategy
-                    summary={summary}
-                    profile={profile}
-                    colors={colors}
-                    runs={sessionRuns}
-                    series={sessionSeries}
-                    revealKey={revealKey}
-                  />
-                ) : (
-                  <StrategySpace summary={summary} profile={profile} colors={colors} />
-                )}
-                <LearningCurves
+            {/* Stretches to the row so the rail has a height to cap against —
+                see `AnimalRail`'s `scroll`. */}
+            <div className="lg:relative">
+              <AnimalRail
+                summary={summary}
+                profile={profile}
+                colors={colors}
+                metricId={activeMetric}
+              />
+            </div>
+            <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
+              {/* §4.4 — the two strategy panels share one plane and swap,
+                  never coexist: a line in one spans weeks and a line in the
+                  other spans an hour, and the frame cannot tell them apart. */}
+              {selectedSession ? (
+                <SessionStrategy
                   summary={summary}
                   profile={profile}
                   colors={colors}
-                  sessionScope={sessionScope}
+                  runs={sessionRuns}
                   series={sessionSeries}
+                  revealKey={revealKey}
                 />
-              </div>
-              {/* The outcome trends are across-session by nature: one session
-                  has a single pooled figure, and the summary below shows that
-                  per animal instead of flattening it to a dot. All three share
-                  x slots (`sessionOutcomePoints`), so a session sits above
-                  itself in every panel. */}
-              {sessionScope === ALL_SESSIONS && (
-                <>
-                  <RewardedTrend
-                    summary={summary}
-                    profile={profile}
-                    colors={colors}
-                    revealKey={revealKey}
-                  />
-                  {/* Directly below rewarded accuracy, and full width like it:
-                      the two share x slots and a denominator, so the gap
-                      between the curves is the hold-failure rate — a reading
-                      that only survives if a session sits above itself and
-                      both plots are the same shape. */}
-                  <ResponseTrend
-                    summary={summary}
-                    profile={profile}
-                    colors={colors}
-                    revealKey={revealKey}
-                  />
-                  <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
-                    <EffortTrend summary={summary} profile={profile} revealKey={revealKey} />
-                    <OutcomeMix summary={summary} profile={profile} revealKey={revealKey} />
-                  </div>
-                </>
+              ) : (
+                <StrategySpace summary={summary} profile={profile} colors={colors} />
               )}
-              <CohortHeatmap
+              <LearningCurves
                 summary={summary}
                 profile={profile}
-                metricId={activeMetric}
+                colors={colors}
                 sessionScope={sessionScope}
-                revealKey={revealKey}
+                series={sessionSeries}
               />
             </div>
           </div>
+
+          {/* Full width, and directly under the rail: it is the one panel whose
+              width is set by how much archive there is rather than by its
+              container, so it is the one with something to do with the room. */}
+          <CohortHeatmap
+            summary={summary}
+            profile={profile}
+            metricId={activeMetric}
+            sessionScope={sessionScope}
+            revealKey={revealKey}
+          />
+
+          {/* The outcome trends are across-session by nature: one session
+              has a single pooled figure, and the summary below shows that
+              per animal instead of flattening it to a dot. All three share
+              x slots (`sessionOutcomePoints`), so a session sits above
+              itself in every panel — which is why these four stay a single
+              unbroken run and nothing may be inserted between them. */}
+          {sessionScope === ALL_SESSIONS && (
+            <>
+              <RewardedTrend
+                summary={summary}
+                profile={profile}
+                colors={colors}
+                revealKey={revealKey}
+              />
+              {/* Directly below rewarded accuracy, and full width like it:
+                  the two share x slots and a denominator, so the gap
+                  between the curves is the hold-failure rate — a reading
+                  that only survives if a session sits above itself and
+                  both plots are the same shape. */}
+              <ResponseTrend
+                summary={summary}
+                profile={profile}
+                colors={colors}
+                revealKey={revealKey}
+              />
+              <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
+                <EffortTrend summary={summary} profile={profile} revealKey={revealKey} />
+                <OutcomeMix summary={summary} profile={profile} revealKey={revealKey} />
+              </div>
+            </>
+          )}
 
           {/* Selecting a session opens it up: the cohort views compare
               sessions, this one is the inside of a single one. */}
@@ -578,34 +671,6 @@ function describeRecover(result: RecoverResult): string {
     }
   }
   return `${parts.join("; ")}.`;
-}
-
-function Footnote({
-  summary,
-  cohortName,
-  scope,
-}: {
-  summary: AnalyticsSummary;
-  cohortName: string;
-  scope: string;
-}) {
-  const fallback = summary.runs.filter((run) => run.profileSource === "sketch-current").length;
-  return (
-    <p className="px-1 font-mono text-[10px] leading-relaxed text-static/70">
-      {cohortName} · {summary.counts.decoded} of {summary.counts.runs} runs scored ·{" "}
-      {scope === ALL_SESSIONS ? "all sessions" : "one session"} · fewer than{" "}
-      {summary.minCountedTrials} scored trials shows as a count, not a probability
-      {fallback > 0 && (
-        <>
-          {" · "}
-          <span style={{ color: "var(--color-status-warning)" }}>
-            {fallback} run{fallback === 1 ? "" : "s"} decoded with the current
-            task.json, which may have changed since
-          </span>
-        </>
-      )}
-    </p>
-  );
 }
 
 function Notice({ children }: { children: ReactNode }) {

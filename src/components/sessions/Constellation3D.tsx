@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 
 import { GL } from "@/components/chrome/constellationStyle";
 import {
@@ -7,22 +7,23 @@ import {
   type SceneNode,
 } from "@/components/constellation3d/Scene";
 import { StellarSurface } from "@/components/constellation3d/StellarSurface";
+import { useRigSky } from "@/components/constellation3d/useRigSky";
 import { assignShips } from "@/lib/constellations/ships";
-import { layoutFor } from "@/lib/constellations/slots";
-import { zodiacById } from "@/lib/constellations/zodiac";
-import { buildSky } from "@/lib/sessions/stars";
-import { useBoundBoxes, useSettings } from "@/lib/settings/context";
 
 /**
  * The 3D constellation (`dashboard.md` §9).
  *
- * **The scene is the rig's own asterism.** Whatever zodiac Box Setup chose, and
- * whichever star each box was slotted onto, is exactly what gets drawn here —
- * the same `box → star` map the sidebar widget and Debug Mode read (§6.1). An
- * animal stands on its box's star; unoccupied stars of the asterism are still
+ * **The scene is the rig's own asterism** — the very same one the Dashboard and
+ * Debug Mode draw, resolved through the very same `useRigSky`. Whatever zodiac
+ * Box Setup chose, and whichever star each box was slotted onto, is exactly what
+ * gets drawn here (§6.1); an install that never ran Box Setup gets
+ * `legacyLayout`, which pins a position per box number. There is no second
+ * placement mode and no second sky — see the caution in `stars.ts`.
+ *
+ * An animal stands on its box's star. Unoccupied stars of the asterism are still
  * drawn, faint, because a rig with two boxes would otherwise show two dots and
- * no constellation at all. An install that never ran Box Setup falls back to
- * the original seeded placement.
+ * no constellation at all — and an animal with **no** box in the running group
+ * gets no star, because it is not on the rig the sky is a picture of.
  *
  * Camera, controls and the whole animation grammar live in
  * `constellation3d/Scene` and are shared with Debug Mode. What this file owns
@@ -60,72 +61,48 @@ export function Constellation3D({
   focusedId: string | null;
   onFocus: (animalId: string | null) => void;
 }) {
-  const { settings } = useSettings();
-  const bound = useBoundBoxes();
-
-  // The chosen asterism, slotted exactly as the sidebar widget slots it. Note
-  // this reconciles against *bound* boxes, not the session's boxes: a box's
-  // star is a property of the rig, so it must not move because a group only
-  // runs three of the six.
-  const constellation = zodiacById(settings.constellation);
-  const layout = useMemo(
-    () =>
-      constellation
-        ? layoutFor(constellation, settings.constellationSlots, bound)
-        : null,
-    [constellation, settings.constellationSlots, bound],
+  // The rig's own sky, resolved the one way every view resolves it
+  // (`useRigSky`). An animal stands on its box's star; an animal with no box in
+  // this group has no star at all, because the sky is the rig.
+  const occupants = useMemo(
+    () => animals.map((a) => ({ occupantId: a.animalId, box: a.box ?? null })),
+    [animals],
   );
-
-  // Keyed on placement alone, deliberately. `animals` takes a fresh identity on
-  // every telemetry batch — star temperature rides on it, at the sidecar's
-  // 20 Hz — and nothing in a temperature moves a star. Rebuilding the sky at
-  // that rate would churn a `BufferGeometry` per link per frame and, far worse,
-  // retrigger the camera rig: the view would snap back to the overview several
-  // times a second, which makes orbiting and panning both useless.
-  const placementKey = animals.map((a) => `${a.animalId}:${a.box ?? ""}`).join("|");
-  const animalsRef = useRef(animals);
-  animalsRef.current = animals;
-  const sky = useMemo(
-    () =>
-      buildSky(
-        cohortId,
-        animalsRef.current.map((a) => ({ occupantId: a.animalId, box: a.box ?? null })),
-        layout,
-        constellation?.id ?? "",
-      ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cohortId, placementKey, layout, constellation],
-  );
+  const sky = useRigSky(occupants);
 
   const byId = useMemo(() => new Map(animals.map((a) => [a.animalId, a])), [animals]);
 
   // Cagemates share one ship, and the ship orbits the box of its running —
-  // else most recently ran — crew member (`ships.ts`). Zodiac mode only:
-  // there a star *is* the box, so a ship says "this cage lives here". In the
-  // seeded fallback the star is the animal itself, and a craft orbiting its
-  // own namesake would just repeat the nameplate.
+  // else most recently ran — crew member (`ships.ts`). Unconditional now that a
+  // star is always the box: a ship says "this cage lives here", which only meant
+  // anything once the star stopped being the animal itself. (It used to stand
+  // down in the seeded fallback, where a craft would have orbited its own
+  // namesake and just repeated the nameplate.)
   const ships = useMemo(
     () =>
-      layout === null
-        ? null
-        : assignShips(
-            animals.map((a) => ({
-              id: a.animalId,
-              name: a.name,
-              cage: a.cage ?? null,
-              box: a.box ?? null,
-              running: a.lit,
-              lastRunAt: a.lastRunAt ?? null,
-              lastRunBox: a.lastRunBox ?? null,
-            })),
-          ),
-    [animals, layout],
+      assignShips(
+        animals.map((a) => ({
+          id: a.animalId,
+          name: a.name,
+          // This view only ever holds one cohort, so it cannot collide on
+          // its own — but the key format is shared, and a crew must get the
+          // same id here as it does in the rig views or the same cage would
+          // seed a different orbit in each.
+          cohortId,
+          cage: a.cage ?? null,
+          box: a.box ?? null,
+          running: a.lit,
+          lastRunAt: a.lastRunAt ?? null,
+          lastRunBox: a.lastRunBox ?? null,
+        })),
+      ),
+    [animals, cohortId],
   );
 
-  const nodes: SceneNode[] = sky.points.map((point, index) => {
+  const nodes: SceneNode[] = sky.points.map((point) => {
     if (point.occupantId === null) {
       return {
-        id: `star-${point.star ?? index}`,
+        id: `star-${point.star}`,
         position: point.position,
         radius: point.radius,
         active: false,
@@ -144,17 +121,37 @@ export function Constellation3D({
       // The cage-ships whose anchor rule chose this box ride in orbit around
       // its star, each tagged with its whole crew — a running crew orbits and
       // strobes, a parked one holds its bearing (`Orbiters.tsx`, `ships.ts`).
-      orbiters:
-        ships === null || point.box === null ? undefined : ships.get(point.box),
-      body: lit ? (
-        <StellarSurface radius={point.radius} accuracy={animal?.accuracy ?? null} />
-      ) : (
-        // An unlit star stays a flat matte dot — it has no performance to
-        // report, and giving it a surface would imply it were running (§6.2).
-        <mesh>
-          <sphereGeometry args={[point.radius, 20, 20]} />
-          <meshBasicMaterial color={GL.pulsar} transparent opacity={0.34} />
-        </mesh>
+      orbiters: point.box === null ? undefined : ships.get(point.box),
+      /*
+       * **A star is a star whether or not it is recording.**
+       *
+       * An unlit box used to render as a flat matte dot, on the reasoning that a
+       * surface would imply it were running. In practice it read as a
+       * placeholder — the whole setup phase, before Start All, showed a sky of
+       * dots — and it was the last thing making this view look like a different
+       * sky from the Dashboard's: the same box was a dot here and a full star
+       * there, so navigating between them changed what the star *was*, which no
+       * amount of easing the camera can smooth over.
+       *
+       * So it takes Debug's treatment for a box that is bound but not on the bus
+       * (§4.1): **burned down and frozen**. Stillness and dimness are the status,
+       * and neither is a colour — the temperature it earned still reads, which a
+       * dot could not show at all. The `dim` scale rides the existing colour
+       * lerp, so starting a box fades it up rather than popping it.
+       */
+      body: (
+        <StellarSurface
+          radius={point.radius}
+          accuracy={animal?.accuracy ?? null}
+          churn={lit}
+          dim={!lit}
+          // **The box, not the animal.** A star is the box in every view now, so
+          // its rotation belongs to the box too — seeded on the occupant, box 3
+          // turned one way with an animal on it here and another as itself in
+          // Debug, and the spin visibly re-seeded on every navigation between
+          // them. The same reasoning `buildSky` applies to radius.
+          seed={point.box === null ? undefined : `box:${point.box}`}
+        />
       ),
     };
   });
@@ -171,9 +168,22 @@ export function Constellation3D({
       links={links}
       focusedId={focusedId}
       onFocus={onFocus}
-      // Keyed by cohort: navigating away from Mission Control mid-run and back
-      // returns to the same camera, not the overview (`viewMemory.ts`).
-      persistKey={`cohort:${cohortId}`}
+      /*
+       * No camera key, because there is nothing to key. The camera is one
+       * permanent object (`Scene.tsx`), so a view does not remember a pose or
+       * restore one — it inherits whatever the last view left, and eases to the
+       * overview if it arrives with nothing focused.
+       *
+       * That used to be a `persistKey`, conditional on whether a constellation
+       * had been chosen: `"rig"` if so, `cohort:<id>` if not, because the
+       * fallback drew a per-animal sky the rig's pose pointed nowhere into.
+       * Unifying the skies removed the second case and the permanent camera
+       * removed the mechanism.
+       *
+       * Focus is still this view's own state. Selection is separate
+       * (`rigSelection`) and is the rig's alone, so a focused box never leaks in
+       * as a focused animal.
+       */
     />
   );
 }

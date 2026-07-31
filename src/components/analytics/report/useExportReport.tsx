@@ -1,0 +1,118 @@
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+
+import { useAnalyticsStore } from "@/lib/analytics/context";
+
+import { captureSheet, saveSheet, slug } from "./capture";
+import { ReportSheet, type ReportInput } from "./ReportSheet";
+
+/**
+ * Mount a report sheet, rasterize it, save it, take it back down
+ * (`data.md` §10.6).
+ *
+ * Returns the portal to render and a `run` to call. The caller renders
+ * `portal` unconditionally; it is `null` except during an export.
+ */
+export function useExportReport() {
+  const store = useAnalyticsStore();
+  const [pending, setPending] = useState<ReportInput | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const readyRef = useRef<(() => void) | null>(null);
+  // Guards a second click while the first export is still in the air, and
+  // StrictMode's double-invoked effects in development.
+  const runningRef = useRef(false);
+
+  // The sheet is in the document and laid out — hand control back to `run`.
+  useEffect(() => {
+    if (!pending || !sheetRef.current) return;
+    const resolve = readyRef.current;
+    readyRef.current = null;
+    resolve?.();
+  }, [pending]);
+
+  const run = useCallback(
+    async (input: ReportInput, filename: string) => {
+      if (runningRef.current) return;
+      runningRef.current = true;
+      setBusy(true);
+      setNote(null);
+
+      // A pinned animal dims every other one to near-invisibility across the
+      // strategy planes, the learning curves and both accuracy trends — it is
+      // the dashboard's "show me this one" mode, and it would export as a
+      // figure that is mostly blank. Cleared for the duration and put back
+      // afterwards, since the reader did not ask to lose their selection.
+      const pinned = store.getPinnedAnimal();
+      if (pinned) store.selectAnimal(null);
+
+      try {
+        await new Promise<void>((resolve) => {
+          readyRef.current = resolve;
+          setPending(input);
+        });
+        const node = sheetRef.current;
+        if (!node) throw new Error("the report sheet did not mount");
+
+        const blob = await captureSheet(node);
+        const path = await saveSheet(blob, filename);
+        // Cancelling the dialog is an outcome, not a failure: say nothing.
+        setNote(path ? `Saved ${path}` : null);
+      } catch (error) {
+        setNote(error instanceof Error ? error.message : String(error));
+      } finally {
+        setPending(null);
+        if (pinned) store.selectAnimal(pinned);
+        setBusy(false);
+        runningRef.current = false;
+      }
+    },
+    [store],
+  );
+
+  const portal: ReactNode = pending
+    ? createPortal(
+        // Off the side of the window rather than hidden. `display: none` has
+        // no layout to measure and `visibility: hidden` is faithfully copied
+        // onto the clone — both rasterize to nothing. Moving it out of view
+        // leaves a fully laid-out, fully painted subtree that simply isn't
+        // where anyone is looking.
+        //
+        // A portal, but still inside the React tree, so the panels keep the
+        // analytics store, the sidecar client and the settings they expect.
+        <div
+          aria-hidden
+          style={{
+            position: "fixed",
+            top: 0,
+            left: -20000,
+            pointerEvents: "none",
+            zIndex: -1,
+          }}
+        >
+          <ReportSheet input={pending} ref={sheetRef} />
+        </div>,
+        document.body,
+      )
+    : null;
+
+  return { run, portal, busy, note, setNote };
+}
+
+/**
+ * What the file gets called. Cohort and task lead so a folder of these sorts
+ * into something readable, and the date is ISO for the same reason.
+ */
+export function reportFilename(input: ReportInput): string {
+  const parts = [slug(input.cohortName), slug(input.profile?.taskName ?? "task")];
+  if (input.session) {
+    parts.push(
+      `${slug(input.session.prefixName)}-${slug(input.session.sessionNumber)}`,
+      slug(input.session.date),
+    );
+  } else {
+    parts.push("all-sessions", new Date().toISOString().slice(0, 10));
+  }
+  return `${parts.join("_")}.png`;
+}

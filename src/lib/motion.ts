@@ -33,3 +33,13 @@ export const springModal: Transition = {
   damping: 30,
   mass: 1,
 };
+
+/**
+ * How far a right-docked panel travels as it enters or leaves, in px.
+ *
+ * Shared so a panel and whatever it *replaces* move the same distance on the
+ * same spring — the Dashboard's overview column leaving toward +x while Debug's
+ * `NodeDetail` arrives from +x is what makes a star click read as one panel
+ * being swapped rather than one thing blinking out and another appearing.
+ */
+export const PANEL_TRAVEL = 24;

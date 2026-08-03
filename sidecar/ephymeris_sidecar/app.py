@@ -133,6 +133,7 @@ class Application:
         #: One compile at a time — see _specs_compile for why this is not
         #: an optimisation.
         self._spec_compile_gate = asyncio.Semaphore(1)
+        self.spec_store = spec_store.SpecStore(data_dir)
 
     # --- lifecycle --------------------------------------------------------
 
@@ -189,6 +190,9 @@ class Application:
         self.server.register(Cmd.SPECS_SCHEMA, self._specs_schema)
         self.server.register(Cmd.SPECS_COMPILE, self._specs_compile)
         self.server.register(Cmd.SPECS_CAPABILITIES, self._specs_capabilities)
+        self.server.register(Cmd.SPECS_SAVE, self._specs_save)
+        self.server.register(Cmd.SPECS_DELETE, self._specs_delete)
+        self.server.register(Cmd.SPECS_ACKNOWLEDGE_UPSTREAM, self._specs_acknowledge_upstream)
 
         self.server.on_client_ready(self._replay_state)
 
@@ -320,7 +324,7 @@ class Application:
         await send(event(Evt.COHORTS_UPDATED, {"cohorts": await self._cohort_summaries()}))
         await send(event(Evt.PREFIXES_UPDATED, {"prefixes": await self._prefix_list()}))
         if spec_compiler.available()[0]:
-            await send(event(Evt.SPECS_UPDATED, {"specs": spec_store.list_entries()}))
+            await send(event(Evt.SPECS_UPDATED, {"specs": self.spec_store.list_entries()}))
         if self.utility is not None:
             await send(event(Evt.UTILITY_UPDATED, self.utility.status()))
         if self.backup is not None:
@@ -745,12 +749,12 @@ class Application:
 
     async def _specs_list(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
         self._require_spec_compiler()
-        return {"specs": await asyncio.to_thread(spec_store.list_entries)}
+        return {"specs": await asyncio.to_thread(self.spec_store.list_entries)}
 
     async def _specs_get(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         self._require_spec_compiler()
         spec_id = _str_arg(args, "specId")
-        record = await asyncio.to_thread(spec_store.get, spec_id)
+        record = await asyncio.to_thread(self.spec_store.get, spec_id)
         if record is None:
             raise CommandError(
                 ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
@@ -803,6 +807,86 @@ class Application:
             # An unknown template name or a malformed knob is a caller mistake,
             # not a compile diagnostic -- there is no document to diagnose.
             raise CommandError(ErrCode.SPEC_INVALID, str(exc)) from exc
+
+    async def _broadcast_specs(self) -> None:
+        await self.server.broadcast(
+            event(
+                Evt.SPECS_UPDATED,
+                {"specs": await asyncio.to_thread(self.spec_store.list_entries)},
+            )
+        )
+
+    async def _specs_save(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        spec_id = _str_arg(args, "specId")
+        text = args.get("text")
+        if not isinstance(text, str):
+            raise CommandError(ErrCode.SPEC_INVALID, "`text` must be a string.")
+        if len(text.encode("utf-8", errors="ignore")) > spec_store.MAX_SPEC_BYTES:
+            raise CommandError(
+                ErrCode.SPEC_INVALID,
+                f"The document is over {spec_store.MAX_SPEC_BYTES // 1024} KB — "
+                "that is not a task spec.",
+            )
+        # A document whose own spec_id disagrees with the file it lands in
+        # would poison provenance: the id names the file, the table, and what a
+        # board reports back after an upload. A HALF-BUILT document (no parse,
+        # or no spec_id yet) is fine — the filename stem is its identity, which
+        # is exactly the loader's own default.
+        raw = await asyncio.to_thread(spec_store.parse_document, text)
+        declared = raw.get("spec_id") if isinstance(raw, dict) else None
+        if isinstance(declared, str) and declared != spec_id:
+            raise CommandError(
+                ErrCode.SPEC_INVALID,
+                f"The document says `spec_id: {declared}` but is being saved as "
+                f"{spec_id!r}. Change one to match the other — the frontend "
+                "saves under the document's own id, so this usually means a "
+                "stale client.",
+            )
+        try:
+            record = await asyncio.to_thread(self.spec_store.save, spec_id, text)
+        except spec_store.SpecIdInvalid as exc:
+            raise CommandError(ErrCode.SPEC_INVALID, str(exc)) from exc
+        entry = await asyncio.to_thread(self.spec_store.entry_for, record)
+        # Saving always compiles — not as a gate (a half-finished spec must be
+        # savable; the gate is upload), but because the caller is about to
+        # render the result anyway and this keeps save and display in one
+        # round trip.
+        async with self._spec_compile_gate:
+            result = await asyncio.to_thread(spec_service.compile_payload, text, spec_id)
+        await self._broadcast_specs()
+        return {"entry": entry, "result": result}
+
+    async def _specs_delete(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        spec_id = _str_arg(args, "specId")
+        if self.spec_store.get(spec_id) is None:
+            raise CommandError(
+                ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
+            )
+        try:
+            record = await asyncio.to_thread(self.spec_store.delete, spec_id)
+        except spec_store.SpecReadOnly as exc:
+            raise CommandError(ErrCode.SPEC_READONLY, str(exc), {"specId": spec_id}) from exc
+        entry = (
+            await asyncio.to_thread(self.spec_store.entry_for, record)
+            if record is not None
+            else None
+        )
+        await self._broadcast_specs()
+        return {"entry": entry}
+
+    async def _specs_acknowledge_upstream(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        spec_id = _str_arg(args, "specId")
+        record = await asyncio.to_thread(self.spec_store.acknowledge_upstream, spec_id)
+        if record is None:
+            raise CommandError(
+                ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
+            )
+        entry = await asyncio.to_thread(self.spec_store.entry_for, record)
+        await self._broadcast_specs()
+        return {"entry": entry}
 
     # --- backup (data.md §7) ---------------------------------------
 

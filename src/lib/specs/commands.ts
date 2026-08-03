@@ -43,3 +43,25 @@ export async function getCapabilities(
 ): Promise<SpecCapabilities> {
   return await client.call(CMD.SPECS_CAPABILITIES, { topology });
 }
+
+export async function saveSpec(
+  client: SidecarClient,
+  specId: string,
+  text: string,
+): Promise<{ entry: SpecEntry; result: SpecCompileResult }> {
+  return await client.call(CMD.SPECS_SAVE, { specId, text });
+}
+
+export async function deleteSpec(
+  client: SidecarClient,
+  specId: string,
+): Promise<{ entry: SpecEntry | null }> {
+  return await client.call(CMD.SPECS_DELETE, { specId });
+}
+
+export async function acknowledgeUpstream(
+  client: SidecarClient,
+  specId: string,
+): Promise<{ entry: SpecEntry }> {
+  return await client.call(CMD.SPECS_ACKNOWLEDGE_UPSTREAM, { specId });
+}

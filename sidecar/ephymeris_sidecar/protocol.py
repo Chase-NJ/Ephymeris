@@ -91,6 +91,9 @@ class Cmd:
     SPECS_SCHEMA: Final = "specs.schema"
     SPECS_COMPILE: Final = "specs.compile"
     SPECS_CAPABILITIES: Final = "specs.capabilities"
+    SPECS_SAVE: Final = "specs.save"
+    SPECS_DELETE: Final = "specs.delete"
+    SPECS_ACKNOWLEDGE_UPSTREAM: Final = "specs.acknowledgeUpstream"
 
 
 ALL_COMMANDS: Final[frozenset[str]] = frozenset(
@@ -151,6 +154,7 @@ class ErrCode:
     SPEC_NOT_FOUND: Final = "SPEC_NOT_FOUND"
     SPEC_INVALID: Final = "SPEC_INVALID"
     SPEC_COMPILER_UNAVAILABLE: Final = "SPEC_COMPILER_UNAVAILABLE"
+    SPEC_READONLY: Final = "SPEC_READONLY"
     INTERNAL: Final = "INTERNAL"
 
 
@@ -248,7 +252,7 @@ SHAPES: Final[dict[str, Any]] = {
     "PrefixesUpdatedData": ('obj', (('prefixes', ('list', ('ref', 'Prefix')), False),)),
     "SidecarErrorData": ('obj', (('code', 'str', False), ('message', 'str', False), ('detail', 'any', False))),
     "SpecOrigin": ('lit', ('shipped', 'shipped_edited', 'user')),
-    "SpecEntry": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('description', ('union', ('str', 'null')), False), ('origin', ('ref', 'SpecOrigin'), False), ('template', ('union', ('str', 'null')), False), ('templateVersion', ('union', ('int', 'null')), False))),
+    "SpecEntry": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('description', ('union', ('str', 'null')), False), ('origin', ('ref', 'SpecOrigin'), False), ('template', ('union', ('str', 'null')), False), ('templateVersion', ('union', ('int', 'null')), False), ('upstreamChanged', 'bool', False), ('editedAt', ('union', ('str', 'null')), False))),
     "SpecDiagnostic": ('obj', (('code', 'str', False), ('severity', ('lit', ('INFO', 'WARN', 'ERROR')), False), ('message', 'str', False), ('location', ('union', ('str', 'null')), False), ('placement', ('lit', ('field', 'row', 'section', 'node', 'document')), False), ('anchor', ('union', ('str', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('help', ('union', ('str', 'null')), False), ('decision', ('union', ('str', 'null')), False))),
     "SpecGraphNode": ('obj', (('index', 'int', False), ('symbol', 'str', False), ('label', 'str', False), ('band', 'int', False), ('type', ('lit', ('DELAY', 'WAIT_ENTRY', 'HOLD', 'WAIT_EXIT', 'PULSE', 'TERMINAL')), False), ('durationId', ('union', ('str', 'null')), False), ('durationMs', ('union', ('int', 'null')), False), ('strobeName', ('union', ('str', 'null')), False), ('strobe', ('union', ('int', 'null')), False), ('silentByDesign', 'bool', False), ('watch', ('list', 'str'), False))),
     "SpecGraphEdge": ('obj', (('index', 'int', False), ('src', 'int', False), ('dst', 'int', False), ('trigger', ('lit', ('TIMEOUT', 'ENTER', 'HELD', 'BROKEN', 'EXIT', 'DONE', 'ADVANCE', 'REPEAT')), False), ('guard', ('union', ('str', 'null')), False), ('channel', ('union', ('str', 'null')), False), ('effect', ('union', ('str', 'null')), False))),
@@ -309,6 +313,9 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "specs.schema": ('obj', ()),
     "specs.compile": ('obj', (('text', 'str', False), ('specId', 'str', True))),
     "specs.capabilities": ('obj', (('topology', 'any', False),)),
+    "specs.save": ('obj', (('specId', 'str', False), ('text', 'str', False))),
+    "specs.delete": ('obj', (('specId', 'str', False),)),
+    "specs.acknowledgeUpstream": ('obj', (('specId', 'str', False),)),
 }
 
 COMMAND_RESULTS: Final[dict[str, Any]] = {
@@ -361,6 +368,9 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "specs.schema": ('obj', (('schema', 'any', False), ('overlay', 'any', False), ('strobes', 'any', False), ('channels', 'any', False), ('limits', 'any', False), ('templates', ('list', ('obj', (('name', 'str', False), ('version', 'int', False), ('sourceHash', 'str', False)))), False))),
     "specs.compile": ('ref', 'SpecCompileResult'),
     "specs.capabilities": ('ref', 'SpecCapabilities'),
+    "specs.save": ('obj', (('entry', ('ref', 'SpecEntry'), False), ('result', ('ref', 'SpecCompileResult'), False))),
+    "specs.delete": ('obj', (('entry', ('union', (('ref', 'SpecEntry'), 'null')), False),)),
+    "specs.acknowledgeUpstream": ('obj', (('entry', ('ref', 'SpecEntry'), False),)),
 }
 
 EVENT_DATA: Final[dict[str, Any]] = {

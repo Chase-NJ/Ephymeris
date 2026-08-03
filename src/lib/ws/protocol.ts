@@ -78,6 +78,9 @@ export const CMD = {
   SPECS_SCHEMA: "specs.schema",
   SPECS_COMPILE: "specs.compile",
   SPECS_CAPABILITIES: "specs.capabilities",
+  SPECS_SAVE: "specs.save",
+  SPECS_DELETE: "specs.delete",
+  SPECS_ACKNOWLEDGE_UPSTREAM: "specs.acknowledgeUpstream",
 } as const;
 
 export type CommandName = (typeof CMD)[keyof typeof CMD];
@@ -132,6 +135,7 @@ export const ERR = {
   SPEC_NOT_FOUND: "SPEC_NOT_FOUND",
   SPEC_INVALID: "SPEC_INVALID",
   SPEC_COMPILER_UNAVAILABLE: "SPEC_COMPILER_UNAVAILABLE",
+  SPEC_READONLY: "SPEC_READONLY",
   INTERNAL: "INTERNAL",
 } as const;
 
@@ -1104,6 +1108,14 @@ export interface SpecEntry {
   origin: SpecOrigin;
   template: string | null;
   templateVersion: number | null;
+  /**
+   * A shipped_edited spec whose BUNDLED bytes moved since the user's copy was made — i.e. an app
+   * update changed the shipped version underneath a local edit. Never merged automatically; the
+   * user chooses Keep mine (specs.acknowledgeUpstream) or Reset to shipped (specs.delete).
+   */
+  upstreamChanged: boolean;
+  /** ISO-8601; null for a pure shipped spec. */
+  editedAt: string | null;
 }
 
 export interface SpecDiagnostic {
@@ -1284,6 +1296,9 @@ export interface CommandArgsMap {
   "specs.schema": Record<string, never>;
   "specs.compile": { text: string; specId?: string };
   "specs.capabilities": { topology: unknown };
+  "specs.save": { specId: string; text: string };
+  "specs.delete": { specId: string };
+  "specs.acknowledgeUpstream": { specId: string };
 }
 
 /** The `result` field of each command's ok-reply. */
@@ -1337,6 +1352,9 @@ export interface CommandResultMap {
   "specs.schema": { schema: unknown; overlay: unknown; strobes: unknown; channels: unknown; limits: unknown; templates: Array<{ name: string; version: number; sourceHash: string }> };
   "specs.compile": SpecCompileResult;
   "specs.capabilities": SpecCapabilities;
+  "specs.save": { entry: SpecEntry; result: SpecCompileResult };
+  "specs.delete": { entry: SpecEntry | null };
+  "specs.acknowledgeUpstream": { entry: SpecEntry };
 }
 
 /** The `data` field of each event. */

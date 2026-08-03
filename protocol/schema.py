@@ -1091,6 +1091,16 @@ SHAPES = (
             f("origin", Ref("SpecOrigin")),
             f("template", nullable(STR)),
             f("templateVersion", nullable(INT)),
+            f(
+                "upstreamChanged",
+                BOOL,
+                doc="A shipped_edited spec whose BUNDLED bytes moved since the "
+                "user's copy was made — i.e. an app update changed the shipped "
+                "version underneath a local edit. Never merged automatically; "
+                "the user chooses Keep mine (specs.acknowledgeUpstream) or Reset "
+                "to shipped (specs.delete).",
+            ),
+            f("editedAt", nullable(STR), doc="ISO-8601; null for a pure shipped spec."),
         ),
         doc="A row in the spec list. Built from a cheap parse — never a compile — "
         "so `specs.list` stays instant however many specs exist.",
@@ -1645,6 +1655,45 @@ COMMANDS = (
         "knob change. This is what re-gates the timing rows and outcome cards "
         "before any compile returns.",
     ),
+    Command(
+        "specs.save",
+        args=obj(
+            f("specId", STR, doc="The save target — the frontend passes the "
+              "document's own spec_id, so renaming the id and saving creates a "
+              "copy rather than moving a file."),
+            f("text", STR),
+        ),
+        result=obj(f("entry", Ref("SpecEntry")), f("result", Ref("SpecCompileResult"))),
+        doc="ALWAYS saves, even with ERROR diagnostics — a half-finished spec "
+        "must be savable; the gate is upload, not save. Writes go under the "
+        "sidecar's own app-data dir, like session files and ephymeris.db — no "
+        "Tauri fs capability is involved. Saving over a shipped spec's id "
+        "shadows it (origin becomes shipped_edited) after the shipped bytes are "
+        "copied to a baseline, which is what Reset to shipped restores — "
+        "comments and all, since the shipped file itself is never modified.",
+    ),
+    Command(
+        "specs.delete",
+        args=obj(f("specId", STR)),
+        result=obj(
+            f(
+                "entry",
+                nullable(Ref("SpecEntry")),
+                doc="Null when the spec is gone (a user spec); the now-shipped "
+                "entry when deleting a shadow restored the bundled version.",
+            ),
+        ),
+        doc="For a user spec: delete. For shipped_edited: Reset to shipped — "
+        "removes the user copy and its baseline. For shipped: SPEC_READONLY.",
+    ),
+    Command(
+        "specs.acknowledgeUpstream",
+        args=obj(f("specId", STR)),
+        result=obj(f("entry", Ref("SpecEntry"))),
+        doc="Keep mine: re-baseline a shipped_edited spec against the CURRENT "
+        "bundled bytes, clearing upstreamChanged until the next app update "
+        "moves them again. Nothing is merged and nothing is overwritten.",
+    ),
 )
 
 
@@ -1740,6 +1789,11 @@ ERRORS = (
         "The vendored Task-Graph compiler failed to import (README.md §6.4). "
         "detail carries the ImportError. The legacy task.json path and the "
         "session flow are unaffected.",
+    ),
+    ErrorCode(
+        "SPEC_READONLY",
+        "specs.delete on a purely shipped spec. The bundled file is part of the "
+        "install; editing it goes through save (which shadows it), not delete.",
     ),
     ErrorCode("INTERNAL", "Unhandled sidecar exception; also carried by sidecar.error."),
 )

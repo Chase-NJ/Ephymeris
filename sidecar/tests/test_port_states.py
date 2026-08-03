@@ -25,13 +25,18 @@ S = PortState
 LEGAL_EDGES = {
     (S.IDLE, S.PASSTHROUGH),
     (S.IDLE, S.FLASHING),
+    (S.IDLE, S.UPLOADING),
     (S.IDLE, S.RESETTING),
     (S.IDLE, S.IN_SESSION),
     (S.PASSTHROUGH, S.IDLE),
     (S.PASSTHROUGH, S.FLASHING),
+    (S.PASSTHROUGH, S.UPLOADING),
     (S.PASSTHROUGH, S.RESETTING),
     (S.FLASHING, S.IDLE),
     (S.FLASHING, S.PASSTHROUGH),
+    # UPLOADING mirrors FLASHING exactly, auto-resume included (`specs.md`).
+    (S.UPLOADING, S.IDLE),
+    (S.UPLOADING, S.PASSTHROUGH),
     (S.RESETTING, S.IDLE),
     (S.RESETTING, S.PASSTHROUGH),
     (S.IN_SESSION, S.IDLE),
@@ -60,9 +65,17 @@ def test_every_undocumented_edge_is_rejected(edge: tuple[PortState, PortState]) 
 
 
 def test_in_session_is_exclusive_with_every_other_operation() -> None:
-    """§3.3 — nothing may flash, reset, or open passthrough during a session."""
-    for target in (S.PASSTHROUGH, S.FLASHING, S.RESETTING):
+    """§3.3 — nothing may flash, reset, upload, or open passthrough mid-session."""
+    for target in (S.PASSTHROUGH, S.FLASHING, S.UPLOADING, S.RESETTING):
         assert not can_transition(S.IN_SESSION, target)
+
+
+def test_a_table_upload_cannot_reach_a_session() -> None:
+    """A table transfer during a run is nonsense in both directions —
+    and the door from a spec to a session stays closed structurally, not
+    just by UI (`specs.md`)."""
+    assert not can_transition(S.UPLOADING, S.IN_SESSION)
+    assert not can_transition(S.IN_SESSION, S.UPLOADING)
 
 
 def test_a_session_can_only_start_from_idle() -> None:

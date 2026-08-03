@@ -97,6 +97,11 @@ class Cmd:
     SPECS_DIFF: Final = "specs.diff"
     SPECS_EXPORT: Final = "specs.export"
 
+    # Bench boxes (specs.md)
+    BOARD_CAPABILITIES: Final = "board.capabilities"
+    BOARD_UPLOAD_TABLE: Final = "board.uploadTable"
+    UTILITY_BENCH_HOLD: Final = "utility.benchHold"
+
 
 ALL_COMMANDS: Final[frozenset[str]] = frozenset(
     v for k, v in vars(Cmd).items() if not k.startswith("_") and isinstance(v, str)
@@ -122,6 +127,7 @@ class Evt:
     ANALYTICS_PROGRESS: Final = "analytics.progress"
     SIDECAR_ERROR: Final = "sidecar.error"
     SPECS_UPDATED: Final = "specs.updated"
+    UPLOAD_PROGRESS: Final = "upload.progress"
 
 
 ALL_EVENTS: Final[frozenset[str]] = frozenset(
@@ -157,6 +163,8 @@ class ErrCode:
     SPEC_INVALID: Final = "SPEC_INVALID"
     SPEC_COMPILER_UNAVAILABLE: Final = "SPEC_COMPILER_UNAVAILABLE"
     SPEC_READONLY: Final = "SPEC_READONLY"
+    UPLOAD_REFUSED: Final = "UPLOAD_REFUSED"
+    UPLOAD_FAILED: Final = "UPLOAD_FAILED"
     INTERNAL: Final = "INTERNAL"
 
 
@@ -173,7 +181,7 @@ ALL_ERROR_CODES: Final[frozenset[str]] = frozenset(
 # ("obj", ((field, spec, optional), ...)).
 
 SHAPES: Final[dict[str, Any]] = {
-    "PortStateName": ('lit', ('IDLE', 'PASSTHROUGH', 'FLASHING', 'RESETTING', 'IN_SESSION', 'ERROR')),
+    "PortStateName": ('lit', ('IDLE', 'PASSTHROUGH', 'FLASHING', 'UPLOADING', 'RESETTING', 'IN_SESSION', 'ERROR')),
     "OutputLine": ('obj', (('dir', ('lit', ('rx', 'tx')), False), ('text', 'str', False), ('ts', 'float', False))),
     "DetectedBoard": ('obj', (('hardwareId', 'str', False), ('address', 'str', False), ('fqbn', ('union', ('str', 'null')), False), ('boxId', ('union', ('int', 'null')), False))),
     "LibraryState": ('lit', ('ok', 'empty', 'damaged')),
@@ -267,6 +275,9 @@ SHAPES: Final[dict[str, Any]] = {
     "DiffHunk": ('obj', (('section', 'str', False), ('lines', ('list', ('ref', 'DiffLine')), False))),
     "SpecListingDiff": ('obj', (('specId', 'str', False), ('baseline', ('lit', ('shipped', 'saved', 'spec')), False), ('changed', 'bool', False), ('before', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('after', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('hunks', ('list', ('ref', 'DiffHunk')), False), ('added', 'int', False), ('removed', 'int', False))),
     "SpecArtifact": ('obj', (('kind', ('lit', ('spec', 'listing', 'lint', 'table_json', 'table_bin', 'bench')), False), ('filename', 'str', False), ('text', ('union', ('str', 'null')), False), ('base64', ('union', ('str', 'null')), False))),
+    "BoardCapabilities": ('obj', (('box', 'int', False), ('present', 'bool', False), ('baud', 'int', False), ('values', ('map', 'int'), False), ('text', ('map', 'str'), False), ('banner', ('list', 'str'), False))),
+    "UploadProgressData": ('obj', (('box', 'int', False), ('phase', ('lit', ('detect', 'probe', 'transfer', 'verify')), False), ('chunk', ('union', ('int', 'null')), False), ('chunks', ('union', ('int', 'null')), False), ('text', ('union', ('str', 'null')), False))),
+    "UploadResult": ('obj', (('box', 'int', False), ('specId', 'str', False), ('specHash', 'str', False), ('nBytes', 'int', False), ('chunks', 'int', False), ('crc32', 'str', False), ('digest', 'str', False), ('seconds', 'float', False), ('notes', ('list', 'str'), False), ('caps', ('ref', 'BoardCapabilities'), False))),
 }
 
 COMMAND_ARGS: Final[dict[str, Any]] = {
@@ -324,6 +335,9 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "specs.acknowledgeUpstream": ('obj', (('specId', 'str', False),)),
     "specs.diff": ('obj', (('specId', 'str', False), ('text', 'str', True), ('baseline', ('lit', ('shipped', 'saved')), True), ('againstSpecId', 'str', True))),
     "specs.export": ('obj', (('specId', 'str', False), ('text', 'str', True), ('artifacts', ('list', 'str'), False))),
+    "board.capabilities": ('obj', (('box', 'int', False), ('baud', 'int', True))),
+    "board.uploadTable": ('obj', (('box', 'int', False), ('specId', 'str', False), ('text', 'str', True))),
+    "utility.benchHold": ('obj', (('held', 'bool', False),)),
 }
 
 COMMAND_RESULTS: Final[dict[str, Any]] = {
@@ -381,6 +395,9 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "specs.acknowledgeUpstream": ('obj', (('entry', ('ref', 'SpecEntry'), False),)),
     "specs.diff": ('ref', 'SpecListingDiff'),
     "specs.export": ('obj', (('artifacts', ('list', ('ref', 'SpecArtifact')), False),)),
+    "board.capabilities": ('ref', 'BoardCapabilities'),
+    "board.uploadTable": ('ref', 'UploadResult'),
+    "utility.benchHold": ('ref', 'UtilityStatus'),
 }
 
 EVENT_DATA: Final[dict[str, Any]] = {
@@ -400,6 +417,7 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "analytics.progress": ('ref', 'AnalyticsProgress'),
     "sidecar.error": ('ref', 'SidecarErrorData'),
     "specs.updated": ('ref', 'SpecsUpdatedData'),
+    "upload.progress": ('ref', 'UploadProgressData'),
 }
 
 

@@ -28,6 +28,7 @@ import { useCapabilities, useSpecs } from "@/lib/specs/useSpecs";
 import { useRegisterUnsaved } from "@/lib/nav/unsavedGuard";
 import { useSidecar } from "@/lib/ws/context";
 import { BandPalette } from "./BandPalette";
+import { BoardBench } from "./BoardBench";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { ListingDiff } from "./ListingDiff";
 import { SpecForm } from "./SpecForm";
@@ -408,6 +409,13 @@ export function SpecWorkbench() {
             onChange={setDoc}
           />
           {result && <DiagnosticsPanel diagnostics={result.diagnostics} />}
+          {specId && (
+            <BoardBench
+              specId={specId}
+              doc={doc}
+              compiled={result?.ok === true && result.table !== null}
+            />
+          )}
         </div>
       )}
 

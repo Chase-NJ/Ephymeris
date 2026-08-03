@@ -55,8 +55,10 @@ SHAPES = (
     # Hardware / discovery
     Shape(
         "PortStateName",
-        lit("IDLE", "PASSTHROUGH", "FLASHING", "RESETTING", "IN_SESSION", "ERROR"),
-        doc="Per-port state machine names (`dashboard.md` §5.1).",
+        lit("IDLE", "PASSTHROUGH", "FLASHING", "UPLOADING", "RESETTING", "IN_SESSION", "ERROR"),
+        doc="Per-port state machine names (`dashboard.md` §5.1). UPLOADING is a "
+        "task-spec table transfer (`specs.md`) — exclusive like FLASHING, with "
+        "the same passthrough auto-resume.",
     ),
     Shape(
         "OutputLine",
@@ -1285,6 +1287,60 @@ SHAPES = (
             f("base64", nullable(STR), doc="Only table_bin — the packed wire bytes."),
         ),
     ),
+    Shape(
+        "BoardCapabilities",
+        obj(
+            f("box", INT),
+            f(
+                "present",
+                BOOL,
+                doc="False when the board announced no CAP line — un-migrated "
+                "firmware, the legacy bare-START path. Not an error; it means "
+                "'flash the interpreter sketch first' and the UI offers exactly "
+                "that.",
+            ),
+            f("baud", INT, doc="The rate that actually answered (transport detect)."),
+            f("values", MapOf(INT), doc="Numeric CAP keys — PROTO, WIRE, MAX_NODES…"),
+            f("text", MapOf(STR), doc="Text CAP keys — SKETCH, SPEC…"),
+            f("banner", ListOf(STR), doc="Everything the board said up to READY, verbatim."),
+        ),
+    ),
+    Shape(
+        "UploadProgressData",
+        obj(
+            f("box", INT),
+            f(
+                "phase",
+                lit("detect", "probe", "transfer", "verify"),
+                doc="detect = finding the baud · probe = reading CAP · transfer = "
+                "chunks moving · verify = awaiting TABLE OK.",
+            ),
+            f("chunk", nullable(INT), doc="Confirmed BY THE BOARD — counted at its ACK."),
+            f("chunks", nullable(INT)),
+            f("text", nullable(STR)),
+        ),
+    ),
+    Shape(
+        "UploadResult",
+        obj(
+            f("box", INT),
+            f("specId", STR),
+            f("specHash", STR),
+            f("nBytes", INT),
+            f("chunks", INT),
+            f("crc32", STR),
+            f(
+                "digest",
+                STR,
+                doc="The body digest the board echoed. CRC says the bytes arrived; "
+                "the digest says they decoded into the right fields — a transfer "
+                "can be perfect and a decode wrong, and only this catches it.",
+            ),
+            f("seconds", FLOAT),
+            f("notes", ListOf(STR), doc="Advisory CAP notes — a dimension the board didn't announce."),
+            f("caps", Ref("BoardCapabilities")),
+        ),
+    ),
 )
 
 
@@ -1786,6 +1842,65 @@ COMMANDS = (
         "dialog-picked path. That keeps 'no wire command writes an arbitrary "
         "file' intact — the sidecar's own writes stay under its data dir.",
     ),
+    # Bench boxes (specs.md) — probe and table upload. NOTE the structural
+    # invariant: no command here or anywhere ties a spec to a SESSION.
+    # sessions.confirmMapping does not learn a specId and port.startSession is
+    # untouched — that door opens at Phase 5's exit criteria, not before.
+    Command(
+        "board.capabilities",
+        args=obj(
+            f("box", INT),
+            f(
+                "baud",
+                INT,
+                optional=True,
+                doc="Skip detection and probe at this rate. Absent = try 115200 "
+                "then 9600 — the two the fleet actually contains during the "
+                "rollout. NOT settings.defaultBaud, which is the console default.",
+            ),
+        ),
+        result=Ref("BoardCapabilities"),
+        doc="Read a board's CAP banner and stop — what a box says about itself, "
+        "changing nothing on it. Costs one DTR reset (opening the port is the "
+        "reset). Requires the port IDLE or PASSTHROUGH; auto-resumes the latter.",
+        section="Bench boxes (specs.md)",
+    ),
+    Command(
+        "board.uploadTable",
+        args=obj(
+            f("box", INT),
+            f("specId", STR),
+            f(
+                "text",
+                STR,
+                optional=True,
+                doc="Upload the editor's document instead of the stored file. "
+                "COMPILED SERVER-SIDE EITHER WAY — a client-supplied table is "
+                "never trusted; the structural gate stays in the compiler.",
+            ),
+        ),
+        result=Ref("UploadResult"),
+        doc="Compile → detect baud → CAP check → chunked transfer → CRC+digest "
+        "verify. The capability check runs BEFORE any byte of table, so a board "
+        "that can't hold this task says so in milliseconds and names both "
+        "numbers. Progress streams on `upload.progress` with this command's "
+        "corr. The port lands back in IDLE (or resumes PASSTHROUGH); the "
+        "utility baseline's bench hold decides whether it STAYS there.",
+    ),
+    Command(
+        "utility.benchHold",
+        args=obj(f("held", BOOL)),
+        result=Ref("UtilityStatus"),
+        doc="Suspend baseline restores while the bench panel is open. WITHOUT "
+        "this, a table upload ends with the port falling IDLE, the baseline "
+        "quietly reflashing BOX_Utility over the interpreter, and the uploaded "
+        "table dying with it — a bug no existing test caught because nothing "
+        "before this ever flashed a non-baseline sketch outside a session. A "
+        "SEPARATE flag from the session hold, so a bench release can never "
+        "release a rig a confirmed mapping owns. In-memory only: a client that "
+        "crashes leaves it set until app restart, which errs on the side of "
+        "not reflashing.",
+    ),
 )
 
 
@@ -1838,6 +1953,12 @@ EVENTS = (
         Ref("SpecsUpdatedData"),
         doc="Push-on-change and replayed on connect — the sketches.updated pattern.",
     ),
+    Event(
+        "upload.progress",
+        Ref("UploadProgressData"),
+        doc="Streamed during board.uploadTable, carrying the causing command's "
+        "corr — the flash.progress precedent, verbatim.",
+    ),
 )
 
 
@@ -1886,6 +2007,19 @@ ERRORS = (
         "SPEC_READONLY",
         "specs.delete on a purely shipped spec. The bundled file is part of the "
         "install; editing it goes through save (which shadows it), not delete.",
+    ),
+    ErrorCode(
+        "UPLOAD_REFUSED",
+        "The board cannot take this table and said so before any byte moved: no "
+        "CAP line (un-migrated firmware — flash the interpreter sketch first), a "
+        "protocol/wire-format mismatch, or a capacity the table exceeds. detail "
+        "carries the comparison.",
+    ),
+    ErrorCode(
+        "UPLOAD_FAILED",
+        "The transfer itself broke: no rate answered, the board went quiet "
+        "mid-transfer, TABLE FAIL, or a CRC/digest mismatch. A partial upload "
+        "leaves the board's table invalid, so it will refuse to run it.",
     ),
     ErrorCode("INTERNAL", "Unhandled sidecar exception; also carried by sidecar.error."),
 )

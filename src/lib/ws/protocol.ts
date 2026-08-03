@@ -83,6 +83,11 @@ export const CMD = {
   SPECS_ACKNOWLEDGE_UPSTREAM: "specs.acknowledgeUpstream",
   SPECS_DIFF: "specs.diff",
   SPECS_EXPORT: "specs.export",
+
+  // Bench boxes (specs.md)
+  BOARD_CAPABILITIES: "board.capabilities",
+  BOARD_UPLOAD_TABLE: "board.uploadTable",
+  UTILITY_BENCH_HOLD: "utility.benchHold",
 } as const;
 
 export type CommandName = (typeof CMD)[keyof typeof CMD];
@@ -106,6 +111,7 @@ export const EVT = {
   ANALYTICS_PROGRESS: "analytics.progress",
   SIDECAR_ERROR: "sidecar.error",
   SPECS_UPDATED: "specs.updated",
+  UPLOAD_PROGRESS: "upload.progress",
 } as const;
 
 export type EventName = (typeof EVT)[keyof typeof EVT];
@@ -138,6 +144,8 @@ export const ERR = {
   SPEC_INVALID: "SPEC_INVALID",
   SPEC_COMPILER_UNAVAILABLE: "SPEC_COMPILER_UNAVAILABLE",
   SPEC_READONLY: "SPEC_READONLY",
+  UPLOAD_REFUSED: "UPLOAD_REFUSED",
+  UPLOAD_FAILED: "UPLOAD_FAILED",
   INTERNAL: "INTERNAL",
 } as const;
 
@@ -145,8 +153,11 @@ export type ErrorCode = (typeof ERR)[keyof typeof ERR];
 
 // --- Payload shapes --------------------------------------------------------
 
-/** Per-port state machine names (`dashboard.md` §5.1). */
-export type PortStateName = "IDLE" | "PASSTHROUGH" | "FLASHING" | "RESETTING" | "IN_SESSION" | "ERROR";
+/**
+ * Per-port state machine names (`dashboard.md` §5.1). UPLOADING is a task-spec table transfer
+ * (`specs.md`) — exclusive like FLASHING, with the same passthrough auto-resume.
+ */
+export type PortStateName = "IDLE" | "PASSTHROUGH" | "FLASHING" | "UPLOADING" | "RESETTING" | "IN_SESSION" | "ERROR";
 
 /** One passthrough console line. Debug output, never persisted (§5.4). */
 export interface OutputLine {
@@ -1289,6 +1300,56 @@ export interface SpecArtifact {
   base64: string | null;
 }
 
+export interface BoardCapabilities {
+  box: number;
+  /**
+   * False when the board announced no CAP line — un-migrated firmware, the legacy bare-START
+   * path. Not an error; it means 'flash the interpreter sketch first' and the UI offers exactly
+   * that.
+   */
+  present: boolean;
+  /** The rate that actually answered (transport detect). */
+  baud: number;
+  /** Numeric CAP keys — PROTO, WIRE, MAX_NODES… */
+  values: Record<string, number>;
+  /** Text CAP keys — SKETCH, SPEC… */
+  text: Record<string, string>;
+  /** Everything the board said up to READY, verbatim. */
+  banner: string[];
+}
+
+export interface UploadProgressData {
+  box: number;
+  /**
+   * detect = finding the baud · probe = reading CAP · transfer = chunks moving · verify =
+   * awaiting TABLE OK.
+   */
+  phase: "detect" | "probe" | "transfer" | "verify";
+  /** Confirmed BY THE BOARD — counted at its ACK. */
+  chunk: number | null;
+  chunks: number | null;
+  text: string | null;
+}
+
+export interface UploadResult {
+  box: number;
+  specId: string;
+  specHash: string;
+  nBytes: number;
+  chunks: number;
+  crc32: string;
+  /**
+   * The body digest the board echoed. CRC says the bytes arrived; the digest says they decoded
+   * into the right fields — a transfer can be perfect and a decode wrong, and only this catches
+   * it.
+   */
+  digest: string;
+  seconds: number;
+  /** Advisory CAP notes — a dimension the board didn't announce. */
+  notes: string[];
+  caps: BoardCapabilities;
+}
+
 // --- Per-command and per-event payload maps --------------------------------
 
 /** Args each command takes; `Record<string, never>` = none. */
@@ -1347,6 +1408,9 @@ export interface CommandArgsMap {
   "specs.acknowledgeUpstream": { specId: string };
   "specs.diff": { specId: string; text?: string; baseline?: "shipped" | "saved"; againstSpecId?: string };
   "specs.export": { specId: string; text?: string; artifacts: string[] };
+  "board.capabilities": { box: number; baud?: number };
+  "board.uploadTable": { box: number; specId: string; text?: string };
+  "utility.benchHold": { held: boolean };
 }
 
 /** The `result` field of each command's ok-reply. */
@@ -1405,6 +1469,9 @@ export interface CommandResultMap {
   "specs.acknowledgeUpstream": { entry: SpecEntry };
   "specs.diff": SpecListingDiff;
   "specs.export": { artifacts: SpecArtifact[] };
+  "board.capabilities": BoardCapabilities;
+  "board.uploadTable": UploadResult;
+  "utility.benchHold": UtilityStatus;
 }
 
 /** The `data` field of each event. */
@@ -1425,6 +1492,7 @@ export interface EventDataMap {
   "analytics.progress": AnalyticsProgress;
   "sidecar.error": SidecarErrorData;
   "specs.updated": SpecsUpdatedData;
+  "upload.progress": UploadProgressData;
 }
 
 // --- Envelopes -------------------------------------------------------------

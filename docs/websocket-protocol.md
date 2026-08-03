@@ -1,6 +1,6 @@
 # WebSocket / IPC Message Schema
 
-![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![commands](https://img.shields.io/badge/commands-54-8B7EC8?style=flat-square) ![events](https://img.shields.io/badge/events-16-8B7EC8?style=flat-square) ![errors](https://img.shields.io/badge/error_codes-26-2C2A3A?style=flat-square)
+![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![commands](https://img.shields.io/badge/commands-57-8B7EC8?style=flat-square) ![events](https://img.shields.io/badge/events-17-8B7EC8?style=flat-square) ![errors](https://img.shields.io/badge/error_codes-28-2C2A3A?style=flat-square)
 
 > **What this is** · The complete wire schema between the React frontend and the Python sidecar. Every command and event below is implemented and emitted.
 >
@@ -292,6 +292,21 @@ The vendored Task-Graph compiler's surface ([specs.md](specs.md)). A spec is a *
 
 The graph is the compiled **machine** graph — six node primitives (`DELAY`/`WAIT_ENTRY`/`HOLD`/`WAIT_EXIT`/`PULSE`/`TERMINAL`), trigger-keyed edges with guards and effects — deliberately not the derived `TaskGraphModel`, which describes what an animal does rather than what the interpreter executes.
 
+### 3.7 Bench boxes
+
+Probing and table upload for the Task-Graph interpreter firmware ([specs.md](specs.md)). These commands claim the port through a dedicated `UPLOADING` state that mirrors `FLASHING` exactly — force-releases `PASSTHROUGH` on entry, auto-resumes it on success — because the ownership question is identical; what differs is that the uploader opens its **own** serial handle and holds a line-oriented request/response conversation with deadlines, which the passthrough ring buffer (drained, not consumed) cannot provide.
+
+> [!IMPORTANT]
+> **The structural invariant: no command anywhere ties a spec to a session.** `sessions.confirmMapping` does not learn a `specId`, `port.startSession` is untouched, and `UPLOADING ↔ IN_SESSION` is illegal in the transition table. The interpreter is proved off-target and has never driven a pin — a box carrying it accepts a table and reports whether it fits. That door opens at Task-Graph Phase 5's exit criteria (actuator timing verified on hardware, parallel run clean), not before.
+
+| Command | Args | Result | Notes |
+|---|---|---|---|
+| `board.capabilities` | `{box, baud?}` | `<BoardCapabilities>` | Read a board's `CAP` banner and stop — what a box says about itself, changing nothing on it (costs one DTR reset, since opening the port *is* the reset). `baud` absent = try 115200 then 9600, the two rates the fleet actually contains mid-rollout; the answer is cached per `hardware_id` and invalidated by any `port.flash` to that box, since flashing is precisely what changes it. **Never `settings.defaultBaud`** — that is the console default. `present: false` means an un-migrated board (no `CAP` line) — not an error; it means "flash the interpreter sketch first", and the UI offers exactly that |
+| `board.uploadTable` | `{box, specId, text?}` | `<UploadResult>` | Compile → detect → CAP check → chunked transfer → CRC+digest verify. **Compiled server-side either way** — a client-supplied table is never trusted, so the compiler's structural gate holds on the hardware path too. The capability check runs *before* any byte of table moves, so a board that can't hold this task says so in milliseconds and names both numbers. Progress streams on `upload.progress` with this command's `corr`. Success means the board echoed both the CRC (the bytes arrived) **and** the body digest (they decoded into the right fields) — a transfer can be perfect and a decode wrong, and only the second catches it |
+| `utility.benchHold` | `{held}` | `<UtilityStatus>` | Suspend baseline restores while the bench panel is open. Without it, an upload ends with the port falling `IDLE`, the baseline quietly reflashing `BOX_Utility` over the interpreter, and the uploaded table dying with it — a bug nothing had ever exercised, because nothing before this flashed a non-baseline sketch outside a session. A **separate flag** from the session hold, so releasing the bench can never release a rig a confirmed mapping owns. In-memory only: a crashed client leaves it set until app restart, which errs on the side of *not* reflashing |
+
+**Failure split, by where the fault lies.** `UPLOAD_REFUSED` = the board is healthy and said no before any byte moved (no CAP, protocol/wire mismatch, capacity exceeded) — the port lands cleanly and passthrough resumes. `UPLOAD_FAILED` = the transfer itself broke (no rate answered, went quiet mid-transfer, `TABLE FAIL`, CRC/digest mismatch) — the port parks in `ERROR`, because a partial table leaves the board's state genuinely unknown (its own `table.valid` guard will refuse to run it, but nothing has confirmed that).
+
 ---
 
 ## 4. Events (server → client)
@@ -313,7 +328,8 @@ The graph is the compiled **machine** graph — six node primitives (`DELAY`/`WA
 | `backup.status` | `<BackupStatus>` | The state of Backup Directory mirroring (`data.md` §7). Sent on client connect, on every settings push that changes the directory, and whenever the mirror's state changes or it actually copies something — deliberately **not** every quiet 10s tick, so six idle boxes don't generate an event stream |
 | `analytics.progress` | `{cohortId, phase, done, total}` | Earns its place against the client's 15 s default reply timeout: the first summary after upgrading is a cold index of every historical run, and on a network-mounted data directory this is the difference between "working" and "hung". Published on phase change and every N files, following `backup.status`'s discipline — never per file |
 | `sidecar.error` | `{code, message, detail}` | Failures with no command to attribute them to. **Emitted** by the session runner when a mid-session `.tsv` write raises (disk full, permissions) — `data.md` §5.1. Carries `code: "INTERNAL"`, a message naming the box, and `detail: {box}` |
-| `specs.updated` | `{specs: [SpecEntry]}` | The spec library snapshot — replayed on connect (when the compiler is available) and pushed on change, the `sketches.updated` pattern. Read-only this phase, so "change" only means a reconnect; saves will broadcast it |
+| `specs.updated` | `{specs: [SpecEntry]}` | The spec library snapshot — replayed on connect (when the compiler is available) and pushed on every save/delete/acknowledge, the `sketches.updated` pattern |
+| `upload.progress` | `{box, phase, chunk, chunks, text}` | Streamed during `board.uploadTable`, carrying the causing command's `corr` — the `flash.progress` precedent verbatim. `phase` ∈ `detect` \| `probe` \| `transfer` \| `verify`; `chunk` counts **the board's acknowledgements**, not bytes this side hopes arrived |
 
 ### Shared payload shapes
 
@@ -591,6 +607,8 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | `SPEC_INVALID` | The document isn't a document — `text` not a string, over the size cap, or `topology` not an object. **Not** a compile failure: a spec that doesn't compile is a successful `specs.compile` reply carrying diagnostics (§3.6) |
 | `SPEC_COMPILER_UNAVAILABLE` | The vendored Task-Graph compiler failed its import or self-check ([README.md §6.4](README.md#64-dependency-policy)). `detail.reason` carries the original error. Every `specs.*` command raises this; the legacy `task.json` path and the whole session flow are unaffected |
 | `SPEC_READONLY` | `specs.delete` on a purely shipped spec — the bundled file is part of the install. Editing it goes through `specs.save`, which shadows it; there is nothing to delete until then |
+| `UPLOAD_REFUSED` | The board cannot take this table and said so **before any byte moved**: no `CAP` line (un-migrated firmware — flash the interpreter sketch first), a protocol/wire-format mismatch, or a capacity the table exceeds. The port lands cleanly; `detail` carries the comparison (§3.7) |
+| `UPLOAD_FAILED` | The transfer itself broke: no rate answered, the board went quiet mid-transfer, `TABLE FAIL`, or a CRC/digest mismatch. The port parks in `ERROR` — a partial table leaves the board's state genuinely unknown (§3.7) |
 | `INTERNAL` | Unhandled sidecar exception. Also the code carried by `sidecar.error` on a mid-session write failure |
 
 > **`DIR_INVALID` has been removed** (it was defined but never raised, kept in case the reasoning reversed). The reasoning can no longer reverse: there is no configured directory to be invalid about. Library problems surface as a `SketchLibraryStatus` payload on the `settings.push` reply (§3), because the caller wants to *render* the states from `tasks.md` §2.4, not catch a failure.

@@ -134,6 +134,11 @@ class Application:
         #: an optimisation.
         self._spec_compile_gate = asyncio.Semaphore(1)
         self.spec_store = spec_store.SpecStore(data_dir)
+        #: hardware_id → detected interpreter baud. Detection costs a boot
+        #: cycle per candidate rate, so the answer is kept for the app's
+        #: lifetime — and invalidated on any flash to that box, since flashing
+        #: is precisely what changes it.
+        self._board_bauds: dict[str, int] = {}
 
     # --- lifecycle --------------------------------------------------------
 
@@ -195,6 +200,9 @@ class Application:
         self.server.register(Cmd.SPECS_ACKNOWLEDGE_UPSTREAM, self._specs_acknowledge_upstream)
         self.server.register(Cmd.SPECS_DIFF, self._specs_diff)
         self.server.register(Cmd.SPECS_EXPORT, self._specs_export)
+        self.server.register(Cmd.BOARD_CAPABILITIES, self._board_capabilities)
+        self.server.register(Cmd.BOARD_UPLOAD_TABLE, self._board_upload_table)
+        self.server.register(Cmd.UTILITY_BENCH_HOLD, self._utility_bench_hold)
 
         self.server.on_client_ready(self._replay_state)
 
@@ -510,6 +518,11 @@ class Application:
         if self.utility is not None:
             self.utility.note_flashed(box, sketch.path)
             await self.utility.publish()
+        # Flashing is precisely what changes a board's interpreter baud, so the
+        # cached detection result dies with the old firmware.
+        hardware_id = self.settings.hardware_id_for(box)
+        if hardware_id is not None:
+            self._board_bauds.pop(hardware_id, None)
         return {"state": state.value, "resumedPassthrough": resumed}
 
     async def _port_reset(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -949,6 +962,183 @@ class Application:
             text = await asyncio.to_thread(record.read_text)
         async with self._spec_compile_gate:
             return await asyncio.to_thread(spec_service.export_payload, spec_id, text, kinds)
+
+    # --- bench boxes (specs.md) --------------------------------------------
+    #
+    # The structural invariant, stated where the handlers live: NOTHING here
+    # ties a spec to a session. sessions.confirmMapping does not learn a
+    # specId, and port.startSession is untouched. The interpreter is proved
+    # off-target and has never driven a pin — a box carrying it accepts a
+    # table and reports whether it fits. Revisit at Phase 5's exit criteria.
+
+    def _detect_board_baud(self, box: int, address: str, requested: int | None) -> int:
+        """The interpreter baud for this box — cached per hardware_id.
+
+        NOT settings.defaultBaud: that is the console default (9600 for every
+        legacy sketch), and using it here would make every interpreter board
+        look mute. The interpreter fleet is mid-rollout at 115200/9600, which
+        is exactly what transport detect exists for.
+        """
+        from taskgraph.transport import client as tg_client
+
+        from .ports.upload import PortLink
+
+        if requested is not None:
+            return requested
+        hardware_id = self.settings.hardware_id_for(box)
+        cached = self._board_bauds.get(hardware_id) if hardware_id else None
+        if cached is not None:
+            return cached
+        baud = tg_client.detect(lambda b: PortLink(address, b, reset=True))
+        if hardware_id is not None:
+            self._board_bauds[hardware_id] = baud
+        return int(baud)
+
+    async def _board_capabilities(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        box = _box_arg(args)
+        requested = args.get("baud") if isinstance(args.get("baud"), int) else None
+
+        def work(address: str, handler) -> dict[str, Any]:  # noqa: ANN001
+            from taskgraph.transport import UploadError
+            from taskgraph.transport import client as tg_client
+
+            from .ports.upload import PortLink
+
+            try:
+                baud = self._detect_board_baud(box, address, requested)
+                with PortLink(address, baud, reset=True, mirror=handler.echo) as link:
+                    banner, caps = tg_client.probe(link)
+            except UploadError as exc:
+                raise CommandError(ErrCode.UPLOAD_FAILED, str(exc), {"box": box}) from exc
+            return {
+                "box": box,
+                "present": caps.present,
+                "baud": baud,
+                "values": dict(caps.values),
+                "text": dict(caps.text),
+                "banner": banner,
+            }
+
+        with _mapped_errors(box):
+            _state, _resumed, payload = await self._require_ports().with_port_for_upload(
+                box, work
+            )
+        return payload  # type: ignore[return-value]
+
+    async def _board_upload_table(self, _server, _conn, args, corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        box = _box_arg(args)
+        spec_id = _str_arg(args, "specId")
+        text = args.get("text")
+        if not isinstance(text, str):
+            record = await asyncio.to_thread(self.spec_store.get, spec_id)
+            if record is None:
+                raise CommandError(
+                    ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
+                )
+            text = await asyncio.to_thread(record.read_text)
+
+        # Compiled server-side, always — a client-supplied table is never
+        # trusted, so the compiler's structural gate (no table from a failing
+        # spec) holds on the hardware path too.
+        async with self._spec_compile_gate:
+            compiled = await asyncio.to_thread(spec_compiler.compile, text, spec_id=spec_id)
+        if not compiled.ok or compiled.table is None:
+            errors = [d.message for d in compiled.bag if d.severity.name == "ERROR"]
+            raise CommandError(
+                ErrCode.UPLOAD_REFUSED,
+                f"{spec_id} does not compile, so there is no table to upload.",
+                {"box": box, "errors": errors[:8]},
+            )
+        table = compiled.table
+        blob, crc = spec_compiler.table_bytes(compiled)
+
+        loop = asyncio.get_running_loop()
+
+        def emit_progress(phase: str, chunk: int | None, chunks: int | None, note: str | None):
+            data = {"box": box, "phase": phase, "chunk": chunk, "chunks": chunks, "text": note}
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(
+                    self.server.broadcast(event(Evt.UPLOAD_PROGRESS, data, corr=corr))
+                )
+            )
+
+        requested = args.get("baud") if isinstance(args.get("baud"), int) else None
+
+        def work(address: str, handler) -> dict[str, Any]:  # noqa: ANN001
+            from taskgraph.transport import UploadError
+            from taskgraph.transport import client as tg_client
+            from taskgraph.transport.caps import CapabilityError
+
+            from .ports.upload import PortLink
+
+            emit_progress("detect", None, None, None)
+            try:
+                baud = self._detect_board_baud(box, address, requested)
+                emit_progress("probe", None, None, f"board answered at {baud}")
+                with PortLink(
+                    address,
+                    baud,
+                    reset=True,
+                    on_progress=emit_progress,
+                    mirror=handler.echo,
+                ) as link:
+                    result = tg_client.upload(link, table, packed=blob)
+            except CapabilityError as exc:
+                # The board said no BEFORE any byte moved — un-migrated
+                # firmware, a wire mismatch, or a capacity the table exceeds.
+                # A healthy board answering honestly is not a port fault, so
+                # this returns a marker (the port lands cleanly, passthrough
+                # resumes) and becomes UPLOAD_REFUSED after landing. A broken
+                # TRANSFER raises instead, which parks the port in ERROR — the
+                # board's table is invalid and its state genuinely unknown.
+                return {"refused": str(exc)}
+            except UploadError as exc:
+                raise CommandError(ErrCode.UPLOAD_FAILED, str(exc), {"box": box}) from exc
+            emit_progress("verify", result.chunks, result.chunks, None)
+            return {
+                "box": box,
+                "specId": table.spec_id,
+                "specHash": table.spec_hash,
+                "nBytes": result.n_bytes,
+                "chunks": result.chunks,
+                "crc32": f"{crc:#010x}",
+                "digest": f"{result.digest:#010x}",
+                "seconds": result.seconds,
+                "notes": list(result.notes),
+                "caps": {
+                    "box": box,
+                    "present": result.caps.present,
+                    "baud": baud,
+                    "values": dict(result.caps.values),
+                    "text": dict(result.caps.text),
+                    "banner": list(result.banner),
+                },
+            }
+
+        with _mapped_errors(box):
+            _state, _resumed, payload = await self._require_ports().with_port_for_upload(
+                box, work
+            )
+        assert isinstance(payload, dict)
+        if "refused" in payload:
+            raise CommandError(ErrCode.UPLOAD_REFUSED, payload["refused"], {"box": box})
+        log.info(
+            "box %d: table %s (%s) uploaded, %d bytes",
+            box,
+            table.spec_id,
+            table.spec_hash,
+            len(blob),
+        )
+        return payload
+
+    async def _utility_bench_hold(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        if self.utility is None:
+            raise CommandError(ErrCode.INTERNAL, "hardware layer isn't running")
+        self.utility.set_bench_hold(args.get("held") is True)
+        await self.utility.publish()
+        return self.utility.status()
 
     # --- backup (data.md §7) ---------------------------------------
 

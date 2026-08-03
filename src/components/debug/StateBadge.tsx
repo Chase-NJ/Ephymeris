@@ -18,6 +18,7 @@ const META: Record<PortStateName, { label: string; color: string; busy?: boolean
   IDLE: { label: "idle", color: "var(--color-static)" },
   PASSTHROUGH: { label: "passthrough", color: "var(--color-status-ok)" },
   FLASHING: { label: "flashing", color: "var(--color-status-warning)", busy: true },
+  UPLOADING: { label: "uploading table", color: "var(--color-status-warning)", busy: true },
   RESETTING: { label: "resetting", color: "var(--color-status-warning)", busy: true },
   IN_SESSION: { label: "in session", color: "var(--color-pulsar)" },
   ERROR: { label: "error", color: "var(--color-status-error)" },

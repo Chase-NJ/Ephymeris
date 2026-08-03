@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight, RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { TextInput, Toggle } from "@/components/common/controls";
+import { FieldRow } from "@/components/common/FieldRow";
 import { springSnappy } from "@/lib/motion";
 import type { ConfigField, TaskProfile } from "@/lib/sessions/types";
 
@@ -20,6 +20,14 @@ import type { ConfigField, TaskProfile } from "@/lib/sessions/types";
  * so a profile that declares none renders as a plain list exactly as it did
  * before any of this existed. There is no second code path for "simple"
  * profiles to fall out of sync with.
+ *
+ * The LEAF lives in `common/FieldRow.tsx` and is shared with the spec editor
+ * (`components/specs/`). That split is deliberate and has a boundary: the two
+ * forms serve different document shapes — a flat `config[]` keyed by
+ * `metadataKey` here, a nested spec document there — and must not converge
+ * above the leaf, or this file's grouping/reset/advanced logic grows a second
+ * mode. What IS shared is exactly the behaviour that must never diverge:
+ * clamp-never-reject, and the mid-typing "not a number" escape hatch.
  */
 export function ConfigFields({
   profile,
@@ -169,20 +177,6 @@ export function ConfigFields({
   );
 }
 
-/**
- * Clamp a parsed number into the field's declared range.
- *
- * Clamping rather than rejecting: these bounds exist to keep a typo from
- * reaching the firmware (a zero polling rate is a hang, a bias window past the
- * ring buffer is an overrun), and silently refusing a keystroke mid-edit is
- * worse than landing on the nearest legal value.
- */
-function clamp(field: ConfigField, value: number): number {
-  if (field.min !== undefined && value < field.min) return field.min;
-  if (field.max !== undefined && value > field.max) return field.max;
-  return value;
-}
-
 function Field({
   field,
   value,
@@ -194,73 +188,18 @@ function Field({
   baseline: unknown;
   onChange: (next: unknown) => void;
 }) {
-  // A number the user is mid-typing ("-", "0.") isn't a number yet, so it is
-  // held as text and reported rather than silently swallowed. The old form
-  // stored the raw string in `config`, and the START builder then quietly
-  // substituted the profile default — the operator saw their value on screen
-  // and the board ran on a different one.
-  const numeric = field.type === "int" || field.type === "float";
-  const invalid = numeric && typeof value === "string" && value.trim() !== "";
-  const changed = !Object.is(value, baseline);
-
   return (
-    <label className="flex items-start justify-between gap-3">
-      <span className="min-w-0 pt-1">
-        <span
-          className={`block truncate text-[11px] ${changed ? "text-starlight" : "text-static"}`}
-          title={field.help ?? field.label}
-        >
-          {changed && <span className="mr-1 text-pulsar">•</span>}
-          {field.label}
-        </span>
-        {field.help && (
-          <span className="mt-0.5 block text-[10px] leading-snug text-static/70">
-            {field.help}
-          </span>
-        )}
-        {invalid && (
-          <span
-            className="mt-0.5 block text-[10px]"
-            style={{ color: "var(--color-status-error)" }}
-          >
-            Not a number — the box would run on {String(field.default)}.
-          </span>
-        )}
-      </span>
-
-      <span className="flex shrink-0 items-center gap-1.5">
-        {field.type === "bool" ? (
-          <Toggle
-            label={field.label}
-            checked={value === true}
-            onChange={onChange}
-          />
-        ) : numeric ? (
-          <TextInput
-            label={field.label}
-            mono
-            value={String(value ?? "")}
-            onChange={(raw) => {
-              if (raw.trim() === "") return onChange(field.default);
-              const parsed = field.type === "int" ? parseInt(raw, 10) : parseFloat(raw);
-              // Keep the raw text on a partial entry so the caret doesn't jump;
-              // `invalid` above is what makes that state visible.
-              onChange(Number.isNaN(parsed) ? raw : clamp(field, parsed));
-            }}
-            className="w-[76px]"
-          />
-        ) : (
-          <TextInput
-            label={field.label}
-            value={String(value ?? "")}
-            onChange={onChange}
-            className="w-[120px]"
-          />
-        )}
-        <span className="w-6 shrink-0 font-mono text-[10px] text-static/70">
-          {field.unit ?? ""}
-        </span>
-      </span>
-    </label>
+    <FieldRow
+      label={field.label}
+      help={field.help}
+      unit={field.unit}
+      type={field.type}
+      value={value}
+      fallback={field.default}
+      baseline={baseline}
+      min={field.min}
+      max={field.max}
+      onChange={onChange}
+    />
   );
 }

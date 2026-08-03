@@ -117,6 +117,7 @@ const int Fluids[NUM_FLUIDS] = {
 #define BF_WATER_POKE_NONE      256 // After a correct response on a No-Go trial
 #define BF_WATER_POKE_ERROR_L   257 // Sent when rat incorrectly responds at left well
 #define BF_WATER_POKE_ERROR_R   258 // Sent when rat incorrectly responds at right well
+#define BF_RESP_OMIT            262 // Response window expired after complete sampling
 #define BF_STOP_FLUID_G_R       357 // Sent when we stop right-well fluid delivery
 #define BF_STOP_FLUID_G_L       369 // Sent when we stop left-well fluid delivery
 
@@ -1088,7 +1089,12 @@ inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
     }
 
     if (pokedWell == SENTINEL)
+    { /* Say so. END_INCORRECT_ITI is reached by three different outcomes, so
+         without this the class is recoverable only from the PRECEDING strobe --
+         and an omission has none. */
+      emitStrobe(clock, BF_RESP_OMIT);
       return OUTCOME_ERROR; // 2. No response within the window
+    }
 
     if (pokedWell != trial.correctWell)
     {
@@ -1103,7 +1109,7 @@ inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
     }
 
     deliverReward(trial, p, clock); // 4. Held -- deliver reward
-    while (digitalRead(pokedWell))  // Await well unpoke
+    while (digitalRead(pokedWell) == LOW) // Await well unpoke
       delay(p.pollingRate);
     /* The consummatory bout's end, and the only place the firmware actually
        observes the animal leaving a well. The other two exits are already
@@ -1155,8 +1161,8 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
     {
       digitalWrite(trialLight, LOW);
       digitalWrite(trial.odorPin, LOW);
-      emitStrobe(clock, BF_LIGHTS_OFF);
       emitStrobe(clock, BF_LAZY_RAT);
+      emitStrobe(clock, BF_LIGHTS_OFF);
       if (policy && policy->selector) // abstention feeds the bias estimate too
         policy->selector->recordAbstention(trial.correctWell == rightWell);
       if (policy && policy->abstention)
@@ -1177,8 +1183,8 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
   { // 5. Verify the pre-odor hold
     digitalWrite(trialLight, LOW);
     digitalWrite(trial.odorPin, LOW);
-    emitStrobe(clock, BF_LIGHTS_OFF);
     emitStrobe(clock, BF_ODOR_UNPOKE_EARLY);
+    emitStrobe(clock, BF_LIGHTS_OFF);
     if (policy && policy->selector) // poke-and-bail still counts as not-engaging
       policy->selector->recordAbstention(trial.correctWell == rightWell);
     delay(p.noPokeHoldTimeout);
@@ -1193,8 +1199,8 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
     digitalWrite(trialLight, LOW);
     digitalWrite(trial.odorPin, LOW);
     digitalWrite(vac, LOW);
-    emitStrobe(clock, BF_LIGHTS_OFF);
     emitStrobe(clock, BF_ODOR_UNPOKE_EARLY);
+    emitStrobe(clock, BF_LIGHTS_OFF);
     if (policy && policy->selector)
       policy->selector->recordAbstention(trial.correctWell == rightWell);
     delay(p.noPokeHoldTimeout);

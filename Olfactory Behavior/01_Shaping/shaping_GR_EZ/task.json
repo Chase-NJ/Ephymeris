@@ -602,6 +602,7 @@
     "256": "WATER_POKE_NONE",
     "257": "WATER_POKE_ERROR_L",
     "258": "WATER_POKE_ERROR_R",
+    "262": "RESP_OMIT",
     "357": "STOP_FLUID_G_R",
     "369": "STOP_FLUID_G_L"
   },

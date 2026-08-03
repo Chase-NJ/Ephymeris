@@ -42,6 +42,9 @@ from .sessions.models import (
 )
 from .sessions import recovery
 from .sessions.paths import resolve_session_folder
+from .specs import compiler as spec_compiler
+from .specs import service as spec_service
+from .specs import store as spec_store
 from .sessions.repository import SessionRepository
 from .sessions.runner import ActiveRun, BoxConfig, SessionRunner
 from .tasks import profile as task_profile
@@ -127,6 +130,9 @@ class Application:
         self.analytics: AnalyticsService | None = None
         self.profiles = AnalyticsRepository(self.db)
         self._running_session_id: str | None = None
+        #: One compile at a time — see _specs_compile for why this is not
+        #: an optimisation.
+        self._spec_compile_gate = asyncio.Semaphore(1)
 
     # --- lifecycle --------------------------------------------------------
 
@@ -177,6 +183,12 @@ class Application:
         self.server.register(Cmd.ANALYTICS_RESCAN, self._analytics_rescan)
         self.server.register(Cmd.ANALYTICS_RECENT_SESSIONS, self._analytics_recent_sessions)
         self.server.register(Cmd.SESSIONS_RECOVER, self._sessions_recover)
+
+        self.server.register(Cmd.SPECS_LIST, self._specs_list)
+        self.server.register(Cmd.SPECS_GET, self._specs_get)
+        self.server.register(Cmd.SPECS_SCHEMA, self._specs_schema)
+        self.server.register(Cmd.SPECS_COMPILE, self._specs_compile)
+        self.server.register(Cmd.SPECS_CAPABILITIES, self._specs_capabilities)
 
         self.server.on_client_ready(self._replay_state)
 
@@ -307,6 +319,8 @@ class Application:
         await send(event(Evt.SKETCHES_UPDATED, self.discovery.to_json()))
         await send(event(Evt.COHORTS_UPDATED, {"cohorts": await self._cohort_summaries()}))
         await send(event(Evt.PREFIXES_UPDATED, {"prefixes": await self._prefix_list()}))
+        if spec_compiler.available()[0]:
+            await send(event(Evt.SPECS_UPDATED, {"specs": spec_store.list_entries()}))
         if self.utility is not None:
             await send(event(Evt.UTILITY_UPDATED, self.utility.status()))
         if self.backup is not None:
@@ -716,6 +730,79 @@ class Application:
                 {"sketchPath": sketch_path},
             ) from exc
         return profile.to_json() if profile is not None else {"profile": None}
+
+    # --- task specs (specs.md) ---------------------------------------------
+
+    def _require_spec_compiler(self) -> None:
+        ok, why = spec_compiler.self_check()
+        if not ok:
+            raise CommandError(
+                ErrCode.SPEC_COMPILER_UNAVAILABLE,
+                "The task-spec compiler isn't available on this install — the "
+                "spec editor is disabled. Sessions and flashing are unaffected.",
+                {"reason": why},
+            )
+
+    async def _specs_list(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        return {"specs": await asyncio.to_thread(spec_store.list_entries)}
+
+    async def _specs_get(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        spec_id = _str_arg(args, "specId")
+        record = await asyncio.to_thread(spec_store.get, spec_id)
+        if record is None:
+            raise CommandError(
+                ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
+            )
+        text = await asyncio.to_thread(record.read_text)
+        return {
+            "specId": record.spec_id,
+            "origin": record.origin,
+            "text": text,
+            # None when the text will not parse — not an error here: the editor
+            # opens what exists, and the compile that runs on mount is what
+            # reports WHY it won't parse.
+            "raw": await asyncio.to_thread(spec_store.parse_document, text),
+        }
+
+    async def _specs_schema(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        return await asyncio.to_thread(spec_compiler.registries)
+
+    async def _specs_compile(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        text = args.get("text")
+        if not isinstance(text, str):
+            raise CommandError(ErrCode.SPEC_INVALID, "`text` must be a string.")
+        if len(text.encode("utf-8", errors="ignore")) > spec_store.MAX_SPEC_BYTES:
+            raise CommandError(
+                ErrCode.SPEC_INVALID,
+                f"The document is over {spec_store.MAX_SPEC_BYTES // 1024} KB — "
+                "that is not a task spec.",
+            )
+        spec_id = args.get("specId") if isinstance(args.get("specId"), str) else None
+        # Off the loop, and one at a time. This runs per keystroke (debounced
+        # client-side); a synchronous compile here would stall the 20 Hz output
+        # flush for all six ports, and mid-session the fsync-per-strobe write
+        # path. The semaphore keeps a typing burst from stacking worker threads
+        # that each hold the GIL through jsonschema's hot loop.
+        async with self._spec_compile_gate:
+            return await asyncio.to_thread(spec_service.compile_payload, text, spec_id)
+
+    async def _specs_capabilities(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        topology = args.get("topology")
+        if not isinstance(topology, dict):
+            raise CommandError(ErrCode.SPEC_INVALID, "`topology` must be an object.")
+        try:
+            # Synchronous on purpose: a pure function of six scalars, cheaper
+            # than the thread hop.
+            return spec_service.capabilities_payload(topology)
+        except Exception as exc:
+            # An unknown template name or a malformed knob is a caller mistake,
+            # not a compile diagnostic -- there is no document to diagnose.
+            raise CommandError(ErrCode.SPEC_INVALID, str(exc)) from exc
 
     # --- backup (data.md §7) ---------------------------------------
 

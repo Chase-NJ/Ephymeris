@@ -1072,6 +1072,160 @@ SHAPES = (
         obj(f("code", STR), f("message", STR), f("detail", ANY)),
         doc="Failures with no command to attribute them to (§4).",
     ),
+    # Task specs (specs.md) — the vendored Task-Graph compiler's surface.
+    # A spec is a SIBLING artifact to a sketch's task.json, never an extension
+    # of it: the two hash differently, and profile_hash is what Analytics
+    # groups a sketch's historical runs by.
+    Shape(
+        "SpecOrigin",
+        lit("shipped", "shipped_edited", "user"),
+        doc="Where a spec's current bytes come from. `shipped_edited` = a user "
+        "copy shadowing a bundled spec of the same id.",
+    ),
+    Shape(
+        "SpecEntry",
+        obj(
+            f("specId", STR),
+            f("label", nullable(STR), doc="meta.label, when the document parses."),
+            f("description", nullable(STR)),
+            f("origin", Ref("SpecOrigin")),
+            f("template", nullable(STR)),
+            f("templateVersion", nullable(INT)),
+        ),
+        doc="A row in the spec list. Built from a cheap parse — never a compile — "
+        "so `specs.list` stays instant however many specs exist.",
+    ),
+    Shape(
+        "SpecDiagnostic",
+        obj(
+            f("code", STR, doc="TG###; append-only, never reused."),
+            f("severity", lit("INFO", "WARN", "ERROR")),
+            f("message", STR),
+            f(
+                "location",
+                nullable(STR),
+                doc="A dotted YAML path (`contingency.outcome_map.omission.strobe`), "
+                "a node id (`S12`), a selector, or a registry filename. Clients "
+                "should not parse it — `placement` already says where it lands.",
+            ),
+            f(
+                "placement",
+                lit("field", "row", "section", "node", "document"),
+                doc="Where this diagnostic belongs on screen, computed by the one "
+                "definition in the compiler (taskgraph/presentation.py). `field` "
+                "anchors are overlay keys, so mapping onto an input is a "
+                "dictionary lookup and never a parse.",
+            ),
+            f("anchor", nullable(STR), doc="The overlay key, section path or node id."),
+            f("detail", nullable(STR)),
+            f("help", nullable(STR), doc="Rule-level: what to do about it."),
+            f("decision", nullable(STR), doc="e.g. `D4` — a docs/decisions.md pointer."),
+        ),
+    ),
+    Shape(
+        "SpecGraphNode",
+        obj(
+            f("index", INT),
+            f("symbol", STR, doc="The template's node id (`engage_win`); `index` "
+              "formats to the listing's `S07`."),
+            f("label", STR),
+            f("band", INT, doc="1 engagement · 2 sampling · 3 response · 4 outcome."),
+            f("type", lit("DELAY", "WAIT_ENTRY", "HOLD", "WAIT_EXIT", "PULSE", "TERMINAL")),
+            f("durationId", nullable(STR), doc="Timing id, when duration comes from the vector."),
+            f("durationMs", nullable(INT)),
+            f("strobeName", nullable(STR)),
+            f("strobe", nullable(INT)),
+            f("silentByDesign", BOOL, doc="An explicit `strobe: null` (D4), not an omission."),
+            f("watch", ListOf(STR), doc="Channel names this state watches."),
+        ),
+    ),
+    Shape(
+        "SpecGraphEdge",
+        obj(
+            f("index", INT),
+            f("src", INT),
+            f("dst", INT),
+            f("trigger", lit("TIMEOUT", "ENTER", "HELD", "BROKEN", "EXIT", "DONE", "ADVANCE", "REPEAT")),
+            f("guard", nullable(STR), doc="Human-readable guard, or null for the default edge."),
+            f("channel", nullable(STR)),
+            f("effect", nullable(STR), doc="`score:wrong`, `reward:@target` — the edge's side effect."),
+        ),
+    ),
+    Shape(
+        "SpecGraph",
+        obj(
+            f("nodes", ListOf(Ref("SpecGraphNode"))),
+            f("edges", ListOf(Ref("SpecGraphEdge"))),
+            f("entry", INT),
+        ),
+        doc="The compiled machine graph — six node primitives, trigger-keyed edges. "
+        "Deliberately NOT the derived TaskGraphModel: that describes what an animal "
+        "does; this describes what the interpreter executes.",
+    ),
+    Shape(
+        "SpecTableSummary",
+        obj(
+            f("specId", STR),
+            f("specHash", STR),
+            f("specVersion", INT),
+            f("vocabVersion", INT),
+            f("template", STR),
+            f("templateVersion", INT),
+            f("templateHash", STR),
+            f("nNodes", INT),
+            f("nEdges", INT),
+            f("nTiming", INT),
+            f("nTrialTypes", INT),
+            f("sizeBytes", INT, doc="Bytes on the wire to a board — the capacity that matters."),
+            f("crc32", STR, doc="Hex, `0x`-prefixed — matches the CLI's own rendering."),
+        ),
+    ),
+    Shape(
+        "SpecCompileResult",
+        obj(
+            f("ok", BOOL),
+            f("diagnostics", ListOf(Ref("SpecDiagnostic"))),
+            f(
+                "table",
+                nullable(Ref("SpecTableSummary")),
+                doc="Null whenever any diagnostic is an ERROR — the compiler's "
+                "structural gate, mirrored onto the wire. There is no code path "
+                "from a failing spec to a table summary.",
+            ),
+            f("graph", nullable(Ref("SpecGraph"))),
+            f(
+                "listing",
+                nullable(STR),
+                doc="emit.listing.render verbatim — the review artifact, byte-equal "
+                "to the checked-in specs/<id>.table.txt when the spec is unedited.",
+            ),
+            f("elapsedMs", FLOAT),
+        ),
+        doc="A spec that doesn't compile is a SUCCESSFUL reply carrying diagnostics, "
+        "never a command error — same discipline as Analytics' corrupt-file rule. "
+        "SPEC_INVALID is reserved for a document that isn't a document.",
+    ),
+    Shape(
+        "SpecCapabilities",
+        obj(
+            f("outcomeClasses", ListOf(STR)),
+            f(
+                "requiredTiming",
+                ListOf(STR),
+                doc="Ordered — the form renders timing rows in exactly this order.",
+            ),
+            f("knobs", ListOf(STR)),
+            f("template", STR),
+            f("templateVersion", INT),
+        ),
+        doc="What a topology produces (roadmap Phase 6): the palette's validity "
+        "model. A pure function of the knobs, so the form re-gates its rows the "
+        "instant one moves, before any compile returns.",
+    ),
+    Shape(
+        "SpecsUpdatedData",
+        obj(f("specs", ListOf(Ref("SpecEntry")))),
+    ),
 )
 
 
@@ -1425,6 +1579,72 @@ COMMANDS = (
         "is running: a live run's .tsv has no .json yet and is not an orphan.",
         section="Crash recovery (data.md §12, §11)",
     ),
+    # Task specs
+    Command(
+        "specs.list",
+        result=obj(f("specs", ListOf(Ref("SpecEntry")))),
+        doc="Enumerate the spec library. Reads headers, never compiles.",
+        section="Task specs (specs.md)",
+    ),
+    Command(
+        "specs.get",
+        args=obj(f("specId", STR)),
+        result=obj(
+            f("specId", STR),
+            f("origin", Ref("SpecOrigin")),
+            f("text", STR, doc="The YAML source, verbatim — comments and all."),
+            f(
+                "raw",
+                ANY,
+                doc="The parsed document, or null if the text will not parse. The "
+                "form binds to this; the text is the escape hatch and the save "
+                "payload.",
+            ),
+        ),
+    ),
+    Command(
+        "specs.schema",
+        result=obj(
+            f("schema", ANY, doc="schema/task_spec.v1.json, verbatim."),
+            f("overlay", ANY, doc="task_spec.presentation.v1.json — labels/widgets/groups."),
+            f("strobes", ANY, doc="strobe_vocab.v1.json — codes with their rationale."),
+            f("channels", ANY, doc="channels.v1.json — the box pinout, by kind."),
+            f("limits", ANY, doc="limits.v1.json — hard ceilings, each with rationale."),
+            f(
+                "templates",
+                ListOf(obj(f("name", STR), f("version", INT), f("sourceHash", STR))),
+            ),
+        ),
+        doc="Everything a form needs, in one call on route mount. Served from the "
+        "vendored registry FILES — the same bytes the compiler validates against, "
+        "so a picker cannot offer a value the compiler then rejects. The frontend "
+        "must never hold its own copy of a registry.",
+    ),
+    Command(
+        "specs.compile",
+        args=obj(
+            f("text", STR, doc="The document as it would be saved — the LOAD pass "
+              "(schema validation, TG1xx, the YAML `on:` trap) checks things that "
+              "only exist before parsing, so the wire carries text, not a dict."),
+            f("specId", STR, optional=True),
+        ),
+        result=Ref("SpecCompileResult"),
+        doc="Stateless; the live per-edit call. Runs in a worker thread behind a "
+        "semaphore of 1 — a synchronous compile on the loop would stall the 20 Hz "
+        "output flush and, mid-session, the fsync-per-strobe write path. The "
+        "frontend debounces (~120 ms) and discards stale replies by corr.",
+    ),
+    Command(
+        "specs.capabilities",
+        args=obj(
+            f("topology", ANY, doc="The topology knobs as the form holds them — "
+              "may be half-built; unspecified knobs take the schema's defaults."),
+        ),
+        result=Ref("SpecCapabilities"),
+        doc="Pure function of six scalars; no I/O, no debounce, called on every "
+        "knob change. This is what re-gates the timing rows and outcome cards "
+        "before any compile returns.",
+    ),
 )
 
 
@@ -1472,6 +1692,11 @@ EVENTS = (
         doc="Published on phase change and every N files — never per file.",
     ),
     Event("sidecar.error", Ref("SidecarErrorData"), doc="Failures with no command to attribute to."),
+    Event(
+        "specs.updated",
+        Ref("SpecsUpdatedData"),
+        doc="Push-on-change and replayed on connect — the sketches.updated pattern.",
+    ),
 )
 
 
@@ -1502,6 +1727,19 @@ ERRORS = (
         "UTILITY_UNAVAILABLE",
         "No hardware utility sketch is configured, or the named one can't be used "
         "(not in the bundled library, or not a utility profile).",
+    ),
+    ErrorCode("SPEC_NOT_FOUND", "No spec with that id in the library."),
+    ErrorCode(
+        "SPEC_INVALID",
+        "The document isn't a document — not a string, or too large. NOT a "
+        "compile failure: a spec that doesn't compile is a successful "
+        "specs.compile reply carrying diagnostics.",
+    ),
+    ErrorCode(
+        "SPEC_COMPILER_UNAVAILABLE",
+        "The vendored Task-Graph compiler failed to import (README.md §6.4). "
+        "detail carries the ImportError. The legacy task.json path and the "
+        "session flow are unaffected.",
     ),
     ErrorCode("INTERNAL", "Unhandled sidecar exception; also carried by sidecar.error."),
 )

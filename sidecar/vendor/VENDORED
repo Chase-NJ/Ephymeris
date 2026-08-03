@@ -1,7 +1,7 @@
 {
   "source": "Task-Graph",
-  "commit": "924413eee45cd75e54248b72d3913b0a310f7b5e",
-  "synced": "2026-08-03T08:32:35Z",
+  "commit": "aaa006151c4288784b68b9de93446b627af277d5",
+  "synced": "2026-08-03T15:25:05Z",
   "trees": [
     "taskgraph",
     "templates",
@@ -51,7 +51,7 @@
     "taskgraph/lint/__init__.py": "f5aee10d61465b248654b939946faa120f79cd2ab1e81ceee11190eb417604c8",
     "taskgraph/lint/rules_capacity.py": "cf515d7f26d8bd0a6e08c4f119ebefd33c11acbee7d02d7fdc0d0f952967a70f",
     "taskgraph/lint/rules_graph.py": "ab8eafc96d666a53635bdc06754e509c2b1bb2c5c9f2b0c21736a0b3bcf3c732",
-    "taskgraph/lint/rules_load.py": "42fefed493c26097fcd79e1a8d6a400f0055586397c37c4576e40065c72a82c1",
+    "taskgraph/lint/rules_load.py": "18eadd3765bfc053edf4456d8c74617edf793fc1517f703b4ca59c1aeece194a",
     "taskgraph/lint/rules_spec.py": "f02a978fc4e4101347c0ec702bf9e234d18988dd0c55b2dee7b43dd9a49fc855",
     "taskgraph/lint/rules_topology.py": "07491ab7df4a2f6adbadd3846c721070d3069e9ab7852e68a3c14598acdf8920",
     "taskgraph/loader.py": "4d8cc1c095bea261921329f755caca012a2afb493695c790cb7ea2c70885c35a",

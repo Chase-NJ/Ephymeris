@@ -161,5 +161,19 @@ def schema_violation(ctx: LoadContext) -> Iterator[Diagnostic]:
 
     validator = jsonschema.Draft202012Validator(ctx.schema())
     for err in sorted(validator.iter_errors(ctx.raw), key=lambda e: list(e.path)):
-        loc = ".".join(str(p) for p in err.path) or "(root)"
-        yield _err(ctx, "TG102", loc, err.message)
+        yield _err(ctx, "TG102", _json_path(err.path) or "(root)", err.message)
+
+
+def _json_path(path) -> str:  # noqa: ANN001 - jsonschema's deque of str|int
+    """jsonschema's error path, in THIS repo's location grammar.
+
+    A naive dot-join renders an array index as `timing.5.ms`, which is a sixth
+    location spelling nothing else emits and normalize_location() cannot map to
+    an overlay key -- so a schema violation on an array element would reach a
+    form as a document-level banner instead of landing on its field. Brackets
+    (`timing[5].ms`) are what every hand-written rule already uses.
+    """
+    out = ""
+    for part in path:
+        out += f"[{part}]" if isinstance(part, int) else (f".{part}" if out else str(part))
+    return out

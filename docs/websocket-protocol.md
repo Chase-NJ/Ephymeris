@@ -1,6 +1,6 @@
 # WebSocket / IPC Message Schema
 
-![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![commands](https://img.shields.io/badge/commands-44-8B7EC8?style=flat-square) ![events](https://img.shields.io/badge/events-15-8B7EC8?style=flat-square) ![errors](https://img.shields.io/badge/error_codes-22-2C2A3A?style=flat-square)
+![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![commands](https://img.shields.io/badge/commands-49-8B7EC8?style=flat-square) ![events](https://img.shields.io/badge/events-16-8B7EC8?style=flat-square) ![errors](https://img.shields.io/badge/error_codes-25-2C2A3A?style=flat-square)
 
 > **What this is** · The complete wire schema between the React frontend and the Python sidecar. Every command and event below is implemented and emitted.
 >
@@ -71,6 +71,7 @@ Immediately after a successful `auth`, the server replays current state **to tha
 3. One `sketches.updated`.
 4. One `cohorts.updated`.
 5. One `prefixes.updated`.
+6. One `specs.updated` — skipped entirely when the spec compiler is unavailable, so a client's empty spec list means "no compiler" exactly when the Task screen's banner says so.
 
 Events are otherwise emitted only when something changes, so a client connecting during a quiet period would have nothing to render and would have to guess. Guessing is exactly what §5.2 forbids.
 
@@ -247,6 +248,45 @@ Rejected with `UTILITY_UNAVAILABLE` when no utility sketch is configured or the 
 
 An `identify` pair rides on the utility sketch's own `task.json` (`tasks.md` §3.6) rather than in settings, for the same reason the rest of the Task Profile does: the app must not know that a Hart-lab box says `ON LIGHT`.
 
+### 3.6 Task specs
+
+The vendored Task-Graph compiler's surface ([specs.md](specs.md)). A spec is a **sibling artifact** to a sketch's `task.json`, never an extension of it — the two hash differently, and `profile_hash` is what Analytics groups a sketch's historical runs by.
+
+| Command | Args | Result | Notes |
+|---|---|---|---|
+| `specs.list` | — | `{specs: [SpecEntry]}` | Enumerates the library from a cheap **parse**, never a compile, so it stays instant however many specs exist. A document that won't parse still gets a row (with nulls) — a broken spec is exactly the one someone needs to find |
+| `specs.get` | `{specId}` | `{specId, origin, text, raw}` | `text` is the YAML source verbatim, comments and all; `raw` is the parsed document or `null` when it won't parse — the form binds to `raw`, and the compile that runs on mount is what reports *why* a null one won't parse |
+| `specs.schema` | — | `{schema, overlay, strobes, channels, limits, templates}` | Everything a form needs, once, on route mount. Served from the vendored registry **files** — the same bytes the compiler validates against, so a picker cannot offer a value the compiler then rejects. The frontend must never hold its own copy of a registry |
+| `specs.compile` | `{text, specId?}` | `<SpecCompileResult>` | Stateless; the live per-edit call. Takes **text**, not a dict — the LOAD pass (schema validation, TG1xx, the YAML `on:` trap) checks things that only exist before parsing, so the editor compiles exactly the bytes it would save. Runs in a worker thread behind a semaphore of 1; the frontend debounces ~120 ms and discards stale replies by `corr` |
+| `specs.capabilities` | `{topology}` | `<SpecCapabilities>` | Which outcome classes and timing ids this topology produces — the palette's validity model, from the template's own `capabilities()`. A pure function of the knobs (half-built topologies welcome; unspecified knobs take the schema defaults), so the form re-gates its rows the instant a knob moves, before any compile returns |
+
+```jsonc
+// SpecCompileResult — a spec that doesn't compile is a SUCCESSFUL reply
+// carrying diagnostics, never a command error (the Analytics corrupt-file
+// discipline). SPEC_INVALID is reserved for a document that isn't a document.
+{
+  "ok": true,
+  "diagnostics": [ {
+    "code": "TG204", "severity": "ERROR",
+    "message": "…", "location": "timing[3].ms",
+    // Where it lands on screen, computed by the ONE definition in the
+    // compiler (taskgraph/presentation.py). `field` anchors are overlay keys,
+    // so mapping a diagnostic onto its input is a dictionary lookup.
+    "placement": "field" /* | "row" | "section" | "node" | "document" */,
+    "anchor": "timing[].ms",
+    "detail": "…", "help": "…", "decision": "D6"
+  } ],
+  "table": { /* SpecTableSummary */ },   // null whenever any diagnostic is an ERROR —
+                                         // the compiler's structural gate, mirrored
+  "graph": { "nodes": [/* SpecGraphNode */], "edges": [/* SpecGraphEdge */], "entry": 0 },
+  "listing": "…",   // emit.listing.render verbatim — the review artifact, byte-equal
+                    // to the checked-in specs/<id>.table.txt when the spec is unedited
+  "elapsedMs": 48.1
+}
+```
+
+The graph is the compiled **machine** graph — six node primitives (`DELAY`/`WAIT_ENTRY`/`HOLD`/`WAIT_EXIT`/`PULSE`/`TERMINAL`), trigger-keyed edges with guards and effects — deliberately not the derived `TaskGraphModel`, which describes what an animal does rather than what the interpreter executes.
+
 ---
 
 ## 4. Events (server → client)
@@ -268,6 +308,7 @@ An `identify` pair rides on the utility sketch's own `task.json` (`tasks.md` §3
 | `backup.status` | `<BackupStatus>` | The state of Backup Directory mirroring (`data.md` §7). Sent on client connect, on every settings push that changes the directory, and whenever the mirror's state changes or it actually copies something — deliberately **not** every quiet 10s tick, so six idle boxes don't generate an event stream |
 | `analytics.progress` | `{cohortId, phase, done, total}` | Earns its place against the client's 15 s default reply timeout: the first summary after upgrading is a cold index of every historical run, and on a network-mounted data directory this is the difference between "working" and "hung". Published on phase change and every N files, following `backup.status`'s discipline — never per file |
 | `sidecar.error` | `{code, message, detail}` | Failures with no command to attribute them to. **Emitted** by the session runner when a mid-session `.tsv` write raises (disk full, permissions) — `data.md` §5.1. Carries `code: "INTERNAL"`, a message naming the box, and `detail: {box}` |
+| `specs.updated` | `{specs: [SpecEntry]}` | The spec library snapshot — replayed on connect (when the compiler is available) and pushed on change, the `sketches.updated` pattern. Read-only this phase, so "change" only means a reconnect; saves will broadcast it |
 
 ### Shared payload shapes
 
@@ -541,6 +582,9 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed. `detail` carries the parse error; the sketch is otherwise treated as profile-less |
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. Note that an ordinary mirroring **failure** never surfaces as a command error — there is no command to attribute it to; it appears as `state: "failed"` on `backup.status` (`data.md` §7) |
 | `UTILITY_UNAVAILABLE` | A `utility.*` command with no `utilitySketchName` set, or with one that can't be used at all — a name not among the bundled sketches, or a sketch whose profile isn't `kind: "utility"`. A *box-level* problem never raises this: it is reported as that box's `state` in the snapshot (§3.5), because "box 4 has no board" is a fact about the rig, not a failure of the command |
+| `SPEC_NOT_FOUND` | No spec with that id in the library |
+| `SPEC_INVALID` | The document isn't a document — `text` not a string, over the size cap, or `topology` not an object. **Not** a compile failure: a spec that doesn't compile is a successful `specs.compile` reply carrying diagnostics (§3.6) |
+| `SPEC_COMPILER_UNAVAILABLE` | The vendored Task-Graph compiler failed its import or self-check ([README.md §6.4](README.md#64-dependency-policy)). `detail.reason` carries the original error. Every `specs.*` command raises this; the legacy `task.json` path and the whole session flow are unaffected |
 | `INTERNAL` | Unhandled sidecar exception. Also the code carried by `sidecar.error` on a mid-session write failure |
 
 > **`DIR_INVALID` has been removed** (it was defined but never raised, kept in case the reasoning reversed). The reasoning can no longer reverse: there is no configured directory to be invalid about. Library problems surface as a `SketchLibraryStatus` payload on the `settings.push` reply (§3), because the caller wants to *render* the states from `tasks.md` §2.4, not catch a failure.

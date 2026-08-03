@@ -71,6 +71,13 @@ export const CMD = {
 
   // Crash recovery (data.md §12, §11)
   SESSIONS_RECOVER: "sessions.recover",
+
+  // Task specs (specs.md)
+  SPECS_LIST: "specs.list",
+  SPECS_GET: "specs.get",
+  SPECS_SCHEMA: "specs.schema",
+  SPECS_COMPILE: "specs.compile",
+  SPECS_CAPABILITIES: "specs.capabilities",
 } as const;
 
 export type CommandName = (typeof CMD)[keyof typeof CMD];
@@ -93,6 +100,7 @@ export const EVT = {
   BACKUP_STATUS: "backup.status",
   ANALYTICS_PROGRESS: "analytics.progress",
   SIDECAR_ERROR: "sidecar.error",
+  SPECS_UPDATED: "specs.updated",
 } as const;
 
 export type EventName = (typeof EVT)[keyof typeof EVT];
@@ -121,6 +129,9 @@ export const ERR = {
   TASK_PROFILE_INVALID: "TASK_PROFILE_INVALID",
   BACKUP_UNAVAILABLE: "BACKUP_UNAVAILABLE",
   UTILITY_UNAVAILABLE: "UTILITY_UNAVAILABLE",
+  SPEC_NOT_FOUND: "SPEC_NOT_FOUND",
+  SPEC_INVALID: "SPEC_INVALID",
+  SPEC_COMPILER_UNAVAILABLE: "SPEC_COMPILER_UNAVAILABLE",
   INTERNAL: "INTERNAL",
 } as const;
 
@@ -1075,6 +1086,151 @@ export interface SidecarErrorData {
   detail: unknown;
 }
 
+/**
+ * Where a spec's current bytes come from. `shipped_edited` = a user copy shadowing a bundled spec
+ * of the same id.
+ */
+export type SpecOrigin = "shipped" | "shipped_edited" | "user";
+
+/**
+ * A row in the spec list. Built from a cheap parse — never a compile — so `specs.list` stays
+ * instant however many specs exist.
+ */
+export interface SpecEntry {
+  specId: string;
+  /** meta.label, when the document parses. */
+  label: string | null;
+  description: string | null;
+  origin: SpecOrigin;
+  template: string | null;
+  templateVersion: number | null;
+}
+
+export interface SpecDiagnostic {
+  /** TG###; append-only, never reused. */
+  code: string;
+  severity: "INFO" | "WARN" | "ERROR";
+  message: string;
+  /**
+   * A dotted YAML path (`contingency.outcome_map.omission.strobe`), a node id (`S12`), a
+   * selector, or a registry filename. Clients should not parse it — `placement` already says
+   * where it lands.
+   */
+  location: string | null;
+  /**
+   * Where this diagnostic belongs on screen, computed by the one definition in the compiler
+   * (taskgraph/presentation.py). `field` anchors are overlay keys, so mapping onto an input is a
+   * dictionary lookup and never a parse.
+   */
+  placement: "field" | "row" | "section" | "node" | "document";
+  /** The overlay key, section path or node id. */
+  anchor: string | null;
+  detail: string | null;
+  /** Rule-level: what to do about it. */
+  help: string | null;
+  /** e.g. `D4` — a docs/decisions.md pointer. */
+  decision: string | null;
+}
+
+export interface SpecGraphNode {
+  index: number;
+  /** The template's node id (`engage_win`); `index` formats to the listing's `S07`. */
+  symbol: string;
+  label: string;
+  /** 1 engagement · 2 sampling · 3 response · 4 outcome. */
+  band: number;
+  type: "DELAY" | "WAIT_ENTRY" | "HOLD" | "WAIT_EXIT" | "PULSE" | "TERMINAL";
+  /** Timing id, when duration comes from the vector. */
+  durationId: string | null;
+  durationMs: number | null;
+  strobeName: string | null;
+  strobe: number | null;
+  /** An explicit `strobe: null` (D4), not an omission. */
+  silentByDesign: boolean;
+  /** Channel names this state watches. */
+  watch: string[];
+}
+
+export interface SpecGraphEdge {
+  index: number;
+  src: number;
+  dst: number;
+  trigger: "TIMEOUT" | "ENTER" | "HELD" | "BROKEN" | "EXIT" | "DONE" | "ADVANCE" | "REPEAT";
+  /** Human-readable guard, or null for the default edge. */
+  guard: string | null;
+  channel: string | null;
+  /** `score:wrong`, `reward:@target` — the edge's side effect. */
+  effect: string | null;
+}
+
+/**
+ * The compiled machine graph — six node primitives, trigger-keyed edges. Deliberately NOT the
+ * derived TaskGraphModel: that describes what an animal does; this describes what the interpreter
+ * executes.
+ */
+export interface SpecGraph {
+  nodes: SpecGraphNode[];
+  edges: SpecGraphEdge[];
+  entry: number;
+}
+
+export interface SpecTableSummary {
+  specId: string;
+  specHash: string;
+  specVersion: number;
+  vocabVersion: number;
+  template: string;
+  templateVersion: number;
+  templateHash: string;
+  nNodes: number;
+  nEdges: number;
+  nTiming: number;
+  nTrialTypes: number;
+  /** Bytes on the wire to a board — the capacity that matters. */
+  sizeBytes: number;
+  /** Hex, `0x`-prefixed — matches the CLI's own rendering. */
+  crc32: string;
+}
+
+/**
+ * A spec that doesn't compile is a SUCCESSFUL reply carrying diagnostics, never a command error —
+ * same discipline as Analytics' corrupt-file rule. SPEC_INVALID is reserved for a document that
+ * isn't a document.
+ */
+export interface SpecCompileResult {
+  ok: boolean;
+  diagnostics: SpecDiagnostic[];
+  /**
+   * Null whenever any diagnostic is an ERROR — the compiler's structural gate, mirrored onto the
+   * wire. There is no code path from a failing spec to a table summary.
+   */
+  table: SpecTableSummary | null;
+  graph: SpecGraph | null;
+  /**
+   * emit.listing.render verbatim — the review artifact, byte-equal to the checked-in
+   * specs/<id>.table.txt when the spec is unedited.
+   */
+  listing: string | null;
+  elapsedMs: number;
+}
+
+/**
+ * What a topology produces (roadmap Phase 6): the palette's validity model. A pure function of
+ * the knobs, so the form re-gates its rows the instant one moves, before any compile returns.
+ */
+export interface SpecCapabilities {
+  outcomeClasses: string[];
+  /** Ordered — the form renders timing rows in exactly this order. */
+  requiredTiming: string[];
+  knobs: string[];
+  template: string;
+  templateVersion: number;
+}
+
+export interface SpecsUpdatedData {
+  specs: SpecEntry[];
+}
+
 // --- Per-command and per-event payload maps --------------------------------
 
 /** Args each command takes; `Record<string, never>` = none. */
@@ -1123,6 +1279,11 @@ export interface CommandArgsMap {
   "analytics.rescan": { cohortId: string; adoptOrphans?: boolean };
   "analytics.recentSessions": { limit?: number };
   "sessions.recover": { cohortId: string };
+  "specs.list": Record<string, never>;
+  "specs.get": { specId: string };
+  "specs.schema": Record<string, never>;
+  "specs.compile": { text: string; specId?: string };
+  "specs.capabilities": { topology: unknown };
 }
 
 /** The `result` field of each command's ok-reply. */
@@ -1171,6 +1332,11 @@ export interface CommandResultMap {
   "analytics.rescan": RescanResult;
   "analytics.recentSessions": { sessions: DiskSession[] };
   "sessions.recover": RecoverResult;
+  "specs.list": { specs: SpecEntry[] };
+  "specs.get": { specId: string; origin: SpecOrigin; text: string; raw: unknown };
+  "specs.schema": { schema: unknown; overlay: unknown; strobes: unknown; channels: unknown; limits: unknown; templates: Array<{ name: string; version: number; sourceHash: string }> };
+  "specs.compile": SpecCompileResult;
+  "specs.capabilities": SpecCapabilities;
 }
 
 /** The `data` field of each event. */
@@ -1190,6 +1356,7 @@ export interface EventDataMap {
   "backup.status": BackupStatus;
   "analytics.progress": AnalyticsProgress;
   "sidecar.error": SidecarErrorData;
+  "specs.updated": SpecsUpdatedData;
 }
 
 // --- Envelopes -------------------------------------------------------------

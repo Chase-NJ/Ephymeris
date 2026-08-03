@@ -15,6 +15,7 @@ import { ParameterTiles } from "@/components/task/ParameterTiles";
 import { TaskGraph } from "@/components/task/TaskGraph";
 import { TaskRail } from "@/components/task/TaskRail";
 import { SketchPicker } from "@/components/sessions/TaskConfigForm";
+import { SpecWorkbench } from "@/components/specs/SpecWorkbench";
 import { LibraryStatusNote } from "@/components/task/LibraryStatusNote";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { springPanel } from "@/lib/motion";
@@ -228,6 +229,11 @@ export function Task() {
             </span>
             <h1 className="font-display text-[22px] text-starlight">Task</h1>
           </div>
+
+          {/* Spec-first: the compiled-task workbench. The legacy task.json
+          sketch section keeps its place below — a spec is a sibling artifact,
+          and both kinds of task live under the one question this tab answers. */}
+          <SpecWorkbench />
 
           <section className="surface mt-6 rounded-md">
             <div className="border-b border-halo px-4 py-3.5">

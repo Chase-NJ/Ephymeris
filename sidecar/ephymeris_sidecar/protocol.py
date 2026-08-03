@@ -85,6 +85,13 @@ class Cmd:
     # Crash recovery (data.md §12, §11)
     SESSIONS_RECOVER: Final = "sessions.recover"
 
+    # Task specs (specs.md)
+    SPECS_LIST: Final = "specs.list"
+    SPECS_GET: Final = "specs.get"
+    SPECS_SCHEMA: Final = "specs.schema"
+    SPECS_COMPILE: Final = "specs.compile"
+    SPECS_CAPABILITIES: Final = "specs.capabilities"
+
 
 ALL_COMMANDS: Final[frozenset[str]] = frozenset(
     v for k, v in vars(Cmd).items() if not k.startswith("_") and isinstance(v, str)
@@ -109,6 +116,7 @@ class Evt:
     BACKUP_STATUS: Final = "backup.status"
     ANALYTICS_PROGRESS: Final = "analytics.progress"
     SIDECAR_ERROR: Final = "sidecar.error"
+    SPECS_UPDATED: Final = "specs.updated"
 
 
 ALL_EVENTS: Final[frozenset[str]] = frozenset(
@@ -140,6 +148,9 @@ class ErrCode:
     TASK_PROFILE_INVALID: Final = "TASK_PROFILE_INVALID"
     BACKUP_UNAVAILABLE: Final = "BACKUP_UNAVAILABLE"
     UTILITY_UNAVAILABLE: Final = "UTILITY_UNAVAILABLE"
+    SPEC_NOT_FOUND: Final = "SPEC_NOT_FOUND"
+    SPEC_INVALID: Final = "SPEC_INVALID"
+    SPEC_COMPILER_UNAVAILABLE: Final = "SPEC_COMPILER_UNAVAILABLE"
     INTERNAL: Final = "INTERNAL"
 
 
@@ -236,6 +247,16 @@ SHAPES: Final[dict[str, Any]] = {
     "CohortsUpdatedData": ('obj', (('cohorts', ('list', ('ref', 'CohortSummary')), False),)),
     "PrefixesUpdatedData": ('obj', (('prefixes', ('list', ('ref', 'Prefix')), False),)),
     "SidecarErrorData": ('obj', (('code', 'str', False), ('message', 'str', False), ('detail', 'any', False))),
+    "SpecOrigin": ('lit', ('shipped', 'shipped_edited', 'user')),
+    "SpecEntry": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('description', ('union', ('str', 'null')), False), ('origin', ('ref', 'SpecOrigin'), False), ('template', ('union', ('str', 'null')), False), ('templateVersion', ('union', ('int', 'null')), False))),
+    "SpecDiagnostic": ('obj', (('code', 'str', False), ('severity', ('lit', ('INFO', 'WARN', 'ERROR')), False), ('message', 'str', False), ('location', ('union', ('str', 'null')), False), ('placement', ('lit', ('field', 'row', 'section', 'node', 'document')), False), ('anchor', ('union', ('str', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('help', ('union', ('str', 'null')), False), ('decision', ('union', ('str', 'null')), False))),
+    "SpecGraphNode": ('obj', (('index', 'int', False), ('symbol', 'str', False), ('label', 'str', False), ('band', 'int', False), ('type', ('lit', ('DELAY', 'WAIT_ENTRY', 'HOLD', 'WAIT_EXIT', 'PULSE', 'TERMINAL')), False), ('durationId', ('union', ('str', 'null')), False), ('durationMs', ('union', ('int', 'null')), False), ('strobeName', ('union', ('str', 'null')), False), ('strobe', ('union', ('int', 'null')), False), ('silentByDesign', 'bool', False), ('watch', ('list', 'str'), False))),
+    "SpecGraphEdge": ('obj', (('index', 'int', False), ('src', 'int', False), ('dst', 'int', False), ('trigger', ('lit', ('TIMEOUT', 'ENTER', 'HELD', 'BROKEN', 'EXIT', 'DONE', 'ADVANCE', 'REPEAT')), False), ('guard', ('union', ('str', 'null')), False), ('channel', ('union', ('str', 'null')), False), ('effect', ('union', ('str', 'null')), False))),
+    "SpecGraph": ('obj', (('nodes', ('list', ('ref', 'SpecGraphNode')), False), ('edges', ('list', ('ref', 'SpecGraphEdge')), False), ('entry', 'int', False))),
+    "SpecTableSummary": ('obj', (('specId', 'str', False), ('specHash', 'str', False), ('specVersion', 'int', False), ('vocabVersion', 'int', False), ('template', 'str', False), ('templateVersion', 'int', False), ('templateHash', 'str', False), ('nNodes', 'int', False), ('nEdges', 'int', False), ('nTiming', 'int', False), ('nTrialTypes', 'int', False), ('sizeBytes', 'int', False), ('crc32', 'str', False))),
+    "SpecCompileResult": ('obj', (('ok', 'bool', False), ('diagnostics', ('list', ('ref', 'SpecDiagnostic')), False), ('table', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('graph', ('union', (('ref', 'SpecGraph'), 'null')), False), ('listing', ('union', ('str', 'null')), False), ('elapsedMs', 'float', False))),
+    "SpecCapabilities": ('obj', (('outcomeClasses', ('list', 'str'), False), ('requiredTiming', ('list', 'str'), False), ('knobs', ('list', 'str'), False), ('template', 'str', False), ('templateVersion', 'int', False))),
+    "SpecsUpdatedData": ('obj', (('specs', ('list', ('ref', 'SpecEntry')), False),)),
 }
 
 COMMAND_ARGS: Final[dict[str, Any]] = {
@@ -283,6 +304,11 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "analytics.rescan": ('obj', (('cohortId', 'str', False), ('adoptOrphans', 'bool', True))),
     "analytics.recentSessions": ('obj', (('limit', 'int', True),)),
     "sessions.recover": ('obj', (('cohortId', 'str', False),)),
+    "specs.list": ('obj', ()),
+    "specs.get": ('obj', (('specId', 'str', False),)),
+    "specs.schema": ('obj', ()),
+    "specs.compile": ('obj', (('text', 'str', False), ('specId', 'str', True))),
+    "specs.capabilities": ('obj', (('topology', 'any', False),)),
 }
 
 COMMAND_RESULTS: Final[dict[str, Any]] = {
@@ -330,6 +356,11 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "analytics.rescan": ('ref', 'RescanResult'),
     "analytics.recentSessions": ('obj', (('sessions', ('list', ('ref', 'DiskSession')), False),)),
     "sessions.recover": ('ref', 'RecoverResult'),
+    "specs.list": ('obj', (('specs', ('list', ('ref', 'SpecEntry')), False),)),
+    "specs.get": ('obj', (('specId', 'str', False), ('origin', ('ref', 'SpecOrigin'), False), ('text', 'str', False), ('raw', 'any', False))),
+    "specs.schema": ('obj', (('schema', 'any', False), ('overlay', 'any', False), ('strobes', 'any', False), ('channels', 'any', False), ('limits', 'any', False), ('templates', ('list', ('obj', (('name', 'str', False), ('version', 'int', False), ('sourceHash', 'str', False)))), False))),
+    "specs.compile": ('ref', 'SpecCompileResult'),
+    "specs.capabilities": ('ref', 'SpecCapabilities'),
 }
 
 EVENT_DATA: Final[dict[str, Any]] = {
@@ -348,6 +379,7 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "backup.status": ('ref', 'BackupStatus'),
     "analytics.progress": ('ref', 'AnalyticsProgress'),
     "sidecar.error": ('ref', 'SidecarErrorData'),
+    "specs.updated": ('ref', 'SpecsUpdatedData'),
 }
 
 

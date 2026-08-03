@@ -16,6 +16,8 @@
  *                             avrdude) seeded via `core install` into an empty
  *                             directory, so nothing from the dev machine's own
  *                             Arduino15 rides along
+ *     sketches/               the bundled sketch library, freshly staged by
+ *                             stage-sketches.mjs from ../Arduino + ../Task-Graph
  *
  * The shell resolves these through Tauri's resource dir and hands their
  * locations to the sidecar via EPHYMERIS_BUNDLED_* env vars; the sidecar
@@ -171,5 +173,18 @@ if (existsSync(join(dataDir, "packages", "arduino"))) {
   rmSync(join(dataDir, "staging"), { recursive: true, force: true });
   console.log(`seeded arduino:avr (${sizeOf(dataDir)})`);
 }
+
+// --- 4. bundle the sketch library ------------------------------------------
+// Sketches ship with the app (`docs/tasks.md` §2). stage-sketches.mjs owns the
+// merge of the two source repos; this just re-runs it fresh and copies the
+// result into the installer payload. Never reuses a stale staging, unlike the
+// arduino data seed — sketches are small and edited often, and a stale copy in
+// an installer is exactly the drift bundling exists to end.
+
+run(process.execPath, [join(repoRoot, "scripts", "stage-sketches.mjs")]);
+const sketchesOut = join(resourcesDir, "sketches");
+rmSync(sketchesOut, { recursive: true, force: true });
+cpSync(join(repoRoot, "sketches"), sketchesOut, { recursive: true });
+console.log(`staged sketch library (${sizeOf(sketchesOut)})`);
 
 console.log(`\nresources staged at ${resourcesDir} — total ${sizeOf(resourcesDir)}`);

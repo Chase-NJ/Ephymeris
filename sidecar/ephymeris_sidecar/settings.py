@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -40,12 +41,13 @@ class BoxBinding:
 
 @dataclass
 class SidecarSettings:
-    arduino_directory: str | None = None
     arduino_cli_path: str | None = None
-    #: The sketch every idle box is returned to (`settings.md` §8).
+    #: The sketch every idle box is returned to (`settings.md` §8), by FOLDER
+    #: NAME — the same key `taskDefaults` uses, because the bundled library's
+    #: path differs per install while the name is what a session file records.
     #: `None` turns the baseline off entirely — the app is fully usable without
     #: one, it just can't ask a box to point at itself.
-    utility_sketch_path: str | None = None
+    utility_sketch_name: str | None = None
     #: Where session output lives. Used as the base for new cohorts' data
     #: folders (`cohorts.md` §8) — distinct from the app data directory that
     #: holds the cohort database (§3).
@@ -65,9 +67,8 @@ class SidecarSettings:
             return cls(boxes=_default_boxes())
 
         return cls(
-            arduino_directory=_opt_str(payload.get("arduinoDirectory")),
             arduino_cli_path=_opt_str(payload.get("arduinoCliPath")),
-            utility_sketch_path=_opt_str(payload.get("utilitySketchPath")),
+            utility_sketch_name=_utility_sketch_name(payload),
             data_directory=_opt_str(payload.get("dataDirectory")),
             backup_directory=_opt_str(payload.get("backupDirectory")),
             default_baud=_baud(payload.get("defaultBaud")),
@@ -85,6 +86,26 @@ class SidecarSettings:
 def _opt_str(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value
+    return None
+
+
+def _utility_sketch_name(payload: dict) -> str | None:
+    """Read the baseline sketch, healing the retired path-valued key.
+
+    Until sketches shipped with the app this was `utilitySketchPath`, an absolute
+    path into the user's Arduino Directory. The shell migrates its own store the
+    same way, so this branch should never fire on a paired build — it exists for
+    the unpaired case (an old store pushed verbatim by a dev shell), where
+    silently losing the baseline would mean six boxes quietly stop returning to
+    it. The basename of the old path IS the sketch's folder name, because
+    arduino-cli requires `<folder>/<folder>.ino`.
+    """
+    name = _opt_str(payload.get("utilitySketchName"))
+    if name is not None:
+        return name
+    legacy = _opt_str(payload.get("utilitySketchPath"))
+    if legacy is not None:
+        return Path(legacy).name or None
     return None
 
 

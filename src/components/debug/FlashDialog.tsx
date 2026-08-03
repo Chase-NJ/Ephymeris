@@ -1,6 +1,5 @@
-import { Check, CircleAlert, FolderOpen, RefreshCw, Zap } from "lucide-react";
+import { Check, CircleAlert, RefreshCw, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
@@ -41,7 +40,6 @@ export function FlashDialog({
   const { client } = useSidecar();
   const { discovery, refreshSketches } = useSettings();
   const store = useHardwareStore();
-  const navigate = useNavigate();
 
   const [selected, setSelected] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>("pick");
@@ -105,7 +103,7 @@ export function FlashDialog({
     setStage("done");
   }
 
-  const { state } = discovery.directory;
+  const { state } = discovery.library;
 
   return (
     <Modal open={open} onClose={onClose} title={`Flash box ${box}`}>
@@ -169,15 +167,8 @@ export function FlashDialog({
           )}
 
           {state !== "ok" && (
-            <DirectoryProblem
-              state={state}
-              message={discovery.directory.message}
-              onSettings={() => {
-                onClose();
-                // The Arduino Directory setting lives on the Task tab, beside
-                // the sketch picker it feeds.
-                navigate("/task");
-              }}
+            <LibraryProblem
+              message={discovery.library.message}
               onRefresh={() => void refreshSketches()}
             />
           )}
@@ -230,40 +221,27 @@ export function FlashDialog({
   );
 }
 
-function DirectoryProblem({
-  state,
+function LibraryProblem({
   message,
-  onSettings,
   onRefresh,
 }: {
-  state: "not_configured" | "invalid" | "empty";
   message: string | null;
-  onSettings: () => void;
   onRefresh: () => void;
 }) {
+  // Sketches ship with the app, so a non-ok library is a broken install rather
+  // than a wrong setting — there is no picker to send anyone to, and the
+  // sidecar's message already says "reinstall". Refresh is offered because a
+  // rescan is free and a half-finished install may have completed since.
   return (
     <div className="flex flex-col items-start gap-3">
       <p className="text-[13px] leading-relaxed text-static">
-        {state === "not_configured" &&
-          "No Arduino Directory is set yet. Sketches are flashed from a configured folder rather than browsed to, so set that up first."}
-        {state === "invalid" && (message ?? "Can't find your configured Arduino Directory.")}
-        {state === "empty" &&
-          (message ??
-            "No valid sketches found. A sketch folder must contain a .ino file with the same name as the folder.")}
+        {message ??
+          "Ephymeris couldn't find the sketches it ships with. The install looks incomplete — reinstalling should fix it."}
       </p>
-      <div className="flex gap-2">
-        {state !== "empty" ? (
-          <Button onClick={onSettings}>
-            <FolderOpen size={13} strokeWidth={1.75} />
-            Open Config
-          </Button>
-        ) : (
-          <Button onClick={onRefresh}>
-            <RefreshCw size={13} strokeWidth={1.75} />
-            Refresh
-          </Button>
-        )}
-      </div>
+      <Button onClick={onRefresh}>
+        <RefreshCw size={13} strokeWidth={1.75} />
+        Refresh
+      </Button>
     </div>
   );
 }

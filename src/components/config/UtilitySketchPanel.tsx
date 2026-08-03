@@ -27,16 +27,24 @@ export function UtilitySketchPanel({
 }: {
   sketches: SketchEntry[];
   boxes: BoxBinding[];
+  /** The sketch's folder NAME — the settings key (`settings.md` §8). */
   value: string | null;
   status: UtilityStatus;
   busy: boolean;
   connected: boolean;
-  onChange: (path: string | null) => void;
+  onChange: (name: string | null) => void;
   onReflash: () => void;
 }) {
   const bound = boxes.filter((b) => b.hardwareId !== null).map((b) => b.box);
   const rows = status.boxes.filter((b) => bound.includes(b.box));
   const restoring = rows.some((b) => b.state === "restoring");
+
+  // The picker is path-keyed (paths are unique within one discovery; names are
+  // what the setting stores). Translate at this boundary rather than fork the
+  // picker: the same component serves the session flow, where a path is right.
+  const selectedPath = sketches.find((s) => s.name === value)?.path ?? null;
+  const nameOf = (path: string | null) =>
+    path === null ? null : (sketches.find((s) => s.path === path)?.name ?? null);
 
   return (
     <div className="border-b border-halo px-4 py-3.5">
@@ -55,8 +63,8 @@ export function UtilitySketchPanel({
         <SketchPicker
           label="Hardware utility sketch"
           sketches={sketches}
-          value={value}
-          onChange={onChange}
+          value={selectedPath}
+          onChange={(path) => onChange(nameOf(path))}
           className="w-[240px] shrink-0 truncate"
         />
       </div>

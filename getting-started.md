@@ -150,7 +150,7 @@ Nothing is pre-seeded — the app expects you to point it at your own folders an
 | Step | Screen | What you're doing |
 |---|---|---|
 | **1** | **Config** | A box-setup wizard walks you through binding each of the 6 boxes to a connected board, nicknaming them, and (optionally) running a handshake test. Skippable — same options live on the Config screen directly. |
-| **2** | **Task → Arduino Directory** | Point at the root folder holding your sketch category folders plus a shared `libraries/` folder. |
+| **2** | **Task** | Nothing to configure — sketches ship with the app. The screen names how many this build carries; pick one to see its trial flow. |
 | **3** | **Settings → Data directory** | Where session data gets written. You can also set an optional **Backup directory** on another drive or network share. |
 
 Once that's done, create a **Cohort** and start a run from the **Dashboard**.
@@ -173,7 +173,7 @@ Once that's done, create a **Cohort** and start a run from the **Dashboard**.
 - **[`docs/README.md`](docs/README.md)** — the full engineering guide: architecture, file-by-file module map, test map, and the open-issues register. Read this before making non-trivial changes.
 - **[`docs/dashboard.md`](docs/dashboard.md)** — theme/tokens, the shell, every screen, the per-port hardware state machine, Mission Control, the 3D constellation.
 - **[`docs/cohorts.md`](docs/cohorts.md)** — the Cohort/Animal/Group data model and UI.
-- **[`docs/tasks.md`](docs/tasks.md)** — the Arduino Directory, `task.json` schema, and how to author a new behavior task.
+- **[`docs/tasks.md`](docs/tasks.md)** — the bundled sketch library, `task.json` schema, and how to author a new behavior task.
 - **[`docs/data.md`](docs/data.md)** — on-disk data layout, the SQLite schema, backup mirroring, and Analytics.
 - **[`docs/settings.md`](docs/settings.md)** — every settings key, box bindings, and the hardware utility baseline.
 - **[`docs/websocket-protocol.md`](docs/websocket-protocol.md)** — the canonical wire protocol schema.

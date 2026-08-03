@@ -1,14 +1,14 @@
 # Settings
 
-![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![keys](https://img.shields.io/badge/settings_keys-12-8B7EC8?style=flat-square) ![owner](https://img.shields.io/badge/owner-Tauri_shell-16151F?style=flat-square)
+![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![keys](https://img.shields.io/badge/settings_keys-11-8B7EC8?style=flat-square) ![owner](https://img.shields.io/badge/owner-Tauri_shell-16151F?style=flat-square)
 
 > **What this is** · Every configurable value, where it is edited, and the rig-level machinery those values drive.
 >
-> **Owns** · The Config / Settings / Task split · all twelve settings keys · persistence and the push to the sidecar · box→board bindings · board discovery · **the hardware utility baseline** · the handshake test.
+> **Owns** · The Config / Settings / Task split · all eleven settings keys · persistence and the push to the sidecar · box→board bindings · board discovery · **the hardware utility baseline** · the handshake test.
 >
-> **Read with** · [dashboard.md](dashboard.md) (the port state machine these values feed) · [tasks.md](tasks.md) (the Arduino Directory and rig task defaults) · [data.md](data.md) (what the data and backup directories mean).
+> **Read with** · [dashboard.md](dashboard.md) (the port state machine these values feed) · [tasks.md](tasks.md) (the bundled sketch library and rig task defaults) · [data.md](data.md) (what the data and backup directories mean).
 
-**Contents** — [1. The split](#1-the-split) · [2. The twelve keys](#2-the-twelve-keys) · [3. Persistence & push](#3-persistence--push) · [4. The Settings screen](#4-the-settings-screen) · [5. The Config screen](#5-the-config-screen) · [6. Box bindings](#6-box-bindings) · [7. Board discovery](#7-board-discovery) · [8. **The utility baseline**](#8-the-hardware-utility-baseline) · [9. The handshake test](#9-the-handshake-test)
+**Contents** — [1. The split](#1-the-split) · [2. The eleven keys](#2-the-eleven-keys) · [3. Persistence & push](#3-persistence--push) · [4. The Settings screen](#4-the-settings-screen) · [5. The Config screen](#5-the-config-screen) · [6. Box bindings](#6-box-bindings) · [7. Board discovery](#7-board-discovery) · [8. **The utility baseline**](#8-the-hardware-utility-baseline) · [9. The handshake test](#9-the-handshake-test)
 
 ---
 
@@ -20,7 +20,7 @@ Three screens edit settings. **The split is by subject, not by shape.**
 |---|---|---|
 | ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
 | 📡 **Config** (`/config`) | *How is this rig wired?* | Constellation layout, box→board bindings, handshake test, utility baseline, default baud, `arduino-cli` path |
-| 🔀 **Task** (`/task`) | *What is the animal doing?* | Arduino Directory, per-sketch task parameters |
+| 🔀 **Task** (`/task`) | *What is the animal doing?* | Sketch inspection over the bundled library, per-sketch task parameters |
 
 > [!NOTE]
 > **This row has been decided twice.** The first split (Settings → Config) was by *shape*: hardware-ish vs storage-ish. The second (Config → Task) is by *subject*, and the forcing function was volume — making every firmware parameter operator-tunable turned a three-field panel into forty-odd fields, which is not a row on a hardware page.
@@ -29,7 +29,7 @@ Three screens edit settings. **The split is by subject, not by shape.**
 
 ---
 
-## 2. The twelve keys
+## 2. The eleven keys
 
 Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/settings/schema.ts); the shape is generated into `src/lib/ws/protocol.ts`.
 
@@ -37,9 +37,8 @@ Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/set
 |---|---|---|---|---|
 | `dataDirectory` | `string \| null` | `null` | **Settings** → Storage | Where session data is written ([data.md §1](data.md#1-directory-structure)). Blank/whitespace normalizes to `null` |
 | `backupDirectory` | `string \| null` | `null` | **Settings** → Storage | Second copy of session files and the cohort database on another drive or share ([data.md §7](data.md#7-backup-mirroring)). Setting it does **not** backfill |
-| `arduinoDirectory` | `string \| null` | `null` | **Task** | Root folder holding sketch categories and a shared `libraries/` ([tasks.md §2](tasks.md#2-the-arduino-directory)). No default is shipped or guessed |
 | `arduinoCliPath` | `string \| null` | `null` | **Config** → Hardware | Override for the bundled `arduino-cli`. Empty string coerces to `null` |
-| `utilitySketchPath` | `string \| null` | `null` | **Config** → Hardware | The baseline every idle box is returned to ([§8](#8-the-hardware-utility-baseline)). `null` turns the baseline off |
+| `utilitySketchName` | `string \| null` | `null` | **Config** → Hardware | The baseline every idle box is returned to ([§8](#8-the-hardware-utility-baseline)), by sketch **folder name** — the same key `taskDefaults` uses, because the bundled library's path is per-install while the name survives an update. `null` turns the baseline off |
 | `defaultBaud` | `number` | **`9600`** | **Config** → Hardware, and the setup wizard | Starting baud for each console. Debug Mode allows a per-box override. Options: 9600, 19200, 38400, 57600, 115200, 230400, 250000 |
 | `boxes` | `BoxBinding[]` | `[]` | **Config** → Boxes, and the wizard | The user-managed box list — see [§6](#6-box-bindings) |
 | `reducedMotion` | `boolean` | `false` | **Settings** → Interface | Forces reduced motion on regardless of the system setting (which is always respected on top). **Shell-only** |
@@ -49,7 +48,7 @@ Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/set
 | `taskDefaults` | `Record<string, Record<string, unknown>>` | `{}` | **Task** | This rig's default task parameters, per sketch. **Shell-only** |
 
 > [!IMPORTANT]
-> **The sidecar reads only seven of these** — `arduinoDirectory`, `arduinoCliPath`, `utilitySketchPath`, `dataDirectory`, `backupDirectory`, `defaultBaud`, `boxes` — and ignores the rest. That is why adding a settings field is deliberately a **non-event**: the four shell-only keys needed no sidecar change at all.
+> **The sidecar reads only six of these** — `arduinoCliPath`, `utilitySketchName`, `dataDirectory`, `backupDirectory`, `defaultBaud`, `boxes` — and ignores the rest. That is why adding a settings field is deliberately a **non-event**: the shell-only keys needed no sidecar change at all. Removing one is a non-event on the same grounds: the retired `arduinoDirectory` is dropped by `normalizeSettings` on load, and a stale store still carrying it (or the path-valued `utilitySketchPath`, which heals to its basename) disturbs nothing.
 
 **Normalization rules worth knowing:**
 
@@ -59,7 +58,7 @@ Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/set
 - `taskDefaults` values are carried through unexamined; only values **diverging** from a sketch's own `task.json` defaults are stored, and an empty diff deletes the sketch's entry entirely.
 
 > [!TIP]
-> **`taskDefaults` is keyed by sketch folder *name*, not path**, because the two lab machines keep their Arduino Directories in different places — and the name is what the session file already records in `sketch`.
+> **`taskDefaults` is keyed by sketch folder *name*, not path**, because the bundled library's location is per-install — and the name is what the session file already records in `sketch`. `utilitySketchName` follows the same rule for the same reason.
 
 ---
 
@@ -272,4 +271,4 @@ A box already in `PASSTHROUGH` is closed before the test, since re-opening is wh
 
 ---
 
-**Where to next** — [dashboard.md](dashboard.md) (the state machine these values drive) · [tasks.md](tasks.md) (the Arduino Directory and rig defaults) · [data.md](data.md) (the directories) · [README.md](README.md)
+**Where to next** — [dashboard.md](dashboard.md) (the state machine these values drive) · [tasks.md](tasks.md) (the bundled sketch library and rig defaults) · [data.md](data.md) (the directories) · [README.md](README.md)

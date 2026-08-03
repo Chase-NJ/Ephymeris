@@ -333,7 +333,7 @@ A transition to the state a port is already in is a **silent no-op**, not an err
 
 Two steps via `arduino-cli` (FQBN `arduino:avr:mega`): `compile` then `upload -p <port>`. Progress and errors stream to the frontend incrementally, not as a spinner-until-done — the gRPC daemon backend gives true line-by-line streaming rather than buffered replay.
 
-The sketch comes from the categorized picker over the [Arduino Directory](tasks.md#2-the-arduino-directory) — there is no arbitrary file browse.
+The sketch comes from the categorized picker over the [bundled sketch library](tasks.md#2-the-bundled-sketch-library) — there is no arbitrary file browse.
 
 On failure (compile error or upload failure) the port transitions to `ERROR` with the parsed message surfaced; it does **not** silently fall back to `IDLE`.
 

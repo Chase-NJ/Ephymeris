@@ -4,11 +4,11 @@
 
 > **What this is** · Everything between "I have a sketch that emits strobes" and "the app renders its trial flow, builds its `START` line, and scores it live."
 >
-> **Owns** · The Arduino Directory · the `task.json` schema · the derived trial-flow state machine · live metrics · `START` construction · the profile and parameter hashes.
+> **Owns** · The bundled sketch library · the `task.json` schema · the derived trial-flow state machine · live metrics · `START` construction · the profile and parameter hashes.
 >
 > **Read with** · [data.md](data.md) (what the recorded values become on disk and in Analytics) · [dashboard.md](dashboard.md) (where the graph is rendered live) · [settings.md](settings.md) (where the directory and rig defaults are edited).
 
-**Contents** — [1. What a task is](#1-what-a-task-is) · [2. Arduino Directory](#2-the-arduino-directory) · [3. `task.json`](#3-taskjson-reference) · [4. The derived state machine](#4-the-derived-state-machine) · [5. Live metrics](#5-live-metrics) · [6. Values → the wire](#6-from-values-to-the-wire) · [7. Hashes](#7-profile_hash-and-params_hash) · [8. **Authoring guide**](#8-authoring-guide--define-your-own-task) · [9. Validation](#9-validation-and-failure-modes) · [10. The Task screen](#10-the-task-screen)
+**Contents** — [1. What a task is](#1-what-a-task-is) · [2. The sketch library](#2-the-bundled-sketch-library) · [3. `task.json`](#3-taskjson-reference) · [4. The derived state machine](#4-the-derived-state-machine) · [5. Live metrics](#5-live-metrics) · [6. Values → the wire](#6-from-values-to-the-wire) · [7. Hashes](#7-profile_hash-and-params_hash) · [8. **Authoring guide**](#8-authoring-guide--define-your-own-task) · [9. Validation](#9-validation-and-failure-modes) · [10. The Task screen](#10-the-task-screen)
 
 ---
 
@@ -34,24 +34,35 @@ flowchart LR
 
 ---
 
-## 2. The Arduino Directory
+## 2. The bundled sketch library
 
-A single configured root folder is the **only** source of flashable sketches. There is no arbitrary-file fallback — one source of truth is what makes the error and empty states in [§2.4](#24-error-and-empty-states) unambiguous.
+Sketches **ship with the app**, and the shipped library is the **only** source of flashable sketches. There is no configured directory and no arbitrary-file fallback — one source of truth is what makes the error states in [§2.4](#24-error-and-empty-states) unambiguous, and shipping it is what makes the library a fact about the build rather than a setting someone can get wrong.
+
+The deliberate trade, stated plainly: **adding or changing a sketch needs a new build.** The library is staged at build time by `scripts/stage-sketches.mjs` from two source repos — the lab's firmware repo (behaviour sketches + `libraries/BehaviorBox`) and Task-Graph (`TaskRunner_*` interpreter sketches + `libraries/TaskInterpreter`) — with both `libraries/` collections merged into the one root that reaches `arduino-cli --libraries`. The Task screen names the sketch count so an operator can say which library they have.
 
 > [!WARNING]
-> **The rule that causes the most confusion.** A folder is a valid sketch **only if it contains a `.ino` whose filename matches the folder's own name** — `clean_flush/clean_flush.ino`, never `clean_flush/main.ino`. This is arduino-cli's requirement, not ours, and it is far and away the most common reason a sketch a user just wrote fails to appear in the picker. Folders that fail it are **skipped and reported**, never silently dropped.
+> **The rule that causes the most confusion.** A folder is a valid sketch **only if it contains a `.ino` whose filename matches the folder's own name** — `clean_flush/clean_flush.ino`, never `clean_flush/main.ino`. This is arduino-cli's requirement, not ours. Folders that fail it are **skipped and reported**, never silently dropped.
 
 ### 2.1 Location
 
-- **No default path is shipped or assumed.** The user sets it explicitly on the **Task** screen (native OS directory picker), directly above the sketch picker it feeds. It lives there rather than on Config because "which folder holds the sketches" is a question about the task, not about which board is box 3.
-- Persisted in the Tauri settings store as `arduinoDirectory` and pushed to the sidecar on connect/change like every other setting ([settings.md §3](settings.md#3-persistence--push)).
-- On receipt the sidecar validates the path (exists, is a directory, readable) and reports one of the four states below — validation is immediate, not deferred.
-- **Per-machine, by decision.** Each lab PC has its own independently-configured local directory, with no network dependency in any form.
+Resolution order, mirroring how the shell already picks a sidecar interpreter (`sidecar.rs::resolve_launch`):
+
+| Priority | Source | When |
+|---|---|---|
+| 1 | `$EPHYMERIS_SKETCH_LIBRARY` | A developer pointing the sidecar somewhere else. An env var and **deliberately not a setting** — it never appears in the UI, never persists, and cannot reintroduce a configurable directory by the back door |
+| 2 | `$EPHYMERIS_BUNDLED_SKETCHES` | An installed build. Set by the Tauri shell from its resource dir, exactly as `EPHYMERIS_BUNDLED_ARDUINO_CLI` already is |
+| 3 | `<repo>/sketches` | A checkout. Staged by `npm run predev` (or `npm run stage:sketches`), which is what makes `tauri dev` work with no installer resources |
+
+- Owned by `discovery.library_root()` / `library_status()`; the status rides the `settings.push` reply so a client learns it on connect.
+- **`arduinoDirectory` is retired.** A stored value is dropped by `normalizeSettings` — silently on purpose, since the key configured a directory nothing reads any more. Do not reintroduce it.
+
+> [!NOTE]
+> **History.** Until v1.1 this was a per-machine, user-configured directory, chosen on the Task screen. That design made the library's completeness the user's problem; bundling makes it the build's. What was lost is the same-afternoon loop of writing a sketch and flashing it without a build — the walk-back, if that loss bites, is a hidden additional library that *appends* to the bundle, never a return of the configured root.
 
 ### 2.2 Required structure
 
 ```
-<ArduinoDirectory>/
+<library root>/
 ├── Utility/                     ← a category
 │   └── BOX_Utility/
 │       ├── BOX_Utility.ino
@@ -67,10 +78,14 @@ A single configured root folder is the **only** source of flashable sketches. Th
 │       │   ├── GRGL_2-Odor.ino
 │       │   └── task.json
 │       └── libraries/           ← reserved at any depth; not passed to compile
-└── libraries/                   ← reserved name, not a category
-    └── BehaviorBox/
-        ├── BehaviorBox.h
-        └── BehaviorBox.cpp
+├── Bench/                       ← Task-Graph's interpreter sketches (bench only)
+│   └── TaskRunner_Dev/
+│       └── TaskRunner_Dev.ino
+└── libraries/                   ← reserved name, not a category; the MERGED root
+    ├── BehaviorBox/             ← from the firmware repo
+    │   ├── BehaviorBox.h
+    │   └── BehaviorBox.cpp
+    └── TaskInterpreter/         ← from Task-Graph
 ```
 
 | Rule | Detail |
@@ -88,9 +103,9 @@ A single configured root folder is the **only** source of flashable sketches. Th
 
 ### 2.3 Discovery
 
-The Python sidecar performs discovery (`discovery.py`). Triggers: the setting changing, a manual **Refresh**, and route mount. There is **no live filesystem watcher** — scan-on-trigger is enough for how often lab sketches actually change.
+The Python sidecar performs discovery (`discovery.py`). Triggers: every `settings.push` (which arrives on connect and on any change), a manual **Refresh**, and route mount. There is **no live filesystem watcher** — the library changes when the app does, so scan-on-trigger is more than enough.
 
-1. Validate the root path.
+1. Resolve and check the library root ([§2.1](#21-location)).
 2. Enumerate top-level subfolders; set aside the root `libraries/`, ignore hidden folders.
 3. For each remaining folder, descend looking for sketches, applying the folder-name-matches-`.ino` rule. A folder that *is* a valid sketch is recorded (category = its parent) and not descended into; a folder with no `.ino` is a sub-category and is scanned one level deeper.
 4. Folders that **contain an `.ino` but none matching the folder's own name** are **skipped but reported**. A folder holding no `.ino` at all is plain organisation, not a broken sketch, and is not reported.
@@ -109,14 +124,16 @@ The Python sidecar performs discovery (`discovery.py`). Triggers: the setting ch
 
 ### 2.4 Error and empty states
 
-Four distinct states, surfaced clearly rather than collapsed into one generic "error":
+Three distinct states plus a derived note — and every non-ok state now means a **broken or partial install**, never a wrong setting. That is a genuine inversion of the copy, not a rename: the retired states offered a directory picker as the way back; these point at reinstalling, because there is nothing else a user *can* do. `not_configured` is gone entirely — there is nothing to configure, so there is no first-run state to be in.
 
 | State | Condition | Treatment |
 |---|---|---|
-| 🔵 **Not configured** | No directory set yet | Prompt to configure. Expected on first run, **not** an error |
-| 🔴 **Invalid path** | Doesn't exist / isn't a directory / isn't readable | "Can't find your configured Arduino Directory," with a way back to fix it |
-| 🟡 **Valid but empty** | Readable, zero valid sketches | A distinct empty state pointing at the naming convention, not an error |
-| 🟢 **Partial** | Some sketches found, some folders skipped | Non-blocking — the list populates, with an "N items couldn't be read" note |
+| 🔴 **Damaged** | The shipped library is missing, not a directory, or unreadable | "The install looks incomplete — reinstalling should fix it" |
+| 🟡 **Empty** | Readable, zero valid sketches | Same remedy — a library that shipped without sketches is a partial install, not a naming lesson |
+| 🟢 **Ok** | Sketches found | The Task screen names the count: *"N sketches ship with this version of Ephymeris. Adding or changing one needs a new build."* |
+| 🟠 **Partial** *(derived)* | `ok` with a non-zero skipped count | Non-blocking — the list populates, with an "N items couldn't be read" note |
+
+`SketchLibraryStatus.source` records whether the root came from the bundle or from `$EPHYMERIS_SKETCH_LIBRARY` — a developer fact, carried so a bug report can say which library was actually scanned.
 
 ---
 
@@ -295,7 +312,10 @@ A `"kind": "utility"` profile makes a cleaning/priming/self-test sketch first-cl
 
 ### 3.7 `legacyNames`
 
-A finalized run records `sketch` as a **name**, and the archive walk resolves that name against the Arduino Directory to find the profile that can score it. For anything this app wrote, the name is the folder's and resolution is exact. Data written by whatever the lab used before is not so lucky — a real archive records `"Shape - L"` where the directory holds `shaping_GL`.
+A finalized run records `sketch` as a **name**, and the archive walk resolves that name against the bundled library to find the profile that can score it. For anything this app wrote, the name is the folder's and resolution is exact. Data written by whatever the lab used before is not so lucky — a real archive records `"Shape - L"` where the library holds `shaping_GL`.
+
+> [!CAUTION]
+> Because the library ships with the app, dropping a sketch from the bundle — or editing away a `legacyNames` entry — makes every archived run recorded under that name stop decoding, **with a warning rather than an error**. `tests/test_bundled_library_covers_archives.py` pins the names the lab's real archives contain; keep it current when a new archive appears.
 
 ```jsonc
 { "legacyNames": ["Shape - L"] }
@@ -942,7 +962,7 @@ Route `/task` ([`src/routes/Task.tsx`](../src/routes/Task.tsx)) — a single scr
 
 | Section | Contents |
 |---|---|
-| **Arduino Directory** | Directory field + status note with a rescan, then the **Sketch** picker (grouped `category / name`). Picking a sketch loads its profile over `tasks.getProfile` |
+| **Sketch** | The **Sketch** picker (grouped `category / name`) over the bundled library, with a status note naming the shipped sketch count and a rescan. Picking a sketch loads its profile over `tasks.getProfile` |
 | **Error strip** | A malformed `task.json` message — surfaced, not swallowed |
 | **Trial flow** | Header shows `taskName` and the condition count; body is `TaskGraph`. When `!usable`, prose instead: *"…declares no behavioural strobes. Utility sketches are driven from Debug Mode instead"* or *"This sketch has no task.json, so it runs a bare START…"* |
 | **Task rail** | The same nodes as a compact strip, pinned to the top once the diagram scrolls away. Pin detection uses an `IntersectionObserver` on a 1 px sentinel — a sticky element never stops intersecting its own scroller. Its measured height is published as `--task-rail-h` for the tiles' `scroll-margin-top` |

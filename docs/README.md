@@ -150,12 +150,12 @@ That builds the Rust shell, starts Vite on port 1420, spawns the sidecar, and op
 
 ### 2.5 First-launch setup
 
-Nothing is guessed or shipped with defaults — point the app at your own folders and hardware.
+Point the app at your own folders and hardware — the bundled sketch library is the one thing that ships ready.
 
 | Step | Where | What |
 |---|---|---|
 | 1 | **Config** | A five-step box-setup wizard opens on first launch. Bind each box 1–6 to a connected board (listed by USB serial), nickname them, optionally run the handshake test, pick a constellation. Skippable — the same things are on the Config screen directly. See [settings.md §5](settings.md#5-the-config-screen). |
-| 2 | **Task → Arduino Directory** | The root folder holding your sketch category folders and a shared `libraries/`. See [tasks.md §2](tasks.md#2-the-arduino-directory). |
+| 2 | **Task** | Nothing to configure — sketches ship with the app ([tasks.md §2](tasks.md#2-the-bundled-sketch-library)). The screen names how many this build carries. |
 | 3 | **Settings → Data directory** | Where session data is written. Optionally a **Backup directory** on another drive or share. See [data.md §1](data.md#1-directory-structure). |
 
 Then create a cohort under **Cohorts** and start a run from the Dashboard.
@@ -199,7 +199,7 @@ Owns everything stateful. See [§6.4](#64-dependency-policy) before adding a run
 | `app.py` | Wires everything together and registers every command handler (`auth` never reaches dispatch). The largest module, and the place to look first for any command's behaviour | [protocol §3](websocket-protocol.md#3-commands-client--server) |
 | `server.py` | WebSocket server, auth handshake, command dispatch, event fan-out. Handles `auth` itself, before dispatch | [protocol §1.1](websocket-protocol.md#11-authentication) |
 | `settings.py` | Receives the shell's settings push. Deliberately lenient — an unknown key is a non-event, a malformed value degrades to a default rather than killing the process that owns the ports | [settings §3](settings.md#3-persistence--push) |
-| `discovery.py` | Arduino Directory validation and sketch/library scanning, including the skipped-but-reported rule | [tasks §2](tasks.md#2-the-arduino-directory) |
+| `discovery.py` | Bundled-library resolution and sketch/library scanning, including the skipped-but-reported rule | [tasks §2](tasks.md#2-the-bundled-sketch-library) |
 | `protocol.py` | **Generated** mirror of the wire schema — do not edit | [protocol](websocket-protocol.md) |
 | **`ports/`** | | |
 | `ports/states.py` | The transition table and `assert_transition`. Small, and the authority on what is legal | [dashboard §5](dashboard.md#5-the-per-port-state-machine) |
@@ -287,7 +287,7 @@ Every route is a child of `<AppShell />`, wired in `src/App.tsx`.
 | `/` | `routes/Dashboard.tsx` | Landing: full-bleed 3D rig sky with a hero launch CTA, the session dock, and Cohorts/Rig/Analytics summary cards |
 | `/cohorts` | `routes/Cohorts.tsx` | Cohort browser — card grid, search/sort/archived toggle |
 | `/cohorts/new`, `/cohorts/:id` | `routes/CohortEditor.tsx` | Create (progressive reveal) or manage (all at once) a cohort |
-| `/task` | `routes/Task.tsx` | Arduino Directory, sketch picker, the derived trial-flow graph, per-sketch parameter defaults |
+| `/task` | `routes/Task.tsx` | Sketch picker over the bundled library, the derived trial-flow graph, per-sketch parameter defaults |
 | `/analytics` | `routes/Analytics.tsx` | The Observatory — one route, no tabs; cohort/session/animal are filters |
 | `/config` | `routes/Config.tsx` | Rig wiring: constellation, box→board bindings, handshake, utility baseline, baud, `arduino-cli` |
 | `/settings` | `routes/Settings.tsx` | Storage and interface only |
@@ -457,7 +457,7 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 | **11** | **Full settings schema.** The twelve implemented keys ([settings.md §2](settings.md#2-the-twelve-keys)) are a starting point, not final. The sidecar reads only seven and ignores the rest, so adding a field is deliberately a non-event — proven by the four shell-only keys, which needed no sidecar change at all. |
 | **12** | **Back-pressure policy for `port.output`.** Currently unbounded send, relying on the ring buffer cap. No policy exists for a frontend that cannot keep up with 20 Hz × 6 boards. Not observed as a problem — but undefined. |
 | **14** | **Box→board re-binding UX.** A board swap is a routine lab event. Partially addressed: bindings live in Config with a re-runnable wizard and a per-box handshake test to confirm a swap took. Still open is proactive surfacing — "a new board appeared, bind it to box 3?" — rather than the user knowing to open Config. |
-| **15** | **Live filesystem watcher for the Arduino Directory.** Scan-on-trigger (setting change, manual refresh, route mount) was judged sufficient. Revisit only if that proves wrong in practice. |
+| **15** | **Live filesystem watcher for the sketch library.** Scan-on-trigger (settings push, manual refresh, route mount) was judged sufficient — doubly so now the library only changes when the app does. |
 | **16** | **Archive has no confirmation.** Deliberate — archive is the reversible everyday action and only permanent delete is gated. Revisit if it proves too easy to trigger on a large cohort. |
 | **30** | **Installer signing and a CI build.** The shipped installer is unsigned, so every fresh lab machine shows the SmartScreen dialog once. A code-signing certificate (or Azure Trusted Signing) would remove that. Separately, the installer is built by hand via `npm run package`; a Windows CI build would make the artifact reproducible and untie it from any one machine's `arduino-cli`. Neither blocks the two lab machines. |
 
@@ -472,7 +472,7 @@ Recorded so they aren't rediscovered as oversights. Each was decided, not missed
 | **Auto-respawn of a crashed sidecar** | No. A silent respawn would resurrect the process without the port ownership or session state it had — worse than an honest failure the user can see. |
 | **Auto-recovery from a mid-session board drop** | No. Always a hard stop into `ERROR`, cleared manually. Costs nothing in data because of the write-ahead log. |
 | **Custom/uploaded cohort icons** | Deferred; procedural generation from the cohort id is sufficient and stores nothing. |
-| **Arbitrary sketch browse outside the Arduino Directory** | No. One source of truth makes the error and empty states unambiguous. |
+| **Arbitrary sketch browse outside the bundled library** | No. One source of truth makes the error and empty states unambiguous — and since v1.1 that source ships with the app; the user-configured `arduinoDirectory` is retired (`tasks.md` §2.1). |
 | **`scipy` for `.mat` writing** | Replaced by a hand-written MAT v5 serializer to keep sidecar runtime dependencies minimal. |
 | **A `states`/`graph` key in `task.json`** | No. It would change `profile_hash` and permanently split every sketch's historical runs from its future ones. See [tasks.md §4.1](tasks.md#41-why-derived-not-declared). |
 

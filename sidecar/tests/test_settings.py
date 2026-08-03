@@ -8,37 +8,54 @@ from ephymeris_sidecar.settings import BOX_COUNT, DEFAULT_BAUD, SidecarSettings
 def test_reads_the_keys_the_sidecar_needs() -> None:
     settings = SidecarSettings.from_payload(
         {
-            "arduinoDirectory": "/tmp/arduino",
             "arduinoCliPath": "/opt/homebrew/bin/arduino-cli",
-            "utilitySketchPath": "/tmp/arduino/Utility/BOX_Utility",
+            "utilitySketchName": "BOX_Utility",
             "defaultBaud": 9600,
         }
     )
-    assert settings.arduino_directory == "/tmp/arduino"
     assert settings.arduino_cli_path == "/opt/homebrew/bin/arduino-cli"
-    assert settings.utility_sketch_path == "/tmp/arduino/Utility/BOX_Utility"
+    assert settings.utility_sketch_name == "BOX_Utility"
     assert settings.default_baud == 9600
 
 
 def test_an_unset_utility_sketch_turns_the_baseline_off() -> None:
     """No sketch is a supported configuration, not a missing one."""
-    assert SidecarSettings.from_payload({}).utility_sketch_path is None
-    assert SidecarSettings.from_payload({"utilitySketchPath": "  "}).utility_sketch_path is None
+    assert SidecarSettings.from_payload({}).utility_sketch_name is None
+    assert SidecarSettings.from_payload({"utilitySketchName": "  "}).utility_sketch_name is None
+
+
+def test_the_retired_path_valued_key_heals_to_its_basename() -> None:
+    """`utilitySketchPath` predates the bundled library.
+
+    The shell migrates its own store, so this branch only fires when an old
+    store is pushed verbatim — where dropping the value would silently turn the
+    baseline off and six boxes would quietly stop returning to it. The basename
+    IS the sketch name, because arduino-cli requires `<folder>/<folder>.ino`.
+    """
+    old = {"utilitySketchPath": "/tmp/arduino/Utility/BOX_Utility"}
+    assert SidecarSettings.from_payload(old).utility_sketch_name == "BOX_Utility"
+    # The new key wins when both are present.
+    both = {**old, "utilitySketchName": "OTHER_Sketch"}
+    assert SidecarSettings.from_payload(both).utility_sketch_name == "OTHER_Sketch"
 
 
 def test_unknown_keys_are_a_non_event() -> None:
-    """Adding a shell-only setting must not disturb the sidecar."""
+    """Adding a shell-only setting must not disturb the sidecar.
+
+    `arduinoDirectory` is the live case now rather than a hypothetical: a stale
+    store still carries it, and the sidecar must shrug it off.
+    """
     settings = SidecarSettings.from_payload(
         {"arduinoDirectory": "/tmp/a", "somethingTheShellOwns": {"nested": True}}
     )
-    assert settings.arduino_directory == "/tmp/a"
+    assert settings.default_baud == DEFAULT_BAUD
 
 
 def test_malformed_values_fall_back_to_defaults_rather_than_raising() -> None:
     settings = SidecarSettings.from_payload(
-        {"arduinoDirectory": 42, "defaultBaud": "not-a-number"}
+        {"utilitySketchName": 42, "defaultBaud": "not-a-number"}
     )
-    assert settings.arduino_directory is None
+    assert settings.utility_sketch_name is None
     assert settings.default_baud == DEFAULT_BAUD
 
 

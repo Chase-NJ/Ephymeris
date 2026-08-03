@@ -149,6 +149,9 @@ def make_baseline(
         on_output=_noop_output,
         on_presence=_noop_presence,
     )
+    # Deliberately the RETIRED path-valued key: from_payload heals it to the
+    # basename, so this doubles as an integration test of the migration — the
+    # whole baseline runs on a value that arrived in the old spelling.
     settings = SidecarSettings.from_payload(
         {
             "defaultBaud": 9600,

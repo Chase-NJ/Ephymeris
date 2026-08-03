@@ -78,17 +78,28 @@ SHAPES = (
         doc="A board the out-of-band `arduino-cli board list` poll has seen.",
     ),
     Shape(
-        "DirectoryState",
-        lit("not_configured", "invalid", "empty", "ok"),
-        doc="The four Arduino Directory states of `tasks.md` §2.4.",
+        "LibraryState",
+        lit("ok", "empty", "damaged"),
+        doc="The three bundled-sketch-library states of `tasks.md` §2.4. There is "
+        "no `not_configured`: sketches ship with the app, so there is nothing to "
+        "configure and no first-run state to be in.",
     ),
     Shape(
-        "DirectoryStatus",
+        "SketchLibraryStatus",
         obj(
-            f("state", Ref("DirectoryState")),
+            f("state", Ref("LibraryState")),
             f("path", nullable(STR)),
             f("message", nullable(STR), doc='Populated when state != "ok".'),
+            f(
+                "source",
+                lit("bundled", "override"),
+                doc="`override` when $EPHYMERIS_SKETCH_LIBRARY points elsewhere — a "
+                "developer facility, never reachable from the UI.",
+            ),
         ),
+        doc="Every non-ok state means a broken or partial INSTALL rather than a "
+        "wrong setting, which is why the messages point at reinstalling and not "
+        "at a picker.",
     ),
     Shape(
         "SketchEntry",
@@ -102,14 +113,14 @@ SHAPES = (
     Shape(
         "SketchDiscovery",
         obj(
-            f("directory", Ref("DirectoryStatus")),
+            f("library", Ref("SketchLibraryStatus")),
             f("sketches", ListOf(Ref("SketchEntry"))),
             f("skipped", ListOf(Ref("SkippedEntry"))),
             f("skippedCount", INT, doc='Drives the "Partial" note (`tasks.md` §2.4).'),
             f("libraries", ListOf(STR)),
             f("librariesPath", nullable(STR)),
         ),
-        doc="The full result of an Arduino Directory scan (`tasks.md` §2.3).",
+        doc="The full result of a bundled-library scan (`tasks.md` §2.3).",
     ),
     # Settings (pushed Tauri → sidecar; the shell owns them — §4 of the doc)
     Shape(
@@ -125,13 +136,15 @@ SHAPES = (
         obj(
             f("dataDirectory", nullable(STR)),
             f("backupDirectory", nullable(STR)),
-            f("arduinoDirectory", nullable(STR)),
             f("arduinoCliPath", nullable(STR)),
             f(
-                "utilitySketchPath",
+                "utilitySketchName",
                 nullable(STR),
                 doc="The hardware utility sketch every idle box is returned to "
-                "(`settings.md` §8). Null turns the baseline off.",
+                "(`settings.md` §8). Null turns the baseline off. Keyed by sketch "
+                "FOLDER NAME rather than by path, matching `taskDefaults` — the "
+                "path moved when sketches began shipping with the app, and the "
+                "name is what a session file already records.",
             ),
             f("defaultBaud", INT),
             f("boxes", ListOf(Ref("BoxBinding"))),
@@ -191,7 +204,12 @@ SHAPES = (
         "UtilityStatus",
         obj(
             f("configured", BOOL),
-            f("sketchPath", nullable(STR)),
+            f(
+                "sketchPath",
+                nullable(STR),
+                doc="Resolved from the name against the bundled library — an "
+                "install-specific fact, informational only.",
+            ),
             f("sketchName", nullable(STR)),
             f(
                 "canIdentify",
@@ -1080,9 +1098,11 @@ COMMANDS = (
     Command(
         "settings.push",
         args=obj(f("settings", Ref("EphymerisSettings"))),
-        result=obj(f("arduinoDirectory", Ref("DirectoryStatus"))),
+        result=obj(f("library", Ref("SketchLibraryStatus"))),
         doc="Sent on every connect and change, Tauri → sidecar only. The reply "
-        "carries the immediate directory validation (`tasks.md` §2.1).",
+        "carries the bundled library's state (`tasks.md` §2.1) — which no longer "
+        "depends on the settings being pushed, but is still answered here so a "
+        "client learns it on connect without a second round trip.",
     ),
     Command(
         "sketches.refresh",
@@ -1480,10 +1500,9 @@ ERRORS = (
     ErrorCode("BACKUP_UNAVAILABLE", "backup.syncNow with no directory set, or a sync already running."),
     ErrorCode(
         "UTILITY_UNAVAILABLE",
-        "No hardware utility sketch is configured, or the configured one can't "
-        "be used (missing from the Arduino Directory, or not a utility profile).",
+        "No hardware utility sketch is configured, or the named one can't be used "
+        "(not in the bundled library, or not a utility profile).",
     ),
-    ErrorCode("DIR_INVALID", "Defined but never raised — kept in case the reasoning reverses (§6)."),
     ErrorCode("INTERNAL", "Unhandled sidecar exception; also carried by sidecar.error."),
 )
 

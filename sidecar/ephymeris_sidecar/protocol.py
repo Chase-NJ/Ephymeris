@@ -140,7 +140,6 @@ class ErrCode:
     TASK_PROFILE_INVALID: Final = "TASK_PROFILE_INVALID"
     BACKUP_UNAVAILABLE: Final = "BACKUP_UNAVAILABLE"
     UTILITY_UNAVAILABLE: Final = "UTILITY_UNAVAILABLE"
-    DIR_INVALID: Final = "DIR_INVALID"
     INTERNAL: Final = "INTERNAL"
 
 
@@ -160,13 +159,13 @@ SHAPES: Final[dict[str, Any]] = {
     "PortStateName": ('lit', ('IDLE', 'PASSTHROUGH', 'FLASHING', 'RESETTING', 'IN_SESSION', 'ERROR')),
     "OutputLine": ('obj', (('dir', ('lit', ('rx', 'tx')), False), ('text', 'str', False), ('ts', 'float', False))),
     "DetectedBoard": ('obj', (('hardwareId', 'str', False), ('address', 'str', False), ('fqbn', ('union', ('str', 'null')), False), ('boxId', ('union', ('int', 'null')), False))),
-    "DirectoryState": ('lit', ('not_configured', 'invalid', 'empty', 'ok')),
-    "DirectoryStatus": ('obj', (('state', ('ref', 'DirectoryState'), False), ('path', ('union', ('str', 'null')), False), ('message', ('union', ('str', 'null')), False))),
+    "LibraryState": ('lit', ('ok', 'empty', 'damaged')),
+    "SketchLibraryStatus": ('obj', (('state', ('ref', 'LibraryState'), False), ('path', ('union', ('str', 'null')), False), ('message', ('union', ('str', 'null')), False), ('source', ('lit', ('bundled', 'override')), False))),
     "SketchEntry": ('obj', (('category', 'str', False), ('name', 'str', False), ('path', 'str', False))),
     "SkippedEntry": ('obj', (('path', 'str', False), ('reason', 'str', False))),
-    "SketchDiscovery": ('obj', (('directory', ('ref', 'DirectoryStatus'), False), ('sketches', ('list', ('ref', 'SketchEntry')), False), ('skipped', ('list', ('ref', 'SkippedEntry')), False), ('skippedCount', 'int', False), ('libraries', ('list', 'str'), False), ('librariesPath', ('union', ('str', 'null')), False))),
+    "SketchDiscovery": ('obj', (('library', ('ref', 'SketchLibraryStatus'), False), ('sketches', ('list', ('ref', 'SketchEntry')), False), ('skipped', ('list', ('ref', 'SkippedEntry')), False), ('skippedCount', 'int', False), ('libraries', ('list', 'str'), False), ('librariesPath', ('union', ('str', 'null')), False))),
     "BoxBinding": ('obj', (('box', 'int', False), ('hardwareId', ('union', ('str', 'null')), False), ('label', 'str', False))),
-    "EphymerisSettings": ('obj', (('dataDirectory', ('union', ('str', 'null')), False), ('backupDirectory', ('union', ('str', 'null')), False), ('arduinoDirectory', ('union', ('str', 'null')), False), ('arduinoCliPath', ('union', ('str', 'null')), False), ('utilitySketchPath', ('union', ('str', 'null')), False), ('defaultBaud', 'int', False), ('boxes', ('list', ('ref', 'BoxBinding')), False), ('reducedMotion', 'bool', False), ('constellation', ('union', ('str', 'null')), False), ('constellationSlots', ('map', 'int'), False), ('boxSetupComplete', 'bool', False), ('taskDefaults', ('map', ('map', 'any')), False))),
+    "EphymerisSettings": ('obj', (('dataDirectory', ('union', ('str', 'null')), False), ('backupDirectory', ('union', ('str', 'null')), False), ('arduinoCliPath', ('union', ('str', 'null')), False), ('utilitySketchName', ('union', ('str', 'null')), False), ('defaultBaud', 'int', False), ('boxes', ('list', ('ref', 'BoxBinding')), False), ('reducedMotion', 'bool', False), ('constellation', ('union', ('str', 'null')), False), ('constellationSlots', ('map', 'int'), False), ('boxSetupComplete', 'bool', False), ('taskDefaults', ('map', ('map', 'any')), False))),
     "UtilityBaselineState": ('lit', ('unknown', 'restoring', 'ready', 'busy', 'held', 'unavailable', 'failed')),
     "UtilityBoxState": ('obj', (('box', 'int', False), ('state', ('ref', 'UtilityBaselineState'), False), ('detail', ('union', ('str', 'null')), False), ('identifying', 'bool', False))),
     "UtilityStatus": ('obj', (('configured', 'bool', False), ('sketchPath', ('union', ('str', 'null')), False), ('sketchName', ('union', ('str', 'null')), False), ('canIdentify', 'bool', False), ('held', 'bool', False), ('message', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'UtilityBoxState')), False))),
@@ -289,7 +288,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
 COMMAND_RESULTS: Final[dict[str, Any]] = {
     "auth": ('obj', (('authenticated', 'bool', False),)),
     "ping": ('obj', (('pong', 'bool', False), ('sidecarVersion', 'str', False))),
-    "settings.push": ('obj', (('arduinoDirectory', ('ref', 'DirectoryStatus'), False),)),
+    "settings.push": ('obj', (('library', ('ref', 'SketchLibraryStatus'), False),)),
     "sketches.refresh": ('ref', 'SketchDiscovery'),
     "port.passthrough.open": ('obj', (('state', ('ref', 'PortStateName'), False),)),
     "port.passthrough.close": ('obj', (('state', ('ref', 'PortStateName'), False),)),

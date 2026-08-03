@@ -1,7 +1,20 @@
-"""Arduino Directory validation and sketch discovery.
+"""The bundled sketch library, and discovery within it.
 
-Implements `tasks.md` §2.2–§6. Owned by the sidecar because
-filesystem work and `arduino-cli` interaction already live here.
+Implements `tasks.md` §2. Owned by the sidecar because filesystem work and
+`arduino-cli` interaction already live here.
+
+SKETCHES SHIP WITH THE APP. There is no configured Arduino Directory: the
+library is staged into the installer by `scripts/stage-sketches.mjs` and located
+here by `library_root()`. That makes the failure modes structural rather than
+user-authored — a library can be missing or partial, but it can no longer be
+*misconfigured*, and "you haven't set this up yet" stopped being a state anyone
+can be in.
+
+The consequence worth stating plainly: adding a sketch now needs a new build.
+That is the deliberate trade, and `library_status()` carries the word "damaged"
+rather than "invalid" because the remedy changed with it — the old copy sent the
+user to a directory picker, and the new one has to send them to whoever
+maintains the app.
 
 The two rules most worth preserving:
 
@@ -36,7 +49,18 @@ LIBRARIES_DIRNAME = "libraries"
 #: pointing the app at a huge tree by mistake can't crawl for minutes.
 MAX_SCAN_DEPTH = 5
 
-DirectoryState = Literal["not_configured", "invalid", "empty", "ok"]
+LibraryState = Literal["ok", "empty", "damaged"]
+LibrarySource = Literal["bundled", "override"]
+
+#: Points the sidecar at a sketch library other than the bundled one. A developer
+#: facility, documented in README.md §2 — deliberately an environment variable and
+#: NOT a setting, so it cannot come back as a configurable directory by the back
+#: door, and so `not_configured` cannot come back as a state.
+LIBRARY_ENV = "EPHYMERIS_SKETCH_LIBRARY"
+
+#: Set by the Tauri shell from its resource dir, exactly as
+#: EPHYMERIS_BUNDLED_ARDUINO_CLI already is (`src-tauri/src/sidecar.rs`).
+BUNDLED_ENV = "EPHYMERIS_BUNDLED_SKETCHES"
 
 
 @dataclass(frozen=True)
@@ -53,10 +77,11 @@ class SkippedEntry:
 
 
 @dataclass(frozen=True)
-class DirectoryStatus:
-    state: DirectoryState
+class SketchLibraryStatus:
+    state: LibraryState
     path: str | None = None
     message: str | None = None
+    source: LibrarySource = "bundled"
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -64,7 +89,7 @@ class DirectoryStatus:
 
 @dataclass(frozen=True)
 class SketchDiscovery:
-    directory: DirectoryStatus
+    library: SketchLibraryStatus
     sketches: list[Sketch] = field(default_factory=list)
     skipped: list[SkippedEntry] = field(default_factory=list)
     libraries: list[str] = field(default_factory=list)
@@ -72,7 +97,7 @@ class SketchDiscovery:
 
     def to_json(self) -> dict[str, Any]:
         return {
-            "directory": self.directory.to_json(),
+            "library": self.library.to_json(),
             "sketches": [asdict(s) for s in self.sketches],
             "skipped": [asdict(s) for s in self.skipped],
             "skippedCount": len(self.skipped),
@@ -81,29 +106,67 @@ class SketchDiscovery:
         }
 
 
-def validate_directory(path: str | None) -> DirectoryStatus:
-    """Check the configured root, per §6.
+def library_root() -> tuple[Path | None, LibrarySource]:
+    """Where the sketch library lives, and whether it is the shipped one.
 
-    Distinguishes "you haven't set this yet" from "what you set is broken" —
-    the first is expected on first run and is not an error.
+    Three candidates, in order, mirroring how `sidecar.rs::resolve_launch`
+    already picks an interpreter:
+
+        $EPHYMERIS_SKETCH_LIBRARY   a developer pointing somewhere else
+        $EPHYMERIS_BUNDLED_SKETCHES the installed app, set by the Tauri shell
+        <repo>/sketches             a checkout, staged by npm run predev
+
+    The last one is not a fallback for a broken install — it is the only way
+    `npm run tauri:dev` works at all, since a dev run has no staged installer
+    resources.
     """
-    if not path or not str(path).strip():
-        return DirectoryStatus("not_configured")
+    override = os.environ.get(LIBRARY_ENV)
+    if override and override.strip():
+        return Path(override).expanduser(), "override"
 
-    root = Path(path).expanduser()
-    if not root.exists():
-        return DirectoryStatus(
-            "invalid", str(root), "Can't find your configured Arduino Directory."
+    bundled = os.environ.get(BUNDLED_ENV)
+    if bundled and bundled.strip():
+        return Path(bundled).expanduser(), "bundled"
+
+    # sidecar/ephymeris_sidecar/discovery.py -> <repo>/sketches
+    repo = Path(__file__).resolve().parent.parent.parent / "sketches"
+    if repo.is_dir():
+        return repo, "bundled"
+    return None, "bundled"
+
+
+def library_status() -> SketchLibraryStatus:
+    """Check the library the app shipped with.
+
+    Every failure here means a broken or partial INSTALL, never a wrong setting,
+    so every message points at reinstalling rather than at a picker.
+    """
+    root, source = library_root()
+    if root is None:
+        return SketchLibraryStatus(
+            "damaged",
+            None,
+            "Ephymeris couldn't find the sketches it ships with. The install looks "
+            "incomplete — reinstalling should fix it.",
+            source,
         )
-    if not root.is_dir():
-        return DirectoryStatus(
-            "invalid", str(root), "The configured Arduino Directory isn't a folder."
+    if not root.exists() or not root.is_dir():
+        return SketchLibraryStatus(
+            "damaged",
+            str(root),
+            "The sketches Ephymeris ships with are missing. The install looks "
+            "incomplete — reinstalling should fix it.",
+            source,
         )
     if not os.access(root, os.R_OK | os.X_OK):
-        return DirectoryStatus(
-            "invalid", str(root), "The configured Arduino Directory isn't readable."
+        return SketchLibraryStatus(
+            "damaged",
+            str(root),
+            "Ephymeris can't read the sketches it ships with — check the "
+            "permissions on the install folder.",
+            source,
         )
-    return DirectoryStatus("ok", str(root))
+    return SketchLibraryStatus("ok", str(root), None, source)
 
 
 def _is_valid_sketch(folder: Path) -> bool:
@@ -181,11 +244,11 @@ def _scan(
             _scan(child, depth + 1, sketches, skipped, visited)
 
 
-def discover(path: str | None) -> SketchDiscovery:
-    """Scan the Arduino Directory, per the §4 algorithm."""
-    status = validate_directory(path)
+def discover() -> SketchDiscovery:
+    """Scan the bundled sketch library, per the §2.3 algorithm."""
+    status = library_status()
     if status.state != "ok" or status.path is None:
-        return SketchDiscovery(directory=status)
+        return SketchDiscovery(library=status)
 
     root = Path(status.path)
     sketches: list[Sketch] = []
@@ -197,8 +260,11 @@ def discover(path: str | None) -> SketchDiscovery:
         top_level = sorted(root.iterdir(), key=lambda p: p.name.lower())
     except OSError as exc:
         return SketchDiscovery(
-            directory=DirectoryStatus(
-                "invalid", str(root), f"Couldn't read the Arduino Directory: {exc.strerror}"
+            library=SketchLibraryStatus(
+                "damaged",
+                str(root),
+                f"Couldn't read the bundled sketches: {exc.strerror}",
+                status.source,
             )
         )
 
@@ -234,15 +300,17 @@ def discover(path: str | None) -> SketchDiscovery:
 
         _scan(entry, 1, sketches, skipped, visited)
 
-    # "Valid but empty" is a distinct state from an error (§6): the path is
-    # fine, there's just nothing validly named in it yet.
+    # A readable library holding nothing valid is its own state. It used to mean
+    # "you pointed at the wrong folder"; now it can only mean a partial install,
+    # so it reads as one.
     if not sketches:
         return SketchDiscovery(
-            directory=DirectoryStatus(
+            library=SketchLibraryStatus(
                 "empty",
                 str(root),
-                "No valid sketches found. A sketch folder must contain a .ino file "
-                "with the same name as the folder.",
+                "Ephymeris shipped without any usable sketches, which shouldn't "
+                "happen — reinstalling should fix it.",
+                status.source,
             ),
             skipped=skipped,
             libraries=libraries,
@@ -250,7 +318,7 @@ def discover(path: str | None) -> SketchDiscovery:
         )
 
     return SketchDiscovery(
-        directory=status,
+        library=status,
         sketches=sketches,
         skipped=skipped,
         libraries=libraries,

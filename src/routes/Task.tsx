@@ -15,8 +15,7 @@ import { ParameterTiles } from "@/components/task/ParameterTiles";
 import { TaskGraph } from "@/components/task/TaskGraph";
 import { TaskRail } from "@/components/task/TaskRail";
 import { SketchPicker } from "@/components/sessions/TaskConfigForm";
-import { DirectoryField } from "@/components/settings/DirectoryField";
-import { DirectoryStatusNote } from "@/components/settings/DirectoryStatusNote";
+import { LibraryStatusNote } from "@/components/task/LibraryStatusNote";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { springPanel } from "@/lib/motion";
 import { getTaskProfile } from "@/lib/sessions/commands";
@@ -230,54 +229,34 @@ export function Task() {
             <h1 className="font-display text-[22px] text-starlight">Task</h1>
           </div>
 
-          {/* The directory the picker draws from, so it sits beside the picker
-          rather than on Config with the box wiring. */}
           <section className="surface mt-6 rounded-md">
             <div className="border-b border-halo px-4 py-3.5">
               <div className="flex items-start justify-between gap-8">
                 <div className="min-w-0 pt-0.5">
                   <div className="text-[13px] font-medium text-starlight">
-                    Arduino Directory
+                    Sketch
                   </div>
                   <p className="mt-0.5 text-[12px] leading-relaxed text-static">
-                    Root folder holding your sketch categories and a shared{" "}
-                    <code className="font-mono">libraries/</code> folder. Each
-                    machine configures its own.
+                    Its task profile drives the flow below and the parameters
+                    this rig runs it with.
                   </p>
                 </div>
-                <DirectoryField
-                  value={settings.arduinoDirectory}
-                  onChange={(next) => void update({ arduinoDirectory: next })}
-                  title="Choose the Arduino Directory"
+                <SketchPicker
+                  label="Sketch to inspect"
+                  sketches={discovery.sketches}
+                  value={sketchPath}
+                  onChange={(path) => {
+                    setSketchPath(path);
+                    void load(path);
+                  }}
+                  disabled={!connected}
+                  className="w-[260px] shrink-0"
                 />
               </div>
-              <DirectoryStatusNote
+              <LibraryStatusNote
                 discovery={discovery}
                 onRefresh={() => void refreshSketches()}
                 canRefresh={connected}
-              />
-            </div>
-
-            <div className="flex items-start justify-between gap-8 px-4 py-3.5">
-              <div className="min-w-0 pt-0.5">
-                <div className="text-[13px] font-medium text-starlight">
-                  Sketch
-                </div>
-                <p className="mt-0.5 text-[12px] leading-relaxed text-static">
-                  Its task profile drives the flow below and the parameters this
-                  rig runs it with.
-                </p>
-              </div>
-              <SketchPicker
-                label="Sketch to inspect"
-                sketches={discovery.sketches}
-                value={sketchPath}
-                onChange={(path) => {
-                  setSketchPath(path);
-                  void load(path);
-                }}
-                disabled={!connected}
-                className="w-[260px] shrink-0"
               />
             </div>
           </section>

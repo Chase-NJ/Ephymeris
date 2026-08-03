@@ -213,12 +213,12 @@ export function Config() {
               <UtilitySketchPanel
                 sketches={discovery.sketches}
                 boxes={settings.boxes}
-                value={settings.utilitySketchPath}
+                value={settings.utilitySketchName}
                 status={utility}
                 busy={reflashing}
                 connected={connected}
-                onChange={(utilitySketchPath) =>
-                  void update({ utilitySketchPath })
+                onChange={(utilitySketchName) =>
+                  void update({ utilitySketchName })
                 }
                 onReflash={() => void reflashBaseline()}
               />

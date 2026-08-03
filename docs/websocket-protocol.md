@@ -1,6 +1,6 @@
 # WebSocket / IPC Message Schema
 
-![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![commands](https://img.shields.io/badge/commands-44-8B7EC8?style=flat-square) ![events](https://img.shields.io/badge/events-15-8B7EC8?style=flat-square) ![errors](https://img.shields.io/badge/error_codes-23-2C2A3A?style=flat-square)
+![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![commands](https://img.shields.io/badge/commands-44-8B7EC8?style=flat-square) ![events](https://img.shields.io/badge/events-15-8B7EC8?style=flat-square) ![errors](https://img.shields.io/badge/error_codes-22-2C2A3A?style=flat-square)
 
 > **What this is** · The complete wire schema between the React frontend and the Python sidecar. Every command and event below is implemented and emitted.
 >
@@ -133,7 +133,7 @@ Of the 43 commands, 42 are registered in the sidecar's dispatch table. **`auth` 
 |---|---|---|---|
 | `auth` | `{token}` | `{authenticated: true}` | Must be the first message (§1.1) |
 | `ping` | — | `{pong, sidecarVersion}` | Liveness probe for the connection indicator |
-| `settings.push` | full settings payload (§4) | `{arduinoDirectory: <DirectoryStatus>}` | Sent on connect and on every change. The reply carries the immediate Arduino Directory validation required by `tasks.md` §2.1 |
+| `settings.push` | full settings payload (§4) | `{library: <SketchLibraryStatus>}` | Sent on connect and on every change. The reply carries the bundled library's state (`tasks.md` §2.1) — no longer a function of the settings, but answered here so a client learns it on connect without a second round trip |
 | `sketches.refresh` | — | `<SketchDiscovery>` (§4) | Manual Refresh and Debug Mode mount, per `tasks.md` §2.3 |
 | `port.passthrough.open` | `{box, baud}` | `{state}` | `baud` per box; omitted means the configured `defaultBaud`, which ships as 9600 (`dashboard.md` §6.4) |
 | `port.passthrough.close` | `{box}` | `{state}` | |
@@ -272,16 +272,19 @@ An `identify` pair rides on the utility sketch's own `task.json` (`tasks.md` §3
 ### Shared payload shapes
 
 ```jsonc
-// DirectoryStatus — the four states of tasks.md §2.4
+// SketchLibraryStatus — the three states of tasks.md §2.4. No `not_configured`:
+// sketches ship with the app, so every non-ok state means a broken or partial
+// INSTALL, and the messages point at reinstalling rather than at a picker.
 {
-  "state": "not_configured" | "invalid" | "empty" | "ok",
-  "path": "/Users/…/ArduinoDirectory" | null,
-  "message": "Can't find your configured Arduino Directory"   // present when state != "ok"
+  "state": "ok" | "empty" | "damaged",
+  "path": "/…/resources/sketches" | null,
+  "message": "The install looks incomplete — reinstalling should fix it",  // when state != "ok"
+  "source": "bundled" | "override"   // "override" = $EPHYMERIS_SKETCH_LIBRARY; dev-only
 }
 
 // SketchDiscovery
 {
-  "directory": <DirectoryStatus>,
+  "library": <SketchLibraryStatus>,
   "sketches": [ { "category": "utility", "name": "clean_flush", "path": "/…/utility/clean_flush" } ],
   "skipped":  [ { "path": "/…/utility/broken", "reason": "no .ino matching folder name" } ],
   "skippedCount": 1,          // drives the "Partial" note in tasks.md §2.4
@@ -483,7 +486,7 @@ ISO-8601 strings.
 
 ### `settings.push` payload
 
-The payload mirrors the Tauri-side store, which is the source of truth ([settings.md §3](settings.md#3-persistence--push)); the complete key list is [settings.md §2](settings.md#2-the-twelve-keys). The sidecar reads the keys it needs (`arduinoDirectory`, `arduinoCliPath`, `utilitySketchPath`, `defaultBaud`, `boxes`, `dataDirectory`, `backupDirectory`) and ignores the rest. Adding a setting the sidecar doesn't consume is deliberately a non-event — the Config view's `constellation`, `constellationSlots`, `boxSetupComplete` (`settings.md` §5), and `taskDefaults` (`tasks.md` §6.1) ride the same payload and are ignored by the sidecar entirely.
+The payload mirrors the Tauri-side store, which is the source of truth ([settings.md §3](settings.md#3-persistence--push)); the complete key list is [settings.md §2](settings.md#2-the-eleven-keys). The sidecar reads the keys it needs (`arduinoCliPath`, `utilitySketchName`, `defaultBaud`, `boxes`, `dataDirectory`, `backupDirectory`) and ignores the rest — including the retired `arduinoDirectory` a stale store may still carry, and the retired path-valued `utilitySketchPath`, which the sidecar heals to its basename rather than dropping. Adding a setting the sidecar doesn't consume is deliberately a non-event — the Config view's `constellation`, `constellationSlots`, `boxSetupComplete` (`settings.md` §5), and `taskDefaults` (`tasks.md` §6.1) ride the same payload and are ignored by the sidecar entirely.
 
 `taskDefaults` is a `{sketchName: {metadataKey: value}}` map — this rig's default task parameters per sketch, edited on the Config view. It is keyed by sketch **name** rather than path because the two lab machines keep their Arduino Directories in different places, and the name is what the session file already records. The sidecar never reads it: the frontend merges it under the profile's own defaults and sends the result as the per-box `config` at `sessions.confirmMapping`, so there remains exactly one place a value can enter a `START` line.
 
@@ -526,7 +529,7 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | `PORT_NOT_BOUND` | No board bound to that box number |
 | `PORT_OPEN_FAILED` | Serial open failed (absent, busy, permissions) |
 | `FLASH_FAILED` | Compile or upload failed; `detail` carries parsed `arduino-cli` output |
-| `SKETCH_UNKNOWN` | `port.flash` named a path that isn't in the current discovery result — the configured Arduino Directory is the only source of flashable sketches (`tasks.md` §2.3), and that is enforced here, not just in the picker UI |
+| `SKETCH_UNKNOWN` | `port.flash` named a path that isn't in the current discovery result — the bundled sketch library is the only source of flashable sketches (`tasks.md` §2), and that is enforced here, not just in the picker UI. Since the library ships with the app, this gate is now an absolute guarantee rather than a user-configurable one |
 | `COHORT_NOT_FOUND` | No cohort with that id |
 | `COHORT_NAME_TAKEN` | Name already used by an **active** cohort. Archived cohorts don't reserve names (`cohorts.md` §2), so this can also reject a `cohorts.restore` whose name was claimed while it was away |
 | `COHORT_INVALID` | A `cohorts.md` §2 validation failure. `detail` carries per-field errors so the editor can surface them inline rather than as a toast (§6) |
@@ -537,11 +540,10 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | `SESSION_NOT_READY` | `sessions.create` against a cohort with no group holding a box-assigned animal (`dashboard.md` §7.1) |
 | `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed. `detail` carries the parse error; the sketch is otherwise treated as profile-less |
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. Note that an ordinary mirroring **failure** never surfaces as a command error — there is no command to attribute it to; it appears as `state: "failed"` on `backup.status` (`data.md` §7) |
-| `UTILITY_UNAVAILABLE` | A `utility.*` command with no `utilitySketchPath` set, or with one that can't be used at all — a path no longer in the Arduino Directory, or a sketch whose profile isn't `kind: "utility"`. A *box-level* problem never raises this: it is reported as that box's `state` in the snapshot (§3.5), because "box 4 has no board" is a fact about the rig, not a failure of the command |
-| `DIR_INVALID` | Arduino Directory missing, not a directory, or unreadable |
+| `UTILITY_UNAVAILABLE` | A `utility.*` command with no `utilitySketchName` set, or with one that can't be used at all — a name not among the bundled sketches, or a sketch whose profile isn't `kind: "utility"`. A *box-level* problem never raises this: it is reported as that box's `state` in the snapshot (§3.5), because "box 4 has no board" is a fact about the rig, not a failure of the command |
 | `INTERNAL` | Unhandled sidecar exception. Also the code carried by `sidecar.error` on a mid-session write failure |
 
-> **`DIR_INVALID` is defined but never raised.** Directory problems surface as a `DirectoryStatus` payload on the `settings.push` reply (§3) rather than as a command error, because the caller wants to *render* the four states from §6 of `tasks.md`, not catch a failure. The code is kept because that reasoning could reverse — but as of today nothing in the sidecar emits it, and a client should not wait for it.
+> **`DIR_INVALID` has been removed** (it was defined but never raised, kept in case the reasoning reversed). The reasoning can no longer reverse: there is no configured directory to be invalid about. Library problems surface as a `SketchLibraryStatus` payload on the `settings.push` reply (§3), because the caller wants to *render* the states from `tasks.md` §2.4, not catch a failure.
 
 ---
 

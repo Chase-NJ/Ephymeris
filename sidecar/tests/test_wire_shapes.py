@@ -18,7 +18,7 @@ import pytest
 from ephymeris_sidecar.boards.tool import DetectedBoard
 from ephymeris_sidecar.cohorts.grouping import suggest_groups
 from ephymeris_sidecar.cohorts.models import Animal, Cohort, Group
-from ephymeris_sidecar.discovery import SketchDiscovery, validate_directory
+from ephymeris_sidecar.discovery import SketchDiscovery, SketchLibraryStatus, library_status
 from ephymeris_sidecar.ports.handler import OutputLine
 from ephymeris_sidecar.protocol import (
     Evt,
@@ -300,10 +300,14 @@ def test_hardware_payloads_match_schema() -> None:
 
 
 def test_discovery_payloads_match_schema() -> None:
-    status = validate_directory(None)  # the not_configured arm
-    empty = SketchDiscovery(directory=status)
-    assert validate(("ref", "DirectoryStatus"), status.to_json()) == []
-    assert validate(("ref", "SketchDiscovery"), empty.to_json()) == []
+    # The real resolver's answer on this machine, whatever state it is in —
+    # ok, empty and damaged all serialise to the same shape.
+    status = library_status()
+    assert validate(("ref", "SketchLibraryStatus"), status.to_json()) == []
+    assert validate(("ref", "SketchDiscovery"), SketchDiscovery(library=status).to_json()) == []
+    # The damaged arm explicitly, since a dev machine will rarely produce it.
+    damaged = SketchLibraryStatus("damaged", None, "missing", "bundled")
+    assert validate(("ref", "SketchLibraryStatus"), damaged.to_json()) == []
 
 
 def test_event_data_specs_cover_every_event() -> None:

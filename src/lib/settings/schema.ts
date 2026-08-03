@@ -16,8 +16,8 @@ import type { BoxBinding, EphymerisSettings, SketchDiscovery } from "@/lib/ws/pr
 export type {
   BoxBinding,
   EphymerisSettings,
-  DirectoryState,
-  DirectoryStatus,
+  LibraryState,
+  SketchLibraryStatus,
   SketchEntry,
   SkippedEntry,
   SketchDiscovery,
@@ -58,13 +58,10 @@ export function nextAvailableBox(boxes: BoxBinding[]): number | null {
 export const DEFAULT_SETTINGS: EphymerisSettings = {
   dataDirectory: null,
   backupDirectory: null,
-  // No default is shipped or assumed — the user sets it explicitly
-  // (tasks.md §2.1).
-  arduinoDirectory: null,
   arduinoCliPath: null,
   // No baseline until the user names a utility sketch (`dashboard.md`
   // §8) — there is no safe sketch to guess, and guessing would flash the rig.
-  utilitySketchPath: null,
+  utilitySketchName: null,
   defaultBaud: DEFAULT_BAUD,
   // No boxes until the user adds them.
   boxes: [],
@@ -80,6 +77,25 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
 
 function optString(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+/**
+ * The baseline sketch, healing the retired path-valued key.
+ *
+ * `utilitySketchPath` stored an absolute path into the old user-configured
+ * Arduino Directory; the setting is now a sketch folder NAME resolved against
+ * the bundled library, matching `taskDefaults`' key. The basename of the old
+ * path IS that name — arduino-cli requires `<folder>/<folder>.ino` — so a lab
+ * machine's stored `BOX_Utility` path heals on first load and the migrated
+ * value is written back on the next save.
+ */
+function normalizeUtilitySketch(value: Record<string, unknown>): string | null {
+  const name = optString(value["utilitySketchName"]);
+  if (name !== null) return name;
+  const legacy = optString(value["utilitySketchPath"]);
+  if (legacy === null) return null;
+  const base = legacy.split(/[\\/]/).filter(Boolean).pop() ?? "";
+  return base || null;
 }
 
 function normalizeBoxes(value: unknown): BoxBinding[] {
@@ -151,9 +167,12 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
   return {
     dataDirectory: optString(value["dataDirectory"]),
     backupDirectory: optString(value["backupDirectory"]),
-    arduinoDirectory: optString(value["arduinoDirectory"]),
+    // `arduinoDirectory` was retired when sketches began shipping with the app
+    // (tasks.md §2). A stored value is dropped here — silently on purpose: the
+    // key configured a directory that nothing reads any more, so there is
+    // nothing to migrate it INTO. Don't reintroduce it.
     arduinoCliPath: optString(value["arduinoCliPath"]),
-    utilitySketchPath: optString(value["utilitySketchPath"]),
+    utilitySketchName: normalizeUtilitySketch(value),
     defaultBaud: typeof baud === "number" && baud > 0 ? baud : DEFAULT_BAUD,
     boxes: normalizeBoxes(value["boxes"]),
     reducedMotion: value["reducedMotion"] === true,
@@ -169,8 +188,12 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
   };
 }
 
+// Pre-first-report placeholder. "ok with nothing in it" rather than a
+// pessimistic guess: the real scan arrives with the first settings.push reply,
+// and flashing an "install damaged" banner during the connection handshake
+// would alarm every launch.
 export const EMPTY_DISCOVERY: SketchDiscovery = {
-  directory: { state: "not_configured", path: null, message: null },
+  library: { state: "ok", path: null, message: null, source: "bundled" },
   sketches: [],
   skipped: [],
   skippedCount: 0,

@@ -1,4 +1,12 @@
-"""Arduino Directory discovery — `tasks.md` §2.2, §4, §6."""
+"""Bundled sketch library discovery — `tasks.md` §2.
+
+The scan itself is unchanged from the configured-directory era; what changed is
+where the root comes from (`library_root()`, not a setting) and what a non-ok
+state MEANS — a broken install rather than a wrong setting. The tests point the
+library at `tmp_path` through the developer override, which is also the only
+way a test can exercise the scan without depending on this machine's staged
+`<repo>/sketches`.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +14,20 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.discovery import MAX_SCAN_DEPTH, discover, validate_directory
+from ephymeris_sidecar.discovery import (
+    BUNDLED_ENV,
+    LIBRARY_ENV,
+    MAX_SCAN_DEPTH,
+    discover,
+    library_root,
+    library_status,
+)
+
+
+@pytest.fixture(autouse=True)
+def _library_at_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test scans its own tmp_path, never this machine's real library."""
+    monkeypatch.setenv(LIBRARY_ENV, str(tmp_path))
 
 
 def make_sketch(root: Path, category: str, name: str, ino_name: str | None = None) -> Path:
@@ -16,40 +37,60 @@ def make_sketch(root: Path, category: str, name: str, ino_name: str | None = Non
     return folder
 
 
-# --- §6 directory states --------------------------------------------------
+# --- §2.4 library states ---------------------------------------------------
 
 
-def test_unset_path_is_not_configured_rather_than_an_error() -> None:
-    assert validate_directory(None).state == "not_configured"
-    assert validate_directory("").state == "not_configured"
-    assert validate_directory("   ").state == "not_configured"
+def test_the_resolution_order_is_override_then_bundled_then_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundled = tmp_path / "from-shell"
+    bundled.mkdir()
+    monkeypatch.setenv(BUNDLED_ENV, str(bundled))
+
+    # The developer override outranks the shell's bundled path…
+    root, source = library_root()
+    assert root == tmp_path
+    assert source == "override"
+
+    # …and the bundled path answers when the override is absent.
+    monkeypatch.delenv(LIBRARY_ENV)
+    root, source = library_root()
+    assert root == bundled
+    assert source == "bundled"
 
 
-def test_missing_path_is_invalid(tmp_path: Path) -> None:
-    status = validate_directory(str(tmp_path / "gone"))
-    assert status.state == "invalid"
-    assert "Can't find" in (status.message or "")
+def test_a_missing_library_is_damaged_and_points_at_reinstalling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(LIBRARY_ENV, str(tmp_path / "gone"))
+    status = library_status()
+    assert status.state == "damaged"
+    assert "reinstall" in (status.message or "").lower()
 
 
-def test_file_instead_of_directory_is_invalid(tmp_path: Path) -> None:
+def test_a_file_where_the_library_should_be_is_damaged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "notadir"
     target.write_text("")
-    assert validate_directory(str(target)).state == "invalid"
+    monkeypatch.setenv(LIBRARY_ENV, str(target))
+    assert library_status().state == "damaged"
 
 
-def test_readable_but_sketchless_directory_is_empty_not_invalid(tmp_path: Path) -> None:
+def test_a_library_with_no_valid_sketch_is_empty_not_damaged(tmp_path: Path) -> None:
     (tmp_path / "utility").mkdir()
-    result = discover(str(tmp_path))
-    assert result.directory.state == "empty"
-    # The empty state points at the naming convention rather than just saying
-    # "nothing here" (§6).
-    assert ".ino" in (result.directory.message or "")
+    result = discover()
+    assert result.library.state == "empty"
+    # Empty can only mean a partial install now, and the message says so
+    # rather than explaining a naming convention nobody here misapplied.
+    assert "reinstall" in (result.library.message or "").lower()
 
 
-def test_populated_directory_is_ok(tmp_path: Path) -> None:
+def test_a_populated_library_is_ok(tmp_path: Path) -> None:
     make_sketch(tmp_path, "utility", "clean_flush")
-    result = discover(str(tmp_path))
-    assert result.directory.state == "ok"
+    result = discover()
+    assert result.library.state == "ok"
+    assert result.library.source == "override"
     assert result.to_json()["skippedCount"] == 0
 
 
@@ -60,7 +101,7 @@ def test_folder_name_must_match_the_ino_name(tmp_path: Path) -> None:
     make_sketch(tmp_path, "utility", "clean_flush")
     make_sketch(tmp_path, "utility", "broken", ino_name="main")
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert [s.name for s in result.sketches] == ["clean_flush"]
     assert len(result.skipped) == 1
@@ -72,7 +113,7 @@ def test_skipped_folders_are_reported_not_silently_dropped(tmp_path: Path) -> No
     make_sketch(tmp_path, "shaping", "fr1_shaping")
     make_sketch(tmp_path, "shaping", "typo_sketch", ino_name="typo_sketchh")
 
-    payload = discover(str(tmp_path)).to_json()
+    payload = discover().to_json()
 
     assert payload["skippedCount"] == 1
     assert "typo_sketch.ino" in payload["skipped"][0]["reason"]
@@ -80,8 +121,8 @@ def test_skipped_folders_are_reported_not_silently_dropped(tmp_path: Path) -> No
 
 def test_a_sketchless_folder_with_skips_is_still_empty(tmp_path: Path) -> None:
     make_sketch(tmp_path, "utility", "broken", ino_name="main")
-    result = discover(str(tmp_path))
-    assert result.directory.state == "empty"
+    result = discover()
+    assert result.library.state == "empty"
     assert len(result.skipped) == 1
 
 
@@ -92,7 +133,7 @@ def test_categories_are_not_a_fixed_enum(tmp_path: Path) -> None:
     make_sketch(tmp_path, "utility", "clean_flush")
     make_sketch(tmp_path, "some_new_paradigm", "novel_task")
 
-    categories = {s.category for s in discover(str(tmp_path)).sketches}
+    categories = {s.category for s in discover().sketches}
 
     assert categories == {"utility", "some_new_paradigm"}
 
@@ -103,7 +144,7 @@ def test_libraries_is_reserved_case_insensitively(tmp_path: Path, dirname: str) 
     make_sketch(tmp_path, "utility", "clean_flush")
     (tmp_path / dirname / "EphymerisStrobe").mkdir(parents=True)
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert result.libraries == ["EphymerisStrobe"]
     assert result.libraries_path is not None
@@ -113,7 +154,7 @@ def test_libraries_is_reserved_case_insensitively(tmp_path: Path, dirname: str) 
 
 def test_libraries_path_is_absent_when_there_is_no_libraries_folder(tmp_path: Path) -> None:
     make_sketch(tmp_path, "utility", "clean_flush")
-    result = discover(str(tmp_path))
+    result = discover()
     assert result.libraries_path is None
     assert result.libraries == []
 
@@ -122,7 +163,7 @@ def test_loose_files_at_the_root_are_ignored(tmp_path: Path) -> None:
     make_sketch(tmp_path, "utility", "clean_flush")
     (tmp_path / "README.md").write_text("notes")
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert len(result.sketches) == 1
     assert result.skipped == []
@@ -137,7 +178,7 @@ def test_sketches_nested_below_a_subcategory_are_found(tmp_path: Path) -> None:
     make_sketch(tmp_path, "Olfactory Behavior/02_Bdisc", "GRGL_2-Odor")
     make_sketch(tmp_path, "Utility", "PRIME_Lines")
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert {s.name for s in result.sketches} == {"shaping_GL", "GRGL_2-Odor", "PRIME_Lines"}
     assert result.skipped == []
@@ -147,7 +188,7 @@ def test_category_is_the_folder_directly_containing_the_sketch(tmp_path: Path) -
     make_sketch(tmp_path, "Olfactory Behavior/01_Shaping", "shaping_GL")
     make_sketch(tmp_path, "Utility", "PRIME_Lines")
 
-    by_name = {s.name: s.category for s in discover(str(tmp_path)).sketches}
+    by_name = {s.name: s.category for s in discover().sketches}
 
     assert by_name["shaping_GL"] == "01_Shaping"  # not "Olfactory Behavior"
     assert by_name["PRIME_Lines"] == "Utility"
@@ -160,7 +201,7 @@ def test_a_sketch_folder_is_not_descended_into(tmp_path: Path) -> None:
     nested.mkdir(parents=True)
     (nested / "host_test.ino").write_text("void setup(){}")
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert [s.name for s in result.sketches] == ["clean_flush"]
 
@@ -170,14 +211,14 @@ def test_organisational_folders_without_sketches_are_not_reported(tmp_path: Path
     make_sketch(tmp_path, "utility", "clean_flush")
     (tmp_path / "notes" / "scratch").mkdir(parents=True)
 
-    assert discover(str(tmp_path)).skipped == []
+    assert discover().skipped == []
 
 
 def test_a_misnamed_sketch_is_still_reported_when_nested(tmp_path: Path) -> None:
     make_sketch(tmp_path, "behavior/stage_one", "good_one")
     make_sketch(tmp_path, "behavior/stage_one", "bad_one", ino_name="main")
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert [s.name for s in result.sketches] == ["good_one"]
     assert len(result.skipped) == 1
@@ -189,7 +230,7 @@ def test_scanning_stops_at_a_sane_depth(tmp_path: Path) -> None:
     deep.mkdir(parents=True)
     (deep / f"{deep.name}.ino").write_text("void setup(){}")
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert result.sketches == []
 
@@ -205,7 +246,7 @@ def test_hidden_folders_are_ignored_silently(tmp_path: Path, hidden: str) -> Non
     junk.mkdir(parents=True)
     (junk / "stray.ino").write_text("noise")
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert [s.name for s in result.sketches] == ["clean_flush"]
     assert result.skipped == []
@@ -221,7 +262,7 @@ def test_nested_libraries_folders_are_reserved_but_not_passed_to_compile(
     (nested_lib / "SharedThing.h").write_text("#pragma once")
     (tmp_path / "libraries" / "RootThing").mkdir(parents=True)
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert [s.name for s in result.sketches] == ["task"]
     # The nested libraries folder was never treated as a category…
@@ -237,7 +278,7 @@ def test_a_sketch_at_the_root_is_reported_rather_than_ignored(tmp_path: Path) ->
     (stray / "loose_sketch.ino").write_text("void setup(){}")
     make_sketch(tmp_path, "utility", "clean_flush")
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert [s.name for s in result.sketches] == ["clean_flush"]
     assert len(result.skipped) == 1
@@ -249,6 +290,6 @@ def test_symlink_cycles_do_not_hang_the_scan(tmp_path: Path) -> None:
     loop = tmp_path / "utility" / "loop"
     loop.symlink_to(tmp_path / "utility", target_is_directory=True)
 
-    result = discover(str(tmp_path))
+    result = discover()
 
     assert "clean_flush" in {s.name for s in result.sketches}

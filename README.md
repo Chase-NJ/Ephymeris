@@ -29,7 +29,6 @@ This is the path for a machine that will *run* Ephymeris, not develop it. The in
 3. Launch Ephymeris from the Start menu. On the very first launch the app copies its bundled Arduino toolchain into place; boards may take a few extra seconds to appear that one time.
 4. Do the first-launch setup, same as ever:
    - **Config** opens the box-setup wizard — plug in the boards, bind each box 1–6 to its board, nickname them, pick a constellation.
-   - **Task → Arduino Directory** — the folder holding your sketch categories and shared `libraries/`. Copy it onto the machine first if it isn't there already.
    - **Settings → Data directory** — where session files are written; optionally a **Backup directory** on another drive or share.
 5. Create or import cohorts under **Cohorts**, then start a run from the **Dashboard**.
 
@@ -143,10 +142,10 @@ That builds the Rust shell, starts the Vite dev server on port 1420, spawns the 
 
 ### 5. First-launch setup
 
-Nothing is guessed or shipped with defaults — point the app at your own folders and hardware:
+Point the app at your own folders and hardware (sketches are the one thing that ships with it):
 
 1. **Config** opens a five-step box setup wizard on first launch. Add a row per behavior box, bind each to a connected board (boards are listed by USB serial number), give them nicknames, optionally run the handshake test, and pick a constellation for the status display. You can skip it and do the same things from the Config screen directly.
-2. **Task → Arduino Directory** — the root folder holding your sketch category folders and a shared `libraries/` folder. The screen reports how many sketches and libraries it found, and picking a sketch draws its trial flow.
+2. **Task** — the sketches ship with the app, so there is nothing to point at: the screen reports how many the build carries, and picking one draws its trial flow. Adding or changing a sketch needs a new build. (Developers: `EPHYMERIS_SKETCH_LIBRARY` points a dev sidecar at another library; a checkout stages `<repo>/sketches` via `npm run predev`.)
 3. **Settings → Data directory** — where session data is written. Optionally set a **Backup directory** too, on a different drive or share, to mirror session files and the cohort database.
 
 Then create a cohort under **Cohorts**, and start a run from the **Dashboard**.
@@ -208,7 +207,7 @@ A fuller version of this, including a file-by-file module map, is in **[docs/REA
 | **[docs/README.md](docs/README.md)** | **Start here.** Developer setup, architecture, the module map, the test map, and every open issue |
 | [docs/dashboard.md](docs/dashboard.md) | The theme, every screen, the port state machine, the session flow, the 3D constellation |
 | [docs/cohorts.md](docs/cohorts.md) | The Cohort/Animal/Group model, the cohort UI, Auto-Balance grouping |
-| [docs/tasks.md](docs/tasks.md) | The Arduino Directory, `task.json`, the derived trial-flow state machine, **and how to define your own task** |
+| [docs/tasks.md](docs/tasks.md) | The bundled sketch library, `task.json`, the derived trial-flow state machine, **and how to define your own task** |
 | [docs/data.md](docs/data.md) | On-disk layout, the SQLite schema, crash safety, backup, and the derived metrics behind Analytics |
 | [docs/settings.md](docs/settings.md) | Every settings key, box bindings, board discovery, the hardware utility baseline |
 | [docs/websocket-protocol.md](docs/websocket-protocol.md) | The exact shape of any command, event, payload, or error code |

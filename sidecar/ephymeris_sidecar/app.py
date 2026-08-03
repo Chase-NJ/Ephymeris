@@ -101,9 +101,10 @@ class Application:
     def __init__(self, server: SidecarServer, data_dir: Path) -> None:
         self.server = server
         self.settings = SidecarSettings()
-        self.discovery = discovery.SketchDiscovery(
-            directory=discovery.DirectoryStatus("not_configured")
-        )
+        # A real scan, not a placeholder: the library ships with the app, so
+        # there is no "not configured yet" to wait out — a fresh launch either
+        # has its sketches or is damaged, and both are knowable immediately.
+        self.discovery = discovery.discover()
         # `legacyNames` → sketch path, built lazily by `_sketch_path_for_name`
         # and tied to the discovery it was built from. Read from an analytics
         # worker thread while `_rescan` runs on the loop, hence the lock.
@@ -369,16 +370,17 @@ class Application:
         return {"pong": True, "sidecarVersion": __version__}
 
     async def _settings_push(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        """Accept the shell's settings and immediately validate the directory.
+        """Accept the shell's settings and answer with the library's state.
 
-        `tasks.md` §2.1 requires validation on receipt rather than
-        deferred until Debug Mode opens, so a broken path is reported while the
-        user is still looking at the field they just changed.
+        The bundled library no longer depends on anything in the settings, but
+        the reply still carries its status so a client learns it on connect
+        without a second round trip — the same moment it used to learn the old
+        directory validation.
         """
         self.settings = SidecarSettings.from_payload(args.get("settings", args))
         log.info(
-            "settings received (arduinoDirectory=%r, defaultBaud=%d, backupDirectory=%r)",
-            self.settings.arduino_directory,
+            "settings received (utilitySketch=%r, defaultBaud=%d, backupDirectory=%r)",
+            self.settings.utility_sketch_name,
             self.settings.default_baud,
             self.settings.backup_directory,
         )
@@ -391,16 +393,17 @@ class Application:
             # even when the detected set didn't.
             await self._handle_presence(self.ports.presence_json())
 
-        # Rescan unconditionally, even when the path itself is unchanged: it may
-        # have been deleted, renamed, or unmounted since the last push.
+        # Rescan unconditionally, even though the library path can't be
+        # reconfigured: an install can still lose files underneath a running
+        # app, and a dev checkout restages between pushes.
         await self._rescan()
         # After the rescan, so a newly-chosen utility sketch resolves against
-        # the directory as it is now rather than as it was one push ago.
+        # the library as it is now rather than as it was one push ago.
         if self.utility is not None:
             self.utility.update_settings(self.settings)
             self.utility.ensure()
             await self.utility.publish()
-        return {"arduinoDirectory": self.discovery.directory.to_json()}
+        return {"library": self.discovery.library.to_json()}
 
     async def _sketches_refresh(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
         await self._rescan()
@@ -1201,11 +1204,12 @@ class Application:
     # --- internals --------------------------------------------------------
 
     async def _rescan(self) -> None:
-        self.discovery = discovery.discover(self.settings.arduino_directory)
+        self.discovery = discovery.discover()
         result = self.discovery
         log.info(
-            "arduino directory %s: %d sketches, %d skipped",
-            result.directory.state,
+            "sketch library %s (%s): %d sketches, %d skipped",
+            result.library.state,
+            result.library.path,
             len(result.sketches),
             len(result.skipped),
         )

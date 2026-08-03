@@ -401,11 +401,11 @@ This is the **only** path by which a pre-Ephymeris archive reaches Analytics, so
 |---|---|---|
 | 🟢 `snapshot` | Decoded with the profile the run actually used | Trustworthy, unmarked |
 | 🟡 `sketch-current` | Decoded with today's `task.json` at the recorded sketch path | **Flag: profile may have changed since** |
-| 🔴 `unavailable` | Sketch path renamed, moved, or the Arduino Directory re-pointed | **Flag: cannot decode** |
+| 🔴 `unavailable` | The recorded name no longer resolves against the bundled library — a sketch dropped from the bundle, or a `legacyNames` entry edited away | **Flag: cannot decode** |
 
 A malformed `task.json` on the fallback path degrades to `no-metrics` rather than raising.
 
-**A sketch name is resolved when a run is read, not when it is adopted.** The path stored at adoption is a cache of that lookup, never a fact about the run. Freezing it would mean a cohort adopted while the Arduino Directory was unset stays permanently undecodable until someone thinks to rescan. Verified against the real archive: with the directory removed it read 0 of 296 scored; restoring it returned 295 of 296 with no re-adoption.
+**A sketch name is resolved when a run is read, not when it is adopted.** The path stored at adoption is a cache of that lookup, never a fact about the run. Freezing it would mean a cohort adopted against one install's library paths stays wrong after every update. Verified against the real archive back when the library was a configurable directory: with it removed, 0 of 296 read as scored; restored, 295 of 296, with no re-adoption. Now that the library ships with the app, the failure mode moved from "directory re-pointed" to "sketch dropped from the bundle" — which is why `tests/test_bundled_library_covers_archives.py` exists.
 
 > [!IMPORTANT]
 > **Comparability is the pair `(profileHash, paramsHash)`, not the profile hash alone.** A profile hash covers the *declaration*, which is identical across every run of a sketch. That was sufficient while a task's timings were compiled into its firmware; it stopped being sufficient once they became operator-set, because a rat run at a 10 ms poke hold and one run at 500 ms share a profile hash and would otherwise be plotted on one axis as though the task had not changed underneath them.

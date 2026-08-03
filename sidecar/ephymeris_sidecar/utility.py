@@ -2,7 +2,7 @@
 
 The baseline is one idea: **a box that isn't doing anything else is a box
 Ephymeris can talk to.** The operator picks a utility sketch once
-(`Settings.utilitySketchPath`), and from then on the app quietly returns every
+(`Settings.utilitySketchName`), and from then on the app quietly returns every
 idle, bound box to it — at startup, when a board appears, and whenever a run or
 session ends. Nothing about that is announced; it is the resting state, not an
 operation. What *is* announced is failure, because a box that can't be restored
@@ -125,7 +125,7 @@ class UtilityBaseline:
 
     def update_settings(self, settings: SidecarSettings) -> None:
         """Take the shell's settings; a changed sketch invalidates every belief."""
-        changed = settings.utility_sketch_path != self._settings.utility_sketch_path
+        changed = settings.utility_sketch_name != self._settings.utility_sketch_name
         self._settings = settings
         if changed:
             self._profile_cache = None
@@ -205,7 +205,7 @@ class UtilityBaseline:
         no reply timeout should ever be asked to cover. `utility.updated`
         carries the progress.
         """
-        if self._held or not self._settings.utility_sketch_path:
+        if self._held or not self._settings.utility_sketch_name:
             # No baseline configured is a supported way to run the app, not a
             # degraded one — so it costs nothing and reports nothing.
             return
@@ -464,17 +464,18 @@ class UtilityBaseline:
     # --- resolution -------------------------------------------------------
 
     def _sketch_entry(self) -> Any | None:
-        """The configured sketch, as the current discovery knows it.
+        """The named sketch, as the current discovery knows it.
 
-        Resolved against discovery every time rather than cached: the whole
-        reason `port.flash` refuses an unknown path is that the Arduino
-        Directory can move or be edited between one command and the next.
+        Resolved BY NAME against discovery every time rather than cached: the
+        setting stores a folder name (the same key `taskDefaults` uses), and the
+        library it resolves against ships with the app — so the path this yields
+        is per-install, while the name survives an update.
         """
-        path = self._settings.utility_sketch_path
-        if not path:
+        name = self._settings.utility_sketch_name
+        if not name:
             return None
         sketches = getattr(self._discovery(), "sketches", [])
-        entry = next((s for s in sketches if s.path == path), None)
+        entry = next((s for s in sketches if s.name == name), None)
         if entry is None:
             return None
         profile = self._profile()
@@ -483,29 +484,33 @@ class UtilityBaseline:
         return entry
 
     def _profile(self) -> TaskProfile | None:
-        path = self._settings.utility_sketch_path
-        if not path:
+        name = self._settings.utility_sketch_name
+        if not name:
             return None
-        if self._profile_cache is not None and self._profile_cache[0] == path:
+        sketches = getattr(self._discovery(), "sketches", [])
+        entry = next((s for s in sketches if s.name == name), None)
+        if entry is None:
+            return None
+        if self._profile_cache is not None and self._profile_cache[0] == entry.path:
             return self._profile_cache[1]
         try:
-            profile = self._load_profile(path)
+            profile = self._load_profile(entry.path)
         except task_profile.TaskProfileError as exc:
-            log.warning("utility sketch %s has an unreadable task.json: %s", path, exc)
+            log.warning("utility sketch %s has an unreadable task.json: %s", entry.path, exc)
             profile = None
-        self._profile_cache = (path, profile)
+        self._profile_cache = (entry.path, profile)
         return profile
 
     def _unavailable_reason(self) -> str | None:
         """Why the baseline can't operate at all, in words worth showing."""
-        path = self._settings.utility_sketch_path
-        if not path:
+        name = self._settings.utility_sketch_name
+        if not name:
             return None  # not configured is a state, not a complaint
         sketches = getattr(self._discovery(), "sketches", [])
-        if not any(s.path == path for s in sketches):
+        if not any(s.name == name for s in sketches):
             return (
-                "The hardware utility sketch isn't in the configured Arduino "
-                "Directory any more — pick it again in Config."
+                f"{name} isn't among the sketches this version of Ephymeris ships "
+                "with — pick a bundled sketch in Config."
             )
         profile = self._profile()
         if profile is None:
@@ -526,9 +531,11 @@ class UtilityBaseline:
         entry = self._sketch_entry()
         profile = self._profile()
         return {
-            "configured": bool(self._settings.utility_sketch_path),
-            "sketchPath": self._settings.utility_sketch_path,
-            "sketchName": entry.name if entry is not None else None,
+            "configured": bool(self._settings.utility_sketch_name),
+            # Resolved, not stored: the setting is a name, and where that name
+            # lives is a fact about this install of the bundled library.
+            "sketchPath": entry.path if entry is not None else None,
+            "sketchName": self._settings.utility_sketch_name,
             "canIdentify": entry is not None and profile is not None and profile.identify is not None,
             "held": self._held,
             "message": self._unavailable_reason(),

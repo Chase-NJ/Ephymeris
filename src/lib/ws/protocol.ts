@@ -121,7 +121,6 @@ export const ERR = {
   TASK_PROFILE_INVALID: "TASK_PROFILE_INVALID",
   BACKUP_UNAVAILABLE: "BACKUP_UNAVAILABLE",
   UTILITY_UNAVAILABLE: "UTILITY_UNAVAILABLE",
-  DIR_INVALID: "DIR_INVALID",
   INTERNAL: "INTERNAL",
 } as const;
 
@@ -149,14 +148,26 @@ export interface DetectedBoard {
   boxId: number | null;
 }
 
-/** The four Arduino Directory states of `tasks.md` §2.4. */
-export type DirectoryState = "not_configured" | "invalid" | "empty" | "ok";
+/**
+ * The three bundled-sketch-library states of `tasks.md` §2.4. There is no `not_configured`:
+ * sketches ship with the app, so there is nothing to configure and no first-run state to be in.
+ */
+export type LibraryState = "ok" | "empty" | "damaged";
 
-export interface DirectoryStatus {
-  state: DirectoryState;
+/**
+ * Every non-ok state means a broken or partial INSTALL rather than a wrong setting, which is why
+ * the messages point at reinstalling and not at a picker.
+ */
+export interface SketchLibraryStatus {
+  state: LibraryState;
   path: string | null;
   /** Populated when state != "ok". */
   message: string | null;
+  /**
+   * `override` when $EPHYMERIS_SKETCH_LIBRARY points elsewhere — a developer facility, never
+   * reachable from the UI.
+   */
+  source: "bundled" | "override";
 }
 
 export interface SketchEntry {
@@ -171,9 +182,9 @@ export interface SkippedEntry {
   reason: string;
 }
 
-/** The full result of an Arduino Directory scan (`tasks.md` §2.3). */
+/** The full result of a bundled-library scan (`tasks.md` §2.3). */
 export interface SketchDiscovery {
-  directory: DirectoryStatus;
+  library: SketchLibraryStatus;
   sketches: SketchEntry[];
   skipped: SkippedEntry[];
   /** Drives the "Partial" note (`tasks.md` §2.4). */
@@ -196,13 +207,14 @@ export interface BoxBinding {
 export interface EphymerisSettings {
   dataDirectory: string | null;
   backupDirectory: string | null;
-  arduinoDirectory: string | null;
   arduinoCliPath: string | null;
   /**
    * The hardware utility sketch every idle box is returned to (`settings.md` §8). Null turns the
-   * baseline off.
+   * baseline off. Keyed by sketch FOLDER NAME rather than by path, matching `taskDefaults` — the
+   * path moved when sketches began shipping with the app, and the name is what a session file
+   * already records.
    */
-  utilitySketchPath: string | null;
+  utilitySketchName: string | null;
   defaultBaud: number;
   boxes: BoxBinding[];
   reducedMotion: boolean;
@@ -247,6 +259,10 @@ export interface UtilityBoxState {
  */
 export interface UtilityStatus {
   configured: boolean;
+  /**
+   * Resolved from the name against the bundled library — an install-specific fact, informational
+   * only.
+   */
   sketchPath: string | null;
   sketchName: string | null;
   /**
@@ -1113,7 +1129,7 @@ export interface CommandArgsMap {
 export interface CommandResultMap {
   "auth": { authenticated: boolean };
   "ping": { pong: boolean; sidecarVersion: string };
-  "settings.push": { arduinoDirectory: DirectoryStatus };
+  "settings.push": { library: SketchLibraryStatus };
   "sketches.refresh": SketchDiscovery;
   "port.passthrough.open": { state: PortStateName };
   "port.passthrough.close": { state: PortStateName };

@@ -3,7 +3,8 @@
   "bundle": {
     "resources": {
       "resources/sidecar": "sidecar",
-      "resources/arduino": "arduino"
+      "resources/arduino": "arduino",
+      "resources/sketches": "sketches"
     }
   }
 }

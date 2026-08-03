@@ -6,7 +6,7 @@ export interface SettingsContextValue {
   settings: EphymerisSettings;
   /** Merge a partial change, persist it, and push to the sidecar. */
   update: (patch: Partial<EphymerisSettings>) => Promise<void>;
-  /** Latest Arduino Directory scan, from the settings push or a refresh. */
+  /** Latest bundled-library scan, from sketches.updated or a refresh. */
   discovery: SketchDiscovery;
   /** Re-run discovery on demand (`tasks.md` §2.3). */
   refreshSketches: () => Promise<void>;

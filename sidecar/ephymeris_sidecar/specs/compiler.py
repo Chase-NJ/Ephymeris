@@ -52,8 +52,42 @@ DEFAULT_TEMPLATE = ("four_epoch", 2)
 
 
 def available() -> tuple[bool, str | None]:
-    """(usable, why not). Called once at startup and reported in the log."""
+    """(importable, why not). Cheap; says nothing about whether it WORKS."""
     return (_IMPORT_ERROR is None, _IMPORT_ERROR)
+
+
+@lru_cache(maxsize=1)
+def self_check() -> tuple[bool, str | None]:
+    """(usable, why not) -- proved by compiling a real spec, not by importing.
+
+    The distinction is not pedantic, and a packaged build is where it bites. The
+    compiler is shipped as data files, so its own dependencies have to be named by
+    hand in the PyInstaller invocation; get that half right and the import
+    succeeds, get the other half wrong and every compile fails on a metaschema
+    `jsonschema` could not load. An "is it there" check would have reported ready.
+
+    So this runs the whole pipeline over a bundled spec, through schema
+    validation, the linter and the packer, and only then says yes. Once, at
+    startup, cached -- about 60 ms, paid on a path that already opens a database.
+    """
+    ok, why = available()
+    if not ok:
+        return ok, why
+    try:
+        probe = sorted(bundled_specs_dir().glob("*.yaml"))[0]
+        result = compile(probe.read_text(), spec_id=probe.stem)
+        if not result.ok:
+            return False, f"{probe.name} did not compile: {result.bag.render()}"
+        table_bytes(result)
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    return True, None
+
+
+def bundled_specs_dir() -> Any:
+    """The shipped specs. Read-only -- user edits live under the app data dir."""
+    require()
+    return _vendor.ROOT / "specs"
 
 
 def require() -> None:

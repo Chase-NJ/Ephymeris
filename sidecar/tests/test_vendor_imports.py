@@ -39,6 +39,21 @@ def test_the_compiler_is_available():
     assert ok, why
 
 
+def test_self_check_proves_a_real_compile_not_just_an_import():
+    """`available()` says the import worked; `self_check()` says the thing works.
+
+    The gap between those is not theoretical — it is what a packaged build gets
+    wrong. The compiler ships as PyInstaller data files, so its own dependencies
+    have to be named by hand in the freeze; naming `yaml` and forgetting
+    `jsonschema`'s metaschema data gives an import that succeeds and a compile that
+    fails on every document. `available()` reported ready for exactly that build.
+    """
+    ok, why = compiler.self_check()
+    assert ok, why
+    assert compiler.bundled_specs_dir().is_dir()
+    assert sorted(p.name for p in compiler.bundled_specs_dir().glob("*.yaml"))
+
+
 def test_taskgraph_resolves_out_of_the_vendor_tree():
     import taskgraph
     import templates

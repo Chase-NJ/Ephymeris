@@ -7,6 +7,9 @@
  *     sidecar/                PyInstaller-frozen sidecar (onedir)
  *       ephymeris-sidecar.exe
  *       _internal/...
+ *         vendor/             the vendored Task-Graph compiler, as plain .py on
+ *                             disk — it is imported off sys.path, not from the
+ *                             archive (see the --add-data note below)
  *     arduino/
  *       arduino-cli.exe       copied from this machine's PATH
  *       data/                 a clean `arduino:avr` install (core + avr-gcc +
@@ -84,6 +87,21 @@ const rpcData = (sub) => {
   return `${join(sidecarDir, rel)}${sep}${rel}`;
 };
 
+// The vendored Task-Graph compiler ships the same way and for the same reason:
+// `specs/_vendor.py` puts `sidecar/vendor/` on sys.path at runtime, so the
+// analysis cannot see it either. It has to stay plain .py on disk rather than
+// go into the archive, because `templates.load()` imports a module whose name it
+// computes and `templates.source_hash()` reads the file's own bytes — neither
+// works against a frozen module.
+//
+// The excludes are not belt-and-braces. If `taskgraph` ever happens to be
+// pip-installed in the freezing venv, the analysis would find it and bake a
+// SECOND copy into the archive alongside the one on sys.path — and the linter's
+// rule registry and the lru_cached registries are module-level state, so two
+// copies disagree silently. Excluding it makes the sys.path copy the only one
+// that can ever win.
+const vendorData = `${join(sidecarDir, "vendor")}${sep}vendor`;
+
 run(python, [
   "-m", "PyInstaller",
   "--noconfirm", "--clean", "--onedir", "--console",
@@ -91,6 +109,19 @@ run(python, [
   "--collect-submodules", "ephymeris_sidecar",
   "--add-data", rpcData("cc"),
   "--add-data", rpcData("google"),
+  "--add-data", vendorData,
+  "--exclude-module", "taskgraph",
+  "--exclude-module", "templates",
+  // The vendor tree's OWN dependencies, declared by hand for the same reason the
+  // tree is shipped as data: nothing PyInstaller analyses imports them. `yaml`
+  // and `jsonschema` are imported only from vendor/taskgraph/, which the analysis
+  // treats as opaque bytes, so without these the frozen sidecar bundles the
+  // compiler and then cannot import it. `jsonschema` needs --collect-all rather
+  // than --hidden-import because `jsonschema_specifications` ships its metaschemas
+  // as package DATA, and a hidden-import brings the code without them.
+  "--hidden-import", "yaml",
+  "--collect-all", "jsonschema",
+  "--collect-all", "jsonschema_specifications",
   "--distpath", "dist",
   "--workpath", "build",
   "--specpath", "build",

@@ -248,7 +248,7 @@ class Application:
         """
         from ephymeris_sidecar.specs import compiler
 
-        ok, why = compiler.available()
+        ok, why = compiler.self_check()
         if not ok:
             log.warning(
                 "task spec compiler unavailable (%s) — the Task screen's spec "
@@ -257,7 +257,8 @@ class Application:
             )
             return
         log.info(
-            "task spec compiler ready (%d template versions, from %s)",
+            "task spec compiler ready (%d specs, %d template versions, from %s)",
+            len(list(compiler.bundled_specs_dir().glob("*.yaml"))),
             len(compiler.templates_available()),
             compiler.vendor_root(),
         )

@@ -44,16 +44,30 @@ def read_banner(link: Link, timeout: float = 10.0) -> tuple[list[str], Capabilit
     matches it. Anything before it is free — which is what lets a migrated box
     talk to an un-migrated host — so everything is collected and handed back
     rather than filtered here.
+
+    `timeout` is a TOTAL budget, not per line. Per-line was an unbounded loop
+    in disguise: a board streaming at the WRONG baud produces garbage "lines"
+    whenever a 0x0A lands in the noise, each one resetting the clock — so
+    `detect()` against a chatty legacy sketch (BOX_Utility emits STATUS
+    continuously) hung forever at the 115200 attempt instead of failing in
+    four seconds. Silence and chatter must exhaust the same budget. Found on
+    real hardware; every off-target link is either silent or well-framed,
+    which is why no gate ever saw it.
     """
+    import time
+
+    deadline = time.monotonic() + timeout
     lines: list[str] = []
     while True:
-        line = link.read_line(timeout)
+        remaining = deadline - time.monotonic()
+        line = link.read_line(remaining) if remaining > 0 else None
         if line is None:
             raise UploadError(
                 "board never reported READY.\n"
                 "The usual cause is a baud mismatch: the board answers at a rate "
-                "nobody is listening at, and silence is what that looks like from "
-                "here. Check the flashed TG_BAUD_RATE against --baud."
+                "nobody is listening at — silence if it is quiet, undecodable "
+                "noise if it is chatty, and neither contains READY. Check the "
+                "flashed TG_BAUD_RATE against --baud."
             )
         lines.append(line)
         if line == READY:

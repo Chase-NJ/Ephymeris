@@ -1,7 +1,7 @@
 {
   "source": "Task-Graph",
-  "commit": "aaa006151c4288784b68b9de93446b627af277d5",
-  "synced": "2026-08-03T15:25:05Z",
+  "commit": "68c775784faa01f4fc10c002c1dda5384cb01677",
+  "synced": "2026-08-03T16:34:06Z",
   "trees": [
     "taskgraph",
     "templates",
@@ -64,7 +64,7 @@
     "taskgraph/table.py": "dc0be8d9731d7ac8232d7c4dbea7dc69a46c81aaedb08de1ceb20dd37ab7daad",
     "taskgraph/transport/__init__.py": "791c1feec4191388f81b892f64989b8a02940b6832fbf69832ec6463a1e5e18a",
     "taskgraph/transport/caps.py": "ea26903ec3fa0d7fb0680818785628c99d7960205e9d6b034f8479ec61f61551",
-    "taskgraph/transport/client.py": "c6bba3ba4913f60a7dce3ccc75f6cfbc63661a72a54f8845ef18177d2a8ecb42",
+    "taskgraph/transport/client.py": "551889806e7a5a79bc9bd0f3473b160c5197f769e0dbc868b8c0fa38f27c571c",
     "taskgraph/transport/link.py": "996323fc2838804a4b58e4af57825e330c22ae46aff1389063c345b91e1bd3b3",
     "templates/__init__.py": "eeb206cecd84fcf42127d4fc0d4ff3c6b011f27c24a3a9a7cef73a1c93149eaf",
     "templates/four_epoch/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

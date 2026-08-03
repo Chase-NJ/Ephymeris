@@ -73,13 +73,19 @@ class PortLink:
             baudrate=baud,
             timeout=_READ_TIMEOUT_S,
             write_timeout=5.0,
-            dsrdtr=False,
         )
         if reset:
-            # Opening pulled DTR; give the bootloader its window before we
-            # treat silence as an answer. Matches SerialLink's settle upstream.
+            # Mirrors upstream SerialLink exactly, and the ORDER is the point:
+            # opening pulled DTR and rebooted the board, so its banner lands
+            # during the settle — flush that, then pulse DTR DELIBERATELY so
+            # the banner read next is this run's. The first cut flushed
+            # without re-resetting, which silently discarded a boot-time READY
+            # and made every legacy sketch look mute at its own baud.
             time.sleep(settle)
             self._serial.reset_input_buffer()
+            self._serial.setDTR(False)
+            time.sleep(0.1)
+            self._serial.setDTR(True)
 
     # --- Link -------------------------------------------------------------
 

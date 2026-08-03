@@ -145,6 +145,16 @@ class SpecStore:
     def get(self, spec_id: str) -> SpecRecord | None:
         return next((r for r in self.records() if r.spec_id == spec_id), None)
 
+    def bundled_text(self, spec_id: str) -> str | None:
+        """The CURRENT shipped bytes, whether or not a user copy shadows them."""
+        path = self._bundled().get(spec_id)
+        if path is None:
+            return None
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
     def upstream_changed(self, spec_id: str) -> bool:
         """The bundled bytes moved since this shadow's baseline was taken.
 

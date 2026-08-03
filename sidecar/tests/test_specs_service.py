@@ -221,6 +221,108 @@ def test_diagnostics_carry_a_placement_and_field_anchors_are_overlay_keys():
         assert d["anchor"] in overlay, f"{d['code']} anchored to unknown key {d['anchor']}"
 
 
+# --- diff -------------------------------------------------------------------
+
+
+def _shipped(spec_id: str) -> str:
+    return (compiler.bundled_specs_dir() / f"{spec_id}.yaml").read_text()
+
+
+def test_an_unedited_spec_diffs_clean_against_itself():
+    text = _shipped("gonogo")
+    payload = service.diff_payload("gonogo", text, text, "shipped")
+    assert validate(("ref", "SpecListingDiff"), payload) == []
+    assert payload["changed"] is False
+    assert payload["hunks"] == []
+    assert payload["before"]["specHash"] == payload["after"]["specHash"]
+
+
+def test_a_timing_edit_lands_in_the_timing_vector_section_only():
+    before = _shipped("gonogo")
+    after = before.replace("ms: 2000, wire_key: NWP", "ms: 2500, wire_key: NWP")
+    payload = service.diff_payload("gonogo", after, before, "shipped")
+    assert payload["changed"] is True
+    sections = [h["section"] for h in payload["hunks"]]
+    assert "TIMING VECTOR" in sections
+    # The header block's hash churn is deliberately NOT a hunk — the summaries
+    # carry it once, as provenance, instead of topping every diff.
+    assert all("spec_hash" not in line["text"] for h in payload["hunks"] for line in h["lines"])
+    assert payload["before"]["specHash"] != payload["after"]["specHash"]
+
+
+def test_the_ez_variant_is_a_pure_timing_delta():
+    """The acceptance criterion the roadmap names, matched to what upstream
+    actually pins: the eased variant's STRUCTURE is identical (no STATES or
+    TRIAL TYPES hunks — same nodes, same edges), and every hunk lives in a
+    value-carrying section. STAGE SCHEDULE and DWELL BUDGET move WITH the
+    timing vector because they are derived from it — their hunks are the
+    layer-3 delta being visible, not noise."""
+    payload = service.diff_payload(
+        "shaping_gr_ez", _shipped("shaping_gr_ez"), _shipped("shaping_gr"), "spec"
+    )
+    assert payload["changed"] is True
+    sections = {h["section"] for h in payload["hunks"]}
+    assert "TIMING VECTOR" in sections
+    structural = {s for s in sections if s.startswith(("STATES", "TRIAL TYPES"))}
+    assert not structural, f"an eased variant must not change the graph: {structural}"
+    # And the headline agrees: same shape, different bytes.
+    assert payload["before"]["nNodes"] == payload["after"]["nNodes"]
+    assert payload["before"]["nEdges"] == payload["after"]["nEdges"]
+    assert payload["before"]["specHash"] != payload["after"]["specHash"]
+
+
+def test_a_side_that_does_not_compile_reports_honestly():
+    payload = service.diff_payload("gonogo", "not: a spec", _shipped("gonogo"), "shipped")
+    assert payload["changed"] is True
+    assert payload["after"] is None
+    assert payload["before"] is not None
+    assert payload["hunks"] == []
+    assert validate(("ref", "SpecListingDiff"), payload) == []
+
+
+def test_a_topology_change_reads_as_states_moving():
+    before = _shipped("gonogo")
+    after = before.replace("commit_hold: true", "commit_hold: false")
+    payload = service.diff_payload("gonogo", after, before, "shipped")
+    # Dropping the commitment hold restructures the graph — the STATES section
+    # must carry hunks, and the headline counts must move.
+    assert any(h["section"] == "STATES" for h in payload["hunks"])
+    assert payload["before"]["nNodes"] != payload["after"]["nNodes"]
+
+
+# --- export -----------------------------------------------------------------
+
+
+def test_export_produces_every_artifact_kind():
+    import base64
+
+    text = _shipped("gonogo")
+    payload = service.export_payload(
+        "gonogo", text, ["spec", "listing", "lint", "table_json", "table_bin", "bench"]
+    )
+    by_kind = {a["kind"]: a for a in payload["artifacts"]}
+    assert set(by_kind) == {"spec", "listing", "lint", "table_json", "table_bin", "bench"}
+    for artifact in payload["artifacts"]:
+        assert validate(("ref", "SpecArtifact"), artifact) == []
+    assert by_kind["spec"]["text"] == text
+    # The listing export IS the checked-in review artifact, byte for byte.
+    assert by_kind["listing"]["text"] == (
+        compiler.bundled_specs_dir() / "gonogo.table.txt"
+    ).read_text()
+    blob = base64.b64decode(by_kind["table_bin"]["base64"])
+    assert blob[:4] == b"TGTB", "the packed table's magic"
+    assert by_kind["bench"]["filename"] == "gonogo.bench.txt"
+
+
+def test_export_of_a_broken_spec_yields_only_the_spec_itself():
+    payload = service.export_payload("scratch", "not: a spec", ["spec", "listing", "table_bin"])
+    kinds = [a["kind"] for a in payload["artifacts"]]
+    assert kinds == ["spec"], (
+        "everything but the YAML is a function of a compiled table, and a spec "
+        "that doesn't compile has none"
+    )
+
+
 # --- capabilities -----------------------------------------------------------
 
 

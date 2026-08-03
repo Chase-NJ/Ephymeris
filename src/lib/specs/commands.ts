@@ -1,10 +1,12 @@
 import type { SidecarClient } from "@/lib/ws/client";
 import { CMD } from "@/lib/ws/protocol";
 import type {
+  SpecArtifact,
   SpecCapabilities,
   SpecCompileResult,
   SpecDocument,
   SpecEntry,
+  SpecListingDiff,
   SpecSchema,
 } from "./types";
 
@@ -64,4 +66,22 @@ export async function acknowledgeUpstream(
   specId: string,
 ): Promise<{ entry: SpecEntry }> {
   return await client.call(CMD.SPECS_ACKNOWLEDGE_UPSTREAM, { specId });
+}
+
+export async function diffSpec(
+  client: SidecarClient,
+  specId: string,
+  text: string,
+  against: { baseline?: "shipped" | "saved"; againstSpecId?: string },
+): Promise<SpecListingDiff> {
+  return await client.call(CMD.SPECS_DIFF, { specId, text, ...against });
+}
+
+export async function exportSpec(
+  client: SidecarClient,
+  specId: string,
+  text: string,
+  artifacts: string[],
+): Promise<{ artifacts: SpecArtifact[] }> {
+  return await client.call(CMD.SPECS_EXPORT, { specId, text, artifacts });
 }

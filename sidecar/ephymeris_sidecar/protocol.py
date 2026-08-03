@@ -94,6 +94,8 @@ class Cmd:
     SPECS_SAVE: Final = "specs.save"
     SPECS_DELETE: Final = "specs.delete"
     SPECS_ACKNOWLEDGE_UPSTREAM: Final = "specs.acknowledgeUpstream"
+    SPECS_DIFF: Final = "specs.diff"
+    SPECS_EXPORT: Final = "specs.export"
 
 
 ALL_COMMANDS: Final[frozenset[str]] = frozenset(
@@ -261,6 +263,10 @@ SHAPES: Final[dict[str, Any]] = {
     "SpecCompileResult": ('obj', (('ok', 'bool', False), ('diagnostics', ('list', ('ref', 'SpecDiagnostic')), False), ('table', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('graph', ('union', (('ref', 'SpecGraph'), 'null')), False), ('listing', ('union', ('str', 'null')), False), ('elapsedMs', 'float', False))),
     "SpecCapabilities": ('obj', (('outcomeClasses', ('list', 'str'), False), ('requiredTiming', ('list', 'str'), False), ('knobs', ('list', 'str'), False), ('template', 'str', False), ('templateVersion', 'int', False))),
     "SpecsUpdatedData": ('obj', (('specs', ('list', ('ref', 'SpecEntry')), False),)),
+    "DiffLine": ('obj', (('op', ('lit', (' ', '+', '-')), False), ('text', 'str', False))),
+    "DiffHunk": ('obj', (('section', 'str', False), ('lines', ('list', ('ref', 'DiffLine')), False))),
+    "SpecListingDiff": ('obj', (('specId', 'str', False), ('baseline', ('lit', ('shipped', 'saved', 'spec')), False), ('changed', 'bool', False), ('before', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('after', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('hunks', ('list', ('ref', 'DiffHunk')), False), ('added', 'int', False), ('removed', 'int', False))),
+    "SpecArtifact": ('obj', (('kind', ('lit', ('spec', 'listing', 'lint', 'table_json', 'table_bin', 'bench')), False), ('filename', 'str', False), ('text', ('union', ('str', 'null')), False), ('base64', ('union', ('str', 'null')), False))),
 }
 
 COMMAND_ARGS: Final[dict[str, Any]] = {
@@ -316,6 +322,8 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "specs.save": ('obj', (('specId', 'str', False), ('text', 'str', False))),
     "specs.delete": ('obj', (('specId', 'str', False),)),
     "specs.acknowledgeUpstream": ('obj', (('specId', 'str', False),)),
+    "specs.diff": ('obj', (('specId', 'str', False), ('text', 'str', True), ('baseline', ('lit', ('shipped', 'saved')), True), ('againstSpecId', 'str', True))),
+    "specs.export": ('obj', (('specId', 'str', False), ('text', 'str', True), ('artifacts', ('list', 'str'), False))),
 }
 
 COMMAND_RESULTS: Final[dict[str, Any]] = {
@@ -371,6 +379,8 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "specs.save": ('obj', (('entry', ('ref', 'SpecEntry'), False), ('result', ('ref', 'SpecCompileResult'), False))),
     "specs.delete": ('obj', (('entry', ('union', (('ref', 'SpecEntry'), 'null')), False),)),
     "specs.acknowledgeUpstream": ('obj', (('entry', ('ref', 'SpecEntry'), False),)),
+    "specs.diff": ('ref', 'SpecListingDiff'),
+    "specs.export": ('obj', (('artifacts', ('list', ('ref', 'SpecArtifact')), False),)),
 }
 
 EVENT_DATA: Final[dict[str, Any]] = {

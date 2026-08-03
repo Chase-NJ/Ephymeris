@@ -1,4 +1,13 @@
-import { Check, CircleAlert, Loader2, RotateCcw, Save, Trash2 } from "lucide-react";
+import {
+  Check,
+  CircleAlert,
+  Download,
+  GitCompareArrows,
+  Loader2,
+  RotateCcw,
+  Save,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button, Select } from "@/components/common/controls";
@@ -7,6 +16,7 @@ import { errorMessage } from "@/lib/cohorts/commands";
 import {
   acknowledgeUpstream,
   deleteSpec,
+  exportSpec,
   getSpec,
   saveSpec,
 } from "@/lib/specs/commands";
@@ -17,8 +27,11 @@ import { useCompile } from "@/lib/specs/useCompile";
 import { useCapabilities, useSpecs } from "@/lib/specs/useSpecs";
 import { useRegisterUnsaved } from "@/lib/nav/unsavedGuard";
 import { useSidecar } from "@/lib/ws/context";
+import { BandPalette } from "./BandPalette";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
+import { ListingDiff } from "./ListingDiff";
 import { SpecForm } from "./SpecForm";
+import { SpecGraph } from "./SpecGraph";
 
 /**
  * The task-spec workbench — the Task screen's spec-first half.
@@ -50,6 +63,8 @@ export function SpecWorkbench() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (!specId) {
@@ -158,6 +173,44 @@ export function SpecWorkbench() {
     }
   }
 
+  /**
+   * Export one artifact: bytes come back in the reply and are written through
+   * the user's own save dialog — the sidecar never writes outside its data
+   * dir, and the dialog is what scopes the write (`capture.ts`'s pattern).
+   */
+  async function exportArtifact(kind: string) {
+    if (!doc || !specId) return;
+    setExporting(true);
+    setSaveError(null);
+    try {
+      const reply = await exportSpec(client, specId, toYaml(doc), [kind]);
+      const artifact = reply.artifacts[0];
+      if (!artifact) {
+        setSaveError(
+          "Nothing to export — every artifact except the YAML needs a spec that compiles.",
+        );
+        return;
+      }
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const path = await save({ defaultPath: artifact.filename });
+      if (!path) return; // cancel is an outcome, not an error
+      if (artifact.base64 !== null) {
+        const { writeFile } = await import("@tauri-apps/plugin-fs");
+        await writeFile(
+          path,
+          Uint8Array.from(atob(artifact.base64), (c) => c.charCodeAt(0)),
+        );
+      } else {
+        const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+        await writeTextFile(path, artifact.text ?? "");
+      }
+    } catch (err) {
+      setSaveError(errorMessage(err));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (unavailable) {
     return (
       <section className="surface mt-6 rounded-md px-4 py-3.5">
@@ -242,6 +295,16 @@ export function SpecWorkbench() {
             </div>
 
             <div className="flex items-center gap-1.5">
+              <Button
+                variant="ghost"
+                disabled={!doc}
+                onClick={() => setReviewing(true)}
+                title="Diff the compiled listing against a baseline — the review artifact"
+              >
+                <GitCompareArrows size={12} strokeWidth={1.75} />
+                Review
+              </Button>
+              <ExportMenu disabled={!doc || exporting} onExport={(k) => void exportArtifact(k)} />
               {entry?.origin === "shipped_edited" && (
                 <Button
                   variant="ghost"
@@ -326,6 +389,16 @@ export function SpecWorkbench() {
 
       {doc && baseline && schema && (
         <div className="flex flex-col gap-5 px-4 py-3.5">
+          <BandPalette
+            doc={doc}
+            baseline={baseline}
+            schema={schema}
+            caps={caps}
+            graph={result?.graph ?? null}
+            placed={placed}
+            onChange={setDoc}
+          />
+          {result?.graph && <SpecGraph graph={result.graph} placed={placed} />}
           <SpecForm
             doc={doc}
             baseline={baseline}
@@ -336,6 +409,18 @@ export function SpecWorkbench() {
           />
           {result && <DiagnosticsPanel diagnostics={result.diagnostics} />}
         </div>
+      )}
+
+      {specId && doc && (
+        <ListingDiff
+          open={reviewing}
+          onClose={() => setReviewing(false)}
+          client={client}
+          specId={specId}
+          text={toYaml(doc)}
+          specs={specs}
+          hasShipped={entry?.origin !== "user"}
+        />
       )}
 
       <Modal
@@ -358,6 +443,39 @@ export function SpecWorkbench() {
         </div>
       </Modal>
     </section>
+  );
+}
+
+/** One artifact per export — the picker doubles as the explanation of what
+ * each artifact is, and the save dialog scopes the write. */
+function ExportMenu({
+  disabled,
+  onExport,
+}: {
+  disabled: boolean;
+  onExport: (kind: string) => void;
+}) {
+  const [kind, setKind] = useState("listing");
+  return (
+    <span className="flex items-center gap-1">
+      <Select
+        label="Export artifact"
+        value={kind}
+        options={[
+          { value: "listing", label: "listing (.table.txt)" },
+          { value: "spec", label: "spec (.yaml)" },
+          { value: "table_json", label: "table (.json)" },
+          { value: "table_bin", label: "wire bytes (.bin)" },
+          { value: "bench", label: "bench card (.txt)" },
+          { value: "lint", label: "lint baseline (.txt)" },
+        ]}
+        onChange={(v) => setKind(String(v))}
+        className="w-[168px]"
+      />
+      <Button variant="ghost" disabled={disabled} onClick={() => onExport(kind)} title="Export">
+        <Download size={12} strokeWidth={1.75} />
+      </Button>
+    </span>
   );
 }
 

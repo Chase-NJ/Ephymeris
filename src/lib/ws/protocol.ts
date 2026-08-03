@@ -81,6 +81,8 @@ export const CMD = {
   SPECS_SAVE: "specs.save",
   SPECS_DELETE: "specs.delete",
   SPECS_ACKNOWLEDGE_UPSTREAM: "specs.acknowledgeUpstream",
+  SPECS_DIFF: "specs.diff",
+  SPECS_EXPORT: "specs.export",
 } as const;
 
 export type CommandName = (typeof CMD)[keyof typeof CMD];
@@ -1243,6 +1245,50 @@ export interface SpecsUpdatedData {
   specs: SpecEntry[];
 }
 
+export interface DiffLine {
+  op: " " | "+" | "-";
+  text: string;
+}
+
+export interface DiffHunk {
+  /**
+   * The listing section the hunk falls in — STATES, TIMING VECTOR, TRIAL TYPES, STAGE SCHEDULE,
+   * DWELL BUDGET — so a change reads as "3 states added in the sampling band" rather than "line
+   * 71 moved".
+   */
+  section: string;
+  lines: DiffLine[];
+}
+
+/**
+ * A diff of the LISTING — the checked-in review artifact — never of the YAML. The listing is what
+ * a reviewer reads upstream, so it is what a topology change is reviewed against here (roadmap
+ * Phase 6).
+ */
+export interface SpecListingDiff {
+  specId: string;
+  baseline: "shipped" | "saved" | "spec";
+  changed: boolean;
+  /**
+   * Null when that side does not compile. The summaries carry the headline (26 → 29 states) and
+   * the provenance strip — spec_hash and template_hash move on EVERY edit, so they are excluded
+   * from the hunks and shown once here instead of topping every diff.
+   */
+  before: SpecTableSummary | null;
+  after: SpecTableSummary | null;
+  hunks: DiffHunk[];
+  added: number;
+  removed: number;
+}
+
+export interface SpecArtifact {
+  kind: "spec" | "listing" | "lint" | "table_json" | "table_bin" | "bench";
+  filename: string;
+  text: string | null;
+  /** Only table_bin — the packed wire bytes. */
+  base64: string | null;
+}
+
 // --- Per-command and per-event payload maps --------------------------------
 
 /** Args each command takes; `Record<string, never>` = none. */
@@ -1299,6 +1345,8 @@ export interface CommandArgsMap {
   "specs.save": { specId: string; text: string };
   "specs.delete": { specId: string };
   "specs.acknowledgeUpstream": { specId: string };
+  "specs.diff": { specId: string; text?: string; baseline?: "shipped" | "saved"; againstSpecId?: string };
+  "specs.export": { specId: string; text?: string; artifacts: string[] };
 }
 
 /** The `result` field of each command's ok-reply. */
@@ -1355,6 +1403,8 @@ export interface CommandResultMap {
   "specs.save": { entry: SpecEntry; result: SpecCompileResult };
   "specs.delete": { entry: SpecEntry | null };
   "specs.acknowledgeUpstream": { entry: SpecEntry };
+  "specs.diff": SpecListingDiff;
+  "specs.export": { artifacts: SpecArtifact[] };
 }
 
 /** The `data` field of each event. */

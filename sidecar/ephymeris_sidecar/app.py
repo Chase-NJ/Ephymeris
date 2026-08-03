@@ -193,6 +193,8 @@ class Application:
         self.server.register(Cmd.SPECS_SAVE, self._specs_save)
         self.server.register(Cmd.SPECS_DELETE, self._specs_delete)
         self.server.register(Cmd.SPECS_ACKNOWLEDGE_UPSTREAM, self._specs_acknowledge_upstream)
+        self.server.register(Cmd.SPECS_DIFF, self._specs_diff)
+        self.server.register(Cmd.SPECS_EXPORT, self._specs_export)
 
         self.server.on_client_ready(self._replay_state)
 
@@ -887,6 +889,66 @@ class Application:
         entry = await asyncio.to_thread(self.spec_store.entry_for, record)
         await self._broadcast_specs()
         return {"entry": entry}
+
+    async def _specs_diff(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        spec_id = _str_arg(args, "specId")
+        record = await asyncio.to_thread(self.spec_store.get, spec_id)
+        if record is None:
+            raise CommandError(
+                ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
+            )
+
+        text = args.get("text")
+        after_text = text if isinstance(text, str) else await asyncio.to_thread(record.read_text)
+
+        against = args.get("againstSpecId")
+        if isinstance(against, str) and against:
+            other = await asyncio.to_thread(self.spec_store.get, against)
+            if other is None:
+                raise CommandError(
+                    ErrCode.SPEC_NOT_FOUND, f"No spec named {against!r}.", {"specId": against}
+                )
+            before_text = await asyncio.to_thread(other.read_text)
+            baseline = "spec"
+        else:
+            requested = args.get("baseline")
+            shipped = await asyncio.to_thread(self.spec_store.bundled_text, spec_id)
+            # Default: review against what shipped when there is a shipped
+            # version to review against; a pure user spec can only diff its
+            # unsaved edits against its own file.
+            use_shipped = requested == "shipped" or (requested is None and shipped is not None)
+            if use_shipped:
+                if shipped is None:
+                    raise CommandError(
+                        ErrCode.SPEC_INVALID,
+                        f"{spec_id} has no shipped version to diff against.",
+                    )
+                before_text, baseline = shipped, "shipped"
+            else:
+                before_text, baseline = await asyncio.to_thread(record.read_text), "saved"
+
+        async with self._spec_compile_gate:
+            return await asyncio.to_thread(
+                spec_service.diff_payload, spec_id, after_text, before_text, baseline
+            )
+
+    async def _specs_export(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        spec_id = _str_arg(args, "specId")
+        kinds = args.get("artifacts")
+        if not isinstance(kinds, list) or not all(isinstance(k, str) for k in kinds):
+            raise CommandError(ErrCode.SPEC_INVALID, "`artifacts` must be a list of kinds.")
+        text = args.get("text")
+        if not isinstance(text, str):
+            record = await asyncio.to_thread(self.spec_store.get, spec_id)
+            if record is None:
+                raise CommandError(
+                    ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
+                )
+            text = await asyncio.to_thread(record.read_text)
+        async with self._spec_compile_gate:
+            return await asyncio.to_thread(spec_service.export_payload, spec_id, text, kinds)
 
     # --- backup (data.md §7) ---------------------------------------
 

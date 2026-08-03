@@ -1236,6 +1236,55 @@ SHAPES = (
         "SpecsUpdatedData",
         obj(f("specs", ListOf(Ref("SpecEntry")))),
     ),
+    Shape(
+        "DiffLine",
+        obj(f("op", lit(" ", "+", "-")), f("text", STR)),
+    ),
+    Shape(
+        "DiffHunk",
+        obj(
+            f(
+                "section",
+                STR,
+                doc="The listing section the hunk falls in — STATES, TIMING VECTOR, "
+                "TRIAL TYPES, STAGE SCHEDULE, DWELL BUDGET — so a change reads as "
+                '"3 states added in the sampling band" rather than "line 71 moved".',
+            ),
+            f("lines", ListOf(Ref("DiffLine"))),
+        ),
+    ),
+    Shape(
+        "SpecListingDiff",
+        obj(
+            f("specId", STR),
+            f("baseline", lit("shipped", "saved", "spec")),
+            f("changed", BOOL),
+            f(
+                "before",
+                nullable(Ref("SpecTableSummary")),
+                doc="Null when that side does not compile. The summaries carry the "
+                "headline (26 → 29 states) and the provenance strip — spec_hash and "
+                "template_hash move on EVERY edit, so they are excluded from the "
+                "hunks and shown once here instead of topping every diff.",
+            ),
+            f("after", nullable(Ref("SpecTableSummary"))),
+            f("hunks", ListOf(Ref("DiffHunk"))),
+            f("added", INT),
+            f("removed", INT),
+        ),
+        doc="A diff of the LISTING — the checked-in review artifact — never of the "
+        "YAML. The listing is what a reviewer reads upstream, so it is what a "
+        "topology change is reviewed against here (roadmap Phase 6).",
+    ),
+    Shape(
+        "SpecArtifact",
+        obj(
+            f("kind", lit("spec", "listing", "lint", "table_json", "table_bin", "bench")),
+            f("filename", STR),
+            f("text", nullable(STR)),
+            f("base64", nullable(STR), doc="Only table_bin — the packed wire bytes."),
+        ),
+    ),
 )
 
 
@@ -1693,6 +1742,49 @@ COMMANDS = (
         doc="Keep mine: re-baseline a shipped_edited spec against the CURRENT "
         "bundled bytes, clearing upstreamChanged until the next app update "
         "moves them again. Nothing is merged and nothing is overwritten.",
+    ),
+    Command(
+        "specs.diff",
+        args=obj(
+            f("specId", STR),
+            f(
+                "text",
+                STR,
+                optional=True,
+                doc="The AFTER side: the editor's unsaved document. Absent = the "
+                "stored file, for reviewing a saved edit.",
+            ),
+            f(
+                "baseline",
+                lit("shipped", "saved"),
+                optional=True,
+                doc="The BEFORE side. Default: shipped for a bundled id, saved "
+                "otherwise. `shipped` on a shadow means the CURRENT bundled bytes.",
+            ),
+            f(
+                "againstSpecId",
+                STR,
+                optional=True,
+                doc="Compare against another spec entirely — how the shaping_gr / "
+                "shaping_gr_ez 'pure timing delta' claim gets read. Overrides "
+                "`baseline`.",
+            ),
+        ),
+        result=Ref("SpecListingDiff"),
+        doc="A deliberate Review action, never per-keystroke — the baselines live "
+        "server-side and shipping two full listings per edit would be waste.",
+    ),
+    Command(
+        "specs.export",
+        args=obj(
+            f("specId", STR),
+            f("text", STR, optional=True, doc="Export the editor's document instead of the stored file."),
+            f("artifacts", ListOf(STR), doc="Which kinds; unknown names are ignored."),
+        ),
+        result=obj(f("artifacts", ListOf(Ref("SpecArtifact")))),
+        doc="Returns bytes IN THE REPLY; the frontend writes them through a "
+        "dialog-picked path. That keeps 'no wire command writes an arbitrary "
+        "file' intact — the sidecar's own writes stay under its data dir.",
     ),
 )
 

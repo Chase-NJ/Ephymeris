@@ -218,7 +218,10 @@ export function SpecForm({
     <div className="flex flex-col gap-5">
       {section("identity", objectSection("identity"))}
       {section("meta", objectSection("meta"))}
-      {section("topology", objectSection("topology"))}
+      {/* No topology section here: the BandPalette above the graph owns those
+      knobs. One editing surface per field — two would disagree about focus,
+      changed-dots and errors eventually, and the palette is the one the
+      roadmap's Stage 2 asks for. */}
 
       {section(
         "timing",

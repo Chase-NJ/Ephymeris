@@ -5,6 +5,9 @@
  */
 
 export type {
+  DiffHunk,
+  DiffLine,
+  SpecArtifact,
   SpecCapabilities,
   SpecCompileResult,
   SpecDiagnostic,
@@ -12,6 +15,7 @@ export type {
   SpecGraph,
   SpecGraphEdge,
   SpecGraphNode,
+  SpecListingDiff,
   SpecOrigin,
   SpecTableSummary,
 } from "@/lib/ws/protocol";

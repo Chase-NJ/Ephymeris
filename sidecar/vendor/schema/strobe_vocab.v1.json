@@ -1,0 +1,377 @@
+{
+  "vocab_version": 1,
+  "append_only": true,
+  "_readme": [
+    "THE strobe registry. Every strobe name a task spec may reference is declared here,",
+    "and the compiler resolves names to numbers against this file and nothing else.",
+    "",
+    "APPEND-ONLY IS A HARD RULE, NOT A CONVENTION. Downstream analysis depends on codes",
+    "and their ordering, and historical comparability is a hard requirement. A code is",
+    "never repurposed, never renumbered, never deleted. Adding one means: pick the next",
+    "free number from `free_ranges`, give it a `rationale`, and bump nothing -- adding a",
+    "code does not bump `vocab_version`, because additions cannot break an existing spec.",
+    "`vocab_version` bumps only if this file's SHAPE changes.",
+    "",
+    "SOURCE OF TRUTH. Codes with origin 'firmware' mirror BehaviorBox.h:97-129 and their",
+    "numbers are fixed by ~4 years of recorded sessions. Codes with origin 'taskgraph'",
+    "are new in this project. Once the generator in Phase 1 exists, this file emits the",
+    "firmware header, the compiler's table, and a task.json-shaped strobes{} map, which",
+    "retires the three-way hand-mirroring described in PHASE0_PLAN.md section 1.3.",
+    "",
+    "DECLARED MEANS EMITTED. Ephymeris docs/tasks.md:207-213 records a real bug where",
+    "GRGL_Sim declared 23 of 31 codes and emitted codes it had not declared; nothing",
+    "errored and each layer degraded silently. The inverse is equally a bug: do not add",
+    "a code here speculatively. Every code below is emitted by at least one spec in",
+    "specs/, and Phase 1's linter enforces that."
+  ],
+  "code_min": 0,
+  "code_max": 999,
+  "_code_max_why": [
+    "emitStrobe formats \"%03d\\t%lu\" (BehaviorBox.h:275-281) and the host's IN_SESSION",
+    "parser is ^\\d{1,3}\\t\\d+$ -- so a 4-digit code is unparseable on the host and",
+    "silently dropped. 999 is a wire-format limit, not a preference.",
+    "",
+    "Five codes already exceed 255 (256, 257, 258, 357, 369), so the compiled state",
+    "table stores strobes as uint16. See docs/decisions.md D5."
+  ],
+  "free_ranges": [
+    [
+      107,
+      109
+    ],
+    [
+      114,
+      220
+    ],
+    [
+      227,
+      232
+    ],
+    [
+      235,
+      241
+    ],
+    [
+      244,
+      245
+    ],
+    [
+      264,
+      356
+    ],
+    [
+      358,
+      368
+    ],
+    [
+      370,
+      999
+    ]
+  ],
+  "_free_ranges_why": "Gaps in the firmware numbering. Non-contiguous and non-patterned, which is why the compiler must look codes up rather than compute them. NOTE the 107-220 gap is split around 110-113: those are retired, not free -- see `retired` below.",
+  "codes": {
+    "START_SESSION": {
+      "code": 221,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "session entry, timestamp 0",
+      "rationale": "Anchors every timestamp in the run. Emitted by the sketch loop, not by a trial node."
+    },
+    "LIGHTS_ON": {
+      "code": 222,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the engagement window (trial cue on)",
+      "rationale": "The trial-available edge. Paired with nothing; its partner LIGHTS_OFF is not."
+    },
+    "LAZY_RAT": {
+      "code": 223,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the no-engagement penalty",
+      "paired_with": "LIGHTS_OFF",
+      "pair_order": "LIGHTS_OFF first",
+      "rationale": "Abstention. No stimulus was presented, so the trial carries no evidence about discrimination and is scored invalid. See BehaviorBox.h:1158-1159."
+    },
+    "ODOR_POKE": {
+      "code": 224,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the commitment hold",
+      "rationale": "Separates an incidental beam-break from a committed initiation. NOTE: does NOT clear the abstention escalator -- BehaviorBox.h:1171-1174 closed that loophole deliberately."
+    },
+    "ODOR_UNPOKE_EARLY": {
+      "code": 225,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the broken-hold penalty",
+      "paired_with": "LIGHTS_OFF",
+      "pair_order": "LIGHTS_OFF first",
+      "rationale": "A commitment or sampling hold released early. Emitted from two distinct firmware sites (BehaviorBox.h:1181 pre-odor, :1197 sampling) with the same code, so the two are indistinguishable downstream. See open question in docs/spikes/avr-ram.md."
+    },
+    "ODOR_UNPOKE": {
+      "code": 226,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the response window, after a complete sample",
+      "paired_with": "LIGHTS_OFF",
+      "pair_order": "ODOR_UNPOKE first",
+      "rationale": "Withdrawal from the odor port is the sampling/response boundary. The pair order is INVERTED relative to the three abort paths (BehaviorBox.h:1210 then :1213) -- this is why paired strobes are modelled as ordered nodes rather than as a set. See docs/decisions.md D2."
+    },
+    "LIGHTS_OFF": {
+      "code": 233,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a zero-duration node that clears the trial light",
+      "rationale": "Always co-emitted with a behavioural code, never alone, and its ORDER relative to that partner varies by path. Modelled as its own zero-duration node so the order is authored rather than implicit."
+    },
+    "INVALID_TRIAL": {
+      "code": 234,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the invalid terminal",
+      "rationale": "The counter does not advance and the same trial binding is re-presented, so an unsampled trial never enters the record as a choice. Emitted by the sketch loop today, not by runTrial()."
+    },
+    "END_CORRECT_ITI": {
+      "code": 242,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the correct terminal",
+      "rationale": "Scores correct, advances the counter, clears penalty escalation. Kept distinct from END_INCORRECT_ITI so reinforcement rate and timeout cost are separable."
+    },
+    "END_INCORRECT_ITI": {
+      "code": 243,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the incorrect terminal",
+      "rationale": "Reached by THREE distinct outcomes -- wrong port, omission, and response-hold failure (BehaviorBox.h:1225) -- so outcome class is NOT recoverable from this code alone. It is recoverable from the preceding strobe, which is exactly why the invariant matters."
+    },
+    "END_SESSION": {
+      "code": 246,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "session exit",
+      "rationale": "The clean-stop sentinel. Ephymeris keys its only hardcoded strobe string off this (sessions/runner.py:36)."
+    },
+    "ODOR_OFF": {
+      "code": 247,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the sampling-release WAIT_EXIT, and to an inter-stimulus gap",
+      "rationale": "Odor cleared and vacuum reopened. Reused for the inter-stimulus gap in chained-sampling tasks: the emitter-off event is the same physical event."
+    },
+    "WATER_POKE_L": {
+      "code": 248,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the response branch node, left channel",
+      "rationale": "Emitted BEFORE correctness is known (BehaviorBox.h:1082 vs :1093). This is why the response branch is its own zero-duration node with the guard on its edges. See docs/decisions.md D3. Doubles as the false-alarm code on go/no-go."
+    },
+    "WATER_POKE_R": {
+      "code": 249,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the response branch node, right channel",
+      "rationale": "See WATER_POKE_L."
+    },
+    "WATER_UNPOKE_EARLY_L": {
+      "code": 250,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the response-hold-failure penalty, left",
+      "rationale": "The correct port was reached but released before the hold completed -- a consummatory failure, not a wrong choice. Scored separately so it never contaminates the discrimination measure."
+    },
+    "WATER_UNPOKE_EARLY_R": {
+      "code": 251,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the response-hold-failure penalty, right",
+      "rationale": "See WATER_UNPOKE_EARLY_L."
+    },
+    "FLUID_L": {
+      "code": 252,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the left reward PULSE",
+      "rationale": "Emitted before the solenoid opens (BehaviorBox.h:1047). Pulse width is the delivered volume."
+    },
+    "FLUID_R": {
+      "code": 253,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the right reward PULSE",
+      "rationale": "See FLUID_L."
+    },
+    "WATER_UNPOKE_L": {
+      "code": 254,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the ITI delay, after leaving the left well",
+      "rationale": "The only place the firmware observes the end of a consummatory bout, which makes it the anchor for consumption-duration measures. Not emitted on a wrong-well answer -- BehaviorBox.h:1108-1113 returns immediately without awaiting withdrawal."
+    },
+    "WATER_UNPOKE_R": {
+      "code": 255,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the ITI delay, after leaving the right well",
+      "rationale": "See WATER_UNPOKE_L."
+    },
+    "WATER_POKE_NONE": {
+      "code": 256,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the correct terminal path on a withhold trial",
+      "rationale": "Correct withholding. Already fully implemented in firmware (BehaviorBox.h:1115-1133) although no shipped sketch instantiates isGo=false today, so go/no-go reuses an existing code rather than needing a new one."
+    },
+    "WATER_POKE_ERROR_L": {
+      "code": 257,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the wrong-port penalty, left",
+      "rationale": "A genuine discrimination error: sampling completed and a choice was expressed, so it advances the session rather than repeating."
+    },
+    "WATER_POKE_ERROR_R": {
+      "code": 258,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the wrong-port penalty, right",
+      "rationale": "See WATER_POKE_ERROR_L."
+    },
+    "STOP_FLUID_G_R": {
+      "code": 357,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the right consumption WAIT_EXIT",
+      "rationale": "Emitted after the solenoid closes (BehaviorBox.h:1051). Modelling it as the entry strobe of the consumption state colocates the actuator close with its strobe -- semantically tidier than the current bracketing, and free."
+    },
+    "STOP_FLUID_G_L": {
+      "code": 369,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to the left consumption WAIT_EXIT",
+      "rationale": "See STOP_FLUID_G_R."
+    },
+    "ODOR_1_ON": {
+      "code": 101,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 1",
+      "rationale": "Stimulus identity. This is the one state whose entry code identifies WHAT was presented, which is why it is a per-trial @binding rather than a fixed field."
+    },
+    "ODOR_2_ON": {
+      "code": 102,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 2",
+      "rationale": "See ODOR_1_ON."
+    },
+    "ODOR_3_ON": {
+      "code": 103,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 3",
+      "rationale": "See ODOR_1_ON."
+    },
+    "ODOR_4_ON": {
+      "code": 104,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 4",
+      "rationale": "See ODOR_1_ON."
+    },
+    "ODOR_5_ON": {
+      "code": 105,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 5",
+      "rationale": "See ODOR_1_ON."
+    },
+    "ODOR_6_ON": {
+      "code": 106,
+      "origin": "firmware",
+      "since": 1,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 6",
+      "rationale": "See ODOR_1_ON."
+    },
+    "RETENTION_ON": {
+      "code": 260,
+      "origin": "taskgraph",
+      "since": 1,
+      "emitted_on": "entry to the unfilled retention delay",
+      "emitted_by": [
+        "seq2_retention"
+      ],
+      "rationale": "NEW. The working-memory load in delayed match-to-sample and sequence designs. No firmware code exists because no shipped task has a retention delay. Numbered 260 -- immediately after the last firmware code in the 24x block -- so the new taskgraph codes read as a contiguous group."
+    },
+    "INTERSTIM_GAP_ON": {
+      "code": 261,
+      "origin": "taskgraph",
+      "since": 1,
+      "emitted_on": "entry to the gap between chained stimuli",
+      "emitted_by": [
+        "seq2_retention"
+      ],
+      "rationale": "NEW. Distinguishes the inter-stimulus gap from the post-sampling ODOR_OFF: both clear the emitter, but only one is followed by another stimulus. Without a distinct code, a 2-stage trial and a 1-stage trial are ambiguous in the stream."
+    },
+    "RESP_OMIT": {
+      "code": 262,
+      "origin": "taskgraph",
+      "since": 1,
+      "emitted_on": "entry to the omission penalty",
+      "emitted_by": [
+        "grgl_2odor",
+        "seq2_retention"
+      ],
+      "rationale": "NEW. Firmware used to emit NOTHING when the response window expired, so an omission was only inferable from the absence of a poke before END_INCORRECT_ITI. Firmware now emits it (docs/firmware-changes.md #2), and so does the model. The as-built fixture tests/fixtures/grgl_2odor_asbuilt.yaml still reproduces the silence, because that is what the recorded corpus was produced by. See docs/decisions.md D4."
+    },
+    "WATCHDOG_FAULT": {
+      "code": 263,
+      "origin": "taskgraph",
+      "since": 1,
+      "emitted_on": "a state exceeding its maximum dwell; the session then ends",
+      "emitted_by": [],
+      "rationale": "NEW. Emitted by the SESSION LAYER, not by a node -- like START_SESSION and INVALID_TRIAL, and for the same reason: it reports something about the run rather than about a state entry, so routing it through tgEnterNode() would break the one-state-one-strobe invariant that makes every other timestamp a state-entry time. `emitted_by` is empty because no spec's graph produces it; the runtime does, and only when something has gone wrong. Its absence from a session is the normal case and is the evidence that no state overran."
+    }
+  },
+  "retired": {
+    "_readme": [
+      "Codes that were emitted by firmware this repository no longer contains, and",
+      "which MUST NOT be reused. Append-only means a code is never repurposed, and",
+      "that applies just as much to a code whose emitter is gone: 24,600 recorded",
+      "events carry these, and reissuing one would silently merge two unrelated",
+      "event types in any analysis that spans the boundary.",
+      "",
+      "They are not in `codes` because nothing emits them, and the linter requires",
+      "every declared code to be emitted. They are not in `free_ranges` because they",
+      "are not free. This section is the third state.",
+      "",
+      "The replay validator recognises them by name so a legacy session reports",
+      "'retired code' rather than 'unknown code' -- a distinction that matters,",
+      "because one is explained and the other is a question."
+    ],
+    "DUMMY_SOLENOID_CLICK_1": {
+      "code": 110,
+      "retired": true,
+      "seen_in": "GRGL_2-Odor, June 2026, 29 sessions",
+      "rationale": "Dummy solenoid click. Emitted between a terminal and the next LIGHTS_ON to mask the audible cue of the real odor valve, so a subject could not use valve noise to predict the trial."
+    },
+    "DUMMY_SOLENOID_CLICK_2": {
+      "code": 111,
+      "retired": true,
+      "seen_in": "as above",
+      "rationale": "See DUMMY_SOLENOID_CLICK_1."
+    },
+    "DUMMY_SOLENOID_CLICK_3": {
+      "code": 112,
+      "retired": true,
+      "seen_in": "as above",
+      "rationale": "See DUMMY_SOLENOID_CLICK_1."
+    },
+    "DUMMY_SOLENOID_CLICK_4": {
+      "code": 113,
+      "retired": true,
+      "seen_in": "as above",
+      "rationale": "See DUMMY_SOLENOID_CLICK_1."
+    }
+  }
+}

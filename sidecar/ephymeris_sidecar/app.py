@@ -181,6 +181,7 @@ class Application:
 
     def start(self) -> None:
         self.db.connect()
+        self._log_spec_compiler()
         loop = asyncio.get_running_loop()
         self.backup = BackupManager(
             loop=loop,
@@ -235,6 +236,31 @@ class Application:
         if self.backup is not None:
             await self.backup.stop()
         self.db.close()
+
+    def _log_spec_compiler(self) -> None:
+        """Say once, at startup, whether the task-spec compiler came up.
+
+        It is vendored and its two dependencies are the only ones in this sidecar
+        with no fallback behind them, so "is it there" has to be answerable from
+        the log alone -- particularly in a packaged build, where the failure mode
+        is a PyInstaller --add-data entry silently going missing and the only
+        symptom is a banner on one screen nobody has opened yet.
+        """
+        from ephymeris_sidecar.specs import compiler
+
+        ok, why = compiler.available()
+        if not ok:
+            log.warning(
+                "task spec compiler unavailable (%s) — the Task screen's spec "
+                "editor will be disabled; sessions and flashing are unaffected",
+                why,
+            )
+            return
+        log.info(
+            "task spec compiler ready (%d template versions, from %s)",
+            len(compiler.templates_available()),
+            compiler.vendor_root(),
+        )
 
     def _cohort_roots(self) -> list[str]:
         """Every cohort's data folder — the anchors for mirror paths (§8).

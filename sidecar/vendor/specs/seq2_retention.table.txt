@@ -1,0 +1,233 @@
+==============================================================================
+  seq2_retention  —  compiled state table
+==============================================================================
+
+  spec_version    1
+  spec_hash       12b8c3026671f327
+  vocab_version   1
+  template        four_epoch v2 (04c7743ab4bfeddf)
+
+  29 states, 41 edges, 17 timing entries, 2 trial types
+  550 bytes uploaded
+
+------------------------------------------------------------------------------
+  STATES
+------------------------------------------------------------------------------
+
+       TYPE        DURATION               WATCHES                  STROBE
+
+  ── 1 · engagement ────────────────────────────────────────
+  S00  DELAY       t_arm[1]               —                        —
+       arm & pre-load
+         on entry: set @stim[0].emitter
+         TIMEOUT → S01
+
+  S01  WAIT_ENTRY  t_engage_win[2]        odor_port                LIGHTS_ON(222)
+       engagement window
+         on entry: set trial_light
+         ENTER(odor_port) → S06
+         TIMEOUT → S02
+
+  S02  DELAY       t_zero[0]              —                        LAZY_RAT(223)
+       no engage
+         TIMEOUT → S03
+
+  S03  DELAY       t_zero[0]              —                        LIGHTS_OFF(233)
+       cue off
+         on entry: clear trial_light
+         on entry: clear @stim[0].emitter
+         TIMEOUT → S04
+
+  S04  DELAY       t_pen_noengage[15]     —                        — silent
+       no engage penalty
+         TIMEOUT → S05  → score:no_engage
+
+  S05  TERMINAL    —                      —                        INVALID_TRIAL(234)
+       TRIAL_REPEAT
+         ADVANCE → S00
+         REPEAT → S00
+
+  S06  HOLD        t_commit_hold[3]       odor_port                ODOR_POKE(224)
+       commitment hold
+         HELD → S10
+         BROKEN → S07
+
+  S07  DELAY       t_zero[0]              —                        ODOR_UNPOKE_EARLY(225)
+       hold break
+         TIMEOUT → S08
+
+  S08  DELAY       t_zero[0]              —                        LIGHTS_OFF(233)
+       cue off
+         on entry: clear trial_light
+         on entry: clear vacuum
+         on entry: clear @stim[$stage].emitter
+         TIMEOUT → S09
+
+  S09  DELAY       t_pen_break[14]        —                        — silent
+       hold break penalty
+         TIMEOUT → S05  → score:hold_break
+
+  ── 2 · stimulus sampling ────────────────────────────────────────
+  S10  HOLD        t_sample_hold_0[4]     odor_port                @stim[0].on_code(65280)
+       present stimulus 1
+         on entry: set vacuum
+         BROKEN → S07
+         HELD → S11
+
+  S11  HOLD        t_interstim_gap_0[5]   odor_port                INTERSTIM_GAP_ON(261)
+       inter-stimulus gap
+         on entry: clear @stim[0].emitter
+         on entry: set @stim[1].emitter
+         HELD → S12
+         BROKEN → S07
+
+  S12  HOLD        t_sample_hold_1[6]     odor_port                @stim[1].on_code(65281)
+       present stimulus 2
+         on entry: set vacuum
+         BROKEN → S07
+         HELD → S13
+
+  S13  WAIT_EXIT   —                      odor_port                ODOR_OFF(247)
+       sampling release
+         on entry: clear vacuum
+         on entry: clear @stim[1].emitter
+         EXIT → S14
+
+  ── 3 · response ────────────────────────────────────────
+  S14  DELAY       t_zero[0]              —                        ODOR_UNPOKE(226)
+       withdrawal
+         TIMEOUT → S15
+
+  S15  DELAY       t_zero[0]              —                        LIGHTS_OFF(233)
+       cue off
+         on entry: clear trial_light
+         TIMEOUT → S16
+
+  S16  DELAY       t_retention[7]         —                        RETENTION_ON(260)
+       retention delay
+         TIMEOUT → S17
+
+  S17  WAIT_ENTRY  t_resp_win[8]          left_well,right_well     —
+       response window
+         ENTER(left_well) → S18
+         ENTER(right_well) → S18
+         TIMEOUT → S19
+
+  S18  DELAY       t_zero[0]              —                        @ports[$ch].enter_code(65284)
+       response registered
+         TIMEOUT [ch == @target] → S22
+         TIMEOUT → S23
+
+  S19  DELAY       t_pen_error[13]        —                        RESP_OMIT(262)
+       omission
+         TIMEOUT → S20  → score:omission
+
+  S20  DELAY       t_zero[0]              —                        END_INCORRECT_ITI(243)
+       incorrect — scored
+         TIMEOUT [correction budget] → S05  → repeat
+         TIMEOUT → S21  → advance
+
+  S21  TERMINAL    —                      —                        — silent
+       TRIAL_ADVANCE
+         ADVANCE → S00
+         REPEAT → S00
+
+  S22  HOLD        t_resp_hold[9]         @target                  —
+       response hold
+         BROKEN → S24
+         HELD → S25
+
+  S23  DELAY       t_pen_error[13]        —                        @ports[$ch].error_code(65285)
+       wrong
+         TIMEOUT → S20  → score:wrong
+
+  S24  DELAY       t_pen_break[14]        —                        @ports[$ch].break_code(65286)
+       hold fail
+         TIMEOUT → S20  → score:hold_fail
+
+  ── 4 · outcome ────────────────────────────────────────
+  S25  PULSE       @trial.reward          —                        @target.reward_code(65288)
+       reward delivery
+         on entry: set @target.reward_line
+         DONE → S26
+
+  S26  WAIT_EXIT   —                      @target                  @target.reward_stop_code(65289)
+       consumption
+         on entry: clear @target.reward_line
+         EXIT → S27
+
+  S27  DELAY       t_iti_correct[12]      —                        @target.exit_code(65290)
+       correct
+         TIMEOUT → S28  → score:correct
+
+  S28  DELAY       t_zero[0]              —                        END_CORRECT_ITI(242)
+       correct — scored
+         TIMEOUT → S21  → advance
+
+------------------------------------------------------------------------------
+  TIMING VECTOR
+------------------------------------------------------------------------------
+
+  Durations are INDICES into this vector, never literals — which is what
+  makes a shaping ramp a table rewrite rather than a recompile.
+
+  [ 0] t_zero                      0 ms
+  [ 1] t_arm                    1000 ms
+  [ 2] t_engage_win             4000 ms
+  [ 3] t_commit_hold             500 ms
+  [ 4] t_sample_hold_0           400 ms
+  [ 5] t_interstim_gap_0         500 ms
+  [ 6] t_sample_hold_1           400 ms
+  [ 7] t_retention              1500 ms
+  [ 8] t_resp_win               2000 ms
+  [ 9] t_resp_hold               200 ms
+  [10] t_reward_l                100 ms
+  [11] t_reward_r                100 ms
+  [12] t_iti_correct            4000 ms
+  [13] t_pen_error             20000 ms
+  [14] t_pen_break             10000 ms
+  [15] t_pen_noengage           6000 ms
+  [16] t_poll_interval             5 ms
+
+------------------------------------------------------------------------------
+  TRIAL TYPES
+------------------------------------------------------------------------------
+
+  [0] seq_ab         stimuli=[0, 1] target=port[1] weight=1 reward=ch46
+  [1] seq_ba         stimuli=[1, 0] target=port[0] weight=1 reward=ch42
+
+------------------------------------------------------------------------------
+  STAGE SCHEDULE
+------------------------------------------------------------------------------
+
+  Scanned DESCENDING with >=, so applying twice or skipping a count lands
+  on the same row. An unreachable row is expressed by omitting it.
+
+  [0] at trial 0:
+        t_retention            :=    250 ms
+  [1] at trial 60:
+        t_retention            :=    500 ms
+  [2] at trial 150:
+        t_retention            :=   1000 ms
+  [3] at trial 300:
+        t_retention            :=   1500 ms
+
+------------------------------------------------------------------------------
+  DWELL BUDGET  (for the Phase 4 watchdog)
+------------------------------------------------------------------------------
+
+  Bounded ONLY by the runtime watchdog — no static analysis can bound these,
+  because they wait on the subject rather than on a clock:
+
+    S13  WAIT_EXIT  sampling release
+    S26  WAIT_EXIT  consumption
+
+  Worst-case bounded dwell, summed over all states: 80600 ms
+  (an upper bound on one trial, excluding the states above)
+
+------------------------------------------------------------------------------
+  DIAGNOSTICS
+------------------------------------------------------------------------------
+
+  INFO TG901  S13 WAIT_EXIT "sampling release" is bounded only by the runtime watchdog
+  INFO TG901  S26 WAIT_EXIT "consumption" is bounded only by the runtime watchdog

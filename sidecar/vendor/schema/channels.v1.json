@@ -1,0 +1,103 @@
+{
+  "channels_version": 1,
+
+  "_readme": [
+    "THE channel registry. Every channel name a spec may reference resolves here, and",
+    "the compiler turns names into the numeric indices TgNode.watchMask, TgAction.channel",
+    "and TgTrialType.rewardLine actually hold.",
+    "",
+    "WHY THIS EXISTS. Phase 0's specs name channels -- `left_well`, `odor_line_1`,",
+    "`fluid_0` -- and documented them as 'resolved against the box pinout'. No such",
+    "artifact existed. Worse, the engagement port and the trial light were named NOWHERE:",
+    "every spec's engagement WAIT_ENTRY has to watch the odor port and every LIGHTS_ON /",
+    "LIGHTS_OFF has to drive the trial light, but neither appears in any spec, because",
+    "both are emitted by the template rather than authored. A compiler cannot produce a",
+    "table without this file.",
+    "",
+    "WHY NOT DECLARE CHANNELS PER SPEC. It would reopen the frozen task_spec.v1.json and",
+    "repeat the same pinout in five files. Specs already reference channels by name; they",
+    "only needed somewhere to resolve against. See docs/decisions.md D15.",
+    "",
+    "WHY NOT PARSE BehaviorBox.h. It is the true single source, and parsing it would",
+    "never drift -- but it would couple the compiler to reading C++ out of a repo that is",
+    "deliberately read-only, for a table that changes roughly never. The pinout is",
+    "transcribed here instead, with the source line for each entry, and a Phase 5 bench",
+    "check against the real hardware is the thing that actually validates it.",
+    "",
+    "TRANSCRIBED FROM: Arduino/libraries/BehaviorBox/BehaviorBox.h:55-92 in the firmware",
+    "repo. If a pin moves there, it must move here -- and unlike START_LINE_MAX, the",
+    "mismatch is loud: a wrong index drives the wrong solenoid, which the Phase 5 jig",
+    "catches before any animal does."
+  ],
+
+  "kinds": {
+    "engagement": "The port whose entry initiates a trial. EXACTLY ONE channel may carry this kind -- the template resolves the engagement WAIT_ENTRY, the commitment HOLD, every sampling HOLD and the sampling-release WAIT_EXIT to it by kind rather than by name, which is what lets one template serve a box with a different port name.",
+    "response": "A port that may appear in topology.response_ports.",
+    "emitter": "A stimulus actuator. 'Stimulus' is an emitter channel and nothing more, which is why a speaker or LED substitutes for an odor valve with no interpreter change.",
+    "reward": "A reward actuator. Pulse width is the delivered magnitude.",
+    "cue": "A trial-availability signal driven by entry actions, not a stimulus.",
+    "vacuum": "Odor-routing hardware with no behavioural meaning of its own."
+  },
+
+  "_watch_mask_note": [
+    "TgNode.watchMask is uint8, so at most 8 channels can be watched simultaneously.",
+    "Only `engagement` and `response` channels are ever watched -- emitters, rewards,",
+    "cues and the vacuum are write-only -- so the mask indexes WATCHABLE channels, not",
+    "all channels. `watch_bit` below is that index and is dense over exactly those.",
+    "",
+    "With one engagement channel that leaves 7 response ports, while task_spec.v1.json",
+    "permits 8. A spec that names 8 response ports is a capacity ERROR rather than a",
+    "silently dropped port; see the TG5xx rule."
+  ],
+
+  "channels": {
+    "odor_port": {
+      "index": 2, "direction": "in", "kind": "engagement", "watch_bit": 0,
+      "source": "BehaviorBox.h:59 const int odorPort = 2",
+      "rationale": "The engagement port. Named in no spec because the template resolves it by kind -- an engagement port is a structural fact of the epoch model, not a per-task choice."
+    },
+    "right_well": {
+      "index": 3, "direction": "in", "kind": "response", "watch_bit": 1,
+      "source": "BehaviorBox.h:60 const int rightWell = 3",
+      "rationale": "INPUT_PULLUP: LOW means the beam is broken, i.e. poked. The interpreter inherits verifySensor()'s polarity rather than restating it."
+    },
+    "left_well": {
+      "index": 4, "direction": "in", "kind": "response", "watch_bit": 2,
+      "source": "BehaviorBox.h:61 const int leftWell = 4",
+      "rationale": "See right_well."
+    },
+
+    "trial_light": {
+      "index": 36, "direction": "out", "kind": "cue",
+      "source": "BehaviorBox.h:64 const int trialLight = 36",
+      "rationale": "Driven by entry actions on the engagement WAIT_ENTRY (on) and on the zero-duration LIGHTS_OFF nodes (off). Named in no spec for the same reason as odor_port. Its OFF edge is the one that pairs with a behavioural strobe and flips order between paths -- see docs/decisions.md D2."
+    },
+    "vacuum": {
+      "index": 40, "direction": "out", "kind": "vacuum",
+      "source": "BehaviorBox.h:65 const int vac = 40 (normally-open vacuum)",
+      "rationale": "Closed on entry to a sampling HOLD, which is what routes odor to the port; reopened on the sampling-release WAIT_EXIT. Purely mechanical -- it carries no strobe of its own."
+    },
+
+    "odor_line_1":  { "index": 22, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:72 Odors[0]",  "rationale": "Odor solenoid 1." },
+    "odor_line_2":  { "index": 24, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:73 Odors[1]",  "rationale": "Odor solenoid 2." },
+    "odor_line_3":  { "index": 26, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:74 Odors[2]",  "rationale": "Odor solenoid 3." },
+    "odor_line_4":  { "index": 28, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:75 Odors[3]",  "rationale": "Odor solenoid 4." },
+    "odor_line_5":  { "index": 30, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:76 Odors[4]",  "rationale": "Odor solenoid 5." },
+    "odor_line_6":  { "index": 32, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:77 Odors[5]",  "rationale": "Odor solenoid 6." },
+    "odor_line_7":  { "index": 23, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:78 Odors[6]",  "rationale": "Odor solenoid 7. Note the pin ordering is NOT monotonic past line 6 -- 22,24,26,28,30,32 then 23,25,27,29,31,33 -- which is why channels resolve by name and never by arithmetic." },
+    "odor_line_8":  { "index": 25, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:79 Odors[7]",  "rationale": "Odor solenoid 8." },
+    "odor_line_9":  { "index": 27, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:80 Odors[8]",  "rationale": "Odor solenoid 9." },
+    "odor_line_10": { "index": 29, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:81 Odors[9]",  "rationale": "Odor solenoid 10." },
+    "odor_line_11": { "index": 31, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:82 Odors[10]", "rationale": "Odor solenoid 11." },
+    "odor_line_12": { "index": 33, "direction": "out", "kind": "emitter", "source": "BehaviorBox.h:83 Odors[11]", "rationale": "Odor solenoid 12." },
+
+    "fluid_0": {
+      "index": 42, "direction": "out", "kind": "reward", "well": "left_well",
+      "source": "BehaviorBox.h:88 Fluids[0] -- LEFT_WELL_FL_1",
+      "rationale": "Left well, reward line 1. `well` is declared so the linter can catch a spec that rewards the left well through a right-well line -- a mistake that would look correct in the listing and deliver water to the wrong side of the box."
+    },
+    "fluid_1": { "index": 44, "direction": "out", "kind": "reward", "well": "left_well",  "source": "BehaviorBox.h:89 Fluids[1] -- LEFT_WELL_FL_2",  "rationale": "Left well, reward line 2. Unused by every current spec; present because the hardware has it." },
+    "fluid_2": { "index": 46, "direction": "out", "kind": "reward", "well": "right_well", "source": "BehaviorBox.h:90 Fluids[2] -- RIGHT_WELL_FL_1", "rationale": "Right well, reward line 1." },
+    "fluid_3": { "index": 48, "direction": "out", "kind": "reward", "well": "right_well", "source": "BehaviorBox.h:91 Fluids[3] -- RIGHT_WELL_FL_2", "rationale": "Right well, reward line 2. Unused by every current spec." }
+  }
+}

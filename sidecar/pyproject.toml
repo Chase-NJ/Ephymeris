@@ -12,6 +12,18 @@ dependencies = [
     # failed grpcio install degrades flashing to the old path, never breaks it.
     "grpcio>=1.60",
     "protobuf>=5",
+    # The vendored Task-Graph compiler (docs/specs.md). A SECOND exception to the
+    # two-dependency rule, and an explicitly weaker one than grpcio's: grpcio has
+    # the subprocess backend behind it, so a failed wheel degrades flashing rather
+    # than removing it, and nothing can stand in for a compiler. So the fence is
+    # around scope instead — ephymeris_sidecar/specs/compiler.py guards the import,
+    # every specs.* handler reports SPEC_COMPILER_UNAVAILABLE if it failed, and the
+    # legacy task.json path and the whole session flow are untouched either way.
+    # jsonschema drags the native rpds-py, which is the part that can actually fail
+    # to install; a packaged build resolves it once and freezes the result, so lab
+    # machines never run pip for it.
+    "jsonschema>=4.20",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

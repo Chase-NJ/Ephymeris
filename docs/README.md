@@ -394,12 +394,23 @@ Each is documented in place with a `[!CAUTION]` in the owning document. They sha
 
 Sidecar runtime dependencies were **deliberately just `pyserial` and `websockets`** for most of v1. Lab machines are maintained by non-technical users, so install failure modes are a real cost. This is why `.mat` writing is a hand-written serializer rather than `scipy` — a large binary wheel, and by far the most likely thing to fail at install time.
 
-**One exception has been granted, with its risk fenced:** `grpcio` + `protobuf`, for the arduino-cli daemon backend. The policy's concern — an install that fails and takes a feature with it — is answered structurally: the subprocess backend remains as the fallback, and `create_board_tool` degrades to it (loudly, in the log) when `grpcio` doesn't import or the daemon won't start. A lab machine where the wheel failed loses live compiler streaming, never flashing. `grpcio-tools` is dev-only.
+**Two exceptions have been granted, and they are not equally well fenced. The difference is the point of writing both down.**
+
+**`grpcio` + `protobuf`**, for the arduino-cli daemon backend. The policy's concern — an install that fails and takes a feature with it — is answered structurally: the subprocess backend remains as the fallback, and `create_board_tool` degrades to it (loudly, in the log) when `grpcio` doesn't import or the daemon won't start. A lab machine where the wheel failed loses live compiler streaming, never flashing. `grpcio-tools` is dev-only.
+
+**`jsonschema` + `pyyaml`**, for the vendored task-spec compiler ([specs.md](specs.md)). This one is **weaker, deliberately, and should not be read as the same grant.** There is no second implementation to fall back to — nothing stands in for a compiler the way a subprocess stands in for a daemon. So the fence is drawn around *scope* instead of capability:
+
+- `ephymeris_sidecar/specs/compiler.py` guards the import and exposes `available()`.
+- Every `specs.*` and `board.uploadTable` handler reports `SPEC_COMPILER_UNAVAILABLE` with the original `ImportError` in `detail`.
+- The Task screen renders one banner, and **the legacy `task.json` half of that screen, flashing, and the entire session flow are untouched.** A lab machine that cannot compile a spec can still run sessions.
+- The sidecar says which it is in one line at startup, because in a packaged build the realistic failure is a dropped PyInstaller `--add-data` entry whose only other symptom is a banner on a screen nobody has opened yet.
+
+`pyyaml` is low-risk (universal wheels, pure-Python fallback). `jsonschema` drags `attrs`, `referencing` and **`rpds-py`**, a Rust extension — that is the one that can genuinely fail, on a CPython newer than its wheel matrix. A packaged build resolves it once on the packaging machine and freezes the result, so the exposure is dev and packaging machines, not the lab.
 
 Frontend dependencies are less constrained (the 3D stack is `three` + `@react-three/fiber` + `@react-three/drei`, and `modern-screenshot` rasterizes the Analytics PNG export) because they are bundled at build time — npm install never runs on the lab machines, so the failure mode this policy exists to prevent doesn't reach them.
 
 > [!IMPORTANT]
-> Don't add a sidecar runtime dependency without strong justification — and when one is granted, follow the `grpcio` pattern: the feature it powers must **degrade, not disappear**, when the dependency is absent.
+> Don't add a sidecar runtime dependency without strong justification. When one is granted, prefer the `grpcio` pattern — the feature it powers **degrades, not disappears**. Where that is genuinely impossible, the `jsonschema` pattern is the fallback position and its price must be stated rather than glossed: the new feature disappears cleanly and **nothing that worked before stops working**. A dependency that can take an existing feature down with it does not qualify under either.
 
 ### 6.5 Theme constraints
 

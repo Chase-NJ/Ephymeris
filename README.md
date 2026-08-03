@@ -208,6 +208,7 @@ A fuller version of this, including a file-by-file module map, is in **[docs/REA
 | [docs/dashboard.md](docs/dashboard.md) | The theme, every screen, the port state machine, the session flow, the 3D constellation |
 | [docs/cohorts.md](docs/cohorts.md) | The Cohort/Animal/Group model, the cohort UI, Auto-Balance grouping |
 | [docs/tasks.md](docs/tasks.md) | The bundled sketch library, `task.json`, the derived trial-flow state machine, **and how to define your own task** |
+| [docs/specs.md](docs/specs.md) | Task specs — compiled tasks: the editor, where edits live, and the bench upload path (**not yet for animal use**) |
 | [docs/data.md](docs/data.md) | On-disk layout, the SQLite schema, crash safety, backup, and the derived metrics behind Analytics |
 | [docs/settings.md](docs/settings.md) | Every settings key, box bindings, board discovery, the hardware utility baseline |
 | [docs/websocket-protocol.md](docs/websocket-protocol.md) | The exact shape of any command, event, payload, or error code |

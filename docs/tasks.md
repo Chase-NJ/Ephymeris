@@ -958,10 +958,11 @@ These never error, and are the ones to know about when something looks wrong but
 
 ## 10. The Task screen
 
-Route `/task` ([`src/routes/Task.tsx`](../src/routes/Task.tsx)) — a single scrolling page, not tabs.
+Route `/task` ([`src/routes/Task.tsx`](../src/routes/Task.tsx)) — a single scrolling page, not tabs. **Spec-first**: the compiled-task workbench sits above the sketch sections below, because both kinds of task answer the one question this tab owns. A spec is a sibling artifact to a `task.json`, never an extension of it ([§4.1](#41-why-derived-not-declared)); everything about the workbench itself is [specs.md](specs.md).
 
 | Section | Contents |
 |---|---|
+| **Task spec** | The spec workbench — picker with origin chips, band palette, machine graph, generated form, diagnostics, bench boxes. See [specs.md §4–§7](specs.md#4-the-editor) |
 | **Sketch** | The **Sketch** picker (grouped `category / name`) over the bundled library, with a status note naming the shipped sketch count and a rescan. Picking a sketch loads its profile over `tasks.getProfile` |
 | **Error strip** | A malformed `task.json` message — surfaced, not swallowed |
 | **Trial flow** | Header shows `taskName` and the condition count; body is `TaskGraph`. When `!usable`, prose instead: *"…declares no behavioural strobes. Utility sketches are driven from Debug Mode instead"* or *"This sketch has no task.json, so it runs a bare START…"* |

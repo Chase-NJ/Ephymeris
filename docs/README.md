@@ -1,12 +1,12 @@
 # Ephymeris — Engineering Guide
 
-![status](https://img.shields.io/badge/status-v1.0-8B7EC8?style=flat-square) ![platform](https://img.shields.io/badge/target-Windows_11-16151F?style=flat-square) ![tests](https://img.shields.io/badge/sidecar_tests-671-7CC98F?style=flat-square) ![frontend](https://img.shields.io/badge/frontend_tests-none-2C2A3A?style=flat-square)
+![status](https://img.shields.io/badge/status-v1.0-8B7EC8?style=flat-square) ![platform](https://img.shields.io/badge/target-Windows_11-16151F?style=flat-square) ![tests](https://img.shields.io/badge/sidecar_tests-765-7CC98F?style=flat-square) ![frontend](https://img.shields.io/badge/frontend_tests-none-2C2A3A?style=flat-square)
 
 > **What this is** · The one document to read before touching code. It covers the architecture, how to get running, where every module lives, what's actually built, and what's still open.
 >
 > **Owns** · Where things live · what is built · how to develop · the open-issue register · the documentation map.
 >
-> **Verified** · 2026-07-30, against the working tree. `tsc --noEmit` clean · **671** sidecar tests · **2** Rust tests · wire surface **44 commands / 15 events / 23 error codes**.
+> **Verified** · 2026-08-03, against the working tree. `tsc --noEmit` clean · **765** sidecar tests · **2** Rust tests · wire surface **57 commands / 17 events / 28 error codes**.
 
 **Contents** — [1. Architecture](#1-architecture) · [2. Get running](#2-get-running) · [3. Commands](#3-commands) · [4. Repo map](#4-repo-map) · [5. Test map](#5-test-map) · [6. Invariants that bite](#6-invariants-that-bite) · [7. Open issues](#7-open-issues) · [8. Documentation map](#8-documentation-map) · [9. Glossary](#9-glossary)
 
@@ -238,7 +238,13 @@ Owns everything stateful. See [§6.4](#64-dependency-policy) before adding a run
 | `tasks/start_command.py` | Builds `START <wireKey>=<value> …`; enforces `START_LINE_MAX` (mirrored in `BehaviorBox.h`) | [tasks §6](tasks.md#6-from-values-to-the-wire) |
 | `tasks/metrics.py` | Rolling live-metric computation. Scientific output, not a UI detail | [tasks §5](tasks.md#5-live-metrics) |
 | `tasks/seed.py` | Draws the per-run `SEED` value | [tasks §6.4](tasks.md#64-seed) |
-| `utility.py` | The hardware utility baseline: what firmware each box is believed to carry, restoring idle boxes, and the `identify` signal | [settings §8](settings.md#8-the-hardware-utility-baseline) |
+| `utility.py` | The hardware utility baseline: what firmware each box is believed to carry, restoring idle boxes, the `identify` signal, and the bench hold | [settings §8](settings.md#8-the-hardware-utility-baseline), [specs §7](specs.md#7-the-bench) |
+| **`specs/`** | | |
+| `specs/_vendor.py` | Puts `sidecar/vendor/` (the byte-identical Task-Graph compiler) on `sys.path` — one import path only | [specs §2](specs.md#2-the-vendored-compiler) |
+| `specs/compiler.py` | The guarded import, `self_check()` (compiles a real spec, not just imports), registries, emitters | [specs §2](specs.md#2-the-vendored-compiler) |
+| `specs/store.py` | Where specs live: bundled + user copies, shipped baselines, shadow/reset, the no-merge policy | [specs §3](specs.md#3-where-specs-live) |
+| `specs/service.py` | CompileResult → wire shapes; diagnostic placement; the listing diff; artifact export | [specs §4](specs.md#4-the-editor), [§6](specs.md#6-the-diff-as-a-review) |
+| `ports/upload.py` | `PortLink`: the vendored transport's `Link` over one box's own serial handle, with ACK-counted progress and the filtered console mirror | [specs §7](specs.md#7-the-bench) |
 
 ### 4.2 React frontend — `src/`
 
@@ -309,17 +315,17 @@ The interpreter resolves to `sidecar/.venv` unless `EPHYMERIS_SIDECAR_PYTHON` ov
 
 ### 4.4 The wire surface
 
-[`protocol/schema.py`](../protocol/schema.py) is the machine-readable authority; [websocket-protocol.md](websocket-protocol.md) carries the prose. The surface is **44 commands, 15 events, 23 error codes**. All but `auth` are registered in `app.py`; `auth` is handled in `server.py` as the connection's mandatory first message and never reaches the dispatch table.
+[`protocol/schema.py`](../protocol/schema.py) is the machine-readable authority; [websocket-protocol.md](websocket-protocol.md) carries the prose. The surface is **57 commands, 17 events, 28 error codes**. All but `auth` are registered in `app.py`; `auth` is handled in `server.py` as the connection's mandatory first message and never reaches the dispatch table.
 
 ---
 
 ## 5. Test map
 
-**671 sidecar tests · 2 Rust tests · no frontend test runner.**
+**765 sidecar tests · 2 Rust tests · no frontend test runner.**
 
 | Test file | Tests | Covers |
 |---|---:|---|
-| `test_protocol_contract.py` | 83 | Stale-mirror regeneration check + every wire name appears in the doc |
+| `test_protocol_contract.py` | 103 | Stale-mirror regeneration check + every wire name appears in the doc |
 | `test_analytics_derive.py` | 65 | The derived metrics, including offline-equals-live and the pooled-accuracy bias case |
 | `test_task_profiles.py` | 59 | `task.json` parsing, validation, `START` building, the line cap, metric computation |
 | `test_analytics_adoption.py` | 45 | Orphan adoption of pre-Ephymeris archives, both legacy layouts |
@@ -334,7 +340,12 @@ The interpreter resolves to `sidecar/.venv` unless `EPHYMERIS_SIDECAR_PYTHON` ov
 | `test_grpc_tool.py` | 19 | Daemon banner parsing, board-filter parity, stream splitting, fallback; four tests drive a **real daemon** and skip where arduino-cli isn't installed |
 | `test_grouping.py` | 19 | Auto-Balance round-robin |
 | `test_data_folder.py` | 19 | Resolution, sanitization, collision suffixing |
-| `test_utility.py` | 18 | The baseline against the real port manager: restores only from `IDLE`, the session hold, belief invalidation, the identify handshake incl. the silent-board case |
+| `test_utility.py` | 18 | The baseline against the real port manager: restores only from `IDLE`, the session hold, belief invalidation, the identify handshake incl. the silent-board case. The harness deliberately feeds the retired `utilitySketchPath` key, doubling as an integration test of the basename healing |
+| `test_vendor_drift.py` | 4 | `sidecar/vendor/` matches the `VENDORED` manifest — catches an in-place edit of the vendored compiler; staleness is Task-Graph's own mirror test |
+| `test_vendor_imports.py` | 18 | The compiler resolves out of the vendor tree exactly once; `self_check()` compiles a real spec; every bundled spec's listing is byte-equal to the checked-in artifact |
+| `test_specs_service.py` | 27 | The store (shadow/baseline/reset/no-merge, id-as-filename), compile payloads validate as wire shapes, diagnostic placement, the listing diff incl. the EZ-variant structural claim, export |
+| `test_bundled_library_covers_archives.py` | 3 | Every sketch name the lab's real archives record resolves against the bundled library — the guard on Analytics' orphan decoding |
+| `test_upload_link.py` | 8 | `PortLink` framing/deadlines/ACK-counted progress/mirror filtering against a scripted serial; the `UPLOADING` bracket through the real `PortManager` |
 | `test_wire_shapes.py` | 16 | Validator semantics + real `to_json` emitters conform to `protocol/schema.py` |
 | `test_session_runner.py` | 13 | Runner orchestration, including the end-all finalization drain |
 | `test_in_session.py` | 13 | `IN_SESSION` entry/exit sequence |
@@ -444,7 +455,17 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 </td></tr>
 <tr><td><b>6</b></td><td>
 
-**No frontend test runner or linter.** `tsc --noEmit` is the entire automated frontend check — no vitest, jest, eslint, prettier, or biome, and no test file anywhere under `src/`. The wire mirrors are guarded by the contract test, so the highest-risk surface is covered; but store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`), the session flow's step transitions, and `lib/tasks/topology.ts` are untested code paths that real sessions depend on.
+**No frontend test runner or linter.** `tsc --noEmit` is the entire automated frontend check — no vitest, jest, eslint, prettier, or biome, and no test file anywhere under `src/`. The wire mirrors are guarded by the contract test, so the highest-risk surface is covered; but store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`), the session flow's step transitions, `lib/tasks/topology.ts`, and now the spec editor's `lib/specs/` (the document path helpers, `layout.ts`, the diagnostics fan-out) are untested code paths. The layout's invariants were verified once by compiling all five specs and running the real `layout.ts` under esbuild — a ritual, not a regression test.
+
+</td></tr>
+<tr><td><b>31</b></td><td>
+
+**The spec editor is verified on macOS only.** The vendor tree freezes and self-checks in the packaged sidecar, and the whole bench path ran against a real Mega — all on this Mac. Windows, the actual lab target, has run none of it: not the frozen `--add-data` vendor tree, not `rpds-py`'s wheel on the lab's Python, not `PortLink` against a COM port (where open/reset semantics genuinely differ). First Windows packaging run should start at `compiler.self_check()`'s startup line, which was built for exactly this.
+
+</td></tr>
+<tr><td><b>32</b></td><td>
+
+**A crashed client leaves the bench hold set.** `utility.benchHold` is in-memory and released by the bench panel's unmount; a webview that dies while it is held leaves baseline restores suspended until app restart. Deliberate — erring toward *not* reflashing — but the symptom is "boxes mysteriously stop returning to baseline", and `UtilityStatus.held` is the place to look.
 
 </td></tr>
 </table>
@@ -454,7 +475,7 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 | # | Item |
 |---|---|
 | **10** | **Multi-port batching for Debug Mode.** The *session* flash sequence is strictly sequential and halts at first failure, and that's built. Still open: whether Debug Mode wants a "flash all 6" affordance at all, whether it shares the halt policy, and whether it would be one command with six progress streams or six independent commands. |
-| **11** | **Full settings schema.** The twelve implemented keys ([settings.md §2](settings.md#2-the-twelve-keys)) are a starting point, not final. The sidecar reads only seven and ignores the rest, so adding a field is deliberately a non-event — proven by the four shell-only keys, which needed no sidecar change at all. |
+| **11** | **Full settings schema.** The eleven implemented keys ([settings.md §2](settings.md#2-the-eleven-keys)) are a starting point, not final. The sidecar reads only six and ignores the rest, so adding a field is deliberately a non-event — proven by the four shell-only keys, which needed no sidecar change at all. |
 | **12** | **Back-pressure policy for `port.output`.** Currently unbounded send, relying on the ring buffer cap. No policy exists for a frontend that cannot keep up with 20 Hz × 6 boards. Not observed as a problem — but undefined. |
 | **14** | **Box→board re-binding UX.** A board swap is a routine lab event. Partially addressed: bindings live in Config with a re-runnable wizard and a per-box handshake test to confirm a swap took. Still open is proactive surfacing — "a new board appeared, bind it to box 3?" — rather than the user knowing to open Config. |
 | **15** | **Live filesystem watcher for the sketch library.** Scan-on-trigger (settings push, manual refresh, route mount) was judged sufficient — doubly so now the library only changes when the app does. |
@@ -491,7 +512,7 @@ Small things that are true today and will confuse a reader who assumes otherwise
 
 ## 8. Documentation map
 
-Seven documents. This one is the entry point.
+Eight documents. This one is the entry point.
 
 | If you need to know… | Read |
 |---|---|
@@ -502,6 +523,7 @@ Seven documents. This one is the entry point.
 | What lands on disk, the database, the metrics, the Observatory | [**data.md**](data.md) |
 | Every settings key, box bindings, the utility baseline | [**settings.md**](settings.md) |
 | The exact shape of any command, event, payload, or error code | [**websocket-protocol.md**](websocket-protocol.md) |
+| Task specs: the compiled-task editor, the vendored compiler, the bench | [**specs.md**](specs.md) |
 
 ### 8.1 Conventions
 

@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rig_hardware.v1.json",
+  "title": "Rig wiring",
+  "_readme": [
+    "THE OPERATOR'S OWN WIRING, at <data_dir>/hardware/rig.json. It REPLACES the",
+    "shipped pair (schema/channels.v1.json + hardware/<pinout>.json) rather than",
+    "merging with it -- a merge would mean a channel you deleted came back, and",
+    "there would be no way to say 'this box has no vacuum line'.",
+    "",
+    "TWO SECTIONS, ON PURPOSE. `channels` is what a channel MEANS; `pins` is where",
+    "it IS. That split is what lets a box generation be swapped without touching",
+    "meaning, and it is what TG226 checks. Collapsing them into one map would make",
+    "that rule unwritable. Writing them together in one document is what makes the",
+    "rule easy to satisfy.",
+    "",
+    "THIS SCHEMA CHECKS SHAPE, NOT SENSE. Whether a pin is one this board has,",
+    "whether two channels share one, and whether every response port has its own",
+    "strobe slot are TG227, TG228 and TG229 -- and they run against the COMPOSED",
+    "ChannelMap, so a problem is reported once regardless of which half caused it.",
+    "",
+    "A PIN CHANGE IS NOT A TASK CHANGE. Specs name channels, never numbers (D15),",
+    "so editing this file changes the bytes every task compiles to and moves no",
+    "spec_hash. That is the design working, and it is also why the listing header",
+    "carries a pinout hash: without it the review artifact is blind to a remap."
+  ],
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rig_version", "channels", "pins"],
+
+  "properties": {
+    "rig_version": {
+      "const": 1,
+      "description": "The shape of THIS file. Bumped when a section moves or changes meaning, never when a rig is rewired."
+    },
+    "derived_from": {
+      "type": "string",
+      "description": "The shipped pinout this rig started as. Recorded so 'a Mega, wired how?' has an answer the operator did not have to remember."
+    },
+    "board": { "type": "string" },
+    "edited_at": {
+      "type": "string",
+      "description": "Stamped by the store on write. Present in a stored document, absent in one being submitted."
+    },
+    "pin_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "description": "The board's own pin numbering, so TG227 can say 'a Mega has 0-53' rather than quoting the compiler's binding-encoding constant.",
+      "properties": {
+        "min": { "type": "integer", "minimum": 0 },
+        "max": { "type": "integer", "minimum": 0, "maximum": 239 }
+      }
+    },
+
+    "channels": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "What each channel means. Keys are channel names and are referenced by every task spec, so renaming one is a rename in every task that names it.",
+      "propertyNames": { "$ref": "#/$defs/channel_name" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "enum": ["engagement", "response", "emitter", "reward", "cue", "vacuum"],
+            "description": "Resolution is BY KIND for the structural channels (D15): the template asks for 'the engagement channel', not for a name. Exactly one engagement channel, one cue and one vacuum must resolve, which is TG225."
+          },
+          "label": {
+            "type": "string",
+            "description": "What the operator calls it. Display only — never referenced by a spec, so renaming a label is free and renaming a channel is not."
+          },
+          "well": {
+            "$ref": "#/$defs/channel_name",
+            "description": "Reward lines only: which response port this line serves. TG224 uses it to refuse a spec that rewards one well through the other's line — a mistake that looks correct in the listing and delivers water to the wrong side of the box."
+          },
+          "port_slot": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Response ports only: which family of per-port strobes this port reports with (strobe_vocab `port_slots`). Slots 1 and 2 are the historical _L/_R codes. Two ports on one slot are indistinguishable in the data, which is TG229."
+          },
+          "rationale": { "type": "string" }
+        }
+      }
+    },
+
+    "pins": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Where each channel is. Every key here must appear in `channels` and vice versa — TG226 reports both directions.",
+      "propertyNames": { "$ref": "#/$defs/channel_name" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 239,
+            "description": "The board pin. Capped at 239 because lower.py encodes runtime-bound channels from 0xF0 up in the same byte — a pin there is not refused by the board, it is read as a per-trial binding. Whether it is a pin THIS board has is TG227."
+          },
+          "watch_bit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7,
+            "description": "Watchable inputs only: this channel's bit position in TgNode.watchMask. Must be dense and 0-based over exactly the watchable channels (TG226) — a gap addresses the wrong channel rather than none. Eight bits is the hard ceiling, TG_MAX_WATCH."
+          },
+          "note": { "type": "string" }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "channel_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$",
+      "description": "Lower snake case. The same shape a spec's identifiers take, because a channel name is written into specs by hand."
+    }
+  }
+}

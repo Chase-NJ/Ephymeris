@@ -44,6 +44,7 @@ from .sessions import recovery
 from .sessions.paths import resolve_session_folder
 from .specs import compiler as spec_compiler
 from .specs import service as spec_service
+from .hardware import store as hardware_store
 from .specs import store as spec_store
 from .sessions.repository import SessionRepository
 from .sessions.runner import ActiveRun, BoxConfig, SessionRunner
@@ -134,6 +135,10 @@ class Application:
         #: an optimisation.
         self._spec_compile_gate = asyncio.Semaphore(1)
         self.spec_store = spec_store.SpecStore(data_dir)
+        #: The rig's own wiring, if it has one. Pointed at the registries here
+        #: rather than read by them, so `taskgraph` never learns about data_dir.
+        self.hardware_store = hardware_store.HardwareStore(data_dir)
+        self._install_rig_wiring()
         #: hardware_id → detected interpreter baud. Detection costs a boot
         #: cycle per candidate rate, so the answer is kept for the app's
         #: lifetime — and invalidated on any flash to that box, since flashing
@@ -265,6 +270,19 @@ class Application:
             await self.backup.stop()
         self.db.close()
 
+    def _install_rig_wiring(self) -> None:
+        """Point the compiler's registries at this rig's wiring document.
+
+        Called once at construction and again after every `hardware.save`.
+        `set_rig_source` clears the channel cache, which is why this must NOT be
+        hung off `settings.push` -- that fires on every reconnect, and throwing
+        the compiler's registries away several times a session for no reason is
+        a real cost on a call that also does a library rescan.
+        """
+        from ephymeris_sidecar.taskgraph import registries
+
+        registries.set_rig_source(self.hardware_store.load)
+
     def _log_spec_compiler(self) -> None:
         """Say once, at startup, whether the task-spec compiler came up.
 
@@ -290,12 +308,17 @@ class Application:
         # What ships is the ability to MAKE a task, so that is what is counted.
         # The pinout is named because it ends up inside the packed table: a box
         # compiled for the wrong one is a real failure with no other symptom.
+        status = self.hardware_store.status()
+        wiring = (
+            f"rig wiring (from {status.derived_from or 'the shipped pinout'})"
+            if status.custom
+            else f"pinout {active_pinout_id()}"
+        )
         log.info(
-            "task spec compiler ready (%d paradigms, %d template versions, "
-            "pinout %s, from %s)",
+            "task spec compiler ready (%d paradigms, %d template versions, %s, from %s)",
             len(paradigms.load_all()),
             len(compiler.templates_available()),
-            active_pinout_id(),
+            wiring,
             compiler.compiler_root(),
         )
 

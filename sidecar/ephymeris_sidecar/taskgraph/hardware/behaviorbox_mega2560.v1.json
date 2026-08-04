@@ -16,6 +16,11 @@
     "derived so that reordering this file cannot silently change the mask encoding;",
     "TG226 checks the density."
   ],
+  "pin_range": {
+    "min": 0,
+    "max": 53,
+    "_why": "Digital pins on a Mega2560 R3. Declared so TG227 can tell an operator 'this board has pins 0-53' rather than quoting the compiler's binding-encoding constant at them. A different board declares a different range."
+  },
   "pins": {
     "odor_port": {
       "index": 2,

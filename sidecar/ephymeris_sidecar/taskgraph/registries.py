@@ -15,11 +15,22 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 
 # Re-exported: `specs/compiler.py` and several rules import SCHEMA_DIR from here.
 from .paths import HARDWARE_DIR, SCHEMA_DIR  # noqa: F401
+
+#: The first byte value `lower.py` reserves for a runtime-bound channel
+#: (`CH_BIND_BASE`). A pin at or above this is encoded identically to
+#: "@stim[0].emitter" and is read as one by the board.
+#:
+#: DUPLICATED HERE ON PURPOSE, and it is the lesser of two evils: `table.py`
+#: imports `graph.py`, and importing it back would make a cycle. TG227's message
+#: names the number so a mismatch is visible, and `test_registries` pins the two
+#: together so it cannot drift silently.
+CH_BIND_RESERVED_FROM = 0xF0
 
 
 def _load(name: str) -> dict:
@@ -27,13 +38,16 @@ def _load(name: str) -> dict:
 
 
 def active_pinout_id() -> str:
-    """Which box this build compiles for.
+    """Which SHIPPED pinout this build falls back to.
 
-    A BUILD-TIME choice, not a runtime setting, and the registries' `lru_cache`
-    depends on that staying true: the pin numbers end up inside the packed table,
-    so a rig running two box generations at once would need per-box compilation
-    rather than a switch. `$EPHYMERIS_PINOUT` exists for testing a second pinout
-    without editing the default.
+    This used to be the whole answer, and its docstring said so: "a BUILD-TIME
+    choice, not a runtime setting". A rig can now carry its own wiring
+    (`set_rig_source`), so the shipped pinout is the default rather than the
+    decision -- what survives from that reasoning is the constraint that made it
+    true. Pin numbers end up inside the packed table, so ONE wiring is in force
+    at a time and changing it clears the cache; a rig running two box
+    generations at once would still need per-box compilation rather than a
+    switch. `$EPHYMERIS_PINOUT` still selects among the shipped ones for tests.
     """
     override = os.environ.get("EPHYMERIS_PINOUT")
     if override:
@@ -83,9 +97,10 @@ class Vocabulary:
         }
         self._by_code = {e.code: e for e in self._by_name.values()}
         #: Codes emitted by firmware this repo no longer contains. NOT in `codes`
-        #: -- nothing emits them, and the linter requires a declared code to be
-        #: emitted -- and NOT free, because reissuing one would silently merge two
-        #: unrelated event types in any analysis spanning the boundary.
+        #: -- nothing can produce them any more, and the vocabulary's rule is that
+        #: a declared code has a mechanism that emits it -- and NOT free, because
+        #: reissuing one would silently merge two unrelated event types in any
+        #: analysis spanning the boundary.
         self._retired = {
             e["code"]: name
             for name, e in raw.get("retired", {}).items()
@@ -195,6 +210,12 @@ class ChannelMap:
         self.pinout_version: int = pinout["pinout_version"]
         self.board: str = pinout["board"]
         self.pinout_source: str = pinout.get("transcribed_from", "")
+        #: The board's own pin range, so TG227 can say "a Mega has 0-53" rather
+        #: than quoting an encoding constant at an operator. Declared by the
+        #: pinout because it is a fact about the board, not about the compiler.
+        pin_range = pinout.get("pin_range") or {}
+        self.pin_min: int = int(pin_range.get("min", 0))
+        self.pin_max: int = int(pin_range.get("max", CH_BIND_RESERVED_FROM - 1))
 
         pins = pinout["pins"]
         self._logical = raw
@@ -248,6 +269,101 @@ class ChannelMap:
                 f"got {bits}. TgNode.watchMask is a bit position, so a gap "
                 "addresses the wrong channel rather than none.",
             ))
+        return out
+
+    def pin_problems(self) -> list[tuple[str, str]]:
+        """TG227: a pin index that is not a pin on this board.
+
+        UNGUARDED UNTIL NOW, because nobody could type one -- the pinout was a
+        transcription of BehaviorBox.h that shipped inside the package. It stops
+        being safe the moment an operator edits it, and the two bounds fail
+        differently:
+
+        `CH_BIND_BASE` (0xF0) is the hard one. `lower.py::channel_index` encodes
+        runtime-bound channels in the same byte as a pin, relying on pins staying
+        low enough that the high range is free. A pin at or above it is not
+        rejected downstream -- it is read as "@stim[0].emitter" by the board.
+
+        The board's own maximum is the useful one: pin 54 on a Mega is a typo,
+        not a subtle encoding bug, and saying so beats letting it reach a table.
+        """
+        out: list[tuple[str, str]] = []
+        where = f"hardware/{self.pinout_id}.json"
+        for c in sorted(self._by_name.values(), key=lambda c: c.name):
+            if not isinstance(c.index, int) or isinstance(c.index, bool):
+                out.append((where, f"{c.name!r} has a non-integer pin {c.index!r}"))
+            elif c.index >= CH_BIND_RESERVED_FROM:
+                out.append((
+                    where,
+                    f"{c.name!r} is on pin {c.index}, which collides with the "
+                    f"runtime-binding range (>= {CH_BIND_RESERVED_FROM}). A pin there is "
+                    "not refused by the board, it is read as a per-trial binding.",
+                ))
+            elif not (self.pin_min <= c.index <= self.pin_max):
+                out.append((
+                    where,
+                    f"{c.name!r} is on pin {c.index}; {self.board} has pins "
+                    f"{self.pin_min}-{self.pin_max}.",
+                ))
+        return out
+
+    def duplicate_pins(self) -> list[tuple[str, str]]:
+        """TG228: two channels on one pin.
+
+        Also unguarded until now, and it is not always wrong on real hardware --
+        but it is always wrong HERE, because `watch_port` inverts pin to port and
+        the listing's bench card reverse-maps pin to name. Two names on one pin
+        makes both lookups pick one arbitrarily.
+        """
+        seen: dict[int, list[str]] = {}
+        for c in self._by_name.values():
+            if isinstance(c.index, int) and not isinstance(c.index, bool):
+                seen.setdefault(c.index, []).append(c.name)
+        return [
+            (
+                f"hardware/{self.pinout_id}.json",
+                f"pin {pin} is assigned to {', '.join(sorted(names))}. The bench card "
+                "and the watch table both map a pin back to one channel, so a shared "
+                "pin makes that answer arbitrary.",
+            )
+            for pin, names in sorted(seen.items())
+            if len(names) > 1
+        ]
+
+    def slot_problems(self, vocab: "Vocabulary") -> list[tuple[str, str]]:
+        """TG229: a response channel whose strobe slot does not resolve.
+
+        A port with no slot is the failure the slot table was built to end: it
+        used to happen by NAME, silently, to any well not called `left_well` or
+        `right_well`, and produced a port with no per-port codes that compiled
+        fine until a shape change made TG506 reach for them.
+        """
+        out: list[tuple[str, str]] = []
+        where = "schema/channels.v1.json"
+        by_slot: dict[int, list[str]] = {}
+        for c in sorted(self.of_kind("response"), key=lambda c: c.name):
+            if c.port_slot is None:
+                out.append((
+                    where,
+                    f"response channel {c.name!r} declares no `port_slot`, so it has no "
+                    "strobes to report a poke, an error, a broken hold or an exit with.",
+                ))
+                continue
+            if vocab.port_slot(c.port_slot) is None:
+                out.append((
+                    where,
+                    f"response channel {c.name!r} is on port slot {c.port_slot}, which the "
+                    f"strobe vocabulary does not define. It declares slots "
+                    f"{sorted(vocab.port_slots)}.",
+                ))
+            by_slot.setdefault(c.port_slot, []).append(c.name)
+        for slot, names in sorted(by_slot.items()):
+            if len(names) > 1:
+                out.append((
+                    where,
+                    f"port slot {slot} is claimed by {', '.join(sorted(names))}. Two ports "
+                    "reporting with one set of codes are indistinguishable in the data.",
+                ))
         return out
 
     def to_json(self) -> dict:
@@ -383,9 +499,77 @@ def vocabulary() -> Vocabulary:
     return Vocabulary(_load("strobe_vocab.v1.json"))
 
 
+#: The rig's own wiring document, when it has one. Set once at startup and again
+#: after every write by `hardware.store`, via `set_rig_source`.
+#:
+#: A MODULE-LEVEL INJECTION POINT rather than a parameter, because `channels()`
+#: is called from the compile hot path with no argument and threading one through
+#: would touch every caller for a value that changes about twice a year. It is the
+#: same shape `$EPHYMERIS_PINOUT` already had, better typed.
+_rig_source: Callable[[], dict | None] | None = None
+
+
+def set_rig_source(source: Callable[[], dict | None] | None) -> None:
+    """Point the registries at the rig's wiring, and drop what they cached.
+
+    CLEARING HERE, AND ONLY HERE, IS THE POINT. `channels()` is `lru_cache`d and
+    is called on every keystroke compile, so it cannot become uncached; and the
+    obvious place to hang invalidation — `settings.push` — fires on every
+    reconnect, which would throw the compiler's registries away several times a
+    session for no reason. A rig document changes when someone saves one.
+    """
+    global _rig_source
+    _rig_source = source
+    channels.cache_clear()
+
+
 @lru_cache(maxsize=1)
 def channels() -> ChannelMap:
+    """The composed channel map: what each channel means, and where it is.
+
+    A rig document REPLACES the shipped pair rather than merging with it. A
+    merge would mean a channel the operator deleted came back, and there would
+    be no way to describe a box that lacks one.
+    """
+    rig = _rig_source() if _rig_source is not None else None
+    if rig is not None:
+        try:
+            return ChannelMap(*_split_rig(rig))
+        except (KeyError, TypeError) as exc:
+            # A rig document that got past the schema and still cannot compose
+            # is a bug, not an operator error -- but falling back to a working
+            # rig beats refusing to start with six serial ports open.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "rig document could not be composed (%s); using the shipped pinout", exc
+            )
     return ChannelMap(_load("channels.v1.json"), _pinout())
+
+
+def _split_rig(rig: dict) -> tuple[dict, dict]:
+    """One rig document -> the (logical, pinout) pair `ChannelMap` composes.
+
+    The two halves are stored together because an operator edits them together,
+    and split here because keeping them apart is what makes TG226 writable at
+    all. Nothing is invented: `kinds` comes from the shipped registry, since a
+    kind's direction is a property of the model rather than of a rig.
+    """
+    shipped = _load("channels.v1.json")
+    logical = {
+        "channels_version": shipped["channels_version"],
+        "kinds": shipped["kinds"],
+        "channels": rig["channels"],
+    }
+    pinout = {
+        "pinout_id": rig.get("derived_from") or "rig",
+        "pinout_version": int(rig.get("rig_version", 1)),
+        "board": rig.get("board", ""),
+        "transcribed_from": "<data_dir>/hardware/rig.json",
+        "pins": rig["pins"],
+        **({"pin_range": rig["pin_range"]} if rig.get("pin_range") else {}),
+    }
+    return logical, pinout
 
 
 @lru_cache(maxsize=1)

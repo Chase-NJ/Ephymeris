@@ -109,7 +109,11 @@ def _direct_test_codes() -> set[str]:
         never reaches the linter. The rule is still wanted -- it owns the
         semantic, and relying on the schema for a safety-critical bound is how
         that bound quietly disappears when the schema is relaxed -- but its
-        negative test has to construct the spec in memory.
+        negative test has to construct the spec in memory;
+      * the wiring rules (TG226-229) fire on a DIFFERENT DOCUMENT. The spec is
+        fine and the rig is wrong, and a spec cannot express a duplicate pin
+        because a spec never mentions a pin. Their cases are in
+        tests/compiler/test_rules_wiring.py.
 
     Any tests/test_rules_*.py counts.
     """

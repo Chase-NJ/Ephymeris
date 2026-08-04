@@ -404,6 +404,87 @@ def pinout_disagrees_with_registry(ctx: SpecContext) -> Iterator[Diagnostic]:
 
 
 # --------------------------------------------------------------------------- #
+# TG227-229 — the rig document is editable, so the pinout needs checking
+# --------------------------------------------------------------------------- #
+#
+# None of these three could fire before. The pinout was a transcription of
+# BehaviorBox.h that shipped inside the package and was read-only in a frozen
+# build, so "what if the operator types pin 300" was not a question anyone could
+# ask. It is now, and each of these fails quietly rather than loudly:
+#
+#   TG227  a pin in the binding range is READ as a per-trial binding
+#   TG228  two channels on one pin makes every reverse lookup arbitrary
+#   TG229  a response port with no slot has no strobes, and compiles anyway
+#
+# They are BIND-pass rules with registry locations, like TG226, because none of
+# them is the spec author's fault -- the spec named a channel and the channel is
+# what is wrong.
+
+
+@rule(
+    "TG227",
+    name="pin-out-of-range",
+    severity=Severity.ERROR,
+    pass_=Pass.BIND,
+    help=(
+        "A pin index must be a pin this board has, and must stay below the range "
+        "lower.py reserves for runtime-bound channels."
+    ),
+    decision="D15",
+)
+def pin_out_of_range(ctx: SpecContext) -> Iterator[Diagnostic]:
+    """A pin the board does not have, or one the encoding has already claimed.
+
+    The second is the dangerous half. `channel_index` packs a runtime binding
+    into the same byte as a pin, relying on pins staying below 0xF0; a channel
+    placed there is not refused, it is silently read as "@stim[0].emitter".
+    """
+    for location, message in ctx.channels.pin_problems():
+        yield _err(ctx, "TG227", location, message)
+
+
+@rule(
+    "TG228",
+    name="duplicate-pin",
+    severity=Severity.ERROR,
+    pass_=Pass.BIND,
+    help="Two channels cannot share a pin: every reverse lookup from pin to name would be arbitrary.",
+    decision="D15",
+)
+def duplicate_pin(ctx: SpecContext) -> Iterator[Diagnostic]:
+    """Sharing a pin is legal on a breadboard and never legal here.
+
+    `watch_port` inverts pin to port and the bench card inverts pin to name.
+    Both pick one of the two, and which one depends on iteration order.
+    """
+    for location, message in ctx.channels.duplicate_pins():
+        yield _err(ctx, "TG228", location, message)
+
+
+@rule(
+    "TG229",
+    name="port-slot",
+    severity=Severity.ERROR,
+    pass_=Pass.BIND,
+    help=(
+        "Every response channel declares a `port_slot`, no two share one, and the "
+        "strobe vocabulary defines it."
+    ),
+    decision="D15",
+)
+def port_slot(ctx: SpecContext) -> Iterator[Diagnostic]:
+    """A response port with nothing to report with.
+
+    This is the failure the slot table was built to end, and it used to happen
+    by NAME: a well not called `left_well` or `right_well` got no per-port codes
+    at all, and compiled, because each of those fields is individually optional.
+    It surfaced later as TG506 the first time a shape change reached for one.
+    """
+    for location, message in ctx.channels.slot_problems(ctx.vocab):
+        yield _err(ctx, "TG229", location, message)
+
+
+# --------------------------------------------------------------------------- #
 # Representability and policy
 # --------------------------------------------------------------------------- #
 

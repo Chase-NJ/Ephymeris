@@ -57,6 +57,12 @@ def render(table: StateTable, bag: DiagnosticBag | None = None) -> str:
     add(f"  spec_hash       {table.spec_hash}")
     add(f"  vocab_version   {table.vocab_version}")
     add(f"  template        {table.template} v{table.template_version} ({table.template_hash})")
+    # WHICH WIRING. Without this line the listing is blind to a re-pin: every
+    # state, edge and duration is identical, because the listing prints channel
+    # NAMES -- and specs.diff diffs the listing. A rewired box would produce a
+    # different table and a diff that said nothing changed.
+    if table.pinout_id or table.pinout_hash:
+        add(f"  pinout          {table.pinout_id} ({table.pinout_hash})")
     add("")
     add(
         f"  {len(table.nodes)} states, {len(table.edges)} edges, "

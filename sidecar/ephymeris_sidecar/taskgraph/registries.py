@@ -366,6 +366,34 @@ class ChannelMap:
                 ))
         return out
 
+    def content_hash(self) -> str:
+        """SHA-256 over the wiring that can change a compiled byte, truncated.
+
+        THE POINT: `spec_hash` covers the spec document, which names channels and
+        never numbers (D15). So re-wiring a box changes what every task compiles
+        to and moves no spec_hash -- correct, and a provenance hole the moment a
+        rig can be re-wired, because two sessions recorded as the same task ran
+        different valves with nothing in the record to tell them apart.
+
+        BEHAVIOURAL FIELDS ONLY. Prose, pin notes and provenance strings are
+        excluded, and that is a decision rather than an oversight: this hash
+        answers "could these two produce different bytes?", so a rationale
+        someone reworded must not move it. A hash that changed on a typo fix
+        would train people to ignore it.
+
+        `direction` rides along because it comes from the kind, and a kind
+        change moves it -- a reward line that became an input is a real
+        difference even though no pin moved.
+        """
+        import hashlib
+
+        payload = [
+            [c.name, c.kind, c.direction, c.index, c.watch_bit, c.well, c.port_slot]
+            for c in sorted(self._by_name.values(), key=lambda c: c.name)
+        ]
+        canonical = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
     def to_json(self) -> dict:
         """The composed view, in the shape the raw file used to have.
 

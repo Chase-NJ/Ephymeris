@@ -294,6 +294,8 @@ def _summary(table: dict[str, Any], result: Any) -> dict[str, Any]:
         "template": table["template"],
         "templateVersion": table["template_version"],
         "templateHash": table["template_hash"],
+        "pinoutId": table["pinout_id"],
+        "pinoutHash": table["pinout_hash"],
         "nNodes": len(table["nodes"]),
         "nEdges": len(table["edges"]),
         "nTiming": len(table["timing"]),

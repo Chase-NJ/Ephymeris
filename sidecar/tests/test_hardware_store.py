@@ -258,3 +258,73 @@ def test_the_default_document_is_the_shipped_wiring_even_with_a_rig_installed():
     shipped = store.default_document()
     registries.set_rig_source(lambda: rig(pins={"left_well": {"index": 12}}))
     assert store.default_document() == shipped
+
+
+# --------------------------------------------------------------------------- #
+# D22 — the provenance that makes a re-pin visible
+# --------------------------------------------------------------------------- #
+
+
+def test_the_listing_diff_sees_a_repin():
+    """THE POINT OF D22, asserted directly.
+
+    Before the pinout line existed this diff was empty: every state, edge,
+    duration and trial type is identical, because the listing prints channel
+    NAMES. A rewired box produced a different table and a review artifact that
+    said nothing had changed.
+    """
+    from ephymeris_sidecar.specs import service
+
+    text = paradigms.to_yaml(paradigms.skeleton(paradigms.get("two_afc"), spec_id="probe"))
+    before = compiler.render_listing(compiler.compile(text, spec_id="probe"))
+
+    moved = rig(pins={"left_well": {"index": 12}})
+    registries.set_rig_source(lambda: moved)
+    after = compiler.render_listing(compiler.compile(text, spec_id="probe"))
+
+    # Exactly one line differs, and it is the pinout line.
+    changed = [
+        (b, a)
+        for b, a in zip(before.splitlines(), after.splitlines(), strict=True)
+        if b != a
+    ]
+    assert len(changed) == 1, changed
+    assert changed[0][0].strip().startswith("pinout")
+
+    # ...and it reaches the summary the wire carries, on both sides.
+    diff = service.diff_payload("probe", text, text, "spec")
+    assert diff["after"]["pinoutId"]
+    assert diff["after"]["pinoutHash"] == registries.channels().content_hash()
+
+
+def test_the_pinout_hash_moves_on_wiring_and_not_on_prose():
+    """It answers "could these produce different bytes?", so a reworded
+    rationale must not move it — a hash that changed on a typo fix would train
+    people to ignore it."""
+    baseline = registries.channels().content_hash()
+
+    registries.set_rig_source(lambda: rig(channels={"odor_port": {"rationale": "reworded"}}))
+    assert registries.channels().content_hash() == baseline
+
+    registries.set_rig_source(lambda: rig(channels={"odor_port": {"label": "nose port"}}))
+    assert registries.channels().content_hash() == baseline
+
+    registries.set_rig_source(lambda: rig(pins={"odor_port": {"index": 7}}))
+    assert registries.channels().content_hash() != baseline
+
+
+def test_a_kind_change_moves_the_hash_even_though_no_pin_did():
+    """`direction` comes from the kind, and a reward line that became an input
+    is a real difference the pins alone cannot show."""
+    baseline = registries.channels().content_hash()
+    registries.set_rig_source(lambda: rig(channels={"fluid_3": {"kind": "cue"}}))
+    assert registries.channels().content_hash() != baseline
+
+
+def test_the_table_carries_the_wiring_that_resolved_it():
+    text = paradigms.to_yaml(paradigms.skeleton(paradigms.get("two_afc"), spec_id="probe"))
+    table = compiler.compile(text, spec_id="probe").table
+    assert table.pinout_id == registries.channels().pinout_id
+    assert table.pinout_hash == registries.channels().content_hash()
+    # ...and it is NOT the spec hash, which is the whole of D22.
+    assert table.pinout_hash != table.spec_hash

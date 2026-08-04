@@ -6,6 +6,7 @@
   spec_hash       e2318e832666f48b
   vocab_version   2
   template        four_epoch v2 (f0760c460092ddb3)
+  pinout          behaviorbox_mega2560.v1 (fe481f604a8907e3)
 
   26 states, 36 edges, 14 timing entries, 4 trial types
   486 bytes uploaded

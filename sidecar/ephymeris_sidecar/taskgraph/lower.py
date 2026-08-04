@@ -220,6 +220,12 @@ class Lowerer:
             vocab_version=self.spec.vocab_version,
             template=self.spec.topology.template,
             template_version=self.spec.topology.template_version,
+            # Stamped HERE because this is the method that turns channel names
+            # into pin bytes -- `channel_index`, the port and stimulus loops and
+            # `watch_pins` below. The wiring that answered those lookups is the
+            # one thing about this table that the spec does not record.
+            pinout_id=self.channels.pinout_id,
+            pinout_hash=self.channels.content_hash(),
         )
 
         t.timing = [e.ms for e in self.spec.timing]

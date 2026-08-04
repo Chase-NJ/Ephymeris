@@ -485,3 +485,52 @@ hand-maintained mirrors "had already drifted"
 
 **Consequence.** A limit mismatch is *detected at connect time* rather than silently
 truncating a table.
+
+---
+
+<a id="d22"></a>
+
+## D22 — The pinout is recorded beside `spec_hash`, never inside it
+
+**Context.** `spec_hash` is SHA-256 over the parsed spec document, and a spec names
+channels rather than pin numbers ([D15](#d15)). So the same task compiled against two
+pinouts produces two different byte tables with one identical `spec_hash`.
+
+That was correct while it was unobservable. One build meant one pinout, so the
+question "which wiring was this?" had a single answer recoverable from the build
+itself. Once a rig can carry its own wiring document, two sessions recorded as the
+same task can have fired different valves with nothing in the record to tell them
+apart — and the listing, which is what `specs.diff` reviews, shows **nothing**,
+because the listing prints channel names.
+
+**Decision.** A `pinout_id` and a `pinout_hash` travel with the table, appear in the
+listing header, and ride the wire in the table summary. `spec_hash` is unchanged.
+
+The hash covers only the fields that can change a compiled byte — name, kind,
+direction, pin index, watch bit, well, port slot. Prose, pin notes and provenance
+strings are excluded, because the question it answers is "could these two produce
+different bytes?" A hash that moved when someone fixed a typo in a rationale would
+train people to ignore it.
+
+**Alternative rejected.** Folding the pinout into `spec_hash`. It would conflate what
+a task *is* with where it is *wired*, which is precisely the separation D15 exists to
+make; it would move every existing hash; and Analytics groups runs by
+`(profile_hash, params_hash)` and by `spec_hash`, so a rewiring would split an
+animal's history at the boundary exactly as a task rename does. Rewiring a box is not
+a new task.
+
+**Alternative also rejected.** Recording nothing and treating a pinout as invisible
+plumbing. That is the status quo, and it is only defensible while the pinout cannot
+change — which is the assumption this whole change removes.
+
+**Consequence.** A re-pin is visible in `specs.diff`'s provenance strip without adding
+a hunk to any unrelated diff. The cost is one line in the listing header.
+
+**Not yet on the run record**, deliberately. `session_animal_runs` is written by
+`record_animal_run` for SKETCH runs, whose pin numbers are firmware constants rather
+than anything this compiler resolved — stamping a compiler pinout on one would be
+worse than recording nothing. No wire command ties a spec to a session (`specs.md`
+§8), so there is currently no run a pinout could honestly describe. The column lands
+with the session path, not before it: adding one nothing writes is the same
+speculative declaration the strobe vocabulary's readme refuses, and the migration
+will be as cheap then as now.

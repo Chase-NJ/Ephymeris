@@ -26,6 +26,10 @@ def to_dict(table: StateTable) -> dict:
         "template": table.template,
         "template_version": table.template_version,
         "template_hash": table.template_hash,
+        # Which wiring resolved the channel names into the pin bytes below.
+        # Recorded beside spec_hash, never inside it -- see D22.
+        "pinout_id": table.pinout_id,
+        "pinout_hash": table.pinout_hash,
         "size_bytes": table.size_bytes(),
         "timing": [
             {"index": i, "id": tid, "ms": ms}

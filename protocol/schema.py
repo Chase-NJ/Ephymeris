@@ -1321,6 +1321,24 @@ SHAPES = (
             f("template", STR),
             f("templateVersion", INT),
             f("templateHash", STR),
+            f(
+                "pinoutId",
+                STR,
+                doc="Which wiring resolved this table's channel names into pin bytes.",
+            ),
+            f(
+                "pinoutHash",
+                STR,
+                doc=(
+                    "The wiring's own hash, over the fields that can change a compiled "
+                    "byte — pin, kind, watch bit, well, port slot — and not over prose. "
+                    "Recorded BESIDE `specHash`, never folded into it (D22): a spec is "
+                    "identified by what it says and it says channel names, so a re-pin "
+                    "changes every table and moves no `specHash`. Without this pair the "
+                    "listing diff is blind to a rewired box, because the listing prints "
+                    "names."
+                ),
+            ),
             f("nNodes", INT),
             f("nEdges", INT),
             f("nTiming", INT),

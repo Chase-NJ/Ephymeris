@@ -233,6 +233,14 @@ class StateTable:
     template_version: int = 1
     template_hash: str = ""
 
+    #: WHICH WIRING PRODUCED THESE BYTES. Recorded beside `spec_hash`, never
+    #: folded into it (D22): a spec is identified by what it says, and it says
+    #: channel names. So re-pinning a box changes every table and moves no
+    #: spec_hash -- correct, and invisible without this pair, because the
+    #: listing prints channel NAMES and the listing is what specs.diff reviews.
+    pinout_id: str = ""
+    pinout_hash: str = ""
+
     # Names, for the listing only.
     timing_ids: list[str] = field(default_factory=list)
 

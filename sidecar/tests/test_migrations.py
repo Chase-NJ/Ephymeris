@@ -599,7 +599,9 @@ def test_a_newer_database_does_not_run_migrations(
 # --- backup amplification -------------------------------------------------
 
 
-def test_startup_commits_at_most_once(tmp_path: Path) -> None:
+def test_startup_commits_at_most_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Each commit marks the database dirty for backup (`data.md` §7.3).
 
     A migration committing per step would trigger repeated whole-file copies to
@@ -616,11 +618,16 @@ def test_startup_commits_at_most_once(tmp_path: Path) -> None:
         add_column(conn, "cohorts", "a", "TEXT")
         add_column(conn, "cohorts", "b", "TEXT")
 
-    MIGRATIONS[SCHEMA_VERSION] = noisy
+    # `monkeypatch.setitem`, NOT a bare assignment with a `pop` in the finally.
+    # The pop this replaced deleted whatever real migration was registered at
+    # SCHEMA_VERSION -- permanently, for every test that ran after it in the
+    # same process. It was invisible for as long as no later test exercised
+    # that migration, and the first one that did failed here rather than where
+    # the damage was done.
+    monkeypatch.setitem(MIGRATIONS, SCHEMA_VERSION, noisy)
     try:
         db.connect()
     finally:
-        MIGRATIONS.pop(SCHEMA_VERSION, None)
         db.close()
 
     assert len(commits) <= 1, f"startup committed {len(commits)} times"

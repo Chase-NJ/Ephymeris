@@ -136,7 +136,7 @@ Of the 43 commands, 42 are registered in the sidecar's dispatch table. **`auth` 
 | `ping` | — | `{pong, sidecarVersion}` | Liveness probe for the connection indicator |
 | `settings.push` | full settings payload (§4) | `{library: <SketchLibraryStatus>}` | Sent on connect and on every change. The reply carries the bundled library's state (`tasks.md` §2.1) — no longer a function of the settings, but answered here so a client learns it on connect without a second round trip |
 | `sketches.refresh` | — | `<SketchDiscovery>` (§4) | Manual Refresh and Debug Mode mount, per `tasks.md` §2.3 |
-| `port.passthrough.open` | `{box, baud}` | `{state}` | `baud` per box; omitted means the configured `defaultBaud`, which ships as 9600 (`dashboard.md` §6.4) |
+| `port.passthrough.open` | `{box, baud}` | `{state}` | `baud` per box; omitted means the configured `defaultBaud`, which ships as 115200 (`dashboard.md` §6.4) |
 | `port.passthrough.close` | `{box}` | `{state}` | |
 | `port.send` | `{box, text, lineEnding}` | `{bytesWritten}` | `lineEnding` ∈ `none` \| `lf` \| `cr` \| `crlf`, default `lf`. Rejected with `SEND_NOT_PASSTHROUGH` unless the port is in `PASSTHROUGH` (`dashboard.md` §6.4) |
 | `port.flash` | `{box, sketchPath, suppressPassthroughResume?}` | `{state, resumedPassthrough: bool}` | Streams `flash.progress`. `resumedPassthrough` reports the §3.3 auto-resume. `suppressPassthroughResume` (default `false`) forces the port to land in `IDLE` afterward regardless of pre-flash state — the session flash sequence needs `IDLE` so the runner can claim the port (`dashboard.md` §7.4) |

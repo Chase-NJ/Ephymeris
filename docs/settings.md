@@ -48,7 +48,7 @@ Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/set
 | `backupDirectory` | `string \| null` | `null` | **Settings** → Storage | Second copy of session files and the cohort database on another drive or share ([data.md §7](data.md#7-backup-mirroring)). Setting it does **not** backfill |
 | `arduinoCliPath` | `string \| null` | `null` | **Config** → Hardware | Override for the bundled `arduino-cli`. Empty string coerces to `null` |
 | `utilitySketchName` | `string \| null` | `null` | **Config** → Hardware | The baseline every idle box is returned to ([§8](#8-the-hardware-utility-baseline)), by sketch **folder name** — the same key `taskDefaults` uses, because the bundled library's path is per-install while the name survives an update. `null` turns the baseline off |
-| `defaultBaud` | `number` | **`9600`** | **Config** → Hardware, and the setup wizard | Starting baud for each console. Debug Mode allows a per-box override. Options: 9600, 19200, 38400, 57600, 115200, 230400, 250000 |
+| `defaultBaud` | `number` | **`115200`** | **Config** → Hardware, and the setup wizard | Starting baud for each console. Debug Mode allows a per-box override. Options: 9600, 19200, 38400, 57600, 115200, 230400, 250000. **The default only applies to a fresh install** — the value is persisted, so an existing machine keeps whatever its store holds |
 | `boxes` | `BoxBinding[]` | `[]` | **Config** → Boxes, and the wizard | The user-managed box list — see [§6](#6-box-bindings) |
 | `reducedMotion` | `boolean` | `false` | **Settings** → Interface | Forces reduced motion on regardless of the system setting (which is always respected on top). **Shell-only** |
 | `constellation` | `string \| null` | `null` | **Config** → Constellation | Zodiac layout id for the box-status constellation. `null` = the legacy fixed layout. **Shell-only** |
@@ -61,7 +61,7 @@ Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/set
 
 **Normalization rules worth knowing:**
 
-- `defaultBaud` accepts any `number > 0`, else falls back to 9600.
+- `defaultBaud` accepts any `number > 0`, else falls back to 115200.
 - `constellationSlots` requires an integer `>= 0`, with first-wins dedupe in box-number order. Star-index *range* validation is deliberately left to `reconcileSlots`, so a stale persisted map can never render a node off the chart.
 - `constellation` is validated against the zodiac catalogue on load, so a corrupt store degrades to the legacy layout rather than breaking the widget.
 - `taskDefaults` values are carried through unexamined; only values **diverging** from a sketch's own `task.json` defaults are stored, and an empty diff deletes the sketch's entry entirely.
@@ -236,7 +236,7 @@ The sequence: open `PASSTHROUGH` → wait for the board's boot line → send the
 > [!IMPORTANT]
 > **Waiting for the reply rather than assuming it is what makes this trustworthy.** The most likely silent failure is a **baud mismatch**, and the difference between "the light is on" and "we sent something into the void" is exactly the difference the operator needs to know about. When no reply comes, the box is reported failed with that cause named.
 >
-> Building this is what surfaced that `defaultBaud` shipped as 115200 while every sketch in the lab's directory opens at 9600 — the check found a real misconfiguration on its first read-through, before it ever ran.
+> Building this is what surfaced that `defaultBaud` shipped as 115200 while every sketch in the lab's directory opened at 9600 — the check found a real misconfiguration on its first read-through, before it ever ran. *(Both have since moved to 115200 together; the lesson stands, and the direction of the mismatch is the only thing that changed.)*
 
 > [!WARNING]
 > **The confirmation assumes `telemetry`.** A utility sketch declaring `identify` but no `telemetry` gets no confirmation and is trusted on the send alone.

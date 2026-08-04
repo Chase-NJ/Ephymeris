@@ -179,10 +179,10 @@ def _link(args):
     if not args.port:
         raise SystemExit("give --port <device> (or --board <binary> to run off-target)")
     if args.baud == 0:
-        #: --baud auto. The fleet contains boxes at two rates during the rollout
-        #: -- the interpreter firmware opens at 115200 while the eight behaviour
-        #: sketches still open at 9600 -- so "which rate is this box at" is a real
-        #: question with a cheap answer.
+        #: --baud auto. The fleet contains boxes at two rates until the rollout
+        #: finishes: source is uniformly 115200 now, but a box runs whatever it
+        #: was last flashed with, so any box not yet reflashed is still at 9600
+        #: -- "which rate is this box at" is a real question with a cheap answer.
         from ephymeris_sidecar.taskgraph.transport.client import detect
 
         baud = detect(lambda b: SerialLink(args.port, b))

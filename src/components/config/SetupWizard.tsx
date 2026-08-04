@@ -204,7 +204,8 @@ export function SetupWizard({ onExit }: { onExit: () => void }) {
                 {/* The baud rate lives on this step rather than a step of its
                     own because this is where a wrong one first shows itself: a
                     mismatch doesn't error, it just makes every box look silent.
-                    Every sketch in the lab's directory opens at 9600. */}
+                    Every bundled sketch opens at 115200, matching the
+                    interpreter firmware's TG_BAUD_RATE. */}
                 <div className="flex items-center justify-between gap-4 px-4 pb-3">
                   <p className="text-[12px] text-static">
                     Baud rate — match what your sketches open the serial port at.

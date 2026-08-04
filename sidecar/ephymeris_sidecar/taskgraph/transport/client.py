@@ -137,9 +137,10 @@ def detect(open_link, bauds=CANDIDATE_BAUDS, timeout: float = 4.0):
     host-side was mute until someone noticed.
 
     Trying two rates and keeping the one that answers removes the flag day. A
-    fleet can then contain boxes at both rates — which it already does, since the
-    interpreter firmware opens at 115200 while the eight behaviour sketches still
-    open at 9600 — and the tooling simply reports which.
+    fleet can then contain boxes at both rates — which it does for as long as the
+    rollout takes. Every sketch in source opens at 115200 now, but a box runs the
+    firmware it was last flashed with, so a box nobody has reflashed is still at
+    9600 and stays there until someone gets to it. The tooling reports which.
 
     `open_link` is a callable taking a baud and returning a Link, so this works
     against a real port and against anything else that speaks lines.

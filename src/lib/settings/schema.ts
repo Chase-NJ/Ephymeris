@@ -26,12 +26,18 @@ export type {
 /** Hardware ceiling: six Mega2560s (`dashboard.md` §5). */
 export const BOX_COUNT = 6;
 /**
- * Every sketch in the lab's Arduino Directory opens at 9600 (each declares its
- * own `baudRate`, and they all agree), so 115200 was a default that was wrong
- * for every box on both machines — silently, since a mismatched console just
- * prints nothing readable.
+ * Every bundled sketch opens at 115200 — each declares its own `baudRate` and
+ * they all agree, matching the interpreter firmware's `TG_BAUD_RATE`. The
+ * sidecar declares the same number in Python (`settings.py`); nothing keeps the
+ * two in step, so they must be changed together.
+ *
+ * **This is only the default for a fresh install.** `defaultBaud` is persisted,
+ * so a machine that already has a settings file keeps whatever is in it —
+ * changing this constant does not migrate it. A box flashed at 115200 whose
+ * host is still on 9600 is *mute*, and mute reads as dead hardware rather than
+ * as a mismatch. Set it in Config → Hardware, per machine.
  */
-export const DEFAULT_BAUD = 9600;
+export const DEFAULT_BAUD = 115200;
 
 /** Offered in the picker; Debug Mode also allows a per-box override (§6.4). */
 export const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 250000] as const;

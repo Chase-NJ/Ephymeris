@@ -1127,10 +1127,12 @@ class Application:
     def _detect_board_baud(self, box: int, address: str, requested: int | None) -> int:
         """The interpreter baud for this box — cached per hardware_id.
 
-        NOT settings.defaultBaud: that is the console default (9600 for every
-        legacy sketch), and using it here would make every interpreter board
-        look mute. The interpreter fleet is mid-rollout at 115200/9600, which
-        is exactly what transport detect exists for.
+        NOT settings.defaultBaud: that is the console default, an operator
+        setting that can hold any rate the picker offers, and using it here
+        would make a board look mute whenever the two disagree. Source and
+        host defaults are both 115200 now, but a box keeps whatever rate it
+        was last flashed with — so the fleet stays mixed until every box has
+        been reflashed, which is exactly what transport detect exists for.
         """
         from ephymeris_sidecar.taskgraph.transport import client as tg_client
 

@@ -20,9 +20,11 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 BOX_COUNT = 6
-#: Matches the `baudRate` every sketch in the lab's Arduino Directory declares.
-#: Only a fallback here — the shell owns the real value and pushes it.
-DEFAULT_BAUD = 9600
+#: Matches the `baudRate` every bundled sketch declares, and the interpreter
+#: firmware's `TG_BAUD_RATE`. Only a fallback here — the shell owns the real
+#: value and pushes it, and `src/lib/settings/schema.ts` declares the same
+#: number in TypeScript. The two must move together.
+DEFAULT_BAUD = 115200
 
 
 @dataclass(frozen=True)

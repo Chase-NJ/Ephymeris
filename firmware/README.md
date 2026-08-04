@@ -35,6 +35,19 @@ firmware repo's files and asserts all three are still there — including the se
 `task.json` strobe mirrors, which no gate would ever catch going stale because nothing
 in the trial loop reads one.
 
+`patches/0002-baud-115200.patch` has landed. It moves the eight behaviour sketches'
+`baudRate` from 9600 to 115200, matching `TG_BAUD_RATE` — the fleet is one rate again.
+**It landed together with the host defaults it warns about** (`settings.py` and
+`schema.ts`, both now 115200), because a board and a host at different rates is not an
+error, it is a box that never answers.
+
+> [!CAUTION]
+> `defaultBaud` is a **persisted setting**, so a machine that already has a settings
+> file is still on whatever it stored — the new default binds fresh installs only.
+> Set it in **Config → Hardware** on each lab machine *before* flashing any box from
+> this patch. A box flashed at 115200 whose host still says 9600 is mute, and mute
+> reads as dead hardware.
+
 See [`docs/firmware-changes.md`](../docs/firmware-changes.md) for what each change was
 and why.
 

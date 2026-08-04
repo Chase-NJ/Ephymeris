@@ -375,7 +375,9 @@ The same per-port handler object that owns the read loop exposes `write(bytes)` 
 **Baud** is per-box and user-configurable, defaulting to `defaultBaud`.
 
 > [!WARNING]
-> **`defaultBaud` ships as 9600**, which is what every sketch in the lab's directory declares. It shipped as 115200 for most of v1, which was wrong for every box on both machines and wrong **silently** — a mismatched console prints nothing legible rather than reporting an error, so it reads as a dead board.
+> **`defaultBaud` ships as 115200**, which is what every bundled sketch declares and what the interpreter firmware's `TG_BAUD_RATE` opens at. A mismatch is wrong **silently** — a mismatched console prints nothing legible rather than reporting an error, so it reads as a dead board. That is why the value and the firmware must only ever move together, and why it read 9600 for the part of v1 when the sketches did.
+>
+> **The default binds a fresh install only.** `defaultBaud` is persisted, so a machine with an existing settings file keeps its stored value across an update. A box flashed at 115200 whose host still says 9600 is mute — set it in **Config → Hardware**, per machine, *before* flashing.
 
 ---
 

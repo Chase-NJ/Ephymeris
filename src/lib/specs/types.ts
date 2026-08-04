@@ -15,6 +15,8 @@ export type {
   SpecGraph,
   SpecGraphEdge,
   SpecGraphNode,
+  ParadigmQuestion,
+  ParadigmSummary,
   SpecListingDiff,
   SpecOrigin,
   SpecTableSummary,

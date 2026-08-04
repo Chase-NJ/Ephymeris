@@ -15,10 +15,10 @@ import type { SidecarClient } from "@/lib/ws/client";
  * sections, so a change reads as "in STATES". The provenance strip carries the
  * two hashes that move on every edit and are deliberately not hunks.
  *
- * The baseline selector is how the shaping_gr / shaping_gr_ez claim gets read:
- * pick "another spec" and the diff of an eased variant against its base shows
- * value sections only — no STATES hunks — which is the layer-3 promise made
- * visible.
+ * The baseline selector is how a "same machine, different numbers" claim gets
+ * read: pick another spec and a diff that shows value sections only — no STATES
+ * hunks — is the layer-3 promise made visible. Shaping-R against Shaping-L is
+ * exactly that comparison.
  */
 export function ListingDiff({
   open,
@@ -27,7 +27,6 @@ export function ListingDiff({
   specId,
   text,
   specs,
-  hasShipped,
 }: {
   open: boolean;
   onClose: () => void;
@@ -36,9 +35,8 @@ export function ListingDiff({
   /** The editor's current document, serialized — the AFTER side. */
   text: string;
   specs: SpecEntry[];
-  hasShipped: boolean;
 }) {
-  const [against, setAgainst] = useState<string>(hasShipped ? "@shipped" : "@saved");
+  const [against, setAgainst] = useState<string>("@saved");
   const [diff, setDiff] = useState<SpecListingDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -63,12 +61,8 @@ export function ListingDiff({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    const args =
-      against === "@shipped"
-        ? { baseline: "shipped" as const }
-        : against === "@saved"
-          ? { baseline: "saved" as const }
-          : { againstSpecId: against };
+    // Absent `againstSpecId` means "my unsaved edits against my own file".
+    const args = against === "@saved" ? {} : { againstSpecId: against };
     void diffSpec(client, specId, snapshot, args)
       .then((reply) => {
         if (!cancelled) setDiff(reply);
@@ -92,7 +86,6 @@ export function ListingDiff({
           label="Baseline"
           value={against}
           options={[
-            ...(hasShipped ? [{ value: "@shipped", label: "the shipped version" }] : []),
             { value: "@saved", label: "the saved file" },
             ...specs
               .filter((s) => s.specId !== specId)

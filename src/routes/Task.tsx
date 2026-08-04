@@ -13,14 +13,13 @@ import { useNavigate } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
-import { NewSpecGallery } from "@/components/specs/NewSpecGallery";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { PANEL_TRAVEL, springPanel } from "@/lib/motion";
 import { getSpec } from "@/lib/specs/commands";
 import { createSpecFrom, suggestId } from "@/lib/specs/create";
-import type { SpecEntry } from "@/lib/specs/types";
+import type { ParadigmSummary, SpecEntry } from "@/lib/specs/types";
 import { originChip } from "@/lib/specs/useSpecDocument";
-import { useSpecs } from "@/lib/specs/useSpecs";
+import { useParadigms, useSpecs } from "@/lib/specs/useSpecs";
 import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 
@@ -43,20 +42,22 @@ export function Task() {
   const { client, status } = useSidecar();
   const connected = status === "connected";
   const { specs, unavailable, loading } = useSpecs();
+  const { paradigms } = useParadigms();
   const { discovery } = useSettings();
   const { settings } = useSettings();
 
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Every spec belongs to this rig now, so there is no origin to rank by.
+  // Most-recently-touched first: the task someone is working on is the one they
+  // came back for.
   const ordered = useMemo(
     () =>
-      [...specs].sort((a, b) => {
-        // A rig's own tasks first — those are the ones someone here made a
-        // decision about. Shipped paradigms are reference material below them.
-        const rank = (s: SpecEntry) => (s.origin === "user" ? 0 : s.origin === "shipped_edited" ? 1 : 2);
-        return rank(a) - rank(b) || a.specId.localeCompare(b.specId);
-      }),
+      [...specs].sort(
+        (a, b) =>
+          (b.editedAt ?? "").localeCompare(a.editedAt ?? "") ||
+          a.specId.localeCompare(b.specId),
+      ),
     [specs],
   );
 
@@ -133,7 +134,7 @@ export function Task() {
                   <Button
                     variant="primary"
                     disabled={!connected}
-                    onClick={() => setCreating(true)}
+                    onClick={() => navigate("/task/new")}
                   >
                     <Plus size={13} strokeWidth={1.75} />
                     New task
@@ -144,9 +145,10 @@ export function Task() {
                   {loading ? (
                     <p className="text-[12px] text-static">Reading the library…</p>
                   ) : ordered.length === 0 ? (
-                    <p className="text-[12px] text-static">
-                      No task specs yet. Start one from a paradigm.
-                    </p>
+                    <EmptyLibrary
+                      paradigms={paradigms}
+                      onPick={(id) => navigate(`/task/new?paradigm=${id}`)}
+                    />
                   ) : (
                     <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                       {ordered.map((spec) => (
@@ -201,18 +203,6 @@ export function Task() {
         </section>
       </motion.div>
 
-      <NewSpecGallery
-        open={creating}
-        onClose={() => setCreating(false)}
-        specs={specs}
-        onCreated={(id) => {
-          setCreating(false);
-          navigate(`/task/designer/${id}`);
-        }}
-        onDesign={(recipeId) =>
-          navigate(recipeId ? `/task/new?recipe=${recipeId}` : "/task/new")
-        }
-      />
     </div>
   );
 }
@@ -304,4 +294,49 @@ function LinkCard({
 /** ISO-8601 → `2026-08-03`. The timestamp's date half is all a card needs. */
 function shortDate(iso: string): string {
   return iso.slice(0, 10);
+}
+
+/**
+ * The first thing a new rig sees, so it is the front door rather than a footnote.
+ *
+ * Nothing ships as a spec any more: an install has zero tasks until somebody
+ * makes one. The old copy — one grey line reading "start one from a paradigm" —
+ * was written for a library that already had five in it, and pointed at a button
+ * instead of being the thing itself.
+ */
+function EmptyLibrary({
+  paradigms,
+  onPick,
+}: {
+  paradigms: ParadigmSummary[];
+  onPick: (paradigmId: string) => void;
+}) {
+  if (paradigms.length === 0) {
+    return <p className="text-[12px] text-static">Reading the paradigms…</p>;
+  }
+  return (
+    <div>
+      <p className="max-w-prose text-[12px] leading-relaxed text-static">
+        <span className="text-starlight">No tasks on this rig yet.</span> Every task
+        starts from a paradigm — the shape of an experiment, which the compiler and
+        the linter already agree on. Pick one and answer the questions; the machine
+        is drawn beside you the whole way.
+      </p>
+      <div className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+        {paradigms.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => onPick(p.id)}
+            className="min-w-0 rounded-sm border border-halo px-2.5 py-2 text-left transition-colors hover:border-pulsar"
+          >
+            <div className="text-[12px] text-starlight">{p.name}</div>
+            <p className="mt-1 line-clamp-2 text-[10.5px] leading-relaxed text-static">
+              {p.affords}
+            </p>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }

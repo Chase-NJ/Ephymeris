@@ -284,10 +284,18 @@ class Application:
                 why,
             )
             return
+        from ephymeris_sidecar.taskgraph import paradigms
+        from ephymeris_sidecar.taskgraph.registries import active_pinout_id
+
+        # What ships is the ability to MAKE a task, so that is what is counted.
+        # The pinout is named because it ends up inside the packed table: a box
+        # compiled for the wrong one is a real failure with no other symptom.
         log.info(
-            "task spec compiler ready (%d specs, %d template versions, from %s)",
-            len(list(compiler.bundled_specs_dir().glob("*.yaml"))),
+            "task spec compiler ready (%d paradigms, %d template versions, "
+            "pinout %s, from %s)",
+            len(paradigms.load_all()),
             len(compiler.templates_available()),
+            active_pinout_id(),
             compiler.compiler_root(),
         )
 

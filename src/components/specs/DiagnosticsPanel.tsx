@@ -72,7 +72,7 @@ export function DiagnosticsPanel({
                 )
               )}
               {d.decision && (
-                <span className="font-mono text-[10px] text-pulsar/80" title="See Task-Graph docs/decisions.md">
+                <span className="font-mono text-[10px] text-pulsar/80" title="See docs/taskgraph-decisions.md">
                   {d.decision}
                 </span>
               )}

@@ -214,14 +214,18 @@ export function useSpecDocument(specId: string | null): SpecSession {
   };
 }
 
-/** Presentation for a spec's origin chip. One definition, three surfaces. */
+/**
+ * Presentation for a spec's chip. One definition, three surfaces.
+ *
+ * It used to distinguish three origins. Nothing ships as a spec, so every task
+ * on a rig is that rig's own and the only thing left worth saying is whether
+ * there are unsaved edits in the editor right now.
+ */
 export function originChip(
-  origin: SpecOrigin,
+  _origin: SpecOrigin,
   dirty = false,
 ): { label: string; color: string } {
-  if (origin === "user") return { label: "YOURS", color: "var(--color-ion)" };
-  if (origin === "shipped_edited" || dirty) {
-    return { label: "EDITED", color: "var(--color-pulsar)" };
-  }
-  return { label: "SHIPPED", color: "var(--color-static)" };
+  return dirty
+    ? { label: "EDITED", color: "var(--color-pulsar)" }
+    : { label: "YOURS", color: "var(--color-ion)" };
 }

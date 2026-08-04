@@ -2,6 +2,7 @@ import type { SidecarClient } from "@/lib/ws/client";
 import { CMD } from "@/lib/ws/protocol";
 import type { BoardCapabilities, UploadResult, UtilityStatus } from "@/lib/ws/protocol";
 import type {
+  ParadigmSummary,
   SpecArtifact,
   SpecCapabilities,
   SpecCompileResult,
@@ -46,6 +47,35 @@ export async function getCapabilities(
   return await client.call(CMD.SPECS_CAPABILITIES, { topology });
 }
 
+/** Every shape a new task can start from. Static for the life of the process. */
+export async function getParadigms(client: SidecarClient): Promise<ParadigmSummary[]> {
+  const reply = await client.call(CMD.SPECS_PARADIGMS, {});
+  return reply.paradigms;
+}
+
+/**
+ * A first draft for a paradigm, and the compile of it.
+ *
+ * Writes nothing — creating the task is still `saveSpec`, so rename-and-save
+ * keeps its single definition and a wizard abandoned halfway leaves no orphan.
+ * The compile rides along so the first render already has a graph.
+ */
+export async function getSkeleton(
+  client: SidecarClient,
+  paradigmId: string,
+  specId: string,
+  answers: Record<string, unknown>,
+  meta?: { label?: string; description?: string },
+): Promise<{ text: string; result: SpecCompileResult }> {
+  return await client.call(CMD.SPECS_SKELETON, {
+    paradigmId,
+    specId,
+    answers,
+    ...(meta?.label ? { label: meta.label } : {}),
+    ...(meta?.description ? { description: meta.description } : {}),
+  });
+}
+
 export async function saveSpec(
   client: SidecarClient,
   specId: string,
@@ -65,7 +95,7 @@ export async function diffSpec(
   client: SidecarClient,
   specId: string,
   text: string,
-  against: { baseline?: "shipped" | "saved"; againstSpecId?: string },
+  against: { againstSpecId?: string },
 ): Promise<SpecListingDiff> {
   return await client.call(CMD.SPECS_DIFF, { specId, text, ...against });
 }

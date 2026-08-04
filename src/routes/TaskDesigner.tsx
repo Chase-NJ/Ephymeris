@@ -281,7 +281,6 @@ export function TaskDesigner() {
           specId={specId}
           text={toYaml(doc)}
           specs={specs}
-          hasShipped={entry?.origin !== "user"}
         />
       )}
 

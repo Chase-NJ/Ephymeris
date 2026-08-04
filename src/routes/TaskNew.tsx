@@ -1,3 +1,5 @@
+import { parse as parseYaml } from "yaml";
+
 import { motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -11,36 +13,44 @@ import { DiagnosticsPanel } from "@/components/specs/DiagnosticsPanel";
 import { SpecCanvas } from "@/components/specs/SpecCanvas";
 import { SpecField } from "@/components/specs/SpecField";
 import { StructureBlocks } from "@/components/specs/StructureBlocks";
+import { ChipsRow, SelectRow } from "@/components/specs/rows";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { springPanel } from "@/lib/motion";
-import { getSpec } from "@/lib/specs/commands";
+import { getSkeleton } from "@/lib/specs/commands";
 import { createSpecFrom, idError, suggestId } from "@/lib/specs/create";
-import { placeDiagnostics } from "@/lib/specs/diagnostics";
-import { getAt, setAt, topologyOf } from "@/lib/specs/document";
-import { PARADIGMS, RECIPES } from "@/lib/specs/paradigms";
 import { runOp } from "@/lib/specs/operations";
+import { placeDiagnostics, type PlacedDiagnostics } from "@/lib/specs/diagnostics";
+import { getAt, setAt, topologyOf } from "@/lib/specs/document";
 import type {
   ChannelRegistry,
+  ParadigmQuestion,
+  ParadigmSummary,
+  SpecCapabilities,
   SpecDocument,
   SpecGraph,
+  SpecSchema,
   StrobeRegistry,
 } from "@/lib/specs/types";
 import { useCompile } from "@/lib/specs/useCompile";
-import { useCapabilities, useSpecs } from "@/lib/specs/useSpecs";
+import { useCapabilities, useParadigms, useSpecs } from "@/lib/specs/useSpecs";
 import { useRegisterUnsaved } from "@/lib/nav/unsavedGuard";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
  * Design a task, one question at a time, with the machine beside you.
  *
- * THE WIZARD ALWAYS STARTS FROM A BUNDLED PARADIGM. It must, and this is not a
- * detail to relax later: docs/specs.md §3 argues that a blank-skeleton
- * generator would be a second definition of what a minimal legal spec is,
- * competing with the schema. Starting from a spec that already compiles means
- * every step is an EDIT — of a document the compiler and the linter already
- * agree on — rather than a construction that has to be validated into
- * existence. The moment this grows a "start from nothing" option, that
- * argument is lost.
+ * THE WIZARD ALWAYS STARTS FROM A PARADIGM, and never from nothing. The
+ * objection docs/specs.md used to raise — that a skeleton generator would be a
+ * second definition of what a minimal legal spec is — is answered by WHERE the
+ * generator lives, not by refusing to have one: `specs.skeleton` reads the
+ * paradigm, the template's `capabilities()`, the channel registry and the
+ * strobe vocabulary, and emits no value it did not find in one of them. A
+ * "start from nothing" option would break that, because there would be no
+ * paradigm to read.
+ *
+ * The first screen therefore asks which shape, and the answer comes back as a
+ * document that already compiles — with its graph, in the same round trip, so
+ * "it compiles at every step" is true from step zero.
  *
  * Structural steps apply the SAME ops the Designer's blocks do
  * (`lib/specs/operations.ts`), so there is one implementation of "what must
@@ -48,12 +58,12 @@ import { useSidecar } from "@/lib/ws/context";
  * steps are plain `setAt` — layer 3 and layer 4 change no shape.
  *
  * Nothing is written until Create, which is `createSpecFrom` — the same
- * rename-and-save the gallery and Duplicate use. No new wire command.
+ * rename-and-save Duplicate uses. No new wire command for creation.
  */
 export function TaskNew() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const recipeId = params.get("recipe");
+  const paradigmId = params.get("paradigm");
   const { client, status } = useSidecar();
   const connected = status === "connected";
   const { specs, schema, unavailable } = useSpecs();
@@ -69,7 +79,11 @@ export function TaskNew() {
   const [label, setLabel] = useState("");
   const [description, setDescription] = useState("");
 
-  const recipe = useMemo(() => RECIPES.find((r) => r.id === recipeId) ?? null, [recipeId]);
+  const { paradigms, loading: loadingParadigms } = useParadigms();
+  const chosen = useMemo(
+    () => paradigms.find((p) => p.id === (base ?? paradigmId)) ?? null,
+    [paradigms, base, paradigmId],
+  );
   const taken = useMemo(() => new Set(specs.map((s) => s.specId)), [specs]);
 
   const caps = useCapabilities(useMemo(() => topologyOf(doc), [doc]));
@@ -89,40 +103,24 @@ export function TaskNew() {
 
   useRegisterUnsaved("spec-wizard", doc !== null);
 
-  /* Loading the base. A recipe additionally replays its steps through the real
-   * ops, so a recipe cannot describe a task the editor could not also reach —
-   * and each step's own suggestions fill in what it would otherwise ask. */
-  async function start(specId: string, steps = recipe?.steps ?? []) {
+  /**
+   * Start from a paradigm.
+   *
+   * ONE ROUND TRIP, and the compile comes back with it — so the canvas has a
+   * graph before the first question is answered rather than after it. This
+   * replaces a loop that replayed structural ops client-side against the BASE
+   * spec's capabilities, with a comment explaining why that was a limitation:
+   * the generator runs where `capabilities()` actually lives, so there is no
+   * limitation to explain.
+   */
+  async function start(id_: string) {
     setLoadError(null);
     try {
-      const reply = await getSpec(client, specId);
-      if (!reply.raw) {
-        setLoadError("That spec's YAML won't parse, so it can't be a starting point.");
-        return;
-      }
-      let next: SpecDocument = reply.raw;
-      for (const invocation of steps) {
-        // Capabilities for the proposed topology are not available
-        // synchronously here, so a recipe step runs against the base's own —
-        // which is why RECIPES only holds steps whose reconciliation does not
-        // depend on a knob that moved. Anything richer belongs in the editor,
-        // where the round trip exists.
-        if (caps === null) break;
-        next = runOp(
-          {
-            doc: next,
-            caps,
-            next: caps,
-            channels: (schema?.channels ?? {}) as ChannelRegistry,
-            strobes: (schema?.strobes ?? {}) as StrobeRegistry,
-          },
-          invocation,
-          {},
-        ).doc;
-      }
-      setBase(specId);
-      setDoc(next);
-      setId(suggestId(specId, taken));
+      const suggested = suggestId(id_, taken);
+      const reply = await getSkeleton(client, id_, suggested, {});
+      setBase(id_);
+      setDoc(parseYaml(reply.text) as SpecDocument);
+      setId(suggested);
       setStep(1);
     } catch (err) {
       setLoadError(errorMessage(err));
@@ -176,9 +174,7 @@ export function TaskNew() {
           <div className="font-mono text-[9.5px] text-static/70">
             {base === null
               ? "pick a starting point"
-              : `${step > steps.length ? "review" : `${step} of ${steps.length}`} · from ${base}${
-                  recipe ? ` · ${recipe.name}` : ""
-                }`}
+              : `${step > steps.length ? "review" : `${step} of ${steps.length}`} · ${chosen?.name ?? base}`}
           </div>
         </div>
         {result?.table && (
@@ -204,7 +200,11 @@ export function TaskNew() {
       )}
 
       {doc === null ? (
-        <StartingPoints recipe={recipe} onPick={(specId) => void start(specId)} />
+        <StartingPoints
+          paradigms={paradigms}
+          loading={loadingParadigms}
+          onPick={(pid) => void start(pid)}
+        />
       ) : (
         <div className="flex min-h-0 flex-1">
           {/* The machine, beside the questions — so "it compiles at every step"
@@ -276,6 +276,43 @@ export function TaskNew() {
                   band={current.band}
                   doc={doc}
                   baseline={doc}
+                  caps={caps}
+                  schema={schema}
+                  placed={placed}
+                  onChange={setDoc}
+                />
+              )}
+
+              {/* The paradigm's own questions, rendered from what the sidecar
+              declared. Each `path` is a document path the schema knows, so an
+              answer is a set on a validated location and never new structure —
+              which is what lets a paradigm file stay declarative. */}
+              {current?.kind === "questions" && schema && (
+                <div className="flex flex-col gap-1.5">
+                  {(chosen?.questions ?? []).length === 0 ? (
+                    <p className="text-[11px] leading-relaxed text-static/70">
+                      This paradigm asks nothing — every choice it makes is part of
+                      the shape. You can still change any of it in the steps that
+                      follow.
+                    </p>
+                  ) : (
+                    (chosen?.questions ?? []).map((q) => (
+                      <ParadigmQuestionRow
+                        key={q.id}
+                        question={q}
+                        doc={doc}
+                        schema={schema}
+                        placed={placed}
+                        onChange={(value) => setDoc(setAt(doc, q.path, value))}
+                      />
+                    ))
+                  )}
+                </div>
+              )}
+
+              {current?.kind === "ramp" && schema && (
+                <RampStep
+                  doc={doc}
                   caps={caps}
                   schema={schema}
                   placed={placed}
@@ -412,6 +449,8 @@ const EMPTY: ReadonlySet<number> = new Set();
 type Step =
   | { kind: "identity"; title: string; blurb: string }
   | { kind: "structure"; band: number; title: string; blurb: string }
+  | { kind: "questions"; title: string; blurb: string }
+  | { kind: "ramp"; title: string; blurb: string }
   | { kind: "timing"; title: string; blurb: string }
   | { kind: "policy"; title: string; blurb: string };
 
@@ -426,6 +465,13 @@ const STEPS: Step[] = [
     title: "What is it called?",
     blurb:
       "The id names the file and the compiled table; the label and description are what the library shows.",
+  },
+  {
+    kind: "questions",
+    title: "What does this paradigm need to know?",
+    blurb:
+      "The choices this shape leaves open — which lines carry the stimuli, which " +
+      "port is being shaped toward. Everything else already has a working value.",
   },
   {
     kind: "structure",
@@ -453,6 +499,14 @@ const STEPS: Step[] = [
     band: 4,
     title: "What does a correct trial get?",
     blurb: "Rewarding adds the delivery and consumption states through each port's own line.",
+  },
+  {
+    kind: "ramp",
+    title: "Does it get harder over the session?",
+    blurb:
+      "A stage schedule rewrites durations at trial boundaries — the shaping ramp. " +
+      "Choose which durations move, then the trials they move at. A task that does " +
+      "not ramp leaves this empty.",
   },
   {
     kind: "timing",
@@ -503,60 +557,51 @@ function bandReadouts(knobs: Record<string, unknown> | null): Record<number, str
 }
 
 function StartingPoints({
-  recipe,
+  paradigms,
+  loading,
   onPick,
 }: {
-  recipe: { name: string; base: string; affords: string; changes: string } | null;
-  onPick: (specId: string) => void;
+  paradigms: ParadigmSummary[];
+  loading: boolean;
+  onPick: (paradigmId: string) => void;
 }) {
   return (
     <div className="scrollbar-none flex-1 overflow-y-auto px-6 py-5">
       <div className="mx-auto max-w-3xl">
-        {recipe ? (
-          <>
-            <h2 className="font-display text-[15px] text-starlight">{recipe.name}</h2>
-            <p className="mt-1 text-[12px] leading-relaxed text-static">{recipe.affords}</p>
-            <p className="mt-2 text-[11px] leading-relaxed text-static/80">
-              Starts from <span className="font-mono text-starlight">{recipe.base}</span> and{" "}
-              {recipe.changes.charAt(0).toLowerCase() + recipe.changes.slice(1)} You can change
-              anything from there.
-            </p>
-            <div className="mt-3">
-              <Button variant="primary" onClick={() => onPick(recipe.base)}>
-                Begin
-                <ArrowRight size={12} strokeWidth={1.75} />
-              </Button>
-            </div>
-          </>
+        <h2 className="font-display text-[15px] text-starlight">Pick a shape</h2>
+        <p className="mt-1 max-w-xl text-[12px] leading-relaxed text-static">
+          A paradigm is the shape of an experiment — what the animal senses, how it
+          answers, what counts as correct. Picking one gives you a working task
+          immediately; every question after this changes it, and the machine is
+          drawn beside you the whole way.
+        </p>
+
+        {loading ? (
+          <p className="mt-4 text-[12px] text-static">Reading the paradigms…</p>
+        ) : paradigms.length === 0 ? (
+          <p className="mt-4 text-[12px] text-static">
+            No paradigms are installed, which means the compiler's registry did not
+            ship. Nothing here will work until that is fixed.
+          </p>
         ) : (
-          <>
-            <h2 className="font-display text-[15px] text-starlight">
-              Pick a starting point
-            </h2>
-            <p className="mt-1 max-w-xl text-[12px] leading-relaxed text-static">
-              Every design starts from a task that already compiles — that way each
-              answer is a change to a working machine rather than a step toward one
-              that might not be. You can change any of it, including the shape.
-            </p>
-            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {PARADIGMS.map((paradigm) => (
-                <button
-                  key={paradigm.id}
-                  type="button"
-                  onClick={() => onPick(paradigm.variants[0]!.specId)}
-                  className="min-w-0 rounded-sm border border-halo px-3 py-2.5 text-left transition-colors hover:border-pulsar"
-                >
-                  <div className="text-[12.5px] text-starlight">{paradigm.name}</div>
-                  <div className="truncate font-mono text-[9.5px] text-static/70">
-                    {paradigm.variants[0]!.specId}
-                  </div>
-                  <p className="mt-1.5 text-[11px] leading-relaxed text-static">
-                    {paradigm.affords}
-                  </p>
-                </button>
-              ))}
-            </div>
-          </>
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {paradigms.map((paradigm) => (
+              <button
+                key={paradigm.id}
+                type="button"
+                onClick={() => onPick(paradigm.id)}
+                className="min-w-0 rounded-sm border border-halo px-3 py-2.5 text-left transition-colors hover:border-pulsar"
+              >
+                <div className="text-[12.5px] text-starlight">{paradigm.name}</div>
+                <div className="truncate font-mono text-[9.5px] text-static/70">
+                  {paradigm.id} · {paradigm.template} v{paradigm.templateVersion}
+                </div>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-static">
+                  {paradigm.affords}
+                </p>
+              </button>
+            ))}
+          </div>
         )}
       </div>
     </div>
@@ -579,3 +624,236 @@ function Shell({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+/**
+ * One paradigm question, rendered by the same overlay the form uses.
+ *
+ * `source` says where the options come from, and every one of them is a
+ * registry the compiler validates against — so a picker here cannot offer a
+ * value the compile then rejects. `value` is free entry, and falls through to
+ * the overlay's own widget for the path.
+ */
+function ParadigmQuestionRow({
+  question,
+  doc,
+  schema,
+  placed,
+  onChange,
+}: {
+  question: ParadigmQuestion;
+  doc: SpecDocument;
+  schema: SpecSchema;
+  placed: PlacedDiagnostics | null;
+  onChange: (value: unknown) => void;
+}) {
+  const current = getAt(doc, question.path);
+
+  const options = useMemo(() => {
+    const channels = (schema.channels ?? {}) as {
+      channels?: Record<string, { kind: string; index: number }>;
+    };
+    switch (question.source) {
+      case "channel":
+        return Object.entries(channels.channels ?? {})
+          .filter(([, c]) => !question.kind || c.kind === question.kind)
+          .map(([name, c]) => ({ value: name, label: `${name} (pin ${c.index})` }));
+      case "stimulus": {
+        const stimuli = (doc["contingency"] as { stimuli?: Array<{ id?: string }> })?.stimuli;
+        return (stimuli ?? []).map((s) => ({ value: String(s.id), label: String(s.id) }));
+      }
+      case "trial_type": {
+        const tt = (doc["contingency"] as { trial_types?: Array<{ id?: string }> })
+          ?.trial_types;
+        return (tt ?? []).map((t) => ({ value: String(t.id), label: String(t.id) }));
+      }
+      case "strobe":
+        return Object.keys(
+          ((schema.strobes ?? {}) as { codes?: Record<string, unknown> }).codes ?? {},
+        ).map((n) => ({ value: n, label: n }));
+      default:
+        return null;
+    }
+  }, [question, doc, schema]);
+
+  if (options !== null) {
+    return (
+      <SelectRow
+        label={question.label}
+        help={question.help ?? undefined}
+        value={typeof current === "string" ? current : null}
+        baseline={null}
+        options={options}
+        error={
+          question.required && (current === null || current === undefined)
+            ? "This paradigm needs an answer here."
+            : undefined
+        }
+        onChange={onChange}
+      />
+    );
+  }
+
+  const meta = schema.overlay.fields[overlayKeyFor(question.path)];
+  if (meta) {
+    return (
+      <SpecField
+        path={question.path}
+        overlayKey={overlayKeyFor(question.path)}
+        meta={{ ...meta, label: question.label, ...(question.help ? { help: question.help } : {}) }}
+        value={current}
+        baseline={current}
+        schema={schema}
+        doc={doc}
+        placed={placed}
+        onChange={onChange}
+      />
+    );
+  }
+  return (
+    <FieldRow
+      label={question.label}
+      help={question.help ?? undefined}
+      type={typeof current === "number" ? "int" : "string"}
+      value={current}
+      fallback={current ?? ""}
+      baseline={current}
+      onChange={onChange}
+    />
+  );
+}
+
+/** `contingency.stimuli[0].emitter` → `contingency.stimuli[].emitter`. */
+function overlayKeyFor(path: string): string {
+  return path.replace(/\[\d+\]/g, "[]").replace(/\.[a-z0-9_]+\.(?=[a-z_]+$)/i, ".*.");
+}
+
+/**
+ * The shaping ramp, as two questions rather than a nested array.
+ *
+ * WHICH durations move, then WHEN they move. Splitting it that way is what
+ * makes the invariant enforceable: every row has to carry every ramped id,
+ * because the firmware rewrites the whole set at a boundary and a row that
+ * omits one does not leave it alone — it reverts to whatever the row before
+ * left. Editing a raw array of objects would make that trap reachable in one
+ * keystroke; here it is unreachable, because the ops fill the rows.
+ */
+function RampStep({
+  doc,
+  caps,
+  schema,
+  placed,
+  onChange,
+}: {
+  doc: SpecDocument;
+  caps: SpecCapabilities | null;
+  schema: SpecSchema;
+  placed: PlacedDiagnostics | null;
+  onChange: (next: SpecDocument) => void;
+}) {
+  const rows = useMemo(() => {
+    const raw = (doc["policy"] as { stage_schedule?: unknown })?.stage_schedule;
+    return Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+  }, [doc]);
+
+  const rampable = useMemo(
+    () =>
+      (Array.isArray(doc["timing"]) ? (doc["timing"] as Array<Record<string, unknown>>) : [])
+        .map((r) => String(r["id"]))
+        .filter((id) => id !== "t_zero" && id !== "t_poll_interval"),
+    [doc],
+  );
+
+  const ramped = useMemo(() => {
+    const seen = new Set<string>();
+    for (const row of rows) {
+      for (const id of Object.keys((row["set"] as Record<string, unknown>) ?? {})) {
+        seen.add(id);
+      }
+    }
+    return rampable.filter((id) => seen.has(id));
+  }, [rows, rampable]);
+
+  const ctx = {
+    doc,
+    caps: caps ?? EMPTY_CAPS,
+    next: caps ?? EMPTY_CAPS,
+    channels: (schema.channels ?? {}) as ChannelRegistry,
+    strobes: (schema.strobes ?? {}) as StrobeRegistry,
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <ChipsRow
+        label="Durations that ramp"
+        help="Chosen once and carried by every row — a row that omits one reverts it."
+        values={ramped}
+        baseline={[]}
+        options={rampable.map((id) => ({ value: id, label: id }))}
+        onChange={(ids) => onChange(runOp(ctx, { op: "setRampedIds", ids }, {}).doc)}
+      />
+
+      {ramped.length > 0 && (
+        <div className="flex flex-col gap-1.5 rounded-sm border border-halo px-2.5 py-2">
+          <div className="font-mono text-[10px] tracking-wider text-static uppercase">
+            Stages
+          </div>
+          {rows.length === 0 && (
+            <p className="text-[10px] text-static/70">No stages yet.</p>
+          )}
+          {rows.map((row, i) => (
+            <div key={i} className="flex flex-col gap-1 border-t border-halo pt-1.5 first:border-0">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] text-starlight">
+                  from trial {String(row["at_trial"] ?? 0)}
+                </span>
+                <Button
+                  variant="ghost"
+                  onClick={() =>
+                    onChange(runOp(ctx, { op: "removeStageRow", index: i }, {}).doc)
+                  }
+                >
+                  Remove
+                </Button>
+              </div>
+              {ramped.map((id) => {
+                const path = `policy.stage_schedule[${i}].set.${id}`;
+                const meta = schema.overlay.fields["timing[].ms"];
+                if (!meta) return null;
+                return (
+                  <SpecField
+                    key={id}
+                    path={path}
+                    overlayKey="timing[].ms"
+                    meta={{ ...meta, label: id }}
+                    value={getAt(doc, path)}
+                    baseline={getAt(doc, path)}
+                    schema={schema}
+                    doc={doc}
+                    placed={placed}
+                    onChange={(next) => onChange(setAt(doc, path, next))}
+                  />
+                );
+              })}
+            </div>
+          ))}
+          <Button
+            variant="ghost"
+            onClick={() => onChange(runOp(ctx, { op: "addStageRow" }, {}).doc)}
+          >
+            Add a stage
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+//: A stand-in while `capabilities()` is in flight. The ramp ops read neither
+//: field — they touch layer 4 only — so this cannot change what they produce.
+const EMPTY_CAPS: SpecCapabilities = {
+  outcomeClasses: [],
+  requiredTiming: [],
+  knobs: [],
+  template: "four_epoch",
+  templateVersion: 2,
+};

@@ -75,7 +75,10 @@ export type OpInvocation =
   | { op: "setResponseMode"; mode: "n_alternative" | "go_nogo" }
   | { op: "setCommitHold"; on: boolean }
   | { op: "setRetentionDelay"; on: boolean }
-  | { op: "setCorrectRewarded"; on: boolean };
+  | { op: "setCorrectRewarded"; on: boolean }
+  | { op: "addStageRow" }
+  | { op: "removeStageRow"; index: number }
+  | { op: "setRampedIds"; ids: string[] };
 
 export type OpId = OpInvocation["op"];
 
@@ -675,6 +678,9 @@ export function proposeTopology(
     case "addStimulus":
     case "addTrialType":
     case "setCorrectRewarded":
+    case "addStageRow":
+    case "removeStageRow":
+    case "setRampedIds":
       return null;
   }
 }
@@ -695,6 +701,9 @@ const TITLES: Record<OpId, string> = {
   setCommitHold: "Commitment hold",
   setRetentionDelay: "Retention delay",
   setCorrectRewarded: "Reward on correct",
+  addStageRow: "Add a stage to the ramp",
+  removeStageRow: "Remove a stage from the ramp",
+  setRampedIds: "Choose what ramps",
 };
 
 export function runOp(
@@ -734,6 +743,15 @@ export function runOp(
       break;
     case "setRetentionDelay":
       setRetentionDelay(b, ctx, invocation.on);
+      break;
+    case "addStageRow":
+      addStageRow(b);
+      break;
+    case "removeStageRow":
+      removeStageRow(b, invocation.index);
+      break;
+    case "setRampedIds":
+      setRampedIds(b, invocation.ids);
       break;
     case "setCorrectRewarded":
       setCorrectRewarded(b, ctx, invocation.on);
@@ -1291,4 +1309,177 @@ function setCorrectRewarded(b: Op, ctx: OpContext, on: boolean): void {
       "the ports' reward bindings stay declared — harmless, and turning reward back on finds them",
     );
   }
+}
+
+/* ------------------------------------------------------------------------ */
+/* The shaping ramp — policy.stage_schedule                                  */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * The rows of a stage schedule, as records with a numeric `at_trial`.
+ *
+ * TG205 scans them descending with `>=`, so ORDER IS SEMANTIC, not cosmetic:
+ * a schedule listed out of order does not fail, it applies the wrong row. Every
+ * op below re-sorts rather than trusting where the operator typed.
+ */
+function stageRows(doc: SpecDocument): Rec[] {
+  const rows = asRec(doc["policy"])?.["stage_schedule"];
+  return Array.isArray(rows) ? rows.filter((r): r is Rec => asRec(r) !== null) : [];
+}
+
+function sortedRows(rows: Rec[]): Rec[] {
+  return [...rows].sort(
+    (a, b) => (Number(a["at_trial"]) || 0) - (Number(b["at_trial"]) || 0),
+  );
+}
+
+/** Which timing ids this schedule currently ramps, in timing-vector order. */
+function rampedIds(doc: SpecDocument): string[] {
+  const seen = new Set<string>();
+  for (const row of stageRows(doc)) {
+    for (const id of Object.keys(asRec(row["set"]) ?? {})) seen.add(id);
+  }
+  return timingRows(doc)
+    .map((r) => String(r["id"]))
+    .filter((id) => seen.has(id));
+}
+
+/**
+ * Add a boundary to the ramp.
+ *
+ * A new row carries EVERY id the schedule already ramps, because a row that
+ * omits one does not leave it alone -- the firmware rewrites the whole set at a
+ * boundary, so a missing id silently reverts to whatever the previous row left.
+ * That is the partial-row trap TG507 exists for, and the reason this op fills
+ * the row rather than letting the operator build it column by column.
+ *
+ * Values are seeded from the row BEFORE it in trial order, which is the only
+ * honest starting point: a ramp step that begins where the previous step ended
+ * is a no-op until the operator moves it, and a no-op is a better default than
+ * a number this module invented.
+ */
+function addStageRow(b: Op): void {
+  const rows = sortedRows(stageRows(b.doc));
+  const ids = rampedIds(b.doc);
+
+  if (ids.length === 0) {
+    b.blocked =
+      "This task ramps nothing yet. Choose which durations should change across " +
+      "the session first, then add the trials at which they change.";
+    return;
+  }
+
+  const last = rows[rows.length - 1];
+  const lastAt = last ? Number(last["at_trial"]) || 0 : -1;
+  const suggestedAt = lastAt < 0 ? 0 : lastAt + 25;
+
+  const at = b.ask({
+    id: "at_trial",
+    label: "Switches at trial",
+    overlayKey: "policy.stage_schedule[].at_trial",
+    path: `policy.stage_schedule[${rows.length}].at_trial`,
+    options: null,
+    suggested: suggestedAt,
+    why:
+      "The completed-trial count at which this row takes over. Rows are scanned " +
+      "in order, so this must be higher than the row before it.",
+    mandatory: true,
+  });
+  const atTrial = Number(at);
+
+  if (rows.some((r) => Number(r["at_trial"]) === atTrial)) {
+    b.blocked = `There is already a row at trial ${atTrial}. Edit that one instead.`;
+    return;
+  }
+
+  const carried = asRec(last?.["set"]) ?? {};
+  const set: Rec = {};
+  for (const id of ids) {
+    const previous = carried[id];
+    set[id] =
+      previous !== undefined
+        ? previous
+        : (getAt(b.doc, `timing[${timingIndexOf(b.doc, id)}].ms`) ?? 0);
+  }
+
+  const next = sortedRows([...rows, { at_trial: atTrial, set }]);
+  b.set("policy.stage_schedule", next, `stage row at trial ${atTrial}`);
+  b.note(
+    "policy.stage_schedule",
+    `carries all ${ids.length} ramped duration${ids.length === 1 ? "" : "s"} ` +
+      "from the row before it — a row that omits one does not leave it alone",
+  );
+}
+
+/** Remove a boundary. The remaining rows keep their order and their ids. */
+function removeStageRow(b: Op, index: number): void {
+  const rows = sortedRows(stageRows(b.doc));
+  const row = rows[index];
+  if (!row) {
+    b.blocked = "That stage row is no longer there.";
+    return;
+  }
+  if (rows.length === 1) {
+    b.set("policy.stage_schedule", [], "the ramp — every duration holds its base value");
+    return;
+  }
+  const next = rows.filter((_, i) => i !== index);
+  b.set(
+    "policy.stage_schedule",
+    next,
+    `the row at trial ${Number(row["at_trial"]) || 0}`,
+  );
+}
+
+/**
+ * Choose which durations ramp.
+ *
+ * Adding an id fills it into EVERY existing row (seeded from the timing vector,
+ * so nothing changes until the operator moves it); removing one drops it from
+ * every row. Both directions matter for the same reason: the set of ids has to
+ * be identical across rows, or a boundary silently reverts whatever it omits.
+ */
+function setRampedIds(b: Op, ids: string[]): void {
+  const rows = sortedRows(stageRows(b.doc));
+  const wanted = timingRows(b.doc)
+    .map((r) => String(r["id"]))
+    .filter((id) => ids.includes(id));
+
+  if (wanted.length === 0) {
+    b.set("policy.stage_schedule", [], "the ramp — nothing is ramped any more");
+    return;
+  }
+  if (rows.length === 0) {
+    // Nothing to fill yet; the first Add row will carry these.
+    b.set(
+      "policy.stage_schedule",
+      [
+        {
+          at_trial: 0,
+          set: Object.fromEntries(
+            wanted.map((id) => [
+              id,
+              getAt(b.doc, `timing[${timingIndexOf(b.doc, id)}].ms`) ?? 0,
+            ]),
+          ),
+        },
+      ],
+      `a first stage row at trial 0, ramping ${wanted.join(", ")}`,
+    );
+    b.note("policy.stage_schedule", "seeded from the timing vector, so the ramp starts as a no-op");
+    return;
+  }
+
+  const next = rows.map((row) => {
+    const had = asRec(row["set"]) ?? {};
+    const set: Rec = {};
+    for (const id of wanted) {
+      set[id] =
+        had[id] !== undefined
+          ? had[id]
+          : (getAt(b.doc, `timing[${timingIndexOf(b.doc, id)}].ms`) ?? 0);
+    }
+    return { ...row, set };
+  });
+  b.set("policy.stage_schedule", next, `ramped durations → ${wanted.join(", ")}`);
 }

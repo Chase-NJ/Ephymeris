@@ -3,8 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
-import { getCapabilities, getSpecSchema, listSpecs } from "./commands";
-import type { SpecCapabilities, SpecEntry, SpecSchema } from "./types";
+import { getCapabilities, getParadigms, getSpecSchema, listSpecs } from "./commands";
+import type { ParadigmSummary, SpecCapabilities, SpecEntry, SpecSchema } from "./types";
 
 /**
  * The spec library and the form's schema bundle, for the Task routes.
@@ -84,6 +84,52 @@ export function useSpecs(): {
   }, [client, connected]);
 
   return { specs, schema, unavailable, loading };
+}
+
+/*
+ * The paradigm catalogue, cached for the session alongside the schema.
+ *
+ * Static for the life of the process for the same reason the schema is: these
+ * are shipped files, and changing them means shipping a new build. They used to
+ * be a hardcoded table in the frontend, which could only ever name tasks that
+ * already shipped — and once nothing ships, that table could name nothing at
+ * all.
+ */
+let paradigmCache: ParadigmSummary[] | null = null;
+
+export function useParadigms(): {
+  paradigms: ParadigmSummary[];
+  loading: boolean;
+  error: string | null;
+} {
+  const { client, status } = useSidecar();
+  const connected = status === "connected";
+  const [paradigms, setParadigms] = useState<ParadigmSummary[]>(paradigmCache ?? []);
+  const [loading, setLoading] = useState(paradigmCache === null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!connected || paradigmCache !== null) return;
+    let cancelled = false;
+    void getParadigms(client)
+      .then((list) => {
+        if (cancelled) return;
+        paradigmCache = list;
+        setParadigms(list);
+        setError(null);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(errorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, connected]);
+
+  return { paradigms, loading, error };
 }
 
 /**

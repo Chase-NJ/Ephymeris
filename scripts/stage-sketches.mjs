@@ -7,25 +7,30 @@
  * library without staging installer resources, and `scripts/package-resources.mjs`,
  * which copies the result into `src-tauri/resources/sketches`.
  *
- * Two source repos, one destination, because the app needs both and
+ * Two sources, one destination, because the app needs both and
  * `arduino-cli compile` takes exactly one `--libraries` root:
  *
- *   ../Arduino      the lab's behaviour sketches + libraries/BehaviorBox
- *   ../Task-Graph   Arduino/TaskRunner_* + libraries/TaskInterpreter
+ *   ../Arduino        the lab's behaviour sketches + libraries/BehaviorBox
+ *   <repo>/firmware   TaskRunner_* + libraries/TaskInterpreter
+ *
+ * The second used to be a sibling repo (`../Task-Graph/Arduino`). Task-Graph is
+ * part of Ephymeris now, so the interpreter firmware lives in this repo and only
+ * the lab's behaviour sketches are still elsewhere — which is why one of these
+ * two is a configurable path and the other is not.
  *
  * The two `libraries/` collections are MERGED into the single staged root. That
- * is the whole reason this script exists rather than a `cpSync` call: Task-Graph's
- * own `Arduino/build.sh` passes two library roots, Ephymeris passes one, and
- * merging is what lets an interpreter sketch compile through the existing
- * `port.flash` path with no special case anywhere.
+ * is the whole reason this script exists rather than a `cpSync` call: `firmware/
+ * build.sh` passes two library roots, Ephymeris passes one, and merging is what
+ * lets an interpreter sketch compile through the existing `port.flash` path with
+ * no special case anywhere.
  *
  * `sketches/` is gitignored and regenerated. It is a build output, not a mirror —
  * nobody edits it, and committing it would create a copy of the firmware repo
  * inside this one that would drift the first time someone touched a sketch.
  *
- * Sources are overridable so a machine with a different layout can still build:
+ * The behaviour-sketch source is overridable so a machine with a different
+ * layout can still build:
  *   EPHYMERIS_FIRMWARE_REPO   default ../Arduino
- *   EPHYMERIS_TASKGRAPH_REPO  default ../Task-Graph
  */
 
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
@@ -36,21 +41,19 @@ import process from "node:process";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const stagedDir = join(repoRoot, "sketches");
 
-const firmwareRepo = resolve(
+const behaviorRepo = resolve(
   process.env.EPHYMERIS_FIRMWARE_REPO ?? join(repoRoot, "..", "Arduino"),
 );
-const taskGraphRepo = resolve(
-  process.env.EPHYMERIS_TASKGRAPH_REPO ?? join(repoRoot, "..", "Task-Graph"),
-);
+const interpreterDir = join(repoRoot, "firmware");
 
 /**
- * Where Task-Graph's interpreter sketches are filed.
+ * Where the interpreter sketches are filed.
  *
  * They need a category folder like any other sketch — discovery reports a sketch
  * sitting at the root as skipped, because it has nothing to be filed under. The
- * name is doing real work: `Task-Graph/Arduino/README.md` says "nothing in this
- * folder is for animal use", and a box carrying one of these accepts a table and
- * reports whether it fits. It runs no trial and delivers no reward.
+ * name is doing real work: `firmware/README.md` says "nothing in this folder is
+ * for animal use", and a box carrying one of these accepts a table and reports
+ * whether it fits. It runs no trial and delivers no reward.
  */
 const BENCH_CATEGORY = "Bench";
 
@@ -90,19 +93,21 @@ function countSketches(dir) {
   return n;
 }
 
-function requireRepo(path, name, envVar) {
-  if (!existsSync(path)) {
-    console.error(
-      `${name} not found at ${path}\n` +
-        `Sketches ship with the app, so this repo is required to build one.\n` +
-        `Set ${envVar} if yours lives elsewhere.`,
-    );
-    process.exit(1);
-  }
+if (!existsSync(behaviorRepo)) {
+  console.error(
+    `the behaviour firmware repo not found at ${behaviorRepo}\n` +
+      "Sketches ship with the app, so this repo is required to build one.\n" +
+      "Set EPHYMERIS_FIRMWARE_REPO if yours lives elsewhere.",
+  );
+  process.exit(1);
 }
 
-requireRepo(firmwareRepo, "the firmware repo", "EPHYMERIS_FIRMWARE_REPO");
-requireRepo(taskGraphRepo, "the Task-Graph repo", "EPHYMERIS_TASKGRAPH_REPO");
+// Not configurable and not optional: it is part of this repo, so its absence is
+// a broken checkout rather than a machine that is laid out differently.
+if (!existsSync(interpreterDir)) {
+  console.error(`firmware/ missing from this repo (looked in ${interpreterDir})`);
+  process.exit(1);
+}
 
 console.log(`staging sketch library into ${stagedDir}`);
 rmSync(stagedDir, { recursive: true, force: true });
@@ -112,18 +117,17 @@ mkdirSync(stagedDir, { recursive: true });
 // Every top-level folder except `libraries/` is a category, and their names are
 // not hardcoded anywhere — "Utility" and "Olfactory Behavior" are what this lab
 // happens to have, not an enum.
-for (const entry of readdirSync(firmwareRepo, { withFileTypes: true })) {
+for (const entry of readdirSync(behaviorRepo, { withFileTypes: true })) {
   if (!entry.isDirectory() || !isCategoryCandidate(entry.name)) continue;
-  copyTree(join(firmwareRepo, entry.name), join(stagedDir, entry.name), entry.name);
+  copyTree(join(behaviorRepo, entry.name), join(stagedDir, entry.name), entry.name);
 }
 
-// --- 2. Task-Graph's interpreter sketches ----------------------------------
-const tgArduino = join(taskGraphRepo, "Arduino");
-for (const entry of readdirSync(tgArduino, { withFileTypes: true })) {
+// --- 2. this repo's interpreter sketches -----------------------------------
+for (const entry of readdirSync(interpreterDir, { withFileTypes: true })) {
   if (!entry.isDirectory() || !isCategoryCandidate(entry.name)) continue;
-  if (!existsSync(join(tgArduino, entry.name, `${entry.name}.ino`))) continue;
+  if (!existsSync(join(interpreterDir, entry.name, `${entry.name}.ino`))) continue;
   copyTree(
-    join(tgArduino, entry.name),
+    join(interpreterDir, entry.name),
     join(stagedDir, BENCH_CATEGORY, entry.name),
     `${BENCH_CATEGORY}/${entry.name}`,
   );
@@ -137,8 +141,8 @@ const librariesDir = join(stagedDir, "libraries");
 mkdirSync(librariesDir, { recursive: true });
 
 for (const [source, label] of [
-  [join(firmwareRepo, "libraries"), "libraries (firmware)"],
-  [join(tgArduino, "libraries"), "libraries (Task-Graph)"],
+  [join(behaviorRepo, "libraries"), "libraries (behaviour)"],
+  [join(interpreterDir, "libraries"), "libraries (interpreter)"],
 ]) {
   if (!existsSync(source)) continue;
   for (const entry of readdirSync(source, { withFileTypes: true })) {

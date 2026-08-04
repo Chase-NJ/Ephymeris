@@ -16,6 +16,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "check": "node scripts/check.mjs",
     "gen:protocol": "node scripts/gen-protocol.mjs",
     "stage:sketches": "node scripts/stage-sketches.mjs",
     "tauri": "tauri",

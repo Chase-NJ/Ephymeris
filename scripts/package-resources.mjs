@@ -6,10 +6,10 @@
  *   resources/
  *     sidecar/                PyInstaller-frozen sidecar (onedir)
  *       ephymeris-sidecar.exe
- *       _internal/...
- *         vendor/             the vendored Task-Graph compiler, as plain .py on
- *                             disk — it is imported off sys.path, not from the
- *                             archive (see the --add-data note below)
+ *       _internal/ephymeris_sidecar/taskgraph/
+ *         schema/ hardware/ paradigms/   the compiler's data files
+ *         templates/                     plain .py on disk, not in the archive
+ *                                        (see the --add-data note below)
  *     arduino/
  *       arduino-cli.exe       copied from this machine's PATH
  *       data/                 a clean `arduino:avr` install (core + avr-gcc +
@@ -17,7 +17,7 @@
  *                             directory, so nothing from the dev machine's own
  *                             Arduino15 rides along
  *     sketches/               the bundled sketch library, freshly staged by
- *                             stage-sketches.mjs from ../Arduino + ../Task-Graph
+ *                             stage-sketches.mjs from ../Arduino + <repo>/firmware
  *
  * The shell resolves these through Tauri's resource dir and hands their
  * locations to the sidecar via EPHYMERIS_BUNDLED_* env vars; the sidecar
@@ -76,6 +76,36 @@ if (!existsSync(python)) {
   process.exit(1);
 }
 
+// PyInstaller freezes whatever `import ephymeris_sidecar` resolves to in this
+// venv, which is not necessarily the tree beside it. A NON-editable install left
+// over from an earlier `pip install .` shadows the source from every directory
+// except `sidecar/` itself, and the freeze would take the stale copy without a
+// word — an installer built from source that does not match the source. Ask the
+// interpreter where the package actually is rather than assuming.
+let resolved;
+try {
+  resolved = execFileSync(
+    python,
+    ["-c", "import ephymeris_sidecar as m, ephymeris_sidecar.taskgraph; print(m.__file__)"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], cwd: repoRoot },
+  ).trim();
+} catch {
+  console.error(
+    "\nthe venv cannot import ephymeris_sidecar.taskgraph (see above).\n" +
+      `  ${python} -m pip install -e "${sidecarDir}[dev,package]"`,
+  );
+  process.exit(1);
+}
+if (resolve(dirname(resolved)) !== resolve(join(sidecarDir, "ephymeris_sidecar"))) {
+  console.error(
+    `the venv's ephymeris_sidecar is ${resolved}\n` +
+      `but this repo's is ${join(sidecarDir, "ephymeris_sidecar")}.\n` +
+      "Freezing would bundle the wrong one. Reinstall editable:\n" +
+      `  ${python} -m pip install -e "${sidecarDir}[dev,package]"`,
+  );
+  process.exit(1);
+}
+
 // The vendored arduino-cli gRPC stubs (`boards/rpc/cc`, `boards/rpc/google`)
 // are imported via a sys.path entry that `boards/rpc/__init__.py` appends, so
 // PyInstaller's import analysis cannot see them — ship them as data files;
@@ -89,41 +119,66 @@ const rpcData = (sub) => {
   return `${join(sidecarDir, rel)}${sep}${rel}`;
 };
 
-// The vendored Task-Graph compiler ships the same way and for the same reason:
-// `specs/_vendor.py` puts `sidecar/vendor/` on sys.path at runtime, so the
-// analysis cannot see it either. It has to stay plain .py on disk rather than
-// go into the archive, because `templates.load()` imports a module whose name it
-// computes and `templates.source_hash()` reads the file's own bytes — neither
-// works against a frozen module.
-//
-// The excludes are not belt-and-braces. If `taskgraph` ever happens to be
-// pip-installed in the freezing venv, the analysis would find it and bake a
-// SECOND copy into the archive alongside the one on sys.path — and the linter's
-// rule registry and the lru_cached registries are module-level state, so two
-// copies disagree silently. Excluding it makes the sys.path copy the only one
-// that can ever win.
-const vendorData = `${join(sidecarDir, "vendor")}${sep}vendor`;
+// The compiler's templates are the one part of `ephymeris_sidecar` that must
+// stay plain .py ON DISK rather than go into the archive. `templates.load()`
+// resolves a version file by path and `templates.source_hash()` hashes its
+// bytes, so a frozen module would leave the listing's `template_hash` a claim
+// about bytes that never ran. `--collect-data` skips .py by design, so this is
+// the flag that ships them; the family directory has no `__init__.py`, which is
+// what stops `--collect-submodules` from also baking a copy into the archive
+// under the very name `load()` caches.
+const templateRel = join("ephymeris_sidecar", "taskgraph", "templates");
+const templateData = `${join(sidecarDir, templateRel)}${sep}${templateRel}`;
+
+/**
+ * Drop `__pycache__` from the staged tree.
+ *
+ * `--add-data` on a directory takes it whole, and the freeze itself imports the
+ * package it is analysing — so cleaning the source beforehand loses the race
+ * with PyInstaller's own bytecode. Cleaning the output cannot.
+ *
+ * Worth doing rather than tolerating: the point of loading a template from its
+ * path is that the bytes which execute are the bytes `source_hash()` recorded,
+ * and a .pyc sitting next to the source is the one thing that could make that
+ * untrue.
+ */
+function pruneBytecode(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true, recursive: true })) {
+    if (entry.isDirectory() && entry.name === "__pycache__") {
+      rmSync(join(entry.parentPath, entry.name), { recursive: true, force: true });
+    }
+  }
+}
 
 run(python, [
   "-m", "PyInstaller",
   "--noconfirm", "--clean", "--onedir", "--console",
   "--name", "ephymeris-sidecar",
   "--collect-submodules", "ephymeris_sidecar",
+  // schema/, hardware/ and paradigms/ — package data the analysis never sees,
+  // and without which the compiler imports and then cannot compile anything.
+  // `self_check()` is what turns a missing one into a startup line rather than
+  // a first-use failure on a lab machine.
+  "--collect-data", "ephymeris_sidecar",
   "--add-data", rpcData("cc"),
   "--add-data", rpcData("google"),
-  "--add-data", vendorData,
-  "--exclude-module", "taskgraph",
-  "--exclude-module", "templates",
-  // The vendor tree's OWN dependencies, declared by hand for the same reason the
-  // tree is shipped as data: nothing PyInstaller analyses imports them. `yaml`
-  // and `jsonschema` are imported only from vendor/taskgraph/, which the analysis
-  // treats as opaque bytes, so without these the frozen sidecar bundles the
-  // compiler and then cannot import it. `jsonschema` needs --collect-all rather
-  // than --hidden-import because `jsonschema_specifications` ships its metaschemas
-  // as package DATA, and a hidden-import brings the code without them.
-  "--hidden-import", "yaml",
+  "--add-data", templateData,
+  // `jsonschema` needs --collect-all rather than plain analysis because
+  // `jsonschema_specifications` ships its metaschemas as package DATA, and the
+  // import analysis brings the code without them. Nothing to do with how the
+  // compiler is packaged — it was true when the tree was vendored and is still
+  // true now that it is a first-class subpackage.
   "--collect-all", "jsonschema",
   "--collect-all", "jsonschema_specifications",
+  // The generated arduino-cli stubs are shipped as data (above), so the one
+  // place `google.protobuf` is imported from is invisible to the analysis —
+  // `boards/rpc/__init__.py` explicitly expects it from the installed wheel and
+  // vendors only `google.rpc`. Without this the frozen sidecar starts, reports
+  // `grpcio unavailable (No module named 'google.protobuf')` and runs the whole
+  // lab on the subprocess backend. The fallback is doing its job there, which is
+  // exactly why the hole was quiet: nothing breaks, flashing just loses live
+  // compiler streaming on every packaged build.
+  "--collect-all", "google.protobuf",
   "--distpath", "dist",
   "--workpath", "build",
   "--specpath", "build",
@@ -134,6 +189,7 @@ const frozen = join(sidecarDir, "dist", "ephymeris-sidecar");
 rmSync(join(resourcesDir, "sidecar"), { recursive: true, force: true });
 mkdirSync(resourcesDir, { recursive: true });
 cpSync(frozen, join(resourcesDir, "sidecar"), { recursive: true });
+pruneBytecode(join(resourcesDir, "sidecar", "_internal", templateRel));
 console.log(`\nstaged sidecar (${sizeOf(join(resourcesDir, "sidecar"))})`);
 
 // --- 2. bundle arduino-cli -------------------------------------------------

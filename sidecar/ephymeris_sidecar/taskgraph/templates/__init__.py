@@ -10,6 +10,14 @@ change copies to `v2.py`. `topology.template_version` therefore names a file, an
 "a template edit cannot silently change an existing task's graph" is a property of
 the filesystem rather than a promise. The listing header records the template's
 source hash so a violation is visible in review.
+
+A TEMPLATE FAMILY DIRECTORY DELIBERATELY HAS NO `__init__.py`. Nothing imports a
+template by its dotted name -- `load()` below resolves it from the path -- and
+making the directory a package would only create a second way in. That matters
+when frozen: PyInstaller's `--collect-submodules` walks packages, so an
+`__init__.py` here would bake `v2.py` into the archive under the very name
+`load()` caches, and whichever copy got there first would win. The version files
+import absolutely, so they need no parent package to execute.
 """
 
 from __future__ import annotations

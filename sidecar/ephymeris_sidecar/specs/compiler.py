@@ -1,4 +1,4 @@
-"""The vendored Task-Graph compiler, behind an import that is allowed to fail.
+"""The Task-Graph compiler, behind an import that is allowed to fail.
 
 Everything here is pure and thread-safe, which matters because `compile()` runs on
 every keystroke and must therefore run in a worker thread: a 50-150 ms synchronous
@@ -7,12 +7,20 @@ during a live session it would stall the fsync-per-strobe write path. Nothing in
 this module touches the filesystem except to read the registries the compiler
 already caches.
 
-WHY THE IMPORT MAY FAIL, AND WHAT HAPPENS THEN. The compiler needs `jsonschema` and
-`pyyaml`, which is a real weakening of the sidecar's two-dependency rule and a
-weaker exception than the `grpcio` one: `grpcio` has the subprocess backend behind
-it, so a failed wheel degrades flashing rather than removing it, whereas nothing can
-stand in for a compiler. So the fence is drawn around SCOPE instead of capability --
-if the import fails, every `specs.*` handler reports it, the Task screen shows one
+WHY THE IMPORT MAY STILL FAIL, NOW THAT THE COMPILER IS FIRST-PARTY. It used to be
+vendored and reached through a `sys.path` insert, so "the tree is missing" was a
+real cause. It is a subpackage now and cannot be missing without the sidecar being
+missing. Two causes remain and both are real: `jsonschema` or `pyyaml` failing to
+import (`jsonschema` drags the native `rpds-py`, which is the part that actually
+fails to install), and a packaged build that dropped the registry data files --
+which is exactly what `self_check()` below exists to catch.
+
+The fence is unchanged and was never an argument about where the code lived. The
+compiler needs two dependencies the sidecar otherwise does without, a weaker
+exception than the `grpcio` one: `grpcio` has the subprocess backend behind it, so
+a failed wheel degrades flashing rather than removing it, whereas nothing can stand
+in for a compiler. So the fence is drawn around SCOPE instead of capability -- if
+the import fails, every `specs.*` handler reports it, the Task screen shows one
 banner, and the legacy task.json half of the app and the entire session flow are
 untouched. A lab machine that cannot compile a spec can still run sessions.
 """
@@ -27,13 +35,11 @@ from typing import Any
 _IMPORT_ERROR: str | None = None
 
 try:
-    from . import _vendor  # noqa: F401  -- side effect: puts the vendor tree on sys.path
-
-    import templates
-    from taskgraph.emit import bench, canonical, listing, pack
-    from taskgraph.pipeline import CompileResult, compile_text
-    from taskgraph.presentation import placement, presentation
-    from taskgraph.registries import SCHEMA_DIR
+    from ephymeris_sidecar.taskgraph import paths, templates
+    from ephymeris_sidecar.taskgraph.emit import bench, canonical, listing, pack
+    from ephymeris_sidecar.taskgraph.pipeline import CompileResult, compile_text
+    from ephymeris_sidecar.taskgraph.presentation import placement, presentation
+    from ephymeris_sidecar.taskgraph.registries import SCHEMA_DIR, channels
 except Exception as exc:  # pragma: no cover - exercised only on a broken install
     _IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
@@ -87,7 +93,7 @@ def self_check() -> tuple[bool, str | None]:
 def bundled_specs_dir() -> Any:
     """The shipped specs. Read-only -- user edits live under the app data dir."""
     require()
-    return _vendor.ROOT / "specs"
+    return paths.PACKAGE_DIR / "specs"
 
 
 def require() -> None:
@@ -96,7 +102,7 @@ def require() -> None:
 
 
 class SpecCompilerUnavailable(RuntimeError):
-    """The vendored compiler could not be imported. Carries the original error."""
+    """The compiler could not be imported or is unusable. Carries the reason."""
 
 
 def compile(text: str, *, spec_id: str | None = None) -> CompileResult:
@@ -135,15 +141,10 @@ def templates_available() -> tuple[tuple[str, int], ...]:
     return templates.available()
 
 
-def vendor_root() -> Any:
-    """Where the compiler was imported from. Logged at startup; see _vendor.py."""
+def compiler_root() -> Any:
+    """Where the compiler was imported from. Logged at startup."""
     require()
-    return _vendor.ROOT
-
-
-def template_source_hash(name: str, version: int) -> str:
-    require()
-    return templates.source_hash(name, version)
+    return paths.PACKAGE_DIR
 
 
 def registries() -> dict[str, Any]:
@@ -156,6 +157,14 @@ def registries() -> dict[str, Any]:
     and well, every limit's justification -- which is most of what makes a picker
     readable rather than a list of numbers.
 
+    CHANNELS ARE THE ONE EXCEPTION, and it strengthens the rule rather than
+    weakening it. A channel is now two files -- what it means, and where it is on
+    this box -- so there is no single file to serve. What goes on the wire is the
+    COMPOSED view: the compiler's own resolved `ChannelMap`, carrying the logical
+    fields joined to the active pinout. A picker therefore cannot offer a channel
+    the compiler would fail to place, which is a stronger guarantee than serving
+    either half, and the shape the frontend reads is unchanged.
+
     One call on route mount. The frontend must never hold its own copy.
     """
     require()
@@ -163,7 +172,7 @@ def registries() -> dict[str, Any]:
         "schema": _registry("task_spec.v1.json"),
         "overlay": presentation(),
         "strobes": _registry("strobe_vocab.v1.json"),
-        "channels": _registry("channels.v1.json"),
+        "channels": channels().to_json(),
         "limits": _registry("limits.v1.json"),
         "templates": [
             {"name": n, "version": v, "sourceHash": templates.source_hash(n, v)}

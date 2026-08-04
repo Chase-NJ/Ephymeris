@@ -1,0 +1,5 @@
+# TG202 — the same timing id declared twice.
+_expect: TG202
+_why: An id resolves to a vector index; a duplicate makes that ambiguous.
+_append:
+  timing: {id: t_arm, ms: 999}

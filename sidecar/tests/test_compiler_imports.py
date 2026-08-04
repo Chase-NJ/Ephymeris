@@ -1,15 +1,17 @@
-"""The vendored compiler must import once, from the right place, and never raise.
+"""The compiler must import from the package, exactly once, and never raise.
 
-Three separate claims, and the first two are the ones that fail silently:
+Three claims, and the first two are the ones that fail silently:
 
-1. `taskgraph` resolves out of `sidecar/vendor/`, not out of a Task-Graph checkout
-   that happens to be on the developer's PYTHONPATH. Getting this wrong looks
-   perfect on the machine that has both and breaks only in the packaged build.
+1. `taskgraph` is reached ONLY as `ephymeris_sidecar.taskgraph`. A bare top-level
+   `taskgraph` module can now only exist if someone re-adds a `sys.path` insert --
+   which is precisely the arrangement the fold removed, and precisely the one that
+   looks perfect on a machine with a Task-Graph checkout and breaks in the frozen
+   build. Asserting its ABSENCE is the inverted form of the old vendor test.
 
-2. There is exactly ONE `taskgraph` module object. `pipeline.py` calls
+2. There is exactly ONE module object per module. `pipeline.py` calls
    `load_all_rules()` at module scope and `registries` is `lru_cache`d, so a second
    copy means two rule registries and two strobe vocabularies that agree until they
-   don't.
+   don't. A dotted import cannot produce a second copy; a `sys.path` one can.
 
 3. `compile()` never raises for a spec problem. It runs on every keystroke; an
    exception there is an error dialog while someone is mid-word.
@@ -25,12 +27,12 @@ import yaml
 
 from ephymeris_sidecar.specs import compiler
 
-VENDOR = Path(__file__).resolve().parent.parent / "vendor"
-SPECS = sorted((VENDOR / "specs").glob("*.yaml"))
+PACKAGE = Path(__file__).resolve().parent.parent / "ephymeris_sidecar" / "taskgraph"
+SPECS = sorted((PACKAGE / "specs").glob("*.yaml"))
 
 pytestmark = pytest.mark.skipif(
     not compiler.available()[0],
-    reason=f"vendored compiler unavailable: {compiler.available()[1]}",
+    reason=f"task-spec compiler unavailable: {compiler.available()[1]}",
 )
 
 
@@ -54,27 +56,33 @@ def test_self_check_proves_a_real_compile_not_just_an_import():
     assert sorted(p.name for p in compiler.bundled_specs_dir().glob("*.yaml"))
 
 
-def test_taskgraph_resolves_out_of_the_vendor_tree():
-    import taskgraph
-    import templates
+def test_the_compiler_resolves_inside_the_package():
+    from ephymeris_sidecar.taskgraph import pipeline, registries, templates
 
-    for module in (taskgraph, templates):
-        assert Path(module.__file__).resolve().is_relative_to(VENDOR), (
-            f"{module.__name__} imported from {module.__file__}, not from {VENDOR}. "
-            "A Task-Graph checkout on PYTHONPATH will shadow the vendored copy on a "
-            "dev machine and be absent in the packaged build."
+    for module in (pipeline, registries, templates):
+        assert Path(module.__file__).resolve().is_relative_to(PACKAGE), (
+            f"{module.__name__} imported from {module.__file__}, not from {PACKAGE}."
         )
 
 
-def test_there_is_exactly_one_copy_of_the_compiler():
-    doubled = [
-        name
-        for name in sys.modules
-        if name.startswith("ephymeris_sidecar.") and ".taskgraph" in name
-    ]
-    assert not doubled, (
-        "the vendor tree was imported by a dotted path as well as through sys.path, "
-        f"so these modules exist twice: {doubled}. See specs/_vendor.py."
+def test_no_bare_taskgraph_module_exists():
+    """The inverted vendor guard.
+
+    While the compiler was vendored, `taskgraph` was a TOP-LEVEL module put on
+    `sys.path` by hand, and the danger was a Task-Graph checkout shadowing it.
+    There is no checkout and no `sys.path` insert now, so a bare `taskgraph` can
+    only reappear if someone reintroduces one -- which would resurrect the
+    two-module-objects hazard (two rule registries, two vocabularies) that the
+    fold made structurally impossible. Absence is the assertion.
+    """
+    bare = [n for n in sys.modules if n == "taskgraph" or n.startswith("taskgraph.")]
+    assert not bare, (
+        f"a top-level `taskgraph` module is importable: {bare}. The compiler is "
+        "`ephymeris_sidecar.taskgraph`; a bare one means a sys.path insert came "
+        "back, and with it two copies of the rule registry."
+    )
+    assert "templates" not in sys.modules, (
+        "a top-level `templates` module is importable -- same cause, same risk."
     )
 
 

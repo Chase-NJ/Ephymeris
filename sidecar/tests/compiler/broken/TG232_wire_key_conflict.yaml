@@ -1,0 +1,7 @@
+# TG232 — one START token supplying two different values.
+_expect: TG232
+_why: >-
+  Many-to-one wire keys are deliberate (odorPokeHold drives two states, D8) but only
+  while the values agree. Diverged, one silently wins.
+_patch:
+  timing[4].ms: 250

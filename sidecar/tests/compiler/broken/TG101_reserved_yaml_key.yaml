@@ -1,0 +1,21 @@
+# TG101 — a key YAML 1.1 silently resolves to a boolean.
+_expect: TG101
+_why: >-
+  `on:` becomes the boolean True, so the field vanishes rather than looking wrong.
+  Phase 0 lost the outcome trigger field to exactly this (D12). The field is named
+  `trigger` now, but the trap is still there for the next one somebody adds.
+_raw: |
+  spec_version: 1
+  spec_id: reserved_key
+  vocab_version: 1
+  topology:
+    template: four_epoch
+    n_sampling_stages: 1
+    response_mode: n_alternative
+    response_ports: [left_well]
+    on: TIMEOUT
+  timing: [{id: t_zero, ms: 0}]
+  contingency:
+    ports: {left_well: {channel: left_well}}
+    trial_types: [{id: a, stages: []}]
+    outcome_map: {correct: {terminal: TRIAL_CORRECT, delay: t_zero}}

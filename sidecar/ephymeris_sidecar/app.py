@@ -267,11 +267,11 @@ class Application:
     def _log_spec_compiler(self) -> None:
         """Say once, at startup, whether the task-spec compiler came up.
 
-        It is vendored and its two dependencies are the only ones in this sidecar
-        with no fallback behind them, so "is it there" has to be answerable from
-        the log alone -- particularly in a packaged build, where the failure mode
-        is a PyInstaller --add-data entry silently going missing and the only
-        symptom is a banner on one screen nobody has opened yet.
+        Its two dependencies are the only ones in this sidecar with no fallback
+        behind them, so "is it there" has to be answerable from the log alone --
+        particularly in a packaged build, where the failure mode is a PyInstaller
+        data entry silently going missing and the only symptom is a banner on one
+        screen nobody has opened yet.
         """
         from ephymeris_sidecar.specs import compiler
 
@@ -287,7 +287,7 @@ class Application:
             "task spec compiler ready (%d specs, %d template versions, from %s)",
             len(list(compiler.bundled_specs_dir().glob("*.yaml"))),
             len(compiler.templates_available()),
-            compiler.vendor_root(),
+            compiler.compiler_root(),
         )
 
     def _cohort_roots(self) -> list[str]:
@@ -979,7 +979,7 @@ class Application:
         look mute. The interpreter fleet is mid-rollout at 115200/9600, which
         is exactly what transport detect exists for.
         """
-        from taskgraph.transport import client as tg_client
+        from ephymeris_sidecar.taskgraph.transport import client as tg_client
 
         from .ports.upload import PortLink
 
@@ -1000,8 +1000,8 @@ class Application:
         requested = args.get("baud") if isinstance(args.get("baud"), int) else None
 
         def work(address: str, handler) -> dict[str, Any]:  # noqa: ANN001
-            from taskgraph.transport import UploadError
-            from taskgraph.transport import client as tg_client
+            from ephymeris_sidecar.taskgraph.transport import UploadError
+            from ephymeris_sidecar.taskgraph.transport import client as tg_client
 
             from .ports.upload import PortLink
 
@@ -1067,9 +1067,9 @@ class Application:
         requested = args.get("baud") if isinstance(args.get("baud"), int) else None
 
         def work(address: str, handler) -> dict[str, Any]:  # noqa: ANN001
-            from taskgraph.transport import UploadError
-            from taskgraph.transport import client as tg_client
-            from taskgraph.transport.caps import CapabilityError
+            from ephymeris_sidecar.taskgraph.transport import UploadError
+            from ephymeris_sidecar.taskgraph.transport import client as tg_client
+            from ephymeris_sidecar.taskgraph.transport.caps import CapabilityError
 
             from .ports.upload import PortLink
 

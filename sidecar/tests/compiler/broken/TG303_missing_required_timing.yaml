@@ -1,0 +1,6 @@
+# TG303 — the template needs a timing id the spec does not declare.
+_expect: TG303
+_why: >-
+  The required set is COMPUTED from the topology knobs, not a fixed list, so this
+  fires for whichever ids that particular topology actually needs.
+_delete: ["timing[1]"]

@@ -1,0 +1,7 @@
+# TG223 — a channel name not in the pinout registry.
+_expect: TG223
+_why: >-
+  Channel names resolve to pin indices via schema/channels.v1.json (D15). An unknown
+  name has no index, and the compiler cannot invent one.
+_patch:
+  contingency.stimuli[0].emitter: odor_line_99

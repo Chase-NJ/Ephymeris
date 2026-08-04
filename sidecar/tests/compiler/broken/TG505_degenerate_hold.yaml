@@ -1,0 +1,8 @@
+# TG505 — a response hold of zero duration.
+_expect: TG505
+_why: >-
+  Legal, compiles, runs -- and holds nothing, so every poke counts as committed.
+  Syntactically fine and semantically wrong is exactly the class of defect that
+  survives review.
+_patch:
+  timing[6].ms: 0

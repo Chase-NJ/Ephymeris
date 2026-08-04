@@ -1,0 +1,8 @@
+# TG506 — a port with no error_code, on a task that can poke the wrong one.
+_expect: TG506
+_why: >-
+  The wrong-port state binds @ports[$ch].error_code. With the code missing from one
+  port, the board emits NOTHING whenever the subject picks that side — which reads
+  downstream as an animal that never makes that mistake. It compiles cleanly
+  otherwise, which is exactly why the rule exists.
+_delete: ["contingency.ports.left_well.error_code"]

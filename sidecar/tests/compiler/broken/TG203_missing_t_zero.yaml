@@ -1,0 +1,8 @@
+# TG203 — no t_zero in the timing vector.
+_expect: TG203
+_also: [TG303]
+_why: >-
+  Zero-duration nodes carry paired strobes and the response branch guard, and the
+  template emits them for every topology (D2). Without t_zero there is nothing for
+  them to point at.
+_delete: ["timing[0]"]

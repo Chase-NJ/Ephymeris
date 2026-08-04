@@ -1,4 +1,4 @@
-"""Maps the vendored compiler's output onto the wire shapes.
+"""Maps the compiler's output onto the wire shapes.
 
 Pure functions over a CompileResult — no I/O, no state, safe to call from the
 worker thread `specs.compile` runs in. The one non-obvious job here is edge

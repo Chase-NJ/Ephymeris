@@ -1,0 +1,5 @@
+# TG102 — fails JSON Schema validation.
+_expect: TG102
+_why: response_mode is not one of the two permitted values.
+_patch:
+  topology.response_mode: sideways

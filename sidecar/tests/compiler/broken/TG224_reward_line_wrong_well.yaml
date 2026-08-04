@@ -1,0 +1,8 @@
+# TG224 — a port rewarded through the opposite well's fluid line.
+_expect: TG224
+_why: >-
+  fluid_2 serves the RIGHT well, so this delivers water to the wrong side of the box.
+  The graph is well-formed, the pulse fires and the strobe is emitted -- it surfaces
+  only as an animal that will not learn.
+_patch:
+  contingency.ports.left_well.reward_line: fluid_2

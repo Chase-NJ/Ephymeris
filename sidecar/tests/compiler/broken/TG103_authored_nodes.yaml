@@ -1,0 +1,12 @@
+# TG103 — a spec trying to author its own graph.
+_expect: TG103
+_also: [TG102]
+_why: >-
+  The most likely good-faith mistake: wanting a node the template does not emit and
+  reaching for a node list. Arbitrary graphs are not supported (D1); the fix is a new
+  template version.
+_patch:
+  nodes:
+    - {id: my_state, type: DELAY}
+# _also: the schema's additionalProperties:false rejects this too. Both are wanted:
+# the schema stops it, TG103 explains why it is not merely an unknown key.

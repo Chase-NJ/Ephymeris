@@ -1,0 +1,279 @@
+Subject: [PATCH] BehaviorBox: fix the inverted well-unpoke wait, and conform to the model
+
+Three changes, in priority order, from Task-Graph docs/firmware-changes.md.
+Generated against Arduino commit 2ad754c; apply from the repo root with
+
+    git apply /path/to/Task-Graph/Arduino/patches/0001-behaviorbox-model-conformance.patch
+
+--- 0. checkResponse waits for the wrong edge, and can hang the box -------------
+
+INPUT_PULLUP means HIGH = beam intact = unpoked, and digitalRead returns HIGH as
+a truthy 1, so `while (digitalRead(pokedWell))` ran *while the well was unpoked*.
+It waited for a POKE, not the withdrawal its comment describes. Compare :1208,
+which gets the same wait right with an explicit `== LOW`.
+
+Two consequences. WATER_UNPOKE_L/R did not mark withdrawal: across 220 reward
+bouts in the 5 modern recorded sessions, 82 (37%) have a 0 ms STOP_FLUID ->
+WATER_UNPOKE gap and the rest are exact multiples of the 5 ms poll -- the loop
+spinning until the animal RE-POKED. Any consumption duration derived from it is
+wrong. And with no timeout, an animal that left during the reward pulse and did
+not return hung the box with an animal in it; the equivalence battery reproduced
+that in ~1% of randomised trials.
+
+--- 1. Cue-off order: emit the behavioural strobe first ----------------------
+
+LIGHTS_OFF preceded its partner on the three abort paths and followed it on the
+success path. The behavioural strobe reports what happened; LIGHTS_OFF reports a
+consequence of it, so the event belongs first. Only strobe order moves -- every
+digitalWrite and every delay stays exactly where it was, so hardware timing and
+Phase 5 scope work are unaffected.
+
+--- 2. An omission must announce itself -------------------------------------
+
+A subject that sampled and then did nothing emitted nothing, so END_INCORRECT_ITI
+-- reachable from wrong port, omission, and response-hold failure alike -- was
+the only evidence, and the outcome class was unrecoverable. BF_RESP_OMIT = 262 is
+a new number in a free range; nothing is renumbered or repurposed, and sessions
+recorded before this change simply lack the code.
+
+--- The task.json hunks ------------------------------------------------------
+
+BehaviorBox.h calls its BF_* block a "mirror of task.json `strobes`". A code the
+firmware emits but the table does not name reaches Ephymeris as a bare number, so
+the seven task.json strobe tables gain the same entry. Nothing else in task.json
+is touched.
+
+--- Verification -------------------------------------------------------------
+
+Task-Graph tests/test_firmware_patch.py applies this patch to a throwaway copy of
+BehaviorBox.h and runs the Gate B battery against it: 9000 randomised trials over
+three seeds produce zero divergence from the v2 model table and zero hangs on
+either side. The same battery against the unpatched header is the negative
+control, and it diverges.
+
+diff --git a/libraries/BehaviorBox/BehaviorBox.h b/libraries/BehaviorBox/BehaviorBox.h
+index b11e9d1..2bfe138 100644
+--- a/libraries/BehaviorBox/BehaviorBox.h
++++ b/libraries/BehaviorBox/BehaviorBox.h
+@@ -114,12 +114,13 @@ const int Fluids[NUM_FLUIDS] = {
+ #define BF_FLUID_R              253 // Delivered at start of first drop on right
+ #define BF_WATER_UNPOKE_L       254 // Sent when rat unpokes left well
+ #define BF_WATER_UNPOKE_R       255 // Sent when rat unpokes right well
+ #define BF_WATER_POKE_NONE      256 // After a correct response on a No-Go trial
+ #define BF_WATER_POKE_ERROR_L   257 // Sent when rat incorrectly responds at left well
+ #define BF_WATER_POKE_ERROR_R   258 // Sent when rat incorrectly responds at right well
++#define BF_RESP_OMIT            262 // Response window expired after complete sampling
+ #define BF_STOP_FLUID_G_R       357 // Sent when we stop right-well fluid delivery
+ #define BF_STOP_FLUID_G_L       369 // Sent when we stop left-well fluid delivery
+ 
+ /* Distinct Odor-ON codes (one per odor line the task presents) */
+ #define BF_ODOR_1_ON 101
+ #define BF_ODOR_2_ON 102
+@@ -1085,13 +1086,18 @@ inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
+         break;
+       }
+       delay(p.pollingRate);
+     }
+ 
+     if (pokedWell == SENTINEL)
++    { /* Say so. END_INCORRECT_ITI is reached by three different outcomes, so
++         without this the class is recoverable only from the PRECEDING strobe --
++         and an omission has none. */
++      emitStrobe(clock, BF_RESP_OMIT);
+       return OUTCOME_ERROR; // 2. No response within the window
++    }
+ 
+     if (pokedWell != trial.correctWell)
+     {
+       emitStrobe(clock, pokedWell == rightWell ? BF_WATER_POKE_ERROR_R : BF_WATER_POKE_ERROR_L);
+       return OUTCOME_ERROR; // Wrong well
+     }
+@@ -1100,13 +1106,13 @@ inline TrialOutcome checkResponse(const TrialType &trial, const TaskParams &p,
+     { // 3. Correct well -- verify the hold
+       emitStrobe(clock, pokedWell == rightWell ? BF_WATER_UNPOKE_EARLY_R : BF_WATER_UNPOKE_EARLY_L);
+       return OUTCOME_HOLD_FAIL;
+     }
+ 
+     deliverReward(trial, p, clock); // 4. Held -- deliver reward
+-    while (digitalRead(pokedWell))  // Await well unpoke
++    while (digitalRead(pokedWell) == LOW) // Await well unpoke
+       delay(p.pollingRate);
+     /* The consummatory bout's end, and the only place the firmware actually
+        observes the animal leaving a well. The other two exits are already
+        reported by more specific codes -- WATER_UNPOKE_EARLY_* when the hold
+        failed, and nothing at all on a wrong-well answer, where the firmware
+        returns immediately and never waits for the withdrawal. */
+@@ -1152,14 +1158,14 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
+   while (digitalRead(odorPort) == HIGH)
+   { // 4. Await the odor poke
+     if (millis() - waitStart >= (unsigned long)p.odorPortTimeout)
+     {
+       digitalWrite(trialLight, LOW);
+       digitalWrite(trial.odorPin, LOW);
+-      emitStrobe(clock, BF_LIGHTS_OFF);
+       emitStrobe(clock, BF_LAZY_RAT);
++      emitStrobe(clock, BF_LIGHTS_OFF);
+       if (policy && policy->selector) // abstention feeds the bias estimate too
+         policy->selector->recordAbstention(trial.correctWell == rightWell);
+       if (policy && policy->abstention)
+         delay(policy->abstention->nextDelay(escalationArmed(p, completedTrials)));
+       else
+         delay(p.lazyRatDelay);
+@@ -1174,14 +1180,14 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
+      poke-to-reset loophole, which the old EZ copy of this loop had reopened. */
+ 
+   if (!verifySensor(odorPort, p.odorPokeHold, p.pollingRate))
+   { // 5. Verify the pre-odor hold
+     digitalWrite(trialLight, LOW);
+     digitalWrite(trial.odorPin, LOW);
+-    emitStrobe(clock, BF_LIGHTS_OFF);
+     emitStrobe(clock, BF_ODOR_UNPOKE_EARLY);
++    emitStrobe(clock, BF_LIGHTS_OFF);
+     if (policy && policy->selector) // poke-and-bail still counts as not-engaging
+       policy->selector->recordAbstention(trial.correctWell == rightWell);
+     delay(p.noPokeHoldTimeout);
+     return false; // Error 2: didn't hold before the vac closed
+   }
+ 
+@@ -1190,14 +1196,14 @@ inline bool runTrial(const TrialType &trial, TaskParams &p, TrialClock &clock,
+ 
+   if (!verifySensor(odorPort, p.odorPokeHold, p.pollingRate))
+   { // 7. Verify the odor-sampling hold
+     digitalWrite(trialLight, LOW);
+     digitalWrite(trial.odorPin, LOW);
+     digitalWrite(vac, LOW);
+-    emitStrobe(clock, BF_LIGHTS_OFF);
+     emitStrobe(clock, BF_ODOR_UNPOKE_EARLY);
++    emitStrobe(clock, BF_LIGHTS_OFF);
+     if (policy && policy->selector)
+       policy->selector->recordAbstention(trial.correctWell == rightWell);
+     delay(p.noPokeHoldTimeout);
+     return false; // Error 3: didn't sample long enough
+   }
+ 
+diff --git a/Olfactory Behavior/01_Shaping/shaping_GL/task.json b/Olfactory Behavior/01_Shaping/shaping_GL/task.json
+index fe5c7ac..f96ff33 100644
+--- a/Olfactory Behavior/01_Shaping/shaping_GL/task.json	
++++ b/Olfactory Behavior/01_Shaping/shaping_GL/task.json	
+@@ -601,12 +601,13 @@
+     "253": "FLUID_R",
+     "254": "WATER_UNPOKE_L",
+     "255": "WATER_UNPOKE_R",
+     "256": "WATER_POKE_NONE",
+     "257": "WATER_POKE_ERROR_L",
+     "258": "WATER_POKE_ERROR_R",
++    "262": "RESP_OMIT",
+     "357": "STOP_FLUID_G_R",
+     "369": "STOP_FLUID_G_L"
+   },
+   "liveMetrics": [
+     {
+       "id": "p_l_odor3",
+diff --git a/Olfactory Behavior/01_Shaping/shaping_GL_EZ/task.json b/Olfactory Behavior/01_Shaping/shaping_GL_EZ/task.json
+index 97e5a05..53f2408 100644
+--- a/Olfactory Behavior/01_Shaping/shaping_GL_EZ/task.json	
++++ b/Olfactory Behavior/01_Shaping/shaping_GL_EZ/task.json	
+@@ -599,12 +599,13 @@
+     "253": "FLUID_R",
+     "254": "WATER_UNPOKE_L",
+     "255": "WATER_UNPOKE_R",
+     "256": "WATER_POKE_NONE",
+     "257": "WATER_POKE_ERROR_L",
+     "258": "WATER_POKE_ERROR_R",
++    "262": "RESP_OMIT",
+     "357": "STOP_FLUID_G_R",
+     "369": "STOP_FLUID_G_L"
+   },
+   "liveMetrics": [
+     {
+       "id": "p_l_odor3",
+diff --git a/Olfactory Behavior/01_Shaping/shaping_GR/task.json b/Olfactory Behavior/01_Shaping/shaping_GR/task.json
+index 0eea561..f14fa21 100644
+--- a/Olfactory Behavior/01_Shaping/shaping_GR/task.json	
++++ b/Olfactory Behavior/01_Shaping/shaping_GR/task.json	
+@@ -601,12 +601,13 @@
+     "253": "FLUID_R",
+     "254": "WATER_UNPOKE_L",
+     "255": "WATER_UNPOKE_R",
+     "256": "WATER_POKE_NONE",
+     "257": "WATER_POKE_ERROR_L",
+     "258": "WATER_POKE_ERROR_R",
++    "262": "RESP_OMIT",
+     "357": "STOP_FLUID_G_R",
+     "369": "STOP_FLUID_G_L"
+   },
+   "liveMetrics": [
+     {
+       "id": "p_r_odor1",
+diff --git a/Olfactory Behavior/01_Shaping/shaping_GR_EZ/task.json b/Olfactory Behavior/01_Shaping/shaping_GR_EZ/task.json
+index a284082..1c52409 100644
+--- a/Olfactory Behavior/01_Shaping/shaping_GR_EZ/task.json	
++++ b/Olfactory Behavior/01_Shaping/shaping_GR_EZ/task.json	
+@@ -599,12 +599,13 @@
+     "253": "FLUID_R",
+     "254": "WATER_UNPOKE_L",
+     "255": "WATER_UNPOKE_R",
+     "256": "WATER_POKE_NONE",
+     "257": "WATER_POKE_ERROR_L",
+     "258": "WATER_POKE_ERROR_R",
++    "262": "RESP_OMIT",
+     "357": "STOP_FLUID_G_R",
+     "369": "STOP_FLUID_G_L"
+   },
+   "liveMetrics": [
+     {
+       "id": "p_r_odor1",
+diff --git a/Olfactory Behavior/02_Bdisc/GRGL_2-Odor/task.json b/Olfactory Behavior/02_Bdisc/GRGL_2-Odor/task.json
+index 78266fd..6e0a275 100644
+--- a/Olfactory Behavior/02_Bdisc/GRGL_2-Odor/task.json	
++++ b/Olfactory Behavior/02_Bdisc/GRGL_2-Odor/task.json	
+@@ -379,12 +379,13 @@
+     "253": "FLUID_R",
+     "254": "WATER_UNPOKE_L",
+     "255": "WATER_UNPOKE_R",
+     "256": "WATER_POKE_NONE",
+     "257": "WATER_POKE_ERROR_L",
+     "258": "WATER_POKE_ERROR_R",
++    "262": "RESP_OMIT",
+     "357": "STOP_FLUID_G_R",
+     "369": "STOP_FLUID_G_L"
+   },
+   "liveMetrics": [
+     {
+       "id": "p_r_odor1",
+diff --git a/Olfactory Behavior/02_Bdisc/GRGL_2-Odor_EZ/task.json b/Olfactory Behavior/02_Bdisc/GRGL_2-Odor_EZ/task.json
+index b0dc2ad..5fe2329 100644
+--- a/Olfactory Behavior/02_Bdisc/GRGL_2-Odor_EZ/task.json	
++++ b/Olfactory Behavior/02_Bdisc/GRGL_2-Odor_EZ/task.json	
+@@ -640,12 +640,13 @@
+     "253": "FLUID_R",
+     "254": "WATER_UNPOKE_L",
+     "255": "WATER_UNPOKE_R",
+     "256": "WATER_POKE_NONE",
+     "257": "WATER_POKE_ERROR_L",
+     "258": "WATER_POKE_ERROR_R",
++    "262": "RESP_OMIT",
+     "357": "STOP_FLUID_G_R",
+     "369": "STOP_FLUID_G_L"
+   },
+   "liveMetrics": [
+     {
+       "id": "p_r_odor1",
+diff --git a/Olfactory Behavior/02_Bdisc/GRGL_Sim/task.json b/Olfactory Behavior/02_Bdisc/GRGL_Sim/task.json
+index e15d8b6..7eec6c0 100644
+--- a/Olfactory Behavior/02_Bdisc/GRGL_Sim/task.json	
++++ b/Olfactory Behavior/02_Bdisc/GRGL_Sim/task.json	
+@@ -379,12 +379,13 @@
+     "253": "FLUID_R",
+     "254": "WATER_UNPOKE_L",
+     "255": "WATER_UNPOKE_R",
+     "256": "WATER_POKE_NONE",
+     "257": "WATER_POKE_ERROR_L",
+     "258": "WATER_POKE_ERROR_R",
++    "262": "RESP_OMIT",
+     "357": "STOP_FLUID_G_R",
+     "369": "STOP_FLUID_G_L"
+   },
+   "liveMetrics": [
+     {
+       "id": "p_r_odor1",

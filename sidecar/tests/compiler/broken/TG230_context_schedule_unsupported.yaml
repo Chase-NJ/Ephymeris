@@ -1,0 +1,11 @@
+# TG230 — a reversal the table format cannot yet carry.
+_expect: TG230
+_why: >-
+  TaskTable.h has no record for layer-2 block boundaries. Silently dropping this
+  would be a reversal the spec declares, the listing shows, and the board never
+  performs -- exactly the failure class this project exists to close (D16).
+_patch:
+  contingency.context_schedule:
+    - at_trial: 200
+      context: B
+      targets: {go_right: left_well, go_left: right_well}

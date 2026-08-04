@@ -1,0 +1,147 @@
+Subject: [PATCH] Open every sketch at 115200
+
+Eight sketches, one constant each. Nothing else in this repo changes.
+
+WHY. At 9600 the seventh strobe in a burst blocks the trial loop for 10-12 ms and
+a 16-strobe burst spans 89 ms, against 7 ms at 115200 (docs/spikes/transport.md,
+measured on a Mega 2560). Every emission a current task produces is depth 2, which
+measures 0 ms at BOTH rates -- so this buys nothing today and buys an order of
+magnitude of headroom before a task with more simultaneous strobes needs it.
+
+115200 is the highest rate openable by generic POSIX tools: macOS stty rejects
+250000 and above, so screen/minicom/cu cannot reach them, and losing
+`screen /dev/cu.usbmodem... <rate>` as a 2 a.m. debugging path is a poor trade for
+headroom the measurements say is unobservable.
+
+READ THIS BEFORE APPLYING -- THE HOST MUST MOVE TOO.
+
+A baud mismatch is not a clean error. It is a board that never answers, which
+reads as a dead board: a mismatched console prints nothing legible rather than
+reporting anything. Ephymeris' `defaultBaud` is a PERSISTED SETTING, so changing
+its compiled default does not change a machine that already has a settings file --
+someone has to set it in Config -> Hardware on each machine, or a box flashed from
+this patch is mute until they do.
+
+Task-Graph/docs/baud-rollout.md has the sequence, the full site inventory, and the
+argument for not doing this as a flag day at all.
+
+diff --git a/Olfactory Behavior/01_Shaping/shaping_GL/shaping_GL.ino b/Olfactory Behavior/01_Shaping/shaping_GL/shaping_GL.ino
+index 0d99366..adf8a01 100644
+--- a/Olfactory Behavior/01_Shaping/shaping_GL/shaping_GL.ino	
++++ b/Olfactory Behavior/01_Shaping/shaping_GL/shaping_GL.ino	
+@@ -19,9 +19,9 @@ Purpose:
+ 
+ #include <BehaviorBox.h> // pins, strobes, TaskParams + the shared trial runner
+ 
+ /* ======== Session wiring ======== */
+-const int baudRate = 9600;    // Serial baud (matches the app)
++const int baudRate = 115200;    // Serial baud (matches the app)
+ const int MAX_TRIALS = 1000;  // Compile-time size of trials[]; params.numTrials
+                               // is the runtime cap and is clamped to it below.
+ int currentTrial = 0;         // Index into trials[]
+ bool sessionComplete = false; // Session start / end guard
+diff --git a/Olfactory Behavior/01_Shaping/shaping_GL_EZ/shaping_GL_EZ.ino b/Olfactory Behavior/01_Shaping/shaping_GL_EZ/shaping_GL_EZ.ino
+index 0244b76..f893a46 100644
+--- a/Olfactory Behavior/01_Shaping/shaping_GL_EZ/shaping_GL_EZ.ino	
++++ b/Olfactory Behavior/01_Shaping/shaping_GL_EZ/shaping_GL_EZ.ino	
+@@ -22,9 +22,9 @@ Purpose:
+ 
+ #include <BehaviorBox.h> // pins, strobes, TaskParams + the shared trial runner
+ 
+ /* ======== Session wiring ======== */
+-const int baudRate = 9600;    // Serial baud (matches the app)
++const int baudRate = 115200;    // Serial baud (matches the app)
+ const int MAX_TRIALS = 1000;  // Compile-time size of trials[]; params.numTrials
+                               // is the runtime cap and is clamped to it below.
+ int currentTrial = 0;         // Index into trials[]
+ bool sessionComplete = false; // Session start / end guard
+diff --git a/Olfactory Behavior/01_Shaping/shaping_GR/shaping_GR.ino b/Olfactory Behavior/01_Shaping/shaping_GR/shaping_GR.ino
+index dc77bdb..a85b6a6 100644
+--- a/Olfactory Behavior/01_Shaping/shaping_GR/shaping_GR.ino	
++++ b/Olfactory Behavior/01_Shaping/shaping_GR/shaping_GR.ino	
+@@ -19,9 +19,9 @@ Purpose:
+ 
+ #include <BehaviorBox.h> // pins, strobes, TaskParams + the shared trial runner
+ 
+ /* ======== Session wiring ======== */
+-const int baudRate = 9600;    // Serial baud (matches the app)
++const int baudRate = 115200;    // Serial baud (matches the app)
+ const int MAX_TRIALS = 1000;  // Compile-time size of trials[]; params.numTrials
+                               // is the runtime cap and is clamped to it below.
+ int currentTrial = 0;         // Index into trials[]
+ bool sessionComplete = false; // Session start / end guard
+diff --git a/Olfactory Behavior/01_Shaping/shaping_GR_EZ/shaping_GR_EZ.ino b/Olfactory Behavior/01_Shaping/shaping_GR_EZ/shaping_GR_EZ.ino
+index 455a21c..a866c9f 100644
+--- a/Olfactory Behavior/01_Shaping/shaping_GR_EZ/shaping_GR_EZ.ino	
++++ b/Olfactory Behavior/01_Shaping/shaping_GR_EZ/shaping_GR_EZ.ino	
+@@ -22,9 +22,9 @@ Purpose:
+ 
+ #include <BehaviorBox.h> // pins, strobes, TaskParams + the shared trial runner
+ 
+ /* ======== Session wiring ======== */
+-const int baudRate = 9600;    // Serial baud (matches the app)
++const int baudRate = 115200;    // Serial baud (matches the app)
+ const int MAX_TRIALS = 1000;  // Compile-time size of trials[]; params.numTrials
+                               // is the runtime cap and is clamped to it below.
+ int currentTrial = 0;         // Index into trials[]
+ bool sessionComplete = false; // Session start / end guard
+diff --git a/Olfactory Behavior/02_Bdisc/GRGL_2-Odor/GRGL_2-Odor.ino b/Olfactory Behavior/02_Bdisc/GRGL_2-Odor/GRGL_2-Odor.ino
+index 5e270d4..fb3ce4f 100644
+--- a/Olfactory Behavior/02_Bdisc/GRGL_2-Odor/GRGL_2-Odor.ino	
++++ b/Olfactory Behavior/02_Bdisc/GRGL_2-Odor/GRGL_2-Odor.ino	
+@@ -26,9 +26,9 @@ Purpose:
+ 
+ #include <BehaviorBox.h> // pins, strobes, TaskParams, session policy + the shared trial runner
+ 
+ /* ======== Session wiring ======== */
+-const int baudRate = 9600;    // Serial baud (matches the app)
++const int baudRate = 115200;    // Serial baud (matches the app)
+ int currentTrial = 0;         // # of trials advanced this session
+ bool sessionComplete = false; // Session start / end guard
+ 
+ TaskParams params; // every tunable, filled from the START line (BehaviorBox.h)
+diff --git a/Olfactory Behavior/02_Bdisc/GRGL_2-Odor_EZ/GRGL_2-Odor_EZ.ino b/Olfactory Behavior/02_Bdisc/GRGL_2-Odor_EZ/GRGL_2-Odor_EZ.ino
+index b42324e..9958b33 100644
+--- a/Olfactory Behavior/02_Bdisc/GRGL_2-Odor_EZ/GRGL_2-Odor_EZ.ino	
++++ b/Olfactory Behavior/02_Bdisc/GRGL_2-Odor_EZ/GRGL_2-Odor_EZ.ino	
+@@ -28,9 +28,9 @@ Purpose:
+ 
+ #include <BehaviorBox.h> // pins, strobes, TaskParams, session policy + the shared trial runner
+ 
+ /* ======== Session wiring ======== */
+-const int baudRate = 9600;    // Serial baud (matches the app)
++const int baudRate = 115200;    // Serial baud (matches the app)
+ int currentTrial = 0;         // # of trials advanced this session
+ bool sessionComplete = false; // Session start / end guard
+ 
+ TaskParams params; // every tunable, filled from the START line (BehaviorBox.h)
+diff --git a/Olfactory Behavior/02_Bdisc/GRGL_Sim/GRGL_Sim.ino b/Olfactory Behavior/02_Bdisc/GRGL_Sim/GRGL_Sim.ino
+index 168211d..1f13ea4 100644
+--- a/Olfactory Behavior/02_Bdisc/GRGL_Sim/GRGL_Sim.ino	
++++ b/Olfactory Behavior/02_Bdisc/GRGL_Sim/GRGL_Sim.ino	
+@@ -74,9 +74,9 @@ checkResponse() in BehaviorBox.h):
+ */
+ 
+ #include <BehaviorBox.h> // strobe vocabulary, TaskParams, the shared anti-bias selector
+ 
+-const int baudRate = 9600; // must match the app
++const int baudRate = 115200; // must match the app
+ 
+ /* ===== Real-time by default =====
+    1 = every gap is the real phase duration, which is the point of the sketch.
+    A larger value divides every delay in ONE place (emit() + interTrialGap()),
+diff --git a/Utility/BOX_Utility/BOX_Utility.ino b/Utility/BOX_Utility/BOX_Utility.ino
+index 0799c00..7d24f74 100644
+--- a/Utility/BOX_Utility/BOX_Utility.ino
++++ b/Utility/BOX_Utility/BOX_Utility.ino
+@@ -63,9 +63,9 @@ SAFETY
+ ==================================*/
+ 
+ #include <BehaviorBox.h> // shared pinout + CommandReader + emitStatus
+ 
+-const int baudRate = 9600;                      // Serial baud (matches the app)
++const int baudRate = 115200;                      // Serial baud (matches the app)
+ const int pollingRate = 2;                      // IR sensor polling (ms)
+ const unsigned long STATUS_HEARTBEAT_MS = 1000; // re-report at least this often
+ 
+ /* ---- Channel model ---------------------------------------------------- *

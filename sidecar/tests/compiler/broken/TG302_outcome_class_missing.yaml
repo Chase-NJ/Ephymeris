@@ -1,0 +1,6 @@
+# TG302 — the topology produces an outcome the spec does not declare.
+_expect: TG302
+_why: >-
+  Deleting `wrong` leaves the template with nowhere to route a non-target poke.
+  A missing class is a missing edge, which is a hang.
+_delete: ["contingency.outcome_map.wrong"]

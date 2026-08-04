@@ -1,0 +1,9 @@
+# TG100 — the document does not parse as YAML at all.
+_expect: TG100
+_why: >-
+  An unterminated flow mapping. Caught before anything else can look at it, which
+  is why the loader reports it separately from schema validation.
+_raw: |
+  spec_version: 1
+  spec_id: broken
+  topology: {template: four_epoch

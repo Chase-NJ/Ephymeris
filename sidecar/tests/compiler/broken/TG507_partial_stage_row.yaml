@@ -1,0 +1,13 @@
+# TG507 — a stage row that does not restate every entry the schedule touches.
+_expect: TG507
+_why: >-
+  The board applies ONE row -- the latest whose trial count has been reached -- so
+  t_resp_win here keeps whatever it held rather than reverting to a default or
+  inheriting from row 0. Under firmware's applyStage() every row rewrote the same
+  four hard-coded fields, so completeness was structural; addressing entries by
+  index makes a partial row expressible for the first time, and it is silently
+  wrong for the rest of the session.
+_patch:
+  policy.stage_schedule:
+    - {at_trial: 0,  set: {t_commit_hold: 10,  t_resp_win: 10000}}
+    - {at_trial: 20, set: {t_commit_hold: 100}}

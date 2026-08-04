@@ -1,0 +1,6 @@
+# TG304 — an outcome with no declared trigger.
+_expect: TG304
+_why: >-
+  Which trigger routes to which outcome is the whole mechanism behind go/no-go
+  inverting the meaning of TIMEOUT (D9). Absent, the template would have to guess.
+_delete: ["contingency.outcome_map.correct.trigger"]

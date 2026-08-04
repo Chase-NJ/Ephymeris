@@ -23,7 +23,7 @@ Purpose:
 #include <BehaviorBox.h> // pins, strobes, TaskParams + the shared trial runner
 
 /* ======== Session wiring ======== */
-const int baudRate = 9600;    // Serial baud (matches the app)
+const int baudRate = 115200;    // Serial baud (matches the app)
 const int MAX_TRIALS = 1000;  // Compile-time size of trials[]; params.numTrials
                               // is the runtime cap and is clamped to it below.
 int currentTrial = 0;         // Index into trials[]

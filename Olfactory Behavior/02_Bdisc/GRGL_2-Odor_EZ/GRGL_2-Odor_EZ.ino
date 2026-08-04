@@ -29,7 +29,7 @@ Purpose:
 #include <BehaviorBox.h> // pins, strobes, TaskParams, session policy + the shared trial runner
 
 /* ======== Session wiring ======== */
-const int baudRate = 9600;    // Serial baud (matches the app)
+const int baudRate = 115200;    // Serial baud (matches the app)
 int currentTrial = 0;         // # of trials advanced this session
 bool sessionComplete = false; // Session start / end guard
 

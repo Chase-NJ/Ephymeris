@@ -167,10 +167,39 @@ it lands under the right heading without being registered anywhere, and one that
 matches nothing reads honestly as Custom.
 
 **The wizard** (`routes/TaskNew.tsx`, `/task/new`) is a route rather than a modal
-for the reasons §7 gives the bench — it needs the canvas at a usable size, `Modal`
-is capped, the unsaved guard is per-route, and arriving should be deliberate. Each
-step recompiles, so a step that leaves the task unable to compile says so there
-rather than at the end.
+for the reasons §7 gives the bench — `Modal` is capped, the unsaved guard is
+per-route, and arriving should be deliberate. Each step recompiles, so a step that
+leaves the task unable to compile says so there rather than at the end.
+
+> [!IMPORTANT]
+> **The wizard is not the editor, and does not show the machine.** It was a
+> two-pane screen for a while — `SpecCanvas` on the left, the step's questions in
+> a rail on the right — so that "it compiles at every step" was something an
+> operator could watch rather than something we claimed. What that actually did
+> was make creating a task look like the Designer and read like an editor you had
+> to already understand: twenty-six nodes and thirty-six edges restructuring
+> themselves on every keystroke, in front of someone who has not yet decided how
+> many odours there are.
+>
+> So the wizard now mirrors the **guided session flow** instead — a `TaskJourney`
+> rail of constellation stars across the top, one hint line naming the next
+> action, and a centred column of `hud` panels over the rig's own sky, all of it
+> the same shape as `/session/new` because it is the same kind of errand. The rail
+> settles to `COMPACT_SCALE` on Review, the way the session flow's does on
+> reaching Mission Control. The compile is still live and still per-step; what
+> survives of the canvas is the states/edges count in the corner and the
+> diagnostics panel, and the graph belongs to the Designer.
+
+**`TaskShape` is what the wizard shows instead** (`components/specs/TaskShape.tsx`),
+above every step and never replaced by one. Four epoch cards carry a one-line
+readout each and light up when the current step is the one that edits them, and
+beneath is **the mapping, which is the task**: one row per trial type, its stage
+chips, an arrow, and the target port with the pin the rig says it is. That row is
+also where a sequence is reordered — the chips drag or click-to-carry to rewrite
+`trial_types[].stages` — which is why the standalone "Presentation order" block is
+gone. A chain of stimuli and the target it points at are one fact, and showing
+them in two places invites them to disagree. Chips render without drag chrome when
+there is one stage, rather than inviting a gesture that cannot do anything.
 
 **From scratch is the default, and it is still a paradigm.** `/task/new` opens on
 step 1 with `paradigms/blank.yaml` already loaded — the smallest topology that
@@ -220,13 +249,20 @@ so a 10 ms hold beside a 60 s window stays visible, which means **the number
 printed on each segment is the authority and the picture is only for the ratio**.
 *Where it can answer* prints each port's channel and reward line with the pin the
 rig says each one is, from a one-shot `hardware.get`; a channel the rig has no
-entry for reads "not wired" rather than inventing a pin. *Presentation order*
-appears only where ordering is meaningful — two or more sampling stages — and
-drags or click-carries to rewrite `trial_types[].stages`.
+entry for reads "not wired" rather than inventing a pin. Reordering a sequence
+lives in `TaskShape`'s trial-type rows rather than in a block of its own, for the
+reason given above.
 
-When the library is empty, `Task.tsx` renders the paradigm cards **inline in the
-hero**: with nothing shipped, that is the first-run experience rather than a
-footnote. `components/specs/ParadigmCard.tsx` is the one card, used by both, each
+**The Task tab is a column of HUD tiles over the sky**, the Dashboard's shape and
+now literally its component — `components/common/SummaryCard.tsx`, extracted when
+the Task tab's own flatter version (a 14px static icon, no divider, no rows) made
+the two pages that are both "tiles over the rig's constellation" stop looking like
+one app. One Pulsar hero slab is the page's single primary action; the library,
+Rig wiring, Bench and Sketches are tiles. The template gallery appears **only
+while the library is empty**: with nothing shipped that is the first-run
+experience, and once a rig has tasks the wizard's own quiet link is the way in
+rather than a permanent gallery competing with the library above it.
+`components/specs/ParadigmCard.tsx` is the one card, used by both, each
 paradigm carrying a glyph and an accent — held there and not in the paradigm file,
 because an icon is a property of how this app draws a card and not of what an
 experiment measures. The card shows the **first sentence** of `affords`, not the

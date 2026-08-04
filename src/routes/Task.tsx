@@ -6,6 +6,7 @@ import {
   CpuIcon,
   FileCode2,
   Plus,
+  Rocket,
   Waypoints,
   Workflow,
 } from "lucide-react";
@@ -14,13 +15,16 @@ import { useNavigate } from "react-router";
 
 import { ParadigmCard } from "@/components/specs/ParadigmCard";
 
-import { Button } from "@/components/common/controls";
+import {
+  CardFooterNote,
+  SummaryCard,
+} from "@/components/common/SummaryCard";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { errorMessage } from "@/lib/cohorts/commands";
-import { PANEL_TRAVEL, springPanel } from "@/lib/motion";
+import { PANEL_TRAVEL, springPanel, springSnappy } from "@/lib/motion";
 import { getSpec } from "@/lib/specs/commands";
 import { createSpecFrom, suggestId } from "@/lib/specs/create";
-import type { ParadigmSummary, SpecEntry } from "@/lib/specs/types";
+import type { SpecEntry } from "@/lib/specs/types";
 import { originChip } from "@/lib/specs/useSpecDocument";
 import { useParadigms, useSpecs } from "@/lib/specs/useSpecs";
 import { useSettings } from "@/lib/settings/context";
@@ -46,6 +50,9 @@ export function Task() {
   const connected = status === "connected";
   const { specs, schema, unavailable, loading } = useSpecs();
   const { paradigms } = useParadigms();
+  /* `hidden` keeps `blank` out: it is what the hero above already does, not one
+   * of the alternatives to it. */
+  const templates = useMemo(() => paradigms.filter((p) => !p.hidden), [paradigms]);
   const { discovery } = useSettings();
   const { settings } = useSettings();
 
@@ -110,7 +117,12 @@ export function Task() {
             <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
               <Workflow size={18} strokeWidth={1.75} className="text-pulsar" />
             </span>
-            <h1 className="font-display text-[22px] text-starlight">Task</h1>
+            <div className="min-w-0">
+              <h1 className="font-display text-[22px] text-starlight">Task</h1>
+              <p className="font-mono text-[10px] text-static/70">
+                what the animal does, and what the box is built out of
+              </p>
+            </div>
           </div>
 
           {unavailable ? (
@@ -126,55 +138,20 @@ export function Task() {
             </div>
           ) : (
             <>
-              {/* The hero. One affordance, stated as what it is for rather than
-              what it opens: a task is a state machine, and this is where you
-              build one. */}
-              <div className="hud mt-6 rounded-md px-5 py-4">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <h2 className="font-display text-[16px] text-starlight">
-                      Task Designer
-                    </h2>
-                    <p className="mt-1 max-w-prose text-[12px] leading-relaxed text-static">
-                      A task is a state machine, and here it is data: declare the
-                      epochs, the contingencies and the timings, and the compiler
-                      builds the byte table a box walks. Every edit is checked by
-                      the same compiler that produces the table.
-                    </p>
-                  </div>
-                  <Button
-                    variant="primary"
-                    disabled={!connected}
-                    onClick={() => navigate("/task/new")}
-                  >
-                    <Plus size={13} strokeWidth={1.75} />
-                    New task
-                  </Button>
-                </div>
-
-                <div className="mt-4 border-t border-halo pt-3">
-                  {loading ? (
-                    <p className="text-[12px] text-static">Reading the library…</p>
-                  ) : ordered.length === 0 ? (
-                    <EmptyLibrary
-                      paradigms={paradigms}
-                      onScratch={() => navigate("/task/new")}
-                      onPick={(id) => navigate(`/task/new?paradigm=${id}`)}
-                    />
-                  ) : (
-                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                      {ordered.map((spec) => (
-                        <SpecCard
-                          key={spec.specId}
-                          spec={spec}
-                          onOpen={() => navigate(`/task/designer/${spec.specId}`)}
-                          onDuplicate={() => void duplicate(spec.specId)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+              {/* THE HERO, and the only thing on this page that is a button
+                  rather than a tile. A task is a state machine, and this is
+                  where one gets built; everything below is where the parts of
+                  it live. */}
+              <HeroButton
+                disabled={!connected}
+                onClick={() => navigate("/task/new")}
+                title={ordered.length === 0 ? "Design your first task" : "Design a task"}
+                subtitle={
+                  connected
+                    ? "One question at a time, in the order a trial happens — and it compiles at every step"
+                    : "Waiting for the sidecar"
+                }
+              />
 
               {error && (
                 <p
@@ -184,58 +161,171 @@ export function Task() {
                   {error}
                 </p>
               )}
+
+              {/* Two columns of tiles over the sky, the Dashboard's shape. The
+                  library is the tall one and leads, because a rig that has
+                  tasks came here to open one. */}
+              <div className="mt-4 grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
+                <div className="flex flex-col gap-3">
+                  <SummaryCard
+                    icon={Workflow}
+                    label="Tasks"
+                    status={
+                      loading
+                        ? "reading…"
+                        : `${ordered.length} on this rig`
+                    }
+                    empty={
+                      !loading && ordered.length === 0
+                        ? "Nothing ships as a task — every one on a rig is that rig's own. Design one above, or start from a template below."
+                        : null
+                    }
+                  >
+                    {ordered.map((spec) => (
+                      <SpecRow
+                        key={spec.specId}
+                        spec={spec}
+                        onOpen={() => navigate(`/task/designer/${spec.specId}`)}
+                        onDuplicate={() => void duplicate(spec.specId)}
+                      />
+                    ))}
+                  </SummaryCard>
+
+                  {/* Templates, only while there is nothing to open. Once a rig
+                      has tasks the wizard's own quiet link is the way in, and a
+                      permanent gallery here would compete with the library it
+                      sits under. */}
+                  {!loading && ordered.length === 0 && templates.length > 0 && (
+                    <SummaryCard
+                      icon={Rocket}
+                      label="Start from a template"
+                      status={`${templates.length} shapes`}
+                      empty={null}
+                    >
+                      <div className="mt-1 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                        {templates.map((p) => (
+                          <ParadigmCard
+                            key={p.id}
+                            paradigm={p}
+                            compact
+                            onClick={() => navigate(`/task/new?paradigm=${p.id}`)}
+                          />
+                        ))}
+                      </div>
+                    </SummaryCard>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  {/* RIG WIRING SITS WITH TASK, not Config, even though Config
+                      owns "how is this rig wired" (settings.md §1). Every
+                      hardware value in task creation comes from here — response
+                      ports, reward lines, stimulus lines — and filing it a tab
+                      away from the thing that consumes it would be filing by
+                      category rather than by use. */}
+                  <SummaryCard
+                    icon={Waypoints}
+                    label="Rig wiring"
+                    status={`${channelCount} channels`}
+                    onOpen={() => navigate("/task/hardware")}
+                    empty="Which pin each channel is on. Everything a task can reach — the ports, the reward lines, the stimulus lines — is what this says it is."
+                  />
+
+                  <SummaryCard
+                    icon={CpuIcon}
+                    label="Bench"
+                    status={`${boundBoxes} box${boundBoxes === 1 ? "" : "es"} bound`}
+                    onOpen={() => navigate("/task/bench")}
+                    empty={null}
+                  >
+                    <p className="py-1 text-[12px] leading-relaxed text-static">
+                      Put a compiled table on a board and read back what it says
+                      about itself.
+                    </p>
+                    <CardFooterNote>
+                      <span style={{ color: "var(--color-status-warning)" }}>
+                        bench only — no trial runs, no reward is delivered
+                      </span>
+                    </CardFooterNote>
+                  </SummaryCard>
+
+                  <SummaryCard
+                    icon={FileCode2}
+                    label="Sketches"
+                    status={`${discovery.sketches.length} in the library`}
+                    onOpen={() => navigate("/task/sketches")}
+                    empty="The firmware sketches that run today's sessions, their trial flow, and this rig's default parameters for each."
+                  />
+                </div>
+              </div>
             </>
           )}
-
-          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {/* RIG WIRING SITS WITH TASK, not Config, even though Config owns
-                "how is this rig wired" (settings.md §1). Every hardware value in
-                task creation comes from here — response ports, reward lines,
-                stimulus lines — and filing it a tab away from the thing that
-                consumes it would be filing by category rather than by use. */}
-            <LinkCard
-              icon={Waypoints}
-              title="Rig wiring"
-              onClick={() => navigate("/task/hardware")}
-              detail={`${channelCount} channels`}
-            >
-              Which pin each channel is on, and what it means. Everything a task
-              can reach — the ports, the reward lines, the stimulus lines — is
-              what this says it is.
-            </LinkCard>
-
-            <LinkCard
-              icon={CpuIcon}
-              title="Bench"
-              onClick={() => navigate("/task/bench")}
-              detail={`${boundBoxes} box${boundBoxes === 1 ? "" : "es"} bound`}
-            >
-              Put a compiled table on a board and read back what it says about
-              itself.{" "}
-              <span style={{ color: "var(--color-status-warning)" }}>
-                Bench only — a box carrying the interpreter runs no trial and
-                delivers no reward.
-              </span>
-            </LinkCard>
-
-            <LinkCard
-              icon={FileCode2}
-              title="Sketches"
-              onClick={() => navigate("/task/sketches")}
-              detail={`${discovery.sketches.length} in the library`}
-            >
-              The firmware sketches that run today&rsquo;s sessions, their trial
-              flow, and this rig&rsquo;s default parameters for each.
-            </LinkCard>
-          </div>
         </section>
       </motion.div>
-
     </div>
   );
 }
 
-function SpecCard({
+/**
+ * The page's one primary action, in the Dashboard's hero idiom — a filled
+ * Pulsar slab rather than a tile, so there is never a question about which
+ * thing on this page is the thing to press.
+ */
+function HeroButton({
+  title,
+  subtitle,
+  disabled,
+  onClick,
+}: {
+  title: string;
+  subtitle: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <motion.button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      {...(disabled ? {} : { whileHover: { scale: 1.006 }, whileTap: { scale: 0.997 } })}
+      transition={springSnappy}
+      className="group mt-6 flex w-full items-center gap-3 rounded-md bg-pulsar px-5 py-4 text-left disabled:opacity-50"
+    >
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-void/15">
+        <Plus size={18} strokeWidth={2} className="text-void" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-display text-base font-semibold text-void">
+          {title}
+        </span>
+        <span className="mt-0.5 block text-[12px] text-void/70">{subtitle}</span>
+      </span>
+      <ArrowRight
+        size={18}
+        strokeWidth={2}
+        className="shrink-0 text-void transition-transform group-hover:translate-x-0.5"
+      />
+    </motion.button>
+  );
+}
+
+
+
+/** ISO-8601 → `2026-08-03`. The timestamp's date half is all a card needs. */
+function shortDate(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+/**
+ * One task in the library tile.
+ *
+ * A row rather than a card: the library is now a `SummaryCard`'s row list like
+ * every other tile on the page, so a task reads at the same weight as a cohort
+ * does on the Dashboard. Not `CardRow` itself, because the duplicate action
+ * needs its own button and a button inside a button is invalid — so this is the
+ * same metrics with the hover treatment on the wrapper.
+ */
+function SpecRow({
   spec,
   onOpen,
   onDuplicate,
@@ -246,10 +336,10 @@ function SpecCard({
 }) {
   const chip = originChip(spec.origin);
   return (
-    <div className="group relative rounded-sm border border-halo px-2.5 py-2 transition-colors hover:border-static/60">
-      <button type="button" onClick={onOpen} className="w-full text-left">
-        <div className="flex items-baseline gap-2">
-          <span className="truncate text-[12px] text-starlight">
+    <div className="group -mx-1.5 flex items-center gap-2 rounded-sm px-1.5 py-1.5 transition-colors hover:bg-halo/50">
+      <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
+        <span className="flex items-baseline gap-2">
+          <span className="min-w-0 truncate text-[13px] text-starlight">
             {spec.label ?? spec.specId}
           </span>
           <span
@@ -258,132 +348,21 @@ function SpecCard({
           >
             {chip.label}
           </span>
-        </div>
-        <div className="mt-0.5 font-mono text-[9.5px] text-static/70">
+        </span>
+        <span className="mt-0.5 block truncate font-mono text-[9.5px] text-static/70">
           {spec.specId}
-          {spec.template && ` · ${spec.template} v${spec.templateVersion}`}
           {spec.editedAt && ` · edited ${shortDate(spec.editedAt)}`}
-        </div>
-        {spec.description && (
-          <p className="mt-1 line-clamp-2 text-[10.5px] leading-relaxed text-static">
-            {spec.description}
-          </p>
-        )}
+        </span>
       </button>
       <button
         type="button"
         onClick={onDuplicate}
         title={`Duplicate ${spec.specId}`}
         aria-label={`Duplicate ${spec.specId}`}
-        className="absolute top-1.5 right-1.5 rounded-sm p-1 text-static opacity-0 transition-opacity group-hover:opacity-100 hover:text-starlight focus-visible:opacity-100"
+        className="shrink-0 rounded-sm p-1 text-static opacity-0 transition-opacity group-hover:opacity-100 hover:text-starlight focus-visible:opacity-100"
       >
         <Copy size={12} strokeWidth={1.75} />
       </button>
-    </div>
-  );
-}
-
-function LinkCard({
-  icon: Icon,
-  title,
-  detail,
-  onClick,
-  children,
-}: {
-  icon: typeof Workflow;
-  title: string;
-  detail: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="hud group rounded-md px-4 py-3 text-left transition-colors hover:border-static/50"
-    >
-      <div className="flex items-center gap-2">
-        <Icon size={14} strokeWidth={1.75} className="text-static" />
-        <span className="text-[13px] font-medium text-starlight">{title}</span>
-        <span className="ml-auto flex items-center gap-1 font-mono text-[9.5px] text-static/70">
-          {detail}
-          <ArrowRight
-            size={11}
-            strokeWidth={1.75}
-            className="transition-transform group-hover:translate-x-0.5"
-          />
-        </span>
-      </div>
-      <p className="mt-1 text-[11px] leading-relaxed text-static">{children}</p>
-    </button>
-  );
-}
-
-/** ISO-8601 → `2026-08-03`. The timestamp's date half is all a card needs. */
-function shortDate(iso: string): string {
-  return iso.slice(0, 10);
-}
-
-/**
- * The first thing a new rig sees, so it is the front door rather than a footnote.
- *
- * Nothing ships as a spec any more: an install has zero tasks until somebody
- * makes one. The old copy — one grey line reading "start one from a paradigm" —
- * was written for a library that already had five in it, and pointed at a button
- * instead of being the thing itself.
- */
-function EmptyLibrary({
-  paradigms,
-  onScratch,
-  onPick,
-}: {
-  paradigms: ParadigmSummary[];
-  onScratch: () => void;
-  onPick: (paradigmId: string) => void;
-}) {
-  // `hidden` keeps `blank` out: it is the primary action above, not one of the
-  // alternatives below.
-  const templates = paradigms.filter((p) => !p.hidden);
-
-  return (
-    <div>
-      <p className="max-w-prose text-[12px] leading-relaxed text-static">
-        <span className="text-starlight">No tasks on this rig yet.</span> Design one
-        from scratch — the machine is drawn beside you the whole way, and every step
-        compiles — or start from one of the shapes this lab already runs.
-      </p>
-
-      <button
-        type="button"
-        onClick={onScratch}
-        className="group mt-3 flex w-full items-center gap-2.5 rounded-sm border border-pulsar/60 bg-pulsar/10 px-3 py-2.5 text-left transition-colors hover:border-pulsar"
-      >
-        <Plus size={14} strokeWidth={1.75} style={{ color: "var(--color-pulsar)" }} />
-        <span className="min-w-0">
-          <span className="block text-[12.5px] text-starlight">Design a task</span>
-          <span className="block text-[11px] leading-relaxed text-static">
-            Seven steps, in the order a trial happens.
-          </span>
-        </span>
-        <ArrowRight
-          size={13}
-          strokeWidth={1.75}
-          className="ml-auto shrink-0 text-static transition-transform group-hover:translate-x-0.5"
-        />
-      </button>
-
-      {templates.length > 0 && (
-        <>
-          <div className="mt-4 font-mono text-[10px] tracking-wider text-static uppercase">
-            or start from a template
-          </div>
-          <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-            {templates.map((p) => (
-              <ParadigmCard key={p.id} paradigm={p} compact onClick={() => onPick(p.id)} />
-            ))}
-          </div>
-        </>
-      )}
     </div>
   );
 }

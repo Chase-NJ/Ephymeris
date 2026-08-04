@@ -7,14 +7,13 @@ import { useNavigate, useSearchParams } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { FieldRow } from "@/components/common/FieldRow";
-import { RowDensityContext } from "@/components/common/rowDensity";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { DiagnosticsPanel } from "@/components/specs/DiagnosticsPanel";
-import { InspectorRail } from "@/components/specs/InspectorRail";
-import { SpecCanvas } from "@/components/specs/SpecCanvas";
 import { ParadigmCard } from "@/components/specs/ParadigmCard";
 import { SpecField } from "@/components/specs/SpecField";
 import { StructureBlocks } from "@/components/specs/StructureBlocks";
+import { TaskJourney } from "@/components/specs/TaskJourney";
+import { TaskShape } from "@/components/specs/TaskShape";
 import { ChipsRow, SelectRow } from "@/components/specs/rows";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { getRig } from "@/lib/hardware/commands";
@@ -22,7 +21,6 @@ import type { RigDocument } from "@/lib/hardware/types";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { getSkeleton } from "@/lib/specs/commands";
 import { createSpecFrom, idError, suggestId } from "@/lib/specs/create";
-import { bandReadouts } from "@/lib/specs/layout";
 import { runOp } from "@/lib/specs/operations";
 import { placeDiagnostics, type PlacedDiagnostics } from "@/lib/specs/diagnostics";
 import {
@@ -108,7 +106,6 @@ export function TaskNew() {
   /* The save landed. Distinct from `creating`, which is still true while the
    * route transition plays out — see the unsaved guard below. */
   const [created, setCreated] = useState(false);
-  const [selection, setSelection] = useState<Parameters<typeof SpecCanvas>[0]["selection"]>(null);
 
   const [id, setId] = useState("");
   const [label, setLabel] = useState("");
@@ -264,344 +261,324 @@ export function TaskNew() {
     doc === null ? [] : STEPS.filter((s) => s.kind !== "questions" || asks);
   const current = steps[step - 1] ?? null;
 
+  /*
+   * The rail's step list, and the walk's one hint line.
+   *
+   * Review is a star like any other rather than an "and then you're done"
+   * afterthought — it is a place the operator stands, with its own decision
+   * (create, or go back), so it gets a position on the map.
+   */
+  const onReview = step > steps.length;
+  const journey = [...steps.map((s) => s.star), "Review"];
+  const hint = onReview
+    ? result?.ok
+      ? "Everything compiles. Creating it opens the Designer, where every value is still editable."
+      : "Not compiling yet — the panel below says what is unresolved."
+    : (current?.hint ?? "");
+
   return (
     <Shell>
-      <header className="flex shrink-0 items-center gap-3 border-b border-halo px-4 py-2.5">
-        <Button variant="ghost" onClick={() => navigate("/task")} title="Back to Task">
-          <ArrowLeft size={13} strokeWidth={1.75} />
-        </Button>
-        <div className="min-w-0 flex-1">
-          <div className="font-display text-[14px] text-starlight">Design a task</div>
-          <div className="font-mono text-[9.5px] text-static/70">
+      <section className="pointer-events-auto mx-auto max-w-3xl px-8 py-8">
+        <div className="mb-2 flex items-center gap-2">
+          <Button variant="ghost" onClick={() => navigate("/task")} title="Back to Task">
+            <ArrowLeft size={13} strokeWidth={1.75} />
+          </Button>
+          <span className="font-mono text-[10px] text-static/70">
             {base === null
               ? "starting"
-              : `${step > steps.length ? "review" : `${step} of ${steps.length}`} · ${chosen?.name ?? base}`}
-          </div>
+              : `${onReview ? "review" : `${step} of ${steps.length}`} · ${chosen?.name ?? base}`}
+          </span>
+
+          {/* Compiles-at-every-step, as a line rather than a diagram. The graph
+              used to sit beside these questions to make the claim watchable;
+              the graph now belongs to the Designer (that is the whole split),
+              so what survives here is the fact itself. */}
+          {result?.table && (
+            <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] text-static">
+              <Check size={10} strokeWidth={2} style={{ color: "var(--color-status-ok)" }} />
+              {result.table.nNodes} states · {result.table.nEdges} edges
+            </span>
+          )}
+          {result && !result.ok && (
+            <span
+              className="ml-auto font-mono text-[10px]"
+              style={{ color: "var(--color-status-error)" }}
+            >
+              {result.diagnostics.filter((d) => d.severity === "ERROR").length} error
+            </span>
+          )}
         </div>
 
-        {/* Step dots, ported from SetupWizard — the task wizard had a text
-            counter and nothing else, so there was no sense of a shape being
-            worked through. Width rather than colour alone marks the current
-            step, which survives being colour-blind. */}
         {doc !== null && !showTemplates && (
-          <div className="flex items-center gap-1">
-            {steps.map((_, i) => (
-              <motion.span
-                key={i}
-                className="h-1.5 rounded-full"
-                animate={{
-                  backgroundColor:
-                    i <= step - 1 ? "var(--color-pulsar)" : "var(--color-halo)",
-                  width: i === step - 1 ? 22 : 8,
-                }}
-                transition={springSnappy}
-              />
-            ))}
-          </div>
+          <TaskJourney
+            labels={journey}
+            active={Math.min(step - 1, journey.length - 1)}
+            hint={hint}
+            settled={onReview}
+          />
         )}
 
-        {/* The template path, one quiet click away rather than in front of
-            every new task. */}
-        {doc !== null && !showTemplates && step <= 2 && (
-          <Button variant="ghost" onClick={() => setShowTemplates(true)}>
-            Start from a template
-          </Button>
-        )}
-        {result?.table && (
-          <span className="flex items-center gap-1.5 font-mono text-[10px] text-static">
-            <Check size={10} strokeWidth={2} style={{ color: "var(--color-status-ok)" }} />
-            {result.table.nNodes} states · {result.table.nEdges} edges
-          </span>
-        )}
-        {result && !result.ok && (
-          <span className="font-mono text-[10px]" style={{ color: "var(--color-status-error)" }}>
-            {result.diagnostics.filter((d) => d.severity === "ERROR").length} error
-          </span>
-        )}
-      </header>
-
-      {loadError && (
-        <p
-          className="shrink-0 border-b border-halo px-4 py-2 text-[11px]"
-          style={{ color: "var(--color-status-error)" }}
-        >
-          {loadError}
-        </p>
-      )}
-
-      {showTemplates ? (
-        <StartingPoints
-          paradigms={paradigms}
-          loading={loadingParadigms}
-          onPick={(pid) => void start(pid)}
-          onCancel={() => setShowTemplates(false)}
-        />
-      ) : doc === null ? (
-        <div className="flex flex-1 items-center justify-center text-[12px] text-static">
-          {loadError ? "" : "Starting a task…"}
+        <div className="flex items-baseline justify-between gap-3">
+          <h1 className="font-display text-[22px] text-starlight">Design a task</h1>
+          {/* The template path, one quiet click away rather than in front of
+              every new task. */}
+          {doc !== null && !showTemplates && step <= 2 && (
+            <Button variant="ghost" onClick={() => setShowTemplates(true)}>
+              Start from a template
+            </Button>
+          )}
         </div>
-      ) : (
-        <div className="flex min-h-0 flex-1">
-          {/* The machine, beside the questions — so "it compiles at every step"
-          is something the operator watches rather than something we claim. */}
-          <div className="flex min-w-0 flex-1 flex-col">
-            {graph ? (
-              <SpecCanvas
-                graph={graph}
-                placed={placed}
-                selection={selection}
-                onSelect={setSelection}
-                lit={EMPTY}
-                stale={!result?.graph}
-                bandReadouts={bandReadouts(topologyOf(doc))}
+
+        {loadError && (
+          <p className="mt-3 text-[11px]" style={{ color: "var(--color-status-error)" }}>
+            {loadError}
+          </p>
+        )}
+
+        {showTemplates ? (
+          <StartingPoints
+            paradigms={paradigms}
+            loading={loadingParadigms}
+            onPick={(pid) => void start(pid)}
+            onCancel={() => setShowTemplates(false)}
+          />
+        ) : doc === null ? (
+          <p className="mt-8 text-[12px] text-static">
+            {loadError ? "" : "Starting a task…"}
+          </p>
+        ) : (
+          <>
+            {/* THE SUBJECT, ABOVE THE QUESTION ABOUT IT. Every step edits some
+                corner of this, so it stays on screen for all of them — and the
+                epoch the current step touches is lit, which is what connects a
+                question to the part of the task it changes. */}
+            <div className="mt-5">
+              <TaskShape
+                doc={doc}
+                pins={pins}
+                focus={current?.kind === "epoch" ? current.band : null}
+                onChange={setDoc}
               />
-            ) : (
-              <p className="m-auto max-w-sm px-6 text-center text-[12px] leading-relaxed text-static">
-                Compiling…
-              </p>
-            )}
-          </div>
+            </div>
 
-          <RowDensityContext.Provider value="stacked">
             {/*
-             * The panel scrolls; the Back/Next footer does not.
+             * The entering step animates; the leaving one just goes.
              *
-             * Both used to live in one `overflow-y-auto` column with the footer
-             * on `mt-auto`, which pins it only while the content FITS. Every
-             * step fit until the timing step started listing all fourteen
-             * durations instead of the template's eight — and then the only way
-             * forward scrolled off the bottom of a step that looks complete.
+             * This was `AnimatePresence mode="wait"` first, which holds the NEW
+             * child unmounted until the old one's exit animation reports done —
+             * and here it never did, so the rail advanced while the panel stayed
+             * frozen on step one. A cross-fade is not worth a dependency on an
+             * exit lifecycle completing; keying on `step` gives React a fresh
+             * node to slide in, which is the whole visible effect.
              */}
-            {/* Same rail the Designer uses, for the same reason and the same
-                persisted width: a step that holds a strobe picker full of
-                twenty-character SCREAMING_SNAKE needs more room than one
-                holding two knobs, and which of those an operator is looking at
-                changes six times on the way through. A fixed 380px was chosen
-                for the widest step and was wrong for the other five. */}
-            <InspectorRail>
-            <aside className="flex h-full flex-col border-l border-halo">
-              {/*
-               * The entering step animates; the leaving one just goes.
-               *
-               * SetupWizard wraps its equivalent in `AnimatePresence
-               * mode="wait"`, and that is what this was first. `mode="wait"`
-               * holds the NEW child unmounted until the old one's exit
-               * animation reports done — and here it never did, so the step
-               * counter advanced in the header while the panel stayed frozen on
-               * step one. A cross-fade is not worth a dependency on an exit
-               * lifecycle completing; keying the element on `step` gives React
-               * a fresh node to slide in, which is the whole visible effect.
-               */}
-              <motion.div
-                key={step}
-                initial={{ opacity: 0, x: 12 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={springPanel}
-                className="scrollbar-none flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3"
-              >
-              <div>
-                <div className="font-display text-[13px] text-starlight">
-                  {current?.title ?? "Review"}
+            <motion.div
+              key={step}
+              initial={{ opacity: 0, x: 12 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={springPanel}
+              className="mt-4"
+            >
+              <div className="hud rounded-md px-4 py-3.5">
+                <div className="font-display text-[15px] text-starlight">
+                  {current?.title ?? "Ready to create"}
                 </div>
-                <p className="mt-0.5 text-[11px] leading-relaxed text-static">
-                  {current?.blurb ?? "Name it and create."}
+                <p className="mt-1 max-w-[62ch] text-[11.5px] leading-relaxed text-static">
+                  {current?.blurb ??
+                    "Nothing is written until you create it, and everything stays editable afterwards."}
                 </p>
-              </div>
 
-              {current?.kind === "identity" && (
-                <div className="flex flex-col gap-1.5">
-                  <FieldRow
-                    label="Id"
-                    help="Names the file, the compiled table, and what a board reports after an upload."
-                    type="string"
-                    value={id}
-                    fallback=""
-                    baseline=""
-                    error={idError(id, taken) ?? undefined}
-                    onChange={(next) => setId(String(next ?? ""))}
-                  />
-                  <FieldRow
-                    label="Label"
-                    type="string"
-                    value={label}
-                    fallback=""
-                    baseline=""
-                    mono={false}
-                    onChange={(next) => setLabel(String(next ?? ""))}
-                  />
-                  <FieldRow
-                    label="Description"
-                    type="string"
-                    value={description}
-                    fallback=""
-                    baseline=""
-                    mono={false}
-                    onChange={(next) => setDescription(String(next ?? ""))}
-                  />
-                </div>
-              )}
+                <div className="mt-3.5 flex flex-col gap-3">
+                  {current?.kind === "identity" && (
+                    <div className="flex flex-col gap-1.5">
+                      <FieldRow
+                        label="Id"
+                        help="Names the file, the compiled table, and what a board reports after an upload."
+                        type="string"
+                        value={id}
+                        fallback=""
+                        baseline=""
+                        error={idError(id, taken) ?? undefined}
+                        onChange={(next) => setId(String(next ?? ""))}
+                      />
+                      <FieldRow
+                        label="Label"
+                        type="string"
+                        value={label}
+                        fallback=""
+                        baseline=""
+                        mono={false}
+                        onChange={(next) => setLabel(String(next ?? ""))}
+                      />
+                      <FieldRow
+                        label="Description"
+                        type="string"
+                        value={description}
+                        fallback=""
+                        baseline=""
+                        mono={false}
+                        onChange={(next) => setDescription(String(next ?? ""))}
+                      />
+                    </div>
+                  )}
 
-              {current?.kind === "epoch" && schema && (
-                <EpochStep
-                  band={current.band}
-                  doc={doc}
-                  graph={graph}
-                  caps={caps}
-                  schema={schema}
-                  placed={placed}
-                  pins={pins}
-                  onChange={setDoc}
-                />
-              )}
-
-              {/* The paradigm's own questions, rendered from what the sidecar
-              declared. Each `path` is a document path the schema knows, so an
-              answer is a set on a validated location and never new structure —
-              which is what lets a paradigm file stay declarative. */}
-              {current?.kind === "questions" && schema && (
-                <div className="flex flex-col gap-1.5">
-                  {(chosen?.questions ?? []).map((q) => (
-                    <ParadigmQuestionRow
-                      key={q.id}
-                      question={q}
+                  {current?.kind === "epoch" && schema && (
+                    <EpochStep
+                      band={current.band}
                       doc={doc}
+                      graph={graph}
+                      caps={caps}
                       schema={schema}
                       placed={placed}
-                      onChange={(value) => setDoc(setAt(doc, q.path, value))}
+                      pins={pins}
+                      onChange={setDoc}
                     />
-                  ))}
-                </div>
-              )}
+                  )}
 
-              {current?.kind === "session" && schema && (
-                <div className="flex flex-col gap-3">
-                  <div className="flex flex-col gap-1.5">
-                    {POLICY_FIELDS.map(({ path, overlayKey }) => {
-                      const meta = schema.overlay.fields[overlayKey];
-                      if (!meta) return null;
-                      return (
-                        <SpecField
-                          key={path}
-                          path={path}
-                          overlayKey={overlayKey}
-                          meta={meta}
-                          value={getAt(doc, path)}
-                          baseline={getAt(doc, path)}
-                          schema={schema}
+                  {/* The paradigm's own questions, rendered from what the sidecar
+                  declared. Each `path` is a document path the schema knows, so an
+                  answer is a set on a validated location and never new structure —
+                  which is what lets a paradigm file stay declarative. */}
+                  {current?.kind === "questions" && schema && (
+                    <div className="flex flex-col gap-1.5">
+                      {(chosen?.questions ?? []).map((q) => (
+                        <ParadigmQuestionRow
+                          key={q.id}
+                          question={q}
                           doc={doc}
+                          schema={schema}
                           placed={placed}
-                          onChange={(next) => setDoc(setAt(doc, path, next))}
+                          onChange={(value) => setDoc(setAt(doc, q.path, value))}
                         />
-                      );
-                    })}
-                  </div>
-                  <RampStep
-                    doc={doc}
-                    caps={caps}
-                    schema={schema}
-                    placed={placed}
-                    onChange={setDoc}
-                  />
-                </div>
-              )}
+                      ))}
+                    </div>
+                  )}
 
-              {current === null && (
-                <div className="flex flex-col gap-1.5 rounded-sm border border-halo px-2.5 py-2">
-                  <div className="font-mono text-[10px] tracking-wider text-static uppercase">
-                    Ready
-                  </div>
-                  <p className="text-[11px] leading-relaxed text-static">
-                    {result?.table
-                      ? `${result.table.nNodes} states, ${result.table.nEdges} edges, ${result.table.sizeBytes} bytes. Saving opens it in the Designer, where every value is still editable.`
-                      : "The spec has to compile before it can be created."}
-                  </p>
-                  {/* Not while creating: the save lands in the library before
-                  the route changes, so the id this screen is about becomes
-                  "taken" by its own success and flashed as an error. */}
-                  {!creating && idError(id, taken) && (
-                    <p className="text-[11px]" style={{ color: "var(--color-status-error)" }}>
-                      {idError(id, taken)}
+                  {current?.kind === "session" && schema && (
+                    <>
+                      <div className="flex flex-col gap-1.5">
+                        {POLICY_FIELDS.map(({ path, overlayKey }) => {
+                          const meta = schema.overlay.fields[overlayKey];
+                          if (!meta) return null;
+                          return (
+                            <SpecField
+                              key={path}
+                              path={path}
+                              overlayKey={overlayKey}
+                              meta={meta}
+                              value={getAt(doc, path)}
+                              baseline={getAt(doc, path)}
+                              schema={schema}
+                              doc={doc}
+                              placed={placed}
+                              onChange={(next) => setDoc(setAt(doc, path, next))}
+                            />
+                          );
+                        })}
+                      </div>
+                      <RampStep
+                        doc={doc}
+                        caps={caps}
+                        schema={schema}
+                        placed={placed}
+                        onChange={setDoc}
+                      />
+                    </>
+                  )}
+
+                  {current === null && (
+                    <p className="text-[11.5px] leading-relaxed text-static">
+                      {result?.table
+                        ? `${result.table.nNodes} states, ${result.table.nEdges} edges, ${result.table.sizeBytes} bytes.`
+                        : "The spec has to compile before it can be created."}
+                      {/* Not while creating: the save lands in the library
+                      before the route changes, so the id this screen is about
+                      becomes "taken" by its own success and flashed as an
+                      error. */}
+                      {!creating && idError(id, taken) && (
+                        <span
+                          className="mt-1 block"
+                          style={{ color: "var(--color-status-error)" }}
+                        >
+                          {idError(id, taken)}
+                        </span>
+                      )}
                     </p>
                   )}
                 </div>
-              )}
-
-              {/* When a step leaves the spec not compiling, the reason has to
-              be on this screen. Without it the only signal is a dimmed graph
-              and an error count in the header, which tells the operator that
-              something is wrong and nothing about what. */}
-              {result && !result.ok && (
-                <div className="mt-2">
-                  <DiagnosticsPanel diagnostics={result.diagnostics} />
-                </div>
-              )}
-
-              </motion.div>
-
-              <div className="flex shrink-0 items-center justify-between gap-2 border-t border-halo px-4 py-2">
-                <Button
-                  variant="ghost"
-                  disabled={step <= 1}
-                  onClick={() => setStep((s) => Math.max(1, s - 1))}
-                >
-                  <ArrowLeft size={12} strokeWidth={1.75} />
-                  Back
-                </Button>
-                {step <= steps.length ? (
-                  <Button
-                    variant="primary"
-                    /*
-                     * Gated only where a step has a precondition the NEXT step
-                     * depends on, which today is exactly one: the id names the
-                     * file, so walking six screens with a duplicate or malformed
-                     * one and finding out at Create is six screens of wasted
-                     * work. Every other step is answerable in any order and
-                     * disabling Next on those would be a guess about what the
-                     * operator is done thinking about.
-                     */
-                    disabled={
-                      current?.kind === "identity" &&
-                      (id === "" || idError(id, taken) !== null)
-                    }
-                    // Clamped: without it the counter runs past the last step
-                    // and reads "11 of 7" on the review screen.
-                    onClick={() => setStep((s) => Math.min(steps.length + 1, s + 1))}
-                  >
-                    Next
-                    <ArrowRight size={12} strokeWidth={1.75} />
-                  </Button>
-                ) : (
-                  <Button
-                    variant="primary"
-                    disabled={
-                      creating ||
-                      id === "" ||
-                      idError(id, taken) !== null ||
-                      !result?.ok ||
-                      !connected
-                    }
-                    onClick={() => void create()}
-                  >
-                    {creating ? "Creating…" : "Create task"}
-                  </Button>
-                )}
               </div>
-            </aside>
-            </InspectorRail>
-          </RowDensityContext.Provider>
-        </div>
-      )}
+            </motion.div>
+
+            {/* When a step leaves the spec not compiling, the reason has to be
+            on this screen. Without it the only signal is an error count in the
+            corner, which tells the operator that something is wrong and nothing
+            about what. */}
+            {result && !result.ok && (
+              <div className="mt-3">
+                <DiagnosticsPanel diagnostics={result.diagnostics} />
+              </div>
+            )}
+
+            <div className="mt-5 flex items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                disabled={step <= 1}
+                onClick={() => setStep((s) => Math.max(1, s - 1))}
+              >
+                <ArrowLeft size={12} strokeWidth={1.75} />
+                Back
+              </Button>
+              {!onReview ? (
+                <Button
+                  variant="primary"
+                  /*
+                   * Gated only where a step has a precondition the NEXT step
+                   * depends on, which today is exactly one: the id names the
+                   * file, so walking six screens with a duplicate or malformed
+                   * one and finding out at Create is six screens of wasted
+                   * work. Every other step is answerable in any order and
+                   * disabling Next on those would be a guess about what the
+                   * operator is done thinking about.
+                   */
+                  disabled={
+                    current?.kind === "identity" &&
+                    (id === "" || idError(id, taken) !== null)
+                  }
+                  // Clamped: without it the counter runs past the last step
+                  // and reads "11 of 7" on the review screen.
+                  onClick={() => setStep((s) => Math.min(steps.length + 1, s + 1))}
+                >
+                  Next
+                  <ArrowRight size={12} strokeWidth={1.75} />
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  disabled={
+                    creating ||
+                    id === "" ||
+                    idError(id, taken) !== null ||
+                    !result?.ok ||
+                    !connected
+                  }
+                  onClick={() => void create()}
+                >
+                  {creating ? "Creating…" : "Create task"}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </section>
     </Shell>
   );
 }
 
-const EMPTY: ReadonlySet<number> = new Set();
-
-type Step =
-  | { kind: "identity"; title: string; blurb: string }
-  | { kind: "questions"; title: string; blurb: string }
-  | { kind: "epoch"; band: number; title: string; blurb: string }
-  | { kind: "session"; title: string; blurb: string };
+type Step = { star: string; title: string; blurb: string; hint: string } & (
+  | { kind: "identity" }
+  | { kind: "questions" }
+  | { kind: "epoch"; band: number }
+  | { kind: "session" }
+);
 
 /**
  * The questions, in the order a task is actually thought about: what the
@@ -629,12 +606,16 @@ type Step =
 const STEPS: Step[] = [
   {
     kind: "identity",
+    star: "Name",
+    hint: "Give it an id — that names the file, the compiled table, and what a board reports back.",
     title: "What is it called?",
     blurb:
       "The id names the file and the compiled table; the label and description are what the library shows.",
   },
   {
     kind: "questions",
+    star: "Shape",
+    hint: "This template leaves a few choices open. Answer them and the rest follows.",
     title: "What does this paradigm need to know?",
     blurb:
       "The choices this shape leaves open. Everything else already has a working value.",
@@ -642,6 +623,8 @@ const STEPS: Step[] = [
   {
     kind: "epoch",
     band: 1,
+    star: "Begin",
+    hint: "Decide what counts as the animal committing to a trial, and what abstaining costs.",
     title: "How does a trial begin?",
     blurb:
       "The animal has to commit before a stimulus is spent. A commitment hold is " +
@@ -651,6 +634,8 @@ const STEPS: Step[] = [
   {
     kind: "epoch",
     band: 3,
+    star: "Answer",
+    hint: "Set up the answer space first — the stimuli on the next step get mapped onto it.",
     title: "How does it answer?",
     blurb:
       "Choose between ports, or withhold entirely — and how long the window stays " +
@@ -660,14 +645,18 @@ const STEPS: Step[] = [
   {
     kind: "epoch",
     band: 2,
+    star: "Sample",
+    hint: "Add what can be presented, then say which port each one means.",
     title: "What does the animal sample?",
     blurb:
       "Stimuli are what you can present; stages are how many must be sampled in " +
-      "sequence before answering. Drag them to change the order a trial presents.",
+      "sequence before answering. The map above is where their order is changed.",
   },
   {
     kind: "epoch",
     band: 4,
+    star: "Score",
+    hint: "Every way a trial can end, what it is scored as, and what it costs.",
     title: "What counts as right?",
     blurb:
       "Every way a trial can end, what each one is scored as, and what the data " +
@@ -676,6 +665,8 @@ const STEPS: Step[] = [
   },
   {
     kind: "session",
+    star: "Run",
+    hint: "How trials are drawn, how many there are, and which durations ramp.",
     title: "How does the session run?",
     blurb:
       "Trial selection, how many, the seed — and the ramp, if this task gets " +
@@ -688,128 +679,6 @@ const POLICY_FIELDS = [
   { path: "policy.n_trials", overlayKey: "policy.n_trials" },
   { path: "policy.seed", overlayKey: "policy.seed" },
 ];
-
-/**
- * The order a trial presents its stimuli, as something you can drag.
- *
- * `trial_types[].stages` is an ordered list of stimulus ids whose length is
- * `n_sampling_stages` — so for a sequence task it IS the sequence, and the
- * difference between "A then B" and "B then A" is the whole discriminandum.
- * Editing that as two dropdowns makes the operator hold the order in their head
- * while reading it off two controls; dragging shows it.
- *
- * ONE STAGE MEANS NOTHING TO ORDER, so the chain hides itself rather than
- * rendering a list of one and asking to be dragged.
- *
- * Hand-rolled, because there is no drag library in this repo and adding one for
- * this would be the wrong trade. It copies `CrewChip`'s arrangement exactly: a
- * plain `<button draggable>` INSIDE a `motion.span layout`, because on a motion
- * component `onDragStart` is framer's pan-gesture prop and the native event is
- * never heard. And it carries the same click-to-carry fallback, for the same
- * reason the board map does — HTML5 drag works here only because
- * `dragDropEnabled: false` is set in tauri.conf.json, and the lab runs Windows.
- */
-function StimulusChain({
-  doc,
-  onChange,
-}: {
-  doc: SpecDocument;
-  onChange: (next: SpecDocument) => void;
-}) {
-  const [carried, setCarried] = useState<number | null>(null);
-  const [over, setOver] = useState<number | null>(null);
-
-  const stages = Number(topologyOf(doc)?.["n_sampling_stages"] ?? 1);
-  const trials = useMemo(() => {
-    const c = doc["contingency"];
-    const list = c && typeof c === "object" ? (c as Record<string, unknown>)["trial_types"] : null;
-    return Array.isArray(list) ? list : [];
-  }, [doc]);
-
-  if (stages < 2 || trials.length === 0) return null;
-
-  function move(trial: number, from: number, to: number) {
-    const row = trials[trial] as Record<string, unknown>;
-    const order = [...((row["stages"] as string[]) ?? [])];
-    if (from === to || from < 0 || to < 0 || from >= order.length || to >= order.length) return;
-    const [lifted] = order.splice(from, 1);
-    order.splice(to, 0, lifted as string);
-    onChange(setAt(doc, `contingency.trial_types[${trial}].stages`, order));
-    setCarried(null);
-    setOver(null);
-  }
-
-  return (
-    <div className="flex flex-col gap-2 rounded-sm border border-halo px-2.5 py-2">
-      <div className="font-mono text-[10px] tracking-wider text-static uppercase">
-        Presentation order
-      </div>
-      <p className="text-[10px] leading-relaxed text-static">
-        Drag to reorder, or click one and then click where it goes. Order is the
-        discriminandum in a sequence task — A then B and B then A are different
-        trials, not the same trial shuffled.
-      </p>
-      {trials.map((row, ti) => {
-        const order = ((row as Record<string, unknown>)["stages"] as string[]) ?? [];
-        const id = String((row as Record<string, unknown>)["id"] ?? ti);
-        return (
-          <div key={id} className="flex flex-wrap items-center gap-1.5">
-            <span className="w-[92px] shrink-0 truncate font-mono text-[10px] text-static">
-              {id}
-            </span>
-            {order.map((stim, si) => (
-              <motion.span
-                key={`${id}-${si}-${stim}`}
-                layout
-                transition={springSnappy}
-                onDragOver={(e: React.DragEvent) => {
-                  e.preventDefault();
-                  setOver(si);
-                }}
-                onDragLeave={() => setOver(null)}
-                onDrop={(e: React.DragEvent) => {
-                  e.preventDefault();
-                  const from = Number(e.dataTransfer.getData("text/plain"));
-                  if (Number.isInteger(from)) move(ti, from, si);
-                }}
-              >
-                <button
-                  type="button"
-                  draggable
-                  onDragStart={(e) => e.dataTransfer.setData("text/plain", String(si))}
-                  onClick={() =>
-                    carried === null ? setCarried(si) : move(ti, carried, si)
-                  }
-                  title={
-                    carried === null
-                      ? "Drag to reorder, or click to pick up"
-                      : "Click to drop here"
-                  }
-                  className="cursor-grab rounded-sm border px-2 py-0.5 font-mono text-[10.5px] transition-colors active:cursor-grabbing"
-                  style={{
-                    borderColor:
-                      carried === si || over === si
-                        ? "var(--color-pulsar)"
-                        : "var(--color-halo)",
-                    color:
-                      carried === si ? "var(--color-starlight)" : "var(--color-static)",
-                    background:
-                      carried === si
-                        ? "color-mix(in srgb, var(--color-pulsar) 18%, transparent)"
-                        : "var(--color-void)",
-                  }}
-                >
-                  <span className="mr-1 text-[9px] opacity-60">{si + 1}</span>
-                  {stim}
-                </button>
-              </motion.span>
-            ))}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 /**
  * One epoch: what it does, and how long it takes.
@@ -865,7 +734,6 @@ function EpochStep({
         onChange={onChange}
       />
 
-      {band === 2 && <StimulusChain doc={doc} onChange={onChange} />}
       {band === 3 && <PortPads doc={doc} pins={pins} />}
       <EpochTimeline graph={graph} band={band} />
 
@@ -1203,16 +1071,32 @@ function StartingPoints({
   );
 }
 
+/**
+ * The guided-setup shell, shared with the session flow by intent.
+ *
+ * `SessionConfig` and `SessionMapping` are the same shape — a centred column
+ * floating over the rig's own sky — and designing a task is the same kind of
+ * errand: a short walk with a known end. The wizard used to be a two-pane
+ * editor instead, canvas left and rail right, which made it look like the
+ * Designer and read like an editor you had to already understand.
+ *
+ * `pointer-events-none` on the scroller so the sky behind stays orbitable where
+ * the column does not cover it; the column takes the pointer back.
+ * `scrollbar-none` because the scrollbar would otherwise consume 10px of the
+ * column and shift everything in it off centre (`index.css`).
+ */
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="relative h-full">
-      <SkyBackdrop opacity={0} />
+      <SkyBackdrop />
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
+        // Owns its own exit: between two sky routes the shell stops fading the
+        // page (`AppShell`), so anything that should fade has to say so.
         exit={{ opacity: 0 }}
         transition={springPanel}
-        className="absolute inset-0 flex flex-col"
+        className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
       >
         {children}
       </motion.div>

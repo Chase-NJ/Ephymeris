@@ -283,7 +283,8 @@ Talks to the sidecar over the WebSocket only.
 | `components/cohorts/` | Cohort grid, editor panels, procedural icon, Auto-Balance |
 | `components/config/` | Setup wizard, interactive constellation board, zodiac picker, handshake indicator/list |
 | `components/task/` | The derived state-machine graph (`TaskGraph`, also docked live in Mission Control), the same nodes as a pinned strip (`TaskRail`), and the per-group parameter tiles |
-| `components/specs/` | The Designer's parts: the machine-graph canvas (`SpecCanvas`), the selection-driven `SpecInspector`, the generated `SpecForm`/`SpecField`, the diagnostics list, the listing diff, the shared `ParadigmCard` (glyph, accent, and the first sentence of `affords`), and the bench panel |
+| `components/specs/` | The Designer's parts: the machine-graph canvas (`SpecCanvas`), the selection-driven `SpecInspector`, the generated `SpecForm`/`SpecField`, the diagnostics list, the listing diff, the shared `ParadigmCard` (glyph, accent, and the first sentence of `affords`), the wizard's `TaskJourney` rail and `TaskShape` summary, and the bench panel |
+| `components/common/SummaryCard.tsx` | The HUD tile — icon, label, status, divider, rows. Shared by the Dashboard and the Task tab so the two "tiles over the sky" pages are one motif |
 | `components/hardware/` | `BoardMap` — the Mega2560 pin diagram Rig wiring selects and drags on, ported from `ConstellationBoard` |
 | `lib/specs/selection.ts` | **Graph → the fields that produced it**, and the inverse. Joins on data the compiler and the document share, never on template symbol names ([specs.md §5](specs.md)) |
 | `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view |

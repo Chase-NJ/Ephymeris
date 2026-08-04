@@ -31,7 +31,16 @@ import { useSidecar } from "@/lib/ws/context";
  * until Finish, so an abandoned run leaves no half-chosen layout behind.
  */
 
-const STEPS = ["Map hardware", "Nicknames", "Handshake", "Constellation", "Done"] as const;
+/*
+ * "BIND BOXES", not "Map hardware", which this step used to be called.
+ *
+ * Task → Rig wiring maps a CHANNEL to a PIN: compiler input, baked into every
+ * table, and wrong silently — the wrong valve fires and the listing looks
+ * correct. This step binds a BOX to a BOARD: a runtime indirection, per rig,
+ * changing on every board swap, and wrong loudly, because the port will not
+ * open. Two screens called "map hardware" is a support call.
+ */
+const STEPS = ["Bind boxes", "Nicknames", "Handshake", "Constellation", "Done"] as const;
 
 export function SetupWizard({ onExit }: { onExit: () => void }) {
   const { settings, update } = useSettings();
@@ -134,7 +143,7 @@ export function SetupWizard({ onExit }: { onExit: () => void }) {
             {step === 0 && (
               <div>
                 <StepIntro
-                  title="Map your hardware"
+                  title="Bind your boxes to boards"
                   body={
                     <>
                       Add a row for each behavior box in the rig and bind it to a

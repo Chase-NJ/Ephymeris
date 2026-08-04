@@ -6,6 +6,7 @@ import {
   CpuIcon,
   FileCode2,
   Plus,
+  Waypoints,
   Workflow,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -41,12 +42,20 @@ export function Task() {
   const navigate = useNavigate();
   const { client, status } = useSidecar();
   const connected = status === "connected";
-  const { specs, unavailable, loading } = useSpecs();
+  const { specs, schema, unavailable, loading } = useSpecs();
   const { paradigms } = useParadigms();
   const { discovery } = useSettings();
   const { settings } = useSettings();
 
   const [error, setError] = useState<string | null>(null);
+
+  /* Counted from the composed channel map the compiler serves, so the tile
+   * reports this rig's wiring rather than the shipped pinout's size. */
+  const channelCount = useMemo(() => {
+    const channels = (schema?.channels as { channels?: object } | undefined)?.channels;
+    return channels ? Object.keys(channels).length : 0;
+  }, [schema]);
+
 
   // Every spec belongs to this rig now, so there is no origin to rank by.
   // Most-recently-touched first: the task someone is working on is the one they
@@ -176,6 +185,22 @@ export function Task() {
           )}
 
           <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {/* RIG WIRING SITS WITH TASK, not Config, even though Config owns
+                "how is this rig wired" (settings.md §1). Every hardware value in
+                task creation comes from here — response ports, reward lines,
+                stimulus lines — and filing it a tab away from the thing that
+                consumes it would be filing by category rather than by use. */}
+            <LinkCard
+              icon={Waypoints}
+              title="Rig wiring"
+              onClick={() => navigate("/task/hardware")}
+              detail={`${channelCount} channels`}
+            >
+              Which pin each channel is on, and what it means. Everything a task
+              can reach — the ports, the reward lines, the stimulus lines — is
+              what this says it is.
+            </LinkCard>
+
             <LinkCard
               icon={CpuIcon}
               title="Bench"

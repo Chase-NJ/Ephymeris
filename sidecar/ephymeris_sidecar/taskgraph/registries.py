@@ -213,6 +213,12 @@ class ChannelMap:
         #: The board's own pin range, so TG227 can say "a Mega has 0-53" rather
         #: than quoting an encoding constant at an operator. Declared by the
         #: pinout because it is a fact about the board, not about the compiler.
+        #: The FILE a pin problem should point at. A rig document composes into
+        #: the same pair as the shipped files, so without this every diagnostic
+        #: on a rig's own wiring named `hardware/<shipped>.json` -- a file the
+        #: operator cannot edit and did not touch.
+        self.pins_source: str = pinout.get("source_label") or f"hardware/{self.pinout_id}.json"
+        self.channels_source: str = raw.get("source_label") or "schema/channels.v1.json"
         pin_range = pinout.get("pin_range") or {}
         self.pin_min: int = int(pin_range.get("min", 0))
         self.pin_max: int = int(pin_range.get("max", CH_BIND_RESERVED_FROM - 1))
@@ -249,13 +255,13 @@ class ChannelMap:
         physical = set(self._pins)
         for name in sorted(logical - physical):
             out.append((
-                f"hardware/{self.pinout_id}.json",
+                self.pins_source,
                 f"channel {name!r} is declared in the channel registry but the "
                 f"active pinout {self.pinout_id!r} gives it no pin",
             ))
         for name in sorted(physical - logical):
             out.append((
-                "schema/channels.v1.json",
+                self.channels_source,
                 f"the pinout {self.pinout_id!r} assigns a pin to {name!r}, which "
                 "the channel registry does not declare",
             ))
@@ -264,12 +270,22 @@ class ChannelMap:
         bits = sorted(c.watch_bit for c in self._by_name.values() if c.watchable)
         if bits != list(range(len(bits))):
             out.append((
-                f"hardware/{self.pinout_id}.json",
+                self.pins_source,
                 f"watch_bit must be dense and 0-based over the watchable channels; "
                 f"got {bits}. TgNode.watchMask is a bit position, so a gap "
                 "addresses the wrong channel rather than none.",
             ))
         return out
+
+    @staticmethod
+    def _at(source: str, channel: str) -> str:
+        """`pins.odor_line_1` for a rig document, the file name for a shipped one.
+
+        A rig's problems point at a section an operator can edit; the shipped
+        pair's point at a file they cannot, which is the right distinction to
+        draw and the reason the label is not just the file either way.
+        """
+        return f"{source}.{channel}" if "/" not in source else source
 
     def pin_problems(self) -> list[tuple[str, str]]:
         """TG227: a pin index that is not a pin on this board.
@@ -288,20 +304,23 @@ class ChannelMap:
         not a subtle encoding bug, and saying so beats letting it reach a table.
         """
         out: list[tuple[str, str]] = []
-        where = f"hardware/{self.pinout_id}.json"
+        # Located on the CHANNEL, not just the file: a schema violation lands on
+        # `pins.odor_line_1.index`, and a rule that only said "the pinout" would
+        # be the vaguer half of one list.
+        where = lambda name: self._at(self.pins_source, name)  # noqa: E731
         for c in sorted(self._by_name.values(), key=lambda c: c.name):
             if not isinstance(c.index, int) or isinstance(c.index, bool):
-                out.append((where, f"{c.name!r} has a non-integer pin {c.index!r}"))
+                out.append((where(c.name), f"{c.name!r} has a non-integer pin {c.index!r}"))
             elif c.index >= CH_BIND_RESERVED_FROM:
                 out.append((
-                    where,
+                    where(c.name),
                     f"{c.name!r} is on pin {c.index}, which collides with the "
                     f"runtime-binding range (>= {CH_BIND_RESERVED_FROM}). A pin there is "
                     "not refused by the board, it is read as a per-trial binding.",
                 ))
             elif not (self.pin_min <= c.index <= self.pin_max):
                 out.append((
-                    where,
+                    where(c.name),
                     f"{c.name!r} is on pin {c.index}; {self.board} has pins "
                     f"{self.pin_min}-{self.pin_max}.",
                 ))
@@ -321,7 +340,7 @@ class ChannelMap:
                 seen.setdefault(c.index, []).append(c.name)
         return [
             (
-                f"hardware/{self.pinout_id}.json",
+                self.pins_source,
                 f"pin {pin} is assigned to {', '.join(sorted(names))}. The bench card "
                 "and the watch table both map a pin back to one channel, so a shared "
                 "pin makes that answer arbitrary.",
@@ -339,19 +358,19 @@ class ChannelMap:
         fine until a shape change made TG506 reach for them.
         """
         out: list[tuple[str, str]] = []
-        where = "schema/channels.v1.json"
+        where = self.channels_source
         by_slot: dict[int, list[str]] = {}
         for c in sorted(self.of_kind("response"), key=lambda c: c.name):
             if c.port_slot is None:
                 out.append((
-                    where,
+                    self._at(where, c.name),
                     f"response channel {c.name!r} declares no `port_slot`, so it has no "
                     "strobes to report a poke, an error, a broken hold or an exit with.",
                 ))
                 continue
             if vocab.port_slot(c.port_slot) is None:
                 out.append((
-                    where,
+                    self._at(where, c.name),
                     f"response channel {c.name!r} is on port slot {c.port_slot}, which the "
                     f"strobe vocabulary does not define. It declares slots "
                     f"{sorted(vocab.port_slots)}.",
@@ -598,12 +617,14 @@ def _split_rig(rig: dict) -> tuple[dict, dict]:
         "channels_version": shipped["channels_version"],
         "kinds": shipped["kinds"],
         "channels": rig["channels"],
+        "source_label": "channels",
     }
     pinout = {
         "pinout_id": rig.get("derived_from") or "rig",
         "pinout_version": int(rig.get("rig_version", 1)),
         "board": rig.get("board", ""),
         "transcribed_from": "<data_dir>/hardware/rig.json",
+        "source_label": "pins",
         "pins": rig["pins"],
         **({"pin_range": rig["pin_range"]} if rig.get("pin_range") else {}),
     }

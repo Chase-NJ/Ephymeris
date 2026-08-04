@@ -22,15 +22,28 @@ import type { ParadigmSummary, SpecCapabilities, SpecEntry, SpecSchema } from ".
  * without a refetch.
  */
 /*
- * The registry bundle, cached for the session.
+ * The registry bundle, cached for the session — and invalidated when the rig is
+ * rewired.
  *
- * It is the vendored schema, overlay and registry FILES — it cannot change
- * while the app is running, because changing it means shipping a new build.
+ * It USED to be true that this could not change while the app was running: the
+ * bundle is the schema, the overlay and the registry files, and changing those
+ * meant shipping a new build. That is still true of four of its five members.
+ * `channels` is now the composed channel map, which an operator can edit from
+ * Task → Rig wiring, so a cache held for the session would leave every channel
+ * picker in the app offering pins that moved.
+ *
  * Held at module scope rather than in a provider so a route that needs it pays
- * for it once and a route that doesn't never asks. Cleared on disconnect is
- * unnecessary for the same reason: a reconnect is to the same sidecar binary.
+ * for it once and a route that doesn't never asks. Still not cleared on
+ * disconnect: a reconnect is to the same sidecar binary, and the wiring it is
+ * running announces itself on `hardware.updated`.
  */
 let schemaCache: SpecSchema | null = null;
+
+/** Drop the bundle so the next mount refetches it. Exported for the rig editor,
+ * which knows it changed before any hook here does. */
+export function invalidateSpecSchema(): void {
+  schemaCache = null;
+}
 
 export function useSpecs(): {
   specs: SpecEntry[];
@@ -45,12 +58,27 @@ export function useSpecs(): {
   const [schema, setSchema] = useState<SpecSchema | null>(schemaCache);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(
     () =>
       client.on(EVT.SPECS_UPDATED, (data) => {
         setSpecs((data as { specs: SpecEntry[] }).specs);
         setUnavailable(null);
+      }),
+    [client],
+  );
+
+  /* The wiring moved, so `channels` in the cached bundle describes pins that
+   * are no longer where it says. Refetch rather than patch: the bundle is the
+   * compiler's composed answer, and reconstructing half of it here would be the
+   * frontend holding its own copy of a registry — the one thing `specs.schema`
+   * exists to prevent. */
+  useEffect(
+    () =>
+      client.on(EVT.HARDWARE_UPDATED, () => {
+        invalidateSpecSchema();
+        setRefresh((n) => n + 1);
       }),
     [client],
   );
@@ -81,7 +109,7 @@ export function useSpecs(): {
     return () => {
       cancelled = true;
     };
-  }, [client, connected]);
+  }, [client, connected, refresh]);
 
   return { specs, schema, unavailable, loading };
 }

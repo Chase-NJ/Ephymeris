@@ -73,6 +73,9 @@ export function TaskNew() {
   const [base, setBase] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  /* The save landed. Distinct from `creating`, which is still true while the
+   * route transition plays out — see the unsaved guard below. */
+  const [created, setCreated] = useState(false);
   const [selection, setSelection] = useState<Parameters<typeof SpecCanvas>[0]["selection"]>(null);
 
   const [id, setId] = useState("");
@@ -101,7 +104,14 @@ export function TaskNew() {
   }, [result]);
   const graph = result?.graph ?? lastGood;
 
-  useRegisterUnsaved("spec-wizard", doc !== null);
+  /*
+   * An in-progress DESIGN is unsaved work; a design that has been created is
+   * not. Guarding on `doc !== null` alone kept the wizard armed after its own
+   * successful save, so the first navigation afterwards asked whether to
+   * discard a task that was already on disk — and answering "keep editing"
+   * stranded the operator on a screen whose Create button says "Creating…".
+   */
+  useRegisterUnsaved("spec-wizard", doc !== null && !created);
 
   /**
    * Start from a paradigm.
@@ -140,6 +150,7 @@ export function TaskNew() {
         // key on something untrue.
         clearProvenance: true,
       });
+      setCreated(true);
       navigate(`/task/designer/${id}`);
     } catch (err) {
       setLoadError(errorMessage(err));
@@ -228,7 +239,17 @@ export function TaskNew() {
           </div>
 
           <RowDensityContext.Provider value="stacked">
-            <aside className="scrollbar-none flex w-[380px] shrink-0 flex-col gap-3 overflow-y-auto border-l border-halo px-4 py-3">
+            {/*
+             * The panel scrolls; the Back/Next footer does not.
+             *
+             * Both used to live in one `overflow-y-auto` column with the footer
+             * on `mt-auto`, which pins it only while the content FITS. Every
+             * step fit until the timing step started listing all fourteen
+             * durations instead of the template's eight — and then the only way
+             * forward scrolled off the bottom of a step that looks complete.
+             */}
+            <aside className="flex w-[380px] shrink-0 flex-col border-l border-halo">
+              <div className="scrollbar-none flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
               <div>
                 <div className="font-display text-[13px] text-starlight">
                   {current?.title ?? "Review"}
@@ -320,9 +341,25 @@ export function TaskNew() {
                 />
               )}
 
-              {current?.kind === "timing" && schema && caps && (
+              {current?.kind === "timing" && schema && (
                 <div className="flex flex-col gap-1.5">
-                  {caps.requiredTiming.map((tid) => {
+                  {/*
+                   * THE DOCUMENT'S OWN VECTOR, not `caps.requiredTiming`.
+                   *
+                   * The two are not the same set and the difference is exactly
+                   * the numbers an operator most wants: `required_timing` is
+                   * what the TEMPLATE asks for, so it covers the durations the
+                   * graph's shape implies and none of the ones that arrive
+                   * through layer 2 — every `outcome_map[].delay` and both
+                   * ports' `reward_duration`. Iterating it showed 8 rows of 14
+                   * on a step titled "How long is everything?", with the ITI,
+                   * all four penalties and REWARD VOLUME among the missing.
+                   *
+                   * Document order is the right order for the same reason it is
+                   * load-bearing everywhere else: it is the vector index, so
+                   * this list reads in the same order as the compiled listing.
+                   */}
+                  {timingIds(doc).map((tid) => {
                     const index = timingIndexOf(doc, tid);
                     if (index < 0) return null;
                     const meta = schema.overlay.fields["timing[].ms"];
@@ -401,7 +438,9 @@ export function TaskNew() {
                 </div>
               )}
 
-              <div className="mt-auto flex items-center justify-between gap-2 border-t border-halo pt-2">
+              </div>
+
+              <div className="flex shrink-0 items-center justify-between gap-2 border-t border-halo px-4 py-2">
                 <Button
                   variant="ghost"
                   disabled={step <= 1}
@@ -512,7 +551,7 @@ const STEPS: Step[] = [
     kind: "timing",
     title: "How long is everything?",
     blurb:
-      "Every duration this shape requires, in the order the template asks for them. None of these change the machine — only how long it dwells.",
+      "Every duration in the task, in the order the compiled table holds them — the epoch timings first, then the penalties, the ITI and the reward volumes. None of these change the machine, only how long it dwells.",
   },
   {
     kind: "policy",
@@ -526,6 +565,19 @@ const POLICY_FIELDS = [
   { path: "policy.n_trials", overlayKey: "policy.n_trials" },
   { path: "policy.seed", overlayKey: "policy.seed" },
 ];
+
+/** Every timing id the document declares, in vector order. */
+function timingIds(doc: SpecDocument): string[] {
+  const timing = doc["timing"];
+  if (!Array.isArray(timing)) return [];
+  return timing
+    .map((row) =>
+      row !== null && typeof row === "object"
+        ? (row as Record<string, unknown>)["id"]
+        : null,
+    )
+    .filter((id): id is string => typeof id === "string");
+}
 
 function timingIndexOf(doc: SpecDocument, id: string): number {
   const timing = doc["timing"];
@@ -737,6 +789,56 @@ function overlayKeyFor(path: string): string {
  * left. Editing a raw array of objects would make that trap reachable in one
  * keystroke; here it is unreachable, because the ops fill the rows.
  */
+/**
+ * The trial a stage row takes over at.
+ *
+ * COMMITS ON BLUR, not per keystroke, and that is not a preference. The op
+ * re-sorts the schedule so the document is never out of order — which means a
+ * row physically moves as its number changes, remounting the input. Committing
+ * per keystroke made "100" impossible to type: after the `1` the row sorted to
+ * the front and took the focus with it.
+ */
+function StageTrialInput({
+  index,
+  value,
+  onCommit,
+}: {
+  index: number;
+  value: number;
+  onCommit: (at: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  // The document is the authority — an op elsewhere (adding a row, removing
+  // one) can move this row's number without the input being touched.
+  useEffect(() => setDraft(String(value)), [value]);
+
+  function commit() {
+    const n = Number(draft);
+    if (draft.trim() === "" || !Number.isInteger(n) || n < 0) {
+      setDraft(String(value));
+      return;
+    }
+    if (n !== value) onCommit(n);
+  }
+
+  return (
+    <label className="flex items-center gap-1.5">
+      <span className="font-mono text-[10px] whitespace-nowrap text-static">from trial</span>
+      <input
+        aria-label={`Stage ${index + 1} starts at trial`}
+        className="w-16 rounded-sm border border-halo bg-nebula px-1.5 py-0.5 font-mono text-[10px] text-starlight"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setDraft(String(value));
+        }}
+      />
+    </label>
+  );
+}
+
 function RampStep({
   doc,
   caps,
@@ -802,10 +904,26 @@ function RampStep({
           )}
           {rows.map((row, i) => (
             <div key={i} className="flex flex-col gap-1 border-t border-halo pt-1.5 first:border-0">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] text-starlight">
-                  from trial {String(row["at_trial"] ?? 0)}
-                </span>
+              <div className="flex items-center justify-between gap-2">
+                {/*
+                 * `at_trial` IS EDITABLE, and it has to be. The step's own blurb
+                 * promises "which durations move, then the trials they move at";
+                 * seeding a row and then rendering its trial number as static
+                 * text delivers half of that. The seeded spacing is a guess at a
+                 * schedule, not the schedule — the lab's real shaping ramp
+                 * switches at 0/20/25/50/100, which the even spacing never hits.
+                 *
+                 * The op re-sorts on every edit, so typing a number that lands a
+                 * row out of order fixes the order rather than tripping TG205 —
+                 * which does not fail, it applies the wrong row.
+                 */}
+                <StageTrialInput
+                  index={i}
+                  value={Number(row["at_trial"]) || 0}
+                  onCommit={(at) =>
+                    onChange(runOp(ctx, { op: "setStageTrial", index: i }, { at_trial: at }).doc)
+                  }
+                />
                 <Button
                   variant="ghost"
                   onClick={() =>

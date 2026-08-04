@@ -401,3 +401,84 @@ def test_trial_type_stage_count_must_match():
 )
 def test_paradigm_skeleton_compiles(spec_id: str):
     compile_ok(copy.deepcopy(load(spec_id)), spec_id)
+
+
+# --------------------------------------------------------------------------- #
+# setStageTrial — moving a ramp boundary
+# --------------------------------------------------------------------------- #
+#
+# The op re-sorts because TG205 wants rows ascending by `at_trial`, and an
+# out-of-order schedule is the dangerous kind of wrong: the board applies the
+# LATEST row whose count has been reached, so the wrong values arrive and
+# nothing reports it. The mirror below is the same sort the TS op does.
+
+
+def set_stage_trial(doc: dict, index: int, at_trial: int) -> None:
+    rows = sorted(
+        doc["policy"]["stage_schedule"], key=lambda r: int(r.get("at_trial", 0))
+    )
+    if any(int(r.get("at_trial", 0)) == at_trial for i, r in enumerate(rows) if i != index):
+        raise AssertionError(f"collision at trial {at_trial}")
+    rows[index] = {**rows[index], "at_trial": at_trial}
+    doc["policy"]["stage_schedule"] = sorted(
+        rows, key=lambda r: int(r.get("at_trial", 0))
+    )
+
+
+def _ramp(doc: dict, ids: list[str], boundaries: list[int]) -> None:
+    """What the wizard's ramp step builds: every row carries every id."""
+    base = {i["id"]: i["ms"] for i in doc["timing"]}
+    doc["policy"]["stage_schedule"] = [
+        {"at_trial": at, "set": {i: base[i] for i in ids}} for at in boundaries
+    ]
+
+
+def test_moving_a_boundary_keeps_the_schedule_ascending():
+    doc = load("shaping")
+    _ramp(doc, ["t_commit_hold", "t_sample_hold"], [0, 25, 50])
+
+    # Push the FIRST row past the last one. Typed in isolation this is exactly
+    # how a schedule ends up descending.
+    set_stage_trial(doc, 0, 90)
+
+    ats = [int(r["at_trial"]) for r in doc["policy"]["stage_schedule"]]
+    assert ats == sorted(ats) == [25, 50, 90]
+    compile_ok(doc, "shaping")
+
+
+def test_a_descending_schedule_is_rejected_by_the_compiler():
+    """The rule the sort exists to satisfy — proving it is real, not folklore."""
+    doc = load("shaping")
+    _ramp(doc, ["t_commit_hold"], [0, 25, 50])
+    doc["policy"]["stage_schedule"][0]["at_trial"] = 90  # no re-sort
+
+    result = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="shaping")
+    codes = {d.code for d in list(result.bag) if d.severity.name == "ERROR"}
+    assert "TG205" in codes
+
+
+def test_moving_a_boundary_onto_another_is_refused():
+    doc = load("shaping")
+    _ramp(doc, ["t_commit_hold"], [0, 25, 50])
+    with pytest.raises(AssertionError):
+        set_stage_trial(doc, 0, 25)
+
+
+def test_the_ramp_the_wizard_builds_compiles_and_every_row_is_total():
+    """TG507: a row that omits a ramped id does not leave it alone.
+
+    The five-duration, five-boundary shape is the lab's real shaping ramp, and
+    it is the case the wizard's `setRampedIds` fills in for every row at once.
+    """
+    doc = load("shaping")
+    ids = ["t_engage_win", "t_commit_hold", "t_sample_hold", "t_resp_win", "t_resp_hold"]
+    _ramp(doc, ids, [0, 20, 25, 50, 100])
+    compile_ok(doc, "shaping")
+
+    assert all(set(r["set"]) == set(ids) for r in doc["policy"]["stage_schedule"])
+
+    # And the negative: drop one id from one row and the compiler says so.
+    doc["policy"]["stage_schedule"][2]["set"].pop("t_resp_win")
+    result = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="shaping")
+    codes = {d.code for d in list(result.bag) if d.severity.name == "ERROR"}
+    assert "TG507" in codes

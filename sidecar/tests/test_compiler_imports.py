@@ -147,3 +147,80 @@ def test_registries_carry_everything_a_form_needs():
     assert reg["overlay"]["fields"], "the presentation overlay is empty"
     assert any(t["name"] == "four_epoch" for t in reg["templates"])
     assert all(t["sourceHash"] for t in reg["templates"])
+
+
+# --------------------------------------------------------------------------- #
+# An answer re-derives the fields it invalidates (paradigms._reconcile)
+# --------------------------------------------------------------------------- #
+
+from ephymeris_sidecar.taskgraph import paradigms  # noqa: E402
+
+
+def test_an_answered_emitter_carries_its_onset_code():
+    """The gate-B failure, pinned: `emitter` and `on_code` are one fact.
+
+    Answering "which odor line" and leaving the code alone produces a document
+    claiming line 3 announces itself as ODOR_1_ON. Both halves are individually
+    legal, so it compiles — and the way it surfaces is real firmware disagreeing
+    about which odor was presented.
+    """
+    p = paradigms.get("two_afc")
+    doc = paradigms.skeleton(
+        p, spec_id="probe", answers={"stim_a_emitter": "odor_line_3"}
+    )
+    first = doc["contingency"]["stimuli"][0]
+    assert (first["emitter"], first["on_code"]) == ("odor_line_3", "ODOR_3_ON")
+
+
+def test_an_answered_target_renames_the_trial_type_it_describes():
+    """Shaping-L came out of the wizard carrying `tt_odor1_right_well`
+    targeting the LEFT well. An id is only a label, so it compiled — and a
+    listing that names one side while scoring the other is exactly the kind of
+    thing nobody catches at the bench."""
+    p = paradigms.get("shaping")
+    left = paradigms.skeleton(p, spec_id="probe", answers={"rewarded_arm": "left_well"})
+
+    weighted = [t for t in left["contingency"]["trial_types"] if t.get("weight") == 1]
+    assert len(weighted) == 1
+    assert weighted[0]["target"] == "left_well"
+    assert weighted[0]["id"] == "tt_odor1_left_well"
+
+    # The unweighted rows keep the names they were generated with — only the
+    # row whose target the answer moved is re-derived.
+    others = {t["id"]: t["target"] for t in left["contingency"]["trial_types"][1:]}
+    assert all(tid.endswith(target) for tid, target in others.items())
+
+
+def test_shaping_left_and_right_are_the_same_machine():
+    """The paradigm/spec split, stated as a test.
+
+    Shaping-R and Shaping-L differ by ONE answer, so they must compile to the
+    same nodes, the same edges and the same timing — differing only in which
+    trial type carries the weight. If this ever fails, widening a shaping task
+    to both wells has become a reshape rather than a policy edit, and the
+    animal's history splits at that boundary in Analytics.
+    """
+    p = paradigms.get("shaping")
+    tables = {}
+    for side in ("right_well", "left_well"):
+        text = paradigms.to_yaml(
+            paradigms.skeleton(p, spec_id=f"probe_{side}", answers={"rewarded_arm": side})
+        )
+        result = compiler.compile(text, spec_id=f"probe_{side}")
+        assert result.ok
+        tables[side] = result.table
+
+    r, l = tables["right_well"], tables["left_well"]
+    prims = lambda t: [(n.type, n.watch_mask, n.edge_idx, n.strobe) for n in t.nodes]
+    edges = lambda t: [(e.trigger, e.guard, e.target, e.effect) for e in t.edges]
+
+    assert prims(r) == prims(l)
+    assert edges(r) == edges(l)
+    assert list(r.timing) == list(l.timing)
+    assert [(p_.channel, p_.reward_line) for p_ in r.ports] == [
+        (p_.channel, p_.reward_line) for p_ in l.ports
+    ]
+    # ...and the one thing that does differ.
+    assert [(t.target, t.weight) for t in r.trial_types] != [
+        (t.target, t.weight) for t in l.trial_types
+    ]

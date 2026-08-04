@@ -69,9 +69,18 @@ export async function createSpecFrom(
   await saveSpec(client, opts.id, toYaml(rename(source, opts)));
 }
 
-/** `gonogo` → `gonogo_2`, skipping ids already in the library. */
+/**
+ * `gonogo` → `gonogo_2`, skipping ids already in the library.
+ *
+ * The bare stem is tried FIRST, which matters only for the wizard. Duplicate
+ * passes an id that is by definition taken, so it always lands on a suffix and
+ * this line changes nothing for it. The wizard passes a PARADIGM id, which is
+ * never in the library — so without the first check the first task on a fresh
+ * rig was offered `two_afc_2`, numbered against nothing.
+ */
 export function suggestId(source: string, taken: ReadonlySet<string>): string {
   const stem = source.slice(0, 37);
+  if (!taken.has(stem)) return stem;
   for (let n = 2; n < 100; n++) {
     const candidate = `${stem}_${n}`;
     if (!taken.has(candidate)) return candidate;

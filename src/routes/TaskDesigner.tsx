@@ -169,7 +169,9 @@ export function TaskDesigner() {
             disabled={!dirty || session.saving || !connected}
             onClick={() => void onSave()}
             title={
-              docId !== specId ? `Save as a new spec named ${docId}` : "Save this rig's copy"
+              docId !== specId
+                ? `Save as a new spec named ${docId}`
+                : "Write the edits to this task"
             }
           >
             <Save size={12} strokeWidth={1.75} />

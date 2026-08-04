@@ -294,7 +294,9 @@ def _reconcile(doc: dict, vocab) -> None:
     operation fills every field its change makes reachable, not just the one its
     name mentions.
     """
-    for stim in doc.get("contingency", {}).get("stimuli", []) or []:
+    contingency = doc.get("contingency", {})
+
+    for stim in contingency.get("stimuli", []) or []:
         emitter = stim.get("emitter")
         if not isinstance(emitter, str):
             continue
@@ -304,6 +306,30 @@ def _reconcile(doc: dict, vocab) -> None:
         code = f"ODOR_{tail}_ON"
         if code in vocab.names():
             stim["on_code"] = code
+
+    # A trial type's id is generated as tt_<stimulus>_<target>, so answering
+    # "which arm is offered" leaves the NAME describing the old side while the
+    # target describes the new one. Shaping-L came out carrying a trial type
+    # called `tt_odor1_right_well` that targeted the left well -- which compiles,
+    # because an id is only a label, and is exactly the kind of thing that makes
+    # somebody misread a listing at the bench.
+    #
+    # Only the generated shape is rewritten, and only when the stimulus half
+    # still matches: an id the operator chose is theirs. The one field that
+    # references a trial type by id, `context_schedule[].targets`, cannot be
+    # populated at all (TG230 rejects a non-empty schedule), so nothing can be
+    # pointing at the old name.
+    ports = list((contingency.get("ports") or {}).keys())
+    for tt in contingency.get("trial_types", []) or []:
+        tid, target = tt.get("id"), tt.get("target")
+        stages = tt.get("stages") or []
+        if not (isinstance(tid, str) and isinstance(target, str) and stages):
+            continue
+        if target not in ports:
+            continue
+        stem = f"tt_{stages[0]}_"
+        if tid.startswith(stem) and tid[len(stem) :] in ports:
+            tt["id"] = f"{stem}{target}"
 
 
 def _knobs(paradigm: Paradigm):

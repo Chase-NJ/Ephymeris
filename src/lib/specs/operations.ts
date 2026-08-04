@@ -78,6 +78,7 @@ export type OpInvocation =
   | { op: "setCorrectRewarded"; on: boolean }
   | { op: "addStageRow" }
   | { op: "removeStageRow"; index: number }
+  | { op: "setStageTrial"; index: number }
   | { op: "setRampedIds"; ids: string[] };
 
 export type OpId = OpInvocation["op"];
@@ -680,6 +681,7 @@ export function proposeTopology(
     case "setCorrectRewarded":
     case "addStageRow":
     case "removeStageRow":
+    case "setStageTrial":
     case "setRampedIds":
       return null;
   }
@@ -703,6 +705,7 @@ const TITLES: Record<OpId, string> = {
   setCorrectRewarded: "Reward on correct",
   addStageRow: "Add a stage to the ramp",
   removeStageRow: "Remove a stage from the ramp",
+  setStageTrial: "Move a stage boundary",
   setRampedIds: "Choose what ramps",
 };
 
@@ -749,6 +752,9 @@ export function runOp(
       break;
     case "removeStageRow":
       removeStageRow(b, invocation.index);
+      break;
+    case "setStageTrial":
+      setStageTrial(b, invocation.index, answers);
       break;
     case "setRampedIds":
       setRampedIds(b, invocation.ids);
@@ -1409,6 +1415,42 @@ function addStageRow(b: Op): void {
     `carries all ${ids.length} ramped duration${ids.length === 1 ? "" : "s"} ` +
       "from the row before it — a row that omits one does not leave it alone",
   );
+}
+
+/**
+ * Move a boundary to a different trial.
+ *
+ * RE-SORTS, which is the whole point. TG205 wants rows ascending by `at_trial`,
+ * and an out-of-order schedule is the dangerous kind of wrong: the board takes
+ * the latest row whose count has been reached, so it does not fail, it applies
+ * a row the operator did not intend. Sorting here means the document is never
+ * in that state, whatever order the numbers were typed in.
+ *
+ * A collision is refused rather than merged. Two rows at one trial is TG205's
+ * other half, and silently dropping one of them would discard values somebody
+ * entered.
+ */
+function setStageTrial(b: Op, index: number, answers: OpAnswers): void {
+  const rows = sortedRows(stageRows(b.doc));
+  const row = rows[index];
+  if (!row) {
+    b.blocked = "That stage row is no longer there.";
+    return;
+  }
+  const at = Number(answers["at_trial"]);
+  if (!Number.isInteger(at) || at < 0) {
+    b.blocked = "A stage boundary is a whole number of completed trials.";
+    return;
+  }
+  if (at === (Number(row["at_trial"]) || 0)) return;
+  if (rows.some((r, i) => i !== index && (Number(r["at_trial"]) || 0) === at)) {
+    b.blocked = `There is already a row at trial ${at}. Move that one first, or remove it.`;
+    return;
+  }
+  const next = sortedRows(
+    rows.map((r, i) => (i === index ? { ...r, at_trial: at } : r)),
+  );
+  b.set("policy.stage_schedule", next, `the boundary at trial ${at}`);
 }
 
 /** Remove a boundary. The remaining rows keep their order and their ids. */

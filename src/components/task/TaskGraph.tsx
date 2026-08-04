@@ -12,7 +12,7 @@ import {
 import { OUTCOME_STYLE } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
-import type { CountKey, TaskEdge, TaskGraphModel, TaskNode } from "@/lib/tasks/topology";
+import type { TaskEdge, TaskGraphModel, TaskNode } from "@/lib/tasks/topology";
 
 /**
  * The task's state machine, drawn (`dashboard.md` §2.x).
@@ -28,14 +28,13 @@ import type { CountKey, TaskEdge, TaskGraphModel, TaskNode } from "@/lib/tasks/t
  * gradients — because it is the same idea: nodes joined by thin Pulsar lines,
  * lit where something is happening.
  *
- * Three modes off one component:
- *   shape     — the diagram alone
- *   recorded  — edges weighted and labelled by what animals actually did
- *   live      — a token walking the graph from the running box's strobes
+ * Two modes off one component:
+ *   shape — the diagram alone
+ *   live  — a token walking the graph from the running box's strobes
+ *
+ * There is deliberately no third "recorded" mode drawing per-edge counts onto
+ * it; see the note at the top of `topology.ts` for why the model carries none.
  */
-
-/** Recorded figures, as they arrive from `derive.py` via a run summary. */
-export interface GraphCounts extends Partial<Record<CountKey, number>> {}
 
 const ROW_HEIGHT = 10;
 const CENTRE_Y = 30;
@@ -87,15 +86,12 @@ function strokeFor(edge: TaskEdge): string {
 
 export function TaskGraph({
   model,
-  counts,
   liveNode,
   highlighted,
   onNodeClick,
   className = "",
 }: {
   model: TaskGraphModel;
-  /** Recorded figures; omit for the plain diagram. */
-  counts?: GraphCounts | null;
   /** Node the live token sits on; omit outside a running session. */
   liveNode?: string | null;
   /** Node ids to light — the parameter tile the operator is hovering. */
@@ -125,7 +121,6 @@ export function TaskGraph({
   if (!model.usable) return null;
 
   const someoneLit = (highlighted?.size ?? 0) > 0;
-  const denominator = counts?.presented ?? null;
 
   return (
     <svg
@@ -139,20 +134,9 @@ export function TaskGraph({
         const from = positions.get(edge.from);
         const to = positions.get(edge.to);
         if (!from || !to) return null;
-        const value = edge.countKey ? counts?.[edge.countKey] : undefined;
         const lit =
           !someoneLit || highlighted!.has(edge.from) || highlighted!.has(edge.to);
-        return (
-          <Edge
-            key={edge.id}
-            edge={edge}
-            from={from}
-            to={to}
-            value={value ?? null}
-            denominator={denominator}
-            lit={lit}
-          />
-        );
+        return <Edge key={edge.id} edge={edge} from={from} to={to} lit={lit} />;
       })}
 
       {model.nodes.map((node) => {
@@ -259,7 +243,7 @@ function NodeMark({
 }
 
 /**
- * One edge, with its count when a run is in view.
+ * One edge.
  *
  * Straight for the spine, curved for anything that leaves or rejoins it —
  * a return drawn straight would cut back across every node it passed.
@@ -268,22 +252,14 @@ function Edge({
   edge,
   from,
   to,
-  value,
-  denominator,
   lit,
 }: {
   edge: TaskEdge;
   from: { x: number; y: number };
   to: { x: number; y: number };
-  value: number | null;
-  denominator: number | null;
   lit: boolean;
 }) {
   const isReturn = edge.kind === "return";
-  // Weight carries the count, but never thins to invisibility and never
-  // thickens enough to read as a different kind of object.
-  const share = value !== null && denominator ? value / Math.max(denominator, 1) : null;
-  const width = LINK_WIDTH * (share === null ? 1 : 0.5 + Math.min(share, 1) * 2.2);
 
   const path = isReturn
     ? // Up and over the top of the diagram, back to the start.
@@ -300,13 +276,13 @@ function Edge({
         d={path}
         fill="none"
         stroke={strokeFor(edge)}
-        strokeWidth={width}
+        strokeWidth={LINK_WIDTH}
         strokeLinecap="round"
         animate={{ opacity: lit ? baseOpacity : LINK_OPACITY_DIM * 0.6 }}
         transition={springSnappy}
         pointerEvents="none"
       />
-      {!isReturn && (edge.label || value !== null) && (
+      {!isReturn && edge.label && (
         <text
           x={midX}
           y={midY - 1.4}
@@ -319,9 +295,7 @@ function Edge({
             opacity: lit ? 0.85 : 0.3,
           }}
         >
-          {value !== null
-            ? `${value}${share !== null ? ` · ${Math.round(share * 100)}%` : ""}`
-            : edge.label}
+          {edge.label}
         </text>
       )}
     </g>

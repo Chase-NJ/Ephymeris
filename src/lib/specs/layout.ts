@@ -1,5 +1,6 @@
 /**
- * Deterministic layout for the compiled machine graph.
+ * Deterministic layout for the compiled machine graph — vertical, top to
+ * bottom.
  *
  * The compiler emits no coordinates — this is where they come from, as a PURE
  * function of the `SpecGraph` payload. No randomness, no measured text, no
@@ -9,22 +10,32 @@
  *
  * The rules, in order of authority:
  *
- * 1. BAND = COLUMN GROUP. Four bands left to right with a labelled gutter,
- *    matching the listing's `── 1 · engagement ──` rules exactly.
- * 2. X WITHIN A BAND = INDEX ORDER. The template emits nodes in the order a
- *    trial visits them; that is authored intent, it is topological by
- *    construction, and — decisively — it is the order the listing prints.
- *    The graph and the review artifact must not disagree about ordering.
- * 3. Y BY BRANCH. Nodes that can reach a LATER band sit on the spine (y = 0);
- *    everything else is a branch — a penalty chain, an outcome fan — pushed
- *    below, one row per connected branch, in first-encountered order. That
- *    matches the convention the operator already reads on the legacy derived
- *    graph: the main line runs straight, aborts hang underneath.
+ * 1. BAND = ROW GROUP. Four bands top to bottom with a header row, matching
+ *    the listing's `── 1 · engagement ──` rules exactly. A trial reads down
+ *    the page the way it reads down the listing.
+ * 2. THE FLOW AXIS IS VERTICAL, AND ORDER MATCHES THE LISTING: within every
+ *    lane, flow position is strictly increasing in node index; lanes are
+ *    ordered by the index of their first member; bands by band number.
+ *    Reading lane 0 top to bottom reproduces the listing's main line — the
+ *    graph and the review artifact must not disagree about ordering.
+ * 3. X BY BRANCH (lanes). Nodes that can reach a LATER band sit on the spine
+ *    (lane 0); everything else is a branch — a penalty chain, an outcome fan —
+ *    pushed to the next lane, one lane per connected branch, in
+ *    first-encountered order. A branch is COMPACTED to start at the flow
+ *    position of the spine node it leaves from, not at its global index —
+ *    otherwise every branch node pushes the spine along and leaves empty
+ *    spine slots (band 1 of grgl_2odor used to consume 10 slots for a
+ *    6-deep spine).
  * 4. ADVANCE/REPEAT edges are RETURNS — excluded from reachability, drawn as
- *    faint arcs by the renderer, never labelled.
+ *    faint arcs up a reserved right-hand rail, never labelled.
+ * 5. TEXT IS BUDGETED, NEVER OVERFLOWING. Band headers live in a fixed left
+ *    gutter so they cannot reach a lane; node labels are left-anchored beside
+ *    the node inside `LABEL_BUDGET`; everything is fitted with `fitMono`,
+ *    which is character arithmetic, not measurement — determinism again.
  */
 
 import type { SpecGraph, SpecGraphEdge, SpecGraphNode } from "./types";
+import { scoredClass } from "./selection";
 
 export interface LaidOutNode {
   node: SpecGraphNode;
@@ -37,13 +48,22 @@ export interface LaidOutEdge {
   from: { x: number; y: number };
   to: { x: number; y: number };
   isReturn: boolean;
+  /** `guard` or the `score:<class>` effect — precomputed so the renderer never
+   * decides what a label says. Null on returns and unlabelled edges. */
+  label: string | null;
+  labelX: number;
+  labelY: number;
+  labelAnchor: "start" | "middle";
+  /** Lateral bow for parallel edges sharing (src, dst), so two edges read as
+   * two. Zero when the pair is alone. */
+  bow: number;
 }
 
 export interface BandBox {
   band: number;
   label: string;
-  x0: number;
-  x1: number;
+  y0: number;
+  y1: number;
 }
 
 export interface SpecLayout {
@@ -52,6 +72,9 @@ export interface SpecLayout {
   bands: BandBox[];
   width: number;
   height: number;
+  laneCount: number;
+  /** The x of the return rail — the vertical track ADVANCE/REPEAT arcs ride. */
+  returnRailX: number;
 }
 
 export const BAND_LABELS: Record<number, string> = {
@@ -61,11 +84,47 @@ export const BAND_LABELS: Record<number, string> = {
   4: "outcome",
 };
 
-const COL_W = 92;
-const ROW_H = 74;
-const BAND_GUTTER = 40;
-const MARGIN_X = 24;
-const MARGIN_Y = 46;
+export const NODE_PITCH_Y = 56;
+export const LANE_PITCH_X = 168;
+export const BAND_GAP_Y = 34;
+/** Room for three stacked header lines before the band's first node. */
+export const BAND_HEADER_H = 30;
+/** Fixed left column carrying the band name and readout — text there
+ * structurally cannot overrun a lane. */
+export const GUTTER_X = 130;
+const RETURN_GUTTER = 36;
+const MARGIN_TOP = 12;
+/** Without this the last row's strobe line clipped at the SVG edge. */
+const MARGIN_BOTTOM = 22;
+/** Text room to the right of each node before the next lane begins. */
+export const LABEL_BUDGET = LANE_PITCH_X - 22;
+
+/** JetBrains Mono advance ≈ 0.6 em. Character arithmetic, not measurement —
+ * the same string always truncates the same way. Callers put the full string
+ * in a `<title>` so hover still gives the whole thing. */
+export const MONO_ADVANCE = 0.6;
+
+export function fitMono(s: string, widthPx: number, fontSize: number): string {
+  const budget = Math.max(1, Math.floor(widthPx / (fontSize * MONO_ADVANCE)));
+  if (s.length <= budget) return s;
+  return `${s.slice(0, Math.max(0, budget - 1))}…`;
+}
+
+/**
+ * The graph's structural identity: what would make the picture a DIFFERENT
+ * picture, as opposed to the same picture with different text. Durations,
+ * labels, strobe names and watch sets are deliberately excluded — resetting
+ * the view because a strobe name changed is the same bug as resetting it
+ * because the compile returned a fresh object.
+ */
+export function graphSignature(g: SpecGraph): string {
+  return (
+    `${g.nodes.length}/${g.edges.length}:` +
+    g.nodes.map((n) => `${n.symbol}.${n.band}.${n.type}`).join(",") +
+    "|" +
+    g.edges.map((e) => `${e.src}>${e.dst}.${e.trigger}`).join(",")
+  );
+}
 
 function isReturn(edge: SpecGraphEdge): boolean {
   return edge.trigger === "ADVANCE" || edge.trigger === "REPEAT";
@@ -101,59 +160,125 @@ function reachesLaterBand(graph: SpecGraph): boolean[] {
 }
 
 /**
- * Assign each off-spine node a branch row within its band: members of one
- * connected off-spine chain share a row, chains stack in first-encountered
- * (= index) order. Union-find over non-return edges whose BOTH ends are
- * off-spine and share a band.
+ * Which spine node(s) each off-spine node descends from, within its band.
+ *
+ * This is what makes lanes mean "one branch" rather than "one connected blob".
+ * The abort chains of a four_epoch band both end at the SAME repeat terminal,
+ * so plain connectivity fuses every branch in the band into one component and
+ * stacks it — band 1 of grgl_2odor came out 9 rows deep in a single lane, which
+ * is the shape this whole rewrite exists to avoid. Descent separates them:
+ * two chains that merely share a sink are still two branches.
  */
-function branchRows(graph: SpecGraph, spine: boolean[]): number[] {
-  const parent = graph.nodes.map((_, i) => i);
-  const find = (i: number): number => {
-    while (parent[i] !== i) {
-      parent[i] = parent[parent[i]!]!;
-      i = parent[i]!;
-    }
-    return i;
-  };
-  const union = (a: number, b: number) => {
-    parent[find(a)] = find(b);
-  };
+function originsOf(graph: SpecGraph, spine: boolean[]): Array<Set<number>> {
+  const origins = graph.nodes.map(() => new Set<number>());
+  const inBand = (a: number, b: number) =>
+    graph.nodes[a]!.band === graph.nodes[b]!.band;
+
   for (const edge of graph.edges) {
     if (isReturn(edge)) continue;
-    if (spine[edge.src] || spine[edge.dst]) continue;
-    if (graph.nodes[edge.src]!.band !== graph.nodes[edge.dst]!.band) continue;
-    union(edge.src, edge.dst);
+    if (!spine[edge.src] || spine[edge.dst]) continue;
+    if (!inBand(edge.src, edge.dst)) continue;
+    origins[edge.dst]!.add(edge.src);
+  }
+  // Fixed point along off-spine edges. ≤64 nodes by the compiler's capacity
+  // rule, so the sweep is free.
+  let moved = true;
+  while (moved) {
+    moved = false;
+    for (const edge of graph.edges) {
+      if (isReturn(edge)) continue;
+      if (spine[edge.src] || spine[edge.dst]) continue;
+      if (!inBand(edge.src, edge.dst)) continue;
+      const before = origins[edge.dst]!.size;
+      for (const o of origins[edge.src]!) origins[edge.dst]!.add(o);
+      if (origins[edge.dst]!.size !== before) moved = true;
+    }
+  }
+  return origins;
+}
+
+/**
+ * Lane per off-spine node: spine is lane 0, each branch takes the next lane
+ * within its band in origin-index order, and a JOIN — a node several branches
+ * converge on, like the shared repeat terminal — rides the last of the lanes
+ * that feed it rather than claiming one of its own. Lane numbering restarts
+ * per band, so band 2's single branch and band 3's three don't force each
+ * other wider.
+ */
+function laneOf(
+  graph: SpecGraph,
+  spine: boolean[],
+  origins: Array<Set<number>>,
+): number[] {
+  const lanes = graph.nodes.map(() => 0);
+  const laneOfOrigin = new Map<string, number>();
+  const nextLane = new Map<number, number>();
+
+  // Branches first, so a join has lanes to point at.
+  for (const [i, node] of graph.nodes.entries()) {
+    if (spine[i] || origins[i]!.size !== 1) continue;
+    const origin = [...origins[i]!][0]!;
+    const key = `${node.band}:${origin}`;
+    let lane = laneOfOrigin.get(key);
+    if (lane === undefined) {
+      lane = (nextLane.get(node.band) ?? 0) + 1;
+      nextLane.set(node.band, lane);
+      laneOfOrigin.set(key, lane);
+    }
+    lanes[i] = lane;
   }
 
-  const rows = graph.nodes.map(() => 0);
-  const rowOfChain = new Map<string, number>();
-  const nextRow = new Map<number, number>();
   for (const [i, node] of graph.nodes.entries()) {
-    if (spine[i]) continue;
-    const key = `${node.band}:${find(i)}`;
-    let row = rowOfChain.get(key);
-    if (row === undefined) {
-      row = (nextRow.get(node.band) ?? 0) + 1;
-      nextRow.set(node.band, row);
-      rowOfChain.set(key, row);
+    if (spine[i] || origins[i]!.size === 1) continue;
+    const candidates = [...origins[i]!]
+      .map((o) => laneOfOrigin.get(`${node.band}:${o}`))
+      .filter((l): l is number => l !== undefined);
+    if (candidates.length > 0) {
+      lanes[i] = Math.max(...candidates);
+    } else {
+      // Reachable from no spine node in this band (an orphan, or a node whose
+      // only predecessors are in an earlier band): its own lane.
+      const lane = (nextLane.get(node.band) ?? 0) + 1;
+      nextLane.set(node.band, lane);
+      lanes[i] = lane;
     }
-    rows[i] = row;
   }
-  return rows;
+  return lanes;
 }
 
 export function layoutSpecGraph(graph: SpecGraph): SpecLayout {
   const spine = reachesLaterBand(graph);
-  // The last band has no later band to reach, so everything there would be a
-  // "branch". Its spine is the first chain instead: the node the previous band
-  // enters first, in index order — for four_epoch that is the reward path.
+
+  /*
+   * The last band has no later band to reach, so by the rule above every node
+   * in it would be a branch. Its spine is a CHAIN from its first node,
+   * following the lowest-index in-band successor at each step — not everything
+   * reachable, which was the same mistake in the other direction: a go/no-go
+   * task ends at band 3, and sweeping the whole band onto the spine drew its
+   * two genuine forks as one straight column of nine.
+   *
+   * Lowest index is the listing's own order, and it is a CHOICE where the
+   * machine offers no main line: at a go/no-go response window neither
+   * "entered a port" nor "window expired" is structurally the main path, so
+   * what matters is that both are drawn as forks — which they now are.
+   */
   const lastBand = Math.max(0, ...graph.nodes.map((n) => n.band));
-  const firstInLast = graph.nodes.findIndex((n) => n.band === lastBand);
-  if (firstInLast >= 0) spine[firstInLast] = true;
+  let step = graph.nodes.findIndex((n) => n.band === lastBand);
+  while (step >= 0 && !spine[step]) {
+    spine[step] = true;
+    const successors = graph.edges
+      .filter(
+        (e) => !isReturn(e) && e.src === step && graph.nodes[e.dst]!.band === lastBand,
+      )
+      .map((e) => e.dst)
+      .filter((d) => !spine[d]);
+    step = successors.length > 0 ? Math.min(...successors) : -1;
+  }
 
-  const rows = branchRows(graph, spine);
+  const origins = originsOf(graph, spine);
+  const lanes = laneOf(graph, spine, origins);
 
-  // x: bands left to right; within a band, nodes in index order.
+  // Group node indices by band, in index order.
   const bandOf = new Map<number, number[]>();
   for (const [i, node] of graph.nodes.entries()) {
     const list = bandOf.get(node.band);
@@ -162,40 +287,156 @@ export function layoutSpecGraph(graph: SpecGraph): SpecLayout {
   }
   const bandsSorted = [...bandOf.keys()].sort((a, b) => a - b);
 
-  const xOf = new Array<number>(graph.nodes.length).fill(0);
-  const bands: BandBox[] = [];
-  let cursor = MARGIN_X;
+  /*
+   * Flow position within each band — THE COMPACTION.
+   *
+   * Spine nodes take 0, 1, 2, … in index order. A branch starts at the
+   * position just BELOW the spine node it descends from, rather than at its
+   * own global index — otherwise every branch node pushes the spine one row
+   * further down and leaves the spine's own rows empty, which is what made
+   * band 1 ten rows deep for a three-node spine. A join sits below everything
+   * that feeds it. A per-lane cursor only ever moves down, so two branches
+   * sharing a lane can never overlap.
+   */
+  const pos = new Array<number>(graph.nodes.length).fill(0);
+  const bandHeight = new Map<number, number>();
+
+  const predsOf = (i: number): number[] =>
+    graph.edges
+      .filter((e) => !isReturn(e) && e.dst === i && graph.nodes[e.src]!.band === graph.nodes[i]!.band)
+      .map((e) => e.src);
+
   for (const band of bandsSorted) {
     const members = bandOf.get(band)!;
-    const x0 = cursor;
-    for (const [pos, i] of members.entries()) {
-      xOf[i] = cursor + pos * COL_W;
+    let spineCursor = 0;
+    for (const i of members) {
+      if (spine[i]) pos[i] = spineCursor++;
     }
-    const x1 = cursor + (members.length - 1) * COL_W;
-    bands.push({ band, label: BAND_LABELS[band] ?? `band ${band}`, x0, x1 });
-    cursor = x1 + COL_W + BAND_GUTTER;
+
+    const laneCursor = new Map<number, number>();
+    const placed = new Set<number>(members.filter((i) => spine[i]));
+
+    // Branches, grouped by descent, in origin-index order.
+    for (const i of members) {
+      if (spine[i] || placed.has(i) || origins[i]!.size !== 1) continue;
+      const lane = lanes[i]!;
+      const origin = [...origins[i]!][0]!;
+      const chain = members.filter(
+        (m) => !spine[m] && !placed.has(m) && lanes[m] === lane && origins[m]!.size === 1,
+      );
+      const start = spine[origin] ? (pos[origin] ?? 0) + 1 : 0;
+      let k = 0;
+      for (const m of chain) {
+        pos[m] = Math.max(start + k, laneCursor.get(lane) ?? 0);
+        laneCursor.set(lane, pos[m]! + 1);
+        placed.add(m);
+        k++;
+      }
+    }
+
+    // Joins last: a node several branches converge on goes below all of them.
+    // Index order suffices because a join's in-band predecessors precede it —
+    // the emitter builds a chain before the node it ends at.
+    for (const i of members) {
+      if (placed.has(i)) continue;
+      const lane = lanes[i]!;
+      const below = Math.max(
+        0,
+        ...predsOf(i).map((p) => (placed.has(p) ? (pos[p] ?? 0) + 1 : 0)),
+      );
+      pos[i] = Math.max(below, laneCursor.get(lane) ?? 0);
+      laneCursor.set(lane, pos[i]! + 1);
+      placed.add(i);
+    }
+
+    bandHeight.set(band, 1 + Math.max(0, ...members.map((i) => pos[i]!)));
   }
 
-  const maxRow = Math.max(0, ...rows);
+  // y per band, stacked with headers and gaps.
+  const bands: BandBox[] = [];
+  const yOf = new Array<number>(graph.nodes.length).fill(0);
+  let cursor = MARGIN_TOP;
+  for (const band of bandsSorted) {
+    const members = bandOf.get(band)!;
+    const y0 = cursor;
+    const rows = bandHeight.get(band)!;
+    for (const i of members) {
+      yOf[i] = y0 + BAND_HEADER_H + pos[i]! * NODE_PITCH_Y + 18;
+    }
+    const y1 = y0 + BAND_HEADER_H + rows * NODE_PITCH_Y;
+    bands.push({ band, label: BAND_LABELS[band] ?? `band ${band}`, y0, y1 });
+    cursor = y1 + BAND_GAP_Y;
+  }
+  const height = cursor - BAND_GAP_Y + MARGIN_BOTTOM;
+
+  const laneCount = 1 + Math.max(0, ...lanes);
+  const xOf = (i: number) => GUTTER_X + lanes[i]! * LANE_PITCH_X;
+  const rightmostLabel = GUTTER_X + (laneCount - 1) * LANE_PITCH_X + 13 + LABEL_BUDGET;
+  const returnRailX = rightmostLabel + 24;
+  const width = returnRailX + RETURN_GUTTER - 24;
+
   const nodes: LaidOutNode[] = graph.nodes.map((node, i) => ({
     node,
-    x: xOf[i]!,
-    y: MARGIN_Y + rows[i]! * ROW_H,
+    x: xOf(i),
+    y: yOf[i]!,
   }));
 
-  const at = (i: number) => ({ x: nodes[i]!.x, y: nodes[i]!.y });
-  const edges: LaidOutEdge[] = graph.edges.map((edge) => ({
-    edge,
-    from: at(edge.src),
-    to: at(edge.dst),
-    isReturn: isReturn(edge),
-  }));
+  /*
+   * Edges, with their labels PLACED HERE rather than in the renderer, so
+   * collision handling stays pure and deterministic. A label sits beside a
+   * straight vertical run (never on it) and at the midpoint of a diagonal;
+   * labels that would land in the same 12px bucket are pushed down 11px each
+   * in edge-index order — O(e), and the same spec always resolves the same
+   * way. Parallel edges sharing (src, dst) bow apart laterally.
+   */
+  const pairCount = new Map<string, number>();
+  const pairSeen = new Map<string, number>();
+  for (const edge of graph.edges) {
+    if (isReturn(edge)) continue;
+    const key = `${edge.src}>${edge.dst}`;
+    pairCount.set(key, (pairCount.get(key) ?? 0) + 1);
+  }
 
-  return {
-    nodes,
-    edges,
-    bands,
-    width: cursor - BAND_GUTTER + MARGIN_X,
-    height: MARGIN_Y + (maxRow + 1) * ROW_H + 24,
-  };
+  const buckets = new Map<string, number>();
+  const at = (i: number) => ({ x: xOf(i), y: yOf[i]! });
+  const edges: LaidOutEdge[] = graph.edges.map((edge) => {
+    const from = at(edge.src);
+    const to = at(edge.dst);
+    const ret = isReturn(edge);
+
+    let bow = 0;
+    if (!ret) {
+      const key = `${edge.src}>${edge.dst}`;
+      const count = pairCount.get(key) ?? 1;
+      if (count > 1) {
+        const k = pairSeen.get(key) ?? 0;
+        pairSeen.set(key, k + 1);
+        bow = (k - (count - 1) / 2) * 20;
+      }
+    }
+
+    const label = ret ? null : (edge.guard ?? scoredClass(edge));
+    let labelX = 0;
+    let labelY = 0;
+    let labelAnchor: "start" | "middle" = "start";
+    if (label !== null) {
+      if (from.x === to.x) {
+        labelX = from.x + 7 + bow;
+        labelY = (from.y + to.y) / 2;
+        labelAnchor = "start";
+      } else {
+        labelX = (from.x + to.x) / 2 + bow;
+        labelY = (from.y + to.y) / 2 - 4;
+        labelAnchor = "middle";
+      }
+      const bucket = `${Math.round(labelX / 12)}:${Math.round(labelY / 12)}`;
+      const occupants = buckets.get(bucket) ?? 0;
+      buckets.set(bucket, occupants + 1);
+      labelY += occupants * 11;
+    }
+
+    return { edge, from, to, isReturn: ret, label, labelX, labelY, labelAnchor, bow };
+  });
+
+  return { nodes, edges, bands, width, height, laneCount, returnRailX };
 }

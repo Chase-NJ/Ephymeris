@@ -1107,6 +1107,94 @@ SHAPES = (
         doc="A row in the spec list. Built from a cheap parse — never a compile — "
         "so `specs.list` stays instant however many specs exist.",
     ),
+    # The presentation overlay (schema/task_spec.presentation.v1.json), served
+    # verbatim by specs.schema. It is typed here rather than left ANY because
+    # the editor's whole form is generated from it — an untyped overlay meant
+    # the frontend re-declared this shape by hand and cast the reply through
+    # `unknown`, which is exactly the drift the generated mirrors exist to stop.
+    # The sibling registries (schema/strobes/channels/limits) stay ANY: those
+    # are passthrough JSON the frontend reads with lookups, not a shape it
+    # binds a form to.
+    Shape(
+        "SpecOverlayField",
+        obj(
+            f("label", STR),
+            f(
+                "widget",
+                STR,
+                doc="Which input edits this field. Deliberately NOT a literal "
+                "union: the renderer carries a documented default case, so an "
+                "overlay that gains a widget in a vendor sync degrades to a "
+                "plain input instead of failing to compile.",
+            ),
+            f("group", STR, optional=True, doc="An id from `groups`."),
+            f("order", INT, optional=True),
+            f("unit", STR, optional=True),
+            f("step", NUMBER, optional=True),
+            f("help", STR, optional=True),
+            f("advanced", BOOL, optional=True),
+            f("readOnly", BOOL, optional=True),
+            f("nullable", BOOL, optional=True),
+            f("multiple", BOOL, optional=True),
+            f(
+                "channelKind",
+                STR,
+                optional=True,
+                doc="Narrows a channel picker to one kind of the channel "
+                "registry (`emitter`, `response`, `reward`).",
+            ),
+            f(
+                "options",
+                ListOf(obj(f("value", STR), f("label", STR), f("help", STR, optional=True))),
+                optional=True,
+                doc="Present only for `enum`. Every other picker draws its "
+                "options from a registry in this same reply.",
+            ),
+        ),
+        doc="One field's presentation, keyed in `SpecOverlay.fields` by its "
+        "overlay key — the same string a diagnostic's `anchor` carries, which "
+        "is what makes placing an error next to its input a lookup.",
+    ),
+    Shape(
+        "SpecOverlayGroup",
+        obj(f("id", STR), f("label", STR), f("order", INT), f("help", STR, optional=True)),
+    ),
+    Shape(
+        "SpecOverlay",
+        obj(
+            f("presentation_version", INT),
+            f("groups", ListOf(Ref("SpecOverlayGroup"))),
+            f(
+                "sections",
+                MapOf(
+                    obj(
+                        f("group", STR),
+                        f(
+                            "rows",
+                            lit("indexed", "by_id", "by_key", "object"),
+                            doc="How this section's rows are keyed. A literal "
+                            "union on purpose, unlike `widget`: each value is a "
+                            "distinct rendering branch, so a new one must fail "
+                            "the typecheck rather than silently mis-render.",
+                        ),
+                        f(
+                            "gatedBy",
+                            STR,
+                            optional=True,
+                            doc="A capabilities key — `outcome_classes` today. "
+                            "Which rows EXIST is capabilities()'s answer; which "
+                            "are VALID is the compiler's.",
+                        ),
+                    )
+                ),
+                doc="Keyed by dotted document path (`contingency.outcome_map`).",
+            ),
+            f("fields", MapOf(Ref("SpecOverlayField")), doc="Keyed by overlay key."),
+        ),
+        doc="task_spec.presentation.v1.json — the label/widget/group layer over "
+        "the JSON Schema. Vendored alongside the compiler, so the form and the "
+        "validator can never describe different documents.",
+    ),
     Shape(
         "SpecDiagnostic",
         obj(
@@ -1721,7 +1809,13 @@ COMMANDS = (
         "specs.schema",
         result=obj(
             f("schema", ANY, doc="schema/task_spec.v1.json, verbatim."),
-            f("overlay", ANY, doc="task_spec.presentation.v1.json — labels/widgets/groups."),
+            f(
+                "overlay",
+                Ref("SpecOverlay"),
+                doc="task_spec.presentation.v1.json — labels/widgets/groups. The "
+                "one registry in this reply that is typed, because the editor "
+                "generates its whole form from it.",
+            ),
             f("strobes", ANY, doc="strobe_vocab.v1.json — codes with their rationale."),
             f("channels", ANY, doc="channels.v1.json — the box pinout, by kind."),
             f("limits", ANY, doc="limits.v1.json — hard ceilings, each with rationale."),

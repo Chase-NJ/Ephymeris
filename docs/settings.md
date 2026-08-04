@@ -20,7 +20,7 @@ Three screens edit settings. **The split is by subject, not by shape.**
 |---|---|---|
 | ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
 | 📡 **Config** (`/config`) | *How is this rig wired?* | Constellation layout, box→board bindings, handshake test, utility baseline, default baud, `arduino-cli` path |
-| 🔀 **Task** (`/task`) | *What is the animal doing?* | Sketch inspection over the bundled library, per-sketch task parameters |
+| 🔀 **Task** (`/task*`) | *What is the animal doing?* | The task-spec Designer and bench, plus sketch inspection over the bundled library and per-sketch task parameters (`/task/sketches`) |
 
 > [!NOTE]
 > **This row has been decided twice.** The first split (Settings → Config) was by *shape*: hardware-ish vs storage-ish. The second (Config → Task) is by *subject*, and the forcing function was volume — making every firmware parameter operator-tunable turned a three-field panel into forty-odd fields, which is not a row on a hardware page.

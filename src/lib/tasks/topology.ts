@@ -28,7 +28,13 @@
  * closes and odor reaches the nose (`BehaviorBox.h`'s `runTrial()`). The odor is
  * primed well before that and silently, so there is nothing earlier to draw.
  *
- * Pure: no React, no store, no fetch. `TaskGraph` renders what this returns.
+ * Pure: no React, no store, no fetch. `TaskGraph` draws what this returns, and
+ * `TaskRail` draws the same nodes as a strip.
+ *
+ * NOT to be confused with `lib/specs/` and its `SpecGraph`: that is the
+ * compiled MACHINE graph a task spec produces — what the interpreter executes.
+ * This one describes what an animal does. Two models, no shared code, on
+ * purpose (`docs/specs.md` §5).
  */
 
 import type { TaskProfile } from "@/lib/ws/protocol";
@@ -45,19 +51,21 @@ export type NodeKind = "state" | "outcome" | "abort";
 
 export type EdgeKind = "advance" | "choice" | "abort" | "error" | "reward" | "return";
 
-/** Which recorded figure fills an edge when a run is in view. */
-export type CountKey =
-  | "presented"
-  | "noPoke"
-  | "poked"
-  | "pokeAborted"
-  | "odorDelivered"
-  | "aborted"
-  | "administered"
-  | "rewarded"
-  | "holdFailed"
-  | "wrongWell"
-  | "noResponse";
+/*
+ * THE MODEL CARRIES NO COUNTS, DELIBERATELY.
+ *
+ * An earlier version tagged each edge with the `derive.py` bucket that would
+ * fill it, so a run's figures could be drawn onto the diagram. Nothing ever
+ * passed them, because the only place a graph and a live run coexist is
+ * Mission Control — and a partial mid-session tally is exactly the number that
+ * must not be shown: it reads as a result while the trials it summarises are
+ * still arriving. Analytics owns recorded figures, on panels built to caveat
+ * them.
+ *
+ * So the machinery is gone rather than dormant. If per-edge figures are ever
+ * wanted, they belong to a finished run and should arrive as a separate
+ * overlay, not as an optional field every edge in this file has to think about.
+ */
 
 export interface TaskNode {
   id: string;
@@ -98,7 +106,6 @@ export interface TaskEdge {
   to: string;
   label?: string;
   kind: EdgeKind;
-  countKey?: CountKey;
 }
 
 export interface TaskGraphModel {
@@ -342,7 +349,6 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
     to: "await-poke",
     label: "pokes",
     kind: "advance",
-    countKey: "poked",
   });
 
   // --- failure to initiate -------------------------------------------------
@@ -363,7 +369,6 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       to: "lazy",
       label: "window elapses",
       kind: "abort",
-      countKey: "noPoke",
     });
   }
 
@@ -417,24 +422,18 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
     );
   }
   /*
-   * A fan-out edge is labelled and counted only when there is one arm.
-   *
-   * A count across N arms would be drawn N times, each looking like that arm's
-   * own figure, and derive.py has no per-condition breakdown to split it with —
-   * so no number rather than a wrong one, the same call the `withheld` outcome
-   * makes below. The label goes for a plainer reason: N copies of "holds"
+   * A fan-out edge is labelled only when there is one arm: N copies of "holds"
    * stacked around a fan-out is clutter, and it collided with the lower arm's
    * own name. What the transition means is on the node it arrives at.
    */
-  const fanEdge = (label: string, countKey: CountKey) =>
-    singleArm ? { label, countKey } : {};
+  const fanEdge = (label: string) => (singleArm ? { label } : {});
   for (const arm of odorArms) {
     edge({
       id: `e-poke-${arm}`,
       from: "await-poke",
       to: arm,
       kind: "advance",
-      ...fanEdge("holds", "odorDelivered"),
+      ...fanEdge("holds"),
     });
   }
 
@@ -462,7 +461,6 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       to: "abort-pre-odor",
       label: "releases early",
       kind: "abort",
-      countKey: "pokeAborted",
     });
 
     node({
@@ -481,7 +479,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
         from: arm,
         to: "abort-sampling",
         kind: "abort",
-        ...fanEdge("leaves early", "aborted"),
+        ...fanEdge("leaves early"),
       });
     }
   }
@@ -502,7 +500,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       from: arm,
       to: "sample",
       kind: "advance",
-      ...fanEdge("samples", "administered"),
+      ...fanEdge("samples"),
     });
   }
 
@@ -559,7 +557,6 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
     label: string;
     detail: string;
     needs: () => boolean;
-    countKey?: CountKey;
     governedBy: readonly string[];
     entryNames: readonly string[];
     /**
@@ -593,7 +590,6 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       label: "Reward",
       detail: "Correct well, held to the end — fluid delivered.",
       needs: () => has("FLUID_L") || has("FLUID_R"),
-      countKey: "rewarded",
       governedBy: ["Reward volume", ...STAGES],
       entryNames: ["FLUID_L", "FLUID_R"],
       settlesToIti: rewardSettles,
@@ -613,10 +609,6 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
        * A metric that SCORES the withhold is the declaration that it is real;
        * this is the same reason the odor rows filter through liveMetrics.
        *
-       * No countKey: derive.py has no no-go bucket, and its `noResponse` would
-       * silently double as both the correct withhold and a genuine non-answer
-       * (`data.md` — the two are indistinguishable from the strobes alone).
-       * Better to draw the arm with no number than with the wrong one.
        */
       needs: () => has("WATER_POKE_NONE") && scored.has("WATER_POKE_NONE"),
       governedBy: ["Trial timing"],
@@ -631,7 +623,6 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       label: "No hold",
       detail: "Correct well reached, released before the hold cleared — no drop earned.",
       needs: () => has("WATER_UNPOKE_EARLY_L") || has("WATER_UNPOKE_EARLY_R"),
-      countKey: "holdFailed",
       governedBy: STAGES,
       entryNames: ["WATER_UNPOKE_EARLY_L", "WATER_UNPOKE_EARLY_R"],
       settlesToIti: true,
@@ -643,7 +634,6 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       label: "Wrong well",
       detail: "The other well was answered.",
       needs: () => has("WATER_POKE_ERROR_L") || has("WATER_POKE_ERROR_R"),
-      countKey: "wrongWell",
       governedBy: ["Correction trials", "Trial timing"],
       entryNames: ["WATER_POKE_ERROR_L", "WATER_POKE_ERROR_R"],
       settlesToIti: true,
@@ -655,7 +645,6 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       label: "No answer",
       detail: "The response window elapsed with no well answered. Emits no strobe of its own.",
       needs: () => true,
-      countKey: "noResponse",
       governedBy: STAGES,
       entryNames: [],
       // Moot: nothing puts the token here, since a response window that simply
@@ -694,7 +683,6 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       // treats a present-but-undefined key as a different thing from absence.
       ...(outcome.edgeLabel ? { label: outcome.edgeLabel } : {}),
       kind: outcome.kind,
-      ...(outcome.countKey ? { countKey: outcome.countKey } : {}),
     });
   });
 

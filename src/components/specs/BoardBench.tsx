@@ -4,16 +4,13 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/common/controls";
 import { useAllPortStatuses, useBoardPresence } from "@/lib/hardware/context";
 import { errorMessage } from "@/lib/cohorts/commands";
+import { boardCapabilities, setBenchHold, uploadTable } from "@/lib/specs/commands";
 import { toYaml } from "@/lib/specs/document";
 import type { SpecDocument } from "@/lib/specs/types";
 import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 import { CMD, EVT } from "@/lib/ws/protocol";
-import type {
-  BoardCapabilities,
-  UploadProgressData,
-  UploadResult,
-} from "@/lib/ws/protocol";
+import type { BoardCapabilities, UploadProgressData } from "@/lib/ws/protocol";
 
 /**
  * Bench boxes — probe a board's CAP banner and put a compiled table on it.
@@ -59,9 +56,9 @@ export function BoardBench({
   // edges: a failed hold call surfaces on the next restore's own reporting.
   useEffect(() => {
     if (!connected) return;
-    void client.call(CMD.UTILITY_BENCH_HOLD, { held: true }).catch(() => {});
+    void setBenchHold(client, true).catch(() => {});
     return () => {
-      void client.call(CMD.UTILITY_BENCH_HOLD, { held: false }).catch(() => {});
+      void setBenchHold(client, false).catch(() => {});
     };
   }, [client, connected]);
 
@@ -84,12 +81,18 @@ export function BoardBench({
   const bound = settings.boxes.filter((b) => b.hardwareId !== null);
   const interpreterSketch = discovery.sketches.find((s) => s.name === "TaskRunner_Dev");
 
-  async function probe(box: number) {
-    setBusy((prev) => ({ ...prev, [box]: "probing…" }));
+  /**
+   * One box's action, with its busy label and its error landing in the card.
+   *
+   * Every action here has the same shape and the same failure story — the box
+   * says what went wrong and nothing else on the panel changes — so the
+   * bookkeeping lives once and the three callers below are just their own work.
+   */
+  async function run(box: number, label: string, work: () => Promise<void>) {
+    setBusy((prev) => ({ ...prev, [box]: label }));
     setNotes((prev) => ({ ...prev, [box]: "" }));
     try {
-      const reply = await client.call(CMD.BOARD_CAPABILITIES, { box });
-      setCaps((prev) => ({ ...prev, [box]: reply }));
+      await work();
     } catch (err) {
       setNotes((prev) => ({ ...prev, [box]: errorMessage(err) }));
     } finally {
@@ -100,52 +103,43 @@ export function BoardBench({
     }
   }
 
-  async function flashInterpreter(box: number) {
-    if (!interpreterSketch) return;
-    setBusy((prev) => ({ ...prev, [box]: "flashing TaskRunner_Dev…" }));
-    setNotes((prev) => ({ ...prev, [box]: "" }));
-    try {
+  /** Read the banner and show it. Also the tail of a flash, so the card's
+   * firmware line reflects what is now on the board rather than what was. */
+  async function readCaps(box: number) {
+    const reply = await boardCapabilities(client, box);
+    setCaps((prev) => ({ ...prev, [box]: reply }));
+  }
+
+  const probe = (box: number) => run(box, "probing…", () => readCaps(box));
+
+  const flashInterpreter = (box: number) =>
+    run(box, "flashing TaskRunner_Dev…", async () => {
+      if (!interpreterSketch) return;
       await client.call(CMD.PORT_FLASH, { box, sketchPath: interpreterSketch.path });
-      // Re-probe so the card's firmware line reflects what is now on it.
-      const reply = await client.call(CMD.BOARD_CAPABILITIES, { box });
-      setCaps((prev) => ({ ...prev, [box]: reply }));
-    } catch (err) {
-      setNotes((prev) => ({ ...prev, [box]: errorMessage(err) }));
-    } finally {
-      setBusy((prev) => {
-        const { [box]: _done, ...rest } = prev;
-        return rest;
-      });
-    }
-  }
+      await readCaps(box);
+    });
 
-  async function upload(box: number) {
-    setBusy((prev) => ({ ...prev, [box]: "starting…" }));
-    setNotes((prev) => ({ ...prev, [box]: "" }));
-    try {
-      const reply: UploadResult = await client.call(CMD.BOARD_UPLOAD_TABLE, {
-        box,
-        specId,
-        text: toYaml(doc),
-      });
+  const upload = (box: number) =>
+    run(box, "starting…", async () => {
+      const reply = await uploadTable(client, box, specId, toYaml(doc));
+      // Three lines rather than one sentence: what landed, how it went, and
+      // the two verification numbers. As a single concatenation this wrapped
+      // into an unreadable paragraph in a narrow card, and the numbers that
+      // matter most were at the end of it.
       setNotes((prev) => ({
         ...prev,
-        [box]:
-          `✓ ${reply.specId} (${reply.specHash}) — ${reply.nBytes} bytes in ` +
-          `${reply.chunks} chunks, ${(reply.seconds * 1000).toFixed(0)} ms, ` +
-          `crc ${reply.crc32}` +
-          (reply.notes.length > 0 ? ` · ${reply.notes.join(" · ")}` : ""),
+        [box]: [
+          `✓ ${reply.specId} (${reply.specHash})`,
+          `${reply.nBytes} bytes in ${reply.chunks} chunks · ${(reply.seconds * 1000).toFixed(0)} ms`,
+          // Both numbers, because they answer different questions: the CRC says
+          // the bytes arrived, the digest says they decoded into the right
+          // fields. A transfer can be perfect and a decode wrong.
+          `crc ${reply.crc32} · digest ${reply.digest}`,
+          ...reply.notes,
+        ].join("\n"),
       }));
       setCaps((prev) => ({ ...prev, [box]: reply.caps }));
-    } catch (err) {
-      setNotes((prev) => ({ ...prev, [box]: errorMessage(err) }));
-    } finally {
-      setBusy((prev) => {
-        const { [box]: _done, ...rest } = prev;
-        return rest;
-      });
-    }
-  }
+    });
 
   return (
     <section className="flex flex-col gap-1.5">
@@ -257,7 +251,7 @@ export function BoardBench({
                 )}
                 {notes[box] && (
                   <p
-                    className="mt-1 text-[10px] leading-relaxed"
+                    className="mt-1 text-[10px] leading-relaxed whitespace-pre-line"
                     style={{
                       color: notes[box]!.startsWith("✓")
                         ? "var(--color-status-ok)"

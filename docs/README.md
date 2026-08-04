@@ -274,6 +274,8 @@ Talks to the sidecar over the WebSocket only.
 | `components/cohorts/` | Cohort grid, editor panels, procedural icon, Auto-Balance |
 | `components/config/` | Setup wizard, interactive constellation board, zodiac picker, handshake indicator/list |
 | `components/task/` | The derived state-machine graph (`TaskGraph`, also docked live in Mission Control), the same nodes as a pinned strip (`TaskRail`), and the per-group parameter tiles |
+| `components/specs/` | The Designer's parts: the machine-graph canvas (`SpecCanvas`), the selection-driven `SpecInspector`, the generated `SpecForm`/`SpecField`, the diagnostics list, the listing diff, the paradigm gallery, and the bench panel |
+| `lib/specs/selection.ts` | **Graph → the fields that produced it**, and the inverse. Joins on data the compiler and the document share, never on template symbol names ([specs.md §5](specs.md)) |
 | `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view |
 | `components/debug/` | Constellation landing, per-box detail, scrollback, flash dialog, state badges, utility controls |
 | `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, journey rail, placement banner, and `ConfigFields` (the one grouped renderer for a profile's `config`) |
@@ -293,7 +295,10 @@ Every route is a child of `<AppShell />`, wired in `src/App.tsx`.
 | `/` | `routes/Dashboard.tsx` | Landing: full-bleed 3D rig sky with a hero launch CTA, the session dock, and Cohorts/Rig/Analytics summary cards |
 | `/cohorts` | `routes/Cohorts.tsx` | Cohort browser — card grid, search/sort/archived toggle |
 | `/cohorts/new`, `/cohorts/:id` | `routes/CohortEditor.tsx` | Create (progressive reveal) or manage (all at once) a cohort |
-| `/task` | `routes/Task.tsx` | Sketch picker over the bundled library, the derived trial-flow graph, per-sketch parameter defaults |
+| `/task` | `routes/Task.tsx` | Landing: the Task Designer hero over the rig's sky, the spec library as cards, and the Bench/Sketches doors |
+| `/task/designer/:specId` | `routes/TaskDesigner.tsx` | The spec editor, built around the compiled machine graph ([specs.md §5](specs.md)) |
+| `/task/bench` | `routes/TaskBench.tsx` | Probe a board and load a table. Permanent "not for animal use" strip; `?spec=<id>` preselects |
+| `/task/sketches` | `routes/TaskSketches.tsx` | The `task.json` library: sketch picker, derived trial-flow graph, and the **only** editor for `settings.taskDefaults` |
 | `/analytics` | `routes/Analytics.tsx` | The Observatory — one route, no tabs; cohort/session/animal are filters |
 | `/config` | `routes/Config.tsx` | Rig wiring: constellation, box→board bindings, handshake, utility baseline, baud, `arduino-cli` |
 | `/settings` | `routes/Settings.tsx` | Storage and interface only |
@@ -455,7 +460,7 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 </td></tr>
 <tr><td><b>6</b></td><td>
 
-**No frontend test runner or linter.** `tsc --noEmit` is the entire automated frontend check — no vitest, jest, eslint, prettier, or biome, and no test file anywhere under `src/`. The wire mirrors are guarded by the contract test, so the highest-risk surface is covered; but store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`), the session flow's step transitions, `lib/tasks/topology.ts`, and now the spec editor's `lib/specs/` (the document path helpers, `layout.ts`, the diagnostics fan-out) are untested code paths. The layout's invariants were verified once by compiling all five specs and running the real `layout.ts` under esbuild — a ritual, not a regression test.
+**No frontend test runner or linter.** `tsc --noEmit` is the entire automated frontend check — no vitest, jest, eslint, prettier, or biome, and no test file anywhere under `src/`. The wire mirrors are guarded by the contract test, so the highest-risk surface is covered; but store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`), the session flow's step transitions, `lib/tasks/topology.ts`, and now the spec editor's `lib/specs/` (the document path helpers, `layout.ts`, the diagnostics fan-out, and `selection.ts`) are untested code paths. The layout's invariants were verified once by compiling all five specs and running the real `layout.ts` under esbuild — a ritual, not a regression test; `selection.ts` got the same treatment against `gonogo`'s real compiled table (every node resolved to at least one producing field) and is the highest-value target the day a runner lands, being pure and entirely about a mapping that must not silently drift.
 
 </td></tr>
 <tr><td><b>31</b></td><td>

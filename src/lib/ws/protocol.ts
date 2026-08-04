@@ -1131,6 +1131,60 @@ export interface SpecEntry {
   editedAt: string | null;
 }
 
+/**
+ * One field's presentation, keyed in `SpecOverlay.fields` by its overlay key — the same string a
+ * diagnostic's `anchor` carries, which is what makes placing an error next to its input a lookup.
+ */
+export interface SpecOverlayField {
+  label: string;
+  /**
+   * Which input edits this field. Deliberately NOT a literal union: the renderer carries a
+   * documented default case, so an overlay that gains a widget in a vendor sync degrades to a
+   * plain input instead of failing to compile.
+   */
+  widget: string;
+  /** An id from `groups`. */
+  group?: string;
+  order?: number;
+  unit?: string;
+  step?: number;
+  help?: string;
+  advanced?: boolean;
+  readOnly?: boolean;
+  nullable?: boolean;
+  multiple?: boolean;
+  /**
+   * Narrows a channel picker to one kind of the channel registry (`emitter`, `response`,
+   * `reward`).
+   */
+  channelKind?: string;
+  /**
+   * Present only for `enum`. Every other picker draws its options from a registry in this same
+   * reply.
+   */
+  options?: Array<{ value: string; label: string; help?: string }>;
+}
+
+export interface SpecOverlayGroup {
+  id: string;
+  label: string;
+  order: number;
+  help?: string;
+}
+
+/**
+ * task_spec.presentation.v1.json — the label/widget/group layer over the JSON Schema. Vendored
+ * alongside the compiler, so the form and the validator can never describe different documents.
+ */
+export interface SpecOverlay {
+  presentation_version: number;
+  groups: SpecOverlayGroup[];
+  /** Keyed by dotted document path (`contingency.outcome_map`). */
+  sections: Record<string, { group: string; rows: "indexed" | "by_id" | "by_key" | "object"; gatedBy?: string }>;
+  /** Keyed by overlay key. */
+  fields: Record<string, SpecOverlayField>;
+}
+
 export interface SpecDiagnostic {
   /** TG###; append-only, never reused. */
   code: string;
@@ -1461,7 +1515,7 @@ export interface CommandResultMap {
   "sessions.recover": RecoverResult;
   "specs.list": { specs: SpecEntry[] };
   "specs.get": { specId: string; origin: SpecOrigin; text: string; raw: unknown };
-  "specs.schema": { schema: unknown; overlay: unknown; strobes: unknown; channels: unknown; limits: unknown; templates: Array<{ name: string; version: number; sourceHash: string }> };
+  "specs.schema": { schema: unknown; overlay: SpecOverlay; strobes: unknown; channels: unknown; limits: unknown; templates: Array<{ name: string; version: number; sourceHash: string }> };
   "specs.compile": SpecCompileResult;
   "specs.capabilities": SpecCapabilities;
   "specs.save": { entry: SpecEntry; result: SpecCompileResult };

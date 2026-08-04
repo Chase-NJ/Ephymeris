@@ -66,6 +66,21 @@ export function setAt(doc: SpecDocument, path: string, value: unknown): SpecDocu
   return assign(doc, 0) as SpecDocument;
 }
 
+/**
+ * The document's `topology` block, or null if it isn't one yet.
+ *
+ * Its own accessor because four surfaces need it — the capabilities call, the
+ * band cards, and two of the pickers — and a half-built document is the normal
+ * case here, not the edge one: the user is mid-edit on every keystroke. A
+ * `getAt` at each site drifted into four slightly different null checks.
+ */
+export function topologyOf(doc: SpecDocument | null): Record<string, unknown> | null {
+  const block = doc?.["topology"];
+  return block !== null && typeof block === "object" && !Array.isArray(block)
+    ? (block as Record<string, unknown>)
+    : null;
+}
+
 /** Delete the key/element at `path`, immutably. */
 export function deleteAt(doc: SpecDocument, path: string): SpecDocument {
   const parts = steps(path);

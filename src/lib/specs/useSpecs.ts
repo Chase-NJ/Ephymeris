@@ -7,17 +7,31 @@ import { getCapabilities, getSpecSchema, listSpecs } from "./commands";
 import type { SpecCapabilities, SpecEntry, SpecSchema } from "./types";
 
 /**
- * The spec library and the form's schema bundle, for the Task route.
+ * The spec library and the form's schema bundle, for the Task routes.
  *
- * Mounted at the route rather than the app root, deliberately: HardwareProvider
+ * Mounted per route rather than at the app root, deliberately: HardwareProvider
  * lives at the root because the sidebar needs box health on every screen, and
  * that reasoning cuts the other way here — nothing outside /task reads specs.
+ * Four `/task/*` routes now share this hook, and moving between them remounts
+ * it; the schema cache below is what keeps that from costing a round trip each
+ * time, without making the whole app carry the state.
  *
  * `unavailable` carries the SPEC_COMPILER_UNAVAILABLE story: the list call is
  * the probe, and its failure message is rendered as the one banner. The list
  * also arrives on `specs.updated` (replayed on connect), so a reconnect heals
  * without a refetch.
  */
+/*
+ * The registry bundle, cached for the session.
+ *
+ * It is the vendored schema, overlay and registry FILES — it cannot change
+ * while the app is running, because changing it means shipping a new build.
+ * Held at module scope rather than in a provider so a route that needs it pays
+ * for it once and a route that doesn't never asks. Cleared on disconnect is
+ * unnecessary for the same reason: a reconnect is to the same sidecar binary.
+ */
+let schemaCache: SpecSchema | null = null;
+
 export function useSpecs(): {
   specs: SpecEntry[];
   schema: SpecSchema | null;
@@ -28,7 +42,7 @@ export function useSpecs(): {
   const connected = status === "connected";
 
   const [specs, setSpecs] = useState<SpecEntry[]>([]);
-  const [schema, setSchema] = useState<SpecSchema | null>(null);
+  const [schema, setSchema] = useState<SpecSchema | null>(schemaCache);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -49,9 +63,12 @@ export function useSpecs(): {
       try {
         const [entries, bundle] = await Promise.all([
           listSpecs(client),
-          getSpecSchema(client),
+          // The list call is the availability probe either way, so a cached
+          // schema saves the second round trip without weakening that.
+          schemaCache ? Promise.resolve(schemaCache) : getSpecSchema(client),
         ]);
         if (cancelled) return;
+        schemaCache = bundle;
         setSpecs(entries);
         setSchema(bundle);
         setUnavailable(null);

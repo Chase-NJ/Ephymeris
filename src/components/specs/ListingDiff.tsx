@@ -43,6 +43,21 @@ export function ListingDiff({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  /*
+   * The document as it stood when Review was opened.
+   *
+   * `specs.diff` is a deliberate Review action, never per-keystroke — it
+   * compiles both sides. Depending on the live `text` made it re-run on every
+   * edit behind the modal, which is both the wrong cost and the wrong reading:
+   * a review is of the thing you asked to review.
+   */
+  const [snapshot, setSnapshot] = useState(text);
+  useEffect(() => {
+    if (open) setSnapshot(text);
+    // Deliberately keyed on `open` alone — see above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -54,7 +69,7 @@ export function ListingDiff({
         : against === "@saved"
           ? { baseline: "saved" as const }
           : { againstSpecId: against };
-    void diffSpec(client, specId, text, args)
+    void diffSpec(client, specId, snapshot, args)
       .then((reply) => {
         if (!cancelled) setDiff(reply);
       })
@@ -67,7 +82,7 @@ export function ListingDiff({
     return () => {
       cancelled = true;
     };
-  }, [open, against, client, specId, text]);
+  }, [open, against, client, specId, snapshot]);
 
   return (
     <Modal open={open} onClose={onClose} title={`Review ${specId}`}>

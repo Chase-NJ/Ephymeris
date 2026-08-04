@@ -20,48 +20,45 @@ export type {
   SpecTableSummary,
 } from "@/lib/ws/protocol";
 
+import type { CommandResultMap, SpecOverlay, SpecOverlayField } from "@/lib/ws/protocol";
+
+/** The presentation overlay and its parts, under the names this module has
+ * always used. The declarations themselves are generated — the overlay is a
+ * wire shape, and a second hand-written copy of one is exactly the drift the
+ * generated mirrors exist to stop. */
+export type Overlay = SpecOverlay;
+export type OverlayField = SpecOverlayField;
+export type { SpecOverlayGroup as OverlayGroup } from "@/lib/ws/protocol";
+
+/** The `specs.schema` reply — everything the form needs, fetched once. */
+export type SpecSchema = CommandResultMap["specs.schema"];
+
 /** The parsed spec document the form binds to. Deliberately loose — the
  * compiler is the authority on what's legal, and typing it tightly here would
  * be a second schema that drifts. */
 export type SpecDocument = Record<string, unknown>;
 
-/** One field entry in the presentation overlay (task_spec.presentation.v1.json). */
-export interface OverlayField {
-  label: string;
-  widget: string;
-  group?: string;
-  order?: number;
-  unit?: string;
-  step?: number;
-  help?: string;
-  advanced?: boolean;
-  readOnly?: boolean;
-  nullable?: boolean;
-  multiple?: boolean;
-  channelKind?: string;
-  options?: Array<{ value: string; label: string; help?: string }>;
+/*
+ * The two registries a picker reads *structurally* rather than by lookup.
+ *
+ * They stay `unknown` on the wire deliberately (see websocket-protocol.md
+ * §3.6): they are vendored JSON files served verbatim, and pinning their full
+ * shape here would be a third copy of a schema the compiler already owns. What
+ * the form needs is the one field it actually reads off each entry, declared
+ * once here instead of re-cast at every use site.
+ */
+
+/** `strobe_vocab.v1.json`, as far as the strobe picker reads it. Codes are
+ * non-contiguous and resolution is always by NAME, so the map's keys are the
+ * values a spec carries and the numbers are for display only. */
+export interface StrobeRegistry {
+  codes?: Record<string, { code: number }>;
 }
 
-export interface OverlayGroup {
-  id: string;
-  label: string;
-  order: number;
-  help?: string;
-}
-
-export interface Overlay {
-  presentation_version: number;
-  groups: OverlayGroup[];
-  sections: Record<string, { group: string; rows: string; gatedBy?: string }>;
-  fields: Record<string, OverlayField>;
-}
-
-/** The `specs.schema` reply — everything the form needs, fetched once. */
-export interface SpecSchema {
-  schema: Record<string, unknown>;
-  overlay: Overlay;
-  strobes: Record<string, unknown>;
-  channels: Record<string, unknown>;
-  limits: Record<string, unknown>;
-  templates: Array<{ name: string; version: number; sourceHash: string }>;
+/** `channels.v1.json`, as far as the channel picker reads it. `kind` is what
+ * an overlay field's `channelKind` narrows against; `well` is declared on
+ * reward lines so a picker can refuse to plumb the wrong side of the box
+ * (the linter's TG224, honoured before the compile ever runs). */
+export interface ChannelRegistry {
+  channels?: Record<string, { kind: string; index: number; well?: string }>;
 }

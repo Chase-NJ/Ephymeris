@@ -256,7 +256,7 @@ The vendored Task-Graph compiler's surface ([specs.md](specs.md)). A spec is a *
 |---|---|---|---|
 | `specs.list` | — | `{specs: [SpecEntry]}` | Enumerates the library from a cheap **parse**, never a compile, so it stays instant however many specs exist. A document that won't parse still gets a row (with nulls) — a broken spec is exactly the one someone needs to find |
 | `specs.get` | `{specId}` | `{specId, origin, text, raw}` | `text` is the YAML source verbatim, comments and all; `raw` is the parsed document or `null` when it won't parse — the form binds to `raw`, and the compile that runs on mount is what reports *why* a null one won't parse |
-| `specs.schema` | — | `{schema, overlay, strobes, channels, limits, templates}` | Everything a form needs, once, on route mount. Served from the vendored registry **files** — the same bytes the compiler validates against, so a picker cannot offer a value the compiler then rejects. The frontend must never hold its own copy of a registry |
+| `specs.schema` | — | `{schema, overlay: <SpecOverlay>, strobes, channels, limits, templates}` | Everything a form needs, once, on route mount. Served from the vendored registry **files** — the same bytes the compiler validates against, so a picker cannot offer a value the compiler then rejects. The frontend must never hold its own copy of a registry. `overlay` is the one member with a declared shape; see below |
 | `specs.compile` | `{text, specId?}` | `<SpecCompileResult>` | Stateless; the live per-edit call. Takes **text**, not a dict — the LOAD pass (schema validation, TG1xx, the YAML `on:` trap) checks things that only exist before parsing, so the editor compiles exactly the bytes it would save. Runs in a worker thread behind a semaphore of 1; the frontend debounces ~120 ms and discards stale replies by `corr` |
 | `specs.capabilities` | `{topology}` | `<SpecCapabilities>` | Which outcome classes and timing ids this topology produces — the palette's validity model, from the template's own `capabilities()`. A pure function of the knobs (half-built topologies welcome; unspecified knobs take the schema defaults), so the form re-gates its rows the instant a knob moves, before any compile returns |
 | `specs.save` | `{specId, text}` | `{entry, result}` | **Always saves, even with ERROR diagnostics** — a half-finished spec must be savable; the gate is upload, not save. Writes land under the sidecar's app-data dir (`<data_dir>/specs/user/`), like session files and `ephymeris.db` — no Tauri fs capability involved. Saving over a shipped spec's id **shadows** it: the shipped bytes are baselined first (before the user file exists, so no ordering leaves an edit without its undo), and the shipped file itself is never modified. The frontend passes the *document's own* `spec_id` as the target, so renaming the id and saving creates a copy; a parsed document whose `spec_id` disagrees with the target is refused (`SPEC_INVALID`) because the id names the file, the table, and what a board reports after an upload. The reply carries the compile of what was just written |
@@ -291,6 +291,37 @@ The vendored Task-Graph compiler's surface ([specs.md](specs.md)). A spec is a *
 ```
 
 The graph is the compiled **machine** graph — six node primitives (`DELAY`/`WAIT_ENTRY`/`HOLD`/`WAIT_EXIT`/`PULSE`/`TERMINAL`), trigger-keyed edges with guards and effects — deliberately not the derived `TaskGraphModel`, which describes what an animal does rather than what the interpreter executes.
+
+**One of `specs.schema`'s five registries is typed, and it is the presentation overlay.**
+
+```jsonc
+// SpecOverlay — schema/task_spec.presentation.v1.json, verbatim.
+{
+  "presentation_version": 1,
+  // SpecOverlayGroup — the form's section order.
+  "groups": [ { "id": "timing", "label": "Timing", "order": 40, "help": "…" } ],
+  // Keyed by dotted DOCUMENT path. `rows` is a literal union because each
+  // value is a distinct rendering branch; `gatedBy` names a capabilities key,
+  // and which rows EXIST is capabilities()'s answer while which are VALID is
+  // the compiler's.
+  "sections": {
+    "contingency.outcome_map": {
+      "group": "outcomes",
+      "rows": "by_key" /* | "indexed" | "by_id" | "object" */,
+      "gatedBy": "outcome_classes"
+    }
+  },
+  // SpecOverlayField, keyed by OVERLAY key — the same string a diagnostic's
+  // `anchor` carries, which is what makes placing an error next to the input
+  // that caused it a dictionary lookup rather than a parse.
+  "fields": {
+    "timing.ms": { "label": "Duration", "widget": "number", "group": "timing",
+                   "order": 20, "unit": "ms", "step": 1 }
+  }
+}
+```
+
+`widget` is deliberately **not** a literal union: the renderer carries a documented default case, so an overlay that gains a widget in a vendor sync degrades to a plain input rather than failing to compile. The other four members (`schema`, `strobes`, `channels`, `limits`) stay untyped `any` on purpose — those are passthrough JSON the frontend reads with lookups, not a shape it binds a form to.
 
 ### 3.7 Bench boxes
 

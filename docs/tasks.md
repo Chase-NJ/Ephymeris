@@ -958,21 +958,25 @@ These never error, and are the ones to know about when something looks wrong but
 
 ## 10. The Task screen
 
-Route `/task` ([`src/routes/Task.tsx`](../src/routes/Task.tsx)) — a single scrolling page, not tabs. **Spec-first**: the compiled-task workbench sits above the sketch sections below, because both kinds of task answer the one question this tab owns. A spec is a sibling artifact to a `task.json`, never an extension of it ([§4.1](#41-why-derived-not-declared)); everything about the workbench itself is [specs.md](specs.md).
+The Task tab is a small **route family**, not one page. It used to be a single scroll carrying two whole systems — the spec workbench stacked on the sketch sections — where everything was visible at once and nothing was the front door. `/task` is now a landing page leading with the **Task Designer**; the sketch half lives at `/task/sketches` and is described below, and everything about the Designer and the bench is [specs.md](specs.md). A spec remains a sibling artifact to a `task.json`, never an extension of it ([§4.1](#41-why-derived-not-declared)).
+
+> [!IMPORTANT]
+> **`/task/sketches` is the only editor for `settings.taskDefaults`**, and `SessionMapping` reads that map on every session ([§6.1](#61-the-three-layer-merge)). If this page is ever removed or folded away, the stored per-sketch overrides keep being merged into every `START` line with nothing able to show or clear them — the silent-wrong-value failure this document's other cautions are about. Retire it only alongside the merge layer itself.
+
+### 10.1 `/task/sketches`
 
 | Section | Contents |
 |---|---|
-| **Task spec** | The spec workbench — picker with origin chips, band palette, machine graph, generated form, diagnostics, bench boxes. See [specs.md §4–§7](specs.md#4-the-editor) |
 | **Sketch** | The **Sketch** picker (grouped `category / name`) over the bundled library, with a status note naming the shipped sketch count and a rescan. Picking a sketch loads its profile over `tasks.getProfile` |
 | **Error strip** | A malformed `task.json` message — surfaced, not swallowed |
 | **Trial flow** | Header shows `taskName` and the condition count; body is `TaskGraph`. When `!usable`, prose instead: *"…declares no behavioural strobes. Utility sketches are driven from Debug Mode instead"* or *"This sketch has no task.json, so it runs a bare START…"* |
 | **Task rail** | The same nodes as a compact strip, pinned to the top once the diagram scrolls away. Pin detection uses an `IntersectionObserver` on a 1 px sentinel — a sticky element never stops intersecting its own scroller. Its measured height is published as `--task-rail-h` for the tiles' `scroll-margin-top` |
 | **Parameters** | `ParameterTiles`: one card per `group`, ordered by `orderGroups`, subtitled with the nodes that group governs. Hover a tile → lights the governed states; click a state → scrolls to its tile. A "Reset all N" button |
 
-**`TaskGraph` has three modes**: *shape* (the diagram alone), *recorded* (a `counts` prop weights and labels the edges), and *live* (a `liveNode` walks a token). Edge width scales with `share = value / max(presented, 1)`; returns are the faintest thing on the canvas and are never labelled. Outcome fills are borrowed from the analytics outcome palette, exported so `TaskRail` cannot disagree with the diagram.
+**`TaskGraph` has two modes**: *shape* (the diagram alone) and *live* (a `liveNode` walks a token). Returns are the faintest thing on the canvas and are never labelled. Outcome fills are borrowed from the analytics outcome palette, exported so `TaskRail` cannot disagree with the diagram.
 
 > [!NOTE]
-> `GraphCounts` is defined and wired, but **no caller currently passes `counts`**. That is deliberate — partial mid-session tallies must not be shown. `StarPanel` passes `liveNode` only.
+> **The model carries no per-edge counts, and the machinery for them is gone rather than dormant.** An earlier version tagged each edge with the `derive.py` bucket that would fill it; nothing ever passed them, because the only place a graph and a live run coexist is Mission Control — and a partial mid-session tally is exactly the number that must not be shown, reading as a result while the trials it summarises are still arriving. Analytics owns recorded figures, on panels built to caveat them. If per-edge figures are ever wanted they belong to a *finished* run and should arrive as a separate overlay, not as an optional field every edge in `topology.ts` has to think about.
 
 Only values **diverging** from the sketch's own `task.json` defaults are persisted into `taskDefaults`, and an empty diff deletes the sketch's entry entirely.
 

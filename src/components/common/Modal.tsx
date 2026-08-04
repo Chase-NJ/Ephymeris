@@ -9,15 +9,26 @@ import { springModal } from "@/lib/motion";
  * (dashboard.md §1.4): persistent chrome (the sidebar) and this. Content
  * cards stay opaque.
  */
+/** `md` is the historical width and stays the default, so every existing call
+ * site is unchanged; wider sizes exist for content that is a grid rather than
+ * a column (the paradigm gallery). */
+const WIDTHS = {
+  md: "max-w-xl",
+  lg: "max-w-3xl",
+  xl: "max-w-5xl",
+} as const;
+
 export function Modal({
   open,
   onClose,
   title,
+  size = "md",
   children,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
+  size?: keyof typeof WIDTHS;
   children: ReactNode;
 }) {
   useEffect(() => {
@@ -44,7 +55,7 @@ export function Modal({
             role="dialog"
             aria-modal="true"
             aria-label={title}
-            className="vibrancy relative flex max-h-full w-full max-w-xl flex-col rounded-lg border border-halo shadow-xl"
+            className={`vibrancy relative flex max-h-full w-full flex-col rounded-lg border border-halo shadow-xl ${WIDTHS[size]}`}
             initial={{ opacity: 0, scale: 0.96, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 8 }}

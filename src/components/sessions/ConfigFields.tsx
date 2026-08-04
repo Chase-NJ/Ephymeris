@@ -8,8 +8,10 @@ import type { ConfigField, TaskProfile } from "@/lib/sessions/types";
 
 /**
  * The one renderer for a Task Profile's `config` array (`tasks.md` §3.2),
- * shared by the Config page's rig defaults and the per-box override on the
- * mapping step.
+ * shared by this rig's per-sketch defaults on the Task tab and the per-box
+ * override on the mapping step — the middle and outer layers of the three-layer
+ * merge, rendered by the same component so they cannot disagree about what a
+ * field is.
  *
  * It exists because a profile is no longer three fields. The lab's behaviour
  * sketches declare forty-odd — every timing, hold, window, penalty, reward

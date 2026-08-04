@@ -1,4 +1,5 @@
 import { TextInput, Toggle } from "@/components/common/controls";
+import { useRowDensity } from "@/components/common/rowDensity";
 
 /**
  * One labelled value row: label + help + changed-dot on the left, the input and
@@ -61,70 +62,89 @@ export function FieldRow({
   const numeric = type === "int" || type === "float";
   const invalid = numeric && typeof value === "string" && value.trim() !== "";
   const changed = !Object.is(value, baseline);
+  const stacked = useRowDensity() === "stacked";
+
+  const caption = (
+    <>
+      <span
+        className={`block text-[11px] ${stacked ? "" : "truncate"} ${
+          changed ? "text-starlight" : "text-static"
+        }`}
+        title={help ?? label}
+      >
+        {changed && <span className="mr-1 text-pulsar">•</span>}
+        {label}
+      </span>
+      {help && (
+        <span className="mt-0.5 block text-[10px] leading-snug text-static/70">{help}</span>
+      )}
+      {invalid && (
+        <span
+          className="mt-0.5 block text-[10px]"
+          style={{ color: "var(--color-status-error)" }}
+        >
+          Not a number — the box would run on {String(fallback)}.
+        </span>
+      )}
+      {error && !invalid && (
+        <span
+          className="mt-0.5 block text-[10px] leading-snug"
+          style={{ color: "var(--color-status-error)" }}
+        >
+          {error}
+        </span>
+      )}
+    </>
+  );
+
+  // A stacked row gives the control the full column; the inline one keeps the
+  // fixed widths the two forms were laid out around.
+  const control =
+    type === "bool" ? (
+      <Toggle label={label} checked={value === true} onChange={onChange} />
+    ) : numeric ? (
+      <TextInput
+        label={label}
+        mono={mono}
+        value={String(value ?? "")}
+        onChange={(raw) => {
+          if (raw.trim() === "") return onChange(fallback);
+          const parsed = type === "int" ? parseInt(raw, 10) : parseFloat(raw);
+          // Keep the raw text on a partial entry so the caret doesn't jump;
+          // `invalid` above is what makes that state visible.
+          onChange(Number.isNaN(parsed) ? raw : clamp(parsed, min, max));
+        }}
+        className={stacked ? "w-full" : (width ?? "w-[76px]")}
+      />
+    ) : (
+      <TextInput
+        label={label}
+        mono={mono && type !== "string"}
+        value={String(value ?? "")}
+        onChange={onChange}
+        className={stacked ? "w-full" : (width ?? "w-[120px]")}
+      />
+    );
+
+  if (stacked) {
+    return (
+      <label className="flex min-w-0 flex-col gap-1">
+        <span className="min-w-0">{caption}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          {control}
+          {unit && (
+            <span className="shrink-0 font-mono text-[10px] text-static/70">{unit}</span>
+          )}
+        </span>
+      </label>
+    );
+  }
 
   return (
     <label className="flex items-start justify-between gap-3">
-      <span className="min-w-0 pt-1">
-        <span
-          className={`block truncate text-[11px] ${changed ? "text-starlight" : "text-static"}`}
-          title={help ?? label}
-        >
-          {changed && <span className="mr-1 text-pulsar">•</span>}
-          {label}
-        </span>
-        {help && (
-          <span className="mt-0.5 block text-[10px] leading-snug text-static/70">
-            {help}
-          </span>
-        )}
-        {invalid && (
-          <span
-            className="mt-0.5 block text-[10px]"
-            style={{ color: "var(--color-status-error)" }}
-          >
-            Not a number — the box would run on {String(fallback)}.
-          </span>
-        )}
-        {error && !invalid && (
-          <span
-            className="mt-0.5 block text-[10px] leading-snug"
-            style={{ color: "var(--color-status-error)" }}
-          >
-            {error}
-          </span>
-        )}
-      </span>
-
+      <span className="min-w-0 pt-1">{caption}</span>
       <span className="flex shrink-0 items-center gap-1.5">
-        {type === "bool" ? (
-          <Toggle
-            label={label}
-            checked={value === true}
-            onChange={onChange}
-          />
-        ) : numeric ? (
-          <TextInput
-            label={label}
-            mono={mono}
-            value={String(value ?? "")}
-            onChange={(raw) => {
-              if (raw.trim() === "") return onChange(fallback);
-              const parsed = type === "int" ? parseInt(raw, 10) : parseFloat(raw);
-              // Keep the raw text on a partial entry so the caret doesn't jump;
-              // `invalid` above is what makes that state visible.
-              onChange(Number.isNaN(parsed) ? raw : clamp(parsed, min, max));
-            }}
-            className={width ?? "w-[76px]"}
-          />
-        ) : (
-          <TextInput
-            label={label}
-            mono={mono && type !== "string"}
-            value={String(value ?? "")}
-            onChange={onChange}
-            className={width ?? "w-[120px]"}
-          />
-        )}
+        {control}
         <span className="w-6 shrink-0 font-mono text-[10px] text-static/70">
           {unit ?? ""}
         </span>

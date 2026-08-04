@@ -2,8 +2,14 @@ import { useMemo } from "react";
 
 import { FieldRow } from "@/components/common/FieldRow";
 import { errorsFor, firstError, type PlacedDiagnostics } from "@/lib/specs/diagnostics";
-import type { SpecDocument } from "@/lib/specs/types";
-import type { OverlayField, SpecSchema } from "@/lib/specs/types";
+import { topologyOf } from "@/lib/specs/document";
+import type {
+  ChannelRegistry,
+  OverlayField,
+  SpecDocument,
+  SpecSchema,
+  StrobeRegistry,
+} from "@/lib/specs/types";
 import { ChipsRow, SelectRow } from "./rows";
 
 /**
@@ -40,16 +46,14 @@ export function SpecField({
   const error = placed ? firstError(errorsFor(placed, path, overlayKey)) : undefined;
 
   const strobeOptions = useMemo(() => {
-    const codes = (schema.strobes as { codes?: Record<string, { code: number }> }).codes ?? {};
+    const codes = (schema.strobes as StrobeRegistry).codes ?? {};
     return Object.entries(codes)
       .sort(([, a], [, b]) => a.code - b.code)
       .map(([name, entry]) => ({ value: name, label: `${name} (${entry.code})` }));
   }, [schema.strobes]);
 
   const channelOptions = useMemo(() => {
-    const channels =
-      (schema.channels as { channels?: Record<string, { kind: string; index: number }> })
-        .channels ?? {};
+    const channels = (schema.channels as ChannelRegistry).channels ?? {};
     return Object.entries(channels)
       .filter(([, c]) => !meta.channelKind || c.kind === meta.channelKind)
       .sort(([, a], [, b]) => a.index - b.index)
@@ -231,11 +235,7 @@ export function SpecField({
         // legitimately repeat a stimulus (an AA trial). One select per sampling
         // stage, with the count taken from the topology knob so the row grows
         // and shrinks with it — TG221 confirms the agreement either way.
-        const topology = doc["topology"];
-        const declared =
-          topology !== null && typeof topology === "object"
-            ? (topology as Record<string, unknown>)["n_sampling_stages"]
-            : undefined;
+        const declared = topologyOf(doc)?.["n_sampling_stages"];
         const values = Array.isArray(value) ? value.map(String) : [];
         const count = Math.max(
           typeof declared === "number" && declared >= 0 ? declared : values.length,
@@ -307,7 +307,7 @@ export function SpecField({
       );
 
     case "template_version": {
-      const template = (doc["topology"] as Record<string, unknown> | undefined)?.["template"];
+      const template = topologyOf(doc)?.["template"];
       return (
         <SelectRow
           label={meta.label}

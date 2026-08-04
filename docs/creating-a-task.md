@@ -294,18 +294,30 @@ a rat brushing the port consumes a trial.
 
 ### The two walls
 
-Two limits are real and neither is arbitrary. Both are computed from the
-registries, so re-syncing the hardware definition lifts them automatically.
+Two limits are real and neither is arbitrary. Both are **computed from the
+registries rather than written down**, which is what makes them movable: you move
+them by changing what the rig declares, not by editing the compiler.
 
 > [!IMPORTANT]
-> **You cannot have a third response port.** `channels.v1.json` declares exactly
-> two channels of `kind: response` — `right_well` and `left_well`. A box with
-> three wells would declare three, and the wall moves on its own.
+> **You get as many response ports as your rig declares response channels.** The
+> shipped wiring declares two of `kind: response` — `right_well` and `left_well` —
+> so *Add a response option* blocks once both are bound, and the message says so
+> by counting the registry. **Declare a third in Task → Rig wiring and the block
+> turns itself on**, with no edit anywhere in the app. The real ceiling above that
+> is seven: `TG_MAX_WATCH` is eight watched channels and one of them is the
+> engagement port.
 >
-> **You cannot have a seventh stimulus onset code.** The strobe vocabulary
-> declares six: `ODOR_1_ON` … `ODOR_6_ON`. There are twelve odor *lines*
-> physically, but only six codes to announce an onset with — and a stimulus whose
-> onset cannot be announced is invisible in the data.
+> **You get twelve stimulus onset codes**, `ODOR_1_ON` … `ODOR_12_ON`, matching the
+> twelve odor lines the board physically has. This used to be six, which meant six
+> of the twelve lines could be plumbed but never announced — and a stimulus whose
+> onset cannot be announced is invisible in the data, which is worse than not
+> having the line. A thirteenth stimulus is still a wall.
+
+Neither number is typed into a rule. The port wall counts `kind: response` entries
+in the composed channel map; the stimulus wall counts onset codes in the strobe
+vocabulary. That is why the first one is now something an operator can move from
+inside the app, and the second one still isn't — a strobe code is a number the
+data files and the firmware both have to agree on, so it ships.
 
 ### Changing a knob makes new fields required
 

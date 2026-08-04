@@ -16,11 +16,26 @@
   ],
   "type": "object",
   "additionalProperties": false,
-  "required": ["paradigm_version", "id", "name", "affords", "template", "template_version"],
+  "required": [
+    "paradigm_version",
+    "id",
+    "name",
+    "affords",
+    "template",
+    "template_version"
+  ],
   "properties": {
-    "paradigm_version": { "const": 1 },
-    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-    "name": { "type": "string", "minLength": 1 },
+    "paradigm_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
     "affords": {
       "type": "string",
       "minLength": 1,
@@ -30,18 +45,40 @@
       "type": "integer",
       "description": "Gallery order. Explicit rather than alphabetical, so the canonical paradigm leads and self_check() has a defined probe."
     },
-    "template": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-    "template_version": { "type": "integer", "minimum": 1 },
-
+    "hidden": {
+      "type": "boolean",
+      "description": "Kept out of the template gallery. Exactly one paradigm is hidden \u2014 `blank`, which is what a task starts from when the operator picks NO template. It is a paradigm rather than a special case so the generator still reads every value from an authority (there would otherwise be no paradigm to read), and hidden rather than listed because 'from scratch' is the default action, not one of the shapes."
+    },
+    "template": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "template_version": {
+      "type": "integer",
+      "minimum": 1
+    },
     "topology": {
       "type": "object",
       "additionalProperties": false,
       "description": "The knobs this paradigm FIXES. A knob omitted here takes the template's default and may be moved afterwards in the Designer.",
       "properties": {
-        "n_sampling_stages": { "type": "integer", "minimum": 0, "maximum": 4 },
-        "retention_delay": { "type": "boolean" },
-        "response_mode": { "enum": ["n_alternative", "go_nogo"] },
-        "commit_hold": { "type": "boolean" },
+        "n_sampling_stages": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "retention_delay": {
+          "type": "boolean"
+        },
+        "response_mode": {
+          "enum": [
+            "n_alternative",
+            "go_nogo"
+          ]
+        },
+        "commit_hold": {
+          "type": "boolean"
+        },
         "response_ports": {
           "type": "integer",
           "minimum": 1,
@@ -49,7 +86,6 @@
         }
       }
     },
-
     "contingency": {
       "type": "object",
       "additionalProperties": false,
@@ -65,7 +101,11 @@
           "description": "Whether a correct trial delivers. The one layer-2 field that changes the GRAPH: null omits the delivery PULSE and the consumption WAIT_EXIT."
         },
         "trial_types": {
-          "enum": ["one_per_stimulus", "single_withhold", "sequence_pairs"],
+          "enum": [
+            "one_per_stimulus",
+            "single_withhold",
+            "sequence_pairs"
+          ],
           "description": "The stimulus-to-answer mapping. An enum rather than a structure, so this file cannot grow an index-into-index format."
         },
         "weight_one_only": {
@@ -74,41 +114,77 @@
         }
       }
     },
-
     "policy": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "selection": { "type": "object" },
-        "correction_budgets": { "type": "boolean" },
-        "penalty_escalation": { "type": "object" },
-        "n_trials": { "type": "integer", "minimum": 1 },
+        "selection": {
+          "type": "object"
+        },
+        "correction_budgets": {
+          "type": "boolean"
+        },
+        "penalty_escalation": {
+          "type": "object"
+        },
+        "n_trials": {
+          "type": "integer",
+          "minimum": 1
+        },
         "ramped": {
           "type": "array",
-          "items": { "type": "string", "pattern": "^t_[a-z0-9_]+$" },
+          "items": {
+            "type": "string",
+            "pattern": "^t_[a-z0-9_]+$"
+          },
           "description": "Timing ids this paradigm expects to ramp across a stage schedule. Names ids only -- the VALUES and the trial boundaries are the operator's."
         }
       }
     },
-
     "questions": {
       "type": "array",
       "description": "What the wizard asks, in order. Every path is a document path the spec schema already knows, so an answer is a set on a validated location and never new structure.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "label", "path"],
+        "required": [
+          "id",
+          "label",
+          "path"
+        ],
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-          "label": { "type": "string", "minLength": 1 },
-          "path": { "type": "string", "minLength": 1 },
-          "help": { "type": "string" },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "help": {
+            "type": "string"
+          },
           "source": {
-            "enum": ["value", "channel", "stimulus", "trial_type", "strobe"],
+            "enum": [
+              "value",
+              "channel",
+              "stimulus",
+              "trial_type",
+              "strobe"
+            ],
             "description": "Where the offered options come from. `value` is free text or a number."
           },
-          "kind": { "type": "string", "description": "For source=channel: which channel kind to offer." },
-          "required": { "type": "boolean" }
+          "kind": {
+            "type": "string",
+            "description": "For source=channel: which channel kind to offer."
+          },
+          "required": {
+            "type": "boolean"
+          }
         }
       }
     }

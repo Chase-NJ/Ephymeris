@@ -369,10 +369,11 @@ them, and **TG226** rejects the three ways they can disagree — including a
 `watch_bit` set that is not dense and 0-based over exactly the watchable
 channels, which would silently misaddress `TgNode.watchMask`.
 
-### The seven paradigms
+### The eight paradigms
 
 | id | shape | affords |
 |---|---|---|
+| `blank` | 1 stimulus, 1 port, rewarded — **hidden** | the from-scratch default: the smallest thing that compiles, fixing nothing |
 | `two_afc` | 1 stimulus, 2 ports, rewarded | the canonical discrimination task |
 | `two_afc_unrewarded` | as above, no reward | probe and extinction blocks |
 | `shaping` | 1 port, ramped | approach training; **Shaping-R and Shaping-L are one paradigm** |

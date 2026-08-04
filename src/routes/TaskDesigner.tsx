@@ -27,6 +27,7 @@ import { SpecInspector } from "@/components/specs/SpecInspector";
 import { springPanel } from "@/lib/motion";
 import { placeDiagnostics } from "@/lib/specs/diagnostics";
 import { topologyOf, toYaml } from "@/lib/specs/document";
+import { bandReadouts } from "@/lib/specs/layout";
 import { nodesForPath, type Selection } from "@/lib/specs/selection";
 import type { SpecDiagnostic, SpecGraph } from "@/lib/specs/types";
 import { useCompile } from "@/lib/specs/useCompile";
@@ -100,7 +101,7 @@ export function TaskDesigner() {
     [hoverPath, graph, doc],
   );
 
-  const bandReadouts = useMemo(() => readouts(topologyOf(doc)), [doc]);
+  const readouts = useMemo(() => bandReadouts(topologyOf(doc)), [doc]);
 
   async function onSave() {
     const target = docId;
@@ -218,7 +219,7 @@ export function TaskDesigner() {
                   onRevealStructure={(band) => setSelection({ kind: "band", band })}
                   lit={lit}
                   stale={stale}
-                  bandReadouts={bandReadouts}
+                  bandReadouts={readouts}
                 />
               ) : (
                 <p className="m-auto max-w-sm px-6 text-center text-[12px] leading-relaxed text-static">
@@ -336,24 +337,6 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 /** One line per band, from the knobs — what the four band cards used to say. */
-function readouts(knobs: Record<string, unknown> | null): Record<number, string> {
-  const k = knobs ?? {};
-  const stages = typeof k["n_sampling_stages"] === "number" ? k["n_sampling_stages"] : null;
-  const ports = Array.isArray(k["response_ports"]) ? k["response_ports"].length : 0;
-  return {
-    1: k["commit_hold"] === false ? "no commitment hold" : "commitment hold on",
-    2:
-      stages === 0
-        ? "epoch skipped"
-        : `${stages ?? "?"} stage${stages === 1 ? "" : "s"}` +
-          (stages !== null && stages > 1 ? ` + ${stages - 1} gap` : "") +
-          (k["retention_delay"] === true ? " + retention" : ""),
-    3: `${k["response_mode"] === "go_nogo" ? "go / no-go" : "n-alternative"} · ${ports} port${
-      ports === 1 ? "" : "s"
-    }`,
-    4: "",
-  };
-}
 
 function CompileLine({
   compiling,

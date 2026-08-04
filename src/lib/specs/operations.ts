@@ -52,7 +52,7 @@
  * every application against the real compiler.
  */
 
-import { deleteAt, getAt, setAt, topologyOf } from "./document";
+import { deleteAt, getAt, setAt, timingIndexOf, topologyOf } from "./document";
 import type {
   ChannelRegistry,
   SpecCapabilities,
@@ -149,12 +149,6 @@ function asRec(v: unknown): Rec | null {
 function timingRows(doc: SpecDocument): Rec[] {
   const t = doc["timing"];
   return Array.isArray(t) ? t.filter((r): r is Rec => asRec(r) !== null) : [];
-}
-
-function timingIndexOf(doc: SpecDocument, id: string): number {
-  const t = doc["timing"];
-  if (!Array.isArray(t)) return -1;
-  return t.findIndex((r) => asRec(r)?.["id"] === id);
 }
 
 function portsOf(doc: SpecDocument): Record<string, Rec> {
@@ -905,7 +899,25 @@ function addResponseOption(b: Op, ctx: OpContext): void {
   );
   const rp = responsePortsOf(b.doc);
   b.set("topology.response_ports", [...rp, name], `add ${name} to the response window`);
-  b.set(`policy.correction.budgets.${name}`, 0, `correction budget ${name} = 0`);
+  /*
+   * A budget for the new port ONLY IF the task already runs correction trials.
+   *
+   * Setting this unconditionally created a `policy.correction.budgets` block
+   * holding one entry — the port just added — on a document that had none, so
+   * a task built from `blank` came out with a correction policy for its second
+   * well and nothing for its first. Two wrongs in one line: it invents a policy
+   * the task never declared, and where the policy IS declared, a block covering
+   * some of the ports is worse than one covering none, because the missing
+   * entry reads as a deliberate zero.
+   *
+   * `budgets` is a map keyed by port, so an existing block is the signal that
+   * this task uses correction trials at all. Zero is the identity here — no
+   * correction trials for this port — and not a tuning value pulled from a
+   * defaults table, which is why it can be written without asking.
+   */
+  if (getAt(b.doc, "policy.correction.budgets") !== undefined) {
+    b.set(`policy.correction.budgets.${name}`, 0, `correction budget ${name} = 0`);
+  }
 
   ensurePortCodes(b, ctx);
   const om = outcomeMapOf(b.doc);

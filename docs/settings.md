@@ -19,8 +19,17 @@ Three screens edit settings. **The split is by subject, not by shape.**
 | Screen | Answers | Owns |
 |---|---|---|
 | ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
-| 📡 **Config** (`/config`) | *How is this rig wired?* | Constellation layout, box→board bindings, handshake test, utility baseline, default baud, `arduino-cli` path |
-| 🔀 **Task** (`/task*`) | *What is the animal doing?* | The task-spec Designer and bench, plus sketch inspection over the bundled library and per-sketch task parameters (`/task/sketches`) |
+| 📡 **Config** (`/config`) | *Which board is box 3?* | Constellation layout, box→board bindings, handshake test, utility baseline, default baud, `arduino-cli` path |
+| 🔀 **Task** (`/task*`) | *What is the animal doing, and what is the box built out of?* | The task-spec Designer, wizard and bench; the channel→pin map (`/task/hardware`); sketch inspection over the bundled library and per-sketch task parameters (`/task/sketches`) |
+
+> [!NOTE]
+> **Both of the first two rows are about wiring, and they are different wirings.**
+> Config binds a **box number to a board** — runtime indirection, per rig, changing
+> whenever a board is swapped or Windows renumbers a COM port. Task → Rig wiring
+> binds a **channel to a pin** — compile-time input, per box generation, baked into
+> every table the compiler emits ([specs.md §9](specs.md)). The screens are named
+> **Bind boxes** and **Rig wiring** so the distinction survives being spoken aloud;
+> the Config step used to be called "Map hardware", which collided.
 
 > [!NOTE]
 > **This row has been decided twice.** The first split (Settings → Config) was by *shape*: hardware-ish vs storage-ish. The second (Config → Task) is by *subject*, and the forcing function was volume — making every firmware parameter operator-tunable turned a three-field panel into forty-odd fields, which is not a row on a hardware page.

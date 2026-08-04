@@ -269,7 +269,7 @@ SHAPES: Final[dict[str, Any]] = {
     "PrefixesUpdatedData": ('obj', (('prefixes', ('list', ('ref', 'Prefix')), False),)),
     "SidecarErrorData": ('obj', (('code', 'str', False), ('message', 'str', False), ('detail', 'any', False))),
     "ParadigmQuestion": ('obj', (('id', 'str', False), ('label', 'str', False), ('path', 'str', False), ('help', ('union', ('str', 'null')), False), ('source', ('lit', ('value', 'channel', 'stimulus', 'trial_type', 'strobe')), False), ('kind', ('union', ('str', 'null')), False), ('required', 'bool', False))),
-    "ParadigmSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('affords', 'str', False), ('order', 'int', False), ('template', 'str', False), ('templateVersion', 'int', False), ('fixes', 'any', False), ('questions', ('list', ('ref', 'ParadigmQuestion')), False))),
+    "ParadigmSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('affords', 'str', False), ('order', 'int', False), ('hidden', 'bool', False), ('template', 'str', False), ('templateVersion', 'int', False), ('fixes', 'any', False), ('questions', ('list', ('ref', 'ParadigmQuestion')), False))),
     "SpecOrigin": ('lit', ('user',)),
     "SpecEntry": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('description', ('union', ('str', 'null')), False), ('origin', ('ref', 'SpecOrigin'), False), ('template', ('union', ('str', 'null')), False), ('templateVersion', ('union', ('int', 'null')), False), ('paradigmId', ('union', ('str', 'null')), False), ('editedAt', ('union', ('str', 'null')), False))),
     "RigProblem": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', ('union', ('str', 'null')), False))),

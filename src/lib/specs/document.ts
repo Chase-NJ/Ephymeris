@@ -81,6 +81,47 @@ export function topologyOf(doc: SpecDocument | null): Record<string, unknown> | 
     : null;
 }
 
+/**
+ * Every timing id the document declares, IN VECTOR ORDER.
+ *
+ * The order is the point and not an accident of iteration: layer 3 is an
+ * ordered vector whose index is what the packed table refers to, so anything
+ * that renders or rewrites timing has to agree with the document about which
+ * row is which. Lived here after being written twice — the wizard grouped rows
+ * by epoch and `operations.ts` inserted them, from two private copies.
+ */
+export function timingIds(doc: SpecDocument): string[] {
+  const timing = doc["timing"];
+  if (!Array.isArray(timing)) return [];
+  return timing
+    .map((row) =>
+      row !== null && typeof row === "object" && !Array.isArray(row)
+        ? (row as Record<string, unknown>)["id"]
+        : null,
+    )
+    .filter((id): id is string => typeof id === "string");
+}
+
+/**
+ * Where `id` sits in the timing vector, or -1.
+ *
+ * Deliberately NOT `timingIds(doc).indexOf(id)`. That list drops rows with no
+ * string id, so a single malformed row above the one being looked for would
+ * shift every index below it by one — and this index is what a path write and
+ * the packed table both refer to. It has to count rows, not ids.
+ */
+export function timingIndexOf(doc: SpecDocument, id: string): number {
+  const timing = doc["timing"];
+  if (!Array.isArray(timing)) return -1;
+  return timing.findIndex(
+    (row) =>
+      row !== null &&
+      typeof row === "object" &&
+      !Array.isArray(row) &&
+      (row as Record<string, unknown>)["id"] === id,
+  );
+}
+
 /** Delete the key/element at `path`, immutably. */
 export function deleteAt(doc: SpecDocument, path: string): SpecDocument {
   const parts = steps(path);

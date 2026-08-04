@@ -375,6 +375,81 @@ def test_add_stimulus_and_trial_type():
     compile_ok(doc, "grgl_2odor")
 
 
+# --------------------------------------------------------------------------- #
+# Adding a response option: a correction budget is EXTENDED, never invented.
+# --------------------------------------------------------------------------- #
+
+
+def add_response_option(doc: dict, name: str, channel: str) -> None:
+    """`addResponseOption`, in the one respect this file is about.
+
+    The strobe codes and reward binding the real op fills in are set literally
+    here — TG506's per-port coverage has its own case above. What is mirrored
+    is the correction-budget rule, because it is the one that decides whether a
+    field appears in the document at all.
+    """
+    doc["contingency"]["ports"][name] = {
+        "channel": channel,
+        "enter_code": "WATER_POKE_L",
+        "error_code": "WATER_POKE_ERROR_L",
+        "break_code": "WATER_UNPOKE_EARLY_L",
+        "exit_code": "WATER_UNPOKE_L",
+        "reward_line": "fluid_0",
+        "reward_duration": "t_reward_left",
+        "reward_code": "FLUID_L",
+        "reward_stop_code": "STOP_FLUID_G_L",
+    }
+    doc["topology"]["response_ports"].append(name)
+    doc["timing"].append({"id": "t_reward_left", "ms": 100})
+
+    # THE RULE: extend a budgets map that exists; do not create one.
+    budgets = (doc.get("policy", {}).get("correction") or {}).get("budgets")
+    if budgets is not None:
+        budgets[name] = 0
+
+
+def test_adding_a_port_does_not_invent_a_correction_policy():
+    """`blank` declares no correction budgets, so a task grown from it has none.
+
+    Writing `policy.correction.budgets.<new port>` unconditionally produced a
+    block holding exactly one entry — the port just added — which reads as a
+    deliberate zero for that well and an unstated default for the well that was
+    already there. A task that does not run correction trials should come out
+    of the wizard with no correction block at all.
+    """
+    doc = load("blank")
+    assert "correction" not in (doc.get("policy") or {})
+
+    add_response_option(doc, "left_well", "left_well")
+    doc["contingency"]["stimuli"].append(
+        {"id": "odor2", "emitter": "odor_line_2", "on_code": "ODOR_2_ON"}
+    )
+    doc["contingency"]["trial_types"].append(
+        {"id": "tt_odor2_left", "stages": ["odor2"], "target": "left_well", "weight": 1}
+    )
+
+    assert "correction" not in (doc.get("policy") or {})
+    compile_ok(doc, "grown_from_blank")
+
+
+def test_adding_a_port_extends_an_existing_correction_policy():
+    """Where the block DOES exist, a port missing from it is the asymmetry."""
+    doc = load("two_afc")
+    budgets = doc["policy"]["correction"]["budgets"]
+    assert set(budgets) == set(doc["topology"]["response_ports"])
+
+    # Free the channel the third port will take, so the mirror stays honest
+    # about there being one — `channels.v1.json` declares two response kinds
+    # today, which is the wall `capabilities()` computes rather than declares.
+    doc["contingency"]["ports"]["third_well"] = dict(
+        doc["contingency"]["ports"]["left_well"]
+    )
+    doc["topology"]["response_ports"].append("third_well")
+    budgets["third_well"] = 0
+
+    assert set(budgets) == set(doc["topology"]["response_ports"])
+
+
 def test_trial_type_stage_count_must_match():
     """TG221 is exact, not a minimum — which is why adding a stage has to
     touch every trial type rather than only the ones being edited."""

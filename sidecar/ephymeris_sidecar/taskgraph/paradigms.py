@@ -82,6 +82,7 @@ class Paradigm:
     name: str
     affords: str
     order: int
+    hidden: bool
     template: str
     template_version: int
     topology: dict[str, Any]
@@ -134,6 +135,7 @@ def load_all() -> tuple[Paradigm, ...]:
                 name=raw["name"],
                 affords=raw["affords"].strip(),
                 order=raw.get("order", 100),
+                hidden=bool(raw.get("hidden", False)),
                 template=raw["template"],
                 template_version=raw["template_version"],
                 topology=raw.get("topology", {}),
@@ -185,6 +187,12 @@ def fingerprint(doc: dict) -> str | None:
         outcome.get("reward") is not None,
     )
     for p in load_all():
+        if p.hidden:
+            # `blank` is the floor a task starts from, not a shape it HAS. Left
+            # in, every one-stimulus one-port rewarded task would come back
+            # labelled "From scratch" -- which is where it began and says
+            # nothing about what it is.
+            continue
         theirs = (
             int(p.topology.get("n_sampling_stages", 1)),
             bool(p.topology.get("retention_delay", False)),

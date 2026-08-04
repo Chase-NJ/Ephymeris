@@ -1115,6 +1115,14 @@ SHAPES = (
             f("name", STR),
             f("affords", STR, doc="What this paradigm lets you measure. Gallery copy."),
             f("order", INT, doc="Gallery order — explicit, not alphabetical."),
+            f(
+                "hidden",
+                BOOL,
+                doc="Kept out of the gallery. True for exactly one paradigm — "
+                "`blank`, which is what a task starts from when no template is "
+                "picked. Declared rather than special-cased by id, so the "
+                "frontend holds no magic string.",
+            ),
             f("template", STR),
             f("templateVersion", INT),
             f(

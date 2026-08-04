@@ -10,17 +10,28 @@ import { FieldRow } from "@/components/common/FieldRow";
 import { RowDensityContext } from "@/components/common/rowDensity";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { DiagnosticsPanel } from "@/components/specs/DiagnosticsPanel";
+import { InspectorRail } from "@/components/specs/InspectorRail";
 import { SpecCanvas } from "@/components/specs/SpecCanvas";
+import { ParadigmCard } from "@/components/specs/ParadigmCard";
 import { SpecField } from "@/components/specs/SpecField";
 import { StructureBlocks } from "@/components/specs/StructureBlocks";
 import { ChipsRow, SelectRow } from "@/components/specs/rows";
 import { errorMessage } from "@/lib/cohorts/commands";
-import { springPanel } from "@/lib/motion";
+import { getRig } from "@/lib/hardware/commands";
+import type { RigDocument } from "@/lib/hardware/types";
+import { springPanel, springSnappy } from "@/lib/motion";
 import { getSkeleton } from "@/lib/specs/commands";
 import { createSpecFrom, idError, suggestId } from "@/lib/specs/create";
+import { bandReadouts } from "@/lib/specs/layout";
 import { runOp } from "@/lib/specs/operations";
 import { placeDiagnostics, type PlacedDiagnostics } from "@/lib/specs/diagnostics";
-import { getAt, setAt, topologyOf } from "@/lib/specs/document";
+import {
+  getAt,
+  setAt,
+  timingIds,
+  timingIndexOf,
+  topologyOf,
+} from "@/lib/specs/document";
 import type {
   ChannelRegistry,
   ParadigmQuestion,
@@ -60,6 +71,16 @@ import { useSidecar } from "@/lib/ws/context";
  * Nothing is written until Create, which is `createSpecFrom` — the same
  * rename-and-save Duplicate uses. No new wire command for creation.
  */
+/**
+ * The paradigm that fixes nothing.
+ *
+ * Named here rather than inferred, because it is the one paradigm the wizard
+ * treats structurally: it is what `/task/new` opens on and what "design from
+ * scratch" returns to. Everything else about it — that it is kept out of the
+ * gallery — is declared in the paradigm file as `hidden`, not decided here.
+ */
+const BLANK = "blank";
+
 export function TaskNew() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -73,6 +94,17 @@ export function TaskNew() {
   const [base, setBase] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  /*
+   * The rig's pin map, fetched once.
+   *
+   * READ-ONLY HERE, and deliberately not `useRig` — that hook carries an
+   * editing session with a debounced preview behind it, which is the Rig wiring
+   * screen's job. The wizard only wants to print which pin a channel is, so a
+   * one-shot `hardware.get` is the whole need. A failure leaves the map empty
+   * and the pads read "not wired", which is the truth from here.
+   */
+  const [pins, setPins] = useState<Record<string, number>>({});
   /* The save landed. Distinct from `creating`, which is still true while the
    * route transition plays out — see the unsaved guard below. */
   const [created, setCreated] = useState(false);
@@ -105,6 +137,35 @@ export function TaskNew() {
   const graph = result?.graph ?? lastGood;
 
   /*
+   * Gated on `connected`, and re-run when it flips.
+   *
+   * Firing this on mount alone raced the socket's auth handshake: the call
+   * rejected, the catch below swallowed it, and every pad read "not wired" on a
+   * rig that was wired fine. Depending on `connected` makes a reconnect the
+   * retry, which is the same shape every other domain provider uses.
+   */
+  useEffect(() => {
+    if (!connected) return;
+    let live = true;
+    getRig(client)
+      .then((reply) => {
+        if (!live) return;
+        const map: Record<string, number> = {};
+        const pinBlock = (reply.document as RigDocument).pins ?? {};
+        for (const [name, pin] of Object.entries(pinBlock)) {
+          if (typeof pin?.index === "number") map[name] = pin.index;
+        }
+        setPins(map);
+      })
+      .catch(() => {
+        /* Pads read "not wired"; nothing here is worth interrupting a design for. */
+      });
+    return () => {
+      live = false;
+    };
+  }, [client, connected]);
+
+  /*
    * An in-progress DESIGN is unsaved work; a design that has been created is
    * not. Guarding on `doc !== null` alone kept the wizard armed after its own
    * successful save, so the first navigation afterwards asked whether to
@@ -126,16 +187,34 @@ export function TaskNew() {
   async function start(id_: string) {
     setLoadError(null);
     try {
-      const suggested = suggestId(id_, taken);
+      const suggested = suggestId(id_ === BLANK ? "task" : id_, taken);
       const reply = await getSkeleton(client, id_, suggested, {});
       setBase(id_);
       setDoc(parseYaml(reply.text) as SpecDocument);
       setId(suggested);
       setStep(1);
+      setShowTemplates(false);
     } catch (err) {
       setLoadError(errorMessage(err));
     }
   }
+
+  /*
+   * FROM SCRATCH IS THE DEFAULT, so the wizard opens on step 1 rather than on a
+   * picker. `?paradigm=` still works — that is what the Task tab's template
+   * cards navigate to — and choosing a template later goes through the very
+   * same `start()`, so there is one code path either way.
+   *
+   * Guarded on `doc === null` rather than a mounted ref: the effect must not
+   * fire again after the operator switches templates, and the document is the
+   * honest record of whether a start has happened.
+   */
+  useEffect(() => {
+    if (!connected || doc !== null || loadingParadigms) return;
+    if (paradigms.length === 0) return;
+    void start(paradigmId ?? BLANK);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, doc, loadingParadigms, paradigms.length, paradigmId]);
 
   async function create() {
     if (!doc || id === "" || idError(id, taken)) return;
@@ -171,7 +250,18 @@ export function TaskNew() {
     );
   }
 
-  const steps = doc === null ? [] : STEPS;
+  /*
+   * The questions step exists only if the paradigm asks something.
+   *
+   * `blank` — the from-scratch default, and so the step list most operators
+   * ever see — declares `questions: []` on purpose: a shape that fixes nothing
+   * leaves nothing open to ask about. Keeping the step and explaining the
+   * emptiness put a screen with no controls on it in the middle of the default
+   * path. Six steps from scratch, seven from a template that asks.
+   */
+  const asks = (chosen?.questions ?? []).length > 0;
+  const steps =
+    doc === null ? [] : STEPS.filter((s) => s.kind !== "questions" || asks);
   const current = steps[step - 1] ?? null;
 
   return (
@@ -184,10 +274,39 @@ export function TaskNew() {
           <div className="font-display text-[14px] text-starlight">Design a task</div>
           <div className="font-mono text-[9.5px] text-static/70">
             {base === null
-              ? "pick a starting point"
+              ? "starting"
               : `${step > steps.length ? "review" : `${step} of ${steps.length}`} · ${chosen?.name ?? base}`}
           </div>
         </div>
+
+        {/* Step dots, ported from SetupWizard — the task wizard had a text
+            counter and nothing else, so there was no sense of a shape being
+            worked through. Width rather than colour alone marks the current
+            step, which survives being colour-blind. */}
+        {doc !== null && !showTemplates && (
+          <div className="flex items-center gap-1">
+            {steps.map((_, i) => (
+              <motion.span
+                key={i}
+                className="h-1.5 rounded-full"
+                animate={{
+                  backgroundColor:
+                    i <= step - 1 ? "var(--color-pulsar)" : "var(--color-halo)",
+                  width: i === step - 1 ? 22 : 8,
+                }}
+                transition={springSnappy}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* The template path, one quiet click away rather than in front of
+            every new task. */}
+        {doc !== null && !showTemplates && step <= 2 && (
+          <Button variant="ghost" onClick={() => setShowTemplates(true)}>
+            Start from a template
+          </Button>
+        )}
         {result?.table && (
           <span className="flex items-center gap-1.5 font-mono text-[10px] text-static">
             <Check size={10} strokeWidth={2} style={{ color: "var(--color-status-ok)" }} />
@@ -210,12 +329,17 @@ export function TaskNew() {
         </p>
       )}
 
-      {doc === null ? (
+      {showTemplates ? (
         <StartingPoints
           paradigms={paradigms}
           loading={loadingParadigms}
           onPick={(pid) => void start(pid)}
+          onCancel={() => setShowTemplates(false)}
         />
+      ) : doc === null ? (
+        <div className="flex flex-1 items-center justify-center text-[12px] text-static">
+          {loadError ? "" : "Starting a task…"}
+        </div>
       ) : (
         <div className="flex min-h-0 flex-1">
           {/* The machine, beside the questions — so "it compiles at every step"
@@ -248,8 +372,33 @@ export function TaskNew() {
              * durations instead of the template's eight — and then the only way
              * forward scrolled off the bottom of a step that looks complete.
              */}
-            <aside className="flex w-[380px] shrink-0 flex-col border-l border-halo">
-              <div className="scrollbar-none flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
+            {/* Same rail the Designer uses, for the same reason and the same
+                persisted width: a step that holds a strobe picker full of
+                twenty-character SCREAMING_SNAKE needs more room than one
+                holding two knobs, and which of those an operator is looking at
+                changes six times on the way through. A fixed 380px was chosen
+                for the widest step and was wrong for the other five. */}
+            <InspectorRail>
+            <aside className="flex h-full flex-col border-l border-halo">
+              {/*
+               * The entering step animates; the leaving one just goes.
+               *
+               * SetupWizard wraps its equivalent in `AnimatePresence
+               * mode="wait"`, and that is what this was first. `mode="wait"`
+               * holds the NEW child unmounted until the old one's exit
+               * animation reports done — and here it never did, so the step
+               * counter advanced in the header while the panel stayed frozen on
+               * step one. A cross-fade is not worth a dependency on an exit
+               * lifecycle completing; keying the element on `step` gives React
+               * a fresh node to slide in, which is the whole visible effect.
+               */}
+              <motion.div
+                key={step}
+                initial={{ opacity: 0, x: 12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={springPanel}
+                className="scrollbar-none flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3"
+              >
               <div>
                 <div className="font-display text-[13px] text-starlight">
                   {current?.title ?? "Review"}
@@ -292,14 +441,15 @@ export function TaskNew() {
                 </div>
               )}
 
-              {current?.kind === "structure" && schema && (
-                <StructureBlocks
+              {current?.kind === "epoch" && schema && (
+                <EpochStep
                   band={current.band}
                   doc={doc}
-                  baseline={doc}
+                  graph={graph}
                   caps={caps}
                   schema={schema}
                   placed={placed}
+                  pins={pins}
                   onChange={setDoc}
                 />
               )}
@@ -310,100 +460,48 @@ export function TaskNew() {
               which is what lets a paradigm file stay declarative. */}
               {current?.kind === "questions" && schema && (
                 <div className="flex flex-col gap-1.5">
-                  {(chosen?.questions ?? []).length === 0 ? (
-                    <p className="text-[11px] leading-relaxed text-static/70">
-                      This paradigm asks nothing — every choice it makes is part of
-                      the shape. You can still change any of it in the steps that
-                      follow.
-                    </p>
-                  ) : (
-                    (chosen?.questions ?? []).map((q) => (
-                      <ParadigmQuestionRow
-                        key={q.id}
-                        question={q}
-                        doc={doc}
-                        schema={schema}
-                        placed={placed}
-                        onChange={(value) => setDoc(setAt(doc, q.path, value))}
-                      />
-                    ))
-                  )}
+                  {(chosen?.questions ?? []).map((q) => (
+                    <ParadigmQuestionRow
+                      key={q.id}
+                      question={q}
+                      doc={doc}
+                      schema={schema}
+                      placed={placed}
+                      onChange={(value) => setDoc(setAt(doc, q.path, value))}
+                    />
+                  ))}
                 </div>
               )}
 
-              {current?.kind === "ramp" && schema && (
-                <RampStep
-                  doc={doc}
-                  caps={caps}
-                  schema={schema}
-                  placed={placed}
-                  onChange={setDoc}
-                />
-              )}
-
-              {current?.kind === "timing" && schema && (
-                <div className="flex flex-col gap-1.5">
-                  {/*
-                   * THE DOCUMENT'S OWN VECTOR, not `caps.requiredTiming`.
-                   *
-                   * The two are not the same set and the difference is exactly
-                   * the numbers an operator most wants: `required_timing` is
-                   * what the TEMPLATE asks for, so it covers the durations the
-                   * graph's shape implies and none of the ones that arrive
-                   * through layer 2 — every `outcome_map[].delay` and both
-                   * ports' `reward_duration`. Iterating it showed 8 rows of 14
-                   * on a step titled "How long is everything?", with the ITI,
-                   * all four penalties and REWARD VOLUME among the missing.
-                   *
-                   * Document order is the right order for the same reason it is
-                   * load-bearing everywhere else: it is the vector index, so
-                   * this list reads in the same order as the compiled listing.
-                   */}
-                  {timingIds(doc).map((tid) => {
-                    const index = timingIndexOf(doc, tid);
-                    if (index < 0) return null;
-                    const meta = schema.overlay.fields["timing[].ms"];
-                    if (!meta) return null;
-                    return (
-                      <SpecField
-                        key={tid}
-                        path={`timing[${index}].ms`}
-                        overlayKey="timing[].ms"
-                        meta={{ ...meta, label: tid }}
-                        value={getAt(doc, `timing[${index}].ms`)}
-                        baseline={getAt(doc, `timing[${index}].ms`)}
-                        schema={schema}
-                        doc={doc}
-                        placed={placed}
-                        onChange={(next) =>
-                          setDoc(setAt(doc, `timing[${index}].ms`, next))
-                        }
-                      />
-                    );
-                  })}
-                </div>
-              )}
-
-              {current?.kind === "policy" && schema && (
-                <div className="flex flex-col gap-1.5">
-                  {POLICY_FIELDS.map(({ path, overlayKey }) => {
-                    const meta = schema.overlay.fields[overlayKey];
-                    if (!meta) return null;
-                    return (
-                      <SpecField
-                        key={path}
-                        path={path}
-                        overlayKey={overlayKey}
-                        meta={meta}
-                        value={getAt(doc, path)}
-                        baseline={getAt(doc, path)}
-                        schema={schema}
-                        doc={doc}
-                        placed={placed}
-                        onChange={(next) => setDoc(setAt(doc, path, next))}
-                      />
-                    );
-                  })}
+              {current?.kind === "session" && schema && (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    {POLICY_FIELDS.map(({ path, overlayKey }) => {
+                      const meta = schema.overlay.fields[overlayKey];
+                      if (!meta) return null;
+                      return (
+                        <SpecField
+                          key={path}
+                          path={path}
+                          overlayKey={overlayKey}
+                          meta={meta}
+                          value={getAt(doc, path)}
+                          baseline={getAt(doc, path)}
+                          schema={schema}
+                          doc={doc}
+                          placed={placed}
+                          onChange={(next) => setDoc(setAt(doc, path, next))}
+                        />
+                      );
+                    })}
+                  </div>
+                  <RampStep
+                    doc={doc}
+                    caps={caps}
+                    schema={schema}
+                    placed={placed}
+                    onChange={setDoc}
+                  />
                 </div>
               )}
 
@@ -438,7 +536,7 @@ export function TaskNew() {
                 </div>
               )}
 
-              </div>
+              </motion.div>
 
               <div className="flex shrink-0 items-center justify-between gap-2 border-t border-halo px-4 py-2">
                 <Button
@@ -452,6 +550,19 @@ export function TaskNew() {
                 {step <= steps.length ? (
                   <Button
                     variant="primary"
+                    /*
+                     * Gated only where a step has a precondition the NEXT step
+                     * depends on, which today is exactly one: the id names the
+                     * file, so walking six screens with a duplicate or malformed
+                     * one and finding out at Create is six screens of wasted
+                     * work. Every other step is answerable in any order and
+                     * disabling Next on those would be a guess about what the
+                     * operator is done thinking about.
+                     */
+                    disabled={
+                      current?.kind === "identity" &&
+                      (id === "" || idError(id, taken) !== null)
+                    }
                     // Clamped: without it the counter runs past the last step
                     // and reads "11 of 7" on the review screen.
                     onClick={() => setStep((s) => Math.min(steps.length + 1, s + 1))}
@@ -476,6 +587,7 @@ export function TaskNew() {
                 )}
               </div>
             </aside>
+            </InspectorRail>
           </RowDensityContext.Provider>
         </div>
       )}
@@ -487,16 +599,32 @@ const EMPTY: ReadonlySet<number> = new Set();
 
 type Step =
   | { kind: "identity"; title: string; blurb: string }
-  | { kind: "structure"; band: number; title: string; blurb: string }
   | { kind: "questions"; title: string; blurb: string }
-  | { kind: "ramp"; title: string; blurb: string }
-  | { kind: "timing"; title: string; blurb: string }
-  | { kind: "policy"; title: string; blurb: string };
+  | { kind: "epoch"; band: number; title: string; blurb: string }
+  | { kind: "session"; title: string; blurb: string };
 
 /**
  * The questions, in the order a task is actually thought about: what the
  * animal senses, what it must do to earn the stimulus, how it answers, what
  * counts as right — then the numbers, which change no shape.
+ */
+/**
+ * SEVEN STEPS, IN THE ORDER A TRIAL HAPPENS.
+ *
+ * The nine this replaces were ordered by LAYER, which is how the document is
+ * ordered and how the compiler consumes it — topology, then contingency, then
+ * timing, then policy. That put "how long is the engagement window" (step 8) and
+ * "does a trial begin with a commitment hold" (step 4) on different screens,
+ * four apart, describing the same half-second of the same trial.
+ *
+ * The wizard's order is the OPERATOR'S mental model; the document's layer order
+ * is the compiler's. Nothing requires them to match, because every field here is
+ * a path write — the document comes out in exactly the same shape either way.
+ *
+ * RESPONSES COME BEFORE STIMULI, inverting what the old order did. A trial type
+ * maps a stimulus onto a target, so the answer space has to exist before
+ * anything can be mapped onto it; asking "which port is correct for odour A"
+ * before the ports exist is asking about a set that is still empty.
  */
 const STEPS: Step[] = [
   {
@@ -509,54 +637,49 @@ const STEPS: Step[] = [
     kind: "questions",
     title: "What does this paradigm need to know?",
     blurb:
-      "The choices this shape leaves open — which lines carry the stimuli, which " +
-      "port is being shaped toward. Everything else already has a working value.",
+      "The choices this shape leaves open. Everything else already has a working value.",
   },
   {
-    kind: "structure",
-    band: 2,
-    title: "What does the animal sample?",
-    blurb:
-      "Stimuli are the things you can present; stages are how many it must sample in sequence before answering.",
-  },
-  {
-    kind: "structure",
+    kind: "epoch",
     band: 1,
     title: "How does a trial begin?",
     blurb:
-      "A commitment hold separates an incidental beam-break from a real initiation, before any stimulus is spent.",
+      "The animal has to commit before a stimulus is spent. A commitment hold is " +
+      "what separates an incidental beam-break from a real initiation — and these " +
+      "are the durations of that opening, including what an abstention costs.",
   },
   {
-    kind: "structure",
+    kind: "epoch",
     band: 3,
     title: "How does it answer?",
     blurb:
-      "Choose between ports, or withhold entirely. Trial types are the stimulus-to-answer mappings the pool draws from.",
+      "Choose between ports, or withhold entirely — and how long the window stays " +
+      "open, how long a poke must hold, and how much fluid a correct one delivers. " +
+      "This comes before the stimuli because a trial type maps one onto the other.",
   },
   {
-    kind: "structure",
+    kind: "epoch",
+    band: 2,
+    title: "What does the animal sample?",
+    blurb:
+      "Stimuli are what you can present; stages are how many must be sampled in " +
+      "sequence before answering. Drag them to change the order a trial presents.",
+  },
+  {
+    kind: "epoch",
     band: 4,
-    title: "What does a correct trial get?",
-    blurb: "Rewarding adds the delivery and consumption states through each port's own line.",
-  },
-  {
-    kind: "ramp",
-    title: "Does it get harder over the session?",
+    title: "What counts as right?",
     blurb:
-      "A stage schedule rewrites durations at trial boundaries — the shaping ramp. " +
-      "Choose which durations move, then the trials they move at. A task that does " +
-      "not ramp leaves this empty.",
+      "Every way a trial can end, what each one is scored as, and what the data " +
+      "file records. Rewarding adds the delivery and consumption states through " +
+      "each port's own line.",
   },
   {
-    kind: "timing",
-    title: "How long is everything?",
-    blurb:
-      "Every duration in the task, in the order the compiled table holds them — the epoch timings first, then the penalties, the ITI and the reward volumes. None of these change the machine, only how long it dwells.",
-  },
-  {
-    kind: "policy",
+    kind: "session",
     title: "How does the session run?",
-    blurb: "Trial selection, how many trials, and the seed.",
+    blurb:
+      "Trial selection, how many, the seed — and the ramp, if this task gets " +
+      "harder as it goes. None of this changes the machine.",
   },
 ];
 
@@ -566,92 +689,512 @@ const POLICY_FIELDS = [
   { path: "policy.seed", overlayKey: "policy.seed" },
 ];
 
-/** Every timing id the document declares, in vector order. */
-function timingIds(doc: SpecDocument): string[] {
-  const timing = doc["timing"];
-  if (!Array.isArray(timing)) return [];
-  return timing
-    .map((row) =>
-      row !== null && typeof row === "object"
-        ? (row as Record<string, unknown>)["id"]
-        : null,
-    )
-    .filter((id): id is string => typeof id === "string");
-}
+/**
+ * The order a trial presents its stimuli, as something you can drag.
+ *
+ * `trial_types[].stages` is an ordered list of stimulus ids whose length is
+ * `n_sampling_stages` — so for a sequence task it IS the sequence, and the
+ * difference between "A then B" and "B then A" is the whole discriminandum.
+ * Editing that as two dropdowns makes the operator hold the order in their head
+ * while reading it off two controls; dragging shows it.
+ *
+ * ONE STAGE MEANS NOTHING TO ORDER, so the chain hides itself rather than
+ * rendering a list of one and asking to be dragged.
+ *
+ * Hand-rolled, because there is no drag library in this repo and adding one for
+ * this would be the wrong trade. It copies `CrewChip`'s arrangement exactly: a
+ * plain `<button draggable>` INSIDE a `motion.span layout`, because on a motion
+ * component `onDragStart` is framer's pan-gesture prop and the native event is
+ * never heard. And it carries the same click-to-carry fallback, for the same
+ * reason the board map does — HTML5 drag works here only because
+ * `dragDropEnabled: false` is set in tauri.conf.json, and the lab runs Windows.
+ */
+function StimulusChain({
+  doc,
+  onChange,
+}: {
+  doc: SpecDocument;
+  onChange: (next: SpecDocument) => void;
+}) {
+  const [carried, setCarried] = useState<number | null>(null);
+  const [over, setOver] = useState<number | null>(null);
 
-function timingIndexOf(doc: SpecDocument, id: string): number {
-  const timing = doc["timing"];
-  if (!Array.isArray(timing)) return -1;
-  return timing.findIndex(
-    (row) =>
-      row !== null && typeof row === "object" && (row as Record<string, unknown>)["id"] === id,
+  const stages = Number(topologyOf(doc)?.["n_sampling_stages"] ?? 1);
+  const trials = useMemo(() => {
+    const c = doc["contingency"];
+    const list = c && typeof c === "object" ? (c as Record<string, unknown>)["trial_types"] : null;
+    return Array.isArray(list) ? list : [];
+  }, [doc]);
+
+  if (stages < 2 || trials.length === 0) return null;
+
+  function move(trial: number, from: number, to: number) {
+    const row = trials[trial] as Record<string, unknown>;
+    const order = [...((row["stages"] as string[]) ?? [])];
+    if (from === to || from < 0 || to < 0 || from >= order.length || to >= order.length) return;
+    const [lifted] = order.splice(from, 1);
+    order.splice(to, 0, lifted as string);
+    onChange(setAt(doc, `contingency.trial_types[${trial}].stages`, order));
+    setCarried(null);
+    setOver(null);
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-sm border border-halo px-2.5 py-2">
+      <div className="font-mono text-[10px] tracking-wider text-static uppercase">
+        Presentation order
+      </div>
+      <p className="text-[10px] leading-relaxed text-static">
+        Drag to reorder, or click one and then click where it goes. Order is the
+        discriminandum in a sequence task — A then B and B then A are different
+        trials, not the same trial shuffled.
+      </p>
+      {trials.map((row, ti) => {
+        const order = ((row as Record<string, unknown>)["stages"] as string[]) ?? [];
+        const id = String((row as Record<string, unknown>)["id"] ?? ti);
+        return (
+          <div key={id} className="flex flex-wrap items-center gap-1.5">
+            <span className="w-[92px] shrink-0 truncate font-mono text-[10px] text-static">
+              {id}
+            </span>
+            {order.map((stim, si) => (
+              <motion.span
+                key={`${id}-${si}-${stim}`}
+                layout
+                transition={springSnappy}
+                onDragOver={(e: React.DragEvent) => {
+                  e.preventDefault();
+                  setOver(si);
+                }}
+                onDragLeave={() => setOver(null)}
+                onDrop={(e: React.DragEvent) => {
+                  e.preventDefault();
+                  const from = Number(e.dataTransfer.getData("text/plain"));
+                  if (Number.isInteger(from)) move(ti, from, si);
+                }}
+              >
+                <button
+                  type="button"
+                  draggable
+                  onDragStart={(e) => e.dataTransfer.setData("text/plain", String(si))}
+                  onClick={() =>
+                    carried === null ? setCarried(si) : move(ti, carried, si)
+                  }
+                  title={
+                    carried === null
+                      ? "Drag to reorder, or click to pick up"
+                      : "Click to drop here"
+                  }
+                  className="cursor-grab rounded-sm border px-2 py-0.5 font-mono text-[10.5px] transition-colors active:cursor-grabbing"
+                  style={{
+                    borderColor:
+                      carried === si || over === si
+                        ? "var(--color-pulsar)"
+                        : "var(--color-halo)",
+                    color:
+                      carried === si ? "var(--color-starlight)" : "var(--color-static)",
+                    background:
+                      carried === si
+                        ? "color-mix(in srgb, var(--color-pulsar) 18%, transparent)"
+                        : "var(--color-void)",
+                  }}
+                >
+                  <span className="mr-1 text-[9px] opacity-60">{si + 1}</span>
+                  {stim}
+                </button>
+              </motion.span>
+            ))}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
-/** Same readouts the Designer shows — one line per band from the knobs. */
-function bandReadouts(knobs: Record<string, unknown> | null): Record<number, string> {
-  const k = knobs ?? {};
-  const stages = typeof k["n_sampling_stages"] === "number" ? k["n_sampling_stages"] : null;
-  const ports = Array.isArray(k["response_ports"]) ? k["response_ports"].length : 0;
-  return {
-    1: k["commit_hold"] === false ? "no commitment hold" : "commitment hold on",
-    2:
-      stages === 0
-        ? "epoch skipped"
-        : `${stages ?? "?"} stage${stages === 1 ? "" : "s"}` +
-          (stages !== null && stages > 1 ? ` + ${stages - 1} gap` : "") +
-          (k["retention_delay"] === true ? " + retention" : ""),
-    3: `${k["response_mode"] === "go_nogo" ? "go / no-go" : "n-alternative"} · ${ports} port${
-      ports === 1 ? "" : "s"
-    }`,
-    4: "",
-  };
+/**
+ * One epoch: what it does, and how long it takes.
+ *
+ * THE TIMINGS ARE DERIVED FROM THE GRAPH, not from a table mapping ids to
+ * epochs. Every compiled node carries its band and the timing id it dwells on,
+ * so "which durations belong to the response epoch" is a question the compiler
+ * has already answered — and a table here would be a second answer that drifts
+ * the first time a template moves a node.
+ *
+ * It also gets the grouping RIGHT in a way a hand-written table would not have.
+ * The no-engage penalty lands in Engagement rather than Outcomes, because that
+ * is the epoch it aborts from; the wrong-port penalty lands in Response. Asked
+ * cold, nobody would file them there — but "how long does an abstention cost"
+ * genuinely belongs beside "how long is the engagement window".
+ *
+ * Two durations no node dwells on are added by hand, because they are reached
+ * through layer 2 rather than by the graph: a port's `reward_duration` (the
+ * reward PULSE binds `@trial.reward`, so its index is runtime-resolved) and an
+ * outcome's `delay` where the outcome's own node sits in another band.
+ */
+function EpochStep({
+  band,
+  doc,
+  graph,
+  caps,
+  schema,
+  placed,
+  pins,
+  onChange,
+}: {
+  band: number;
+  doc: SpecDocument;
+  graph: SpecGraph | null;
+  caps: SpecCapabilities | null;
+  schema: SpecSchema;
+  placed: PlacedDiagnostics | null;
+  /** Channel name → pin index, from the rig. Empty until `hardware.get` lands. */
+  pins: Record<string, number>;
+  onChange: (next: SpecDocument) => void;
+}) {
+  const ids = useMemo(() => timingIdsForBand(doc, graph, band), [doc, graph, band]);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <StructureBlocks
+        band={band}
+        doc={doc}
+        baseline={doc}
+        caps={caps}
+        schema={schema}
+        placed={placed}
+        onChange={onChange}
+      />
+
+      {band === 2 && <StimulusChain doc={doc} onChange={onChange} />}
+      {band === 3 && <PortPads doc={doc} pins={pins} />}
+      <EpochTimeline graph={graph} band={band} />
+
+      {ids.length > 0 && (
+        <div className="flex flex-col gap-1.5 rounded-sm border border-halo px-2.5 py-2">
+          <div className="font-mono text-[10px] tracking-wider text-static uppercase">
+            How long
+          </div>
+          {ids.map((tid) => {
+            const index = timingIndexOf(doc, tid);
+            const meta = schema.overlay.fields["timing[].ms"];
+            if (index < 0 || !meta) return null;
+            return (
+              <SpecField
+                key={tid}
+                path={`timing[${index}].ms`}
+                overlayKey="timing[].ms"
+                meta={{ ...meta, label: tid }}
+                value={getAt(doc, `timing[${index}].ms`)}
+                baseline={getAt(doc, `timing[${index}].ms`)}
+                schema={schema}
+                doc={doc}
+                placed={placed}
+                onChange={(next) => onChange(setAt(doc, `timing[${index}].ms`, next))}
+              />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
+/**
+ * The timing ids this epoch owns, in the document's vector order.
+ *
+ * Vector order rather than node order, because the vector index is what the
+ * listing prints and what a ramp row keys on — two places an operator will see
+ * these ids again.
+ */
+function timingIdsForBand(
+  doc: SpecDocument,
+  graph: SpecGraph | null,
+  band: number,
+): string[] {
+  const mine = new Set<string>();
+  for (const node of graph?.nodes ?? []) {
+    if (node.band === band && node.durationId) mine.add(node.durationId);
+  }
+
+  // Reward volume: the PULSE binds `@trial.reward`, so the node carries no
+  // static duration id and only the port binding knows which row it is.
+  if (band === 3) {
+    for (const binding of Object.values(portsOf(doc))) {
+      const id = binding["reward_duration"];
+      if (typeof id === "string") mine.add(id);
+    }
+  }
+
+  // `t_zero` is structural — the zero-duration nodes that carry a paired
+  // strobe's second half (D2) and the response branch guard (D3). Offering it
+  // as an editable number invites someone to make it non-zero, which breaks
+  // the pairing model rather than lengthening anything.
+  mine.delete("t_zero");
+  // The poll interval is the whole rig's input granularity, not one epoch's.
+  mine.delete("t_poll_interval");
+
+  return timingIds(doc).filter((id) => mine.has(id));
+}
+
+/**
+ * The success edge out of each node primitive.
+ *
+ * A HOLD is held, a WAIT_ENTRY is entered, a DELAY expires. Everything else a
+ * node can do — BROKEN, or a WAIT_ENTRY's TIMEOUT — is the animal failing the
+ * state, which leaves the epoch rather than continuing through it.
+ */
+const SUCCESS_TRIGGER: Record<string, string | null> = {
+  DELAY: "TIMEOUT",
+  WAIT_ENTRY: "ENTER",
+  HOLD: "HELD",
+  WAIT_EXIT: "EXIT",
+  PULSE: "DONE",
+  TERMINAL: null,
+};
+
+/**
+ * One pass through a band, in execution order.
+ *
+ * THE SPINE IS WALKED, NOT LISTED. A band's timing ids include its penalties,
+ * and a penalty is not sequential with the window it punishes — laying every
+ * duration in the band end to end would draw a trial that cannot happen, with
+ * the abstention penalty following the engagement window it exists instead of.
+ * So this follows the success edge from the band's first node and stops when
+ * the walk leaves the band. What it visits is one clean pass; what it doesn't
+ * visit is an alternative, and gets listed as one.
+ */
+function spineOf(graph: SpecGraph | null, band: number) {
+  if (!graph) return [];
+  const byIndex = new Map(graph.nodes.map((n) => [n.index, n]));
+  const first = graph.nodes
+    .filter((n) => n.band === band)
+    .sort((a, b) => a.index - b.index)[0];
+
+  const spine: typeof graph.nodes = [];
+  const seen = new Set<number>();
+  let cur = first;
+  while (cur && cur.band === band && !seen.has(cur.index)) {
+    seen.add(cur.index);
+    spine.push(cur);
+    const trigger = SUCCESS_TRIGGER[cur.type] ?? null;
+    const edge = trigger
+      ? graph.edges.find((e) => e.src === cur!.index && e.trigger === trigger)
+      : undefined;
+    cur = edge ? byIndex.get(edge.dst) : undefined;
+  }
+  return spine;
+}
+
+/**
+ * The band's durations drawn to scale, with what it costs to fail beneath.
+ *
+ * The bar is proportional but floored, so a 10 ms hold beside a 60 s window
+ * stays visible and hoverable. THE NUMBER PRINTED ON EACH SEGMENT IS THE
+ * AUTHORITY — the picture is for the ratio, not for reading a value off.
+ */
+function EpochTimeline({ graph, band }: { graph: SpecGraph | null; band: number }) {
+  const { spine, alternatives } = useMemo(() => {
+    const walk = spineOf(graph, band);
+    const onSpine = new Set(walk.map((n) => n.index));
+    return {
+      spine: walk.filter((n) => (n.durationMs ?? 0) > 0),
+      alternatives: (graph?.nodes ?? []).filter(
+        (n) => n.band === band && !onSpine.has(n.index) && (n.durationMs ?? 0) > 0,
+      ),
+    };
+  }, [graph, band]);
+
+  if (spine.length < 2) return null;
+  const total = spine.reduce((sum, n) => sum + (n.durationMs ?? 0), 0);
+
+  return (
+    <div className="flex flex-col gap-1.5 rounded-sm border border-halo px-2.5 py-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="font-mono text-[10px] tracking-wider text-static uppercase">
+          One pass
+        </div>
+        <div className="font-mono text-[10px] text-static">{fmtMs(total)}</div>
+      </div>
+
+      <div className="flex h-6 items-stretch gap-[2px] overflow-hidden rounded-[3px]">
+        {spine.map((node, i) => (
+          <motion.div
+            key={node.index}
+            layout
+            transition={springSnappy}
+            title={`${node.label} · ${node.durationMs} ms`}
+            /* Wide enough for "200ms" — the floor exists so a brief state stays
+               visible, and a floor that still clips the number it exists to
+               show would be no floor at all. */
+            className="flex min-w-[46px] items-center justify-center overflow-hidden px-1"
+            style={{
+              flexGrow: node.durationMs ?? 1,
+              flexBasis: 0,
+              backgroundColor:
+                i % 2 === 0 ? "var(--color-nebula)" : "var(--color-halo)",
+            }}
+          >
+            <span className="truncate font-mono text-[9.5px] text-starlight">
+              {fmtMs(node.durationMs ?? 0)}
+            </span>
+          </motion.div>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap gap-x-2.5 gap-y-0.5">
+        {spine.map((node) => (
+          <span key={node.index} className="text-[9.5px] text-static">
+            {node.label}
+          </span>
+        ))}
+      </div>
+
+      {alternatives.length > 0 && (
+        <div className="mt-0.5 flex flex-wrap gap-x-2.5 gap-y-0.5 border-t border-halo pt-1.5">
+          <span className="font-mono text-[9.5px] tracking-wider text-static uppercase">
+            instead, on failure
+          </span>
+          {alternatives.map((node) => (
+            <span key={node.index} className="font-mono text-[9.5px] text-static">
+              {node.label} {fmtMs(node.durationMs ?? 0)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Milliseconds, in whatever unit reads as a duration rather than a count. */
+function fmtMs(ms: number): string {
+  if (ms >= 10000) return `${Math.round(ms / 1000)}s`;
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${ms}ms`;
+}
+
+/**
+ * The live response ports, each with the hardware it actually drives.
+ *
+ * This is the seam the Rig wiring screen exists for: the wizard names channels
+ * and the rig says which pin each one is, so a pad shows both and the operator
+ * never has to hold the mapping in their head while deciding what a correct
+ * answer is. The pin comes from `hardware.get` — if the rig has no entry for a
+ * channel the pad says so rather than inventing one, which is the same failure
+ * TG226 reports at compile.
+ */
+function PortPads({ doc, pins }: { doc: SpecDocument; pins: Record<string, number> }) {
+  const ports = Object.entries(portsOf(doc));
+  if (ports.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-1.5 rounded-sm border border-halo px-2.5 py-2">
+      <div className="font-mono text-[10px] tracking-wider text-static uppercase">
+        Where it can answer
+      </div>
+      <div
+        className="grid gap-1.5"
+        style={{ gridTemplateColumns: `repeat(${Math.min(ports.length, 2)}, minmax(0, 1fr))` }}
+      >
+        {ports.map(([name, binding]) => {
+          const channel = String(binding["channel"] ?? name);
+          const reward = binding["reward_line"];
+          const pin = pins[channel];
+          const rewardPin = typeof reward === "string" ? pins[reward] : undefined;
+          return (
+            <div key={name} className="rounded-[3px] border border-halo px-2 py-1.5">
+              <div className="truncate font-mono text-[11px] text-starlight">{name}</div>
+              <div className="mt-0.5 font-mono text-[9.5px] text-static">
+                {channel} · {pin === undefined ? "not wired" : `pin ${pin}`}
+              </div>
+              <div className="font-mono text-[9.5px] text-static">
+                {typeof reward === "string"
+                  ? `${reward} · ${rewardPin === undefined ? "not wired" : `pin ${rewardPin}`}`
+                  : "no reward"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function portsOf(doc: SpecDocument): Record<string, Record<string, unknown>> {
+  const contingency = doc["contingency"];
+  const ports =
+    contingency && typeof contingency === "object"
+      ? (contingency as Record<string, unknown>)["ports"]
+      : null;
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [name, value] of Object.entries((ports as object) ?? {})) {
+    if (value && typeof value === "object") {
+      out[name] = value as Record<string, unknown>;
+    }
+  }
+  return out;
+}
+
+
+/**
+ * The template picker, which is now the SECONDARY path.
+ *
+ * `/task/new` opens straight into step 1 on the `blank` paradigm; this screen
+ * is reached by a quiet "start from a template instead" link. That inverts what
+ * it used to be — a mandatory gate in front of every new task — and the reason
+ * is that a template is a shortcut for the seven shapes this lab already runs,
+ * not a prerequisite for designing an eighth.
+ *
+ * The doctrine survives the inversion intact: "from scratch" is a paradigm that
+ * FIXES nothing (`paradigms/blank.yaml`), not the absence of one. The generator
+ * still reads every value from an authority, `specs.skeleton` is unchanged, and
+ * there is still exactly one creation path.
+ */
 function StartingPoints({
   paradigms,
   loading,
   onPick,
+  onCancel,
 }: {
   paradigms: ParadigmSummary[];
   loading: boolean;
   onPick: (paradigmId: string) => void;
+  onCancel: () => void;
 }) {
+  // `hidden` rather than an id check: `blank` is what you get by NOT picking,
+  // so listing it here would offer the default as one of the alternatives.
+  const shown = paradigms.filter((p) => !p.hidden);
+
   return (
     <div className="scrollbar-none flex-1 overflow-y-auto px-6 py-5">
       <div className="mx-auto max-w-3xl">
-        <h2 className="font-display text-[15px] text-starlight">Pick a shape</h2>
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="font-display text-[15px] text-starlight">
+            Start from a template
+          </h2>
+          <Button variant="ghost" onClick={onCancel}>
+            Design from scratch instead
+          </Button>
+        </div>
         <p className="mt-1 max-w-xl text-[12px] leading-relaxed text-static">
-          A paradigm is the shape of an experiment — what the animal senses, how it
-          answers, what counts as correct. Picking one gives you a working task
-          immediately; every question after this changes it, and the machine is
-          drawn beside you the whole way.
+          Seven shapes this lab already runs. Picking one fills in the answers it
+          implies — you can still change every one of them in the steps that follow.
         </p>
 
         {loading ? (
-          <p className="mt-4 text-[12px] text-static">Reading the paradigms…</p>
-        ) : paradigms.length === 0 ? (
+          <p className="mt-4 text-[12px] text-static">Reading the templates…</p>
+        ) : shown.length === 0 ? (
           <p className="mt-4 text-[12px] text-static">
-            No paradigms are installed, which means the compiler's registry did not
-            ship. Nothing here will work until that is fixed.
+            No templates are installed, which means the compiler's registry did not
+            ship. Designing from scratch still works.
           </p>
         ) : (
           <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {paradigms.map((paradigm) => (
-              <button
+            {shown.map((paradigm) => (
+              <ParadigmCard
                 key={paradigm.id}
-                type="button"
+                paradigm={paradigm}
                 onClick={() => onPick(paradigm.id)}
-                className="min-w-0 rounded-sm border border-halo px-3 py-2.5 text-left transition-colors hover:border-pulsar"
-              >
-                <div className="text-[12.5px] text-starlight">{paradigm.name}</div>
-                <div className="truncate font-mono text-[9.5px] text-static/70">
-                  {paradigm.id} · {paradigm.template} v{paradigm.templateVersion}
-                </div>
-                <p className="mt-1.5 text-[11px] leading-relaxed text-static">
-                  {paradigm.affords}
-                </p>
-              </button>
+              />
             ))}
           </div>
         )}

@@ -211,6 +211,7 @@ def paradigms_payload() -> dict[str, Any]:
                 "name": p.name,
                 "affords": p.affords,
                 "order": p.order,
+                "hidden": p.hidden,
                 "template": p.template,
                 "templateVersion": p.template_version,
                 "fixes": dict(p.topology),

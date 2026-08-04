@@ -84,6 +84,39 @@ export const BAND_LABELS: Record<number, string> = {
   4: "outcome",
 };
 
+/**
+ * One line per band, read off the topology knobs — the band header's subtitle.
+ *
+ * Beside `BAND_LABELS` because it answers the same question the labels do, one
+ * level down: the label says which epoch, this says what shape the epoch is in.
+ * Band 4 is deliberately blank — the outcome epoch's shape is the contingency's
+ * outcome map, not a knob, so there is nothing here that would not be a guess.
+ *
+ * Shared because the Designer and the wizard drew the same header from two
+ * identical private copies, which is a caption that can disagree with itself
+ * about what the operator is looking at.
+ */
+export function bandReadouts(
+  knobs: Record<string, unknown> | null,
+): Record<number, string> {
+  const k = knobs ?? {};
+  const stages = typeof k["n_sampling_stages"] === "number" ? k["n_sampling_stages"] : null;
+  const ports = Array.isArray(k["response_ports"]) ? k["response_ports"].length : 0;
+  return {
+    1: k["commit_hold"] === false ? "no commitment hold" : "commitment hold on",
+    2:
+      stages === 0
+        ? "epoch skipped"
+        : `${stages ?? "?"} stage${stages === 1 ? "" : "s"}` +
+          (stages !== null && stages > 1 ? ` + ${stages - 1} gap` : "") +
+          (k["retention_delay"] === true ? " + retention" : ""),
+    3: `${k["response_mode"] === "go_nogo" ? "go / no-go" : "n-alternative"} · ${ports} port${
+      ports === 1 ? "" : "s"
+    }`,
+    4: "",
+  };
+}
+
 export const NODE_PITCH_Y = 56;
 export const LANE_PITCH_X = 168;
 export const BAND_GAP_Y = 34;

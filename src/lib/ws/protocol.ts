@@ -1139,6 +1139,12 @@ export interface ParadigmSummary {
   affords: string;
   /** Gallery order — explicit, not alphabetical. */
   order: number;
+  /**
+   * Kept out of the gallery. True for exactly one paradigm — `blank`, which is what a task starts
+   * from when no template is picked. Declared rather than special-cased by id, so the frontend
+   * holds no magic string.
+   */
+  hidden: boolean;
   template: string;
   templateVersion: number;
   /**

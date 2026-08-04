@@ -12,6 +12,8 @@ import {
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 
+import { ParadigmCard } from "@/components/specs/ParadigmCard";
+
 import { Button } from "@/components/common/controls";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { errorMessage } from "@/lib/cohorts/commands";
@@ -156,6 +158,7 @@ export function Task() {
                   ) : ordered.length === 0 ? (
                     <EmptyLibrary
                       paradigms={paradigms}
+                      onScratch={() => navigate("/task/new")}
                       onPick={(id) => navigate(`/task/new?paradigm=${id}`)}
                     />
                   ) : (
@@ -331,37 +334,56 @@ function shortDate(iso: string): string {
  */
 function EmptyLibrary({
   paradigms,
+  onScratch,
   onPick,
 }: {
   paradigms: ParadigmSummary[];
+  onScratch: () => void;
   onPick: (paradigmId: string) => void;
 }) {
-  if (paradigms.length === 0) {
-    return <p className="text-[12px] text-static">Reading the paradigms…</p>;
-  }
+  // `hidden` keeps `blank` out: it is the primary action above, not one of the
+  // alternatives below.
+  const templates = paradigms.filter((p) => !p.hidden);
+
   return (
     <div>
       <p className="max-w-prose text-[12px] leading-relaxed text-static">
-        <span className="text-starlight">No tasks on this rig yet.</span> Every task
-        starts from a paradigm — the shape of an experiment, which the compiler and
-        the linter already agree on. Pick one and answer the questions; the machine
-        is drawn beside you the whole way.
+        <span className="text-starlight">No tasks on this rig yet.</span> Design one
+        from scratch — the machine is drawn beside you the whole way, and every step
+        compiles — or start from one of the shapes this lab already runs.
       </p>
-      <div className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-        {paradigms.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => onPick(p.id)}
-            className="min-w-0 rounded-sm border border-halo px-2.5 py-2 text-left transition-colors hover:border-pulsar"
-          >
-            <div className="text-[12px] text-starlight">{p.name}</div>
-            <p className="mt-1 line-clamp-2 text-[10.5px] leading-relaxed text-static">
-              {p.affords}
-            </p>
-          </button>
-        ))}
-      </div>
+
+      <button
+        type="button"
+        onClick={onScratch}
+        className="group mt-3 flex w-full items-center gap-2.5 rounded-sm border border-pulsar/60 bg-pulsar/10 px-3 py-2.5 text-left transition-colors hover:border-pulsar"
+      >
+        <Plus size={14} strokeWidth={1.75} style={{ color: "var(--color-pulsar)" }} />
+        <span className="min-w-0">
+          <span className="block text-[12.5px] text-starlight">Design a task</span>
+          <span className="block text-[11px] leading-relaxed text-static">
+            Seven steps, in the order a trial happens.
+          </span>
+        </span>
+        <ArrowRight
+          size={13}
+          strokeWidth={1.75}
+          className="ml-auto shrink-0 text-static transition-transform group-hover:translate-x-0.5"
+        />
+      </button>
+
+      {templates.length > 0 && (
+        <>
+          <div className="mt-4 font-mono text-[10px] tracking-wider text-static uppercase">
+            or start from a template
+          </div>
+          <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {templates.map((p) => (
+              <ParadigmCard key={p.id} paradigm={p} compact onClick={() => onPick(p.id)} />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

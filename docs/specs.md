@@ -166,14 +166,72 @@ computes a rig's own `my_task_3` back to the paradigm whose knobs it matches, so
 it lands under the right heading without being registered anywhere, and one that
 matches nothing reads honestly as Custom.
 
-**The wizard** (`routes/TaskNew.tsx`, `/task/new`) walks the paradigm's questions
-with the compiled machine beside them, and is a route rather than a modal for the
-reasons §7 gives the bench — it needs the canvas at a usable size, `Modal` is
-capped, the unsaved guard is per-route, and arriving should be deliberate. Each
+**The wizard** (`routes/TaskNew.tsx`, `/task/new`) is a route rather than a modal
+for the reasons §7 gives the bench — it needs the canvas at a usable size, `Modal`
+is capped, the unsaved guard is per-route, and arriving should be deliberate. Each
 step recompiles, so a step that leaves the task unable to compile says so there
-rather than at the end. When the library is empty, `Task.tsx` renders the paradigm
-cards **inline in the hero**: with nothing shipped, that is the first-run
-experience rather than a footnote.
+rather than at the end.
+
+**From scratch is the default, and it is still a paradigm.** `/task/new` opens on
+step 1 with `paradigms/blank.yaml` already loaded — the smallest topology that
+compiles, fixing nothing, asking nothing. A quiet *Start from a template* link
+reaches the seven shapes this lab runs. That inverts what the screen used to be, a
+mandatory gate in front of every new task, and the doctrine survives the inversion
+intact **because "from scratch" is a paradigm that fixes nothing rather than the
+absence of one**: `specs.skeleton` still reads a paradigm, so the generator still
+invents no value and there is still exactly one creation path. `blank.yaml` is
+`hidden: true` — listing it in the gallery would offer the default as one of the
+alternatives to itself.
+
+**The steps run in trial order, not layer order.**
+
+| # | Step | Shape | Durations it carries |
+|---|---|---|---|
+| 1 | Identity | — | — |
+| 2 | The paradigm's questions — *skipped when it asks none, which `blank` does* | — | — |
+| 3 | How does a trial begin? | commitment hold | band 1 |
+| 4 | How does it answer? | ports, go/no-go, trial types | band 3 |
+| 5 | What does the animal sample? | stimuli, stages, retention | band 2 |
+| 6 | What counts as right? | rewarded | band 4 |
+| 7 | How does the session run? | selection mode | trials, seed, the ramp |
+
+Two of those orderings are the point:
+
+- **The standalone timing step is gone; every duration is grouped into the epoch
+  that owns it.** No document changes — each field is still a path write to
+  `timing[i].ms` — only the grouping moves. The wizard's order is the operator's
+  mental model and the document's layer order is the compiler's, and nothing
+  requires them to match. **The grouping is derived from the compiled graph**
+  (`band` + `durationId`), never from a hand-written table, which is also what
+  gets the awkward cases right: a penalty lands with the epoch it aborts from, and
+  `t_pen_break` appears under *both* engagement and response because a hold break
+  can happen in either.
+- **Responses come before stimuli.** A trial type maps a stimulus onto a target,
+  so the answer space has to exist before anything can be mapped onto it.
+
+**The small visualizations are computed, never listed.** *One pass* draws a band's
+durations to scale by walking the compiled graph from the band's first node along
+each primitive's success edge (a HOLD is held, a WAIT_ENTRY entered, a DELAY
+expires) and stopping when the walk leaves the band. Laying every duration in the
+band end to end instead would draw a trial that cannot happen, with the abstention
+penalty following the engagement window it exists *instead of* — so what the walk
+misses is listed under *instead, on failure* rather than drawn. The bar is floored
+so a 10 ms hold beside a 60 s window stays visible, which means **the number
+printed on each segment is the authority and the picture is only for the ratio**.
+*Where it can answer* prints each port's channel and reward line with the pin the
+rig says each one is, from a one-shot `hardware.get`; a channel the rig has no
+entry for reads "not wired" rather than inventing a pin. *Presentation order*
+appears only where ordering is meaningful — two or more sampling stages — and
+drags or click-carries to rewrite `trial_types[].stages`.
+
+When the library is empty, `Task.tsx` renders the paradigm cards **inline in the
+hero**: with nothing shipped, that is the first-run experience rather than a
+footnote. `components/specs/ParadigmCard.tsx` is the one card, used by both, each
+paradigm carrying a glyph and an accent — held there and not in the paradigm file,
+because an icon is a property of how this app draws a card and not of what an
+experiment measures. The card shows the **first sentence** of `affords`, not the
+paragraph: every paradigm's opening sentence is already its summary, so this needs
+no second field to keep in sync and throws no prose away.
 
 ## 4. The editor
 
@@ -196,7 +254,8 @@ Four rules that make a block safe to press:
 - **A new timing row is seeded from a sibling in the same document, or asked for inline — never from a defaults table.** A table would be a second definition of what a reasonable task looks like, competing with the template's own `timing_defaults` (§3.1). `t_sample_hold_1` copies `t_sample_hold_0` (the template's own comment says stage-indexed ids exist so each stage is independently rampable); `t_retention` and `t_resp_hold` have no peer and so are asked for, and Apply waits. A seeded row's preflight line names the row it copied.
 - **An op that changes a value a `note:` describes deletes the note, and says so.** Rewriting one means inventing a firmware citation; leaving it makes a pinned line number a lie. `t_resp_win → t_withhold_win` is a *different* firmware field (`fluidWellPoll` → `nogoWellPoll`) so the note and `wire_key` go; `t_sample_hold → t_sample_hold_0` is the same field at a new index, so they stay.
 - **Stale outcome classes are deleted; stale timing rows are kept and greyed.** TG302 errors in both directions, so a class the topology cannot produce is a hard error and has to go (the baseline recovers it). An unused timing row is merely unused — hiding or deleting one silently orphans a value the operator typed.
-- **An op that cannot be made valid says why, from the registry.** *Add a response option* ships permanently blocked because `channels.v1.json` declares exactly two `kind: response` channels and both are bound; the message is computed from the registry rather than hardcoded, so a hardware change that adds a third response channel turns the op on with no frontend edit. It exists rather than being absent so the UI can explain.
+- **An op that cannot be made valid says why, from the registry.** *Add a response option* blocks when every `kind: response` channel is already bound — two of them on the shipped wiring — and the message is computed by counting the registry rather than hardcoded, so adding a third response channel in Rig wiring turns the op on with no frontend edit. **That is now a thing an operator can actually do** (§9), which is why the message names the screen; before the rig document existed this op was blocked permanently and the registry-derived message was a promise about a build nobody could make. It exists rather than being absent so the UI can explain.
+- **An op extends a policy block that exists; it never creates one.** Adding a response option writes `policy.correction.budgets.<port>` **only if that map is already there**. Writing it unconditionally invented a correction policy on a task that had declared none — and worse, produced a block holding exactly one entry, the port just added, so the new well read as a deliberate zero and the well that was already there as an unstated default. A block covering some of the ports is worse than one covering none.
 
 > [!CAUTION]
 > **A block must fill every field its new shape makes reachable, not just the ones its knob names.** Switching go/no-go → n-alternative is the case that already bit: a withhold task's ports declare `enter_code` and nothing else, because it never reports a wrong port, a broken response hold, or leaving a reward port. All three become reachable at once and TG506 wants a code for each on *every* port — the operation shipped without them and produced six errors. `sidecar/tests/test_spec_operations.py` pins both directions, including the negative case.
@@ -265,6 +324,64 @@ The bench is **its own route** (`/task/bench`, reached from the landing page or 
 **The structural blocks** (§4) are covered two ways, and the gap between them is worth naming. `sidecar/tests/test_spec_operations.py` applies each op's path edits to each paradigm skeleton and asserts the real compiler accepts the result — but it is a **second implementation in Python**, so it proves the design is sound and *not* that `operations.ts` implements it; when an op changes, that file must be changed by hand. The other way is driving the app: every unblocked op on a task generated from each paradigm, watching `CompileLine`. **There is no frontend test runner** — `npm run typecheck` is the only automated frontend gate, and since `SpecDocument` is `Record<string, unknown>` it cannot check a document path either. That is a named gap, not an oversight.
 
 **Not proven, and marked accordingly:** anything involving an animal. The interpreter has never driven a solenoid, a light, or a vacuum line under this app — that is Phase 5 (bench jig, scope, parallel run), and until its exit criteria hold, the bench strip and the no-session invariant are the boundary. Also still open: the spec editor on Windows (a frozen build is verified on macOS only), and a crashed client leaves `benchHold` set until app restart — deliberate, erring toward not-reflashing, but worth knowing when a box mysteriously stops returning to baseline.
+
+---
+
+## 9. Rig wiring
+
+`/task/hardware` (`routes/TaskHardware.tsx`) is where an operator says which pin
+each channel is on. Before it existed, `taskgraph/hardware/behaviorbox_mega2560.v1.json`
+was a transcription of `BehaviorBox.h` shipped inside the package and read-only in
+a frozen build — `active_pinout_id()`'s docstring called it "a BUILD-TIME choice,
+not a runtime setting" — so an operator who rewired a box could not tell Ephymeris.
+They edited firmware and rebuilt.
+
+**It is on Task, not Config, and the boundary is subject.** Config answers *how is
+this rig wired* in the sense of which USB port is box 3 — runtime indirection, per
+rig, changing on every board swap. This answers *what is channel `left_well`* —
+compile-time input, per box generation, baked into every table the compiler emits.
+Two different axes, and the naming reflects it: this screen is **Rig wiring** and
+the Config step that was called "Map hardware" is now **Bind boxes**, because two
+screens with one name is a support call.
+
+**The document** is `<data_dir>/hardware/rig.json`, owned and validated by
+`hardware/store.py` on the `specs/store.py` pattern — not settings (leniently
+parsed and silently defaulting, which is catastrophic for a pin) and not SQLite
+(no relational content, and it would put registry loading behind the db lock). It
+keeps the shipped pair's two-section shape, `channels` and `pins`, so TG226 still
+means something. `registries.set_rig_source()` composes it into `channels()`, and
+**`channels.cache_clear()` fires on write and only on write** — that cache sits on
+the hot compile path, and hanging invalidation off `settings.push` would clear it
+on every reconnect.
+
+Three lint rules exist because a pin became typeable: **TG227** an index outside
+the board's legal range or at/above the `0xF0` binding-sentinel floor, **TG228**
+two channels on one pin, **TG229** a response channel with no slot, two on one
+slot, or a slot the vocabulary has no codes for.
+
+> [!CAUTION]
+> **`spec_hash` does not absorb the pinout, and must not** (D22). A spec is
+> identified by what it says, and it says channel *names* — so a re-pin changes
+> every compiled byte and moves no `spec_hash`, and the listing, which prints
+> names, shows nothing. `specs.diff` is this project's designated review artifact,
+> so that was a provenance hole the moment the pinout became per-rig: two sessions
+> recorded as the same task, different valves fired, nothing in the record telling
+> them apart. A `pinout_hash` rides **beside** `spec_hash` in the listing header
+> and on the run record instead. Folding it in would conflate what a task *is*
+> with where it is *wired*, and Analytics groups by `spec_hash`.
+
+**`hardware.save` reports breakage before it lands.** Full authoring means an
+operator can delete `left_well` while a stored spec binds it — TG223 catches that
+at compile, which is far too late. The save path recompiles every stored spec
+under both wirings and returns the ones that **newly** fail, so "shown loudly" is
+a list of task ids rather than a warning tone.
+
+The screen follows the existing grain — *the canvas selects, the rail edits* —
+with an SVG board diagram ported from `ConstellationBoard.tsx` (one write per
+completed drag, never per move) and click-to-carry alongside dragging, which is
+mandatory rather than a nicety: HTML5 drag only works here because
+`dragDropEnabled: false` is set in `tauri.conf.json`, and the lab runs Windows,
+where none of this has been tried.
 
 ---
 

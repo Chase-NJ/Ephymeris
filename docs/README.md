@@ -248,7 +248,7 @@ Owns everything stateful. See [§6.4](#64-dependency-policy) before adding a run
 | `taskgraph/paths.py` | The one place `__file__` is walked. Runtime data resolves package-relative; repo-only paths walk up for a marker and raise when frozen | [TaskGraph §5](TaskGraph.md#5-paradigm--template--hardware--spec) |
 | `taskgraph/graph.py` | The six primitives, the eight triggers, the four bands, and `TRIGGERS_FOR` — the authority for trigger totality | [TaskGraph §3](TaskGraph.md#3-six-primitives-four-epochs) |
 | `taskgraph/pipeline.py` | P0 LOAD → P1 BIND → P2 TEMPLATE → P3 EMIT+LOWER → P4 GRAPH → P5 PACK | [TaskGraph §4](TaskGraph.md#4-the-compile-pipeline) |
-| `taskgraph/paradigms.py` | The seven paradigms and the skeleton generator. Defines no value — reads every one from template, registry, vocabulary or answer | [specs §3.1](specs.md#31-paradigms-and-the-skeleton) |
+| `taskgraph/paradigms.py` | The eight paradigms (seven templates + the hidden `blank`) and the skeleton generator. Defines no value — reads every one from template, registry, vocabulary or answer | [specs §3.1](specs.md#31-paradigms-and-the-skeleton) |
 | `taskgraph/templates/four_epoch/v{1,2}.py` | Knobs → nodes and edges. **Versioned by file; never edited once pinned** | [D14](taskgraph-decisions.md#d14) |
 | `taskgraph/registries.py` | `ChannelMap` composing logical channels with the active pinout; the strobe vocabulary; runtime limits | [D15](taskgraph-decisions.md#d15) |
 | `taskgraph/codegen/layout.py` | Record widths, generating **both** the Python packer and the C++ `static_assert`s | [D17](taskgraph-decisions.md#d17) |
@@ -283,7 +283,8 @@ Talks to the sidecar over the WebSocket only.
 | `components/cohorts/` | Cohort grid, editor panels, procedural icon, Auto-Balance |
 | `components/config/` | Setup wizard, interactive constellation board, zodiac picker, handshake indicator/list |
 | `components/task/` | The derived state-machine graph (`TaskGraph`, also docked live in Mission Control), the same nodes as a pinned strip (`TaskRail`), and the per-group parameter tiles |
-| `components/specs/` | The Designer's parts: the machine-graph canvas (`SpecCanvas`), the selection-driven `SpecInspector`, the generated `SpecForm`/`SpecField`, the diagnostics list, the listing diff, the paradigm gallery, and the bench panel |
+| `components/specs/` | The Designer's parts: the machine-graph canvas (`SpecCanvas`), the selection-driven `SpecInspector`, the generated `SpecForm`/`SpecField`, the diagnostics list, the listing diff, the shared `ParadigmCard` (glyph, accent, and the first sentence of `affords`), and the bench panel |
+| `components/hardware/` | `BoardMap` — the Mega2560 pin diagram Rig wiring selects and drags on, ported from `ConstellationBoard` |
 | `lib/specs/selection.ts` | **Graph → the fields that produced it**, and the inverse. Joins on data the compiler and the document share, never on template symbol names ([specs.md §5](specs.md)) |
 | `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view |
 | `components/debug/` | Constellation landing, per-box detail, scrollback, flash dialog, state badges, utility controls |
@@ -307,9 +308,10 @@ Every route is a child of `<AppShell />`, wired in `src/App.tsx`.
 | `/task` | `routes/Task.tsx` | Landing: the Task Designer hero over the rig's sky, the spec library as cards, and the Bench/Sketches doors |
 | `/task/designer/:specId` | `routes/TaskDesigner.tsx` | The spec editor, built around the compiled machine graph ([specs.md §5](specs.md)) |
 | `/task/bench` | `routes/TaskBench.tsx` | Probe a board and load a table. Permanent "not for animal use" strip; `?spec=<id>` preselects |
+| `/task/hardware` | `routes/TaskHardware.tsx` | **Rig wiring**: the channel→pin map this rig is actually built to, edited on a board diagram ([specs.md §9](specs.md)) |
 | `/task/sketches` | `routes/TaskSketches.tsx` | The `task.json` library: sketch picker, derived trial-flow graph, and the **only** editor for `settings.taskDefaults` |
 | `/analytics` | `routes/Analytics.tsx` | The Observatory — one route, no tabs; cohort/session/animal are filters |
-| `/config` | `routes/Config.tsx` | Rig wiring: constellation, box→board bindings, handshake, utility baseline, baud, `arduino-cli` |
+| `/config` | `routes/Config.tsx` | **Bind boxes**: constellation, box→board bindings, handshake, utility baseline, baud, `arduino-cli` |
 | `/settings` | `routes/Settings.tsx` | Storage and interface only |
 | `/debug` | `routes/DebugMode.tsx` | Per-box instrument panel. **No nav entry** — reached by selecting a box |
 | `/session/new` | `routes/SessionConfig.tsx` | Session setup step 1 — cohort, prefix, number, time limit |

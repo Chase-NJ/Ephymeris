@@ -25,6 +25,7 @@ import {
   useBoardPresence,
   useBoxOutput,
   useFlashedSketch,
+  useHardwareStore,
   usePortStatus,
   useUtilityStatus,
 } from "@/lib/hardware/context";
@@ -94,6 +95,7 @@ export function NodeDetail({
   const { settings } = useSettings();
   const port = usePortStatus(box);
   const lines = useBoxOutput(box);
+  const store = useHardwareStore();
   const boards = useBoardPresence();
   const flashed = useFlashedSketch(box);
   const utility = useUtilityStatus();
@@ -188,7 +190,26 @@ export function NodeDetail({
     }
   }
 
-  const openPort = () => void run(() => client.call(CMD.PORT_PASSTHROUGH_OPEN, { box, baud }));
+  /*
+   * **A console opened at a new baud must not show the old one's output.**
+   *
+   * The sidecar clears its decode buffer on every open (`handler.py`), but the
+   * client-side scrollback accumulated across opens, so reopening at a
+   * different rate left the previous session's legible lines sitting above the
+   * new garbage. That inverts the one diagnosis this console exists to make: a
+   * mismatched baud reads as *working* for as long as the stale lines are the
+   * ones on screen, and mute-reads-as-dead is already the failure mode
+   * `dashboard.md` §6.4 warns about.
+   *
+   * Only the explicit user-initiated open clears. A passthrough that resumes on
+   * its own — after a flash, or after a bench upload — must keep what is
+   * already there, since the uploader's mirror (`handler.echo`) is written into
+   * this same scrollback and is the record of the upload the operator just ran.
+   */
+  const openPort = () => {
+    store.clearLines(box);
+    void run(() => client.call(CMD.PORT_PASSTHROUGH_OPEN, { box, baud }));
+  };
   const closePort = () => void run(() => client.call(CMD.PORT_PASSTHROUGH_CLOSE, { box }));
 
   /*

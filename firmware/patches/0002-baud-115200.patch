@@ -35,7 +35,7 @@ index 0d99366..adf8a01 100644
  
  /* ======== Session wiring ======== */
 -const int baudRate = 9600;    // Serial baud (matches the app)
-+const int baudRate = 115200;    // Serial baud (matches the app)
++const unsigned long baudRate = 115200;    // Serial baud (matches the app)
  const int MAX_TRIALS = 1000;  // Compile-time size of trials[]; params.numTrials
                                // is the runtime cap and is clamped to it below.
  int currentTrial = 0;         // Index into trials[]
@@ -50,7 +50,7 @@ index 0244b76..f893a46 100644
  
  /* ======== Session wiring ======== */
 -const int baudRate = 9600;    // Serial baud (matches the app)
-+const int baudRate = 115200;    // Serial baud (matches the app)
++const unsigned long baudRate = 115200;    // Serial baud (matches the app)
  const int MAX_TRIALS = 1000;  // Compile-time size of trials[]; params.numTrials
                                // is the runtime cap and is clamped to it below.
  int currentTrial = 0;         // Index into trials[]
@@ -65,7 +65,7 @@ index dc77bdb..a85b6a6 100644
  
  /* ======== Session wiring ======== */
 -const int baudRate = 9600;    // Serial baud (matches the app)
-+const int baudRate = 115200;    // Serial baud (matches the app)
++const unsigned long baudRate = 115200;    // Serial baud (matches the app)
  const int MAX_TRIALS = 1000;  // Compile-time size of trials[]; params.numTrials
                                // is the runtime cap and is clamped to it below.
  int currentTrial = 0;         // Index into trials[]
@@ -80,7 +80,7 @@ index 455a21c..a866c9f 100644
  
  /* ======== Session wiring ======== */
 -const int baudRate = 9600;    // Serial baud (matches the app)
-+const int baudRate = 115200;    // Serial baud (matches the app)
++const unsigned long baudRate = 115200;    // Serial baud (matches the app)
  const int MAX_TRIALS = 1000;  // Compile-time size of trials[]; params.numTrials
                                // is the runtime cap and is clamped to it below.
  int currentTrial = 0;         // Index into trials[]
@@ -95,7 +95,7 @@ index 5e270d4..fb3ce4f 100644
  
  /* ======== Session wiring ======== */
 -const int baudRate = 9600;    // Serial baud (matches the app)
-+const int baudRate = 115200;    // Serial baud (matches the app)
++const unsigned long baudRate = 115200;    // Serial baud (matches the app)
  int currentTrial = 0;         // # of trials advanced this session
  bool sessionComplete = false; // Session start / end guard
  
@@ -110,7 +110,7 @@ index b42324e..9958b33 100644
  
  /* ======== Session wiring ======== */
 -const int baudRate = 9600;    // Serial baud (matches the app)
-+const int baudRate = 115200;    // Serial baud (matches the app)
++const unsigned long baudRate = 115200;    // Serial baud (matches the app)
  int currentTrial = 0;         // # of trials advanced this session
  bool sessionComplete = false; // Session start / end guard
  
@@ -125,7 +125,7 @@ index 168211d..1f13ea4 100644
  #include <BehaviorBox.h> // strobe vocabulary, TaskParams, the shared anti-bias selector
  
 -const int baudRate = 9600; // must match the app
-+const int baudRate = 115200; // must match the app
++const unsigned long baudRate = 115200; // must match the app
  
  /* ===== Real-time by default =====
     1 = every gap is the real phase duration, which is the point of the sketch.
@@ -140,7 +140,7 @@ index 0799c00..7d24f74 100644
  #include <BehaviorBox.h> // shared pinout + CommandReader + emitStatus
  
 -const int baudRate = 9600;                      // Serial baud (matches the app)
-+const int baudRate = 115200;                      // Serial baud (matches the app)
++const unsigned long baudRate = 115200;                      // Serial baud (matches the app)
  const int pollingRate = 2;                      // IR sensor polling (ms)
  const unsigned long STATUS_HEARTBEAT_MS = 1000; // re-report at least this often
  

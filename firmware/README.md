@@ -37,6 +37,13 @@ in the trial loop reads one.
 
 `patches/0002-baud-115200.patch` has landed. It moves the eight behaviour sketches'
 `baudRate` from 9600 to 115200, matching `TG_BAUD_RATE` — the fleet is one rate again.
+**It widens the type in the same edit, and has to:** `int` is 16 bits on AVR, so
+115200 wraps to −15872 and `Serial.begin()` opens at a rate nothing can match. The
+first cut of this patch changed only the value, and every box flashed from it was mute
+at *every* baud — which reads as dead hardware, not as a misconfiguration. `avr-gcc`
+catches it under `-Woverflow`; the Arduino build shows no warnings by default. A rate
+written as a bare literal is safe (the literal is typed `long` on its own), which is
+why `TG_BAUD_RATE` never had the problem and only the stored variable did.
 **It landed together with the host defaults it warns about** (`settings.py` and
 `schema.ts`, both now 115200), because a board and a host at different rates is not an
 error, it is a box that never answers.

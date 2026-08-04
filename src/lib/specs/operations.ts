@@ -204,7 +204,7 @@ function knobBool(doc: SpecDocument, knob: string, fallback: boolean): boolean {
 
 function channelEntries(
   reg: ChannelRegistry,
-): Array<[string, { kind: string; index: number; well?: string }]> {
+): Array<[string, { kind: string; index: number; well?: string; port_slot?: number }]> {
   return Object.entries(reg.channels ?? {});
 }
 
@@ -527,17 +527,38 @@ function reconcileOutcomes(b: Op, next: SpecCapabilities): void {
  * resolve for every port it could select. So the mode op has to fill them,
  * and this is the table it fills them from.
  */
+/** The per-port strobe fields, and what each one records. WHICH code fills a
+ * field is the slot's business (`portSlotCodes`), not this table's — it used to
+ * carry a `family` here and glue a `_L`/`_R` onto it. */
 const PORT_CODES = [
-  { field: "enter_code", family: "WATER_POKE", why: "a poke at this port" },
-  { field: "error_code", family: "WATER_POKE_ERROR", why: "a poke here when it was the wrong port" },
-  { field: "break_code", family: "WATER_UNPOKE_EARLY", why: "the response hold broken here" },
-  { field: "exit_code", family: "WATER_UNPOKE", why: "leaving this port" },
+  { field: "enter_code", why: "a poke at this port" },
+  { field: "error_code", why: "a poke here when it was the wrong port" },
+  { field: "break_code", why: "the response hold broken here" },
+  { field: "exit_code", why: "leaving this port" },
 ] as const;
 
-/** `left_well` → `_L`, `right_well` → `_R`; null when the channel is neither,
- * in which case there is no honest suggestion and the operator picks. */
-function sideSuffix(channel: string | null): string | null {
-  return channel === "left_well" ? "_L" : channel === "right_well" ? "_R" : null;
+/**
+ * The six per-port code names this channel's slot reports with, or null.
+ *
+ * THIS REPLACES `sideSuffix()`, which read `left_well → _L`, `right_well → _R`
+ * and null for anything else. Two problems with that: it was a second copy of
+ * `paradigms.py`'s `_SIDE` table with nothing keeping them in step, and a rig
+ * whose wells were named anything else got null — so every per-port strobe
+ * arrived unsuggested and the operator picked six codes by hand, or left them
+ * unset until a shape change made TG506 fire.
+ *
+ * Now the channel declares `port_slot` and the vocabulary's `port_slots` table
+ * says what that slot's codes are called. Both come from `specs.schema`, so
+ * this reads the compiler's own answer rather than restating it.
+ */
+function portSlotCodes(
+  channel: string | null,
+  ctx: OpContext,
+): Record<string, string> | null {
+  if (channel === null) return null;
+  const slot = ctx.channels.channels?.[channel]?.port_slot;
+  if (slot === undefined) return null;
+  return ctx.strobes.port_slots?.[String(slot)] ?? null;
 }
 
 /** Ask for any per-port strobe the topology now needs and the port lacks. */
@@ -547,11 +568,11 @@ function ensurePortCodes(b: Op, ctx: OpContext): void {
     const binding = portsOf(b.doc)[name];
     if (!binding) continue;
     const channel = typeof binding["channel"] === "string" ? binding["channel"] : null;
-    const suffix = sideSuffix(channel);
+    const slot = portSlotCodes(channel, ctx);
 
-    for (const { field, family, why } of PORT_CODES) {
+    for (const { field, why } of PORT_CODES) {
       if (binding[field] !== undefined && binding[field] !== null) continue;
-      const suggestion = suffix === null ? null : `${family}${suffix}`;
+      const suggestion = slot?.[field] ?? null;
       const code = b.ask({
         id: `${field}_${name}`,
         label: `${name} ${field.replace(/_/g, " ")}`,
@@ -608,13 +629,10 @@ function ensureRewardBindings(b: Op, ctx: OpContext): void {
       );
     }
 
-    const suffix = sideSuffix(channel);
-    for (const [field, family] of [
-      ["reward_code", "FLUID"],
-      ["reward_stop_code", "STOP_FLUID_G"],
-    ] as const) {
+    const slot = portSlotCodes(channel, ctx);
+    for (const field of ["reward_code", "reward_stop_code"] as const) {
       if (binding[field] !== undefined && binding[field] !== null) continue;
-      const suggestion = suffix !== null ? `${family}${suffix}` : null;
+      const suggestion = slot?.[field] ?? null;
       const known = strobeNames(ctx.strobes);
       const code = b.ask({
         id: `${field}_${name}`,
@@ -872,8 +890,8 @@ function addResponseOption(b: Op, ctx: OpContext): void {
     const total = channelEntries(ctx.channels).filter(([, c]) => c.kind === "response").length;
     b.blocked =
       `The channel registry declares ${total} response channel${total === 1 ? "" : "s"} and ` +
-      `every one is already bound to a port. A new response option needs a channel the ` +
-      `pinout carries — the registry ships with the compiler.`;
+      `every one is already bound to a port. Add one in Task → Rig wiring, and this ` +
+      `block turns on by itself — it counts the registry rather than a number written here.`;
     return;
   }
 
@@ -994,10 +1012,11 @@ function addStimulus(b: Op, ctx: OpContext): void {
     mandatory: true,
   });
 
-  // ODOR_<k>_ON pairs with odor_line_<k> for k ≤ 6; the vocabulary declares
-  // six onset codes and no more. Past the sixth there is nothing honest to
-  // suggest — a seventh needs a code appended to strobe_vocab.v1.json, which
-  // ships with the compiler.
+  // ODOR_<k>_ON pairs with odor_line_<k>, and the family is READ rather than
+  // assumed to stop at six. It did stop at six: twelve odor lines were plumbed
+  // and only half of them could announce an onset, so lines 7-12 existed on the
+  // board and could not be discriminanda. The vocabulary now declares twelve,
+  // and this line finds however many it declares.
   const known = strobeNames(ctx.strobes);
   const onsetFamily = known.filter((s) => /^ODOR_\d+_ON$/.test(s));
   const match = typeof emitter === "string" ? /^odor_line_(\d+)$/.exec(emitter) : null;

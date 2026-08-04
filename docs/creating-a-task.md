@@ -77,7 +77,7 @@ in it.
 ```yaml
 spec_version: 1
 spec_id: my_task
-vocab_version: 1
+vocab_version: 2
 meta:
   label: Two-alternative forced choice
   description: One stimulus, two ports, reward at the correct one. The discriminandum is which stimulus

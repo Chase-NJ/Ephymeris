@@ -77,6 +77,31 @@ def _block(text: str, indent: str = " *  ") -> list[str]:
     return out
 
 
+#: Version constants whose real definition is the registry file they name, not
+#: the literal beside them in limits.v1.json.
+#:
+#: THESE WERE HAND-TYPED, and the vocabulary bump to 2 walked straight into it:
+#: `TG_VOCAB_VERSION` stayed at 1 in TaskLimits.h while `TG_VOCAB_VERSION_DECLARED`
+#: -- which codegen/strobes.py derives from the vocabulary itself -- went to 2.
+#: Two headers in one library disagreeing about the same number, with nothing
+#: comparing them. That is precisely the mirroring this module's docstring says a
+#: limit must not have, so the literal is now a fallback and the registry wins.
+_DERIVED_VERSIONS: dict[str, str] = {
+    "TG_VOCAB_VERSION": "vocabulary",
+    "TG_CHANNELS_VERSION": "channels",
+}
+
+
+def _value(name: str, entry: dict) -> int:
+    """The value to emit: derived where a registry owns it, literal otherwise."""
+    registry = _DERIVED_VERSIONS.get(name)
+    if registry is None:
+        return int(entry["value"])
+    from ephymeris_sidecar.taskgraph import registries
+
+    return int(getattr(registries, registry)().version)
+
+
 def _literal(name: str, value: int) -> str:
     """Sentinels in hex, everything else in decimal.
 
@@ -144,7 +169,7 @@ def emit_header() -> str:
                     out.append(" *")
                     out.append(f" *  Measured by: {measured}")
                 out.append(" */")
-            out.append(f"#define {name} {_literal(name, entry['value'])}")
+            out.append(f"#define {name} {_literal(name, _value(name, entry))}")
             out.append("")
 
     out.append("#endif  /* TASK_LIMITS_H */")

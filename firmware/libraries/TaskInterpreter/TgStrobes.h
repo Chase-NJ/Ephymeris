@@ -17,43 +17,79 @@
 #ifndef TG_STROBES_H
 #define TG_STROBES_H
 
-#define TG_VOCAB_VERSION_DECLARED 1
+#define TG_VOCAB_VERSION_DECLARED 2
 
-#define TG_STROBE_ODOR_1_ON             101  // entry to a sampling HOLD bound to odor line 1
-#define TG_STROBE_ODOR_2_ON             102  // entry to a sampling HOLD bound to odor line 2
-#define TG_STROBE_ODOR_3_ON             103  // entry to a sampling HOLD bound to odor line 3
-#define TG_STROBE_ODOR_4_ON             104  // entry to a sampling HOLD bound to odor line 4
-#define TG_STROBE_ODOR_5_ON             105  // entry to a sampling HOLD bound to odor line 5
-#define TG_STROBE_ODOR_6_ON             106  // entry to a sampling HOLD bound to odor line 6
-#define TG_STROBE_START_SESSION         221  // session entry, timestamp 0
-#define TG_STROBE_LIGHTS_ON             222  // entry to the engagement window (trial cue on)
-#define TG_STROBE_LAZY_RAT              223  // entry to the no-engagement penalty
-#define TG_STROBE_ODOR_POKE             224  // entry to the commitment hold
-#define TG_STROBE_ODOR_UNPOKE_EARLY     225  // entry to the broken-hold penalty
-#define TG_STROBE_ODOR_UNPOKE           226  // entry to the response window, after a complete sample
-#define TG_STROBE_LIGHTS_OFF            233  // entry to a zero-duration node that clears the trial light
-#define TG_STROBE_INVALID_TRIAL         234  // entry to the invalid terminal
-#define TG_STROBE_END_CORRECT_ITI       242  // entry to the correct terminal
-#define TG_STROBE_END_INCORRECT_ITI     243  // entry to the incorrect terminal
-#define TG_STROBE_END_SESSION           246  // session exit
-#define TG_STROBE_ODOR_OFF              247  // entry to the sampling-release WAIT_EXIT, and to an inter-stimulus gap
-#define TG_STROBE_WATER_POKE_L          248  // entry to the response branch node, left channel
-#define TG_STROBE_WATER_POKE_R          249  // entry to the response branch node, right channel
-#define TG_STROBE_WATER_UNPOKE_EARLY_L  250  // entry to the response-hold-failure penalty, left
-#define TG_STROBE_WATER_UNPOKE_EARLY_R  251  // entry to the response-hold-failure penalty, right
-#define TG_STROBE_FLUID_L               252  // entry to the left reward PULSE
-#define TG_STROBE_FLUID_R               253  // entry to the right reward PULSE
-#define TG_STROBE_WATER_UNPOKE_L        254  // entry to the ITI delay, after leaving the left well
-#define TG_STROBE_WATER_UNPOKE_R        255  // entry to the ITI delay, after leaving the right well
-#define TG_STROBE_WATER_POKE_NONE       256  // entry to the correct terminal path on a withhold trial
-#define TG_STROBE_WATER_POKE_ERROR_L    257  // entry to the wrong-port penalty, left
-#define TG_STROBE_WATER_POKE_ERROR_R    258  // entry to the wrong-port penalty, right
-#define TG_STROBE_RETENTION_ON          260  // entry to the unfilled retention delay
-#define TG_STROBE_INTERSTIM_GAP_ON      261  // entry to the gap between chained stimuli
-#define TG_STROBE_RESP_OMIT             262  // entry to the omission penalty
-#define TG_STROBE_WATCHDOG_FAULT        263  // a state exceeding its maximum dwell; the session then ends
-#define TG_STROBE_STOP_FLUID_G_R        357  // entry to the right consumption WAIT_EXIT
-#define TG_STROBE_STOP_FLUID_G_L        369  // entry to the left consumption WAIT_EXIT
+#define TG_STROBE_ODOR_1_ON              101  // entry to a sampling HOLD bound to odor line 1
+#define TG_STROBE_ODOR_2_ON              102  // entry to a sampling HOLD bound to odor line 2
+#define TG_STROBE_ODOR_3_ON              103  // entry to a sampling HOLD bound to odor line 3
+#define TG_STROBE_ODOR_4_ON              104  // entry to a sampling HOLD bound to odor line 4
+#define TG_STROBE_ODOR_5_ON              105  // entry to a sampling HOLD bound to odor line 5
+#define TG_STROBE_ODOR_6_ON              106  // entry to a sampling HOLD bound to odor line 6
+#define TG_STROBE_START_SESSION          221  // session entry, timestamp 0
+#define TG_STROBE_LIGHTS_ON              222  // entry to the engagement window (trial cue on)
+#define TG_STROBE_LAZY_RAT               223  // entry to the no-engagement penalty
+#define TG_STROBE_ODOR_POKE              224  // entry to the commitment hold
+#define TG_STROBE_ODOR_UNPOKE_EARLY      225  // entry to the broken-hold penalty
+#define TG_STROBE_ODOR_UNPOKE            226  // entry to the response window, after a complete sample
+#define TG_STROBE_LIGHTS_OFF             233  // entry to a zero-duration node that clears the trial light
+#define TG_STROBE_INVALID_TRIAL          234  // entry to the invalid terminal
+#define TG_STROBE_END_CORRECT_ITI        242  // entry to the correct terminal
+#define TG_STROBE_END_INCORRECT_ITI      243  // entry to the incorrect terminal
+#define TG_STROBE_END_SESSION            246  // session exit
+#define TG_STROBE_ODOR_OFF               247  // entry to the sampling-release WAIT_EXIT, and to an inter-stimulus gap
+#define TG_STROBE_WATER_POKE_L           248  // entry to the response branch node, left channel
+#define TG_STROBE_WATER_POKE_R           249  // entry to the response branch node, right channel
+#define TG_STROBE_WATER_UNPOKE_EARLY_L   250  // entry to the response-hold-failure penalty, left
+#define TG_STROBE_WATER_UNPOKE_EARLY_R   251  // entry to the response-hold-failure penalty, right
+#define TG_STROBE_FLUID_L                252  // entry to the left reward PULSE
+#define TG_STROBE_FLUID_R                253  // entry to the right reward PULSE
+#define TG_STROBE_WATER_UNPOKE_L         254  // entry to the ITI delay, after leaving the left well
+#define TG_STROBE_WATER_UNPOKE_R         255  // entry to the ITI delay, after leaving the right well
+#define TG_STROBE_WATER_POKE_NONE        256  // entry to the correct terminal path on a withhold trial
+#define TG_STROBE_WATER_POKE_ERROR_L     257  // entry to the wrong-port penalty, left
+#define TG_STROBE_WATER_POKE_ERROR_R     258  // entry to the wrong-port penalty, right
+#define TG_STROBE_RETENTION_ON           260  // entry to the unfilled retention delay
+#define TG_STROBE_INTERSTIM_GAP_ON       261  // entry to the gap between chained stimuli
+#define TG_STROBE_RESP_OMIT              262  // entry to the omission penalty
+#define TG_STROBE_WATCHDOG_FAULT         263  // a state exceeding its maximum dwell; the session then ends
+#define TG_STROBE_STOP_FLUID_G_R         357  // entry to the right consumption WAIT_EXIT
+#define TG_STROBE_STOP_FLUID_G_L         369  // entry to the left consumption WAIT_EXIT
+#define TG_STROBE_WATER_POKE_P3          370  // entry to the response branch node, port 3
+#define TG_STROBE_WATER_POKE_ERROR_P3    371  // entry to the wrong-port penalty, port 3
+#define TG_STROBE_WATER_UNPOKE_EARLY_P3  372  // entry to the response-hold-failure penalty, port 3
+#define TG_STROBE_WATER_UNPOKE_P3        373  // entry to the ITI after a completed bout at port 3
+#define TG_STROBE_FLUID_P3               374  // entry to the reward PULSE at port 3
+#define TG_STROBE_STOP_FLUID_G_P3        375  // entry to the consumption WAIT_EXIT at port 3
+#define TG_STROBE_WATER_POKE_P4          376  // entry to the response branch node, port 4
+#define TG_STROBE_WATER_POKE_ERROR_P4    377  // entry to the wrong-port penalty, port 4
+#define TG_STROBE_WATER_UNPOKE_EARLY_P4  378  // entry to the response-hold-failure penalty, port 4
+#define TG_STROBE_WATER_UNPOKE_P4        379  // entry to the ITI after a completed bout at port 4
+#define TG_STROBE_FLUID_P4               380  // entry to the reward PULSE at port 4
+#define TG_STROBE_STOP_FLUID_G_P4        381  // entry to the consumption WAIT_EXIT at port 4
+#define TG_STROBE_WATER_POKE_P5          382  // entry to the response branch node, port 5
+#define TG_STROBE_WATER_POKE_ERROR_P5    383  // entry to the wrong-port penalty, port 5
+#define TG_STROBE_WATER_UNPOKE_EARLY_P5  384  // entry to the response-hold-failure penalty, port 5
+#define TG_STROBE_WATER_UNPOKE_P5        385  // entry to the ITI after a completed bout at port 5
+#define TG_STROBE_FLUID_P5               386  // entry to the reward PULSE at port 5
+#define TG_STROBE_STOP_FLUID_G_P5        387  // entry to the consumption WAIT_EXIT at port 5
+#define TG_STROBE_WATER_POKE_P6          388  // entry to the response branch node, port 6
+#define TG_STROBE_WATER_POKE_ERROR_P6    389  // entry to the wrong-port penalty, port 6
+#define TG_STROBE_WATER_UNPOKE_EARLY_P6  390  // entry to the response-hold-failure penalty, port 6
+#define TG_STROBE_WATER_UNPOKE_P6        391  // entry to the ITI after a completed bout at port 6
+#define TG_STROBE_FLUID_P6               392  // entry to the reward PULSE at port 6
+#define TG_STROBE_STOP_FLUID_G_P6        393  // entry to the consumption WAIT_EXIT at port 6
+#define TG_STROBE_WATER_POKE_P7          394  // entry to the response branch node, port 7
+#define TG_STROBE_WATER_POKE_ERROR_P7    395  // entry to the wrong-port penalty, port 7
+#define TG_STROBE_WATER_UNPOKE_EARLY_P7  396  // entry to the response-hold-failure penalty, port 7
+#define TG_STROBE_WATER_UNPOKE_P7        397  // entry to the ITI after a completed bout at port 7
+#define TG_STROBE_FLUID_P7               398  // entry to the reward PULSE at port 7
+#define TG_STROBE_STOP_FLUID_G_P7        399  // entry to the consumption WAIT_EXIT at port 7
+#define TG_STROBE_ODOR_7_ON              400  // entry to a sampling HOLD bound to odor line 7
+#define TG_STROBE_ODOR_8_ON              401  // entry to a sampling HOLD bound to odor line 8
+#define TG_STROBE_ODOR_9_ON              402  // entry to a sampling HOLD bound to odor line 9
+#define TG_STROBE_ODOR_10_ON             403  // entry to a sampling HOLD bound to odor line 10
+#define TG_STROBE_ODOR_11_ON             404  // entry to a sampling HOLD bound to odor line 11
+#define TG_STROBE_ODOR_12_ON             405  // entry to a sampling HOLD bound to odor line 12
 
 /*  RETIRED — emitted by firmware this repository no longer contains, and
  *  MUST NOT be reused. Listed rather than omitted: a gap in the numbering

@@ -49,11 +49,13 @@
     },
     "right_well": {
       "kind": "response",
-      "rationale": "INPUT_PULLUP: LOW means the beam is broken, i.e. poked. The interpreter inherits verifySensor()'s polarity rather than restating it."
+      "port_slot": 2,
+      "rationale": "INPUT_PULLUP: LOW means the beam is broken, i.e. poked. The interpreter inherits verifySensor()'s polarity rather than restating it. `port_slot` names which family of per-port strobes this port reports with (strobe_vocab `port_slots`); slot 2 is the historical _R family, so the recorded archive is unchanged."
     },
     "left_well": {
       "kind": "response",
-      "rationale": "See right_well."
+      "port_slot": 1,
+      "rationale": "See right_well. Slot 1 is the historical _L family."
     },
     "trial_light": {
       "kind": "cue",

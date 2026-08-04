@@ -224,3 +224,126 @@ def test_shaping_left_and_right_are_the_same_machine():
     assert [(t.target, t.weight) for t in r.trial_types] != [
         (t.target, t.weight) for t in l.trial_types
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Port slots — the vocabulary ceiling, and that it is a lookup not a naming rule
+# --------------------------------------------------------------------------- #
+
+
+def test_port_slots_cover_seven_ports_with_six_codes_each():
+    """TG_MAX_WATCH is 8 and one watchable channel is the engagement port, so
+    seven is the real ceiling. Slots 1 and 2 must still be the historical _L/_R
+    families or every recorded session decodes differently."""
+    from ephymeris_sidecar.taskgraph import registries
+
+    vocab = registries.vocabulary()
+    slots = vocab.port_slots
+    assert sorted(slots) == [1, 2, 3, 4, 5, 6, 7]
+
+    fields = {"enter_code", "error_code", "break_code", "exit_code",
+              "reward_code", "reward_stop_code"}
+    for n, codes in slots.items():
+        assert set(codes) == fields, f"slot {n} is missing {fields - set(codes)}"
+        for name in codes.values():
+            assert name in vocab.names(), f"slot {n} names {name}, which is not declared"
+
+    assert slots[1]["enter_code"] == "WATER_POKE_L"
+    assert slots[2]["enter_code"] == "WATER_POKE_R"
+    assert slots[1]["reward_code"] == "FLUID_L"
+    assert slots[2]["reward_code"] == "FLUID_R"
+
+
+def test_every_declared_code_is_unique_and_in_range():
+    """Append-only means a collision is unrecoverable, and code_max is a wire
+    limit: emitStrobe formats %03d and the host parser is ^\\d{1,3}\\t\\d+$, so a
+    four-digit code is silently dropped rather than reported."""
+    from ephymeris_sidecar.taskgraph import registries
+
+    vocab = registries.vocabulary()
+    codes = [e.code for e in vocab]
+    assert len(codes) == len(set(codes)), "two names share a code"
+    assert all(0 <= c <= vocab.code_max for c in codes)
+    # ...and none of them collides with a retired code, which would silently
+    # merge two unrelated event types across the boundary.
+    assert not (set(codes) & set(vocab.retired)), "a code reissues a retired one"
+
+
+def test_the_slot_table_is_what_binds_a_port_not_its_name():
+    """A response channel named nothing like a well still gets all six codes.
+
+    `_SIDE = {"left_well": "_L", "right_well": "_R"}` returned nothing for any
+    other name, so such a port compiled with no per-port strobes at all — every
+    one of those fields is individually optional, so nothing errored until a
+    shape change made TG506 reach for them.
+    """
+    from ephymeris_sidecar.taskgraph import registries
+
+    vocab = registries.vocabulary()
+    slot = vocab.port_slot(3)
+    assert slot is not None
+    assert slot["enter_code"] == "WATER_POKE_P3"
+    # Nothing in the mapping mentions a side.
+    assert not any(c.endswith(("_L", "_R")) for c in slot.values())
+
+
+def test_a_third_response_port_compiles_end_to_end(monkeypatch):
+    """The wall this whole change exists to move.
+
+    Two response ports was never a hardware limit — TG_MAX_WATCH leaves room for
+    seven. It was a naming limit: every per-port code was `_L`/`_R` suffixed, so
+    a third port had nothing to announce itself with and TG506 refused it. With
+    the slot table in place a rig that declares a third port compiles, and its
+    strobes are slot 3's.
+    """
+    import copy
+
+    from ephymeris_sidecar.taskgraph import paradigms, registries
+    import ephymeris_sidecar.taskgraph.pipeline as pipeline
+
+    logical = copy.deepcopy(registries._load("channels.v1.json"))
+    pinout = copy.deepcopy(registries._pinout())
+    logical["channels"]["center_well"] = {
+        "kind": "response", "port_slot": 3, "rationale": "a third well on this rig"
+    }
+    pinout["pins"]["center_well"] = {"index": 5, "watch_bit": 3, "source": "rig wiring"}
+    logical["channels"]["fluid_4"] = {
+        "kind": "reward", "well": "center_well", "rationale": "the centre line"
+    }
+    pinout["pins"]["fluid_4"] = {"index": 50, "source": "rig wiring"}
+
+    chans = registries.ChannelMap(logical, pinout)
+    assert chans.disagreements() == [], chans.disagreements()
+    assert [c.name for c in chans.of_kind("response")] == [
+        "right_well", "left_well", "center_well"
+    ]
+    monkeypatch.setattr(pipeline, "channels", lambda: chans)
+
+    vocab = registries.vocabulary()
+    doc = paradigms.skeleton(paradigms.get("two_afc"), spec_id="three_port")
+    doc["contingency"]["ports"]["center_well"] = {
+        "channel": "center_well",
+        **vocab.port_slot(3),
+        "reward_line": "fluid_4",
+        "reward_duration": "t_reward_center",
+    }
+    doc["timing"].append({"id": "t_reward_center", "ms": 100})
+    doc["topology"]["response_ports"].append("center_well")
+    doc["contingency"]["stimuli"].append(
+        {"id": "odor3", "emitter": "odor_line_3", "on_code": "ODOR_3_ON"}
+    )
+    doc["contingency"]["trial_types"].append(
+        {"id": "tt_odor3_center_well", "stages": ["odor3"], "target": "center_well"}
+    )
+
+    result = compiler.compile(paradigms.to_yaml(doc), spec_id="three_port")
+    errors = [f"{d.code} {d.message}" for d in result.bag if d.severity.name == "ERROR"]
+    assert result.ok, errors
+    assert len(result.table.ports) == 3
+
+    # ...and the third port reports with slot 3, on the pin the rig gave it.
+    third = result.table.ports[2]
+    assert third.channel == 5
+    assert third.reward_line == 50
+    assert vocab.name_of(third.enter_code) == "WATER_POKE_P3"
+    assert vocab.name_of(third.reward_code) == "FLUID_P3"

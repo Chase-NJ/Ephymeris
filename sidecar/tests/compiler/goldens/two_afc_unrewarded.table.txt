@@ -3,8 +3,8 @@
 ==============================================================================
 
   spec_version    1
-  spec_hash       70db6d3887996aca
-  vocab_version   1
+  spec_hash       e62e87c23aaf4297
+  vocab_version   2
   template        four_epoch v2 (f0760c460092ddb3)
 
   24 states, 34 edges, 12 timing entries, 2 trial types

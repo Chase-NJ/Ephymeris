@@ -162,11 +162,13 @@
  *  schema/strobe_vocab.v1.json. Separate from spec_version because the
  *  vocabulary grows (append-only) far more often than the schema changes.
  */
-#define TG_VOCAB_VERSION 1
+#define TG_VOCAB_VERSION 2
 
 /*
  *  schema/channels.v1.json. Separate again: a box with a different pinout
- *  changes this and nothing else.
+ *  changes this and nothing else. NOTE this tracks what a channel MEANS, not
+ *  where it is -- the pinout has its own version and does not move this
+ *  number.
  */
 #define TG_CHANNELS_VERSION 1
 

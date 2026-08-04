@@ -94,12 +94,14 @@
       "rationale": "schema/task_spec.v1.json. Travels with every compiled table so a recorded session can be reconstructed against the schema that produced it."
     },
     "TG_VOCAB_VERSION": {
-      "value": 1,
+      "value": 2,
+      "_value_is_a_mirror": "DERIVED at codegen time from strobe_vocab's own vocab_version; this literal is a fallback and a reading aid. It was hand-typed until the vocabulary went to 2 and TaskLimits.h stayed at 1 while TgStrobes.h moved -- two headers in one library disagreeing about one number.",
       "rationale": "schema/strobe_vocab.v1.json. Separate from spec_version because the vocabulary grows (append-only) far more often than the schema changes."
     },
     "TG_CHANNELS_VERSION": {
       "value": 1,
-      "rationale": "schema/channels.v1.json. Separate again: a box with a different pinout changes this and nothing else."
+      "_value_is_a_mirror": "DERIVED at codegen time from channels.v1.json's channels_version. See TG_VOCAB_VERSION.",
+      "rationale": "schema/channels.v1.json. Separate again: a box with a different pinout changes this and nothing else. NOTE this tracks what a channel MEANS, not where it is -- the pinout has its own version and does not move this number."
     }
   },
   "wire": {

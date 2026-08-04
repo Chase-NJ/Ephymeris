@@ -1,5 +1,5 @@
 {
-  "vocab_version": 1,
+  "vocab_version": 2,
   "append_only": true,
   "_readme": [
     "THE strobe registry. Every strobe name a task spec may reference is declared here,",
@@ -18,11 +18,26 @@
     "firmware header, the compiler's table, and a task.json-shaped strobes{} map, which",
     "retires the three-way hand-mirroring described in PHASE0_PLAN.md section 1.3.",
     "",
-    "DECLARED MEANS EMITTED. Ephymeris docs/tasks.md:207-213 records a real bug where",
+    "DECLARED MEANS EMITTABLE. Ephymeris docs/tasks.md:207-213 records a real bug where",
     "GRGL_Sim declared 23 of 31 codes and emitted codes it had not declared; nothing",
     "errored and each layer degraded silently. The inverse is equally a bug: do not add",
-    "a code here speculatively. Every code below is emitted by at least one spec in",
-    "specs/, and Phase 1's linter enforces that."
+    "a code here on a hunch that something might want it one day.",
+    "",
+    "The rule used to read DECLARED MEANS EMITTED, and named the shipped specs as the",
+    "witnesses. Nothing ships as a spec now, and the port-slot codes below are emitted",
+    "by a construction the compiler supports rather than by a file in this repository:",
+    "the moment an operator wires a third response port, slot 3's six codes are what",
+    "that port reports with. That is a different thing from speculation, and the test",
+    "is whether a code has a mechanism that produces it, not whether a file already",
+    "does. WATCHDOG_FAULT has carried `emitted_by: []` under exactly this reasoning",
+    "since Phase 1 -- the runtime produces it, no graph does.",
+    "",
+    "PORT SLOTS. `port_slots` below maps a response port's slot number to the six",
+    "codes it reports with. Slots 1 and 2 are the historical _L and _R families, so",
+    "the recorded archive decodes unchanged; 3-7 are new. A response channel declares",
+    "its slot in channels.v1.json, which is what lets the compiler stop knowing about",
+    "left and right. Seven is not a preference: TG_MAX_WATCH is 8 and one watchable",
+    "channel is the engagement port."
   ],
   "code_min": 0,
   "code_max": 999,
@@ -64,7 +79,7 @@
       368
     ],
     [
-      370,
+      406,
       999
     ]
   ],
@@ -331,6 +346,364 @@
       "emitted_on": "a state exceeding its maximum dwell; the session then ends",
       "emitted_by": [],
       "rationale": "NEW. Emitted by the SESSION LAYER, not by a node -- like START_SESSION and INVALID_TRIAL, and for the same reason: it reports something about the run rather than about a state entry, so routing it through tgEnterNode() would break the one-state-one-strobe invariant that makes every other timestamp a state-entry time. `emitted_by` is empty because no spec's graph produces it; the runtime does, and only when something has gone wrong. Its absence from a session is the normal case and is the evidence that no state overran."
+    },
+    "WATER_POKE_P3": {
+      "code": 370,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the response branch node, port 3",
+      "emitted_by": [],
+      "rationale": "A poke at port 3, emitted BEFORE correctness is known -- see WATER_POKE_L for why that makes the response branch its own zero-duration node (D3). Port slot 3. Unemitted on a rig with fewer than 3 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a third response channel."
+    },
+    "WATER_POKE_ERROR_P3": {
+      "code": 371,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the wrong-port penalty, port 3",
+      "emitted_by": [],
+      "rationale": "See WATER_POKE_ERROR_L. Port slot 3. Unemitted on a rig with fewer than 3 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a third response channel."
+    },
+    "WATER_UNPOKE_EARLY_P3": {
+      "code": 372,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the response-hold-failure penalty, port 3",
+      "emitted_by": [],
+      "rationale": "See WATER_UNPOKE_EARLY_L: a consummatory failure, scored apart from a wrong choice. Port slot 3. Unemitted on a rig with fewer than 3 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a third response channel."
+    },
+    "WATER_UNPOKE_P3": {
+      "code": 373,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the ITI after a completed bout at port 3",
+      "emitted_by": [],
+      "rationale": "See WATER_UNPOKE_L. The only place the end of a consummatory bout is observable. Port slot 3. Unemitted on a rig with fewer than 3 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a third response channel."
+    },
+    "FLUID_P3": {
+      "code": 374,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the reward PULSE at port 3",
+      "emitted_by": [],
+      "rationale": "See FLUID_L. Emitted before the solenoid opens; pulse width is the delivered volume. Port slot 3. Unemitted on a rig with fewer than 3 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a third response channel."
+    },
+    "STOP_FLUID_G_P3": {
+      "code": 375,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the consumption WAIT_EXIT at port 3",
+      "emitted_by": [],
+      "rationale": "See STOP_FLUID_G_R. Emitted after the solenoid closes. Port slot 3. Unemitted on a rig with fewer than 3 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a third response channel."
+    },
+    "WATER_POKE_P4": {
+      "code": 376,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the response branch node, port 4",
+      "emitted_by": [],
+      "rationale": "A poke at port 4, emitted BEFORE correctness is known -- see WATER_POKE_L for why that makes the response branch its own zero-duration node (D3). Port slot 4. Unemitted on a rig with fewer than 4 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fourth response channel."
+    },
+    "WATER_POKE_ERROR_P4": {
+      "code": 377,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the wrong-port penalty, port 4",
+      "emitted_by": [],
+      "rationale": "See WATER_POKE_ERROR_L. Port slot 4. Unemitted on a rig with fewer than 4 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fourth response channel."
+    },
+    "WATER_UNPOKE_EARLY_P4": {
+      "code": 378,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the response-hold-failure penalty, port 4",
+      "emitted_by": [],
+      "rationale": "See WATER_UNPOKE_EARLY_L: a consummatory failure, scored apart from a wrong choice. Port slot 4. Unemitted on a rig with fewer than 4 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fourth response channel."
+    },
+    "WATER_UNPOKE_P4": {
+      "code": 379,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the ITI after a completed bout at port 4",
+      "emitted_by": [],
+      "rationale": "See WATER_UNPOKE_L. The only place the end of a consummatory bout is observable. Port slot 4. Unemitted on a rig with fewer than 4 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fourth response channel."
+    },
+    "FLUID_P4": {
+      "code": 380,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the reward PULSE at port 4",
+      "emitted_by": [],
+      "rationale": "See FLUID_L. Emitted before the solenoid opens; pulse width is the delivered volume. Port slot 4. Unemitted on a rig with fewer than 4 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fourth response channel."
+    },
+    "STOP_FLUID_G_P4": {
+      "code": 381,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the consumption WAIT_EXIT at port 4",
+      "emitted_by": [],
+      "rationale": "See STOP_FLUID_G_R. Emitted after the solenoid closes. Port slot 4. Unemitted on a rig with fewer than 4 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fourth response channel."
+    },
+    "WATER_POKE_P5": {
+      "code": 382,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the response branch node, port 5",
+      "emitted_by": [],
+      "rationale": "A poke at port 5, emitted BEFORE correctness is known -- see WATER_POKE_L for why that makes the response branch its own zero-duration node (D3). Port slot 5. Unemitted on a rig with fewer than 5 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fifth response channel."
+    },
+    "WATER_POKE_ERROR_P5": {
+      "code": 383,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the wrong-port penalty, port 5",
+      "emitted_by": [],
+      "rationale": "See WATER_POKE_ERROR_L. Port slot 5. Unemitted on a rig with fewer than 5 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fifth response channel."
+    },
+    "WATER_UNPOKE_EARLY_P5": {
+      "code": 384,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the response-hold-failure penalty, port 5",
+      "emitted_by": [],
+      "rationale": "See WATER_UNPOKE_EARLY_L: a consummatory failure, scored apart from a wrong choice. Port slot 5. Unemitted on a rig with fewer than 5 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fifth response channel."
+    },
+    "WATER_UNPOKE_P5": {
+      "code": 385,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the ITI after a completed bout at port 5",
+      "emitted_by": [],
+      "rationale": "See WATER_UNPOKE_L. The only place the end of a consummatory bout is observable. Port slot 5. Unemitted on a rig with fewer than 5 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fifth response channel."
+    },
+    "FLUID_P5": {
+      "code": 386,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the reward PULSE at port 5",
+      "emitted_by": [],
+      "rationale": "See FLUID_L. Emitted before the solenoid opens; pulse width is the delivered volume. Port slot 5. Unemitted on a rig with fewer than 5 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fifth response channel."
+    },
+    "STOP_FLUID_G_P5": {
+      "code": 387,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the consumption WAIT_EXIT at port 5",
+      "emitted_by": [],
+      "rationale": "See STOP_FLUID_G_R. Emitted after the solenoid closes. Port slot 5. Unemitted on a rig with fewer than 5 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a fifth response channel."
+    },
+    "WATER_POKE_P6": {
+      "code": 388,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the response branch node, port 6",
+      "emitted_by": [],
+      "rationale": "A poke at port 6, emitted BEFORE correctness is known -- see WATER_POKE_L for why that makes the response branch its own zero-duration node (D3). Port slot 6. Unemitted on a rig with fewer than 6 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a sixth response channel."
+    },
+    "WATER_POKE_ERROR_P6": {
+      "code": 389,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the wrong-port penalty, port 6",
+      "emitted_by": [],
+      "rationale": "See WATER_POKE_ERROR_L. Port slot 6. Unemitted on a rig with fewer than 6 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a sixth response channel."
+    },
+    "WATER_UNPOKE_EARLY_P6": {
+      "code": 390,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the response-hold-failure penalty, port 6",
+      "emitted_by": [],
+      "rationale": "See WATER_UNPOKE_EARLY_L: a consummatory failure, scored apart from a wrong choice. Port slot 6. Unemitted on a rig with fewer than 6 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a sixth response channel."
+    },
+    "WATER_UNPOKE_P6": {
+      "code": 391,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the ITI after a completed bout at port 6",
+      "emitted_by": [],
+      "rationale": "See WATER_UNPOKE_L. The only place the end of a consummatory bout is observable. Port slot 6. Unemitted on a rig with fewer than 6 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a sixth response channel."
+    },
+    "FLUID_P6": {
+      "code": 392,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the reward PULSE at port 6",
+      "emitted_by": [],
+      "rationale": "See FLUID_L. Emitted before the solenoid opens; pulse width is the delivered volume. Port slot 6. Unemitted on a rig with fewer than 6 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a sixth response channel."
+    },
+    "STOP_FLUID_G_P6": {
+      "code": 393,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the consumption WAIT_EXIT at port 6",
+      "emitted_by": [],
+      "rationale": "See STOP_FLUID_G_R. Emitted after the solenoid closes. Port slot 6. Unemitted on a rig with fewer than 6 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a sixth response channel."
+    },
+    "WATER_POKE_P7": {
+      "code": 394,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the response branch node, port 7",
+      "emitted_by": [],
+      "rationale": "A poke at port 7, emitted BEFORE correctness is known -- see WATER_POKE_L for why that makes the response branch its own zero-duration node (D3). Port slot 7. Unemitted on a rig with fewer than 7 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a seventh response channel."
+    },
+    "WATER_POKE_ERROR_P7": {
+      "code": 395,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the wrong-port penalty, port 7",
+      "emitted_by": [],
+      "rationale": "See WATER_POKE_ERROR_L. Port slot 7. Unemitted on a rig with fewer than 7 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a seventh response channel."
+    },
+    "WATER_UNPOKE_EARLY_P7": {
+      "code": 396,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the response-hold-failure penalty, port 7",
+      "emitted_by": [],
+      "rationale": "See WATER_UNPOKE_EARLY_L: a consummatory failure, scored apart from a wrong choice. Port slot 7. Unemitted on a rig with fewer than 7 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a seventh response channel."
+    },
+    "WATER_UNPOKE_P7": {
+      "code": 397,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the ITI after a completed bout at port 7",
+      "emitted_by": [],
+      "rationale": "See WATER_UNPOKE_L. The only place the end of a consummatory bout is observable. Port slot 7. Unemitted on a rig with fewer than 7 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a seventh response channel."
+    },
+    "FLUID_P7": {
+      "code": 398,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the reward PULSE at port 7",
+      "emitted_by": [],
+      "rationale": "See FLUID_L. Emitted before the solenoid opens; pulse width is the delivered volume. Port slot 7. Unemitted on a rig with fewer than 7 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a seventh response channel."
+    },
+    "STOP_FLUID_G_P7": {
+      "code": 399,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to the consumption WAIT_EXIT at port 7",
+      "emitted_by": [],
+      "rationale": "See STOP_FLUID_G_R. Emitted after the solenoid closes. Port slot 7. Unemitted on a rig with fewer than 7 response ports, which is the normal case -- see this file's _readme on DECLARED MEANS EMITTABLE. It is reported the moment a rig declares a seventh response channel."
+    },
+    "ODOR_7_ON": {
+      "code": 400,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 7",
+      "emitted_by": [],
+      "rationale": "Stimulus identity for odor line 7. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. See ODOR_1_ON."
+    },
+    "ODOR_8_ON": {
+      "code": 401,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 8",
+      "emitted_by": [],
+      "rationale": "Stimulus identity for odor line 8. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. See ODOR_1_ON."
+    },
+    "ODOR_9_ON": {
+      "code": 402,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 9",
+      "emitted_by": [],
+      "rationale": "Stimulus identity for odor line 9. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. See ODOR_1_ON."
+    },
+    "ODOR_10_ON": {
+      "code": 403,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 10",
+      "emitted_by": [],
+      "rationale": "Stimulus identity for odor line 10. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. See ODOR_1_ON."
+    },
+    "ODOR_11_ON": {
+      "code": 404,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 11",
+      "emitted_by": [],
+      "rationale": "Stimulus identity for odor line 11. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. See ODOR_1_ON."
+    },
+    "ODOR_12_ON": {
+      "code": 405,
+      "origin": "taskgraph",
+      "since": 2,
+      "emitted_on": "entry to a sampling HOLD bound to odor line 12",
+      "emitted_by": [],
+      "rationale": "Stimulus identity for odor line 12. Twelve lines have always existed in the pinout but only six could announce an onset, so lines 7-12 were plumbed and unusable as discriminanda. See ODOR_1_ON."
+    }
+  },
+  "port_slots": {
+    "_why": [
+      "Slot -> the six codes a response port on that slot reports with.",
+      "",
+      "Slots 1 and 2 point at the historical _L and _R names, so a recorded session",
+      "decodes exactly as it always did and the archive is untouched. Everything",
+      "above them is uniform. A response channel names its slot in channels.v1.json.",
+      "",
+      "This table is why nothing in the compiler derives a code from a channel called",
+      "'left_well'. It used to: paradigms.py carried _SIDE = {left_well: _L, ...} and",
+      "operations.ts carried a matching sideSuffix(), so a box whose wells were named",
+      "anything else silently got no per-port codes at all."
+    ],
+    "1": {
+      "enter_code": "WATER_POKE_L",
+      "error_code": "WATER_POKE_ERROR_L",
+      "break_code": "WATER_UNPOKE_EARLY_L",
+      "exit_code": "WATER_UNPOKE_L",
+      "reward_code": "FLUID_L",
+      "reward_stop_code": "STOP_FLUID_G_L"
+    },
+    "2": {
+      "enter_code": "WATER_POKE_R",
+      "error_code": "WATER_POKE_ERROR_R",
+      "break_code": "WATER_UNPOKE_EARLY_R",
+      "exit_code": "WATER_UNPOKE_R",
+      "reward_code": "FLUID_R",
+      "reward_stop_code": "STOP_FLUID_G_R"
+    },
+    "3": {
+      "enter_code": "WATER_POKE_P3",
+      "error_code": "WATER_POKE_ERROR_P3",
+      "break_code": "WATER_UNPOKE_EARLY_P3",
+      "exit_code": "WATER_UNPOKE_P3",
+      "reward_code": "FLUID_P3",
+      "reward_stop_code": "STOP_FLUID_G_P3"
+    },
+    "4": {
+      "enter_code": "WATER_POKE_P4",
+      "error_code": "WATER_POKE_ERROR_P4",
+      "break_code": "WATER_UNPOKE_EARLY_P4",
+      "exit_code": "WATER_UNPOKE_P4",
+      "reward_code": "FLUID_P4",
+      "reward_stop_code": "STOP_FLUID_G_P4"
+    },
+    "5": {
+      "enter_code": "WATER_POKE_P5",
+      "error_code": "WATER_POKE_ERROR_P5",
+      "break_code": "WATER_UNPOKE_EARLY_P5",
+      "exit_code": "WATER_UNPOKE_P5",
+      "reward_code": "FLUID_P5",
+      "reward_stop_code": "STOP_FLUID_G_P5"
+    },
+    "6": {
+      "enter_code": "WATER_POKE_P6",
+      "error_code": "WATER_POKE_ERROR_P6",
+      "break_code": "WATER_UNPOKE_EARLY_P6",
+      "exit_code": "WATER_UNPOKE_P6",
+      "reward_code": "FLUID_P6",
+      "reward_stop_code": "STOP_FLUID_G_P6"
+    },
+    "7": {
+      "enter_code": "WATER_POKE_P7",
+      "error_code": "WATER_POKE_ERROR_P7",
+      "break_code": "WATER_UNPOKE_EARLY_P7",
+      "exit_code": "WATER_UNPOKE_P7",
+      "reward_code": "FLUID_P7",
+      "reward_stop_code": "STOP_FLUID_G_P7"
     }
   },
   "retired": {

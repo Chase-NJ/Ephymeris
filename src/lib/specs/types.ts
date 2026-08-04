@@ -55,6 +55,11 @@ export type SpecDocument = Record<string, unknown>;
  * values a spec carries and the numbers are for display only. */
 export interface StrobeRegistry {
   codes?: Record<string, { code: number }>;
+  /** Slot number → the six per-port code names a port on that slot reports
+   * with. Keys are strings because they arrive from JSON. Slots 1 and 2 are the
+   * historical `_L`/`_R` families; this table is why nothing here derives a
+   * code from a channel called `left_well` any more. */
+  port_slots?: Record<string, Record<string, string>>;
 }
 
 /** `channels.v1.json`, as far as the channel picker reads it. `kind` is what
@@ -62,5 +67,8 @@ export interface StrobeRegistry {
  * reward lines so a picker can refuse to plumb the wrong side of the box
  * (the linter's TG224, honoured before the compile ever runs). */
 export interface ChannelRegistry {
-  channels?: Record<string, { kind: string; index: number; well?: string }>;
+  channels?: Record<
+    string,
+    { kind: string; index: number; well?: string; port_slot?: number }
+  >;
 }

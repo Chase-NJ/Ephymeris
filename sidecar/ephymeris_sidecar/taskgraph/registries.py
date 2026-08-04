@@ -91,6 +91,14 @@ class Vocabulary:
             for name, e in raw.get("retired", {}).items()
             if isinstance(e, dict) and "code" in e
         }
+        #: Slot number -> its six per-port code names. Keys arrive as JSON
+        #: strings; they are the one thing here that is genuinely numeric, since
+        #: a channel declares `port_slot: 3` as an integer.
+        self._slots: dict[int, dict[str, str]] = {
+            int(slot): dict(fields)
+            for slot, fields in raw.get("port_slots", {}).items()
+            if not slot.startswith("_") and isinstance(fields, dict)
+        }
 
     def retired_name(self, code: int) -> str | None:
         return self._retired.get(code)
@@ -118,6 +126,25 @@ class Vocabulary:
     def names(self) -> set[str]:
         return set(self._by_name)
 
+    def port_slot(self, slot: int) -> dict[str, str] | None:
+        """The six per-port code names a response port on `slot` reports with.
+
+        THE REASON THIS TABLE EXISTS. The mapping used to be derived from the
+        channel's NAME, in two hand-mirrored places: `_SIDE = {"left_well": "_L",
+        "right_well": "_R"}` in paradigms.py and a matching `sideSuffix()` in
+        operations.ts. Both returned nothing for a channel called anything else,
+        so a box whose wells were named differently got a port with no codes at
+        all -- silently, because every field is individually optional.
+
+        Slots 1 and 2 are the historical `_L`/`_R` families, so a recorded
+        session decodes exactly as it always did.
+        """
+        return self._slots.get(int(slot))
+
+    @property
+    def port_slots(self) -> dict[int, dict[str, str]]:
+        return {n: dict(fields) for n, fields in self._slots.items()}
+
 
 # --------------------------------------------------------------------------- #
 # Channels
@@ -132,6 +159,7 @@ class Channel:
     kind: str           # engagement | response | emitter | reward | cue | vacuum
     watch_bit: int | None = None   # position in TgNode.watchMask, watchable channels only
     well: str | None = None        # reward lines declare which port they serve
+    port_slot: int | None = None   # response ports: which strobe family they report with
     rationale: str = ""            # what the channel means
     pin_note: str = ""             # why THIS pin, when there is anything to say
     pin_source: str = ""           # the BehaviorBox.h line the number came from
@@ -179,6 +207,7 @@ class ChannelMap:
                 kind=c["kind"],
                 watch_bit=pins[name].get("watch_bit"),
                 well=c.get("well"),
+                port_slot=c.get("port_slot"),
                 rationale=c.get("rationale", ""),
                 pin_note=pins[name].get("note", ""),
                 pin_source=pins[name].get("source", ""),
@@ -245,6 +274,7 @@ class ChannelMap:
                     "direction": c.direction,
                     **({"watch_bit": c.watch_bit} if c.watchable else {}),
                     **({"well": c.well} if c.well else {}),
+                    **({"port_slot": c.port_slot} if c.port_slot else {}),
                     **({"rationale": c.rationale} if c.rationale else {}),
                     **({"note": c.pin_note} if c.pin_note else {}),
                     **({"source": c.pin_source} if c.pin_source else {}),

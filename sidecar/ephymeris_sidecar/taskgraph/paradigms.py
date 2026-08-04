@@ -202,17 +202,12 @@ def fingerprint(doc: dict) -> str | None:
 # The skeleton
 # --------------------------------------------------------------------------- #
 
-#: Which strobe reports each per-port event, by side. The vocabulary declares the
-#: names; this says which of them a port's five bindings take, which is the same
-#: mapping every hand-authored spec used.
-_PORT_CODES = {
-    "enter_code": "WATER_POKE",
-    "error_code": "WATER_POKE_ERROR",
-    "break_code": "WATER_UNPOKE_EARLY",
-    "exit_code": "WATER_UNPOKE",
-}
-_REWARD_CODES = {"reward_code": "FLUID", "reward_stop_code": "STOP_FLUID_G"}
-_SIDE = {"left_well": "_L", "right_well": "_R"}
+#: The port binding fields that take a strobe, split by whether an unrewarded
+#: task reaches them. WHICH code each one takes is not decided here -- the
+#: channel's `port_slot` selects a row of the vocabulary's `port_slots` table,
+#: which is the only place a per-port code name is written down.
+_PORT_FIELDS = ("enter_code", "error_code", "break_code", "exit_code")
+_REWARD_FIELDS = ("reward_code", "reward_stop_code")
 
 
 def skeleton(
@@ -353,6 +348,13 @@ def _ports(paradigm: Paradigm, chans, vocab, caps) -> dict:
     port carries all five codes whether or not this shape reaches them: a shape
     change (go/no-go to n-alternative) makes three of them reachable at once, and
     TG506 wants them present when it does.
+
+    WHICH CODES A PORT REPORTS WITH COMES FROM ITS SLOT, not from its name. The
+    channel declares `port_slot` and the vocabulary's `port_slots` table says
+    what that slot's six codes are called. This used to be `_SIDE = {"left_well":
+    "_L", "right_well": "_R"}` -- a box whose wells were named anything else got
+    a port with no codes at all, silently, because every one of those fields is
+    individually optional and TG506 only fires once a shape makes them reachable.
     """
     available = [c.name for c in chans.of_kind("response")]
     wanted = available[: paradigm.n_response_ports]
@@ -364,10 +366,11 @@ def _ports(paradigm: Paradigm, chans, vocab, caps) -> dict:
 
     out: dict[str, Any] = {}
     for name in wanted:
-        side = _SIDE.get(name)
+        channel = chans.get(name)
+        slot = vocab.port_slot(channel.port_slot) if channel and channel.port_slot else None
         binding: dict[str, Any] = {"channel": name}
-        for field_, family in _PORT_CODES.items():
-            code = f"{family}{side}" if side else None
+        for field_ in _PORT_FIELDS:
+            code = (slot or {}).get(field_)
             if code and code in vocab.names():
                 binding[field_] = code
         if paradigm.rewarded:
@@ -381,8 +384,8 @@ def _ports(paradigm: Paradigm, chans, vocab, caps) -> dict:
                 )
             binding["reward_line"] = line.name
             binding["reward_duration"] = _reward_id(name)
-            for field_, family in _REWARD_CODES.items():
-                code = f"{family}{side}" if side else None
+            for field_ in _REWARD_FIELDS:
+                code = (slot or {}).get(field_)
                 if code and code in vocab.names():
                     binding[field_] = code
         out[name] = binding
@@ -390,7 +393,15 @@ def _ports(paradigm: Paradigm, chans, vocab, caps) -> dict:
 
 
 def _reward_id(port: str) -> str:
-    return f"t_reward_{port.replace('_well', '')}"
+    """A per-port reward duration id.
+
+    `right_well` -> `t_reward_right`, and any other channel name -> itself, so a
+    rig whose ports are called something else still gets one id per port rather
+    than a collision. The `_well` strip keeps the two shipped names reading the
+    way every existing spec spells them.
+    """
+    stem = port[: -len("_well")] if port.endswith("_well") else port
+    return f"t_reward_{stem}"
 
 
 def _stimuli(paradigm: Paradigm, chans, vocab, answers) -> list:

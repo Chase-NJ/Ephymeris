@@ -45,7 +45,7 @@ import { useSidecar } from "@/lib/ws/context";
  *
  * What the canvas cannot do is as deliberate as what it can. Nodes are not
  * draggable, addable or rewirable, because `topology` is six knobs and a
- * versioned template emits the graph (Task-Graph D1). A free-form node canvas
+ * versioned template emits the graph (D1). A free-form node canvas
  * would make invalid machines representable and drag graph validation into the
  * UI — the ordering error the epoch model exists to prevent. So the canvas
  * SELECTS and the inspector EDITS, and the round trip between them is the

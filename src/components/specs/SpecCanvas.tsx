@@ -24,7 +24,7 @@ import type { SpecGraph as SpecGraphData, SpecGraphNode } from "@/lib/specs/type
  * WHAT A CLICK MEANS HERE. Nothing on this canvas can be dragged, added or
  * rewired, and that is the design rather than an unfinished state: `topology`
  * is six knobs and a versioned template emits the nodes, so the set of
- * representable graphs is exactly the image of those templates (Task-Graph D1,
+ * representable graphs is exactly the image of those templates (D1,
  * and TG103 rejects a spec that declares `nodes:` at all). A node canvas would
  * make invalid state machines representable and pull graph validation into the
  * UI, which is the ordering error the whole epoch model exists to forbid.

@@ -38,7 +38,7 @@ flowchart LR
 
 Sketches **ship with the app**, and the shipped library is the **only** source of flashable sketches. There is no configured directory and no arbitrary-file fallback — one source of truth is what makes the error states in [§2.4](#24-error-and-empty-states) unambiguous, and shipping it is what makes the library a fact about the build rather than a setting someone can get wrong.
 
-The deliberate trade, stated plainly: **adding or changing a sketch needs a new build.** The library is staged at build time by `scripts/stage-sketches.mjs` from two source repos — the lab's firmware repo (behaviour sketches + `libraries/BehaviorBox`) and Task-Graph (`TaskRunner_*` interpreter sketches + `libraries/TaskInterpreter`) — with both `libraries/` collections merged into the one root that reaches `arduino-cli --libraries`. The Task screen names the sketch count so an operator can say which library they have.
+The deliberate trade, stated plainly: **adding or changing a sketch needs a new build.** The library is staged at build time by `scripts/stage-sketches.mjs` from two sources — the lab's firmware repo (behaviour sketches + `libraries/BehaviorBox`, still a sibling checkout) and this repo's own `firmware/` (`TaskRunner_*` interpreter sketches + `libraries/TaskInterpreter`) — with both `libraries/` collections merged into the one root that reaches `arduino-cli --libraries`. The Task screen names the sketch count so an operator can say which library they have.
 
 > [!WARNING]
 > **The rule that causes the most confusion.** A folder is a valid sketch **only if it contains a `.ino` whose filename matches the folder's own name** — `clean_flush/clean_flush.ino`, never `clean_flush/main.ino`. This is arduino-cli's requirement, not ours. Folders that fail it are **skipped and reported**, never silently dropped.
@@ -78,14 +78,14 @@ Resolution order, mirroring how the shell already picks a sidecar interpreter (`
 │       │   ├── GRGL_2-Odor.ino
 │       │   └── task.json
 │       └── libraries/           ← reserved at any depth; not passed to compile
-├── Bench/                       ← Task-Graph's interpreter sketches (bench only)
+├── Bench/                       ← interpreter sketches from firmware/ (bench only)
 │   └── TaskRunner_Dev/
 │       └── TaskRunner_Dev.ino
 └── libraries/                   ← reserved name, not a category; the MERGED root
     ├── BehaviorBox/             ← from the firmware repo
     │   ├── BehaviorBox.h
     │   └── BehaviorBox.cpp
-    └── TaskInterpreter/         ← from Task-Graph
+    └── TaskInterpreter/         ← from <repo>/firmware
 ```
 
 | Rule | Detail |

@@ -1247,7 +1247,7 @@ export interface SpecDiagnostic {
   detail: string | null;
   /** Rule-level: what to do about it. */
   help: string | null;
-  /** e.g. `D4` — a docs/decisions.md pointer. */
+  /** e.g. `D4` — a docs/taskgraph-decisions.md pointer. */
   decision: string | null;
 }
 

@@ -1,4 +1,4 @@
-"""The Task-Graph compiler, behind an import that is allowed to fail.
+"""The task-spec compiler, behind an import that is allowed to fail.
 
 Everything here is pure and thread-safe, which matters because `compile()` runs on
 every keystroke and must therefore run in a worker thread: a 50-150 ms synchronous

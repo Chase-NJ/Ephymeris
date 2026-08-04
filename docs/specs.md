@@ -4,17 +4,17 @@
 
 > **What this is** · The task-spec editor under the Task tab: a declarative task compiled into a state table that a fixed on-board interpreter walks. **Tasks stop being firmware and become data** — a new task ships without touching C++.
 >
-> **Owns** · The vendored Task-Graph compiler · where specs live and how edits are stored · the editor (form, palette, graph, diff) · the bench upload path · the boundaries that keep all of it away from live sessions.
+> **Owns** · Where specs live and how edits are stored · the editor (form, blocks, graph, diff) · the wizard · the bench upload path · the boundaries that keep all of it away from live sessions.
 >
-> **Read with** · [tasks.md](tasks.md) (the *other* kind of task — sketches and `task.json`) · [websocket-protocol.md](websocket-protocol.md) §3.6–3.7 (the wire) · [README.md §6.4](README.md#64-dependency-policy) (the dependency fence) · Task-Graph's own `docs/` for the compiler's internals.
+> **Read with** · [TaskGraph.md](TaskGraph.md) (the compiler itself — design theory, the byte format, the decision log) · [creating-a-task.md](creating-a-task.md) (authoring, for the person designing an experiment) · [tasks.md](tasks.md) (the *other* kind of task — sketches and `task.json`) · [websocket-protocol.md](websocket-protocol.md) §3.6–3.7 (the wire) · [README.md §6.4](README.md#64-dependency-policy) (the dependency fence).
 
-**Contents** — [1. What a spec is](#1-what-a-spec-is) · [2. The vendored compiler](#2-the-vendored-compiler) · [3. Where specs live](#3-where-specs-live) · [4. The editor](#4-the-editor) · [5. The graph is the editor](#5-the-graph-is-the-editor) · [6. The diff as a review](#6-the-diff-as-a-review) · [7. The bench](#7-the-bench) · [8. What is proven, and what is not](#8-what-is-proven-and-what-is-not)
+**Contents** — [1. What a spec is](#1-what-a-spec-is) · [2. The compiler](#2-the-compiler) · [3. Where specs live](#3-where-specs-live) · [4. The editor](#4-the-editor) · [5. The graph is the editor](#5-the-graph-is-the-editor) · [6. The diff as a review](#6-the-diff-as-a-review) · [7. The bench](#7-the-bench) · [8. What is proven, and what is not](#8-what-is-proven-and-what-is-not)
 
 ---
 
 ## 1. What a spec is
 
-A YAML document with four layers, compiled by the [Task-Graph](../../Task-Graph) compiler into a byte table a fixed interpreter executes:
+A YAML document with four layers, compiled into a byte table a fixed interpreter executes ([TaskGraph.md](TaskGraph.md)):
 
 | Layer | Key | Changes |
 |---|---|---|
@@ -23,61 +23,157 @@ A YAML document with four layers, compiled by the [Task-Graph](../../Task-Graph)
 | **3 · Timing** | `timing` | One duration per id. Order is load-bearing — the index is what the firmware holds |
 | **4 · Policy** | `policy` | Selection, correction, penalty escalation, the shaping schedule, trial count, seed |
 
-There is deliberately **no `nodes:` key**. Task authors never write a node: the set of representable graphs is exactly the image of the templates over the topology knobs, which is what makes compilation, validation and this editor tractable (Task-Graph D1 — a spec declaring `nodes` is rejected with a message saying so, TG103).
+There is deliberately **no `nodes:` key**. Task authors never write a node: the set of representable graphs is exactly the image of the templates over the topology knobs, which is what makes compilation, validation and this editor tractable ([D1](taskgraph-decisions.md#d1) — a spec declaring `nodes` is rejected with a message saying so, TG103).
 
 **The one shape-bearing exception to layer 1, named because hiding it would be worse:** `contingency.outcome_map.correct.reward` is a layer-2 field, and setting it to `null` omits the reward delivery `PULSE` and the consumption `WAIT_EXIT` from the outcome epoch entirely (`four_epoch/v2.py`'s `if correct.reward:`). An unrewarded 2AFC really is a different machine from a rewarded one. Everything else in layers 2–4 changes content, ordering or duration and leaves the node set alone.
 
 > [!CAUTION]
-> **A spec is a SIBLING artifact to a sketch's `task.json`, never an extension of it.** The two describe different things and hash differently: `profile_hash` is what Analytics groups a sketch's historical runs by, and adding anything to `task.json` to make a graph authorable would split every sketch's past runs from its future ones permanently ([tasks.md §4.1](tasks.md#41-why-derived-not-declared), Task-Graph D7). Both kinds of task live on the one Task screen — the spec workbench above, the sketch section below — because both answer "what does the animal do".
+> **A spec is a SIBLING artifact to a sketch's `task.json`, never an extension of it.** The two describe different things and hash differently: `profile_hash` is what Analytics groups a sketch's historical runs by, and adding anything to `task.json` to make a graph authorable would split every sketch's past runs from its future ones permanently ([tasks.md §4.1](tasks.md#41-why-derived-not-declared), [D7](taskgraph-decisions.md#d7)). Both kinds of task live on the one Task screen — the spec workbench above, the sketch section below — because both answer "what does the animal do".
 
 Provenance mirrors the shapes Ephymeris already records: `spec_hash` is SHA-256 over the **parsed document** (16 hex chars, like `profile_hash`/`params_hash`), so reformatting never moves it; the compiled table additionally carries the template name, version and **source hash**, so editing a pinned template — which the file-per-version rule forbids — shows up as a diff rather than a silent change.
 
-## 2. The vendored compiler
+## 2. The compiler
 
-The compiler is copied into `sidecar/vendor/` **byte-identical** to its source repo, mirroring Task-Graph's repo root (`taskgraph/` and `schema/` stay siblings — four modules resolve paths as `__file__/../../…`). It is imported through one `sys.path` entry (`specs/_vendor.py`), never by a dotted package path: the linter's rule registry and the cached registries are module-level state, and a second module object means two vocabularies disagreeing silently.
+The compiler lives in the sidecar as a first-class subpackage,
+`sidecar/ephymeris_sidecar/taskgraph/`, imported by dotted path like anything
+else. Its design is [TaskGraph.md](TaskGraph.md); this section covers only the
+seam between it and the app.
 
-Two drift guards, and neither can do the other's job:
+It used to be vendored byte-identical from a sibling repository and reached
+through a `sys.path` insert, with a sync script and two mirror-drift test suites
+holding the two copies together. That arrangement bought drift detection between
+two repos, and cost a dead `codegen` pass, a build that silently depended on
+`../Task-Graph` existing, and a rule that no one could nest the tree one level
+deeper. Task-Graph is Ephymeris, so it is in here now. The two-module-objects
+hazard the `sys.path` insert had to manage — a second copy of the linter's rule
+registry and the `lru_cache`d registries, disagreeing silently — is structurally
+impossible once there is only a dotted path.
 
-| Where | Catches |
-|---|---|
-| `sidecar/tests/test_vendor_drift.py` | someone **edited the copy** — compares against the `VENDORED` manifest, no second repo needed |
-| Task-Graph `tests/test_ephymeris_mirror.py` | the copy is **stale** — runs the sync script's own `--check` against this checkout |
+`taskgraph/paths.py` is the one place `__file__` is walked. Runtime data
+(`schema/`, `hardware/`, `templates/`, `paradigms/`) resolves package-relative and
+is present in every install; repo-only paths (`firmware/`, test fixtures) walk up
+for a marker file and raise a named error when frozen, because a packaged sidecar
+has no business writing C headers.
 
-To update: run Task-Graph's `scripts/sync_to_ephymeris.py --dest <ephymeris>/sidecar/vendor` and commit the result here.
+**The dependency fence** ([README.md §6.4](README.md#64-dependency-policy)):
+`jsonschema` + `pyyaml` are the sidecar's second exception, and a weaker one than
+`grpcio`'s — nothing stands in for a compiler. On import failure every `specs.*`
+command raises `SPEC_COMPILER_UNAVAILABLE`, the Task screen shows one banner, and
+the legacy `task.json` path, flashing, and the whole session flow are untouched.
+That fence survived the fold unchanged, because it was never about where the
+source lived: **a rig that cannot compile a spec must still run sessions.**
 
-**The dependency fence** ([README.md §6.4](README.md#64-dependency-policy)): `jsonschema` + `pyyaml` are the sidecar's second exception, and a weaker one than `grpcio`'s — nothing stands in for a compiler. On import failure every `specs.*` command raises `SPEC_COMPILER_UNAVAILABLE`, the Task screen shows one banner, and the legacy `task.json` path, flashing, and the whole session flow are untouched. The startup log line comes from `compiler.self_check()`, which **compiles a real bundled spec** rather than merely importing — a packaged build can bundle the tree, import it, and still fail every compile on missing metaschema data, and an import check reported ready for exactly that build once.
+The startup line comes from `compiler.self_check()`, which **generates a paradigm
+skeleton and compiles, lints and packs it** rather than merely importing:
 
-In a packaged build the vendor tree ships as PyInstaller `--add-data` — plain `.py` on disk, never in the archive, because `templates.load()` imports a module whose name it computes and `source_hash()` reads the file's own bytes.
+```
+task spec compiler ready (7 paradigms, 2 template versions,
+pinout behaviorbox_mega2560.v1, from .../ephymeris_sidecar/taskgraph)
+```
+
+That probe is deliberately end-to-end. A packaged build can bundle the tree,
+import it, and still fail every compile on missing metaschema data — and an
+import-only check reported ready for exactly that build once. The generated probe
+exercises the paradigm registry, the template, the composed pinout, the strobe
+vocabulary, `jsonschema`'s own data, the linter and the packer, so every data file
+a freeze could drop is proven at startup rather than at first use in a lab.
+
+In a packaged build the data files ship via `--collect-data`, and
+`taskgraph/templates/` additionally as `--add-data` — plain `.py` on disk, never
+in the archive, because `templates.load()` resolves a version file by path and
+`source_hash()` hashes its bytes. A template family directory therefore carries no
+`__init__.py`: that is what stops PyInstaller's `--collect-submodules` baking a
+second copy into the archive under the very name `load()` caches.
 
 ## 3. Where specs live
 
 ```
-sidecar/vendor/specs/               the bundled specs — read-only, one copy shared
-                                    with the compiler's own checked-in listings
 <data_dir>/specs/
-  user/<spec_id>.yaml               user-created and user-edited
-  shipped-baseline/<spec_id>.yaml   the shipped bytes as of the user's first edit
-  index.json                        {spec_id: {baselineSha, editedAt}}
+  user/<spec_id>.yaml               every spec on this rig
+  index.json                        {spec_id: {editedAt}}
 ```
 
-Sidecar-side writes, under the same roof as `ephymeris.db` — no Tauri fs capability involved.
-
-**No seeding.** Nothing is copied on first use: the compiler only reads, so a bundled spec is served as-is and one that ships changed simply *is* changed for anyone who hasn't edited it. A user file with a bundled id **shadows** it; the shipped bytes are baselined *before* the first edit lands, so no ordering exists in which an edit lacks its undo. The shipped file itself is never modified — which is why **Reset to shipped restores it byte-for-byte, comments included** (the shipped specs' comments cite firmware line numbers; they are documentation, and the editor's YAML rewrite would destroy them, which the workbench says at the moment of first divergence).
-
-**No merging.** When an app update changes a bundled spec underneath a local edit, the entry gets `upstreamChanged` and the user picks: **Keep mine** (re-baseline) or **Take the new shipped version** (reset). A wrong automatic merge of two task definitions is an experiment nobody designed; a badge is annoying, which is the correct price.
-
-Three origins ride every list row: `shipped` · `shipped_edited` · `user`. The save target is the **document's own `spec_id`**, so renaming the id field and saving creates a copy. The id is also a filename; it dies at a regex (`^[a-z][a-z0-9_]{0,39}$`) before any path join.
-
-**Creating a task is that same rename-and-save, given a front door.** *New task* opens a paradigm gallery over the bundled specs (`components/specs/NewSpecGallery.tsx`): pick one, take a new id and label, and it is fetched, re-identified and saved under the new id. The source is untouched because nothing wrote to it. **No new wire command exists for this, and none should** — a blank-skeleton generator would be a second definition of what a minimal legal spec is, competing with the schema; a bundled paradigm is a task the compiler *and* the linter already agree on, and it arrives carrying its author's notes. *Duplicate* on a library card is the same path with the id chosen for you. All three surfaces go through one function, `lib/specs/create.ts::createSpecFrom` — they were on their way to being three near-copies, which is how the rewrite-the-id-in-the-document rule gets forgotten in one of them.
-
-**A paradigm is a SHAPE, not a spec id** (`lib/specs/paradigms.ts`). Five bundled specs are three graphs: `grgl_2odor` *is* two-alternative forced choice, and `shaping_gr`/`shaping_gr_ez` are the same 26-state machine with a timing ramp — `specs.diff` between them shows no structural hunks, which §6 already names as the test of a `derived_from` claim. The gallery groups them as variants under one paradigm and says "same machine, different timings" out loud, because listing them as three paradigms would teach that a timing ramp is a different kind of task. Matching is by **fingerprint computed from the document**, never by spec id, so a rig's own `my_task_3` lands under the right paradigm without being registered anywhere and one that matches nothing reads honestly as Custom.
-
-**The wizard** (`routes/TaskNew.tsx`, `/task/new`) walks the questions with the compiled machine beside them. It is a route rather than a modal for the reasons §7 gives the bench — it needs the canvas at a usable size, `Modal` is capped, the unsaved guard is per-route, and arriving should be deliberate.
+Sidecar-side writes, under the same roof as `ephymeris.db` — no Tauri fs
+capability involved.
 
 > [!IMPORTANT]
-> **The wizard always starts from a bundled paradigm, and that is the argument above, not a convenience.** Every step is an *edit* to a document the compiler and the linter already agree on, applied through the same structural blocks the Designer exposes (§4), so "it compiles at every step" is on screen rather than claimed. The moment it grows a *start from nothing* option it becomes the blank-skeleton generator this section rejects.
+> **Nothing ships as a spec.** A fresh install has an empty library. Every task on
+> a rig is that rig's own, which is why there is exactly one origin (`user`) and
+> the only thing the editor's chip still says is whether there are unsaved edits.
 
-Paradigms this rig can reach that no bundled file holds are **recipes**: a base plus a fixed sequence of those same blocks (unrewarded 2AFC, three-stimulus sequence, shaping with no stimulus). A recipe is not a skeleton generator either — it is a sequence of edits to a spec that already compiled. New bundled *files* cannot come from here at all: `sidecar/vendor/` is byte-identical to Task-Graph and drift-tested, so a genuinely new bundled paradigm arrives through the sync script (§2) or not at all.
+This replaced a shipped/shadow/baseline arrangement: five specs bundled read-only,
+a user file shadowing one by id, the shipped bytes baselined before the first
+edit, and an `upstreamChanged` badge offering Keep-mine or Reset when an app
+update moved a bundled spec underneath a local edit. All of it existed to answer
+"what happens when we ship a new version of a task the user has edited" — a
+question that stops being askable once no task ships.
+
+What replaced it is **paradigms** ([§3.1](#31-paradigms-and-the-skeleton)), which
+are a genuinely different thing: a bundled spec was a *task*, and shipping one
+meant shipping an experiment somebody would run. A paradigm is a *shape*, and
+generating from it produces a document the rig owns outright from its first save.
+
+The save target is the **document's own `spec_id`**, so renaming the id field and
+saving creates a copy — that is the entire Duplicate flow, riding one text field.
+The sidecar refuses a parsed document whose id disagrees with the target, so the
+two cannot drift. The id is also a filename; it dies at a regex
+(`^[a-z][a-z0-9_]{0,39}$`) before any path join.
+
+### 3.1 Paradigms and the skeleton
+
+Seven paradigm files (`taskgraph/paradigms/*.yaml`) declare **knobs, counts,
+questions and prose** — never a node, never a timing value, never a strobe code.
+`schema/paradigm.v1.json` rejects the rest, so a paradigm file cannot grow into a
+second spec format.
+
+`specs.skeleton` returns **YAML text plus the compile result** in one round trip:
+text because the LOAD pass checks things that only exist before parsing, and the
+result because it makes "it compiles at step zero" true rather than claimed. It is
+pure and writes nothing — creation stays `specs.save`, so `createSpecFrom` keeps
+its single definition.
+
+> [!NOTE]
+> **This section used to forbid a skeleton generator**, on the grounds that it
+> would be "a second definition of what a minimal legal spec is, competing with
+> the schema". That objection was comparative — generator *versus* bundled
+> paradigm — and with zero bundled specs the second term is gone.
+>
+> More to the point, **the generator defines nothing.** Every value it emits is
+> read from an existing authority: which knobs are fixed from the paradigm file;
+> outcome classes, timing ids and per-id defaults from the template, via
+> `capabilities()` extended with `outcome_defaults`/`timing_defaults`; channel
+> names and reward pairings from the channel registry; per-port strobes from the
+> vocabulary; everything else from the user's answer, or the field is not emitted.
+> That is `operations.ts`'s existing rule — *seeded from a sibling or asked for
+> inline, never from a defaults table* — applied to creation instead of edit.
+>
+> Putting the defaults in the **template** is the load-bearing part. The template
+> already decides which outcome classes exist and already consumes each one's
+> trigger, terminal, delay and strobe when it emits nodes. And the firmware's own
+> `TaskParams` in-class defaults *are* the GRGL values, so `timing_defaults` is not
+> an invention — it is the same provenance the deleted specs carried, moved next
+> to the template that emits the node. `wire_key` and `note` ride along with it.
+
+**What was traded, stated honestly:** the deleted specs carried author comments
+citing firmware line numbers, and Reset-to-shipped restored them byte for byte.
+Those comments are partly recovered through `timing_defaults`, whose notes are
+emitted into every generated skeleton — but a spec the operator has edited for
+six months no longer has a pristine version to fall back to, because there is no
+longer a shipped copy for it to differ from.
+
+**A paradigm is matched by fingerprint, not by id.** `paradigms.fingerprint()`
+computes a rig's own `my_task_3` back to the paradigm whose knobs it matches, so
+it lands under the right heading without being registered anywhere, and one that
+matches nothing reads honestly as Custom.
+
+**The wizard** (`routes/TaskNew.tsx`, `/task/new`) walks the paradigm's questions
+with the compiled machine beside them, and is a route rather than a modal for the
+reasons §7 gives the bench — it needs the canvas at a usable size, `Modal` is
+capped, the unsaved guard is per-route, and arriving should be deliberate. Each
+step recompiles, so a step that leaves the task unable to compile says so there
+rather than at the end. When the library is empty, `Task.tsx` renders the paradigm
+cards **inline in the hero**: with nothing shipped, that is the first-run
+experience rather than a footnote.
 
 ## 4. The editor
 
@@ -86,7 +182,7 @@ The form is generated, not written, from three sources with strict jobs:
 | Source | Says |
 |---|---|
 | `schema/task_spec.v1.json` | what is **legal** — types, ranges, enums |
-| `schema/task_spec.presentation.v1.json` | what a field is **called** and which **widget** edits it (labels, units, groups, help). Lives in Task-Graph beside the schema it describes, tested there for two-way coverage |
+| `taskgraph/schema/task_spec.presentation.v1.json` | what a field is **called** and which **widget** edits it (labels, units, groups, help). Lives beside the schema it describes, with a test pinning two-way coverage |
 | the document | which **rows exist** |
 | `capabilities(topology)` | which rows this topology **needs** |
 
@@ -97,10 +193,10 @@ The form is generated, not written, from three sources with strict jobs:
 
 Four rules that make a block safe to press:
 
-- **A new timing row is seeded from a sibling in the same document, or asked for inline — never from a defaults table.** A table would be a second definition of what a reasonable task looks like, competing with the bundled specs. `t_sample_hold_1` copies `t_sample_hold_0` (the template's own comment says stage-indexed ids exist so each stage is independently rampable); `t_retention` and `t_resp_hold` have no peer and so are asked for, and Apply waits. A seeded row's preflight line names the row it copied.
+- **A new timing row is seeded from a sibling in the same document, or asked for inline — never from a defaults table.** A table would be a second definition of what a reasonable task looks like, competing with the template's own `timing_defaults` (§3.1). `t_sample_hold_1` copies `t_sample_hold_0` (the template's own comment says stage-indexed ids exist so each stage is independently rampable); `t_retention` and `t_resp_hold` have no peer and so are asked for, and Apply waits. A seeded row's preflight line names the row it copied.
 - **An op that changes a value a `note:` describes deletes the note, and says so.** Rewriting one means inventing a firmware citation; leaving it makes a pinned line number a lie. `t_resp_win → t_withhold_win` is a *different* firmware field (`fluidWellPoll` → `nogoWellPoll`) so the note and `wire_key` go; `t_sample_hold → t_sample_hold_0` is the same field at a new index, so they stay.
 - **Stale outcome classes are deleted; stale timing rows are kept and greyed.** TG302 errors in both directions, so a class the topology cannot produce is a hard error and has to go (the baseline recovers it). An unused timing row is merely unused — hiding or deleting one silently orphans a value the operator typed.
-- **An op that cannot be made valid says why, from the registry.** *Add a response option* ships permanently blocked because `channels.v1.json` declares exactly two `kind: response` channels and both are bound; the message is computed from the registry rather than hardcoded, so a Task-Graph registry change plus a re-sync turns the op on with no frontend edit. It exists rather than being absent so the UI can explain.
+- **An op that cannot be made valid says why, from the registry.** *Add a response option* ships permanently blocked because `channels.v1.json` declares exactly two `kind: response` channels and both are bound; the message is computed from the registry rather than hardcoded, so a hardware change that adds a third response channel turns the op on with no frontend edit. It exists rather than being absent so the UI can explain.
 
 > [!CAUTION]
 > **A block must fill every field its new shape makes reachable, not just the ones its knob names.** Switching go/no-go → n-alternative is the case that already bit: a withhold task's ports declare `enter_code` and nothing else, because it never reports a wrong port, a broken response hold, or leaving a reward port. All three become reachable at once and TG506 wants a code for each on *every* port — the operation shipped without them and produced six errors. `sidecar/tests/test_spec_operations.py` pins both directions, including the negative case.
@@ -109,7 +205,7 @@ Four rules that make a block safe to press:
 
 **A spec that doesn't compile is a successful reply carrying diagnostics, never an error** — the Analytics corrupt-file discipline. Each diagnostic arrives with its `placement` precomputed by the compiler's own `placement()` (field / row / section / node / document) and an `anchor` that is an overlay key — so putting an error next to the input that caused it is a dictionary lookup, and the frontend never parses a location. The panel below the form lists **every** diagnostic regardless, with `help` and the `D-number` decision pointer, because a diagnostic that reaches nobody is the failure mode the whole design exists to avoid.
 
-Pickers draw from the **vendored registry files** — the same bytes the compiler validates against — served once per mount by `specs.schema`. The frontend never holds its own copy of a registry: a strobe picker offering a code the compiler rejects would be manufacturing an error.
+Pickers draw from the **registry files** — the same bytes the compiler validates against, served as the compiler's own composed view (logical channels merged with the active pinout) rather than one of its raw inputs — once per mount, via `specs.schema`. The frontend never holds its own copy of a registry: a strobe picker offering a code the compiler rejects would be manufacturing an error.
 
 ## 5. The graph is the editor
 
@@ -140,13 +236,13 @@ Text is budgeted rather than trusted: SVG text neither wraps nor clips, so band 
 
 ## 6. The diff as a review
 
-`specs.diff` diffs the **listing** — the compiler's checked-in review artifact — never the YAML. Headline first (`26 → 29 states · 462 → 508 bytes`); hunks grouped by the listing's own ruled sections so a change reads as *"in STATES"*; `spec_hash`/`template_hash` move on every edit and are confined to a provenance strip, never hunks. Baselines: *vs shipped*, *vs saved*, or *vs another spec* — the last is how a `derived_from` claim gets read: an eased variant against its base shows **no structural hunks** (same nodes, same edges), with values moving in TIMING VECTOR and its derived sections (STAGE SCHEDULE, DWELL BUDGET) alongside.
+`specs.diff` diffs the **listing** — the compiler's checked-in review artifact — never the YAML. Headline first (`26 → 29 states · 462 → 508 bytes`); hunks grouped by the listing's own ruled sections so a change reads as *"in STATES"*; `spec_hash`/`template_hash` move on every edit and are confined to a provenance strip, never hunks. Baselines: *vs saved*, or *vs another spec* — the second is how a `derived_from` claim gets read: an eased variant against its base shows **no structural hunks** (same nodes, same edges), with values moving in TIMING VECTOR and its derived sections (STAGE SCHEDULE, DWELL BUDGET) alongside.
 
 `specs.export` returns bytes in the reply — spec, listing, lint, canonical JSON, packed `.bin`, bench card — and the frontend writes one artifact at a time through the user's own save dialog. No wire command writes an arbitrary file.
 
 ## 7. The bench
 
-Probing and upload own the port through a dedicated **`UPLOADING`** state — `FLASHING`'s twin (force-release passthrough, auto-resume), but the uploader opens its **own** serial handle: the passthrough ring buffer is drained by the 20 Hz flusher, not consumed, and a table transfer is request/response with deadlines. `ports/upload.py::PortLink` implements the vendored transport's `Link`; progress is extracted *inside* the link (chunks counted at the board's ACK, not at hopeful writes) so `taskgraph.transport.client` is used unmodified; the console mirror carries headline lines and never the hex chunks.
+Probing and upload own the port through a dedicated **`UPLOADING`** state — `FLASHING`'s twin (force-release passthrough, auto-resume), but the uploader opens its **own** serial handle: the passthrough ring buffer is drained by the 20 Hz flusher, not consumed, and a table transfer is request/response with deadlines. `ports/upload.py::PortLink` implements the compiler transport's `Link`; progress is extracted *inside* the link (chunks counted at the board's ACK, not at hopeful writes) so `taskgraph.transport.client` is used unmodified; the console mirror carries headline lines and never the hex chunks.
 
 The pieces that exist because hardware taught them:
 
@@ -160,15 +256,15 @@ The bench is **its own route** (`/task/bench`, reached from the landing page or 
 > **Bench only.** The table interpreter is proved off-target and has never driven a pin — a box carrying TaskRunner accepts a table and reports whether it fits. It runs no trial and delivers no reward. Do not put an animal in a box running this.
 
 > [!CAUTION]
-> **The no-session invariant, structurally enforced:** no wire command ties a spec to a session. `sessions.confirmMapping` does not learn a `specId`, `port.startSession` is untouched, and `UPLOADING ↔ IN_SESSION` is illegal in the transition table in both directions. That door opens at Task-Graph Phase 5's exit criteria — actuator timing verified on hardware, parallel run clean — not because the parts happened to be ready.
+> **The no-session invariant, structurally enforced:** no wire command ties a spec to a session. `sessions.confirmMapping` does not learn a `specId`, `port.startSession` is untouched, and `UPLOADING ↔ IN_SESSION` is illegal in the transition table in both directions. That door opens at the Phase 5 exit criteria — actuator timing verified on hardware, parallel run clean — not because the parts happened to be ready.
 
 ## 8. What is proven, and what is not
 
-**Proven, on a real Mega2560 through the app's own wire commands** (2026-08-03): the legacy-sketch flash against the merged bundled libraries; the no-CAP probe and refusal with the port landing cleanly; TaskRunner_Dev flashed and announcing `PROTO=2 WIRE=1` with the full capacity set at 115200; `grgl_2odor` uploaded — 558 bytes / 9 chunks / 207 ms — with CRC **and** body digest confirmed (the CRC says the bytes arrived; the digest says they decoded into the right fields); the baud cache invalidated by a flash and skipping detection on the second upload. Off-target, the same sidecar-compiled tables go `TABLE OK` into `tg_board`, the real receiver compiled for the host — and every upload-protocol failure mode stays covered by Task-Graph's own `test_uploader.py`, deliberately not retested here.
+**Proven, on a real Mega2560 through the app's own wire commands** (2026-08-03): the legacy-sketch flash against the merged bundled libraries; the no-CAP probe and refusal with the port landing cleanly; TaskRunner_Dev flashed and announcing `PROTO=2 WIRE=1` with the full capacity set at 115200; a compiled 2AFC table uploaded — 558 bytes / 9 chunks / 207 ms — with CRC **and** body digest confirmed (the CRC says the bytes arrived; the digest says they decoded into the right fields); the baud cache invalidated by a flash and skipping detection on the second upload. Off-target, the same sidecar-compiled tables go `TABLE OK` into `tg_board`, the real receiver compiled for the host — and every upload-protocol failure mode stays covered by the compiler's own `tests/compiler/test_uploader.py`, deliberately not retested at the app layer.
 
-**The structural blocks** (§4) are covered two ways, and the gap between them is worth naming. `sidecar/tests/test_spec_operations.py` applies each op's path edits to each bundled spec and asserts the real compiler accepts the result — but it is a **second implementation in Python**, so it proves the design is sound and *not* that `operations.ts` implements it; when an op changes, that file must be changed by hand. The other way is driving the app: every unblocked op on every bundled spec, watching `CompileLine`. **There is no frontend test runner** — `npm run typecheck` is the only automated frontend gate, and since `SpecDocument` is `Record<string, unknown>` it cannot check a document path either. That is a named gap, not an oversight.
+**The structural blocks** (§4) are covered two ways, and the gap between them is worth naming. `sidecar/tests/test_spec_operations.py` applies each op's path edits to each paradigm skeleton and asserts the real compiler accepts the result — but it is a **second implementation in Python**, so it proves the design is sound and *not* that `operations.ts` implements it; when an op changes, that file must be changed by hand. The other way is driving the app: every unblocked op on a task generated from each paradigm, watching `CompileLine`. **There is no frontend test runner** — `npm run typecheck` is the only automated frontend gate, and since `SpecDocument` is `Record<string, unknown>` it cannot check a document path either. That is a named gap, not an oversight.
 
-**Not proven, and marked accordingly:** anything involving an animal. The interpreter has never driven a solenoid, a light, or a vacuum line under this app — that is Task-Graph Phase 5 (bench jig, scope, parallel run), and until its exit criteria hold, the bench strip and the no-session invariant are the boundary. Also still open: the spec editor on Windows (packaging is staged but the frozen vendor tree is verified on macOS only), and a crashed client leaves `benchHold` set until app restart — deliberate, erring toward not-reflashing, but worth knowing when a box mysteriously stops returning to baseline.
+**Not proven, and marked accordingly:** anything involving an animal. The interpreter has never driven a solenoid, a light, or a vacuum line under this app — that is Phase 5 (bench jig, scope, parallel run), and until its exit criteria hold, the bench strip and the no-session invariant are the boundary. Also still open: the spec editor on Windows (a frozen build is verified on macOS only), and a crashed client leaves `benchHold` set until app restart — deliberate, erring toward not-reflashing, but worth knowing when a box mysteriously stops returning to baseline.
 
 ---
 

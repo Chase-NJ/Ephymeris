@@ -240,11 +240,20 @@ Owns everything stateful. See [§6.4](#64-dependency-policy) before adding a run
 | `tasks/seed.py` | Draws the per-run `SEED` value | [tasks §6.4](tasks.md#64-seed) |
 | `utility.py` | The hardware utility baseline: what firmware each box is believed to carry, restoring idle boxes, the `identify` signal, and the bench hold | [settings §8](settings.md#8-the-hardware-utility-baseline), [specs §7](specs.md#7-the-bench) |
 | **`specs/`** | | |
-| `specs/_vendor.py` | Puts `sidecar/vendor/` (the byte-identical Task-Graph compiler) on `sys.path` — one import path only | [specs §2](specs.md#2-the-vendored-compiler) |
-| `specs/compiler.py` | The guarded import, `self_check()` (compiles a real spec, not just imports), registries, emitters | [specs §2](specs.md#2-the-vendored-compiler) |
-| `specs/store.py` | Where specs live: bundled + user copies, shipped baselines, shadow/reset, the no-merge policy | [specs §3](specs.md#3-where-specs-live) |
-| `specs/service.py` | CompileResult → wire shapes; diagnostic placement; the listing diff; artifact export | [specs §4](specs.md#4-the-editor), [§6](specs.md#6-the-diff-as-a-review) |
-| `ports/upload.py` | `PortLink`: the vendored transport's `Link` over one box's own serial handle, with ACK-counted progress and the filtered console mirror | [specs §7](specs.md#7-the-bench) |
+| `specs/compiler.py` | The guarded import, `self_check()` (generates a paradigm skeleton and compiles it, not just imports), registries, emitters | [specs §2](specs.md#2-the-compiler) |
+| `specs/store.py` | Where specs live — one directory of user files, and nothing else | [specs §3](specs.md#3-where-specs-live) |
+| `specs/service.py` | CompileResult → wire shapes; diagnostic placement; the listing diff; artifact export; paradigms and skeletons | [specs §4](specs.md#4-the-editor), [§6](specs.md#6-the-diff-as-a-review) |
+| `ports/upload.py` | `PortLink`: the compiler transport's `Link` over one box's own serial handle, with ACK-counted progress and the filtered console mirror | [specs §7](specs.md#7-the-bench) |
+| **`taskgraph/`** | **The task-spec compiler.** Formerly a separate repo vendored into `sidecar/vendor/`; now a first-class subpackage | [**TaskGraph.md**](TaskGraph.md) |
+| `taskgraph/paths.py` | The one place `__file__` is walked. Runtime data resolves package-relative; repo-only paths walk up for a marker and raise when frozen | [TaskGraph §5](TaskGraph.md#5-paradigm--template--hardware--spec) |
+| `taskgraph/graph.py` | The six primitives, the eight triggers, the four bands, and `TRIGGERS_FOR` — the authority for trigger totality | [TaskGraph §3](TaskGraph.md#3-six-primitives-four-epochs) |
+| `taskgraph/pipeline.py` | P0 LOAD → P1 BIND → P2 TEMPLATE → P3 EMIT+LOWER → P4 GRAPH → P5 PACK | [TaskGraph §4](TaskGraph.md#4-the-compile-pipeline) |
+| `taskgraph/paradigms.py` | The seven paradigms and the skeleton generator. Defines no value — reads every one from template, registry, vocabulary or answer | [specs §3.1](specs.md#31-paradigms-and-the-skeleton) |
+| `taskgraph/templates/four_epoch/v{1,2}.py` | Knobs → nodes and edges. **Versioned by file; never edited once pinned** | [D14](taskgraph-decisions.md#d14) |
+| `taskgraph/registries.py` | `ChannelMap` composing logical channels with the active pinout; the strobe vocabulary; runtime limits | [D15](taskgraph-decisions.md#d15) |
+| `taskgraph/codegen/layout.py` | Record widths, generating **both** the Python packer and the C++ `static_assert`s | [D17](taskgraph-decisions.md#d17) |
+| `taskgraph/emit/pack.py` | The byte format: 24-byte header, 12 sections, trailing CRC | [TaskGraph §6](TaskGraph.md#6-the-byte-table-and-the-wire) |
+| `taskgraph/lint/rules_*.py` | 39 rules, banded TG1xx–TG5xx by the pass that finds them | [TaskGraph §4](TaskGraph.md#4-the-compile-pipeline) |
 
 ### 4.2 React frontend — `src/`
 
@@ -346,9 +355,10 @@ The interpreter resolves to `sidecar/.venv` unless `EPHYMERIS_SIDECAR_PYTHON` ov
 | `test_grouping.py` | 19 | Auto-Balance round-robin |
 | `test_data_folder.py` | 19 | Resolution, sanitization, collision suffixing |
 | `test_utility.py` | 18 | The baseline against the real port manager: restores only from `IDLE`, the session hold, belief invalidation, the identify handshake incl. the silent-board case. The harness deliberately feeds the retired `utilitySketchPath` key, doubling as an integration test of the basename healing |
-| `test_vendor_drift.py` | 4 | `sidecar/vendor/` matches the `VENDORED` manifest — catches an in-place edit of the vendored compiler; staleness is Task-Graph's own mirror test |
-| `test_vendor_imports.py` | 18 | The compiler resolves out of the vendor tree exactly once; `self_check()` compiles a real spec; every bundled spec's listing is byte-equal to the checked-in artifact |
-| `test_specs_service.py` | 27 | The store (shadow/baseline/reset/no-merge, id-as-filename), compile payloads validate as wire shapes, diagnostic placement, the listing diff incl. the EZ-variant structural claim, export |
+| `tests/compiler/` | ~900 | The compiler's own suite, moved in with it: the six passes, every lint rule, the templates, the packer, the transport, gates A–F against the off-target board. Test data comes from generated skeletons (`tgpaths.py`), not from checked-in specs |
+| `test_compiler_imports.py` | 18 | The compiler resolves by dotted path only — `test_no_bare_taskgraph_module_exists` fails if a `sys.path` hack ever reappears; `self_check()` generates and compiles a real skeleton |
+| `test_taskgraph_docs.py` | 6 | The `two_afc` skeleton embedded in `creating-a-task.md` is byte-current **and compiles**; every `decision=` a rule carries has an anchor to land on |
+| `test_specs_service.py` | 27 | The store (id-as-filename, delete), compile payloads validate as wire shapes, diagnostic placement, the listing diff, paradigms and skeletons, export |
 | `test_bundled_library_covers_archives.py` | 3 | Every sketch name the lab's real archives record resolves against the bundled library — the guard on Analytics' orphan decoding |
 | `test_upload_link.py` | 8 | `PortLink` framing/deadlines/ACK-counted progress/mirror filtering against a scripted serial; the `UPLOADING` bracket through the real `PortManager` |
 | `test_wire_shapes.py` | 16 | Validator semantics + real `to_json` emitters conform to `protocol/schema.py` |
@@ -414,7 +424,7 @@ Sidecar runtime dependencies were **deliberately just `pyserial` and `websockets
 
 **`grpcio` + `protobuf`**, for the arduino-cli daemon backend. The policy's concern — an install that fails and takes a feature with it — is answered structurally: the subprocess backend remains as the fallback, and `create_board_tool` degrades to it (loudly, in the log) when `grpcio` doesn't import or the daemon won't start. A lab machine where the wheel failed loses live compiler streaming, never flashing. `grpcio-tools` is dev-only.
 
-**`jsonschema` + `pyyaml`**, for the vendored task-spec compiler ([specs.md](specs.md)). This one is **weaker, deliberately, and should not be read as the same grant.** There is no second implementation to fall back to — nothing stands in for a compiler the way a subprocess stands in for a daemon. So the fence is drawn around *scope* instead of capability:
+**`jsonschema` + `pyyaml`**, for the task-spec compiler ([TaskGraph.md](TaskGraph.md)). This one is **weaker, deliberately, and should not be read as the same grant.** There is no second implementation to fall back to — nothing stands in for a compiler the way a subprocess stands in for a daemon. So the fence is drawn around *scope* instead of capability:
 
 - `ephymeris_sidecar/specs/compiler.py` guards the import and exposes `available()`.
 - Every `specs.*` and `board.uploadTable` handler reports `SPEC_COMPILER_UNAVAILABLE` with the original `ImportError` in `detail`.
@@ -465,7 +475,7 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 </td></tr>
 <tr><td><b>31</b></td><td>
 
-**The spec editor is verified on macOS only.** The vendor tree freezes and self-checks in the packaged sidecar, and the whole bench path ran against a real Mega — all on this Mac. Windows, the actual lab target, has run none of it: not the frozen `--add-data` vendor tree, not `rpds-py`'s wheel on the lab's Python, not `PortLink` against a COM port (where open/reset semantics genuinely differ). First Windows packaging run should start at `compiler.self_check()`'s startup line, which was built for exactly this.
+**The spec editor is verified on macOS only.** The compiler freezes and self-checks in the packaged sidecar, and the whole bench path ran against a real Mega — all on this Mac. Windows, the actual lab target, has run none of it: not the frozen data layout, not `rpds-py`'s wheel on the lab's Python, not `PortLink` against a COM port (where open/reset semantics genuinely differ). First Windows packaging run should start at `compiler.self_check()`'s startup line, which was built for exactly this.
 
 </td></tr>
 <tr><td><b>32</b></td><td>
@@ -517,7 +527,7 @@ Small things that are true today and will confuse a reader who assumes otherwise
 
 ## 8. Documentation map
 
-Eight documents. This one is the entry point.
+Ten documents. This one is the entry point.
 
 | If you need to know… | Read |
 |---|---|
@@ -528,7 +538,10 @@ Eight documents. This one is the entry point.
 | What lands on disk, the database, the metrics, the Observatory | [**data.md**](data.md) |
 | Every settings key, box bindings, the utility baseline | [**settings.md**](settings.md) |
 | The exact shape of any command, event, payload, or error code | [**websocket-protocol.md**](websocket-protocol.md) |
-| Task specs: the compiled-task editor, the vendored compiler, the bench | [**specs.md**](specs.md) |
+| Task specs in the app: the editor, the wizard, where specs live, the bench | [**specs.md**](specs.md) |
+| **How the task compiler works** — layers, primitives, the pipeline, the byte format | [**TaskGraph.md**](TaskGraph.md) |
+| **How to author a task**, layer by layer, for someone designing an experiment | [**creating-a-task.md**](creating-a-task.md) |
+| Why the compiler is shaped the way it is — 21 decisions, each naming its rejected alternative | [taskgraph-decisions.md](taskgraph-decisions.md) |
 
 ### 8.1 Conventions
 

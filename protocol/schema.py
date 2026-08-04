@@ -1268,7 +1268,7 @@ SHAPES = (
             f("anchor", nullable(STR), doc="The overlay key, section path or node id."),
             f("detail", nullable(STR)),
             f("help", nullable(STR), doc="Rule-level: what to do about it."),
-            f("decision", nullable(STR), doc="e.g. `D4` — a docs/decisions.md pointer."),
+            f("decision", nullable(STR), doc="e.g. `D4` — a docs/taskgraph-decisions.md pointer."),
         ),
     ),
     Shape(

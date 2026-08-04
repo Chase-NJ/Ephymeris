@@ -1,4 +1,4 @@
-"""`PortLink` — Task-Graph's transport `Link`, over one box's serial port.
+"""`PortLink` — the compiler transport's `Link`, over one box's serial port.
 
 Opens its OWN `serial.Serial` rather than borrowing the handler's. The
 handler's reader thread owns its port's bytes and pushes them into a ring

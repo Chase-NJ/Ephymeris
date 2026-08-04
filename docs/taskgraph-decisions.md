@@ -8,6 +8,8 @@ Format: `## D<n> — <decision>` / Context / Decision / Alternative rejected / C
 
 ---
 
+<a id="d1"></a>
+
 ## D1 — Nodes are emitted by versioned epoch templates, never authored per task
 
 **Context.** A task spec could carry an explicit node/edge list, or carry only layer-1
@@ -25,6 +27,8 @@ copy-pasted into five specs. Linter rule: a spec containing a `nodes:` or `edges
 rejected outright.
 
 ---
+
+<a id="d2"></a>
 
 ## D2 — Paired strobes become zero-duration nodes, not per-node strobe lists
 
@@ -53,6 +57,8 @@ is now used in more places, not fewer.
 
 ---
 
+<a id="d3"></a>
+
 ## D3 — A strobe emitted before its guard resolves becomes a branch node
 
 **Context.** `BehaviorBox.h:1082` emits `WATER_POKE_L/R` the moment a well beam breaks;
@@ -69,6 +75,8 @@ require the wrong-port state to emit two codes, reintroducing D2's problem one l
 just `@`-prefixed trial bindings.
 
 ---
+
+<a id="d4"></a>
 
 ## D4 — `strobe: null` is legal and explicit
 
@@ -93,6 +101,8 @@ still exercises it, and a future spec reproducing an older build will need it ag
 
 ---
 
+<a id="d5"></a>
+
 ## D5 — Strobe codes are `uint16` in the compiled table
 
 **Context.** `BF_WATER_POKE_NONE`=256, `..._ERROR_L`=257, `..._ERROR_R`=258,
@@ -109,6 +119,8 @@ optimisation.
 codes are additionally capped at **999**. Both bounds are enforced by the vocabulary schema.
 
 ---
+
+<a id="d6"></a>
 
 ## D6 — Durations are `uint16` with an out-of-band sentinel
 
@@ -128,6 +140,8 @@ must not exercise durations above 32767 for GRGL, since `runTrial()` cannot repr
 
 ---
 
+<a id="d7"></a>
+
 ## D7 — `task.json` is not extended; the spec is a sibling artifact
 
 **Context.** Ephymeris `CLAUDE.md:114` forbids adding a `states`/`graph` key because it
@@ -144,6 +158,8 @@ comparability, which is a hard requirement.
 `(profile_hash, params_hash, spec_hash, seed)` plus firmware and protocol versions.
 
 ---
+
+<a id="d8"></a>
 
 ## D8 — One firmware value may map to several timing ids
 
@@ -163,6 +179,8 @@ inferred.
 
 ---
 
+<a id="d9"></a>
+
 ## D9 — Scoring is an edge effect, never a node or trigger property
 
 **Context.** Go/no-go requires "correct = the window expired", inverting the usual meaning
@@ -181,6 +199,8 @@ a suppressing flag.
 
 ---
 
+<a id="d10"></a>
+
 ## D10 — Capabilities are announced before `READY`, never on it
 
 **Context.** The host matches readiness as an exact whole line —
@@ -197,6 +217,8 @@ existing host would fail with "board never reported READY".
 fallback is current behaviour, not a new code path. See `docs/protocol-negotiation.md`.
 
 ---
+
+<a id="d21"></a>
 
 ## D21 — The model is authoritative; firmware conforms
 
@@ -223,6 +245,8 @@ firmware changes are enumerated in `docs/firmware-changes.md`, and a test measur
 when they have shipped.
 
 ---
+
+<a id="d20"></a>
 
 ## D20 — INVALID_TRIAL is the repeat marker, not a terminal's strobe
 
@@ -251,6 +275,8 @@ reason the corpus replay is a permanent test rather than a one-off exercise.
 
 ---
 
+<a id="d19"></a>
+
 ## D19 — Warnings are pinned by a checked-in lint baseline
 
 **Context.** Some warnings are correct and permanent — `grgl_2odor`'s deliberately
@@ -269,6 +295,8 @@ nobody reads.
 
 ---
 
+<a id="d18"></a>
+
 ## D18 — Graph rules see a GraphView, never a TaskSpec
 
 **Context.** The TG4xx rules are the ones the roadmap says deserve most of the effort.
@@ -284,6 +312,8 @@ checks that matter most would have been the ones that could never be tested. Eve
 rule now has a hand-built negative case.
 
 ---
+
+<a id="d17"></a>
 
 ## D17 — TgTimingSet carries an explicit pad byte
 
@@ -311,6 +341,8 @@ whose budget formula omitted the `timing_sets` term because the probe never allo
 
 ---
 
+<a id="d16"></a>
+
 ## D16 — Layer 4 rides the START line; a context_schedule is a hard error
 
 **Context.** `TaskTable.h` has records for the graph and timing and **none** for layer-2
@@ -327,6 +359,8 @@ it silently, which would be a reversal the spec declares, the listing shows, and
 never performs.
 
 ---
+
+<a id="d15"></a>
 
 ## D15 — A channel registry, resolved by kind
 
@@ -350,6 +384,8 @@ looks entirely correct in the listing and shows up only as an animal that will n
 
 ---
 
+<a id="d14"></a>
+
 ## D14 — Epoch templates are Python; the listing is the review artifact
 
 **Context.** D1 says nodes come from versioned templates. It did not say what a template is.
@@ -371,6 +407,8 @@ which outcome classes exist depends on `response_mode`, `commit_hold` and
 `n_sampling_stages` together — data would have needed the same mini-language.
 
 ---
+
+<a id="d13"></a>
 
 ## D13 — Serial runs at 115200, changed immediately
 
@@ -406,6 +444,8 @@ and which is the concrete argument for [[D11]].
 
 ---
 
+<a id="d12"></a>
+
 ## D12 — The outcome trigger field is named `trigger`, never `on`
 
 **Context.** The first draft of the outcome map used `on: TIMEOUT`. YAML 1.1 — which
@@ -426,6 +466,8 @@ the roadmap's claim that hand-authoring "forces every schema decision you would 
 defer" turned out to include decisions nobody would have thought to make.
 
 ---
+
+<a id="d11"></a>
 
 ## D11 — Shared limits are announced at runtime, not mirrored as constants
 

@@ -30,7 +30,7 @@ import { useSidecar } from "@/lib/ws/context";
  *
  * This is the pre-spec path and it is still the one that runs animals. Every
  * behaviour sketch compiles its own `runTrial()`; a task spec is a SIBLING
- * artifact whose interpreter has never driven a pin. Until Task-Graph's Phase 7
+ * artifact whose interpreter has never driven a pin. Until Phase 7
  * retires `runTrial()`, both are real, and this page owning the sketch half is
  * what lets the Designer own the other half without either pretending to be the
  * whole story.

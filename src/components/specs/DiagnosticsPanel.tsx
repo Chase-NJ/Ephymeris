@@ -72,7 +72,10 @@ export function DiagnosticsPanel({
                 )
               )}
               {d.decision && (
-                <span className="font-mono text-[10px] text-pulsar/80" title="See docs/taskgraph-decisions.md">
+                <span
+                  className="font-mono text-[10px] text-pulsar/80"
+                  title={`Why this rule exists — docs/taskgraph-decisions.md#${d.decision.toLowerCase()}`}
+                >
                   {d.decision}
                 </span>
               )}

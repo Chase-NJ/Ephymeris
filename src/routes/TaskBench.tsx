@@ -25,7 +25,7 @@ import { useSidecar } from "@/lib/ws/context";
  * No wire command ties a spec to a session: `sessions.confirmMapping` never
  * learns a `specId`, `port.startSession` is untouched, and `UPLOADING ↔
  * IN_SESSION` is illegal in the transition table in both directions. That door
- * opens at Task-Graph Phase 5's exit criteria, not by adding a button here.
+ * opens at the Phase 5 exit criteria, not by adding a button here.
  *
  * The spec arrives as `?spec=<id>` from the Designer and is otherwise picked
  * here — the compile is re-run either way, because the table a board receives

@@ -3,7 +3,7 @@
  *
  * The Task Designer draws the compiled machine and lets the operator click it.
  * Clicking cannot EDIT the graph — `topology` is knobs and a versioned template
- * emits the nodes (Task-Graph D1; a spec carrying a `nodes:` key is rejected
+ * emits the nodes (D1; a spec carrying a `nodes:` key is rejected
  * outright by TG103) — so what a click has to do instead is answer "which
  * fields, if I changed them, would change this?" and put those fields in front
  * of the operator. This module is that answer, and nothing else: pure, no

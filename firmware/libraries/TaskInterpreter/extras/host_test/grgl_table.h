@@ -2,7 +2,7 @@
  *
  * spec:     grgl_2odor
  * hash:     721d0c60d7db9de9
- * template: four_epoch v2 (fc90ccd0b1cb195f)
+ * template: four_epoch v2 (f0760c460092ddb3)
  *
  * The equivalence gate needs both implementations walking the same table.
  * Hand-transcribing it into the test would be a third copy that can drift,

@@ -1,0 +1,30 @@
+# Nothing to discriminate: the first thing a naive animal learns.
+paradigm_version: 1
+id: shaping_no_stimulus
+name: Shaping — no stimulus
+order: 70
+affords: >-
+  Engagement and responding, with nothing presented to discriminate. The sampling
+  epoch is skipped entirely, so there is no odor, no sampling hold and no
+  hold-break class -- the animal is only learning that engaging the port and then
+  answering produces fluid.
+
+template: four_epoch
+template_version: 2
+
+topology:
+  n_sampling_stages: 0
+  retention_delay: false
+  response_mode: n_alternative
+  commit_hold: true
+  response_ports: 2
+
+contingency:
+  stimuli: 0
+  rewarded: true
+  trial_types: one_per_stimulus
+
+policy:
+  selection:
+    mode: weighted_pool
+  n_trials: 200

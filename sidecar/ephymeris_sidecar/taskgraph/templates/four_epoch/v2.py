@@ -32,6 +32,28 @@ WHAT DID NOT CHANGE. The paired response strobes stay: a wrong poke emits
 WATER_POKE_L and then WATER_POKE_ERROR_L, because "a poke happened" is common to
 the correct and the wrong path and is worth having on its own.
 
+-----------------------------------------------------------------------------
+ON EDITING THIS FILE AT ALL, GIVEN D14
+
+D14 says a template is never edited once a spec pins it; a change copies to a
+new vN.py. This file has been edited twice since: once to rewrite its imports
+when the compiler stopped being vendored, and once to add `outcome_defaults`
+and `timing_defaults` below.
+
+Both are deliberate exceptions, and the test for whether an exception is safe is
+not "is it small" but "does emit() produce different bytes". Neither touched
+emit(). The additions are consumed only by the skeleton generator, which did not
+exist when a spec last pinned this version, and `tests/compiler/
+test_paradigm_equivalence.py` proves the point directly: every generated
+skeleton compiles to a byte-identical machine to the hand-authored spec it
+replaces -- same primitives, watch masks, edge offsets, strobes and edges.
+
+Bumping to v3 would have forked every spec's provenance for a change that emits
+identical bytes. What the rule buys is still bought: the template's source hash
+moved, so both edits appear in every listing diff rather than passing silently.
+That is the mechanism working, not being bypassed.
+-----------------------------------------------------------------------------
+
 The three divergences from docs/task_topology.html that v1 records -- the response
 branch node, the inter-stimulus gap as a HOLD, and cue-off as its own node -- all
 still hold. They were never firmware accommodations; they were the diagram being
@@ -41,13 +63,48 @@ wrong.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 from ephymeris_sidecar.taskgraph.graph import Band, EpochBuilder, GraphDraft, NodeType, Trigger
 from ephymeris_sidecar.taskgraph.spec import TaskSpec
 
 NAME = "four_epoch"
 VERSION = 2
+
+
+@dataclass(frozen=True)
+class OutcomeDefault:
+    """Everything an outcome_map entry needs, for a class this template produces.
+
+    Here rather than in the skeleton generator because this module is already
+    authoritative for these values -- `emit()` below reads every one of them off
+    the outcome map to build the nodes and edges the class hangs off. A generator
+    carrying its own copy would be a second definition of the same fact, which is
+    the objection that kept a skeleton generator out of the project for so long.
+    """
+
+    trigger: str
+    terminal: str
+    delay: str            # names a timing id, never a literal
+    strobe: str | None
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class TimingDefault:
+    """A duration this template can require, with the firmware field it mirrors.
+
+    `wire_key` and `note` are not decoration. The values below ARE the firmware's
+    TaskParams in-class defaults, which BehaviorBox.h:488-490 records as "the
+    FULL-TASK (GRGL_2-Odor) values, so a bare START with no tokens still
+    reproduces exactly the legacy behavior" -- so carrying their provenance means
+    a generated task arrives with the same citations a hand-authored one had.
+    """
+
+    ms: int
+    wire_key: str | None = None
+    note: str = ""
 
 
 @dataclass(frozen=True)
@@ -59,11 +116,18 @@ class Capabilities:
     n_sampling_stages together. Expressing that as data would need conditionals and
     a loop -- i.e. a mini-language, which is exactly the trap D14 rejects. The
     linter imports this and compares against what the spec declares.
+
+    `outcome_defaults` and `timing_defaults` extend that same idea to CREATION.
+    The linter asks "which classes must exist"; the skeleton generator asks "and
+    what does one look like before anyone has edited it". Both answers come from
+    here, so neither the linter nor the generator holds a copy.
     """
 
     outcome_classes: frozenset[str]
     required_timing: tuple[str, ...]
     knobs: tuple[str, ...]
+    outcome_defaults: Mapping[str, OutcomeDefault] = field(default_factory=dict)
+    timing_defaults: Mapping[str, TimingDefault] = field(default_factory=dict)
 
 
 def _sample_hold_id(i: int, n: int) -> str:
@@ -78,6 +142,100 @@ def _sample_hold_id(i: int, n: int) -> str:
 
 def _gap_id(i: int) -> str:
     return f"t_interstim_gap_{i}"
+
+
+#: Every duration this template can require or reference, with the firmware field
+#: it mirrors. Stage-indexed ids are resolved from the `_STAGE` entries below.
+#:
+#: THESE ARE NOT INVENTED NUMBERS. They are TaskParams' in-class defaults, which
+#: are the full-task GRGL values by construction, so a skeleton arrives behaving
+#: like the task the firmware already runs rather than like a blank form.
+_TIMING = {
+    "t_zero": TimingDefault(0, None,
+        "Required by every spec. Zero-duration nodes carry the second strobe of a "
+        "paired emission and the response branch guard. See D2, D3."),
+    "t_arm": TimingDefault(1000, "PRD",
+        "primingDelay -- odor primed before the trial light, so stimulus onset is "
+        "latency-free."),
+    "t_engage_win": TimingDefault(4000, "S0O", "odorPortTimeout."),
+    "t_commit_hold": TimingDefault(500, "S0P",
+        "odorPokeHold at BehaviorBox.h:1176 -- the pre-odor commitment hold."),
+    "t_sample_hold": TimingDefault(500, "S0P",
+        "odorPokeHold at BehaviorBox.h:1191 -- the sampling hold. Same wire key and "
+        "value as t_commit_hold, deliberately a DISTINCT index (D8)."),
+    "t_retention": TimingDefault(1500, None,
+        "The unfilled delay between the last stimulus and the response window."),
+    "t_resp_win": TimingDefault(2000, "S0W", "fluidWellPoll -- the response window."),
+    "t_withhold_win": TimingDefault(2000, "NWP",
+        "The window the subject must leave empty. Scored correct on expiry."),
+    "t_resp_hold": TimingDefault(200, "S0H",
+        "fluidWellHold -- hold at the chosen well before reward."),
+    "t_poll_interval": TimingDefault(5, "POL",
+        "pollingRate -- input sampling granularity for every watched channel."),
+    # Outcome delays. Not in `required_timing` -- the outcome map references them,
+    # so they exist because a class does, not because the topology does.
+    "t_iti_correct": TimingDefault(4000, "ITI", "standardITI."),
+    "t_pen_error": TimingDefault(20000, "ERR",
+        "errorDelay -- serves both wrong-port and omission (BehaviorBox.h:1038)."),
+    "t_pen_break": TimingDefault(10000, "NPH",
+        "noPokeHoldTimeout -- serves the sampling/commitment hold breaks and the "
+        "response-hold failure."),
+    "t_pen_noengage": TimingDefault(6000, "LZD",
+        "lazyRatDelay -- base value; policy.penalty_escalation grows it."),
+}
+
+#: Per-stage ids, whose defaults are the unsuffixed row's.
+_STAGE_SUFFIXED = ("t_sample_hold",)
+_GAP_DEFAULT = TimingDefault(500, None,
+    "The unfilled gap between stimuli; engagement is still required across it. "
+    "Set to 0 for a compound simultaneous cue.")
+
+#: The outcome map, before anyone edits it. Keyed the way `capabilities()` keys
+#: `outcome_classes`, so the two cannot disagree about which classes exist.
+_OUTCOMES = {
+    "correct": OutcomeDefault("HELD", "TRIAL_CORRECT", "t_iti_correct",
+        "@target.exit_code",
+        "The exit code is the ITI node's entry strobe -- the only place firmware "
+        "observes the end of a consummatory bout."),
+    "wrong": OutcomeDefault("ENTER", "TRIAL_INCORRECT", "t_pen_error",
+        "@ports[$ch].error_code",
+        "Sampling completed and a choice was expressed, so this is a genuine "
+        "discrimination error and advances the session."),
+    "omission": OutcomeDefault("TIMEOUT", "TRIAL_INCORRECT", "t_pen_error",
+        "RESP_OMIT", "The response window expired after complete sampling."),
+    "hold_fail": OutcomeDefault("BROKEN", "TRIAL_INCORRECT", "t_pen_break",
+        "@ports[$ch].break_code",
+        "Correct port reached but released before the hold completed -- a "
+        "consummatory failure, not a wrong choice."),
+    "no_engage": OutcomeDefault("TIMEOUT", "TRIAL_INVALID", "t_pen_noengage",
+        "LAZY_RAT",
+        "No stimulus was presented, so the trial carries no evidence about "
+        "discrimination: scored invalid and repeated, never counted as an error."),
+    "hold_break": OutcomeDefault("BROKEN", "TRIAL_INVALID", "t_pen_break",
+        "ODOR_UNPOKE_EARLY", "Sampling incomplete."),
+    "false_alarm": OutcomeDefault("ENTER", "TRIAL_INCORRECT", "t_pen_error",
+        "@ports[$ch].enter_code",
+        "Any port entry during the withhold window. The poke code IS the report; "
+        "there is no correct port to contrast it against."),
+}
+
+#: The go/no-go inversion, and it is one entry: the same class, a different
+#: trigger, and a strobe that names the absence rather than a port.
+_GONOGO_CORRECT = OutcomeDefault("TIMEOUT", "TRIAL_CORRECT", "t_iti_correct",
+    "WATER_POKE_NONE",
+    "The subject withheld for the whole window. Scored correct, counter advances.")
+
+
+def timing_default(tid: str) -> TimingDefault:
+    """The default for a timing id, including the stage-indexed forms."""
+    if tid in _TIMING:
+        return _TIMING[tid]
+    if tid.startswith("t_interstim_gap_"):
+        return _GAP_DEFAULT
+    for base in _STAGE_SUFFIXED:
+        if tid.startswith(base + "_"):
+            return _TIMING[base]
+    raise KeyError(f"no default for timing id {tid!r} in {NAME} v{VERSION}")
 
 
 def capabilities(topology) -> Capabilities:
@@ -107,9 +265,18 @@ def capabilities(topology) -> Capabilities:
     if not gonogo:
         timing.append("t_resp_hold")
 
+    required = tuple(dict.fromkeys(timing))
+
+    outcomes = {c: (_GONOGO_CORRECT if gonogo and c == "correct" else _OUTCOMES[c])
+                for c in sorted(classes)}
+    # Every id a generated document could name: what the shape requires, plus the
+    # delay each produced outcome routes through.
+    defaults = {tid: timing_default(tid)
+                for tid in (*required, *(o.delay for o in outcomes.values()))}
+
     return Capabilities(
         outcome_classes=frozenset(classes),
-        required_timing=tuple(dict.fromkeys(timing)),
+        required_timing=required,
         knobs=(
             "n_sampling_stages",
             "retention_delay",
@@ -117,6 +284,8 @@ def capabilities(topology) -> Capabilities:
             "response_ports",
             "commit_hold",
         ),
+        outcome_defaults=outcomes,
+        timing_defaults=defaults,
     )
 
 

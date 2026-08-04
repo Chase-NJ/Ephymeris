@@ -1,0 +1,65 @@
+# Two-alternative forced choice -- the canonical discrimination task, and the
+# shape GRGL_2-Odor has always had.
+paradigm_version: 1
+id: two_afc
+name: Two-alternative forced choice
+order: 10
+affords: >-
+  One stimulus, two ports, reward at the correct one. The discriminandum is which
+  stimulus was presented, and because both ports stay live the animal can be
+  wrong as well as slow -- which is what separates a discrimination measure from
+  a detection one.
+
+template: four_epoch
+template_version: 2
+
+topology:
+  n_sampling_stages: 1
+  retention_delay: false
+  response_mode: n_alternative
+  commit_hold: true
+  response_ports: 2
+
+contingency:
+  stimuli: 2
+  rewarded: true
+  trial_types: one_per_stimulus
+
+policy:
+  # Live selection, not a pre-generated pool: an animal that develops a side bias
+  # is offered the other side more often, within bounds.
+  selection:
+    mode: anti_bias
+    bias_window: 20
+    debias_strength: 0.5
+    p_min: 0.02
+    p_max: 0.98
+    max_run: 10
+  correction_budgets: true
+  penalty_escalation:
+    applies_to: no_engage
+    step_ms: 6000
+    ceiling_ms: 30000
+    arm_after_stage: 0
+    # Only a completed correct trial clears it -- a bare poke, or a poke and bail,
+    # must not defuse the abstention penalty.
+    clears_on: TRIAL_CORRECT
+  n_trials: 1000
+
+questions:
+  - id: stim_a_emitter
+    label: First stimulus line
+    path: contingency.stimuli[0].emitter
+    help: The odor line this stimulus opens. Its onset code follows the line.
+    source: channel
+    kind: emitter
+    required: true
+  - id: stim_b_emitter
+    label: Second stimulus line
+    path: contingency.stimuli[1].emitter
+    source: channel
+    kind: emitter
+    required: true
+  - id: n_trials
+    label: Trials per session
+    path: policy.n_trials

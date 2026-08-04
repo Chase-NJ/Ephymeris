@@ -5,7 +5,7 @@
   spec_version    1
   spec_hash       2693d1eb356f2bd1
   vocab_version   1
-  template        four_epoch v2 (fc90ccd0b1cb195f)
+  template        four_epoch v2 (f0760c460092ddb3)
 
   26 states, 36 edges, 14 timing entries, 4 trial types
   606 bytes uploaded

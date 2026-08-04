@@ -1074,10 +1074,59 @@ SHAPES = (
         obj(f("code", STR), f("message", STR), f("detail", ANY)),
         doc="Failures with no command to attribute them to (§4).",
     ),
-    # Task specs (specs.md) — the vendored Task-Graph compiler's surface.
+    # Task specs (specs.md) — the Task-Graph compiler's surface.
     # A spec is a SIBLING artifact to a sketch's task.json, never an extension
     # of it: the two hash differently, and profile_hash is what Analytics
     # groups a sketch's historical runs by.
+    #
+    # A PARADIGM IS A SHAPE, NOT A SPEC. It names a template and fixes the knobs
+    # that make a kind of experiment what it is, then says what to ask about
+    # everything else. Nothing ships as a spec any more, so this is what a new
+    # task starts from.
+    Shape(
+        "ParadigmQuestion",
+        obj(
+            f("id", STR),
+            f("label", STR),
+            f(
+                "path",
+                STR,
+                doc="A document path the spec schema already knows, so an answer "
+                "is a set on a validated location and never new structure the "
+                "paradigm invented.",
+            ),
+            f("help", nullable(STR)),
+            f(
+                "source",
+                lit("value", "channel", "stimulus", "trial_type", "strobe"),
+                doc="Where the offered options come from. `value` is free entry; "
+                "the rest are drawn from the registries the compiler validates "
+                "against, so a picker cannot offer something it would reject.",
+            ),
+            f("kind", nullable(STR), doc="For source=channel: which channel kind."),
+            f("required", BOOL),
+        ),
+        doc="One question the New Task wizard asks for this paradigm.",
+    ),
+    Shape(
+        "ParadigmSummary",
+        obj(
+            f("id", STR),
+            f("name", STR),
+            f("affords", STR, doc="What this paradigm lets you measure. Gallery copy."),
+            f("order", INT, doc="Gallery order — explicit, not alphabetical."),
+            f("template", STR),
+            f("templateVersion", INT),
+            f(
+                "fixes",
+                ANY,
+                doc="The knobs this paradigm pins, as a topology fragment. What "
+                "is absent is what the operator may still move in the Designer.",
+            ),
+            f("questions", ListOf(Ref("ParadigmQuestion"))),
+        ),
+        doc="A gallery card, and everything the wizard needs to drive its steps.",
+    ),
     Shape(
         "SpecOrigin",
         lit("shipped", "shipped_edited", "user"),
@@ -1853,6 +1902,39 @@ COMMANDS = (
         doc="Pure function of six scalars; no I/O, no debounce, called on every "
         "knob change. This is what re-gates the timing rows and outcome cards "
         "before any compile returns.",
+    ),
+    Command(
+        "specs.paradigms",
+        result=obj(f("paradigms", ListOf(Ref("ParadigmSummary")))),
+        doc="Every paradigm a new task can start from, in gallery order. Its own "
+        "command rather than a member of specs.schema: that reply is everything "
+        "the FORM needs on route mount and is fetched by the Designer, which has "
+        "no use for paradigms — while the gallery and the wizard need paradigms "
+        "and not the overlay. Static for the life of the process.",
+    ),
+    Command(
+        "specs.skeleton",
+        args=obj(
+            f("paradigmId", STR),
+            f("specId", STR, doc="Written into the document, since the id names "
+              "the file, the compiled table, and what a board reports."),
+            f("answers", ANY, doc="{questionId: value} for the paradigm's own "
+              "questions. An unanswered question leaves the generator's value."),
+            f("label", nullable(STR), optional=True),
+            f("description", nullable(STR), optional=True),
+        ),
+        result=obj(
+            f("text", STR, doc="The YAML a save would write."),
+            f("result", Ref("SpecCompileResult")),
+        ),
+        doc="A first draft for a paradigm: the document, plus the compile of it. "
+        "TEXT rather than a dict because the LOAD pass checks things that only "
+        "exist before parsing, and the editor must hold the exact bytes it would "
+        "save. The compile rides along so the wizard's first render already has a "
+        "graph — one round trip, and 'it compiles at every step' is true from step "
+        "zero. PURE: it writes nothing, so creating a task stays specs.save and "
+        "rename-and-save keeps its single definition. Runs in the same worker "
+        "thread and semaphore as specs.compile, because it compiles.",
     ),
     Command(
         "specs.save",

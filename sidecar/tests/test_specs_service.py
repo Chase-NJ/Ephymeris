@@ -341,3 +341,81 @@ def test_capabilities_accepts_a_half_built_topology():
     payload = service.capabilities_payload({})
     assert validate(("ref", "SpecCapabilities"), payload) == []
     assert payload["outcomeClasses"], "defaults must produce a real answer"
+
+
+# --------------------------------------------------------------------------- #
+# Paradigms and the skeleton generator
+# --------------------------------------------------------------------------- #
+
+
+def test_every_paradigm_generates_a_document_that_compiles():
+    """The claim the whole zero-shipped-specs design rests on.
+
+    If a paradigm cannot produce a compiling draft, the New Task screen offers a
+    card that leads nowhere -- and since nothing ships as a spec, there is no
+    fallback path to a working task.
+    """
+    from ephymeris_sidecar.specs import service
+    from ephymeris_sidecar.taskgraph import paradigms
+
+    listed = service.paradigms_payload()["paradigms"]
+    assert listed, "no paradigms shipped"
+    assert [p["id"] for p in listed] == [p.id for p in paradigms.load_all()]
+
+    for p in listed:
+        reply = service.skeleton_payload(p["id"], "probe_spec", {})
+        assert reply["result"]["ok"], (
+            f"the {p['id']} skeleton does not compile: "
+            + "; ".join(
+                d["message"] for d in reply["result"]["diagnostics"]
+                if d["severity"] == "ERROR"
+            )
+        )
+        assert reply["text"].startswith("spec_version:")
+
+
+def test_an_answer_lands_on_the_path_the_paradigm_named():
+    """An answer is a set on a document path the schema already knows.
+
+    That is what keeps `questions` declarative: the paradigm names a location,
+    never a structure, so an answer cannot introduce a shape the generator did
+    not already produce.
+    """
+    import yaml
+
+    from ephymeris_sidecar.specs import service
+
+    reply = service.skeleton_payload(
+        "shaping", "shaping_left", {"rewarded_arm": "left_well"}
+    )
+    doc = yaml.safe_load(reply["text"])
+    assert doc["contingency"]["trial_types"][0]["target"] == "left_well"
+    assert reply["result"]["ok"]
+
+
+def test_shaping_builds_every_arm_and_offers_one():
+    """Shaping is the full machine with the pool collapsed, not a smaller task.
+
+    Widening it later must be a policy edit -- one weight -- rather than a
+    reshape, because a reshape moves the spec hash and splits the animal's
+    history in Analytics.
+    """
+    import yaml
+
+    from ephymeris_sidecar.specs import service
+
+    doc = yaml.safe_load(service.skeleton_payload("shaping", "s", {})["text"])
+    weights = [t.get("weight") for t in doc["contingency"]["trial_types"]]
+    assert weights.count(1) == 1 and set(weights) == {0, 1}, weights
+    assert len(doc["topology"]["response_ports"]) == 2, "both ports stay live"
+
+
+def test_the_skeleton_writes_nothing(tmp_path):
+    """Pure. Creating a task stays specs.save, so rename-and-save keeps one
+    definition and a wizard that is abandoned halfway leaves no orphan."""
+    from ephymeris_sidecar.specs import service, store as spec_store
+
+    s = spec_store.SpecStore(tmp_path)
+    before = [e.spec_id for e in s.records()]
+    service.skeleton_payload("two_afc", "not_saved", {})
+    assert [e.spec_id for e in s.records()] == before

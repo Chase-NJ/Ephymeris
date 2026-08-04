@@ -195,6 +195,8 @@ class Application:
         self.server.register(Cmd.SPECS_SCHEMA, self._specs_schema)
         self.server.register(Cmd.SPECS_COMPILE, self._specs_compile)
         self.server.register(Cmd.SPECS_CAPABILITIES, self._specs_capabilities)
+        self.server.register(Cmd.SPECS_PARADIGMS, self._specs_paradigms)
+        self.server.register(Cmd.SPECS_SKELETON, self._specs_skeleton)
         self.server.register(Cmd.SPECS_SAVE, self._specs_save)
         self.server.register(Cmd.SPECS_DELETE, self._specs_delete)
         self.server.register(Cmd.SPECS_ACKNOWLEDGE_UPSTREAM, self._specs_acknowledge_upstream)
@@ -808,6 +810,50 @@ class Application:
         # that each hold the GIL through jsonschema's hot loop.
         async with self._spec_compile_gate:
             return await asyncio.to_thread(spec_service.compile_payload, text, spec_id)
+
+    async def _specs_paradigms(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        # Reads seven small files behind an lru_cache; no thread hop earns its
+        # keep, and self_check() has already paid for the first load.
+        return spec_service.paradigms_payload()
+
+    async def _specs_skeleton(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        paradigm_id = args.get("paradigmId")
+        spec_id = args.get("specId")
+        if not isinstance(paradigm_id, str) or not isinstance(spec_id, str):
+            raise CommandError(
+                ErrCode.SPEC_INVALID, "`paradigmId` and `specId` must be strings."
+            )
+        if not spec_store.SPEC_ID_RE.match(spec_id):
+            raise CommandError(
+                ErrCode.SPEC_INVALID,
+                f"{spec_id!r} is not a legal spec id — the id is also a filename.",
+            )
+        answers = args.get("answers")
+        if answers is not None and not isinstance(answers, dict):
+            raise CommandError(ErrCode.SPEC_INVALID, "`answers` must be an object.")
+        try:
+            # Behind the same gate as compile, because it ends in one.
+            async with self._spec_compile_gate:
+                return await asyncio.to_thread(
+                    spec_service.skeleton_payload,
+                    paradigm_id,
+                    spec_id,
+                    answers,
+                    label=args.get("label"),
+                    description=args.get("description"),
+                )
+        except CommandError:
+            raise
+        except Exception as exc:
+            # A paradigm that cannot generate is an install-integrity problem --
+            # the registry shipped broken -- not a document the user can fix, so
+            # it reports as unavailable rather than as a diagnostic.
+            raise CommandError(
+                ErrCode.SPEC_COMPILER_UNAVAILABLE,
+                f"the {paradigm_id!r} paradigm could not produce a draft: {exc}",
+            ) from exc
 
     async def _specs_capabilities(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         self._require_spec_compiler()

@@ -195,6 +195,65 @@ def export_payload(spec_id: str, text: str, kinds: list[str]) -> dict[str, Any]:
     return {"artifacts": artifacts}
 
 
+def paradigms_payload() -> dict[str, Any]:
+    """The gallery, and the wizard's script.
+
+    `fixes` is the paradigm's topology fragment verbatim rather than a resolved
+    topology: what it does NOT contain is exactly what the operator may still
+    move in the Designer, and resolving it would erase that distinction.
+    """
+    from ephymeris_sidecar.taskgraph import paradigms as reg
+
+    return {
+        "paradigms": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "affords": p.affords,
+                "order": p.order,
+                "template": p.template,
+                "templateVersion": p.template_version,
+                "fixes": dict(p.topology),
+                "questions": [
+                    {
+                        "id": q.id,
+                        "label": q.label,
+                        "path": q.path,
+                        "help": q.help or None,
+                        "source": q.source,
+                        "kind": q.kind,
+                        "required": q.required,
+                    }
+                    for q in p.questions
+                ],
+            }
+            for p in reg.load_all()
+        ]
+    }
+
+
+def skeleton_payload(
+    paradigm_id: str,
+    spec_id: str,
+    answers: dict[str, Any] | None,
+    *,
+    label: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """A first draft, and the compile of it, in one reply."""
+    from ephymeris_sidecar.taskgraph import paradigms as reg
+
+    doc = reg.skeleton(
+        reg.get(paradigm_id),
+        spec_id=spec_id,
+        answers=answers or {},
+        label=label,
+        description=description,
+    )
+    text = reg.to_yaml(doc)
+    return {"text": text, "result": compile_payload(text, spec_id)}
+
+
 def capabilities_payload(topology: dict[str, Any]) -> dict[str, Any]:
     caps = compiler.capabilities_for(topology)
     name = topology.get("template") or compiler.DEFAULT_TEMPLATE[0]

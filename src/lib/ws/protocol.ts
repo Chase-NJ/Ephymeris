@@ -78,6 +78,8 @@ export const CMD = {
   SPECS_SCHEMA: "specs.schema",
   SPECS_COMPILE: "specs.compile",
   SPECS_CAPABILITIES: "specs.capabilities",
+  SPECS_PARADIGMS: "specs.paradigms",
+  SPECS_SKELETON: "specs.skeleton",
   SPECS_SAVE: "specs.save",
   SPECS_DELETE: "specs.delete",
   SPECS_ACKNOWLEDGE_UPSTREAM: "specs.acknowledgeUpstream",
@@ -1103,6 +1105,45 @@ export interface SidecarErrorData {
   detail: unknown;
 }
 
+/** One question the New Task wizard asks for this paradigm. */
+export interface ParadigmQuestion {
+  id: string;
+  label: string;
+  /**
+   * A document path the spec schema already knows, so an answer is a set on a validated location
+   * and never new structure the paradigm invented.
+   */
+  path: string;
+  help: string | null;
+  /**
+   * Where the offered options come from. `value` is free entry; the rest are drawn from the
+   * registries the compiler validates against, so a picker cannot offer something it would
+   * reject.
+   */
+  source: "value" | "channel" | "stimulus" | "trial_type" | "strobe";
+  /** For source=channel: which channel kind. */
+  kind: string | null;
+  required: boolean;
+}
+
+/** A gallery card, and everything the wizard needs to drive its steps. */
+export interface ParadigmSummary {
+  id: string;
+  name: string;
+  /** What this paradigm lets you measure. Gallery copy. */
+  affords: string;
+  /** Gallery order — explicit, not alphabetical. */
+  order: number;
+  template: string;
+  templateVersion: number;
+  /**
+   * The knobs this paradigm pins, as a topology fragment. What is absent is what the operator may
+   * still move in the Designer.
+   */
+  fixes: unknown;
+  questions: ParadigmQuestion[];
+}
+
 /**
  * Where a spec's current bytes come from. `shipped_edited` = a user copy shadowing a bundled spec
  * of the same id.
@@ -1457,6 +1498,8 @@ export interface CommandArgsMap {
   "specs.schema": Record<string, never>;
   "specs.compile": { text: string; specId?: string };
   "specs.capabilities": { topology: unknown };
+  "specs.paradigms": Record<string, never>;
+  "specs.skeleton": { paradigmId: string; specId: string; answers: unknown; label?: string | null; description?: string | null };
   "specs.save": { specId: string; text: string };
   "specs.delete": { specId: string };
   "specs.acknowledgeUpstream": { specId: string };
@@ -1518,6 +1561,8 @@ export interface CommandResultMap {
   "specs.schema": { schema: unknown; overlay: SpecOverlay; strobes: unknown; channels: unknown; limits: unknown; templates: Array<{ name: string; version: number; sourceHash: string }> };
   "specs.compile": SpecCompileResult;
   "specs.capabilities": SpecCapabilities;
+  "specs.paradigms": { paradigms: ParadigmSummary[] };
+  "specs.skeleton": { text: string; result: SpecCompileResult };
   "specs.save": { entry: SpecEntry; result: SpecCompileResult };
   "specs.delete": { entry: SpecEntry | null };
   "specs.acknowledgeUpstream": { entry: SpecEntry };

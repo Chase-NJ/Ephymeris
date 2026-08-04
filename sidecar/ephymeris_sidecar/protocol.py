@@ -91,6 +91,8 @@ class Cmd:
     SPECS_SCHEMA: Final = "specs.schema"
     SPECS_COMPILE: Final = "specs.compile"
     SPECS_CAPABILITIES: Final = "specs.capabilities"
+    SPECS_PARADIGMS: Final = "specs.paradigms"
+    SPECS_SKELETON: Final = "specs.skeleton"
     SPECS_SAVE: Final = "specs.save"
     SPECS_DELETE: Final = "specs.delete"
     SPECS_ACKNOWLEDGE_UPSTREAM: Final = "specs.acknowledgeUpstream"
@@ -261,6 +263,8 @@ SHAPES: Final[dict[str, Any]] = {
     "CohortsUpdatedData": ('obj', (('cohorts', ('list', ('ref', 'CohortSummary')), False),)),
     "PrefixesUpdatedData": ('obj', (('prefixes', ('list', ('ref', 'Prefix')), False),)),
     "SidecarErrorData": ('obj', (('code', 'str', False), ('message', 'str', False), ('detail', 'any', False))),
+    "ParadigmQuestion": ('obj', (('id', 'str', False), ('label', 'str', False), ('path', 'str', False), ('help', ('union', ('str', 'null')), False), ('source', ('lit', ('value', 'channel', 'stimulus', 'trial_type', 'strobe')), False), ('kind', ('union', ('str', 'null')), False), ('required', 'bool', False))),
+    "ParadigmSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('affords', 'str', False), ('order', 'int', False), ('template', 'str', False), ('templateVersion', 'int', False), ('fixes', 'any', False), ('questions', ('list', ('ref', 'ParadigmQuestion')), False))),
     "SpecOrigin": ('lit', ('shipped', 'shipped_edited', 'user')),
     "SpecEntry": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('description', ('union', ('str', 'null')), False), ('origin', ('ref', 'SpecOrigin'), False), ('template', ('union', ('str', 'null')), False), ('templateVersion', ('union', ('int', 'null')), False), ('upstreamChanged', 'bool', False), ('editedAt', ('union', ('str', 'null')), False))),
     "SpecOverlayField": ('obj', (('label', 'str', False), ('widget', 'str', False), ('group', 'str', True), ('order', 'int', True), ('unit', 'str', True), ('step', ('union', ('int', 'float')), True), ('help', 'str', True), ('advanced', 'bool', True), ('readOnly', 'bool', True), ('nullable', 'bool', True), ('multiple', 'bool', True), ('channelKind', 'str', True), ('options', ('list', ('obj', (('value', 'str', False), ('label', 'str', False), ('help', 'str', True)))), True))),
@@ -333,6 +337,8 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "specs.schema": ('obj', ()),
     "specs.compile": ('obj', (('text', 'str', False), ('specId', 'str', True))),
     "specs.capabilities": ('obj', (('topology', 'any', False),)),
+    "specs.paradigms": ('obj', ()),
+    "specs.skeleton": ('obj', (('paradigmId', 'str', False), ('specId', 'str', False), ('answers', 'any', False), ('label', ('union', ('str', 'null')), True), ('description', ('union', ('str', 'null')), True))),
     "specs.save": ('obj', (('specId', 'str', False), ('text', 'str', False))),
     "specs.delete": ('obj', (('specId', 'str', False),)),
     "specs.acknowledgeUpstream": ('obj', (('specId', 'str', False),)),
@@ -393,6 +399,8 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "specs.schema": ('obj', (('schema', 'any', False), ('overlay', ('ref', 'SpecOverlay'), False), ('strobes', 'any', False), ('channels', 'any', False), ('limits', 'any', False), ('templates', ('list', ('obj', (('name', 'str', False), ('version', 'int', False), ('sourceHash', 'str', False)))), False))),
     "specs.compile": ('ref', 'SpecCompileResult'),
     "specs.capabilities": ('ref', 'SpecCapabilities'),
+    "specs.paradigms": ('obj', (('paradigms', ('list', ('ref', 'ParadigmSummary')), False),)),
+    "specs.skeleton": ('obj', (('text', 'str', False), ('result', ('ref', 'SpecCompileResult'), False))),
     "specs.save": ('obj', (('entry', ('ref', 'SpecEntry'), False), ('result', ('ref', 'SpecCompileResult'), False))),
     "specs.delete": ('obj', (('entry', ('union', (('ref', 'SpecEntry'), 'null')), False),)),
     "specs.acknowledgeUpstream": ('obj', (('entry', ('ref', 'SpecEntry'), False),)),

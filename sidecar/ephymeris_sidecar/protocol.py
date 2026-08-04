@@ -91,6 +91,10 @@ class Cmd:
     SPECS_SCHEMA: Final = "specs.schema"
     SPECS_COMPILE: Final = "specs.compile"
     SPECS_CAPABILITIES: Final = "specs.capabilities"
+    HARDWARE_GET: Final = "hardware.get"
+    HARDWARE_PREVIEW: Final = "hardware.preview"
+    HARDWARE_SAVE: Final = "hardware.save"
+    HARDWARE_RESET: Final = "hardware.reset"
     SPECS_PARADIGMS: Final = "specs.paradigms"
     SPECS_SKELETON: Final = "specs.skeleton"
     SPECS_SAVE: Final = "specs.save"
@@ -123,6 +127,7 @@ class Evt:
     SESSION_TELEMETRY: Final = "session.telemetry"
     SESSION_ANIMAL_ENDED: Final = "session.animalEnded"
     SESSION_LIFECYCLE: Final = "session.lifecycle"
+    HARDWARE_UPDATED: Final = "hardware.updated"
     UTILITY_UPDATED: Final = "utility.updated"
     BACKUP_STATUS: Final = "backup.status"
     ANALYTICS_PROGRESS: Final = "analytics.progress"
@@ -160,6 +165,8 @@ class ErrCode:
     TASK_PROFILE_INVALID: Final = "TASK_PROFILE_INVALID"
     BACKUP_UNAVAILABLE: Final = "BACKUP_UNAVAILABLE"
     UTILITY_UNAVAILABLE: Final = "UTILITY_UNAVAILABLE"
+    RIG_INVALID: Final = "RIG_INVALID"
+    RIG_WOULD_BREAK_TASKS: Final = "RIG_WOULD_BREAK_TASKS"
     SPEC_NOT_FOUND: Final = "SPEC_NOT_FOUND"
     SPEC_INVALID: Final = "SPEC_INVALID"
     SPEC_COMPILER_UNAVAILABLE: Final = "SPEC_COMPILER_UNAVAILABLE"
@@ -265,6 +272,11 @@ SHAPES: Final[dict[str, Any]] = {
     "ParadigmSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('affords', 'str', False), ('order', 'int', False), ('template', 'str', False), ('templateVersion', 'int', False), ('fixes', 'any', False), ('questions', ('list', ('ref', 'ParadigmQuestion')), False))),
     "SpecOrigin": ('lit', ('user',)),
     "SpecEntry": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('description', ('union', ('str', 'null')), False), ('origin', ('ref', 'SpecOrigin'), False), ('template', ('union', ('str', 'null')), False), ('templateVersion', ('union', ('int', 'null')), False), ('paradigmId', ('union', ('str', 'null')), False), ('editedAt', ('union', ('str', 'null')), False))),
+    "RigProblem": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', ('union', ('str', 'null')), False))),
+    "RigStatus": ('obj', (('custom', 'bool', False), ('derivedFrom', 'str', False), ('board', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('pinoutHash', 'str', False))),
+    "RigDocument": ('obj', (('document', 'any', False), ('status', ('ref', 'RigStatus'), False), ('problems', ('list', ('ref', 'RigProblem')), False))),
+    "RigImpact": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('codes', ('list', 'str'), False))),
+    "RigSaved": ('obj', (('status', ('ref', 'RigStatus'), False), ('problems', ('list', ('ref', 'RigProblem')), False), ('breaks', ('list', ('ref', 'RigImpact')), False))),
     "SpecOverlayField": ('obj', (('label', 'str', False), ('widget', 'str', False), ('group', 'str', True), ('order', 'int', True), ('unit', 'str', True), ('step', ('union', ('int', 'float')), True), ('help', 'str', True), ('advanced', 'bool', True), ('readOnly', 'bool', True), ('nullable', 'bool', True), ('multiple', 'bool', True), ('channelKind', 'str', True), ('options', ('list', ('obj', (('value', 'str', False), ('label', 'str', False), ('help', 'str', True)))), True))),
     "SpecOverlayGroup": ('obj', (('id', 'str', False), ('label', 'str', False), ('order', 'int', False), ('help', 'str', True))),
     "SpecOverlay": ('obj', (('presentation_version', 'int', False), ('groups', ('list', ('ref', 'SpecOverlayGroup')), False), ('sections', ('map', ('obj', (('group', 'str', False), ('rows', ('lit', ('indexed', 'by_id', 'by_key', 'object')), False), ('gatedBy', 'str', True)))), False), ('fields', ('map', ('ref', 'SpecOverlayField')), False))),
@@ -335,6 +347,10 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "specs.schema": ('obj', ()),
     "specs.compile": ('obj', (('text', 'str', False), ('specId', 'str', True))),
     "specs.capabilities": ('obj', (('topology', 'any', False),)),
+    "hardware.get": ('obj', ()),
+    "hardware.preview": ('obj', (('document', 'any', False),)),
+    "hardware.save": ('obj', (('document', 'any', False), ('confirm', 'bool', False))),
+    "hardware.reset": ('obj', ()),
     "specs.paradigms": ('obj', ()),
     "specs.skeleton": ('obj', (('paradigmId', 'str', False), ('specId', 'str', False), ('answers', 'any', False), ('label', ('union', ('str', 'null')), True), ('description', ('union', ('str', 'null')), True))),
     "specs.save": ('obj', (('specId', 'str', False), ('text', 'str', False))),
@@ -396,6 +412,10 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "specs.schema": ('obj', (('schema', 'any', False), ('overlay', ('ref', 'SpecOverlay'), False), ('strobes', 'any', False), ('channels', 'any', False), ('limits', 'any', False), ('templates', ('list', ('obj', (('name', 'str', False), ('version', 'int', False), ('sourceHash', 'str', False)))), False))),
     "specs.compile": ('ref', 'SpecCompileResult'),
     "specs.capabilities": ('ref', 'SpecCapabilities'),
+    "hardware.get": ('ref', 'RigDocument'),
+    "hardware.preview": ('ref', 'RigSaved'),
+    "hardware.save": ('ref', 'RigSaved'),
+    "hardware.reset": ('ref', 'RigDocument'),
     "specs.paradigms": ('obj', (('paradigms', ('list', ('ref', 'ParadigmSummary')), False),)),
     "specs.skeleton": ('obj', (('text', 'str', False), ('result', ('ref', 'SpecCompileResult'), False))),
     "specs.save": ('obj', (('entry', ('ref', 'SpecEntry'), False), ('result', ('ref', 'SpecCompileResult'), False))),
@@ -419,6 +439,7 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "session.telemetry": ('ref', 'BoxTelemetry'),
     "session.animalEnded": ('ref', 'AnimalEnded'),
     "session.lifecycle": ('ref', 'ActiveSessions'),
+    "hardware.updated": ('ref', 'RigStatus'),
     "utility.updated": ('ref', 'UtilityStatus'),
     "backup.status": ('ref', 'BackupStatus'),
     "analytics.progress": ('ref', 'AnalyticsProgress'),

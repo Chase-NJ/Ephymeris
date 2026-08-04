@@ -1156,6 +1156,72 @@ SHAPES = (
         doc="A row in the spec list. Built from a cheap parse — never a compile — "
         "so `specs.list` stays instant however many specs exist.",
     ),
+    # ---------------------------------------------------------------- rig wiring
+    Shape(
+        "RigProblem",
+        obj(
+            f("location", STR, doc="`channels.left_well.kind`, `pins.odor_port`, or a rule's registry file."),
+            f("message", STR),
+            f(
+                "code",
+                nullable(STR),
+                doc="The lint rule, when one produced it — TG226 through TG229. Null "
+                "for a schema violation, which has no rule number because it is "
+                "caught before binding runs.",
+            ),
+        ),
+        doc="One thing wrong with a wiring document, located. Every problem is "
+        "reported rather than the first, because fixing new wiring should be one "
+        "pass rather than a game of whack-a-mole.",
+    ),
+    Shape(
+        "RigStatus",
+        obj(
+            f("custom", BOOL, doc="False ⇒ this rig runs the wiring its build shipped with."),
+            f("derivedFrom", STR, doc="The shipped pinout this document started as."),
+            f("board", STR),
+            f("editedAt", nullable(STR)),
+            f("pinoutHash", STR, doc="The composed wiring's hash — the same value a compiled table carries (D22)."),
+        ),
+    ),
+    Shape(
+        "RigDocument",
+        obj(
+            f("document", ANY, doc="The rig document itself — `{rig_version, channels, pins}`, validated against schema/rig_hardware.v1.json."),
+            f("status", Ref("RigStatus")),
+            f("problems", ListOf(Ref("RigProblem"))),
+        ),
+        doc="The wiring, plus everything wrong with it. `document` is served even "
+        "when `problems` is non-empty: an editor that refused to show a broken "
+        "document would be refusing to show the one that needs fixing.",
+    ),
+    Shape(
+        "RigImpact",
+        obj(
+            f("specId", STR),
+            f("label", nullable(STR)),
+            f(
+                "codes",
+                ListOf(STR),
+                doc="The rules this wiring would newly break this spec with. Empty "
+                "when the spec was already failing for its own reasons.",
+            ),
+        ),
+        doc="A task this wiring change would break. Computed BEFORE the write.",
+    ),
+    Shape(
+        "RigSaved",
+        obj(
+            f("status", Ref("RigStatus")),
+            f("problems", ListOf(Ref("RigProblem"))),
+            f(
+                "breaks",
+                ListOf(Ref("RigImpact")),
+                doc="Tasks that compile today and would not after this change. "
+                "Non-empty does NOT mean the save was refused — see the command.",
+            ),
+        ),
+    ),
     # The presentation overlay (schema/task_spec.presentation.v1.json), served
     # verbatim by specs.schema. It is typed here rather than left ANY because
     # the editor's whole form is generated from it — an untyped overlay meant
@@ -1921,6 +1987,61 @@ COMMANDS = (
         "knob change. This is what re-gates the timing rows and outcome cards "
         "before any compile returns.",
     ),
+    # ---------------------------------------------------------------- rig wiring
+    #
+    # THE WIRING IS NOT A SETTING, and these four commands are why. Settings are
+    # shell-owned, pushed one-directionally, leniently parsed and silently
+    # defaulting to a working value — right for a directory path, catastrophic
+    # for a pin number, which has no safe default and fails by firing the wrong
+    # valve. This is the specs.* pattern instead: a sidecar-owned document,
+    # validated on the way in, with every problem located.
+    Command(
+        "hardware.get",
+        result=Ref("RigDocument"),
+        doc="This rig's wiring, and everything wrong with it. Returns the shipped "
+        "pinout as an editable document when the rig has never been edited, so "
+        "the editor always has something real to open rather than a blank form.",
+    ),
+    Command(
+        "hardware.preview",
+        args=obj(f("document", ANY)),
+        result=Ref("RigSaved"),
+        doc="Validate a wiring document and say what it would cost, WITHOUT "
+        "writing. Two jobs, and it is the same answer for both: the editor calls "
+        "it as the operator types, so schema violations and TG226-229 appear "
+        "against the field that caused them; and it is what the save preflight "
+        "shows, because `breaks` is the honest form of 'this applies to every "
+        "task'. A pin change that silently stopped a task compiling would be the "
+        "worst version of that promise.",
+    ),
+    Command(
+        "hardware.save",
+        args=obj(
+            f("document", ANY),
+            f(
+                "confirm",
+                BOOL,
+                doc="False ⇒ refuse the write if it would break a task that "
+                "compiles today, and return them in `breaks`. True ⇒ write "
+                "anyway. Rewiring a box is the operator's call and the app must "
+                "not veto it — but it must not let them make it unknowingly.",
+            ),
+        ),
+        result=Ref("RigSaved"),
+        doc="Validate, then write. A document that fails validation is never "
+        "written at all, so there is no state in which the file on disk is one "
+        "the compiler refuses. On success the compiler's channel cache is "
+        "cleared and `hardware.updated` is broadcast — every task compiles to "
+        "different bytes from that moment, which is the design working (D15) "
+        "and the reason the listing carries a pinout hash (D22).",
+    ),
+    Command(
+        "hardware.reset",
+        result=Ref("RigDocument"),
+        doc="Discard this rig's document and go back to the wiring the build "
+        "shipped with. The reply is `hardware.get`'s, so the editor re-renders "
+        "from one shape either way.",
+    ),
     Command(
         "specs.paradigms",
         result=obj(f("paradigms", ListOf(Ref("ParadigmSummary")))),
@@ -2106,6 +2227,14 @@ EVENTS = (
         "re-broadcast here; port.state remains that channel.",
     ),
     Event(
+        "hardware.updated",
+        Ref("RigStatus"),
+        doc="Broadcast after a successful save or reset. Every open client must "
+        "drop what it cached from `specs.schema`: that reply carries the composed "
+        "channel map, whose comment used to say it 'cannot change while the app "
+        "is running, because changing it means shipping a new build'. It can now.",
+    ),
+    Event(
         "utility.updated",
         Ref("UtilityStatus"),
         doc="Pushed on connect and whenever any box's baseline belief changes — "
@@ -2164,6 +2293,21 @@ ERRORS = (
         "UTILITY_UNAVAILABLE",
         "No hardware utility sketch is configured, or the named one can't be used "
         "(not in the bundled library, or not a utility profile).",
+    ),
+    ErrorCode(
+        "RIG_INVALID",
+        "The wiring document is not a wiring document — wrong shape, or too "
+        "large. NOT a wiring MISTAKE: a document that is well-formed and "
+        "describes an impossible box is a successful hardware.preview reply "
+        "carrying located problems, exactly as a spec that will not compile is a "
+        "successful specs.compile.",
+    ),
+    ErrorCode(
+        "RIG_WOULD_BREAK_TASKS",
+        "hardware.save without `confirm` on a change that would stop a task "
+        "compiling. detail carries them. Retry with confirm: true to proceed — "
+        "the app does not veto a rewiring, it refuses to let one happen "
+        "unnoticed.",
     ),
     ErrorCode("SPEC_NOT_FOUND", "No spec with that id in the library."),
     ErrorCode(

@@ -78,6 +78,10 @@ export const CMD = {
   SPECS_SCHEMA: "specs.schema",
   SPECS_COMPILE: "specs.compile",
   SPECS_CAPABILITIES: "specs.capabilities",
+  HARDWARE_GET: "hardware.get",
+  HARDWARE_PREVIEW: "hardware.preview",
+  HARDWARE_SAVE: "hardware.save",
+  HARDWARE_RESET: "hardware.reset",
   SPECS_PARADIGMS: "specs.paradigms",
   SPECS_SKELETON: "specs.skeleton",
   SPECS_SAVE: "specs.save",
@@ -107,6 +111,7 @@ export const EVT = {
   SESSION_TELEMETRY: "session.telemetry",
   SESSION_ANIMAL_ENDED: "session.animalEnded",
   SESSION_LIFECYCLE: "session.lifecycle",
+  HARDWARE_UPDATED: "hardware.updated",
   UTILITY_UPDATED: "utility.updated",
   BACKUP_STATUS: "backup.status",
   ANALYTICS_PROGRESS: "analytics.progress",
@@ -141,6 +146,8 @@ export const ERR = {
   TASK_PROFILE_INVALID: "TASK_PROFILE_INVALID",
   BACKUP_UNAVAILABLE: "BACKUP_UNAVAILABLE",
   UTILITY_UNAVAILABLE: "UTILITY_UNAVAILABLE",
+  RIG_INVALID: "RIG_INVALID",
+  RIG_WOULD_BREAK_TASKS: "RIG_WOULD_BREAK_TASKS",
   SPEC_NOT_FOUND: "SPEC_NOT_FOUND",
   SPEC_INVALID: "SPEC_INVALID",
   SPEC_COMPILER_UNAVAILABLE: "SPEC_COMPILER_UNAVAILABLE",
@@ -1172,6 +1179,68 @@ export interface SpecEntry {
 }
 
 /**
+ * One thing wrong with a wiring document, located. Every problem is reported rather than the
+ * first, because fixing new wiring should be one pass rather than a game of whack-a-mole.
+ */
+export interface RigProblem {
+  /** `channels.left_well.kind`, `pins.odor_port`, or a rule's registry file. */
+  location: string;
+  message: string;
+  /**
+   * The lint rule, when one produced it — TG226 through TG229. Null for a schema violation, which
+   * has no rule number because it is caught before binding runs.
+   */
+  code: string | null;
+}
+
+export interface RigStatus {
+  /** False ⇒ this rig runs the wiring its build shipped with. */
+  custom: boolean;
+  /** The shipped pinout this document started as. */
+  derivedFrom: string;
+  board: string;
+  editedAt: string | null;
+  /** The composed wiring's hash — the same value a compiled table carries (D22). */
+  pinoutHash: string;
+}
+
+/**
+ * The wiring, plus everything wrong with it. `document` is served even when `problems` is
+ * non-empty: an editor that refused to show a broken document would be refusing to show the one
+ * that needs fixing.
+ */
+export interface RigDocument {
+  /**
+   * The rig document itself — `{rig_version, channels, pins}`, validated against
+   * schema/rig_hardware.v1.json.
+   */
+  document: unknown;
+  status: RigStatus;
+  problems: RigProblem[];
+}
+
+/** A task this wiring change would break. Computed BEFORE the write. */
+export interface RigImpact {
+  specId: string;
+  label: string | null;
+  /**
+   * The rules this wiring would newly break this spec with. Empty when the spec was already
+   * failing for its own reasons.
+   */
+  codes: string[];
+}
+
+export interface RigSaved {
+  status: RigStatus;
+  problems: RigProblem[];
+  /**
+   * Tasks that compile today and would not after this change. Non-empty does NOT mean the save
+   * was refused — see the command.
+   */
+  breaks: RigImpact[];
+}
+
+/**
  * One field's presentation, keyed in `SpecOverlay.fields` by its overlay key — the same string a
  * diagnostic's `anchor` carries, which is what makes placing an error next to its input a lookup.
  */
@@ -1508,6 +1577,10 @@ export interface CommandArgsMap {
   "specs.schema": Record<string, never>;
   "specs.compile": { text: string; specId?: string };
   "specs.capabilities": { topology: unknown };
+  "hardware.get": Record<string, never>;
+  "hardware.preview": { document: unknown };
+  "hardware.save": { document: unknown; confirm: boolean };
+  "hardware.reset": Record<string, never>;
   "specs.paradigms": Record<string, never>;
   "specs.skeleton": { paradigmId: string; specId: string; answers: unknown; label?: string | null; description?: string | null };
   "specs.save": { specId: string; text: string };
@@ -1570,6 +1643,10 @@ export interface CommandResultMap {
   "specs.schema": { schema: unknown; overlay: SpecOverlay; strobes: unknown; channels: unknown; limits: unknown; templates: Array<{ name: string; version: number; sourceHash: string }> };
   "specs.compile": SpecCompileResult;
   "specs.capabilities": SpecCapabilities;
+  "hardware.get": RigDocument;
+  "hardware.preview": RigSaved;
+  "hardware.save": RigSaved;
+  "hardware.reset": RigDocument;
   "specs.paradigms": { paradigms: ParadigmSummary[] };
   "specs.skeleton": { text: string; result: SpecCompileResult };
   "specs.save": { entry: SpecEntry; result: SpecCompileResult };
@@ -1594,6 +1671,7 @@ export interface EventDataMap {
   "session.telemetry": BoxTelemetry;
   "session.animalEnded": AnimalEnded;
   "session.lifecycle": ActiveSessions;
+  "hardware.updated": RigStatus;
   "utility.updated": UtilityStatus;
   "backup.status": BackupStatus;
   "analytics.progress": AnalyticsProgress;

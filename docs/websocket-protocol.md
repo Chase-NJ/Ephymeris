@@ -324,6 +324,28 @@ The graph is the compiled **machine** graph — six node primitives (`DELAY`/`WA
 
 `widget` is deliberately **not** a literal union: the renderer carries a documented default case, so an overlay that gains a widget degrades to a plain input rather than failing to compile. The other four members (`schema`, `strobes`, `channels`, `limits`) stay untyped `any` on purpose — those are passthrough JSON the frontend reads with lookups, not a shape it binds a form to.
 
+### 3.7 Rig wiring
+
+Which pin each channel is on, and what it means. Four commands, and the reason there are four rather than a settings key is that **a pin has no safe default**: the settings pipeline is shell-owned, leniently parsed and silently degrades a malformed value to a working one, which is right for a directory path and catastrophic for a number that decides which valve opens. This is the `specs.*` pattern instead — a sidecar-owned document under `<data_dir>/hardware/rig.json`, validated on the way in, with every problem located.
+
+| Command | Args | Result | Notes |
+|---|---|---|---|
+| `hardware.get` | — | `<RigDocument>` | This rig's wiring plus everything wrong with it. A rig that has never been edited gets the **shipped pinout as an editable document**, so the editor always opens something real rather than a blank form. `document` is served even when `problems` is non-empty — refusing to show a broken document would be refusing to show the one that needs fixing |
+| `hardware.preview` | `{document}` | `<RigSaved>` | Validate and cost it, writing nothing. Two jobs with one answer: the editor calls it as the operator types, so a schema violation or TG226–229 lands against the field that caused it; and it is what the save preflight shows, because `breaks` is the honest form of "this applies to every task" |
+| `hardware.save` | `{document, confirm}` | `<RigSaved>` | Validate, then write. **Validation happens before the write**, so there is no state in which the file on disk is one the compiler refuses. `confirm: false` refuses a change that would stop a task compiling and returns them as `RIG_WOULD_BREAK_TASKS`; `confirm: true` proceeds. On success the compiler's channel cache is cleared and `hardware.updated` is broadcast |
+| `hardware.reset` | — | `<RigDocument>` | Back to the wiring the build shipped with. Replies in `hardware.get`'s shape so the editor re-renders from one shape either way |
+
+> [!CAUTION]
+> **A pin change applies to every task, immediately, and moves no `spec_hash`.** Specs name channels and never numbers ([D15](taskgraph-decisions.md#d15)), so re-wiring a box changes the bytes every task compiles to while its identity is unchanged. That is the split working — rewiring a box is not a new task, and folding the pinout into `spec_hash` would split an animal's history at the boundary exactly as a rename does.
+>
+> It is also why the compiled listing carries a `pinout` line ([D22](taskgraph-decisions.md#d22)). Without it `specs.diff` — which diffs the *listing* — showed **nothing** for a re-pin, because the listing prints channel names. The review artifact reported that nothing had changed.
+
+**Why `confirm` rather than a refusal.** Full channel authoring means an operator can delete a channel a saved task binds. TG223 catches that at compile — too late, since by then the wiring is written and the task is broken. So the save path recompiles every stored spec first and reports which ones a change would newly break. The app does not veto a rewiring; the operator rewired the box and the app's model of it must follow. It refuses to let one happen *unnoticed*.
+
+**Failure split, by where the fault lies.** `RIG_INVALID` = the document is not a document (wrong shape, too large). A document that is well-formed and describes an impossible box — pin 300, two channels on one pin, a response port with no strobe slot — is **not** an error: it is a successful `hardware.preview` carrying located problems, exactly as a spec that will not compile is a successful `specs.compile`.
+
+---
+
 ### 3.7 Bench boxes
 
 Probing and table upload for the interpreter firmware in `firmware/` ([specs.md](specs.md)). These commands claim the port through a dedicated `UPLOADING` state that mirrors `FLASHING` exactly — force-releases `PASSTHROUGH` on entry, auto-resumes it on success — because the ownership question is identical; what differs is that the uploader opens its **own** serial handle and holds a line-oriented request/response conversation with deadlines, which the passthrough ring buffer (drained, not consumed) cannot provide.
@@ -356,6 +378,7 @@ Probing and table upload for the interpreter firmware in `firmware/` ([specs.md]
 | `session.telemetry` | `{box, animalId, metrics: [<TelemetryMetric>]}` | Pushed on every strobe that updates a rolling live metric (`dashboard.md` §10 step 7) — **not** batched at `port.output`'s 20Hz, since metric updates are far lower-frequency than raw strobes |
 | `session.animalEnded` | `{box, animalId, stopReason, filePath}` | One animal's run finalized (`dashboard.md` §10.4's `stopReason` set) |
 | `session.lifecycle` | `<ActiveSessions>` | Broadcast whenever session **identity or status** changes — create, abandon, confirmMapping, startAll, switchGroup, end. A full snapshot, not a delta: a second window learns "ended" by seeing `running: null` with zero merge logic, and snapshots cannot be mis-merged. Per-box liveness is deliberately **not** re-broadcast here — `port.state` remains that channel, and `boxes[].running` inside the snapshot is point-in-time |
+| `hardware.updated` | `<RigStatus>` | After a successful save or reset. Every client must drop what it cached from `specs.schema` — that reply carries the composed channel map, whose own comment used to say it "cannot change while the app is running, because changing it means shipping a new build". It can now |
 | `utility.updated` | `<UtilityStatus>` | The hardware utility baseline (§3.5). Sent on client connect and whenever any box's belief changes — a restore starting or finishing, a hold going on or off, an identify light. This is the only progress channel `utility.ensure` has, since that command returns before the flashing starts |
 | `backup.status` | `<BackupStatus>` | The state of Backup Directory mirroring (`data.md` §7). Sent on client connect, on every settings push that changes the directory, and whenever the mirror's state changes or it actually copies something — deliberately **not** every quiet 10s tick, so six idle boxes don't generate an event stream |
 | `analytics.progress` | `{cohortId, phase, done, total}` | Earns its place against the client's 15 s default reply timeout: the first summary after upgrading is a cold index of every historical run, and on a network-mounted data directory this is the difference between "working" and "hung". Published on phase change and every N files, following `backup.status`'s discipline — never per file |
@@ -636,6 +659,8 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. Note that an ordinary mirroring **failure** never surfaces as a command error — there is no command to attribute it to; it appears as `state: "failed"` on `backup.status` (`data.md` §7) |
 | `UTILITY_UNAVAILABLE` | A `utility.*` command with no `utilitySketchName` set, or with one that can't be used at all — a name not among the bundled sketches, or a sketch whose profile isn't `kind: "utility"`. A *box-level* problem never raises this: it is reported as that box's `state` in the snapshot (§3.5), because "box 4 has no board" is a fact about the rig, not a failure of the command |
 | `SPEC_NOT_FOUND` | No spec with that id in the library |
+| `RIG_INVALID` | The wiring document is not a document — wrong shape, or too large. **Not** a wiring mistake: a well-formed document describing an impossible box is a successful `hardware.preview` carrying located problems |
+| `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a task compiling. `detail` carries them. Retry with `confirm: true` to proceed |
 | `SPEC_INVALID` | The document isn't a document — `text` not a string, over the size cap, or `topology` not an object. **Not** a compile failure: a spec that doesn't compile is a successful `specs.compile` reply carrying diagnostics (§3.6) |
 | `SPEC_COMPILER_UNAVAILABLE` | The task-spec compiler failed its import or self-check ([README.md §6.4](README.md#64-dependency-policy)). `detail.reason` carries the original error. Every `specs.*` command raises this; the legacy `task.json` path and the whole session flow are unaffected |
 | `UPLOAD_REFUSED` | The board cannot take this table and said so **before any byte moved**: no `CAP` line (un-migrated firmware — flash the interpreter sketch first), a protocol/wire-format mismatch, or a capacity the table exceeds. The port lands cleanly; `detail` carries the comparison (§3.7) |

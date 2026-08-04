@@ -44,6 +44,7 @@ from .sessions import recovery
 from .sessions.paths import resolve_session_folder
 from .specs import compiler as spec_compiler
 from .specs import service as spec_service
+from .hardware import service as hardware_service
 from .hardware import store as hardware_store
 from .specs import store as spec_store
 from .sessions.repository import SessionRepository
@@ -206,6 +207,10 @@ class Application:
         self.server.register(Cmd.SPECS_DELETE, self._specs_delete)
         self.server.register(Cmd.SPECS_DIFF, self._specs_diff)
         self.server.register(Cmd.SPECS_EXPORT, self._specs_export)
+        self.server.register(Cmd.HARDWARE_GET, self._hardware_get)
+        self.server.register(Cmd.HARDWARE_PREVIEW, self._hardware_preview)
+        self.server.register(Cmd.HARDWARE_SAVE, self._hardware_save)
+        self.server.register(Cmd.HARDWARE_RESET, self._hardware_reset)
         self.server.register(Cmd.BOARD_CAPABILITIES, self._board_capabilities)
         self.server.register(Cmd.BOARD_UPLOAD_TABLE, self._board_upload_table)
         self.server.register(Cmd.UTILITY_BENCH_HOLD, self._utility_bench_hold)
@@ -906,6 +911,109 @@ class Application:
                 {"specs": await asyncio.to_thread(self.spec_store.list_entries)},
             )
         )
+
+    # -- rig wiring -------------------------------------------------------- #
+    #
+    # OFF-LOOP, all four, for the same reason specs.compile is: preview and save
+    # recompile every stored spec, and the event loop also owns six serial ports
+    # and a 20 Hz output flush. They share the spec compile gate rather than
+    # taking one of their own, because they ARE spec compiles -- several at once.
+
+    async def _hardware_get(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        return await asyncio.to_thread(hardware_service.document_payload, self.hardware_store)
+
+    async def _hardware_preview(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        document = self._rig_document_arg(args)
+        async with self._spec_compile_gate:
+            return await asyncio.to_thread(
+                hardware_service.preview_payload,
+                self.hardware_store,
+                document,
+                self.spec_store,
+            )
+
+    async def _hardware_save(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        document = self._rig_document_arg(args)
+        confirm = bool(args.get("confirm"))
+
+        async with self._spec_compile_gate:
+            breaks = await asyncio.to_thread(
+                hardware_service.impact_of, document, self.spec_store
+            )
+            if breaks and not confirm:
+                # Not an error the operator cannot pass -- it is the "shown
+                # loudly" half of "a pin change applies to everything". The app
+                # does not veto a rewiring; it refuses to let one happen
+                # unnoticed. Nothing is written on this path.
+                raise CommandError(
+                    ErrCode.RIG_WOULD_BREAK_TASKS,
+                    f"This wiring would stop {len(breaks)} saved "
+                    f"task{'' if len(breaks) == 1 else 's'} compiling.",
+                    {"breaks": breaks},
+                )
+            try:
+                stored = await asyncio.to_thread(self.hardware_store.save, document)
+            except hardware_store.RigInvalid as exc:
+                raise CommandError(
+                    ErrCode.RIG_INVALID,
+                    "This wiring document could not be saved.",
+                    {"problems": [
+                        {"location": loc, "message": msg} for loc, msg in exc.problems
+                    ]},
+                ) from exc
+
+            # The write landed, so every later compile must see it. Ordering
+            # matters: install first, then report, or the reply would describe
+            # the wiring that was in force a moment ago.
+            self._install_rig_wiring()
+            payload = await asyncio.to_thread(
+                hardware_service.saved_payload, self.hardware_store, stored
+            )
+            payload["breaks"] = breaks
+
+        await self._announce_rig(payload["status"])
+        return payload
+
+    async def _hardware_reset(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_spec_compiler()
+        async with self._spec_compile_gate:
+            await asyncio.to_thread(self.hardware_store.reset)
+            self._install_rig_wiring()
+            payload = await asyncio.to_thread(
+                hardware_service.document_payload, self.hardware_store
+            )
+        await self._announce_rig(payload["status"])
+        return payload
+
+    def _rig_document_arg(self, args: dict[str, Any]) -> dict[str, Any]:
+        """`RIG_INVALID` is for a document that is not a document.
+
+        A well-formed document describing an impossible box is NOT this -- it
+        is a successful reply carrying located problems, exactly as a spec that
+        will not compile is a successful `specs.compile`.
+        """
+        document = args.get("document")
+        if not isinstance(document, dict):
+            raise CommandError(ErrCode.RIG_INVALID, "`document` must be an object.")
+        if len(json.dumps(document).encode()) > hardware_store.MAX_RIG_BYTES:
+            raise CommandError(
+                ErrCode.RIG_INVALID,
+                f"The document is over {hardware_store.MAX_RIG_BYTES // 1024} KB — "
+                "that is not a pin map.",
+            )
+        return document
+
+    async def _announce_rig(self, status: dict[str, Any]) -> None:
+        """Tell every client the wiring moved.
+
+        `specs.schema` carries the composed channel map and the frontend caches
+        it at module scope, under a comment that used to say it cannot change
+        while the app runs. This is what makes that cache correct again.
+        """
+        await self.server.broadcast(event(Evt.HARDWARE_UPDATED, status))
 
     async def _specs_save(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         self._require_spec_compiler()

@@ -537,6 +537,16 @@ def vocabulary() -> Vocabulary:
 _rig_source: Callable[[], dict | None] | None = None
 
 
+def current_rig_source() -> Callable[[], dict | None] | None:
+    """Whatever is installed, so a caller can put it back.
+
+    `impact_of` installs a HYPOTHETICAL wiring to answer "what would this
+    break?", and leaving it installed would mean a preview silently changed
+    what the app compiles.
+    """
+    return _rig_source
+
+
 def set_rig_source(source: Callable[[], dict | None] | None) -> None:
     """Point the registries at the rig's wiring, and drop what they cached.
 

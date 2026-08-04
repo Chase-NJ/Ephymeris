@@ -75,7 +75,7 @@ checkResponse() in BehaviorBox.h):
 
 #include <BehaviorBox.h> // strobe vocabulary, TaskParams, the shared anti-bias selector
 
-const int baudRate = 115200; // must match the app
+const unsigned long baudRate = 115200; // must match the app
 
 /* ===== Real-time by default =====
    1 = every gap is the real phase duration, which is the point of the sketch.

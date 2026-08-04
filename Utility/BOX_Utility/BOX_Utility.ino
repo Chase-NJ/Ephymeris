@@ -64,7 +64,7 @@ SAFETY
 
 #include <BehaviorBox.h> // shared pinout + CommandReader + emitStatus
 
-const int baudRate = 115200;                      // Serial baud (matches the app)
+const unsigned long baudRate = 115200;                      // Serial baud (matches the app)
 const int pollingRate = 2;                      // IR sensor polling (ms)
 const unsigned long STATUS_HEARTBEAT_MS = 1000; // re-report at least this often
 

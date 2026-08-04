@@ -148,7 +148,7 @@ class HardwareStore:
         stored = dict(doc)
         stored["edited_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.root.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(stored, indent=2) + "\n")
+        self.path.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
         return stored
 
     def reset(self) -> None:
@@ -184,7 +184,7 @@ def validate(doc: Any) -> list[tuple[str, str]]:
 
     from ephymeris_sidecar.taskgraph.paths import SCHEMA_DIR
 
-    schema = json.loads((SCHEMA_DIR / "rig_hardware.v1.json").read_text())
+    schema = json.loads((SCHEMA_DIR / "rig_hardware.v1.json").read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
     out: list[tuple[str, str]] = []
     for error in sorted(validator.iter_errors(doc), key=lambda e: list(e.path)):

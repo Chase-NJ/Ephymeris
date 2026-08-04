@@ -102,12 +102,12 @@ def test_the_longest_matching_cohort_folder_wins(tmp_path: Path) -> None:
 
 def test_copy_is_skipped_when_the_mirror_is_already_current(tmp_path: Path) -> None:
     source = tmp_path / "a.tsv"
-    source.write_text("221\t0\n")
+    source.write_text("221\t0\n", encoding="utf-8")
     destination = tmp_path / "mirror" / "a.tsv"
 
     assert copy_if_stale(source, destination) is True
     assert copy_if_stale(source, destination) is False
-    assert destination.read_text() == "221\t0\n"
+    assert destination.read_text(encoding="utf-8") == "221\t0\n"
 
 
 def test_a_growing_tsv_is_re_copied_whole(tmp_path: Path) -> None:
@@ -118,13 +118,13 @@ def test_a_growing_tsv_is_re_copied_whole(tmp_path: Path) -> None:
     are tens of kilobytes (§8).
     """
     source = tmp_path / "a.tsv"
-    source.write_text("221\t0\n")
+    source.write_text("221\t0\n", encoding="utf-8")
     destination = tmp_path / "mirror" / "a.tsv"
     copy_if_stale(source, destination)
 
-    source.write_text("221\t0\n222\t1000\n")
+    source.write_text("221\t0\n222\t1000\n", encoding="utf-8")
     assert copy_if_stale(source, destination) is True
-    assert destination.read_text() == "221\t0\n222\t1000\n"
+    assert destination.read_text(encoding="utf-8") == "221\t0\n222\t1000\n"
 
 
 def test_a_vanished_source_is_not_an_error(tmp_path: Path) -> None:
@@ -134,7 +134,7 @@ def test_a_vanished_source_is_not_an_error(tmp_path: Path) -> None:
 
 def test_no_part_file_is_left_behind(tmp_path: Path) -> None:
     source = tmp_path / "a.tsv"
-    source.write_text("x")
+    source.write_text("x", encoding="utf-8")
     destination = tmp_path / "mirror" / "a.tsv"
     copy_if_stale(source, destination)
     assert list(destination.parent.iterdir()) == [destination]
@@ -172,7 +172,7 @@ async def test_nothing_is_mirrored_without_a_backup_directory(
 ) -> None:
     root = tmp_path / "Batch A"
     root.mkdir()
-    (root / "a.tsv").write_text("221\t0\n")
+    (root / "a.tsv").write_text("221\t0\n", encoding="utf-8")
 
     manager = make_manager(db, [str(root)])
     manager.enqueue(root / "a.tsv")
@@ -189,7 +189,7 @@ async def test_a_queued_file_is_mirrored_on_the_next_pass(
 ) -> None:
     root = tmp_path / "Batch A"
     root.mkdir()
-    (root / "a.json").write_text("{}")
+    (root / "a.json").write_text("{}", encoding="utf-8")
     backup = tmp_path / "mirror"
 
     manager = make_manager(db, [str(root)])
@@ -197,7 +197,7 @@ async def test_a_queued_file_is_mirrored_on_the_next_pass(
     manager.enqueue(root / "a.json")
     await manager._pass()
 
-    assert (backup / "Batch A" / "a.json").read_text() == "{}"
+    assert (backup / "Batch A" / "a.json").read_text(encoding="utf-8") == "{}"
     assert manager.status()["state"] == "ok"
     assert manager.status()["pending"] == 0
 
@@ -209,7 +209,7 @@ async def test_a_tracked_file_is_mirrored_on_every_pass(
     root = tmp_path / "Batch A"
     root.mkdir()
     live = root / "live.tsv"
-    live.write_text("221\t0\n")
+    live.write_text("221\t0\n", encoding="utf-8")
     backup = tmp_path / "mirror"
 
     manager = make_manager(db, [str(root)])
@@ -217,17 +217,17 @@ async def test_a_tracked_file_is_mirrored_on_every_pass(
     manager.track(live)
 
     await manager._pass()
-    assert (backup / "Batch A" / "live.tsv").read_text() == "221\t0\n"
+    assert (backup / "Batch A" / "live.tsv").read_text(encoding="utf-8") == "221\t0\n"
 
-    live.write_text("221\t0\n222\t1000\n")
+    live.write_text("221\t0\n222\t1000\n", encoding="utf-8")
     await manager._pass()
-    assert (backup / "Batch A" / "live.tsv").read_text() == "221\t0\n222\t1000\n"
+    assert (backup / "Batch A" / "live.tsv").read_text(encoding="utf-8") == "221\t0\n222\t1000\n"
 
     manager.untrack(live)
-    live.write_text("221\t0\n222\t1000\n223\t2000\n")
+    live.write_text("221\t0\n222\t1000\n223\t2000\n", encoding="utf-8")
     await manager._pass()
     # Untracked: the mirror keeps what it had rather than following further.
-    assert (backup / "Batch A" / "live.tsv").read_text() == "221\t0\n222\t1000\n"
+    assert (backup / "Batch A" / "live.tsv").read_text(encoding="utf-8") == "221\t0\n222\t1000\n"
 
 
 @pytest.mark.asyncio
@@ -237,11 +237,11 @@ async def test_an_unwritable_target_reports_failed_and_keeps_the_queue(
     """A dead backup share must be visible, and must not lose the file (§8)."""
     root = tmp_path / "Batch A"
     root.mkdir()
-    (root / "a.json").write_text("{}")
+    (root / "a.json").write_text("{}", encoding="utf-8")
 
     # A *file* where the backup directory should be: every copy under it fails.
     blocker = tmp_path / "blocker"
-    blocker.write_text("")
+    blocker.write_text("", encoding="utf-8")
 
     manager = make_manager(db, [str(root)])
     await manager.configure(str(blocker))
@@ -259,9 +259,9 @@ async def test_an_unwritable_target_reports_failed_and_keeps_the_queue(
 async def test_a_recovered_target_clears_the_failure(db: Database, tmp_path: Path) -> None:
     root = tmp_path / "Batch A"
     root.mkdir()
-    (root / "a.json").write_text("{}")
+    (root / "a.json").write_text("{}", encoding="utf-8")
     blocker = tmp_path / "blocker"
-    blocker.write_text("")
+    blocker.write_text("", encoding="utf-8")
 
     manager = make_manager(db, [str(root)])
     await manager.configure(str(blocker))
@@ -415,7 +415,7 @@ async def test_setting_a_directory_does_not_backfill_on_its_own(
     """Picking a folder must not kick off an unannounced archive-sized copy."""
     root = tmp_path / "Batch A"
     (root / "old").mkdir(parents=True)
-    (root / "old" / "history.json").write_text("{}")
+    (root / "old" / "history.json").write_text("{}", encoding="utf-8")
     backup = tmp_path / "mirror"
 
     manager = make_manager(db, [str(root)], db_debounce=0.0)
@@ -429,16 +429,16 @@ async def test_setting_a_directory_does_not_backfill_on_its_own(
 async def test_sync_now_backfills_the_whole_archive(db: Database, tmp_path: Path) -> None:
     root = tmp_path / "Batch A"
     (root / "old").mkdir(parents=True)
-    (root / "old" / "history.json").write_text("{}")
-    (root / "old" / "history.tsv").write_text("221\t0\n")
+    (root / "old" / "history.json").write_text("{}", encoding="utf-8")
+    (root / "old" / "history.tsv").write_text("221\t0\n", encoding="utf-8")
     backup = tmp_path / "mirror"
 
     manager = make_manager(db, [str(root)], db_debounce=0.0)
     await manager.configure(str(backup))
     result = await manager.sync_now()
 
-    assert (backup / "Batch A" / "old" / "history.json").read_text() == "{}"
-    assert (backup / "Batch A" / "old" / "history.tsv").read_text() == "221\t0\n"
+    assert (backup / "Batch A" / "old" / "history.json").read_text(encoding="utf-8") == "{}"
+    assert (backup / "Batch A" / "old" / "history.tsv").read_text(encoding="utf-8") == "221\t0\n"
     assert result["copied"] == 2
     assert result["failed"] == 0
     # It backs the database up too, so one action verifies the whole target.
@@ -449,7 +449,7 @@ async def test_sync_now_backfills_the_whole_archive(db: Database, tmp_path: Path
 async def test_sync_now_skips_what_is_already_current(db: Database, tmp_path: Path) -> None:
     root = tmp_path / "Batch A"
     root.mkdir()
-    (root / "a.json").write_text("{}")
+    (root / "a.json").write_text("{}", encoding="utf-8")
     backup = tmp_path / "mirror"
 
     manager = make_manager(db, [str(root)], db_debounce=0.0)

@@ -53,7 +53,7 @@ pytestmark = pytest.mark.skipif(
 def gate_f(tmp_path_factory):
     r = compile_spec(grgl_equivalent())
     assert r.ok, r.bag.render()
-    (HOST_TEST / "grgl_table.h").write_text(emit(r.table))
+    (HOST_TEST / "grgl_table.h").write_text(emit(r.table), encoding="utf-8")
     binary = tmp_path_factory.mktemp("gate_f") / "gate_f"
     subprocess.run(
         ["clang++", "-std=c++17", "-Wall", "-I", str(HOST_TEST), "-I", str(LIB),
@@ -112,7 +112,7 @@ def test_the_facts_the_policy_needs_are_facts_about_the_walk(gate_f):
     #: CODE only. The header's prose says "no odors, no wells, no shaping
     #: schedule" — which is the claim, not a violation of it — and matching raw
     #: text flagged exactly that sentence.
-    src = (LIB / "TgInterpret.h").read_text()
+    src = (LIB / "TgInterpret.h").read_text(encoding="utf-8")
     code = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
     code = re.sub(r"//[^\n]*", " ", code).lower()
 
@@ -147,7 +147,7 @@ def test_the_escalator_and_the_selector_do_not_fire_together(gate_f):
     escalated one step early on every hold break, which showed up as a 6000 ms
     difference in a penalty six trials later.
     """
-    src = (HOST_TEST / "gate_f.cpp").read_text()
+    src = (HOST_TEST / "gate_f.cpp").read_text(encoding="utf-8")
     body = src[src.index("case TG_OUTCOME_ABSTAINED:"):]
     body = body[: body.index("break;")]
     assert "if (!r.engaged)" in body, (

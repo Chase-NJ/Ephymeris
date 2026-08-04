@@ -60,7 +60,7 @@ def test_every_reward_pulse_is_the_volume_the_spec_declared(spec_id):
     entry cannot agree with itself.
     """
     path = spec(spec_id)
-    doc = yaml.safe_load(path.read_text())
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     declared_ms = {t["id"]: t["ms"] for t in doc["timing"]}
     ports_yaml = doc["contingency"]["ports"]
 
@@ -110,7 +110,7 @@ def test_the_reward_pulse_is_resolved_per_trial(spec_id):
 def gate_d(tmp_path_factory):
     r = compile_spec(grgl_equivalent())
     assert r.ok, r.bag.render()
-    (HOST_TEST / "grgl_table.h").write_text(emit(r.table))
+    (HOST_TEST / "grgl_table.h").write_text(emit(r.table), encoding="utf-8")
     binary = tmp_path_factory.mktemp("gate_d") / "gate_d"
     subprocess.run(
         ["clang++", "-std=c++17", "-Wall", "-I", str(HOST_TEST), "-I", str(LIB),

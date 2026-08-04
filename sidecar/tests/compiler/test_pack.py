@@ -13,6 +13,7 @@ is cheaper and catches cruder mistakes first.
 
 from __future__ import annotations
 
+import os
 import shutil
 import struct
 import subprocess
@@ -222,7 +223,7 @@ def test_cpp_reads_the_same_bytes(tables, spec_id, tmp_path):
     and the build fails here, instead of a board running a table it misread.
     """
     src = tmp_path / "cross.cpp"
-    src.write_text(CROSS_CHECK)
+    src.write_text(CROSS_CHECK, encoding="utf-8")
     binary = tmp_path / "cross"
     subprocess.run(
         ["clang++", "-std=c++17", "-Wall", "-I", str(LIB), str(src), "-o", str(binary)],
@@ -280,9 +281,15 @@ def test_the_cli_starts_from_cold(argv):
     `taskgraph compile` did not. In-process tests inherit an import graph that a
     user's first command does not.
     """
+    # Deliberately NOT spawned with PYTHONUTF8=1. A listing carries em dashes,
+    # and on a Windows locale a subprocess' stdout is cp1252, which cannot
+    # encode them -- so this also pins `cli._force_utf8_output`. Handing the
+    # child UTF-8 mode from outside would test the harness, not the CLI.
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
     r = subprocess.run(
         [sys.executable, "-m", "ephymeris_sidecar.taskgraph.cli", *argv],
         cwd=REPO_ROOT / "sidecar", capture_output=True, text=True,
+        encoding="utf-8", env=env,
     )
     assert r.returncode == 0, f"{argv} failed:\n{r.stdout}\n{r.stderr}"
     assert "Traceback" not in r.stderr

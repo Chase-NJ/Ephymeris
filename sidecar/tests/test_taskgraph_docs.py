@@ -44,7 +44,7 @@ _END = "<!-- END GENERATED two_afc SKELETON -->"
 
 
 def _embedded_yaml() -> str:
-    text = CREATING.read_text()
+    text = CREATING.read_text(encoding="utf-8")
     assert _BEGIN in text and _END in text, (
         "the generated-skeleton markers are gone from creating-a-task.md. They "
         "delimit the one block this test can check; without them the example is "
@@ -87,7 +87,7 @@ def _decision_pointers() -> set[str]:
 
 def test_every_decision_pointer_resolves():
     """Every `decision=` a rule carries has an anchor to land on."""
-    anchors = set(re.findall(r'<a id="(d\d+)"></a>', DECISIONS.read_text()))
+    anchors = set(re.findall(r'<a id="(d\d+)"></a>', DECISIONS.read_text(encoding="utf-8")))
     assert anchors, "taskgraph-decisions.md has no <a id=...> anchors at all"
 
     missing = sorted(
@@ -101,10 +101,10 @@ def test_every_decision_pointer_resolves():
 
 def test_decision_links_in_the_docs_resolve():
     """And so does every hand-written link in the two prose documents."""
-    anchors = set(re.findall(r'<a id="(d\d+)"></a>', DECISIONS.read_text()))
+    anchors = set(re.findall(r'<a id="(d\d+)"></a>', DECISIONS.read_text(encoding="utf-8")))
     broken = []
     for doc in (TASKGRAPH, CREATING):
-        for target in re.findall(r"taskgraph-decisions\.md#(d\d+)", doc.read_text()):
+        for target in re.findall(r"taskgraph-decisions\.md#(d\d+)", doc.read_text(encoding="utf-8")):
             if target not in anchors:
                 broken.append(f"{doc.name} → #{target}")
     assert not broken, broken
@@ -115,7 +115,7 @@ def test_relative_doc_links_point_at_files_that_exist(doc: Path):
     """No link to a document that was renamed or never written."""
     missing = [
         target
-        for target in re.findall(r"\]\((?!https?:)([A-Za-z0-9._-]+\.md)", doc.read_text())
+        for target in re.findall(r"\]\((?!https?:)([A-Za-z0-9._-]+\.md)", doc.read_text(encoding="utf-8"))
         if not (DOCS / target).is_file()
     ]
     assert not missing, f"{doc.name} links to missing documents: {sorted(set(missing))}"

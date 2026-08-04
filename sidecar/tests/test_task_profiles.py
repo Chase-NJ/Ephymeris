@@ -37,13 +37,13 @@ GRGL = {
 
 def test_a_sketch_without_a_task_json_is_profile_less(tmp_path: Path) -> None:
     """§6.1 — fully supported, not an error."""
-    (tmp_path / "clean_flush.ino").write_text("void setup(){}")
+    (tmp_path / "clean_flush.ino").write_text("void setup(){}", encoding="utf-8")
     assert load_profile(tmp_path) is None
 
 
 def test_a_sketch_with_a_task_json_loads_it(tmp_path: Path) -> None:
-    (tmp_path / "GRGL_2-Odor.ino").write_text("void setup(){}")
-    (tmp_path / "task.json").write_text(json.dumps(GRGL))
+    (tmp_path / "GRGL_2-Odor.ino").write_text("void setup(){}", encoding="utf-8")
+    (tmp_path / "task.json").write_text(json.dumps(GRGL), encoding="utf-8")
     profile = load_profile(tmp_path)
     assert profile is not None
     assert profile.task_name == "GRGL 2-Odor Discrimination"
@@ -52,7 +52,7 @@ def test_a_sketch_with_a_task_json_loads_it(tmp_path: Path) -> None:
 
 
 def test_a_malformed_task_json_raises_rather_than_silently_dropping(tmp_path: Path) -> None:
-    (tmp_path / "task.json").write_text("{ not valid json")
+    (tmp_path / "task.json").write_text("{ not valid json", encoding="utf-8")
     with pytest.raises(TaskProfileError):
         load_profile(tmp_path)
 

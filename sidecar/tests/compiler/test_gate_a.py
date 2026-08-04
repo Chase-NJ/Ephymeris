@@ -95,7 +95,7 @@ def compiled():
 @pytest.fixture(scope="module")
 def cpp_streams(compiled, tmp_path_factory):
     """Build and run the C++ side, returning name -> (verdict, [(code, t), ...])."""
-    (HOST_TEST / "grgl_table.h").write_text(emit(compiled.table))
+    (HOST_TEST / "grgl_table.h").write_text(emit(compiled.table), encoding="utf-8")
     binary = tmp_path_factory.mktemp("gate_a") / "gate_a"
     subprocess.run(
         ["clang++", "-std=c++17", "-Wall", "-I", str(HOST_TEST), "-I", str(LIB),

@@ -105,7 +105,7 @@ class Paradigm:
 
 @lru_cache(maxsize=1)
 def _schema() -> dict:
-    return json.loads((SCHEMA_DIR / "paradigm.v1.json").read_text())
+    return json.loads((SCHEMA_DIR / "paradigm.v1.json").read_text(encoding="utf-8"))
 
 
 @lru_cache(maxsize=1)
@@ -121,7 +121,7 @@ def load_all() -> tuple[Paradigm, ...]:
     found: list[Paradigm] = []
     seen: set[str] = set()
     for path in sorted(PARADIGM_DIR.glob("*.yaml")):
-        raw = yaml.safe_load(path.read_text())
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         try:
             jsonschema.validate(raw, _schema())
         except jsonschema.ValidationError as exc:

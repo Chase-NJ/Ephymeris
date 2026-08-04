@@ -89,7 +89,7 @@ def test_TG225_requires_exactly_one_engagement_channel():
     from ephymeris_sidecar.taskgraph.lint.rules_spec import engagement_channel_unresolvable
     from ephymeris_sidecar.taskgraph.registries import ChannelMap, _pinout
 
-    raw = json.loads((SCHEMA_DIR / "channels.v1.json").read_text())
+    raw = json.loads((SCHEMA_DIR / "channels.v1.json").read_text(encoding="utf-8"))
     # The pinout is the second half of a ChannelMap now; these cases mangle the
     # LOGICAL half only, so the real pinout rides along unchanged.
     pinout = _pinout()
@@ -127,7 +127,7 @@ def test_TG226_reports_every_way_the_pinout_and_the_registry_disagree():
     from ephymeris_sidecar.taskgraph.lint.rules_spec import pinout_disagrees_with_registry
     from ephymeris_sidecar.taskgraph.registries import ChannelMap, _pinout
 
-    raw = json.loads((SCHEMA_DIR / "channels.v1.json").read_text())
+    raw = json.loads((SCHEMA_DIR / "channels.v1.json").read_text(encoding="utf-8"))
     pins = _pinout()
     spec = bind(base_document())
 

@@ -33,7 +33,7 @@ def _library_at_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 def make_sketch(root: Path, category: str, name: str, ino_name: str | None = None) -> Path:
     folder = root / category / name
     folder.mkdir(parents=True)
-    (folder / f"{ino_name or name}.ino").write_text("void setup(){}\n")
+    (folder / f"{ino_name or name}.ino").write_text("void setup(){}\n", encoding="utf-8")
     return folder
 
 
@@ -72,7 +72,7 @@ def test_a_file_where_the_library_should_be_is_damaged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target = tmp_path / "notadir"
-    target.write_text("")
+    target.write_text("", encoding="utf-8")
     monkeypatch.setenv(LIBRARY_ENV, str(target))
     assert library_status().state == "damaged"
 
@@ -161,7 +161,7 @@ def test_libraries_path_is_absent_when_there_is_no_libraries_folder(tmp_path: Pa
 
 def test_loose_files_at_the_root_are_ignored(tmp_path: Path) -> None:
     make_sketch(tmp_path, "utility", "clean_flush")
-    (tmp_path / "README.md").write_text("notes")
+    (tmp_path / "README.md").write_text("notes", encoding="utf-8")
 
     result = discover()
 
@@ -199,7 +199,7 @@ def test_a_sketch_folder_is_not_descended_into(tmp_path: Path) -> None:
     sketch = make_sketch(tmp_path, "utility", "clean_flush")
     nested = sketch / "extras" / "host_test"
     nested.mkdir(parents=True)
-    (nested / "host_test.ino").write_text("void setup(){}")
+    (nested / "host_test.ino").write_text("void setup(){}", encoding="utf-8")
 
     result = discover()
 
@@ -228,7 +228,7 @@ def test_a_misnamed_sketch_is_still_reported_when_nested(tmp_path: Path) -> None
 def test_scanning_stops_at_a_sane_depth(tmp_path: Path) -> None:
     deep = tmp_path.joinpath(*[f"level{i}" for i in range(MAX_SCAN_DEPTH + 3)])
     deep.mkdir(parents=True)
-    (deep / f"{deep.name}.ino").write_text("void setup(){}")
+    (deep / f"{deep.name}.ino").write_text("void setup(){}", encoding="utf-8")
 
     result = discover()
 
@@ -244,7 +244,7 @@ def test_hidden_folders_are_ignored_silently(tmp_path: Path, hidden: str) -> Non
     make_sketch(tmp_path, "utility", "clean_flush")
     junk = tmp_path / hidden / "objects"
     junk.mkdir(parents=True)
-    (junk / "stray.ino").write_text("noise")
+    (junk / "stray.ino").write_text("noise", encoding="utf-8")
 
     result = discover()
 
@@ -259,7 +259,7 @@ def test_nested_libraries_folders_are_reserved_but_not_passed_to_compile(
     make_sketch(tmp_path, "behavior/stage_one", "task")
     nested_lib = tmp_path / "behavior" / "libraries" / "SharedThing"
     nested_lib.mkdir(parents=True)
-    (nested_lib / "SharedThing.h").write_text("#pragma once")
+    (nested_lib / "SharedThing.h").write_text("#pragma once", encoding="utf-8")
     (tmp_path / "libraries" / "RootThing").mkdir(parents=True)
 
     result = discover()
@@ -275,7 +275,7 @@ def test_nested_libraries_folders_are_reserved_but_not_passed_to_compile(
 def test_a_sketch_at_the_root_is_reported_rather_than_ignored(tmp_path: Path) -> None:
     stray = tmp_path / "loose_sketch"
     stray.mkdir()
-    (stray / "loose_sketch.ino").write_text("void setup(){}")
+    (stray / "loose_sketch.ino").write_text("void setup(){}", encoding="utf-8")
     make_sketch(tmp_path, "utility", "clean_flush")
 
     result = discover()

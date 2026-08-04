@@ -72,7 +72,7 @@ def test_a_broken_document_is_still_served(rig_store):
     rig_store.root.mkdir(parents=True, exist_ok=True)
     doc = rig()
     doc["pins"]["trial_light"]["index"] = 200
-    rig_store.path.write_text(__import__("json").dumps(doc))
+    rig_store.path.write_text(__import__("json").dumps(doc), encoding="utf-8")
 
     payload = service.document_payload(rig_store)
     assert payload["document"]["pins"]["trial_light"]["index"] == 200

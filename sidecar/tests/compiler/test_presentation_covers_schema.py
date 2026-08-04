@@ -79,7 +79,7 @@ def _merged(props: dict, defs: dict) -> dict:
 
 @lru_cache(maxsize=1)
 def schema_leaves() -> dict[str, dict]:
-    schema = json.loads(SCHEMA_PATH.read_text())
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     out: dict[str, dict] = {}
     _walk(schema, "", schema.get("$defs", {}), out)
     return out

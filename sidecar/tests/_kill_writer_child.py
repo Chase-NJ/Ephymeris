@@ -37,7 +37,7 @@ def main() -> None:
         # Codes/timestamps mimic a real stream; each is fsync'd before the next.
         writer.record(100 + i, i * 1000)
 
-    Path(ready).write_text("ready")
+    Path(ready).write_text("ready", encoding="utf-8")
     # Block forever — the parent kills us here, mid-session, before finalize.
     while True:
         time.sleep(0.1)

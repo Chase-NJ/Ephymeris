@@ -37,7 +37,7 @@ class LoadContext:
 
     def schema(self) -> dict:
         if not self._schema:
-            self._schema = json.loads(SCHEMA_PATH.read_text())
+            self._schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         return self._schema
 
 

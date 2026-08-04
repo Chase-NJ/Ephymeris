@@ -194,4 +194,4 @@ def load_text(
 def load(path: str | Path, bag: DiagnosticBag) -> TaskSpec | None:
     """Full P0 from a file. See load_text for the pass itself."""
     path = Path(path)
-    return load_text(path.read_text(), bag, source_path=str(path), spec_id=path.stem)
+    return load_text(path.read_text(encoding="utf-8"), bag, source_path=str(path), spec_id=path.stem)

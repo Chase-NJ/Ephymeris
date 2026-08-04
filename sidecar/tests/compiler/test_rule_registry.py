@@ -119,7 +119,7 @@ def _direct_test_codes() -> set[str]:
     """
     found: set[str] = set()
     for f in TESTS_DIR.glob("test_rules_*.py"):
-        found |= set(re.findall(r"TG\d{3}", f.read_text()))
+        found |= set(re.findall(r"TG\d{3}", f.read_text(encoding="utf-8")))
     return found
 
 

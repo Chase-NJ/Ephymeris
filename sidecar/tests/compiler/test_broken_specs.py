@@ -91,7 +91,7 @@ def build_document(fixture: dict) -> str:
     """
     if "_raw" in fixture:
         return fixture["_raw"]
-    doc = yaml.safe_load(BASE.read_text())
+    doc = yaml.safe_load(BASE.read_text(encoding="utf-8"))
     doc["spec_id"] = "fixture_" + fixture["_expect"].lower()
     for path in fixture.get("_delete", ()):
         _delete(doc, path)
@@ -124,7 +124,7 @@ def test_base_is_valid():
     """If the base ever develops its own errors, every fixture starts passing for
     the wrong reason -- the expected code would fire, but so would noise nobody
     looked at."""
-    raw = yaml.safe_load(BASE.read_text())
+    raw = yaml.safe_load(BASE.read_text(encoding="utf-8"))
     spec = bind(raw, source_path=str(BASE), spec_hash=compute_spec_hash(raw))
     bag = DiagnosticBag()
     bag.extend(run_pass(Pass.BIND, SpecContext(spec=spec)))
@@ -133,7 +133,7 @@ def test_base_is_valid():
 
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
 def test_fixture_provokes_its_rule(path: Path):
-    fixture = yaml.safe_load(path.read_text())
+    fixture = yaml.safe_load(path.read_text(encoding="utf-8"))
     expect = fixture["_expect"]
 
     assert path.name.split("_")[0].rstrip("b") == expect or path.name.startswith(expect + "_"), (
@@ -158,7 +158,7 @@ def test_fixture_is_a_single_defect(path: Path):
     at all (_raw), where schema validation legitimately reports several things
     about the same malformed file.
     """
-    fixture = yaml.safe_load(path.read_text())
+    fixture = yaml.safe_load(path.read_text(encoding="utf-8"))
     if "_raw" in fixture:
         return
     expect = fixture["_expect"]

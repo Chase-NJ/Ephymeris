@@ -29,15 +29,15 @@ from tests.compiler.tgpaths import (  # noqa: E402
     SCHEMA_DIR, all_specs, spec as spec_path,
 )
 
-SCHEMA = json.loads((SCHEMA_DIR / "task_spec.v1.json").read_text())
-VOCAB = json.loads((SCHEMA_DIR / "strobe_vocab.v1.json").read_text())
+SCHEMA = json.loads((SCHEMA_DIR / "task_spec.v1.json").read_text(encoding="utf-8"))
+VOCAB = json.loads((SCHEMA_DIR / "strobe_vocab.v1.json").read_text(encoding="utf-8"))
 
 SPEC_FILES = all_specs()
 BINDING_RE = re.compile(r"^@")
 
 
 def load(path: Path) -> dict:
-    return yaml.safe_load(path.read_text())
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 @pytest.fixture(params=SPEC_FILES, ids=lambda p: p.stem)

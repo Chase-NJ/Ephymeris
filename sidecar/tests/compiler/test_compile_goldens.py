@@ -52,7 +52,7 @@ def test_listing_golden_is_current(path, compiled):
     r = compiled[path.stem]
     golden = GOLDENS_DIR / f"{path.stem}.table.txt"
     assert golden.exists(), f"missing golden {golden.name} -- run `taskgraph compile`"
-    assert golden.read_text() == render(r.table, r.bag), (
+    assert golden.read_text(encoding="utf-8") == render(r.table, r.bag), (
         f"{golden.name} is stale. Run:\n  npm run taskgraph:goldens\n"
         "and review the diff -- it shows exactly which states moved."
     )
@@ -69,7 +69,7 @@ def test_lint_baseline_is_current(path, compiled):
     r = compiled[path.stem]
     golden = GOLDENS_DIR / f"{path.stem}.lint.txt"
     assert golden.exists(), f"missing {golden.name}"
-    assert golden.read_text() == render_lint(r.bag, r.table.spec_id)
+    assert golden.read_text(encoding="utf-8") == render_lint(r.bag, r.table.spec_id)
 
 
 @pytest.mark.parametrize("path", SPECS, ids=lambda p: p.stem)

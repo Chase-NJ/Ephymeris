@@ -47,14 +47,14 @@ def generate_all(check: bool = False) -> int:
     root = paths.repo_root()
     stale: list[Path] = []
     for path, wanted in outputs().items():
-        current = path.read_text() if path.exists() else None
+        current = path.read_text(encoding="utf-8") if path.exists() else None
         if current == wanted:
             continue
         if check:
             stale.append(path)
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(wanted)
+            path.write_text(wanted, encoding="utf-8")
             print(f"wrote {path.relative_to(root)}")
 
     if check:

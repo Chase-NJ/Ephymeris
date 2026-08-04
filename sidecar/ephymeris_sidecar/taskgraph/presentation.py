@@ -37,7 +37,7 @@ _INDEX_RE = re.compile(r"\[\d+\]")
 
 @lru_cache(maxsize=1)
 def presentation() -> dict:
-    return json.loads(PRESENTATION_PATH.read_text())
+    return json.loads(PRESENTATION_PATH.read_text(encoding="utf-8"))
 
 
 def normalize_location(location: str | None) -> str | None:

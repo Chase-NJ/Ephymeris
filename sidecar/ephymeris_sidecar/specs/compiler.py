@@ -188,7 +188,7 @@ def registries() -> dict[str, Any]:
 
 @lru_cache(maxsize=8)
 def _registry(name: str) -> dict:
-    return json.loads((SCHEMA_DIR / name).read_text())
+    return json.loads((SCHEMA_DIR / name).read_text(encoding="utf-8"))
 
 
 def diagnostic_placement(location: str | None) -> tuple[str, str | None]:

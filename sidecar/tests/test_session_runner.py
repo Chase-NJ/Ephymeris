@@ -122,7 +122,7 @@ async def test_a_run_writes_its_tsv_with_the_seed_captured(tmp_path: Path) -> No
     ports.on_strobe(249, 500)
 
     tsv = next((tmp_path / "behavior.tsv").glob("*.tsv"))
-    text = tsv.read_text()
+    text = tsv.read_text(encoding="utf-8")
     # §5 core fields + flat config + the recognized trial_seed convention (§6.4)
     assert "# rat: remy1" in text
     assert "# serial_port: /dev/fake1" in text
@@ -163,7 +163,7 @@ async def test_both_seeds_are_recorded_when_the_board_disagrees(tmp_path: Path) 
     ports.on_ready(4242)  # an old sketch's own micros()-derived value
     ports.on_strobe(101, 0)
 
-    text = next((tmp_path / "behavior.tsv").glob("*.tsv")).read_text()
+    text = next((tmp_path / "behavior.tsv").glob("*.tsv")).read_text(encoding="utf-8")
     assert "# trial_seed: 4242" in text, "what the board actually ran on"
     assert f"# host_seed: {sent}" in text, "what this app asked for"
 
@@ -206,7 +206,7 @@ async def test_the_end_code_finalizes_the_run_cleanly(tmp_path: Path) -> None:
     assert ports.ended == [(1, CLEAN_STOP_REASON)]
 
     # §7.2 — .json and .mat built once at the end, from the same in-memory list.
-    doc = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
+    doc = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
     assert doc["rat"] == "remy1"
     assert doc["stop_reason"] == CLEAN_STOP_REASON
     assert doc["n_events"] == 3
@@ -287,7 +287,7 @@ async def test_a_board_drop_finalizes_with_whatever_was_captured(tmp_path: Path)
     # Not a clean end, so the port isn't transitioned here — it's already ERROR.
     assert ports.ended == []
 
-    doc = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
+    doc = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
     assert doc["stop_reason"] == "board disconnected"
     assert doc["ts_data"] == [[101, 0], [249, 100]]
 
@@ -313,7 +313,7 @@ async def test_a_profile_less_sketch_still_writes_but_pushes_no_metrics(
     await asyncio.sleep(0)
 
     tsv = next((tmp_path / "behavior.tsv").glob("*.tsv"))
-    assert "101\t0" in tsv.read_text()
+    assert "101\t0" in tsv.read_text(encoding="utf-8")
     assert not [e for e in events if e.get("evt") == "session.telemetry"]
 
 

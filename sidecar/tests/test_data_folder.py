@@ -69,7 +69,7 @@ def test_ensure_folder_creates_nested_paths(tmp_path: Path) -> None:
 
 def test_ensure_folder_rejects_a_file(tmp_path: Path) -> None:
     victim = tmp_path / "not-a-dir"
-    victim.write_text("")
+    victim.write_text("", encoding="utf-8")
     with pytest.raises(DataFolderError):
         ensure_folder(victim)
 
@@ -80,20 +80,20 @@ def test_ensure_folder_rejects_a_file(tmp_path: Path) -> None:
 def test_relocate_moves_contents_when_asked(tmp_path: Path) -> None:
     source = tmp_path / "old"
     source.mkdir()
-    (source / "session.json").write_text("{}")
+    (source / "session.json").write_text("{}", encoding="utf-8")
     destination = tmp_path / "new"
 
     result = relocate(source, destination, move_existing=True)
 
     assert result == destination
-    assert (destination / "session.json").read_text() == "{}"
+    assert (destination / "session.json").read_text(encoding="utf-8") == "{}"
     assert not source.exists()
 
 
 def test_relocate_without_moving_just_creates_the_destination(tmp_path: Path) -> None:
     source = tmp_path / "old"
     source.mkdir()
-    (source / "keep.txt").write_text("still here")
+    (source / "keep.txt").write_text("still here", encoding="utf-8")
     destination = tmp_path / "new"
 
     relocate(source, destination, move_existing=False)
@@ -107,16 +107,16 @@ def test_relocate_refuses_a_non_empty_destination(tmp_path: Path) -> None:
     """§8 — fails safely rather than merging into or overwriting."""
     source = tmp_path / "old"
     source.mkdir()
-    (source / "a.txt").write_text("source")
+    (source / "a.txt").write_text("source", encoding="utf-8")
     destination = tmp_path / "new"
     destination.mkdir()
-    (destination / "existing.txt").write_text("do not clobber")
+    (destination / "existing.txt").write_text("do not clobber", encoding="utf-8")
 
     with pytest.raises(DataFolderError) as exc:
         relocate(source, destination, move_existing=True)
 
     assert "isn't empty" in str(exc.value)
-    assert (destination / "existing.txt").read_text() == "do not clobber"
+    assert (destination / "existing.txt").read_text(encoding="utf-8") == "do not clobber"
     assert (source / "a.txt").exists()
 
 
@@ -135,7 +135,7 @@ def test_relocate_attaches_to_an_archive_that_is_already_full(tmp_path: Path) ->
 
     assert relocate(source, destination, move_existing=False) == destination
     # Nothing was written, moved, or cleared — only a path was chosen.
-    assert (destination / "01_2O-Bdisc" / "run.json").read_text() == "{}"
+    assert (destination / "01_2O-Bdisc" / "run.json").read_text(encoding="utf-8") == "{}"
     assert not source.exists()
 
 
@@ -143,7 +143,7 @@ def test_relocate_into_an_existing_empty_folder_does_not_nest(tmp_path: Path) ->
     """shutil.move would otherwise put `old/` *inside* `new/`."""
     source = tmp_path / "old"
     source.mkdir()
-    (source / "a.txt").write_text("x")
+    (source / "a.txt").write_text("x", encoding="utf-8")
     destination = tmp_path / "new"
     destination.mkdir()
 
@@ -156,7 +156,7 @@ def test_relocate_into_an_existing_empty_folder_does_not_nest(tmp_path: Path) ->
 def test_relocating_onto_itself_is_a_no_op(tmp_path: Path) -> None:
     source = tmp_path / "same"
     source.mkdir()
-    (source / "a.txt").write_text("x")
+    (source / "a.txt").write_text("x", encoding="utf-8")
 
     assert relocate(source, source, move_existing=True) == source
     assert (source / "a.txt").exists()
@@ -166,7 +166,7 @@ def test_relocate_rejects_a_file_destination(tmp_path: Path) -> None:
     source = tmp_path / "old"
     source.mkdir()
     blocker = tmp_path / "blocker"
-    blocker.write_text("")
+    blocker.write_text("", encoding="utf-8")
 
     with pytest.raises(DataFolderError):
         relocate(source, blocker, move_existing=True)

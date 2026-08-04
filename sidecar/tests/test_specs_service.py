@@ -224,7 +224,7 @@ def test_export_produces_every_artifact_kind():
     assert by_kind["spec"]["text"] == text
     # The listing export IS the review artifact, byte for byte.
     goldens = Path(__file__).resolve().parent / "compiler" / "goldens"
-    assert by_kind["listing"]["text"] == (goldens / "go_nogo.table.txt").read_text()
+    assert by_kind["listing"]["text"] == (goldens / "go_nogo.table.txt").read_text(encoding="utf-8")
     blob = base64.b64decode(by_kind["table_bin"]["base64"])
     assert blob[:4] == b"TGTB", "the packed table's magic"
     assert by_kind["bench"]["filename"] == "go_nogo.bench.txt"

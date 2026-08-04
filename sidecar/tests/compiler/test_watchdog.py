@@ -144,7 +144,7 @@ def test_it_fires_when_it_must_and_stays_silent_when_it_must_not(tmp_path):
     drive LOW.
     """
     r = compile_spec(spec("two_afc"))
-    (HOST_TEST / "grgl_table.h").write_text(emit(r.table))
+    (HOST_TEST / "grgl_table.h").write_text(emit(r.table), encoding="utf-8")
     binary = tmp_path / "watchdog"
     subprocess.run(
         ["clang++", "-std=c++17", "-Wall", "-I", str(HOST_TEST), "-I", str(LIB),

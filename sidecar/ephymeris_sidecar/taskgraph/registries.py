@@ -34,7 +34,7 @@ CH_BIND_RESERVED_FROM = 0xF0
 
 
 def _load(name: str) -> dict:
-    return json.loads((SCHEMA_DIR / name).read_text())
+    return json.loads((SCHEMA_DIR / name).read_text(encoding="utf-8"))
 
 
 def active_pinout_id() -> str:
@@ -52,11 +52,11 @@ def active_pinout_id() -> str:
     override = os.environ.get("EPHYMERIS_PINOUT")
     if override:
         return override
-    return json.loads((HARDWARE_DIR / "_default.json").read_text())["pinout"]
+    return json.loads((HARDWARE_DIR / "_default.json").read_text(encoding="utf-8"))["pinout"]
 
 
 def _pinout() -> dict:
-    return json.loads((HARDWARE_DIR / f"{active_pinout_id()}.json").read_text())
+    return json.loads((HARDWARE_DIR / f"{active_pinout_id()}.json").read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------- #

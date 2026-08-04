@@ -40,7 +40,7 @@ def make_writer(tmp_path: Path) -> AnimalWriter:
 def test_the_header_is_written_before_any_strobe(tmp_path: Path) -> None:
     writer = make_writer(tmp_path)
     writer.open_files()
-    lines = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text().splitlines()
+    lines = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8").splitlines()
     # All comment lines, no data yet, and the two footer-only fields absent.
     assert all(line.startswith("#") for line in lines)
     assert any(line == "# rat: remy1" for line in lines)
@@ -56,7 +56,7 @@ def test_strobes_append_in_the_boards_exact_format(tmp_path: Path) -> None:
     writer.record(222, 1000)
     data_lines = [
         line
-        for line in (tmp_path / "behavior.tsv" / "remy1.tsv").read_text().splitlines()
+        for line in (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8").splitlines()
         if not line.startswith("#")
     ]
     assert data_lines == ["221\t0", "222\t1000"]
@@ -72,7 +72,7 @@ def test_finalize_writes_the_footer_and_builds_json_and_mat(tmp_path: Path) -> N
     writer.record(246, 3523555)
     document = writer.finalize("BF_END_SESSION received")
 
-    tsv = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text()
+    tsv = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8")
     assert "# stop_reason: BF_END_SESSION received" in tsv
     assert "# n_events: 2" in tsv
 
@@ -89,7 +89,7 @@ def test_finalize_writes_the_footer_and_builds_json_and_mat(tmp_path: Path) -> N
 
     import json
 
-    on_disk = json.loads((tmp_path / "behavior.json" / "remy1.json").read_text())
+    on_disk = json.loads((tmp_path / "behavior.json" / "remy1.json").read_text(encoding="utf-8"))
     assert on_disk == document
 
 
@@ -132,7 +132,7 @@ def test_an_existing_tsv_is_refused_not_overwritten(tmp_path: Path) -> None:
     writer.open_files()
     writer.record(221, 0)
     writer.finalize("operator stop")
-    existing = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text()
+    existing = (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8")
 
     with pytest.raises(WriteError) as caught:
         make_writer(tmp_path).open_files()
@@ -141,13 +141,13 @@ def test_an_existing_tsv_is_refused_not_overwritten(tmp_path: Path) -> None:
     assert "already exists" in str(caught.value)
     assert "remy1.tsv" in str(caught.value)
     # And the first run's data is untouched.
-    assert (tmp_path / "behavior.tsv" / "remy1.tsv").read_text() == existing
+    assert (tmp_path / "behavior.tsv" / "remy1.tsv").read_text(encoding="utf-8") == existing
 
 
 def test_a_write_to_a_bad_path_raises_writeerror(tmp_path: Path) -> None:
     # Point the .tsv at a path whose parent is a file, so mkdir/open fails.
     blocker = tmp_path / "blocker"
-    blocker.write_text("")
+    blocker.write_text("", encoding="utf-8")
     writer = AnimalWriter(
         blocker / "nested" / "remy1.tsv",
         tmp_path / "j.json",
@@ -206,7 +206,7 @@ def test_tsv_survives_a_mid_session_hard_kill(tmp_path: Path) -> None:
             child.kill()
 
     # The .tsv is intact: header + exactly the flushed data lines.
-    contents = tsv.read_text().splitlines()
+    contents = tsv.read_text(encoding="utf-8").splitlines()
     header = [line for line in contents if line.startswith("#")]
     data = [line for line in contents if not line.startswith("#")]
 

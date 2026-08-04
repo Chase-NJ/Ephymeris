@@ -43,15 +43,15 @@ def cmd_compile(args) -> int:
         if not result.ok:
             failed += 1
             continue
-        _listing_path(spec_path).write_text(render(result.table, result.bag))
-        _lint_path(spec_path).write_text(render_lint(result.bag, result.table.spec_id))
+        _listing_path(spec_path).write_text(render(result.table, result.bag), encoding="utf-8")
+        _lint_path(spec_path).write_text(render_lint(result.bag, result.table.spec_id), encoding="utf-8")
 
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
         from ephymeris_sidecar.taskgraph.emit.canonical import to_json
         from ephymeris_sidecar.taskgraph.emit.pack import crc32, pack
 
-        (out / f"{result.table.spec_id}.table.json").write_text(to_json(result.table))
+        (out / f"{result.table.spec_id}.table.json").write_text(to_json(result.table), encoding="utf-8")
 
         #: The bytes a board receives, and the only artifact the CRC is defined
         #: over. Emitted even though nothing uploads it yet, because writing it is
@@ -100,12 +100,12 @@ def cmd_goldens(args) -> int:
             (out / f"{p.id}.table.txt", render(result.table, result.bag)),
             (out / f"{p.id}.lint.txt", render_lint(result.bag, result.table.spec_id)),
         ):
-            if (path.read_text() if path.exists() else None) == wanted:
+            if (path.read_text(encoding="utf-8") if path.exists() else None) == wanted:
                 continue
             if args.check:
                 stale.append(path)
             else:
-                path.write_text(wanted)
+                path.write_text(wanted, encoding="utf-8")
                 print(f"wrote {path.relative_to(paths.repo_root())}")
     if args.check:
         if stale:
@@ -135,7 +135,7 @@ def cmd_listing(args) -> int:
             (_listing_path(spec_path), render(result.table, result.bag)),
             (_lint_path(spec_path), render_lint(result.bag, result.table.spec_id)),
         ):
-            current = path.read_text() if path.exists() else None
+            current = path.read_text(encoding="utf-8") if path.exists() else None
             if current != wanted:
                 stale.append(path)
     if stale:
@@ -260,7 +260,7 @@ def cmd_bench(args) -> int:
         return 1
     text = render(result.table)
     if args.out:
-        Path(args.out).write_text(text)
+        Path(args.out).write_text(text, encoding="utf-8")
         print(f"wrote {args.out}")
     else:
         print(text, end="")
@@ -288,7 +288,31 @@ def _specs(patterns) -> list[Path]:
     return out
 
 
+def _force_utf8_output() -> None:
+    """Print UTF-8 whatever the console's codepage is.
+
+    A listing is full of em dashes and box-drawing characters, and Python picks
+    its stdout encoding from the locale -- cp1252 on the lab's Windows machines,
+    which cannot encode either. The CLI then dies with UnicodeEncodeError while
+    printing its own output, on a spec that compiled perfectly.
+
+    The app doesn't hit this (the Tauri shell spawns the sidecar with
+    PYTHONUTF8=1), but that variable is read at interpreter startup and so is
+    unavailable to anyone who has already typed `python -m ...`. Reconfiguring
+    the streams is the only fix that works from inside the process.
+
+    `errors="replace"` on a redirected stream rather than a hard failure: a
+    mangled glyph in a listing is a cosmetic loss, and losing the whole command
+    over one is not a trade worth making.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:  # not a plain file object under redirection
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_output()
     ap = argparse.ArgumentParser(prog="taskgraph", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 

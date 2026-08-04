@@ -106,7 +106,7 @@ def test_a_saved_document_round_trips_and_carries_a_stamp(tmp_path):
     stored = s.save(rig())
     assert s.exists()
     assert stored["edited_at"]
-    assert json.loads(s.path.read_text())["channels"] == stored["channels"]
+    assert json.loads(s.path.read_text(encoding="utf-8"))["channels"] == stored["channels"]
     assert s.status().custom is True
 
     s.reset()
@@ -119,7 +119,7 @@ def test_an_unparseable_document_falls_back_rather_than_raising(tmp_path):
     not start with six serial ports open."""
     s = store.HardwareStore(tmp_path)
     s.root.mkdir(parents=True, exist_ok=True)
-    s.path.write_text("{ not json")
+    s.path.write_text("{ not json", encoding="utf-8")
     assert s.load() is None
 
 

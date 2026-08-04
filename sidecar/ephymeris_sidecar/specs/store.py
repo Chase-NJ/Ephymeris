@@ -98,14 +98,14 @@ class SpecStore:
 
     def _index(self) -> dict[str, dict[str, Any]]:
         try:
-            raw = json.loads(self.index_path.read_text())
+            raw = json.loads(self.index_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
         return raw if isinstance(raw, dict) else {}
 
     def _write_index(self, index: dict[str, dict[str, Any]]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        self.index_path.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n")
+        self.index_path.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     # --- enumeration --------------------------------------------------------
 

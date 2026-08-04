@@ -36,7 +36,7 @@ VALID_KINDS = frozenset({"field", "row", "section", "node", "document"})
 
 def _diagnostics():
     for path in FIXTURES:
-        fixture = yaml.safe_load(path.read_text())
+        fixture = yaml.safe_load(path.read_text(encoding="utf-8"))
         result = compile_text(build_document(fixture), spec_id=path.stem)
         for diagnostic in result.bag:
             yield path.name, diagnostic
@@ -76,7 +76,7 @@ def test_the_corpus_exercises_every_placement_kind():
 def test_compile_text_never_raises_on_a_broken_document():
     """The GUI calls compile_text on every keystroke. It must always return a bag."""
     for path in FIXTURES:
-        fixture = yaml.safe_load(path.read_text())
+        fixture = yaml.safe_load(path.read_text(encoding="utf-8"))
         result = compile_text(build_document(fixture), spec_id=path.stem)
         assert result.table is None or not result.bag.has_errors()
 
@@ -92,7 +92,7 @@ def test_a_schema_violation_inside_an_array_element_lands_on_its_field():
     """
     from pathlib import Path
 
-    text = spec("go_nogo").read_text()
+    text = spec("go_nogo").read_text(encoding="utf-8")
     broken = text.replace("  ms: 2000\n  wire_key: NWP", "  ms: 2000000\n  wire_key: NWP")
     assert broken != text
     result = compile_text(broken, spec_id="gonogo")

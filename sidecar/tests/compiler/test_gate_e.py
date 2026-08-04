@@ -50,7 +50,7 @@ pytestmark = pytest.mark.skipif(
 def gate_e(tmp_path_factory):
     r = compile_spec(grgl_equivalent())
     assert r.ok, r.bag.render()
-    (HOST_TEST / "grgl_table.h").write_text(emit(r.table))
+    (HOST_TEST / "grgl_table.h").write_text(emit(r.table), encoding="utf-8")
     binary = tmp_path_factory.mktemp("gate_e") / "gate_e"
     subprocess.run(
         ["clang++", "-std=c++17", "-Wall", "-I", str(HOST_TEST), "-I", str(LIB),
@@ -110,7 +110,7 @@ def test_invalid_trial_is_not_emitted_twice(gate_e):
     Asserted through the gate rather than by grepping: a duplicate strobe is a
     stream difference, and the stream is what is compared.
     """
-    src = (FIRMWARE_LIB / "TgSession.h").read_text()
+    src = (FIRMWARE_LIB / "TgSession.h").read_text(encoding="utf-8")
     body = src[src.index("inline TgTrialResult tgSessionTrial"):]
     assert "emitStrobe" not in body, (
         "the session layer emits a strobe; the graph already carries INVALID_TRIAL"

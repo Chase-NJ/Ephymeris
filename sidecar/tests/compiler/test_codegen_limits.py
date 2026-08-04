@@ -53,7 +53,7 @@ def defines(header) -> dict[str, int]:
 def test_the_file_on_disk_is_what_the_generator_produces(header):
     """The same statement `codegen --check` makes, asserted where a developer
     sees it before CI does."""
-    assert HEADER.read_text() == header, "run `taskgraph codegen` and commit the result"
+    assert HEADER.read_text(encoding="utf-8") == header, "run `taskgraph codegen` and commit the result"
 
 
 def test_every_schema_constant_reaches_the_header(defines):
@@ -135,7 +135,7 @@ def test_the_prose_survives_verbatim():
     #: wrapped across two lines picks up a ` * ` in the middle, and asserting on
     #: the raw text would make this a test of the wrap width.
     text = " ".join(
-        re.sub(r"^\s*\*+\s?", "", line) for line in HEADER.read_text().splitlines()
+        re.sub(r"^\s*\*+\s?", "", line) for line in HEADER.read_text(encoding="utf-8").splitlines()
     )
     text = " ".join(text.split())
     for phrase in (
@@ -155,7 +155,7 @@ def test_a_new_schema_group_fails_loudly():
     every other test here would still pass -- the constants would simply not
     exist. It raises instead.
     """
-    raw = json.loads(SCHEMA.read_text())
+    raw = json.loads(SCHEMA.read_text(encoding="utf-8"))
     groups = [
         g for g in raw
         if isinstance(raw[g], dict) and not g.startswith("_") and g != "limits_version"
@@ -181,7 +181,7 @@ def test_it_compiles_and_defines_no_constant_twice(tmp_path):
     src.write_text(
         '#include "TaskLimits.h"\n#include "TaskTable.h"\n#include "TgWire.h"\n'
         "int main() { return TG_MAX_STATES + TG_NO_STROBE + TG_WIRE_FORMAT ? 0 : 1; }\n"
-    )
+    , encoding="utf-8")
     r = subprocess.run(
         ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(LIB),
          str(src), "-o", str(tmp_path / "t")],
@@ -203,7 +203,7 @@ def test_the_cap_announce_hard_codes_no_number():
     allowed literal is TASKGRAPH=1, which is a presence flag rather than a
     quantity.
     """
-    src = (LIB / "TaskInterpreter.h").read_text()
+    src = (LIB / "TaskInterpreter.h").read_text(encoding="utf-8")
     body = src[src.index("inline void tgAnnounceCapabilities()"):]
     body = body[: body.index("\n}")]
     #: Strings only -- the announce is Serial.print(F("...")) and Serial.print(MACRO),
@@ -224,6 +224,6 @@ def test_the_cap_announce_hard_codes_no_number():
 
 def defines_on_disk() -> dict[str, int]:
     out = {}
-    for name, literal in re.findall(r"^#define\s+(TG_\w+)\s+(\S+)", HEADER.read_text(), re.M):
+    for name, literal in re.findall(r"^#define\s+(TG_\w+)\s+(\S+)", HEADER.read_text(encoding="utf-8"), re.M):
         out[name] = int(literal, 0)
     return out

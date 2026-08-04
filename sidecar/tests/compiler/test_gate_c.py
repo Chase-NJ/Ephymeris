@@ -61,7 +61,7 @@ def compiled():
 
 @pytest.fixture(scope="module")
 def gate_c(compiled, tmp_path_factory):
-    (HOST_TEST / "grgl_table.h").write_text(emit(compiled))
+    (HOST_TEST / "grgl_table.h").write_text(emit(compiled), encoding="utf-8")
     binary = tmp_path_factory.mktemp("gate_c") / "gate_c"
     subprocess.run(
         ["clang++", "-std=c++17", "-Wall", "-I", str(HOST_TEST), "-I", str(LIB),

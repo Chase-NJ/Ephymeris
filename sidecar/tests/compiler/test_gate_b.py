@@ -56,7 +56,7 @@ def gate_b(tmp_path_factory):
     r = compile_spec(MODEL)
     assert r.ok, r.bag.render()
     assert r.table.template_version == 2, "Gate B compares against the MODEL graph"
-    (HOST_TEST / "grgl_table.h").write_text(emit(r.table))
+    (HOST_TEST / "grgl_table.h").write_text(emit(r.table), encoding="utf-8")
 
     binary = tmp_path_factory.mktemp("gate_b") / "gate_b"
     subprocess.run(

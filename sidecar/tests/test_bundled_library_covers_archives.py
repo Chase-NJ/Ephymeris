@@ -62,7 +62,7 @@ def _resolvable_names() -> set[str]:
         profile = folder / "task.json"
         if profile.is_file():
             try:
-                legacy = json.loads(profile.read_text()).get("legacyNames", [])
+                legacy = json.loads(profile.read_text(encoding="utf-8")).get("legacyNames", [])
             except (OSError, json.JSONDecodeError):
                 continue  # a broken profile is its own problem, reported elsewhere
             names.update(n for n in legacy if isinstance(n, str))

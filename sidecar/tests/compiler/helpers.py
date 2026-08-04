@@ -17,4 +17,4 @@ BASE = TESTS / "broken" / "_base.yaml"
 
 def base_document() -> dict:
     """A fresh, valid spec document. Mutate freely."""
-    return yaml.safe_load(BASE.read_text())
+    return yaml.safe_load(BASE.read_text(encoding="utf-8"))

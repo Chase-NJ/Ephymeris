@@ -73,7 +73,7 @@ def spec(paradigm_id: str) -> Path:
 
         p = paradigms.get(paradigm_id)
         path = _SKELETON_DIR / f"{paradigm_id}.yaml"
-        path.write_text(paradigms.to_yaml(paradigms.skeleton(p, spec_id=paradigm_id)))
+        path.write_text(paradigms.to_yaml(paradigms.skeleton(p, spec_id=paradigm_id)), encoding="utf-8")
         _written[paradigm_id] = path
     return _written[paradigm_id]
 
@@ -94,7 +94,7 @@ def spec_with(paradigm_id: str, answers: dict, *, name: str) -> Path:
         path = _SKELETON_DIR / f"{name}.yaml"
         path.write_text(
             paradigms.to_yaml(paradigms.skeleton(p, spec_id=name, answers=answers))
-        )
+        , encoding="utf-8")
         _written[name] = path
     return _written[name]
 
@@ -148,7 +148,7 @@ def shaping_ramped(side: str = "right_well") -> Path:
             if row["id"] in first:
                 row["ms"] = first[row["id"]]
         path = _SKELETON_DIR / f"{name}.yaml"
-        path.write_text(paradigms.to_yaml(doc))
+        path.write_text(paradigms.to_yaml(doc), encoding="utf-8")
         _written[name] = path
     return _written[name]
 

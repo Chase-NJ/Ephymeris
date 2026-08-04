@@ -78,7 +78,7 @@ def load_session(path: Path) -> Session | None:
     corpus unusable for the sake of being strict about files it does not own.
     """
     try:
-        d = json.loads(path.read_text())
+        d = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError):
         return None
     if not isinstance(d, dict) or not isinstance(d.get("ts_data"), list):

@@ -42,12 +42,12 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def firmware() -> str:
-    return BEHAVIORBOX.read_text()
+    return BEHAVIORBOX.read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
 def resp_omit() -> int:
-    vocab = json.loads((SCHEMA_DIR / "strobe_vocab.v1.json").read_text())
+    vocab = json.loads((SCHEMA_DIR / "strobe_vocab.v1.json").read_text(encoding="utf-8"))
     return vocab["codes"]["RESP_OMIT"]["code"]
 
 
@@ -125,11 +125,11 @@ def test_every_task_json_names_the_new_code(resp_omit):
     and nothing in the trial loop would ever notice."""
     tables = [
         p for p in FIRMWARE_REPO.rglob("task.json")
-        if ".retired" not in p.parts and "strobes" in json.loads(p.read_text())
+        if ".retired" not in p.parts and "strobes" in json.loads(p.read_text(encoding="utf-8"))
     ]
     assert len(tables) == 7, f"expected 7 strobe tables, found {len(tables)}"
     for p in tables:
-        strobes = json.loads(p.read_text())["strobes"]
+        strobes = json.loads(p.read_text(encoding="utf-8"))["strobes"]
         assert strobes.get(str(resp_omit)) == "RESP_OMIT", (
             f"{p.relative_to(FIRMWARE_REPO)} does not name {resp_omit}"
         )

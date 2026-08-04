@@ -29,7 +29,7 @@ SPECS = all_specs()
 @pytest.mark.parametrize("path", SPECS, ids=lambda p: p.stem)
 def test_compile_text_matches_compile_spec(path: Path):
     from_file = compile_spec(path)
-    from_text = compile_text(path.read_text(), source_path=str(path), spec_id=path.stem)
+    from_text = compile_text(path.read_text(encoding="utf-8"), source_path=str(path), spec_id=path.stem)
 
     assert from_file.ok and from_text.ok
     assert to_json(from_text.table) == to_json(from_file.table)
@@ -50,7 +50,7 @@ def test_spec_hash_survives_a_yaml_round_trip(path: Path):
 
     original = compile_spec(path)
     round_tripped = compile_text(
-        yaml.safe_dump(yaml.safe_load(path.read_text()), sort_keys=False),
+        yaml.safe_dump(yaml.safe_load(path.read_text(encoding="utf-8")), sort_keys=False),
         spec_id=path.stem,
     )
     assert round_tripped.ok, round_tripped.bag.render()

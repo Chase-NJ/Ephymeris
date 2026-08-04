@@ -51,7 +51,7 @@ def compile_spec(path: str | Path, *, strict: bool = False) -> CompileResult:
     """Run the pipeline on a file. Never raises for a spec problem; read `result.bag`."""
     path = Path(path)
     return compile_text(
-        path.read_text(), source_path=str(path), spec_id=path.stem, strict=strict
+        path.read_text(encoding="utf-8"), source_path=str(path), spec_id=path.stem, strict=strict
     )
 
 

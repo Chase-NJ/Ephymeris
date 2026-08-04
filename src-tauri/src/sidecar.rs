@@ -202,6 +202,16 @@ pub fn spawn<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // **The sidecar reads and writes UTF-8 on a machine whose locale isn't.**
+    //
+    // Python picks its default text encoding from the locale at interpreter
+    // startup, which on the lab's Windows 11 boxes is cp1252 — so a task spec
+    // carrying an em dash in a `note:`, or a µ in a duration, decodes to
+    // mojibake or raises UnicodeDecodeError on a file the app itself wrote.
+    // Set before spawn because the interpreter reads it before any of our code
+    // runs; nothing in conftest or `main()` can fix it after the fact.
+    command.env("PYTHONUTF8", "1");
+
     for (key, value) in bundled_arduino_env(app) {
         command.env(key, value);
     }

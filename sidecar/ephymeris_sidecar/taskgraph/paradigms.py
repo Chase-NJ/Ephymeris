@@ -275,7 +275,35 @@ def skeleton(
     for q in paradigm.questions:
         if q.id in answers and answers[q.id] is not None:
             _set_path(doc, q.path, answers[q.id])
+    _reconcile(doc, vocab)
     return doc
+
+
+def _reconcile(doc: dict, vocab) -> None:
+    """Re-derive the fields an answer invalidates.
+
+    An answer sets one path, but some fields are two halves of one fact. A
+    stimulus's `on_code` is determined by its `emitter` -- odor line 3 announces
+    itself as ODOR_3_ON -- so answering "which line" and leaving the code alone
+    produces a document claiming line 3 emits ODOR_2_ON. It compiles, because
+    both halves are individually legal; it is simply wrong, and the way it
+    surfaces is a byte-equivalence gate against real firmware disagreeing about
+    which odor was presented.
+
+    This is the same rule the editor's structural operations follow: an
+    operation fills every field its change makes reachable, not just the one its
+    name mentions.
+    """
+    for stim in doc.get("contingency", {}).get("stimuli", []) or []:
+        emitter = stim.get("emitter")
+        if not isinstance(emitter, str):
+            continue
+        tail = emitter.rsplit("_", 1)[-1]
+        if not tail.isdigit():
+            continue
+        code = f"ODOR_{tail}_ON"
+        if code in vocab.names():
+            stim["on_code"] = code
 
 
 def _knobs(paradigm: Paradigm):

@@ -72,28 +72,33 @@ def self_check() -> tuple[bool, str | None]:
     succeeds, get the other half wrong and every compile fails on a metaschema
     `jsonschema` could not load. An "is it there" check would have reported ready.
 
-    So this runs the whole pipeline over a bundled spec, through schema
-    validation, the linter and the packer, and only then says yes. Once, at
+    So this GENERATES a task and runs the whole pipeline over it -- schema
+    validation, the linter, the packer -- and only then says yes. Once, at
     startup, cached -- about 60 ms, paid on a path that already opens a database.
+
+    Generating rather than reading a shipped file is strictly stronger, and it
+    is also the only option: nothing ships as a spec. One probe now exercises
+    the paradigm registry, the template, the channel registry composed with the
+    active pinout, the strobe vocabulary, jsonschema's metaschema data, every
+    lint pass and the packer. Those are exactly the data files a freeze can drop
+    -- and the first thing an operator would otherwise hit is an empty New Task
+    screen with no explanation.
     """
     ok, why = available()
     if not ok:
         return ok, why
     try:
-        probe = sorted(bundled_specs_dir().glob("*.yaml"))[0]
-        result = compile(probe.read_text(), spec_id=probe.stem)
+        from ephymeris_sidecar.taskgraph import paradigms
+
+        probe = paradigms.canonical()
+        text = paradigms.to_yaml(paradigms.skeleton(probe, spec_id="self_check_probe"))
+        result = compile(text, spec_id="self_check_probe")
         if not result.ok:
-            return False, f"{probe.name} did not compile: {result.bag.render()}"
+            return False, f"the {probe.id} skeleton did not compile: {result.bag.render()}"
         table_bytes(result)
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
     return True, None
-
-
-def bundled_specs_dir() -> Any:
-    """The shipped specs. Read-only -- user edits live under the app data dir."""
-    require()
-    return paths.PACKAGE_DIR / "specs"
 
 
 def require() -> None:

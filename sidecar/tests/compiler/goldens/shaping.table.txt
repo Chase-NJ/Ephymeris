@@ -1,14 +1,14 @@
 ==============================================================================
-  shaping_gr  —  compiled state table
+  shaping  —  compiled state table
 ==============================================================================
 
   spec_version    1
-  spec_hash       08fb2ccb776e3923
+  spec_hash       4dc20970b21e09bc
   vocab_version   1
   template        four_epoch v2 (f0760c460092ddb3)
 
   26 states, 36 edges, 14 timing entries, 4 trial types
-  606 bytes uploaded
+  486 bytes uploaded
 
 ------------------------------------------------------------------------------
   STATES
@@ -38,7 +38,7 @@
          on entry: clear @stim[0].emitter
          TIMEOUT → S04
 
-  S04  DELAY       t_pen_noengage[12]     —                        — silent
+  S04  DELAY       t_pen_noengage[10]     —                        — silent
        no engage penalty
          TIMEOUT → S05  → score:no_engage
 
@@ -47,7 +47,7 @@
          ADVANCE → S00
          REPEAT → S00
 
-  S06  HOLD        t_commit_hold[3]       odor_port                ODOR_POKE(224)
+  S06  HOLD        t_commit_hold[4]       odor_port                ODOR_POKE(224)
        commitment hold
          HELD → S10
          BROKEN → S07
@@ -63,12 +63,12 @@
          on entry: clear @stim[$stage].emitter
          TIMEOUT → S09
 
-  S09  DELAY       t_pen_break[11]        —                        — silent
+  S09  DELAY       t_pen_break[9]         —                        — silent
        hold break penalty
          TIMEOUT → S05  → score:hold_break
 
   ── 2 · stimulus sampling ────────────────────────────────────────
-  S10  HOLD        t_sample_hold[4]       odor_port                @stim[0].on_code(65280)
+  S10  HOLD        t_sample_hold[5]       odor_port                @stim[0].on_code(65280)
        present stimulus
          on entry: set vacuum
          BROKEN → S07
@@ -90,10 +90,10 @@
          on entry: clear trial_light
          TIMEOUT → S14
 
-  S14  WAIT_ENTRY  t_resp_win[5]          left_well,right_well     —
+  S14  WAIT_ENTRY  t_resp_win[6]          right_well,left_well     —
        response window
-         ENTER(left_well) → S15
          ENTER(right_well) → S15
+         ENTER(left_well) → S15
          TIMEOUT → S16
 
   S15  DELAY       t_zero[0]              —                        @ports[$ch].enter_code(65284)
@@ -101,7 +101,7 @@
          TIMEOUT [ch == @target] → S19
          TIMEOUT → S20
 
-  S16  DELAY       t_pen_error[10]        —                        RESP_OMIT(262)
+  S16  DELAY       t_pen_error[11]        —                        RESP_OMIT(262)
        omission
          TIMEOUT → S17  → score:omission
 
@@ -115,16 +115,16 @@
          ADVANCE → S00
          REPEAT → S00
 
-  S19  HOLD        t_resp_hold[6]         @target                  —
+  S19  HOLD        t_resp_hold[7]         @target                  —
        response hold
          BROKEN → S21
          HELD → S22
 
-  S20  DELAY       t_pen_error[10]        —                        @ports[$ch].error_code(65285)
+  S20  DELAY       t_pen_error[11]        —                        @ports[$ch].error_code(65285)
        wrong
          TIMEOUT → S17  → score:wrong
 
-  S21  DELAY       t_pen_break[11]        —                        @ports[$ch].break_code(65286)
+  S21  DELAY       t_pen_break[9]         —                        @ports[$ch].break_code(65286)
        hold fail
          TIMEOUT → S17  → score:hold_fail
 
@@ -139,7 +139,7 @@
          on entry: clear @target.reward_line
          EXIT → S24
 
-  S24  DELAY       t_iti_correct[9]       —                        @target.exit_code(65290)
+  S24  DELAY       t_iti_correct[8]       —                        @target.exit_code(65290)
        correct
          TIMEOUT → S25  → score:correct
 
@@ -156,65 +156,27 @@
 
   [ 0] t_zero                      0 ms
   [ 1] t_arm                    1000 ms
-  [ 2] t_engage_win             8000 ms
-  [ 3] t_commit_hold              10 ms
-  [ 4] t_sample_hold              10 ms
-  [ 5] t_resp_win              10000 ms
-  [ 6] t_resp_hold                10 ms
-  [ 7] t_reward_l                100 ms
-  [ 8] t_reward_r                100 ms
-  [ 9] t_iti_correct            4000 ms
-  [10] t_pen_error             20000 ms
-  [11] t_pen_break              5000 ms
-  [12] t_pen_noengage           4000 ms
-  [13] t_poll_interval             2 ms
+  [ 2] t_engage_win             4000 ms
+  [ 3] t_poll_interval             5 ms
+  [ 4] t_commit_hold             500 ms
+  [ 5] t_sample_hold             500 ms
+  [ 6] t_resp_win               2000 ms
+  [ 7] t_resp_hold               200 ms
+  [ 8] t_iti_correct            4000 ms
+  [ 9] t_pen_break             10000 ms
+  [10] t_pen_noengage           6000 ms
+  [11] t_pen_error             20000 ms
+  [12] t_reward_right            100 ms
+  [13] t_reward_left             100 ms
 
 ------------------------------------------------------------------------------
   TRIAL TYPES
 ------------------------------------------------------------------------------
 
-  [0] go_right_1     stimuli=[0] target=port[1] weight=1 reward=ch46
-  [1] go_right_2     stimuli=[1] target=port[1] weight=0 reward=ch46
-  [2] go_left_1      stimuli=[2] target=port[0] weight=0 reward=ch42
-  [3] go_left_2      stimuli=[3] target=port[0] weight=0 reward=ch42
-
-------------------------------------------------------------------------------
-  STAGE SCHEDULE
-------------------------------------------------------------------------------
-
-  Scanned DESCENDING with >=, so applying twice or skipping a count lands
-  on the same row. An unreachable row is expressed by omitting it.
-
-  [0] at trial 0:
-        t_commit_hold          :=     10 ms
-        t_sample_hold          :=     10 ms
-        t_resp_hold            :=     10 ms
-        t_resp_win             :=  10000 ms
-        t_engage_win           :=   8000 ms
-  [1] at trial 20:
-        t_commit_hold          :=    100 ms
-        t_sample_hold          :=    100 ms
-        t_resp_hold            :=     50 ms
-        t_resp_win             :=  10000 ms
-        t_engage_win           :=   8000 ms
-  [2] at trial 25:
-        t_commit_hold          :=    125 ms
-        t_sample_hold          :=    125 ms
-        t_resp_hold            :=    250 ms
-        t_resp_win             :=   5000 ms
-        t_engage_win           :=   8000 ms
-  [3] at trial 50:
-        t_commit_hold          :=    250 ms
-        t_sample_hold          :=    250 ms
-        t_resp_hold            :=    500 ms
-        t_resp_win             :=   2000 ms
-        t_engage_win           :=   4000 ms
-  [4] at trial 100:
-        t_commit_hold          :=    500 ms
-        t_sample_hold          :=    500 ms
-        t_resp_hold            :=    500 ms
-        t_resp_win             :=   2000 ms
-        t_engage_win           :=   4000 ms
+  [0] tt_odor1_right_well stimuli=[0] target=port[0] weight=1 reward=ch46
+  [1] tt_odor2_left_well stimuli=[1] target=port[1] weight=0 reward=ch42
+  [2] tt_odor3_right_well stimuli=[2] target=port[0] weight=0 reward=ch46
+  [3] tt_odor4_left_well stimuli=[3] target=port[1] weight=0 reward=ch42
 
 ------------------------------------------------------------------------------
   DWELL BUDGET  (for the Phase 4 watchdog)
@@ -226,7 +188,7 @@
     S11  WAIT_EXIT  sampling release
     S23  WAIT_EXIT  consumption
 
-  Worst-case bounded dwell, summed over all states: 78600 ms
+  Worst-case bounded dwell, summed over all states: 78300 ms
   (an upper bound on one trial, excluding the states above)
 
 ------------------------------------------------------------------------------

@@ -21,7 +21,7 @@ from ephymeris_sidecar.taskgraph.lint import REGISTRY, Pass, load_all_rules
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, TESTS_DIR, all_specs, spec,
+    SCHEMA_DIR, TESTS_DIR, all_specs, spec,
 )
 BROKEN_DIR = TESTS_DIR / "broken"
 

@@ -1,0 +1,3 @@
+# shaping — accepted diagnostics
+
+(none)

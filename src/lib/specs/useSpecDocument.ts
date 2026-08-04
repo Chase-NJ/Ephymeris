@@ -4,7 +4,6 @@ import { errorMessage } from "@/lib/cohorts/commands";
 import { useRegisterUnsaved } from "@/lib/nav/unsavedGuard";
 import { useSidecar } from "@/lib/ws/context";
 import {
-  acknowledgeUpstream,
   deleteSpec,
   exportSpec,
   getSpec,
@@ -49,7 +48,6 @@ export interface SpecSession {
   /** Delete a user spec, or restore a shadowed one to its shipped bytes. */
   resetOrDelete: () => Promise<"deleted" | "restored" | null>;
   /** "Keep mine" — re-baseline against the new shipped bytes, merging nothing. */
-  keepMine: () => Promise<void>;
   exportArtifact: (kind: string) => Promise<void>;
   exporting: boolean;
 }
@@ -159,16 +157,6 @@ export function useSpecDocument(specId: string | null): SpecSession {
     }
   }, [client, specId]);
 
-  const keepMine = useCallback(async () => {
-    if (!specId) return;
-    setActionError(null);
-    try {
-      await acknowledgeUpstream(client, specId);
-    } catch (err) {
-      setActionError(errorMessage(err));
-    }
-  }, [client, specId]);
-
   /**
    * Export one artifact. Bytes come back in the reply and are written through
    * the user's own save dialog — the sidecar never writes outside its data dir,
@@ -221,7 +209,6 @@ export function useSpecDocument(specId: string | null): SpecSession {
     setDoc,
     save,
     resetOrDelete,
-    keepMine,
     exportArtifact,
     exporting,
   };

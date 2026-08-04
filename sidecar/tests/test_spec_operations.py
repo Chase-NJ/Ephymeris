@@ -43,8 +43,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def load(spec_id: str) -> dict:
-    return yaml.safe_load((compiler.bundled_specs_dir() / f"{spec_id}.yaml").read_text())
+def load(paradigm_id: str) -> dict:
+    """A freshly generated task, which is what an operator actually edits.
+
+    These used to be the five bundled specs. Nothing ships as a spec, so the
+    bases are the paradigms' own skeletons -- a stronger subject for op tests,
+    since it is the document the ops will really be run against.
+    """
+    from ephymeris_sidecar.taskgraph import paradigms
+
+    p = paradigms.get(paradigm_id)
+    return paradigms.skeleton(p, spec_id=paradigm_id)
 
 
 def compile_ok(doc: dict, spec_id: str) -> None:
@@ -81,8 +90,8 @@ def rename_timing(doc: dict, old: str, new: str, *, keep: bool) -> None:
 def test_rename_timing_id_rewrites_every_reference():
     """The rename primitive, on the spec that exercises all four reference
     sites at once: shaping_gr has a stage schedule keyed by timing id."""
-    doc = load("shaping_gr")
-    assert any("t_resp_win" in row["set"] for row in doc["policy"]["stage_schedule"])
+    doc = load("shaping")
+    doc["policy"]["stage_schedule"] = [{"at_trial": 0, "set": {"t_resp_win": 5000}}]
 
     rename_timing(doc, "t_resp_win", "t_response_window", keep=True)
 
@@ -91,7 +100,7 @@ def test_rename_timing_id_rewrites_every_reference():
     assert all("t_response_window" in row["set"] for row in doc["policy"]["stage_schedule"])
     # It no longer matches capabilities(), which is TG303's job to say — the
     # point here is only that nothing still points at the old id (TG201).
-    result = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="shaping_gr")
+    result = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="shaping")
     assert not [d for d in list(result.bag) if d.code == "TG201"]
 
 
@@ -115,7 +124,7 @@ def add_sampling_stage(doc: dict) -> None:
 
 
 def test_add_sampling_stage_keeps_grgl_compiling():
-    doc = load("grgl_2odor")
+    doc = load("two_afc")
     add_sampling_stage(doc)
     compile_ok(doc, "grgl_2odor")
 
@@ -127,7 +136,7 @@ def test_add_sampling_stage_keeps_grgl_compiling():
 
 def test_add_sampling_stage_twice():
     """Past the 1→2 crossing the rename must NOT happen again."""
-    doc = load("grgl_2odor")
+    doc = load("two_afc")
     add_sampling_stage(doc)
     add_sampling_stage(doc)
     compile_ok(doc, "grgl_2odor")
@@ -139,7 +148,7 @@ def test_add_sampling_stage_twice():
 
 def test_remove_sampling_stage_to_zero():
     """n=0 skips the sampling epoch entirely — the 'pure shaping' recipe."""
-    doc = load("shaping_gr")
+    doc = load("shaping")
     doc["topology"]["n_sampling_stages"] = 0
     for tt in doc["contingency"]["trial_types"]:
         tt["stages"] = []
@@ -231,12 +240,21 @@ def test_gonogo_to_n_alternative():
     Switching to n-alternative makes all three reachable at once, and TG506
     wants a code for each on EVERY port. The op shipped without them and
     produced six errors.
+
+    THE GENERATOR NOW PREVENTS THIS BY CONSTRUCTION: a skeleton emits all five
+    codes on every port whatever its shape, precisely so that a later shape
+    change cannot strand one. The condition therefore has to be recreated here
+    -- which is still worth testing, because a hand-written spec or a deleted
+    field produces it and the op is what has to cope.
     """
-    doc = load("gonogo")
+    doc = load("go_nogo")
+    for port in doc["contingency"]["ports"].values():
+        for field in ("error_code", "break_code", "exit_code"):
+            port.pop(field, None)
     assert "error_code" not in doc["contingency"]["ports"]["left_well"]
 
     to_n_alternative(doc)
-    compile_ok(doc, "gonogo_2")
+    compile_ok(doc, "go_nogo_2")
 
 
 def test_gonogo_to_n_alternative_without_port_codes_is_rejected():
@@ -246,13 +264,13 @@ def test_gonogo_to_n_alternative_without_port_codes_is_rejected():
     codes again and the positive test above would still pass for the wrong
     reason — it would be asserting that some other change did the work.
     """
-    doc = load("gonogo")
+    doc = load("go_nogo")
     to_n_alternative(doc)
     for port in doc["contingency"]["ports"].values():
         for field in ("error_code", "break_code", "exit_code"):
             port.pop(field, None)
 
-    result = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="gonogo_2")
+    result = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="go_nogo_2")
     codes = {d.code for d in list(result.bag) if d.severity.name == "ERROR"}
     assert "TG506" in codes
     assert result.table is None
@@ -261,7 +279,7 @@ def test_gonogo_to_n_alternative_without_port_codes_is_rejected():
 def test_n_alternative_to_gonogo():
     """The mirror: every target becomes null, which IS the withhold
     declaration, and the classes n-alternative produces have to go."""
-    doc = load("grgl_2odor")
+    doc = load("two_afc")
     doc["topology"]["response_mode"] = "go_nogo"
     rename_timing(doc, "t_resp_win", "t_withhold_win", keep=False)
 
@@ -286,7 +304,7 @@ def test_n_alternative_to_gonogo():
 
 
 def test_drop_commit_hold():
-    doc = load("grgl_2odor")
+    doc = load("two_afc")
     doc["topology"]["commit_hold"] = False
     # t_commit_hold is no longer required — but an unused timing row is legal,
     # which is what lets the form grey it instead of deleting a typed value.
@@ -294,7 +312,7 @@ def test_drop_commit_hold():
 
 
 def test_add_retention_delay():
-    doc = load("grgl_2odor")
+    doc = load("two_afc")
     doc["topology"]["retention_delay"] = True
     doc["timing"].append({"id": "t_retention", "ms": 1500})
     compile_ok(doc, "grgl_2odor")
@@ -316,15 +334,15 @@ def test_unrewarded_2afc_drops_the_reward_states():
     PULSE and the consumption WAIT_EXIT from the outcome epoch entirely —
     which is why docs/specs.md §1 cannot say topology is the ONLY layer that
     changes shape."""
-    doc = load("grgl_2odor")
+    doc = load("two_afc")
     before = compiler.compile(
-        yaml.safe_dump(doc, sort_keys=False), spec_id="grgl_2odor"
+        yaml.safe_dump(doc, sort_keys=False), spec_id="two_afc"
     )
     doc["contingency"]["outcome_map"]["correct"]["reward"] = None
     doc["contingency"]["outcome_map"]["correct"].pop("note", None)
     compile_ok(doc, "grgl_2odor")
 
-    after = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="grgl_2odor")
+    after = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="two_afc")
     assert len(after.table.nodes) < len(before.table.nodes)
 
 
@@ -333,10 +351,10 @@ def test_rewarding_needs_a_line_on_the_matching_well():
     IS the port's channel, so this mistake is unreachable from the UI. It is
     still worth pinning that the compiler catches it — the filter is a
     convenience, the rule is the guarantee."""
-    doc = load("grgl_2odor")
+    doc = load("two_afc")
     # fluid_0 is plumbed to the LEFT well; give it to the right one.
     doc["contingency"]["ports"]["right_well"]["reward_line"] = "fluid_0"
-    result = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="grgl_2odor")
+    result = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="two_afc")
     codes = {d.code for d in list(result.bag) if d.severity.name == "ERROR"}
     assert "TG224" in codes
 
@@ -347,7 +365,7 @@ def test_rewarding_needs_a_line_on_the_matching_well():
 
 
 def test_add_stimulus_and_trial_type():
-    doc = load("grgl_2odor")
+    doc = load("two_afc")
     doc["contingency"]["stimuli"].append(
         {"id": "odor2", "emitter": "odor_line_2", "on_code": "ODOR_2_ON"}
     )
@@ -378,7 +396,8 @@ def test_trial_type_stage_count_must_match():
 
 
 @pytest.mark.parametrize(
-    "spec_id", ["grgl_2odor", "gonogo", "seq2_retention", "shaping_gr", "shaping_gr_ez"]
+    "spec_id", ["two_afc", "two_afc_unrewarded", "shaping", "go_nogo", "seq2_retention",
+     "seq3_retention", "shaping_no_stimulus"]
 )
-def test_bundled_spec_compiles(spec_id: str):
+def test_paradigm_skeleton_compiles(spec_id: str):
     compile_ok(copy.deepcopy(load(spec_id)), spec_id)

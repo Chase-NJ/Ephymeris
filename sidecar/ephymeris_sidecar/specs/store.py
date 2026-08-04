@@ -1,25 +1,23 @@
-"""Where specs live: the bundled library, and the user's copies over it.
+"""Where specs live: one directory, all of it the operator's.
 
 Layout, under the sidecar's own data dir (the same place `ephymeris.db` lives —
 these are sidecar-side writes, and no Tauri fs capability is involved):
 
     <data_dir>/specs/
-      user/<spec_id>.yaml              user-created and user-edited
-      shipped-baseline/<spec_id>.yaml  the shipped bytes as of the user's first
-                                       edit — what Reset to shipped restores,
-                                       and what upstreamChanged compares against
-      index.json                       {spec_id: {baselineSha, editedAt}}
+      user/<spec_id>.yaml   every task on this rig
+      index.json            {spec_id: {editedAt}}
 
-THERE IS NO SEEDING. Unlike the arduino-cli data dir, nothing is copied on
-first use: the compiler only reads, so a read-only bundled spec is served
-as-is, and a bundled spec that ships changed simply IS changed for anyone who
-hasn't edited it. A user file with a bundled spec's id SHADOWS it.
+NOTHING SHIPS AS A SPEC. A task is generated from a paradigm and then belongs to
+the rig that made it, so there is no bundled library underneath, no shadowing,
+no baseline to restore and nothing an app update can move under an edit. That
+retires a real amount of machinery — shipped/shipped_edited origins, the
+baseline directory, upstreamChanged, Keep-mine-versus-Reset — which existed to
+answer a question that no longer has a subject.
 
-AND THERE IS NO MERGING. When an app update changes a bundled spec underneath
-a user's edit, the entry gets `upstreamChanged: true` and the user chooses:
-Keep mine (re-baseline) or Reset to shipped (delete the copy). A wrong
-automatic merge of two YAML task definitions is an experiment nobody designed;
-a badge is annoying, which is the correct price.
+What replaces it is not weaker. A spec's provenance used to be "which bundled
+file did this start as"; it is now `paradigmId`, computed from the document's
+own shape, so a task that was reshaped in the Designer stops claiming to be what
+it started as. That was never true of the old origins.
 
 Enumeration PARSES but never COMPILES. A list row needs `meta.label` and the
 template name, which `yaml.safe_load` yields in microseconds; compiling would
@@ -37,7 +35,6 @@ runs behind compiler.available()/self_check(), which is the guard.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -66,10 +63,6 @@ class SpecIdInvalid(ValueError):
     pass
 
 
-class SpecReadOnly(RuntimeError):
-    pass
-
-
 @dataclass(frozen=True)
 class SpecRecord:
     spec_id: str
@@ -91,10 +84,6 @@ def parse_document(text: str) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -103,7 +92,6 @@ class SpecStore:
     def __init__(self, data_dir: Path) -> None:
         self.root = data_dir / "specs"
         self.user_dir = self.root / "user"
-        self.baseline_dir = self.root / "shipped-baseline"
         self.index_path = self.root / "index.json"
 
     # --- index --------------------------------------------------------------
@@ -121,57 +109,17 @@ class SpecStore:
 
     # --- enumeration --------------------------------------------------------
 
-    def _bundled(self) -> dict[str, Path]:
-        return {p.stem: p for p in sorted(compiler.bundled_specs_dir().glob("*.yaml"))}
-
     def _user(self) -> dict[str, Path]:
         if not self.user_dir.is_dir():
             return {}
         return {p.stem: p for p in sorted(self.user_dir.glob("*.yaml"))}
 
     def records(self) -> list[SpecRecord]:
-        """Every spec, sorted by id. A user file shadows a bundled id."""
-        bundled = self._bundled()
-        user = self._user()
-        out: list[SpecRecord] = []
-        for spec_id in sorted(bundled.keys() | user.keys()):
-            if spec_id in user:
-                origin: Origin = "shipped_edited" if spec_id in bundled else "user"
-                out.append(SpecRecord(spec_id, origin, user[spec_id]))
-            else:
-                out.append(SpecRecord(spec_id, "shipped", bundled[spec_id]))
-        return out
+        """Every spec on this rig, sorted by id."""
+        return [SpecRecord(sid, "user", path) for sid, path in self._user().items()]
 
     def get(self, spec_id: str) -> SpecRecord | None:
         return next((r for r in self.records() if r.spec_id == spec_id), None)
-
-    def bundled_text(self, spec_id: str) -> str | None:
-        """The CURRENT shipped bytes, whether or not a user copy shadows them."""
-        path = self._bundled().get(spec_id)
-        if path is None:
-            return None
-        try:
-            return path.read_text(encoding="utf-8")
-        except OSError:
-            return None
-
-    def upstream_changed(self, spec_id: str) -> bool:
-        """The bundled bytes moved since this shadow's baseline was taken.
-
-        False for anything that isn't a shadow — a pure user spec has no
-        upstream, and an unedited shipped spec that changed simply IS the new
-        version, which is the whole argument for not seeding.
-        """
-        entry = self._index().get(spec_id)
-        if entry is None or "baselineSha" not in entry:
-            return False
-        bundled = self._bundled().get(spec_id)
-        if bundled is None:
-            return False
-        try:
-            return _sha256(bundled.read_bytes()) != entry["baselineSha"]
-        except OSError:
-            return False
 
     def entry_for(self, record: SpecRecord) -> dict[str, Any]:
         """One `SpecEntry` row, from a parse and nothing more."""
@@ -200,6 +148,18 @@ class SpecStore:
                 version = topology.get("template_version")
                 template_version = version if isinstance(version, int) else None
 
+        # Which paradigm's SHAPE this document has, computed from the document
+        # rather than recorded in it -- so a task reshaped in the Designer stops
+        # claiming to be what it started as. Null reads honestly as "Custom".
+        paradigm_id: str | None = None
+        if isinstance(raw, dict):
+            try:
+                from ephymeris_sidecar.taskgraph import paradigms
+
+                paradigm_id = paradigms.fingerprint(raw)
+            except Exception:
+                paradigm_id = None
+
         index_entry = self._index().get(record.spec_id, {})
         return {
             "specId": record.spec_id,
@@ -208,7 +168,7 @@ class SpecStore:
             "origin": record.origin,
             "template": template,
             "templateVersion": template_version,
-            "upstreamChanged": self.upstream_changed(record.spec_id),
+            "paradigmId": paradigm_id,
             "editedAt": index_entry.get("editedAt"),
         }
 
@@ -218,32 +178,15 @@ class SpecStore:
     # --- writes -------------------------------------------------------------
 
     def save(self, spec_id: str, text: str) -> SpecRecord:
-        """Write a user copy, baselining the shipped bytes on a first shadow.
-
-        The baseline is copied BEFORE the user file exists, so there is no
-        ordering in which an edit exists without the means to undo it — and
-        because the shipped file itself is never modified, Reset restores it
-        byte-for-byte, comments and all.
-        """
+        """Write the spec. There is nothing underneath it to preserve."""
         if not SPEC_ID_RE.match(spec_id):
             raise SpecIdInvalid(
                 f"{spec_id!r} is not a valid spec id — lowercase letters, digits "
                 "and underscores, starting with a letter, at most 40 characters."
             )
-
-        bundled = self._bundled().get(spec_id)
-        first_shadow = bundled is not None and spec_id not in self._user()
-
-        index = self._index()
-        if first_shadow:
-            assert bundled is not None
-            shipped_bytes = bundled.read_bytes()
-            self.baseline_dir.mkdir(parents=True, exist_ok=True)
-            (self.baseline_dir / f"{spec_id}.yaml").write_bytes(shipped_bytes)
-            index.setdefault(spec_id, {})["baselineSha"] = _sha256(shipped_bytes)
-
         self.user_dir.mkdir(parents=True, exist_ok=True)
         (self.user_dir / f"{spec_id}.yaml").write_text(text, encoding="utf-8")
+        index = self._index()
         index.setdefault(spec_id, {})["editedAt"] = _now()
         self._write_index(index)
 
@@ -251,34 +194,16 @@ class SpecStore:
         assert record is not None
         return record
 
-    def delete(self, spec_id: str) -> SpecRecord | None:
-        """User spec: gone. Shadow: reset to shipped. Shipped: refused."""
-        record = self.get(spec_id)
-        if record is None:
-            return None
-        if record.origin == "shipped":
-            raise SpecReadOnly(
-                f"{spec_id} is a shipped spec — the bundled file is part of the "
-                "install. Editing it creates your own copy; there is nothing to "
-                "delete until then."
-            )
+    def delete(self, spec_id: str) -> None:
+        """Delete the spec.
+
+        One meaning now, where there used to be three. Every spec belongs to the
+        rig that made it, so there is no bundled version underneath to fall back
+        to and nothing that can be read-only.
+        """
+        if self.get(spec_id) is None:
+            return
         (self.user_dir / f"{spec_id}.yaml").unlink(missing_ok=True)
-        (self.baseline_dir / f"{spec_id}.yaml").unlink(missing_ok=True)
         index = self._index()
         index.pop(spec_id, None)
         self._write_index(index)
-        return self.get(spec_id)  # the shipped record, or None for a user spec
-
-    def acknowledge_upstream(self, spec_id: str) -> SpecRecord | None:
-        """Keep mine: re-baseline against the CURRENT bundled bytes."""
-        record = self.get(spec_id)
-        bundled = self._bundled().get(spec_id)
-        if record is None or bundled is None:
-            return record
-        shipped_bytes = bundled.read_bytes()
-        self.baseline_dir.mkdir(parents=True, exist_ok=True)
-        (self.baseline_dir / f"{spec_id}.yaml").write_bytes(shipped_bytes)
-        index = self._index()
-        index.setdefault(spec_id, {})["baselineSha"] = _sha256(shipped_bytes)
-        self._write_index(index)
-        return self.get(spec_id)

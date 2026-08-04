@@ -82,7 +82,6 @@ export const CMD = {
   SPECS_SKELETON: "specs.skeleton",
   SPECS_SAVE: "specs.save",
   SPECS_DELETE: "specs.delete",
-  SPECS_ACKNOWLEDGE_UPSTREAM: "specs.acknowledgeUpstream",
   SPECS_DIFF: "specs.diff",
   SPECS_EXPORT: "specs.export",
 
@@ -145,7 +144,6 @@ export const ERR = {
   SPEC_NOT_FOUND: "SPEC_NOT_FOUND",
   SPEC_INVALID: "SPEC_INVALID",
   SPEC_COMPILER_UNAVAILABLE: "SPEC_COMPILER_UNAVAILABLE",
-  SPEC_READONLY: "SPEC_READONLY",
   UPLOAD_REFUSED: "UPLOAD_REFUSED",
   UPLOAD_FAILED: "UPLOAD_FAILED",
   INTERNAL: "INTERNAL",
@@ -1145,10 +1143,11 @@ export interface ParadigmSummary {
 }
 
 /**
- * Where a spec's current bytes come from. `shipped_edited` = a user copy shadowing a bundled spec
- * of the same id.
+ * Where a spec's bytes come from. One value: nothing ships as a spec, so every task belongs to
+ * the rig that generated it from a paradigm. Kept as a union so the field has somewhere to grow
+ * if that changes.
  */
-export type SpecOrigin = "shipped" | "shipped_edited" | "user";
+export type SpecOrigin = "user";
 
 /**
  * A row in the spec list. Built from a cheap parse — never a compile — so `specs.list` stays
@@ -1163,12 +1162,12 @@ export interface SpecEntry {
   template: string | null;
   templateVersion: number | null;
   /**
-   * A shipped_edited spec whose BUNDLED bytes moved since the user's copy was made — i.e. an app
-   * update changed the shipped version underneath a local edit. Never merged automatically; the
-   * user chooses Keep mine (specs.acknowledgeUpstream) or Reset to shipped (specs.delete).
+   * Which paradigm's SHAPE this document has, computed from the document itself rather than
+   * recorded in it — so a task reshaped in the Designer stops claiming to be what it started as.
+   * Null reads honestly as Custom.
    */
-  upstreamChanged: boolean;
-  /** ISO-8601; null for a pure shipped spec. */
+  paradigmId: string | null;
+  /** ISO-8601. */
   editedAt: string | null;
 }
 
@@ -1373,7 +1372,8 @@ export interface DiffHunk {
  */
 export interface SpecListingDiff {
   specId: string;
-  baseline: "shipped" | "saved" | "spec";
+  /** Which BEFORE side was used. */
+  baseline: "saved" | "spec";
   changed: boolean;
   /**
    * Null when that side does not compile. The summaries carry the headline (26 → 29 states) and
@@ -1502,8 +1502,7 @@ export interface CommandArgsMap {
   "specs.skeleton": { paradigmId: string; specId: string; answers: unknown; label?: string | null; description?: string | null };
   "specs.save": { specId: string; text: string };
   "specs.delete": { specId: string };
-  "specs.acknowledgeUpstream": { specId: string };
-  "specs.diff": { specId: string; text?: string; baseline?: "shipped" | "saved"; againstSpecId?: string };
+  "specs.diff": { specId: string; text?: string; againstSpecId?: string };
   "specs.export": { specId: string; text?: string; artifacts: string[] };
   "board.capabilities": { box: number; baud?: number };
   "board.uploadTable": { box: number; specId: string; text?: string };
@@ -1565,7 +1564,6 @@ export interface CommandResultMap {
   "specs.skeleton": { text: string; result: SpecCompileResult };
   "specs.save": { entry: SpecEntry; result: SpecCompileResult };
   "specs.delete": { entry: SpecEntry | null };
-  "specs.acknowledgeUpstream": { entry: SpecEntry };
   "specs.diff": SpecListingDiff;
   "specs.export": { artifacts: SpecArtifact[] };
   "board.capabilities": BoardCapabilities;

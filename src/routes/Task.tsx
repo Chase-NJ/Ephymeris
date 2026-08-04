@@ -240,15 +240,6 @@ function SpecCard({
           >
             {chip.label}
           </span>
-          {spec.upstreamChanged && (
-            <span
-              className="shrink-0 font-mono text-[8.5px]"
-              style={{ color: "var(--color-status-warning)" }}
-              title="An app update changed the shipped version underneath your edits"
-            >
-              UPSTREAM
-            </span>
-          )}
         </div>
         <div className="mt-0.5 font-mono text-[9.5px] text-static/70">
           {spec.specId}

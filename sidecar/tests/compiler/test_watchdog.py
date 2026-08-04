@@ -30,7 +30,7 @@ from ephymeris_sidecar.taskgraph.table import DUR_FROM_TRIAL
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    SCHEMA_DIR, all_specs, shaping_ramped, spec,
 )
 
 LIB = FIRMWARE_LIB
@@ -75,9 +75,13 @@ def test_no_budget_is_smaller_than_the_state_it_bounds(spec_id):
 
 
 def test_the_ramp_actually_raises_something():
-    """The test above is vacuous on a spec whose timings never move. `shaping_gr`
-    is the one that ramps, and these are the three nodes that were wrong."""
-    t = compile_spec(spec("shaping_gr")).table
+    """The test above is vacuous on a task whose timings never move.
+
+    A generated skeleton ships no ramp -- the paradigm names which ids ramp, not
+    how far -- so this builds the lab's actual shaping schedule, which is what
+    the wizard's ramp step produces. These are the three nodes that were wrong.
+    """
+    t = compile_spec(shaping_ramped()).table
     ramped = {t.timing_ids[s.idx] for s in t.timing_sets}
     assert {"t_commit_hold", "t_sample_hold", "t_resp_hold"} <= ramped
 
@@ -139,7 +143,7 @@ def test_it_fires_when_it_must_and_stays_silent_when_it_must_not(tmp_path):
     ramp must not fault at all. And safing must leave every actuator the table can
     drive LOW.
     """
-    r = compile_spec(spec("grgl_2odor"))
+    r = compile_spec(spec("two_afc"))
     (HOST_TEST / "grgl_table.h").write_text(emit(r.table))
     binary = tmp_path / "watchdog"
     subprocess.run(

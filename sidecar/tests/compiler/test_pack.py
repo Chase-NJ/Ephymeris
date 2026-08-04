@@ -28,7 +28,7 @@ from ephymeris_sidecar.taskgraph.pipeline import compile_spec
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    SCHEMA_DIR, all_specs, spec,
 )
 SPECS = all_specs()
 
@@ -151,7 +151,7 @@ def test_truncation_is_detected(tables, spec_id):
 
 
 def test_a_table_with_no_magic_is_refused(tables):
-    blob = bytearray(P.pack(tables["grgl_2odor"]))
+    blob = bytearray(P.pack(tables["two_afc"]))
     blob[0] = ord("X")
     blob[-P.CRC_SIZE:] = struct.pack("<I", zlib.crc32(bytes(blob[:-P.CRC_SIZE])) & 0xFFFFFFFF)
     #: Note the CRC is recomputed, so this is a well-formed blob that is simply
@@ -264,9 +264,9 @@ def test_cpp_reads_the_same_bytes(tables, spec_id, tmp_path):
     "argv",
     [
         ["codegen", "--check"],
-        ["compile", str(spec("grgl_2odor")), "-o", "build"],
-        ["listing", "--check", str(spec("grgl_2odor"))],
-        ["show", str(spec("gonogo"))],
+        ["compile", str(spec("two_afc")), "-o", "build"],
+        ["listing", "--check", str(spec("two_afc"))],
+        ["show", str(spec("go_nogo"))],
     ],
     ids=lambda a: a[0],
 )

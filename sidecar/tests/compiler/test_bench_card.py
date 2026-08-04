@@ -25,7 +25,7 @@ from ephymeris_sidecar.taskgraph.table import DUR_FROM_TRIAL
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    SCHEMA_DIR, all_specs, spec,
 )
 SPECS = all_specs()
 
@@ -137,7 +137,7 @@ def test_the_cli_renders_it():
     import sys
 
     r = subprocess.run(
-        [sys.executable, "-m", "ephymeris_sidecar.taskgraph.cli", "bench", str(spec("grgl_2odor"))],
+        [sys.executable, "-m", "ephymeris_sidecar.taskgraph.cli", "bench", str(spec("two_afc"))],
         cwd=REPO_ROOT / "sidecar", capture_output=True, text=True,
     )
     assert r.returncode == 0, r.stderr

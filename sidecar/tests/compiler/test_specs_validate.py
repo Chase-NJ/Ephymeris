@@ -26,13 +26,13 @@ from jsonschema import Draft202012Validator
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    SCHEMA_DIR, all_specs, spec as spec_path,
 )
 
 SCHEMA = json.loads((SCHEMA_DIR / "task_spec.v1.json").read_text())
 VOCAB = json.loads((SCHEMA_DIR / "strobe_vocab.v1.json").read_text())
 
-SPEC_FILES = sorted(SPEC_DIR.glob("*.yaml"))
+SPEC_FILES = all_specs()
 BINDING_RE = re.compile(r"^@")
 
 
@@ -45,15 +45,14 @@ def spec(request) -> dict:
     return load(request.param)
 
 
-def test_spec_files_exist():
-    """All four target tasks plus the EZ variant are present."""
-    assert {p.stem for p in SPEC_FILES} == {
-        "grgl_2odor",
-        "shaping_gr",
-        "shaping_gr_ez",
-        "gonogo",
-        "seq2_retention",
-    }
+def test_every_paradigm_generates_a_file():
+    """Nothing ships as a spec, so what this suite validates is what the wizard
+    produces. A paradigm that stopped generating would empty this whole module
+    rather than failing one case -- hence the explicit floor."""
+    from ephymeris_sidecar.taskgraph import paradigms
+
+    assert {p.stem for p in SPEC_FILES} == {p.id for p in paradigms.load_all()}
+    assert len(SPEC_FILES) >= 7
 
 
 def test_validates_against_schema(spec):
@@ -165,7 +164,7 @@ def test_stage_schedule_is_ordered(spec):
 def test_gonogo_inverts_timeout_without_a_special_case():
     """The load-bearing property of the go/no-go design: TIMEOUT scores CORRECT, and
     that is expressed purely as an edge effect in the outcome map."""
-    spec = load(SPEC_DIR / "gonogo.yaml")
+    spec = load(spec_path("go_nogo"))
     outcomes = spec["contingency"]["outcome_map"]
 
     assert outcomes["correct"]["trigger"] == "TIMEOUT"
@@ -182,7 +181,7 @@ def test_gonogo_inverts_timeout_without_a_special_case():
         assert "reward_line" not in port
 
     # And the contrast: an n-alternative task scores the same trigger as an omission.
-    grgl = load(SPEC_DIR / "grgl_2odor.yaml")
+    grgl = load(spec_path("two_afc"))
     assert grgl["contingency"]["outcome_map"]["omission"]["trigger"] == "TIMEOUT"
     assert grgl["contingency"]["outcome_map"]["omission"]["terminal"] == "TRIAL_INCORRECT"
 
@@ -193,8 +192,9 @@ def test_omission_announces_itself():
     Silence was a firmware accommodation. Firmware conforms to the model now, so
     the accommodation is gone -- see docs/decisions.md D21 and D4's amendment.
     """
-    for name in ("grgl_2odor", "shaping_gr", "shaping_gr_ez", "seq2_retention"):
-        spec = load(SPEC_DIR / f"{name}.yaml")
+    for name in ("two_afc", "two_afc_unrewarded", "shaping", "seq2_retention",
+                 "seq3_retention", "shaping_no_stimulus"):
+        spec = load(spec_path(name))
         assert spec["contingency"]["outcome_map"]["omission"]["strobe"] == "RESP_OMIT"
 
 
@@ -205,32 +205,29 @@ def test_target_specs_pin_the_current_template():
         assert spec["topology"]["template_version"] == 2, f"{path.stem} is still on v1"
 
 
-def test_ez_variant_is_a_pure_layer_three_delta():
-    """THE ROADMAP'S LAYER-3 CLAIM, as a test.
+def test_two_tasks_from_one_paradigm_are_the_same_machine():
+    """THE LAYER-3 CLAIM, restated for a world with no shipped variants.
 
-    "Eased and standard variants of a task differ only in this vector." If this ever
-    fails, either the claim is false or someone smuggled a structural change into a
-    variant -- and both are worth failing a build over.
+    It used to be checked between shaping_gr and shaping_gr_ez: "eased and
+    standard variants differ only in the timing vector". Those files are gone,
+    but the claim is the paradigm's own property now and matters more, because
+    it is what makes Shaping-R and Shaping-L one task with one history rather
+    than two: answering a paradigm differently must move values, never the
+    graph.
     """
-    base = load(SPEC_DIR / "shaping_gr.yaml")
-    ez = load(SPEC_DIR / "shaping_gr_ez.yaml")
+    from ephymeris_sidecar.taskgraph import paradigms
 
-    assert ez["meta"]["derived_from"] == base["spec_id"]
+    p = paradigms.get("shaping")
+    right = paradigms.skeleton(p, spec_id="shaping_r", answers={"rewarded_arm": "right_well"})
+    left = paradigms.skeleton(p, spec_id="shaping_l", answers={"rewarded_arm": "left_well"})
 
-    # Layer 1 and layer 2 must be identical.
-    assert base["topology"] == ez["topology"], "an eased variant must not change the graph"
-    assert base["contingency"] == ez["contingency"], "an eased variant must not change contingency"
-
-    # Layer 4 may differ ONLY in stage_schedule (which is itself a layer-3 rewrite).
-    base_policy = {k: v for k, v in base["policy"].items() if k != "stage_schedule"}
-    ez_policy = {k: v for k, v in ez["policy"].items() if k != "stage_schedule"}
-    assert base_policy == ez_policy, "an eased variant must not change selection or penalty policy"
-
-    # And it must actually differ somewhere in layer 3, or it is not a variant at all.
-    assert base["timing"] != ez["timing"] or (
-        base["policy"]["stage_schedule"] != ez["policy"]["stage_schedule"]
+    assert right["topology"] == left["topology"], "an answer must not change the graph"
+    assert right["timing"] == left["timing"]
+    assert right["contingency"] != left["contingency"], (
+        "the two must differ somewhere, or they are not different tasks"
     )
-
-    # The timing vectors must have the same SHAPE -- same ids in the same order --
-    # so the compiled tables are index-compatible and a ramp can be swapped between them.
-    assert [t["id"] for t in base["timing"]] == [t["id"] for t in ez["timing"]]
+    targets = [
+        [t["target"] for t in d["contingency"]["trial_types"] if t.get("weight") == 1]
+        for d in (right, left)
+    ]
+    assert targets == [["right_well"], ["left_well"]]

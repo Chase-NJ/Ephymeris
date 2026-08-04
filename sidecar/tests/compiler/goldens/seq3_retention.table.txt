@@ -1,14 +1,14 @@
 ==============================================================================
-  seq2_retention  —  compiled state table
+  seq3_retention  —  compiled state table
 ==============================================================================
 
   spec_version    1
-  spec_hash       12b8c3026671f327
+  spec_hash       35c005ad5fcc819b
   vocab_version   1
   template        four_epoch v2 (f0760c460092ddb3)
 
-  29 states, 41 edges, 17 timing entries, 2 trial types
-  550 bytes uploaded
+  31 states, 45 edges, 19 timing entries, 3 trial types
+  572 bytes uploaded
 
 ------------------------------------------------------------------------------
   STATES
@@ -47,7 +47,7 @@
          ADVANCE → S00
          REPEAT → S00
 
-  S06  HOLD        t_commit_hold[3]       odor_port                ODOR_POKE(224)
+  S06  HOLD        t_commit_hold[4]       odor_port                ODOR_POKE(224)
        commitment hold
          HELD → S10
          BROKEN → S07
@@ -68,101 +68,114 @@
          TIMEOUT → S05  → score:hold_break
 
   ── 2 · stimulus sampling ────────────────────────────────────────
-  S10  HOLD        t_sample_hold_0[4]     odor_port                @stim[0].on_code(65280)
+  S10  HOLD        t_sample_hold_0[5]     odor_port                @stim[0].on_code(65280)
        present stimulus 1
          on entry: set vacuum
          BROKEN → S07
          HELD → S11
 
-  S11  HOLD        t_interstim_gap_0[5]   odor_port                INTERSTIM_GAP_ON(261)
+  S11  HOLD        t_interstim_gap_0[6]   odor_port                INTERSTIM_GAP_ON(261)
        inter-stimulus gap
          on entry: clear @stim[0].emitter
          on entry: set @stim[1].emitter
          HELD → S12
          BROKEN → S07
 
-  S12  HOLD        t_sample_hold_1[6]     odor_port                @stim[1].on_code(65281)
+  S12  HOLD        t_sample_hold_1[7]     odor_port                @stim[1].on_code(65281)
        present stimulus 2
          on entry: set vacuum
          BROKEN → S07
          HELD → S13
 
-  S13  WAIT_EXIT   —                      odor_port                ODOR_OFF(247)
+  S13  HOLD        t_interstim_gap_1[8]   odor_port                INTERSTIM_GAP_ON(261)
+       inter-stimulus gap
+         on entry: clear @stim[1].emitter
+         on entry: set @stim[2].emitter
+         HELD → S14
+         BROKEN → S07
+
+  S14  HOLD        t_sample_hold_2[9]     odor_port                @stim[2].on_code(65282)
+       present stimulus 3
+         on entry: set vacuum
+         BROKEN → S07
+         HELD → S15
+
+  S15  WAIT_EXIT   —                      odor_port                ODOR_OFF(247)
        sampling release
          on entry: clear vacuum
-         on entry: clear @stim[1].emitter
-         EXIT → S14
+         on entry: clear @stim[2].emitter
+         EXIT → S16
 
   ── 3 · response ────────────────────────────────────────
-  S14  DELAY       t_zero[0]              —                        ODOR_UNPOKE(226)
+  S16  DELAY       t_zero[0]              —                        ODOR_UNPOKE(226)
        withdrawal
-         TIMEOUT → S15
-
-  S15  DELAY       t_zero[0]              —                        LIGHTS_OFF(233)
-       cue off
-         on entry: clear trial_light
-         TIMEOUT → S16
-
-  S16  DELAY       t_retention[7]         —                        RETENTION_ON(260)
-       retention delay
          TIMEOUT → S17
 
-  S17  WAIT_ENTRY  t_resp_win[8]          left_well,right_well     —
-       response window
-         ENTER(left_well) → S18
-         ENTER(right_well) → S18
+  S17  DELAY       t_zero[0]              —                        LIGHTS_OFF(233)
+       cue off
+         on entry: clear trial_light
+         TIMEOUT → S18
+
+  S18  DELAY       t_retention[10]        —                        RETENTION_ON(260)
+       retention delay
          TIMEOUT → S19
 
-  S18  DELAY       t_zero[0]              —                        @ports[$ch].enter_code(65284)
+  S19  WAIT_ENTRY  t_resp_win[11]         right_well,left_well     —
+       response window
+         ENTER(right_well) → S20
+         ENTER(left_well) → S20
+         TIMEOUT → S21
+
+  S20  DELAY       t_zero[0]              —                        @ports[$ch].enter_code(65284)
        response registered
-         TIMEOUT [ch == @target] → S22
-         TIMEOUT → S23
+         TIMEOUT [ch == @target] → S24
+         TIMEOUT → S25
 
-  S19  DELAY       t_pen_error[13]        —                        RESP_OMIT(262)
+  S21  DELAY       t_pen_error[16]        —                        RESP_OMIT(262)
        omission
-         TIMEOUT → S20  → score:omission
+         TIMEOUT → S22  → score:omission
 
-  S20  DELAY       t_zero[0]              —                        END_INCORRECT_ITI(243)
+  S22  DELAY       t_zero[0]              —                        END_INCORRECT_ITI(243)
        incorrect — scored
          TIMEOUT [correction budget] → S05  → repeat
-         TIMEOUT → S21  → advance
+         TIMEOUT → S23  → advance
 
-  S21  TERMINAL    —                      —                        — silent
+  S23  TERMINAL    —                      —                        — silent
        TRIAL_ADVANCE
          ADVANCE → S00
          REPEAT → S00
 
-  S22  HOLD        t_resp_hold[9]         @target                  —
+  S24  HOLD        t_resp_hold[12]        @target                  —
        response hold
-         BROKEN → S24
-         HELD → S25
+         BROKEN → S26
+         HELD → S27
 
-  S23  DELAY       t_pen_error[13]        —                        @ports[$ch].error_code(65285)
+  S25  DELAY       t_pen_error[16]        —                        @ports[$ch].error_code(65285)
        wrong
-         TIMEOUT → S20  → score:wrong
+         TIMEOUT → S22  → score:wrong
 
-  S24  DELAY       t_pen_break[14]        —                        @ports[$ch].break_code(65286)
+  S26  DELAY       t_pen_break[14]        —                        @ports[$ch].break_code(65286)
        hold fail
-         TIMEOUT → S20  → score:hold_fail
+         TIMEOUT → S22  → score:hold_fail
 
   ── 4 · outcome ────────────────────────────────────────
-  S25  PULSE       @trial.reward          —                        @target.reward_code(65288)
+  S27  PULSE       @trial.reward          —                        @target.reward_code(65288)
        reward delivery
          on entry: set @target.reward_line
-         DONE → S26
+         DONE → S28
 
-  S26  WAIT_EXIT   —                      @target                  @target.reward_stop_code(65289)
+  S28  WAIT_EXIT   —                      @target                  @target.reward_stop_code(65289)
        consumption
          on entry: clear @target.reward_line
-         EXIT → S27
+         EXIT → S29
 
-  S27  DELAY       t_iti_correct[12]      —                        @target.exit_code(65290)
+  S29  DELAY       t_iti_correct[13]      —                        @target.exit_code(65290)
        correct
-         TIMEOUT → S28  → score:correct
+         TIMEOUT → S30  → score:correct
 
-  S28  DELAY       t_zero[0]              —                        END_CORRECT_ITI(242)
+  S30  DELAY       t_zero[0]              —                        END_CORRECT_ITI(242)
        correct — scored
-         TIMEOUT → S21  → advance
+         TIMEOUT → S23  → advance
 
 ------------------------------------------------------------------------------
   TIMING VECTOR
@@ -174,43 +187,30 @@
   [ 0] t_zero                      0 ms
   [ 1] t_arm                    1000 ms
   [ 2] t_engage_win             4000 ms
-  [ 3] t_commit_hold             500 ms
-  [ 4] t_sample_hold_0           400 ms
-  [ 5] t_interstim_gap_0         500 ms
-  [ 6] t_sample_hold_1           400 ms
-  [ 7] t_retention              1500 ms
-  [ 8] t_resp_win               2000 ms
-  [ 9] t_resp_hold               200 ms
-  [10] t_reward_l                100 ms
-  [11] t_reward_r                100 ms
-  [12] t_iti_correct            4000 ms
-  [13] t_pen_error             20000 ms
+  [ 3] t_poll_interval             5 ms
+  [ 4] t_commit_hold             500 ms
+  [ 5] t_sample_hold_0           500 ms
+  [ 6] t_interstim_gap_0         500 ms
+  [ 7] t_sample_hold_1           500 ms
+  [ 8] t_interstim_gap_1         500 ms
+  [ 9] t_sample_hold_2           500 ms
+  [10] t_retention              1500 ms
+  [11] t_resp_win               2000 ms
+  [12] t_resp_hold               200 ms
+  [13] t_iti_correct            4000 ms
   [14] t_pen_break             10000 ms
   [15] t_pen_noengage           6000 ms
-  [16] t_poll_interval             5 ms
+  [16] t_pen_error             20000 ms
+  [17] t_reward_right            100 ms
+  [18] t_reward_left             100 ms
 
 ------------------------------------------------------------------------------
   TRIAL TYPES
 ------------------------------------------------------------------------------
 
-  [0] seq_ab         stimuli=[0, 1] target=port[1] weight=1 reward=ch46
-  [1] seq_ba         stimuli=[1, 0] target=port[0] weight=1 reward=ch42
-
-------------------------------------------------------------------------------
-  STAGE SCHEDULE
-------------------------------------------------------------------------------
-
-  Scanned DESCENDING with >=, so applying twice or skipping a count lands
-  on the same row. An unreachable row is expressed by omitting it.
-
-  [0] at trial 0:
-        t_retention            :=    250 ms
-  [1] at trial 60:
-        t_retention            :=    500 ms
-  [2] at trial 150:
-        t_retention            :=   1000 ms
-  [3] at trial 300:
-        t_retention            :=   1500 ms
+  [0] tt_odor1_right_well stimuli=[0, 0, 0] target=port[0] weight=1 reward=ch46
+  [1] tt_odor2_left_well stimuli=[1, 1, 1] target=port[1] weight=1 reward=ch42
+  [2] tt_odor3_right_well stimuli=[2, 2, 2] target=port[0] weight=1 reward=ch46
 
 ------------------------------------------------------------------------------
   DWELL BUDGET  (for the Phase 4 watchdog)
@@ -219,15 +219,15 @@
   Bounded ONLY by the runtime watchdog — no static analysis can bound these,
   because they wait on the subject rather than on a clock:
 
-    S13  WAIT_EXIT  sampling release
-    S26  WAIT_EXIT  consumption
+    S15  WAIT_EXIT  sampling release
+    S28  WAIT_EXIT  consumption
 
-  Worst-case bounded dwell, summed over all states: 80600 ms
+  Worst-case bounded dwell, summed over all states: 81800 ms
   (an upper bound on one trial, excluding the states above)
 
 ------------------------------------------------------------------------------
   DIAGNOSTICS
 ------------------------------------------------------------------------------
 
-  INFO TG901  S13 WAIT_EXIT "sampling release" is bounded only by the runtime watchdog
-  INFO TG901  S26 WAIT_EXIT "consumption" is bounded only by the runtime watchdog
+  INFO TG901  S15 WAIT_EXIT "sampling release" is bounded only by the runtime watchdog
+  INFO TG901  S28 WAIT_EXIT "consumption" is bounded only by the runtime watchdog

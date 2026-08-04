@@ -1,0 +1,3 @@
+# go_nogo — accepted diagnostics
+
+(none)

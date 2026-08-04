@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ephymeris_sidecar.taskgraph.emit.listing import render, render_lint
 from ephymeris_sidecar.taskgraph.errors import Severity
-from ephymeris_sidecar.taskgraph.pipeline import compile_spec
+from ephymeris_sidecar.taskgraph.pipeline import compile_spec, compile_text
 
 from . import paths
 
@@ -70,6 +70,51 @@ def cmd_lint(args) -> int:
         _report(result, spec_path)
         failed += 0 if result.ok else 1
     return 1 if failed else 0
+
+
+def cmd_goldens(args) -> int:
+    """The listings for every paradigm's generated skeleton.
+
+    Nothing ships as a spec, so there is no `specs/*.table.txt` to review against.
+    What is checked in instead is the listing of each paradigm's first draft --
+    which is what an operator actually receives, so a compiler change that moves
+    a state shows up in review exactly as it always did.
+
+    Weaker than the goldens it replaces, and worth saying so: a GENERATOR bug
+    moves the skeleton and its golden together. The hand-written as-built fixture
+    and the broken/ battery are what still catch that class.
+    """
+    from ephymeris_sidecar.taskgraph import paradigms
+
+    out = paths.repo_root() / "sidecar" / "tests" / "compiler" / "goldens"
+    out.mkdir(parents=True, exist_ok=True)
+    stale: list[Path] = []
+    for p in paradigms.load_all():
+        text = paradigms.to_yaml(paradigms.skeleton(p, spec_id=p.id))
+        result = compile_text(text, source_path=f"{p.id}.yaml", spec_id=p.id)
+        if not result.ok:
+            print(result.bag.render())
+            print(f"{p.id}: the paradigm's skeleton does not compile")
+            return 1
+        for path, wanted in (
+            (out / f"{p.id}.table.txt", render(result.table, result.bag)),
+            (out / f"{p.id}.lint.txt", render_lint(result.bag, result.table.spec_id)),
+        ):
+            if (path.read_text() if path.exists() else None) == wanted:
+                continue
+            if args.check:
+                stale.append(path)
+            else:
+                path.write_text(wanted)
+                print(f"wrote {path.relative_to(paths.repo_root())}")
+    if args.check:
+        if stale:
+            names = ", ".join(str(p.relative_to(paths.repo_root())) for p in stale)
+            print(f"stale paradigm golden(s): {names}", file=sys.stderr)
+            print("run `taskgraph goldens` and commit the result", file=sys.stderr)
+            return 1
+        print("paradigm goldens are current")
+    return 0
 
 
 def cmd_listing(args) -> int:
@@ -262,6 +307,12 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("specs", nargs="+")
     c.add_argument("--check", action="store_true", default=True)
     c.set_defaults(fn=cmd_listing)
+
+    c = sub.add_parser(
+        "goldens", help="write or verify the paradigm listings the tests pin"
+    )
+    c.add_argument("--check", action="store_true")
+    c.set_defaults(fn=cmd_goldens)
 
     c = sub.add_parser("show", help="print a spec's state table")
     c.add_argument("spec")

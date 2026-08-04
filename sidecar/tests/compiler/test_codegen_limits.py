@@ -30,7 +30,7 @@ from ephymeris_sidecar.taskgraph.registries import limits
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    SCHEMA_DIR, all_specs, spec,
 )
 LIB = FIRMWARE_LIB
 HEADER = LIB / "TaskLimits.h"

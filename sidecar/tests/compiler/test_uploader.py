@@ -28,7 +28,7 @@ from ephymeris_sidecar.taskgraph.transport.link import Link, ProcessLink
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    SCHEMA_DIR, all_specs, spec,
 )
 
 LIB = FIRMWARE_LIB
@@ -53,7 +53,7 @@ def board(tmp_path_factory) -> Path:
 
 @pytest.fixture(scope="module")
 def grgl():
-    r = compile_spec(spec("grgl_2odor"))
+    r = compile_spec(spec("two_afc"))
     assert r.ok, r.bag.render()
     return r.table
 
@@ -243,7 +243,7 @@ def run_cli(*argv: str) -> subprocess.CompletedProcess:
 
 
 def test_the_cli_uploads(board):
-    r = run_cli("upload", str(spec("gonogo")), "--board", str(board))
+    r = run_cli("upload", str(spec("go_nogo")), "--board", str(board))
     assert r.returncode == 0, r.stdout + r.stderr
     assert "accepted:" in r.stdout
     assert "digest=" in r.stdout
@@ -252,7 +252,7 @@ def test_the_cli_uploads(board):
 def test_the_cli_dry_run_opens_nothing():
     """Compile and pack, stop before the wire — so a spec can be checked for fit
     without walking to the rig."""
-    r = run_cli("upload", str(spec("gonogo")), "--dry-run")
+    r = run_cli("upload", str(spec("go_nogo")), "--dry-run")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "bytes, crc32=" in r.stdout
     assert "accepted" not in r.stdout

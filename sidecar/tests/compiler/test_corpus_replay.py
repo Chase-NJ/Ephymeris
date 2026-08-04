@@ -26,7 +26,7 @@ from ephymeris_sidecar.taskgraph.replay import GraphAcceptor
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    SCHEMA_DIR, all_specs, spec,
 )
 
 
@@ -149,7 +149,7 @@ def test_the_model_spec_has_moved_ahead_of_the_firmware(grgl):
     this starts failing — and at that point the suite wants splitting by firmware
     generation rather than pointing wholesale at either graph.
     """
-    r = compile_spec(spec("grgl_2odor"))
+    r = compile_spec(spec("two_afc"))
     model = GraphAcceptor(r.spec, r.table)
     accepted = sum(1 for s in grgl if model.accept(list(s.events)).accepted)
     assert accepted < len(grgl), (

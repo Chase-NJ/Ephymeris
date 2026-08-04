@@ -95,7 +95,6 @@ class Cmd:
     SPECS_SKELETON: Final = "specs.skeleton"
     SPECS_SAVE: Final = "specs.save"
     SPECS_DELETE: Final = "specs.delete"
-    SPECS_ACKNOWLEDGE_UPSTREAM: Final = "specs.acknowledgeUpstream"
     SPECS_DIFF: Final = "specs.diff"
     SPECS_EXPORT: Final = "specs.export"
 
@@ -164,7 +163,6 @@ class ErrCode:
     SPEC_NOT_FOUND: Final = "SPEC_NOT_FOUND"
     SPEC_INVALID: Final = "SPEC_INVALID"
     SPEC_COMPILER_UNAVAILABLE: Final = "SPEC_COMPILER_UNAVAILABLE"
-    SPEC_READONLY: Final = "SPEC_READONLY"
     UPLOAD_REFUSED: Final = "UPLOAD_REFUSED"
     UPLOAD_FAILED: Final = "UPLOAD_FAILED"
     INTERNAL: Final = "INTERNAL"
@@ -265,8 +263,8 @@ SHAPES: Final[dict[str, Any]] = {
     "SidecarErrorData": ('obj', (('code', 'str', False), ('message', 'str', False), ('detail', 'any', False))),
     "ParadigmQuestion": ('obj', (('id', 'str', False), ('label', 'str', False), ('path', 'str', False), ('help', ('union', ('str', 'null')), False), ('source', ('lit', ('value', 'channel', 'stimulus', 'trial_type', 'strobe')), False), ('kind', ('union', ('str', 'null')), False), ('required', 'bool', False))),
     "ParadigmSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('affords', 'str', False), ('order', 'int', False), ('template', 'str', False), ('templateVersion', 'int', False), ('fixes', 'any', False), ('questions', ('list', ('ref', 'ParadigmQuestion')), False))),
-    "SpecOrigin": ('lit', ('shipped', 'shipped_edited', 'user')),
-    "SpecEntry": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('description', ('union', ('str', 'null')), False), ('origin', ('ref', 'SpecOrigin'), False), ('template', ('union', ('str', 'null')), False), ('templateVersion', ('union', ('int', 'null')), False), ('upstreamChanged', 'bool', False), ('editedAt', ('union', ('str', 'null')), False))),
+    "SpecOrigin": ('lit', ('user',)),
+    "SpecEntry": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('description', ('union', ('str', 'null')), False), ('origin', ('ref', 'SpecOrigin'), False), ('template', ('union', ('str', 'null')), False), ('templateVersion', ('union', ('int', 'null')), False), ('paradigmId', ('union', ('str', 'null')), False), ('editedAt', ('union', ('str', 'null')), False))),
     "SpecOverlayField": ('obj', (('label', 'str', False), ('widget', 'str', False), ('group', 'str', True), ('order', 'int', True), ('unit', 'str', True), ('step', ('union', ('int', 'float')), True), ('help', 'str', True), ('advanced', 'bool', True), ('readOnly', 'bool', True), ('nullable', 'bool', True), ('multiple', 'bool', True), ('channelKind', 'str', True), ('options', ('list', ('obj', (('value', 'str', False), ('label', 'str', False), ('help', 'str', True)))), True))),
     "SpecOverlayGroup": ('obj', (('id', 'str', False), ('label', 'str', False), ('order', 'int', False), ('help', 'str', True))),
     "SpecOverlay": ('obj', (('presentation_version', 'int', False), ('groups', ('list', ('ref', 'SpecOverlayGroup')), False), ('sections', ('map', ('obj', (('group', 'str', False), ('rows', ('lit', ('indexed', 'by_id', 'by_key', 'object')), False), ('gatedBy', 'str', True)))), False), ('fields', ('map', ('ref', 'SpecOverlayField')), False))),
@@ -280,7 +278,7 @@ SHAPES: Final[dict[str, Any]] = {
     "SpecsUpdatedData": ('obj', (('specs', ('list', ('ref', 'SpecEntry')), False),)),
     "DiffLine": ('obj', (('op', ('lit', (' ', '+', '-')), False), ('text', 'str', False))),
     "DiffHunk": ('obj', (('section', 'str', False), ('lines', ('list', ('ref', 'DiffLine')), False))),
-    "SpecListingDiff": ('obj', (('specId', 'str', False), ('baseline', ('lit', ('shipped', 'saved', 'spec')), False), ('changed', 'bool', False), ('before', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('after', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('hunks', ('list', ('ref', 'DiffHunk')), False), ('added', 'int', False), ('removed', 'int', False))),
+    "SpecListingDiff": ('obj', (('specId', 'str', False), ('baseline', ('lit', ('saved', 'spec')), False), ('changed', 'bool', False), ('before', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('after', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('hunks', ('list', ('ref', 'DiffHunk')), False), ('added', 'int', False), ('removed', 'int', False))),
     "SpecArtifact": ('obj', (('kind', ('lit', ('spec', 'listing', 'lint', 'table_json', 'table_bin', 'bench')), False), ('filename', 'str', False), ('text', ('union', ('str', 'null')), False), ('base64', ('union', ('str', 'null')), False))),
     "BoardCapabilities": ('obj', (('box', 'int', False), ('present', 'bool', False), ('baud', 'int', False), ('values', ('map', 'int'), False), ('text', ('map', 'str'), False), ('banner', ('list', 'str'), False))),
     "UploadProgressData": ('obj', (('box', 'int', False), ('phase', ('lit', ('detect', 'probe', 'transfer', 'verify')), False), ('chunk', ('union', ('int', 'null')), False), ('chunks', ('union', ('int', 'null')), False), ('text', ('union', ('str', 'null')), False))),
@@ -341,8 +339,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "specs.skeleton": ('obj', (('paradigmId', 'str', False), ('specId', 'str', False), ('answers', 'any', False), ('label', ('union', ('str', 'null')), True), ('description', ('union', ('str', 'null')), True))),
     "specs.save": ('obj', (('specId', 'str', False), ('text', 'str', False))),
     "specs.delete": ('obj', (('specId', 'str', False),)),
-    "specs.acknowledgeUpstream": ('obj', (('specId', 'str', False),)),
-    "specs.diff": ('obj', (('specId', 'str', False), ('text', 'str', True), ('baseline', ('lit', ('shipped', 'saved')), True), ('againstSpecId', 'str', True))),
+    "specs.diff": ('obj', (('specId', 'str', False), ('text', 'str', True), ('againstSpecId', 'str', True))),
     "specs.export": ('obj', (('specId', 'str', False), ('text', 'str', True), ('artifacts', ('list', 'str'), False))),
     "board.capabilities": ('obj', (('box', 'int', False), ('baud', 'int', True))),
     "board.uploadTable": ('obj', (('box', 'int', False), ('specId', 'str', False), ('text', 'str', True))),
@@ -403,7 +400,6 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "specs.skeleton": ('obj', (('text', 'str', False), ('result', ('ref', 'SpecCompileResult'), False))),
     "specs.save": ('obj', (('entry', ('ref', 'SpecEntry'), False), ('result', ('ref', 'SpecCompileResult'), False))),
     "specs.delete": ('obj', (('entry', ('union', (('ref', 'SpecEntry'), 'null')), False),)),
-    "specs.acknowledgeUpstream": ('obj', (('entry', ('ref', 'SpecEntry'), False),)),
     "specs.diff": ('ref', 'SpecListingDiff'),
     "specs.export": ('obj', (('artifacts', ('list', ('ref', 'SpecArtifact')), False),)),
     "board.capabilities": ('ref', 'BoardCapabilities'),

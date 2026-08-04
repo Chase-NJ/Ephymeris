@@ -33,7 +33,7 @@ from ephymeris_sidecar.taskgraph.pipeline import compile_spec
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    SCHEMA_DIR, all_specs, grgl_equivalent, spec,
 )
 
 LIB = FIRMWARE_LIB
@@ -51,7 +51,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def gate_f(tmp_path_factory):
-    r = compile_spec(spec("grgl_2odor"))
+    r = compile_spec(grgl_equivalent())
     assert r.ok, r.bag.render()
     (HOST_TEST / "grgl_table.h").write_text(emit(r.table))
     binary = tmp_path_factory.mktemp("gate_f") / "gate_f"

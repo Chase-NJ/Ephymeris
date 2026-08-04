@@ -35,7 +35,7 @@ from ephymeris_sidecar.taskgraph.transport import (
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    SCHEMA_DIR, all_specs, spec,
 )
 
 LIB = FIRMWARE_LIB
@@ -61,7 +61,7 @@ def board(tmp_path_factory) -> Path:
 
 @pytest.fixture(scope="module")
 def grgl():
-    r = compile_spec(spec("grgl_2odor"))
+    r = compile_spec(spec("two_afc"))
     assert r.ok, r.bag.render()
     return r.table
 

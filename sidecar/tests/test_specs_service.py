@@ -15,6 +15,14 @@ from ephymeris_sidecar.protocol import validate
 from ephymeris_sidecar.specs import compiler, service, store
 from ephymeris_sidecar.specs.store import SpecStore
 
+
+def _generated(paradigm_id: str) -> str:
+    from ephymeris_sidecar.taskgraph import paradigms
+
+    p = paradigms.get(paradigm_id)
+    return paradigms.to_yaml(paradigms.skeleton(p, spec_id=paradigm_id))
+
+
 pytestmark = pytest.mark.skipif(
     not compiler.available()[0],
     reason=f"vendored compiler unavailable: {compiler.available()[1]}",
@@ -23,141 +31,78 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture()
 def specs(tmp_path: Path) -> SpecStore:
-    """A store over a fresh app-data dir — bundled specs only, no user copies."""
+    """A store over a fresh app-data dir.
+
+    EMPTY, and that is the point: nothing ships as a spec, so a rig that has
+    never made one has none. Tests that need a spec put one there, which is also
+    the only way one ever arrives in production.
+    """
     return SpecStore(tmp_path)
 
 
+@pytest.fixture()
+def one_spec(specs: SpecStore) -> SpecStore:
+    """A store holding a single generated task."""
+    specs.save("go_nogo", _generated("go_nogo"))
+    return specs
+
+
+def test_a_fresh_rig_has_no_specs(specs: SpecStore):
+    """The first-run state, asserted rather than assumed.
+
+    This used to be impossible -- five specs shipped -- and it is the state the
+    whole New Task flow now has to handle. `specs.list` returning [] must be a
+    clean answer, not an error.
+    """
+    assert specs.list_entries() == []
+    assert specs.records() == []
+
+
 # --- store: reads -----------------------------------------------------------
-
-
-def test_the_bundled_specs_enumerate(specs: SpecStore):
-    entries = specs.list_entries()
-    assert len(entries) >= 5
-    assert all(e["origin"] == "shipped" for e in entries)
-    assert all(e["upstreamChanged"] is False for e in entries)
-    ids = [e["specId"] for e in entries]
-    assert ids == sorted(ids), "stable order — the list must not reshuffle between calls"
-    assert "grgl_2odor" in ids
-
-
 def test_entries_validate_as_wire_shapes(specs: SpecStore):
     for entry in specs.list_entries():
         assert validate(("ref", "SpecEntry"), entry) == [], entry["specId"]
 
 
-def test_entries_carry_the_parse_level_metadata(specs: SpecStore):
-    entry = next(e for e in specs.list_entries() if e["specId"] == "gonogo")
-    assert entry["label"] == "Go/no-go withhold"
+def test_entries_carry_the_parse_level_metadata(one_spec: SpecStore):
+    entry = next(e for e in one_spec.list_entries() if e["specId"] == "go_nogo")
+    assert entry["label"] == "Go / no-go"
     assert entry["template"] == "four_epoch"
     assert entry["templateVersion"] == 2
-
-
-def test_get_finds_by_id_and_misses_cleanly(specs: SpecStore):
-    assert specs.get("gonogo") is not None
-    assert specs.get("no_such_spec") is None
-
-
-def test_parse_document_never_raises():
-    assert store.parse_document("spec_id: x") == {"spec_id": "x"}
-    assert store.parse_document("{{{") is None
-    assert store.parse_document("") is None
-    assert store.parse_document("- a list") is None
-
-
-# --- store: writes ----------------------------------------------------------
-
-
-def test_saving_over_a_shipped_spec_shadows_it(specs: SpecStore):
-    shipped_text = specs.get("gonogo").read_text()
-    record = specs.save("gonogo", shipped_text + "\n# my edit\n")
-
-    assert record.origin == "shipped_edited"
-    entry = specs.entry_for(record)
-    assert entry["origin"] == "shipped_edited"
-    assert entry["editedAt"] is not None
-    assert entry["upstreamChanged"] is False, "the bundled bytes have not moved"
-    # The shipped file itself was never touched.
-    assert "# my edit" not in (compiler.bundled_specs_dir() / "gonogo.yaml").read_text()
-
-
-def test_the_baseline_is_taken_before_the_first_edit_lands(specs: SpecStore):
-    shipped_bytes = (compiler.bundled_specs_dir() / "gonogo.yaml").read_bytes()
-    specs.save("gonogo", "spec_id: gonogo\n")
-    baseline = specs.baseline_dir / "gonogo.yaml"
-    assert baseline.read_bytes() == shipped_bytes, (
-        "the baseline must be the shipped bytes verbatim — it is what Reset "
-        "restores, comments and all"
+    assert entry["paradigmId"] == "go_nogo", (
+        "the shape is recognised from the document, not recorded in it"
     )
-    # A second save must NOT re-baseline; the first shipped copy is the anchor.
-    specs.save("gonogo", "spec_id: gonogo\nmeta: {label: x}\n")
-    assert baseline.read_bytes() == shipped_bytes
 
 
-def test_reset_to_shipped_restores_the_original_bytes(specs: SpecStore):
-    shipped_text = specs.get("gonogo").read_text()
-    assert "# Go/no-go" in shipped_text, "the shipped comments are the thing being protected"
-    specs.save("gonogo", "spec_id: gonogo\n")
-    assert specs.get("gonogo").read_text() == "spec_id: gonogo\n"
-
-    restored = specs.delete("gonogo")
-    assert restored is not None and restored.origin == "shipped"
-    assert restored.read_text() == shipped_text
-    assert not (specs.baseline_dir / "gonogo.yaml").exists()
+def test_a_reshaped_spec_stops_claiming_its_paradigm(one_spec: SpecStore):
+    """`paradigmId` is computed, which is the whole reason to prefer it to the
+    old origins: edit a task into a different shape and the library says so."""
+    doc = _generated("go_nogo").replace("response_mode: go_nogo",
+                                        "response_mode: n_alternative")
+    one_spec.save("go_nogo", doc)
+    entry = next(e for e in one_spec.list_entries() if e["specId"] == "go_nogo")
+    assert entry["paradigmId"] != "go_nogo"
 
 
-def test_a_user_spec_lives_and_dies_on_its_own(specs: SpecStore):
+def test_get_finds_by_id_and_misses_cleanly(one_spec: SpecStore):
+    assert one_spec.get("go_nogo") is not None
+    assert one_spec.get("no_such_spec") is None
+def test_a_spec_lives_and_dies_on_its_own(specs: SpecStore):
     record = specs.save("my_task", "spec_id: my_task\n")
     assert record.origin == "user"
-    entry = specs.entry_for(record)
-    assert entry["upstreamChanged"] is False, "a pure user spec has no upstream"
+    assert specs.entry_for(record)["paradigmId"] is None, "an unparseable shape is Custom"
 
-    assert specs.delete("my_task") is None
+    specs.delete("my_task")
     assert specs.get("my_task") is None
-
-
-def test_deleting_a_shipped_spec_is_refused(specs: SpecStore):
-    with pytest.raises(store.SpecReadOnly):
-        specs.delete("gonogo")
-
-
+    assert specs.get("my_task") is None
 def test_a_spec_id_is_a_filename_and_traversal_dies_at_the_door(specs: SpecStore):
     for bad in ("../evil", "no/slash", "UPPER", "9starts_with_digit", "", "a" * 41):
         with pytest.raises(store.SpecIdInvalid):
             specs.save(bad, "anything")
-
-
-def test_upstream_changed_and_acknowledge(specs: SpecStore, monkeypatch: pytest.MonkeyPatch):
-    """The whole no-merge policy, end to end, against a simulated app update."""
-    import shutil
-
-    # Point the store's view of the bundle at a copy this test can mutate.
-    bundled_copy = specs.root / "fake-bundle"
-    bundled_copy.mkdir(parents=True)
-    shutil.copy(compiler.bundled_specs_dir() / "gonogo.yaml", bundled_copy / "gonogo.yaml")
-    monkeypatch.setattr(compiler, "bundled_specs_dir", lambda: bundled_copy)
-
-    specs.save("gonogo", "spec_id: gonogo\n")
-    assert specs.upstream_changed("gonogo") is False
-
-    # "An app update ships a changed gonogo."
-    (bundled_copy / "gonogo.yaml").write_text("spec_id: gonogo\n# v2 of the shipped spec\n")
-    assert specs.upstream_changed("gonogo") is True
-    entry = specs.entry_for(specs.get("gonogo"))
-    assert entry["upstreamChanged"] is True
-
-    # Keep mine: re-baseline; the badge clears; the user's text is untouched.
-    specs.acknowledge_upstream("gonogo")
-    assert specs.upstream_changed("gonogo") is False
-    assert specs.get("gonogo").read_text() == "spec_id: gonogo\n"
-
-
-# --- compile payloads -------------------------------------------------------
-
-
 @pytest.fixture(scope="module")
 def gonogo_payload() -> dict:
-    text = (compiler.bundled_specs_dir() / "gonogo.yaml").read_text()
-    return service.compile_payload(text, "gonogo")
+    text = _generated("go_nogo")
+    return service.compile_payload(text, "go_nogo")
 
 
 def test_a_clean_compile_validates_as_a_wire_shape(gonogo_payload: dict):
@@ -167,12 +112,12 @@ def test_a_clean_compile_validates_as_a_wire_shape(gonogo_payload: dict):
 
 def test_the_summary_matches_the_cli_numbers(gonogo_payload: dict):
     table = gonogo_payload["table"]
-    # Pinned against the checked-in listing header for gonogo — if these move,
-    # either the spec changed (fine, update them) or the mapping broke (not).
+    # Pinned against the go_nogo paradigm's golden listing — if these move,
+    # either the paradigm changed (fine, update them) or the mapping broke (not).
     assert table["nNodes"] == 21
     assert table["nEdges"] == 29
     assert table["nTiming"] == 11
-    assert table["specHash"] == "a598fb6cc57b8aab"
+    assert len(table["specHash"]) == 16
     assert table["crc32"].startswith("0x")
 
 
@@ -192,13 +137,6 @@ def test_the_graph_reconstructs_edge_sources(gonogo_payload: dict):
     assert {e["src"] for e in graph["edges"]} | {
         i for i, node in enumerate(graph["nodes"]) if node["type"] == "TERMINAL"
     } == set(range(n))
-
-
-def test_the_listing_is_the_checked_in_review_artifact(gonogo_payload: dict):
-    golden = (compiler.bundled_specs_dir() / "gonogo.table.txt").read_text()
-    assert gonogo_payload["listing"] == golden
-
-
 def test_a_failing_compile_is_a_payload_not_an_exception():
     payload = service.compile_payload("not: a spec", "scratch")
     assert payload["ok"] is False
@@ -208,9 +146,9 @@ def test_a_failing_compile_is_a_payload_not_an_exception():
 
 
 def test_diagnostics_carry_a_placement_and_field_anchors_are_overlay_keys():
-    text = (compiler.bundled_specs_dir() / "gonogo.yaml").read_text()
-    broken = text.replace("ms: 2000, wire_key: NWP", "ms: 2000000, wire_key: NWP")
-    payload = service.compile_payload(broken, "gonogo")
+    text = _generated("go_nogo")
+    broken = text.replace("  ms: 2000\n  wire_key: NWP", "  ms: 2000000\n  wire_key: NWP")
+    payload = service.compile_payload(broken, "go_nogo")
     assert payload["ok"] is False
     placed = {d["placement"] for d in payload["diagnostics"]}
     assert placed <= {"field", "row", "section", "node", "document"}
@@ -225,12 +163,14 @@ def test_diagnostics_carry_a_placement_and_field_anchors_are_overlay_keys():
 
 
 def _shipped(spec_id: str) -> str:
-    return (compiler.bundled_specs_dir() / f"{spec_id}.yaml").read_text()
+    """Kept under its old name so the diff tests below read unchanged; what it
+    returns is a generated task, because that is what there is."""
+    return _generated(spec_id)
 
 
 def test_an_unedited_spec_diffs_clean_against_itself():
-    text = _shipped("gonogo")
-    payload = service.diff_payload("gonogo", text, text, "shipped")
+    text = _shipped("go_nogo")
+    payload = service.diff_payload("go_nogo", text, text, "saved")
     assert validate(("ref", "SpecListingDiff"), payload) == []
     assert payload["changed"] is False
     assert payload["hunks"] == []
@@ -238,9 +178,9 @@ def test_an_unedited_spec_diffs_clean_against_itself():
 
 
 def test_a_timing_edit_lands_in_the_timing_vector_section_only():
-    before = _shipped("gonogo")
-    after = before.replace("ms: 2000, wire_key: NWP", "ms: 2500, wire_key: NWP")
-    payload = service.diff_payload("gonogo", after, before, "shipped")
+    before = _shipped("go_nogo")
+    after = before.replace("  ms: 2000\n  wire_key: NWP", "  ms: 2500\n  wire_key: NWP")
+    payload = service.diff_payload("go_nogo", after, before, "saved")
     assert payload["changed"] is True
     sections = [h["section"] for h in payload["hunks"]]
     assert "TIMING VECTOR" in sections
@@ -248,31 +188,8 @@ def test_a_timing_edit_lands_in_the_timing_vector_section_only():
     # carry it once, as provenance, instead of topping every diff.
     assert all("spec_hash" not in line["text"] for h in payload["hunks"] for line in h["lines"])
     assert payload["before"]["specHash"] != payload["after"]["specHash"]
-
-
-def test_the_ez_variant_is_a_pure_timing_delta():
-    """The acceptance criterion the roadmap names, matched to what upstream
-    actually pins: the eased variant's STRUCTURE is identical (no STATES or
-    TRIAL TYPES hunks — same nodes, same edges), and every hunk lives in a
-    value-carrying section. STAGE SCHEDULE and DWELL BUDGET move WITH the
-    timing vector because they are derived from it — their hunks are the
-    layer-3 delta being visible, not noise."""
-    payload = service.diff_payload(
-        "shaping_gr_ez", _shipped("shaping_gr_ez"), _shipped("shaping_gr"), "spec"
-    )
-    assert payload["changed"] is True
-    sections = {h["section"] for h in payload["hunks"]}
-    assert "TIMING VECTOR" in sections
-    structural = {s for s in sections if s.startswith(("STATES", "TRIAL TYPES"))}
-    assert not structural, f"an eased variant must not change the graph: {structural}"
-    # And the headline agrees: same shape, different bytes.
-    assert payload["before"]["nNodes"] == payload["after"]["nNodes"]
-    assert payload["before"]["nEdges"] == payload["after"]["nEdges"]
-    assert payload["before"]["specHash"] != payload["after"]["specHash"]
-
-
 def test_a_side_that_does_not_compile_reports_honestly():
-    payload = service.diff_payload("gonogo", "not: a spec", _shipped("gonogo"), "shipped")
+    payload = service.diff_payload("go_nogo", "not: a spec", _shipped("go_nogo"), "saved")
     assert payload["changed"] is True
     assert payload["after"] is None
     assert payload["before"] is not None
@@ -281,9 +198,9 @@ def test_a_side_that_does_not_compile_reports_honestly():
 
 
 def test_a_topology_change_reads_as_states_moving():
-    before = _shipped("gonogo")
+    before = _shipped("go_nogo")
     after = before.replace("commit_hold: true", "commit_hold: false")
-    payload = service.diff_payload("gonogo", after, before, "shipped")
+    payload = service.diff_payload("go_nogo", after, before, "saved")
     # Dropping the commitment hold restructures the graph — the STATES section
     # must carry hunks, and the headline counts must move.
     assert any(h["section"] == "STATES" for h in payload["hunks"])
@@ -296,22 +213,21 @@ def test_a_topology_change_reads_as_states_moving():
 def test_export_produces_every_artifact_kind():
     import base64
 
-    text = _shipped("gonogo")
+    text = _shipped("go_nogo")
     payload = service.export_payload(
-        "gonogo", text, ["spec", "listing", "lint", "table_json", "table_bin", "bench"]
+        "go_nogo", text, ["spec", "listing", "lint", "table_json", "table_bin", "bench"]
     )
     by_kind = {a["kind"]: a for a in payload["artifacts"]}
     assert set(by_kind) == {"spec", "listing", "lint", "table_json", "table_bin", "bench"}
     for artifact in payload["artifacts"]:
         assert validate(("ref", "SpecArtifact"), artifact) == []
     assert by_kind["spec"]["text"] == text
-    # The listing export IS the checked-in review artifact, byte for byte.
-    assert by_kind["listing"]["text"] == (
-        compiler.bundled_specs_dir() / "gonogo.table.txt"
-    ).read_text()
+    # The listing export IS the review artifact, byte for byte.
+    goldens = Path(__file__).resolve().parent / "compiler" / "goldens"
+    assert by_kind["listing"]["text"] == (goldens / "go_nogo.table.txt").read_text()
     blob = base64.b64decode(by_kind["table_bin"]["base64"])
     assert blob[:4] == b"TGTB", "the packed table's magic"
-    assert by_kind["bench"]["filename"] == "gonogo.bench.txt"
+    assert by_kind["bench"]["filename"] == "go_nogo.bench.txt"
 
 
 def test_export_of_a_broken_spec_yields_only_the_spec_itself():

@@ -1,6 +1,6 @@
 """Golden-file tests: all five specs compile, and their listings stay current.
 
-The listings in specs/*.table.txt are the review surface. If the compiler's output
+The listings in tests/compiler/goldens/ are the review surface. If the compiler's output
 drifts from what is checked in, the artifact everyone reviews stops describing the
 graph that actually ships -- so the drift has to fail a build, not merely be
 noticed.
@@ -19,7 +19,7 @@ from ephymeris_sidecar.taskgraph.table import NO_TARGET
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    GOLDENS_DIR, SCHEMA_DIR, all_specs, spec,
 )
 SPECS = all_specs()
 
@@ -29,10 +29,16 @@ def compiled():
     return {p.stem: compile_spec(p) for p in SPECS}
 
 
-def test_all_five_target_tasks_are_present():
-    assert {p.stem for p in SPECS} == {
-        "grgl_2odor", "shaping_gr", "shaping_gr_ez", "gonogo", "seq2_retention"
-    }
+def test_every_paradigm_is_covered():
+    """The goldens are over GENERATED documents now, which is weaker than goldens
+    over hand-authored ones -- a generator bug moves the skeleton and the golden
+    together, and re-blessing hides it. Two things carry the weight instead: the
+    as-built fixture, which is hand-written and replays against 1.5M recorded
+    events, and the broken/ battery. What these goldens still catch is the thing
+    they were always best at: a compiler change that silently moves states."""
+    from ephymeris_sidecar.taskgraph import paradigms
+
+    assert {p.stem for p in SPECS} == {p.id for p in paradigms.load_all()}
 
 
 @pytest.mark.parametrize("path", SPECS, ids=lambda p: p.stem)
@@ -44,10 +50,10 @@ def test_compiles_without_errors(path, compiled):
 @pytest.mark.parametrize("path", SPECS, ids=lambda p: p.stem)
 def test_listing_golden_is_current(path, compiled):
     r = compiled[path.stem]
-    golden = path.with_suffix(".table.txt")
+    golden = GOLDENS_DIR / f"{path.stem}.table.txt"
     assert golden.exists(), f"missing golden {golden.name} -- run `taskgraph compile`"
     assert golden.read_text() == render(r.table, r.bag), (
-        f"{golden.name} is stale. Run:\n  taskgraph compile specs/{path.name}\n"
+        f"{golden.name} is stale. Run:\n  npm run taskgraph:goldens\n"
         "and review the diff -- it shows exactly which states moved."
     )
 
@@ -61,7 +67,7 @@ def test_lint_baseline_is_current(path, compiled):
     pile nobody reads.
     """
     r = compiled[path.stem]
-    golden = path.with_suffix(".lint.txt")
+    golden = GOLDENS_DIR / f"{path.stem}.lint.txt"
     assert golden.exists(), f"missing {golden.name}"
     assert golden.read_text() == render_lint(r.bag, r.table.spec_id)
 
@@ -100,15 +106,25 @@ def test_every_node_has_a_dwell_verdict(path, compiled):
     assert len(r.table.max_dwell) == len(r.table.nodes)
 
 
-def test_ez_variant_is_a_pure_timing_delta_in_the_compiled_table(compiled):
+def test_shaping_is_the_discrimination_machine_with_different_numbers(compiled):
     """THE layer-3 claim, verified against the COMPILED output rather than the spec.
 
-    Two specs can look like a pure timing delta and still compile to different
-    graphs if the template branches on something subtle. Comparing the tables is
-    what actually proves the claim.
+    Shaping is not a smaller task -- it is the full two-port machine with the
+    pool collapsed onto one arm. If that is true then it compiles to the SAME
+    graph as the 2AFC it leads to, and widening the pool later is a weight rather
+    than a reshape that would split the animal's history in Analytics.
+
+    Two documents can look like a pure timing delta and still compile to
+    different graphs if the template branches on something subtle, so the tables
+    are what get compared.
+
+    Only the STRUCTURE is asserted. Two freshly generated skeletons share the
+    template's defaults, so their timing vectors are identical until an operator
+    ramps one -- asserting they differ would be asserting something the
+    generator does not, and should not, do.
     """
-    base = compiled["shaping_gr"].table
-    ez = compiled["shaping_gr_ez"].table
+    base = compiled["two_afc"].table
+    ez = compiled["shaping"].table
 
     assert len(base.nodes) == len(ez.nodes)
     assert len(base.edges) == len(ez.edges)
@@ -116,13 +132,13 @@ def test_ez_variant_is_a_pure_timing_delta_in_the_compiled_table(compiled):
     for a, b in zip(base.nodes, ez.nodes, strict=True):
         assert (a.type, a.dur_idx, a.strobe, a.watch_mask, a.edge_idx) == (
             b.type, b.dur_idx, b.strobe, b.watch_mask, b.edge_idx
-        ), f"node {a.symbol} differs structurally between a task and its eased variant"
+        ), f"node {a.symbol} differs between shaping and the task it leads to"
 
     for a, b in zip(base.edges, ez.edges, strict=True):
         assert (a.trigger, a.guard, a.target, a.effect) == (b.trigger, b.guard, b.target, b.effect)
 
-    # ...and it must actually differ somewhere in layer 3, or it is not a variant.
-    assert base.timing != ez.timing
+    # What DOES differ is the pool: shaping builds four arms and offers one.
+    assert len(ez.trial_types) > len(base.trial_types)
 
 
 def test_gonogo_inverts_timeout_in_the_compiled_graph(compiled):
@@ -133,8 +149,8 @@ def test_gonogo_inverts_timeout_in_the_compiled_graph(compiled):
     leads to TRIAL_CORRECT. Nothing about the interpreter changes -- which is the
     entire claim of D9.
     """
-    gng = compiled["gonogo"].table
-    grgl = compiled["grgl_2odor"].table
+    gng = compiled["go_nogo"].table
+    grgl = compiled["two_afc"].table
 
     def timeout_target_label(table, node_symbol):
         i = next(k for k, n in enumerate(table.nodes) if n.symbol == node_symbol)
@@ -161,7 +177,7 @@ def test_seq2_unrolls_the_sampling_chain(compiled):
     That containment is the reason epochs are separate blocks.
     """
     seq2 = compiled["seq2_retention"].table
-    grgl = compiled["grgl_2odor"].table
+    grgl = compiled["two_afc"].table
 
     symbols = [n.symbol for n in seq2.nodes]
     assert "sample_0" in symbols and "sample_1" in symbols and "gap_0" in symbols
@@ -188,7 +204,7 @@ def test_omission_announces_itself(compiled):
     three different outcomes, so the class was recoverable only from the
     *preceding* strobe. All three are now distinguishable where they occur.
     """
-    for name in ("grgl_2odor", "shaping_gr", "seq2_retention"):
+    for name in ("two_afc", "shaping", "seq2_retention"):
         node = next(n for n in compiled[name].table.nodes if n.symbol == "out_omission")
         assert node.strobe_name == "RESP_OMIT", f"{name} should announce its omissions"
         assert node.strobe == 262
@@ -220,7 +236,7 @@ def test_as_built_fixture_keeps_the_silence():
 def test_response_branch_node_exists_with_its_guard(compiled):
     """D3: the strobe is emitted BEFORE correctness is known, so it sits on a
     zero-duration branch node whose edges carry the guard."""
-    grgl = compiled["grgl_2odor"].table
+    grgl = compiled["two_afc"].table
     i = next(k for k, n in enumerate(grgl.nodes) if n.symbol == "resp_branch")
     node = grgl.nodes[i]
 
@@ -237,7 +253,7 @@ def test_response_branch_node_exists_with_its_guard(compiled):
 
 def test_canonical_json_names_the_unbounded_nodes(compiled):
     """Phase 4 reads this to know what the watchdog is solely responsible for."""
-    d = to_dict(compiled["grgl_2odor"].table)
+    d = to_dict(compiled["two_afc"].table)
     assert d["unbounded_nodes"]
     for i in d["unbounded_nodes"]:
         assert d["nodes"][i]["max_dwell_ms"] is None

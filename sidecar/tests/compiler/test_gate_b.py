@@ -31,12 +31,12 @@ from ephymeris_sidecar.taskgraph.pipeline import compile_spec
 
 from tests.compiler.tgpaths import (  # noqa: E402
     AS_BUILT, BEHAVIORBOX, FIRMWARE, FIRMWARE_LIB, HOST_TEST, REPO_ROOT,
-    SCHEMA_DIR, SPEC_DIR, all_specs, spec,
+    SCHEMA_DIR, all_specs, grgl_equivalent, spec,
 )
 
 LIB = FIRMWARE_LIB
 
-MODEL = spec("grgl_2odor")
+MODEL = grgl_equivalent()
 
 #: Three seeds, so a pass is not one lucky draw. Kept modest per seed because the
 #: battery is exhaustive per trial, not per run -- 9000 trials covers every

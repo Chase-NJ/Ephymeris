@@ -201,8 +201,6 @@ export function TaskDesigner() {
         actionError={session.actionError}
         openError={session.openError}
         hasDoc={doc !== null}
-        onKeepMine={() => void session.keepMine()}
-        onTakeShipped={() => setConfirmReset(true)}
       />
 
       {doc && baseline && schema ? (
@@ -404,21 +402,16 @@ function Notices({
   actionError,
   openError,
   hasDoc,
-  onKeepMine,
-  onTakeShipped,
 }: {
-  entry: { origin: string; upstreamChanged: boolean } | null;
+  entry: { origin: string } | null;
   dirty: boolean;
   failure: string | null;
   actionError: string | null;
   openError: string | null;
   hasDoc: boolean;
-  onKeepMine: () => void;
-  onTakeShipped: () => void;
 }) {
   const anything =
     (entry?.origin === "shipped" && dirty) ||
-    entry?.upstreamChanged ||
     failure ||
     actionError ||
     (openError && !hasDoc);
@@ -436,25 +429,6 @@ function Notices({
           version&rsquo;s comments stay recoverable via{" "}
           <span className="text-starlight">Reset to shipped</span>.
         </p>
-      )}
-      {entry?.upstreamChanged && (
-        <div
-          className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-halo px-2.5 py-1.5 text-[11px]"
-          style={{ color: "var(--color-status-warning)" }}
-        >
-          <span>
-            An app update changed the shipped version of this spec underneath your
-            edits. Nothing was merged.
-          </span>
-          <span className="flex gap-1.5">
-            <Button variant="ghost" onClick={onKeepMine}>
-              Keep mine
-            </Button>
-            <Button variant="ghost" onClick={onTakeShipped}>
-              Take the new shipped version
-            </Button>
-          </span>
-        </div>
       )}
       {(failure || actionError || (openError && !hasDoc)) && (
         <p className="text-[11px]" style={{ color: "var(--color-status-error)" }}>

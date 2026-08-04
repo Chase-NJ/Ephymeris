@@ -28,7 +28,6 @@ import yaml
 from ephymeris_sidecar.specs import compiler
 
 PACKAGE = Path(__file__).resolve().parent.parent / "ephymeris_sidecar" / "taskgraph"
-SPECS = sorted((PACKAGE / "specs").glob("*.yaml"))
 
 pytestmark = pytest.mark.skipif(
     not compiler.available()[0],
@@ -52,8 +51,12 @@ def test_self_check_proves_a_real_compile_not_just_an_import():
     """
     ok, why = compiler.self_check()
     assert ok, why
-    assert compiler.bundled_specs_dir().is_dir()
-    assert sorted(p.name for p in compiler.bundled_specs_dir().glob("*.yaml"))
+    # The probe is GENERATED now, so a green self_check also proves the paradigm
+    # registry, the composed pinout and the vocabulary are all present -- which
+    # a shipped example could never prove about a freeze that dropped them.
+    from ephymeris_sidecar.taskgraph import paradigms
+
+    assert paradigms.load_all(), "no paradigms shipped"
 
 
 def test_the_compiler_resolves_inside_the_package():
@@ -86,28 +89,28 @@ def test_no_bare_taskgraph_module_exists():
     )
 
 
-@pytest.mark.parametrize("path", SPECS, ids=lambda p: p.stem)
-def test_every_bundled_spec_compiles_clean(path: Path):
-    result = compiler.compile(path.read_text(), spec_id=path.stem)
-    assert result.ok, result.bag.render()
-    assert result.table is not None
-    blob, crc = compiler.table_bytes(result)
-    assert blob and crc
+def _skeletons():
+    from ephymeris_sidecar.taskgraph import paradigms
+
+    return [
+        (p.id, paradigms.to_yaml(paradigms.skeleton(p, spec_id=p.id)))
+        for p in paradigms.load_all()
+    ]
 
 
-@pytest.mark.parametrize("path", SPECS, ids=lambda p: p.stem)
-def test_the_listing_matches_the_checked_in_artifact(path: Path):
-    """The diff baseline must be the artifact Task-Graph reviews, byte for byte.
+def test_every_paradigm_skeleton_compiles_clean():
+    """What ships is the ability to MAKE a task, so that is what is checked.
 
-    A topology editor diffs against `specs/<id>.table.txt`. If the sidecar rendered
-    a listing that differed from the committed one — different registry, different
-    template — every diff would open with spurious hunks and the review artifact
-    would stop meaning anything.
+    The listing-matches-the-checked-in-artifact test that used to live beside
+    this one moved to the compiler suite's paradigm goldens, where the artifact
+    now lives.
     """
-    result = compiler.compile(path.read_text(), spec_id=path.stem)
-    golden = path.with_suffix(".table.txt")
-    assert golden.is_file(), f"{golden.name} is missing from the vendored specs"
-    assert compiler.render_listing(result) == golden.read_text()
+    for spec_id, text in _skeletons():
+        result = compiler.compile(text, spec_id=spec_id)
+        assert result.ok, f"{spec_id}: {result.bag.render()}"
+        assert result.table is not None
+        blob, crc = compiler.table_bytes(result)
+        assert blob and crc
 
 
 def test_compile_never_raises_on_a_malformed_document():
@@ -128,14 +131,14 @@ def test_capabilities_answers_a_half_built_topology():
     assert "wrong" not in caps.outcome_classes
 
 
-def test_capabilities_agrees_with_what_each_bundled_spec_declares():
+def test_capabilities_agrees_with_what_each_skeleton_declares():
     """The gate the form relies on must match the compiler's own view."""
-    for path in SPECS:
-        raw = yaml.safe_load(path.read_text())
+    for spec_id, text in _skeletons():
+        raw = yaml.safe_load(text)
         caps = compiler.capabilities_for(raw["topology"])
         declared = set(raw["contingency"]["outcome_map"])
-        assert declared == set(caps.outcome_classes), path.stem
-        assert set(caps.required_timing) <= {t["id"] for t in raw["timing"]}, path.stem
+        assert declared == set(caps.outcome_classes), spec_id
+        assert set(caps.required_timing) <= {t["id"] for t in raw["timing"]}, spec_id
 
 
 def test_registries_carry_everything_a_form_needs():

@@ -1129,9 +1129,10 @@ SHAPES = (
     ),
     Shape(
         "SpecOrigin",
-        lit("shipped", "shipped_edited", "user"),
-        doc="Where a spec's current bytes come from. `shipped_edited` = a user "
-        "copy shadowing a bundled spec of the same id.",
+        lit("user"),
+        doc="Where a spec's bytes come from. One value: nothing ships as a spec, "
+        "so every task belongs to the rig that generated it from a paradigm. "
+        "Kept as a union so the field has somewhere to grow if that changes.",
     ),
     Shape(
         "SpecEntry",
@@ -1143,15 +1144,14 @@ SHAPES = (
             f("template", nullable(STR)),
             f("templateVersion", nullable(INT)),
             f(
-                "upstreamChanged",
-                BOOL,
-                doc="A shipped_edited spec whose BUNDLED bytes moved since the "
-                "user's copy was made — i.e. an app update changed the shipped "
-                "version underneath a local edit. Never merged automatically; "
-                "the user chooses Keep mine (specs.acknowledgeUpstream) or Reset "
-                "to shipped (specs.delete).",
+                "paradigmId",
+                nullable(STR),
+                doc="Which paradigm's SHAPE this document has, computed from the "
+                "document itself rather than recorded in it — so a task reshaped "
+                "in the Designer stops claiming to be what it started as. Null "
+                "reads honestly as Custom.",
             ),
-            f("editedAt", nullable(STR), doc="ISO-8601; null for a pure shipped spec."),
+            f("editedAt", nullable(STR), doc="ISO-8601."),
         ),
         doc="A row in the spec list. Built from a cheap parse — never a compile — "
         "so `specs.list` stays instant however many specs exist.",
@@ -1396,7 +1396,7 @@ SHAPES = (
         "SpecListingDiff",
         obj(
             f("specId", STR),
-            f("baseline", lit("shipped", "saved", "spec")),
+            f("baseline", lit("saved", "spec"), doc="Which BEFORE side was used."),
             f("changed", BOOL),
             f(
                 "before",
@@ -1948,32 +1948,20 @@ COMMANDS = (
         doc="ALWAYS saves, even with ERROR diagnostics — a half-finished spec "
         "must be savable; the gate is upload, not save. Writes go under the "
         "sidecar's own app-data dir, like session files and ephymeris.db — no "
-        "Tauri fs capability is involved. Saving over a shipped spec's id "
-        "shadows it (origin becomes shipped_edited) after the shipped bytes are "
-        "copied to a baseline, which is what Reset to shipped restores — "
-        "comments and all, since the shipped file itself is never modified.",
+        "Tauri fs capability is involved. The frontend passes the document's own "
+        "spec_id as the target, so renaming the id and saving creates a copy.",
     ),
     Command(
         "specs.delete",
         args=obj(f("specId", STR)),
         result=obj(
-            f(
-                "entry",
-                nullable(Ref("SpecEntry")),
-                doc="Null when the spec is gone (a user spec); the now-shipped "
-                "entry when deleting a shadow restored the bundled version.",
-            ),
+            f("entry", nullable(Ref("SpecEntry")), doc="Always null — see below."),
         ),
-        doc="For a user spec: delete. For shipped_edited: Reset to shipped — "
-        "removes the user copy and its baseline. For shipped: SPEC_READONLY.",
-    ),
-    Command(
-        "specs.acknowledgeUpstream",
-        args=obj(f("specId", STR)),
-        result=obj(f("entry", Ref("SpecEntry"))),
-        doc="Keep mine: re-baseline a shipped_edited spec against the CURRENT "
-        "bundled bytes, clearing upstreamChanged until the next app update "
-        "moves them again. Nothing is merged and nothing is overwritten.",
+        doc="Deletes the spec. One meaning, where there used to be three: nothing "
+        "ships as a spec, so there is no bundled version underneath to fall back "
+        "to and nothing that can be read-only. `entry` stays in the reply shape "
+        "and is always null, so a client that renders the result of a delete does "
+        "not have to special-case its absence.",
     ),
     Command(
         "specs.diff",
@@ -1985,13 +1973,6 @@ COMMANDS = (
                 optional=True,
                 doc="The AFTER side: the editor's unsaved document. Absent = the "
                 "stored file, for reviewing a saved edit.",
-            ),
-            f(
-                "baseline",
-                lit("shipped", "saved"),
-                optional=True,
-                doc="The BEFORE side. Default: shipped for a bundled id, saved "
-                "otherwise. `shipped` on a shadow means the CURRENT bundled bytes.",
             ),
             f(
                 "againstSpecId",
@@ -2178,11 +2159,6 @@ ERRORS = (
         "The vendored Task-Graph compiler failed to import (README.md §6.4). "
         "detail carries the ImportError. The legacy task.json path and the "
         "session flow are unaffected.",
-    ),
-    ErrorCode(
-        "SPEC_READONLY",
-        "specs.delete on a purely shipped spec. The bundled file is part of the "
-        "install; editing it goes through save (which shadows it), not delete.",
     ),
     ErrorCode(
         "UPLOAD_REFUSED",

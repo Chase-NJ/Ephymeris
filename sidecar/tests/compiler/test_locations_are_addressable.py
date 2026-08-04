@@ -92,8 +92,8 @@ def test_a_schema_violation_inside_an_array_element_lands_on_its_field():
     """
     from pathlib import Path
 
-    text = spec("gonogo").read_text()
-    broken = text.replace("ms: 2000, wire_key: NWP", "ms: 2000000, wire_key: NWP")
+    text = spec("go_nogo").read_text()
+    broken = text.replace("  ms: 2000\n  wire_key: NWP", "  ms: 2000000\n  wire_key: NWP")
     assert broken != text
     result = compile_text(broken, spec_id="gonogo")
     tg102 = [d for d in result.bag if d.code == "TG102"]

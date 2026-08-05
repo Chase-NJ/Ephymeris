@@ -8,6 +8,11 @@ fail, because a checkout on a machine with no data is not a broken checkout.
 A recorded session is a JSON document whose `ts_data` is a list of
 `[code, milliseconds]` pairs, plus the merged parameter values the run used
 (docs/tasks.md §5).
+
+It also carries no firmware version, which is why `Session.generation` derives one
+from the stream: the corpus spans the 2026-08-03 conformance cutover, and a session
+is only explainable by the graph of the firmware that produced it
+(docs/TaskGraph.md §7.1).
 """
 
 from __future__ import annotations
@@ -17,14 +22,21 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-#: Codes that reveal which firmware generation produced a session.
+from .registries import vocabulary
+
+#: The behavioural strobes that share an instant with `LIGHTS_OFF` on an abort.
 #:
-#: Ephymeris records that LIGHTS_OFF, WATER_UNPOKE_L and WATER_UNPOKE_R "were dead
-#: for a while — declared, wired to real hardware events, and never strobed." A
-#: session containing any of them post-dates that fix; one containing none of them
-#: pre-dates it. That single bit splits the corpus cleanly, and it is the
-#: difference between a session the current graph can explain and one it cannot.
-MODERN_MARKERS = frozenset({233, 254, 255})
+#: All three abort paths in `runTrial()` drop the house light and announce what the
+#: animal did in the same firmware instant, so the two strobes carry identical
+#: timestamps and only their ORDER separates the generations. Template v1 put
+#: `LIGHTS_OFF` first; v2 always puts the behavioural strobe first, which is what
+#: let the `cue_off_placement` knob be deleted rather than kept for a quirk (D21).
+ABORT_PARTNERS = ("LAZY_RAT", "ODOR_UNPOKE_EARLY")
+
+#: Emitted only by v2 firmware, and the reason `generation` does not rest on the
+#: ordering alone: a v2 session in which no animal ever ran the response window
+#: out has no abort ordering to read, but an omission is unambiguous.
+V2_ONLY = ("RESP_OMIT",)
 
 
 @dataclass(frozen=True)
@@ -43,14 +55,30 @@ class Session:
         return {c for c, _ in self.events}
 
     @property
-    def modern(self) -> bool:
-        """True when the session was produced by firmware that emits the three
-        once-dead codes."""
-        return bool(self.codes & MODERN_MARKERS)
-
-    @property
     def generation(self) -> str:
-        return "modern" if self.modern else "legacy"
+        """Which template generation explains this recording: `"v1"` or `"v2"`.
+
+        NOT A TEST FOR WHICH CODES APPEAR, and the difference matters. `LIGHTS_OFF`,
+        `WATER_UNPOKE_L` and `WATER_UNPOKE_R` were dead for a while and started
+        being emitted on 2026-07-31, three days before the ordering changed. That
+        looks like the same cutover and is not: those sessions still carry v1
+        ordering and are still explained by the as-built graph. Splitting on code
+        presence files eleven of them against the model, which rejects them.
+
+        A recording with no abort and no omission is genuinely undated by its own
+        contents — nothing in it distinguishes the two generations, so either graph
+        explains it. Those answer `"v1"`, because the as-built graph accepts every
+        one of them and is the graph that produced them.
+        """
+        vocab = vocabulary()
+        off = vocab.code_of("LIGHTS_OFF")
+        partners = {vocab.code_of(n) for n in ABORT_PARTNERS}
+        if self.codes & {vocab.code_of(n) for n in V2_ONLY}:
+            return "v2"
+        codes = [c for c, _ in self.events]
+        if any(a in partners and b == off for a, b in zip(codes, codes[1:])):
+            return "v2"
+        return "v1"
 
     def __len__(self) -> int:
         return len(self.events)

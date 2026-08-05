@@ -514,6 +514,34 @@ million real events reproduces what the boxes actually did. Where those differed
 **the data won** — and then, once corrected, the model became authoritative and
 firmware conforms to *it* ([D21](taskgraph-decisions.md#d21)).
 
+### 7.1 The corpus now spans two firmware generations
+
+The conformance patch landed in the firmware repo on **2026-08-03** and the boxes
+were reflashed before the **2026-08-04** sessions, which are the first recordings
+made by firmware that emits `RESP_OMIT` and orders cue-off the model's way. So the
+corpus is no longer uniformly legacy, and no single graph explains all of it:
+
+| generation | graph | GRGL sessions |
+|---|---|---|
+| **v1** | `tests/compiler/fixtures/grgl_2odor_asbuilt.yaml` (template v1, as-built) | 217 |
+| **v2** | the model spec, which firmware now matches | 5 |
+
+`tests/compiler/test_corpus_replay.py` replays each session through the graph of
+its own generation, and each generation reaches **every** state of its own graph
+independently — pooling them would let the 217 v1 sessions vouch for branches the
+model graph has never had driven through it.
+
+> [!CAUTION]
+> **Generation is read from the stream, not from the filename or the codes present.**
+> A recording carries no firmware version, and its name must never be sorted as a
+> string (`docs/data.md` §2). The discriminator is the abort-path strobe *order*:
+> firmware emits the behavioural strobe and `LIGHTS_OFF` in the same instant, so the
+> two share a timestamp and only their order differs. Splitting instead on *which*
+> codes appear looks equivalent and is not — `LIGHTS_OFF`, `WATER_UNPOKE_L` and
+> `WATER_UNPOKE_R` stopped being dead on 2026-07-31, three days before the ordering
+> changed, so eleven v1 sessions carry the "modern" codes and are still v1. Filing
+> them against the model rejects every one of them.
+
 ---
 
 ## 8. What is proven, and what is not

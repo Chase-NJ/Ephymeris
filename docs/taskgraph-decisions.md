@@ -244,6 +244,12 @@ file-per-version rule ([[D14]]) was for, and it is what keeps the corpus evidenc
 firmware changes are enumerated in `docs/firmware-changes.md`, and a test measures
 when they have shipped.
 
+**Shipped 2026-08-03** (`Arduino/…/BehaviorBox.h`, kept honest by
+`tests/compiler/test_firmware_conformance.py` against the checked-in patch). The
+boxes were reflashed before the 2026-08-04 sessions, so the corpus now spans both
+generations and the replay test validates each against its own graph —
+[TaskGraph.md §7.1](TaskGraph.md#71-the-corpus-now-spans-two-firmware-generations).
+
 ---
 
 <a id="d20"></a>

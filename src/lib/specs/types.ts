@@ -54,7 +54,18 @@ export type SpecDocument = Record<string, unknown>;
  * non-contiguous and resolution is always by NAME, so the map's keys are the
  * values a spec carries and the numbers are for display only. */
 export interface StrobeRegistry {
-  codes?: Record<string, { code: number }>;
+  codes?: Record<
+    string,
+    {
+      code: number;
+      /** Why this code exists and what it reports. Already on the wire — the
+       * vocabulary is served verbatim — and read by the explanation tile, which
+       * is the first thing to want prose rather than a number. */
+      rationale?: string;
+      /** The hardware or behavioural event that emits it. */
+      emitted_on?: string;
+    }
+  >;
   /** Slot number → the six per-port code names a port on that slot reports
    * with. Keys are strings because they arrive from JSON. Slots 1 and 2 are the
    * historical `_L`/`_R` families; this table is why nothing here derives a
@@ -69,6 +80,18 @@ export interface StrobeRegistry {
 export interface ChannelRegistry {
   channels?: Record<
     string,
-    { kind: string; index: number; well?: string; port_slot?: number }
+    {
+      kind: string;
+      index: number;
+      well?: string;
+      port_slot?: number;
+      /** Why this channel exists on the box. `ChannelMap.to_json()` has always
+       * passed it through; the Rig wiring inspector reads it, and so does the
+       * explanation tile. */
+      rationale?: string;
+    }
   >;
+  /** `direction` and prose per KIND, not per channel — declaring direction per
+   * channel made "a reward line that is an input" a representable mistake. */
+  kinds?: Record<string, { direction?: string; doc?: string }>;
 }

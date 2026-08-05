@@ -43,12 +43,26 @@ const COMPACT_SCALE = 0.84;
 
 export function TaskJourney({
   labels,
+  sublabels,
   active,
   hint,
   settled = false,
 }: {
   /** One per star, in order. The caller decides which steps exist. */
   labels: string[];
+  /**
+   * One readout per star — what that step has produced so far.
+   *
+   * THIS IS WHERE `TaskShape`'S EPOCH CARDS WENT. A standing tile of four
+   * one-line readouts above every step was a second map competing with the rail
+   * that already said where the operator was, and it said less than the epoch
+   * graph that now heads each step. Folded in here, the readout is attached to
+   * the star it describes and costs no vertical space.
+   *
+   * Rendered ABSOLUTELY, like the label above it, so the rail's fixed-width
+   * arithmetic (see `CONNECTOR`) is untouched by however long a readout gets.
+   */
+  sublabels?: (string | null)[];
   /** 0-based index of the current star. */
   active: number;
   hint: string;
@@ -87,6 +101,7 @@ export function TaskJourney({
               )}
               <StepStar
                 label={label}
+                sublabel={sublabels?.[i] ?? null}
                 state={i < active ? "done" : i === active ? "active" : "ahead"}
               />
             </Fragment>
@@ -97,7 +112,8 @@ export function TaskJourney({
             it has something to say. These are prose that gets edited, and a
             wrap that only shows up on one step would push the whole column
             down on arriving at it. Cheaper to hold the space. */}
-        <div className="mt-8 min-h-[33px] text-center">
+        {/* Clears the star label AND the readout beneath it. */}
+        <div className="mt-[52px] min-h-[33px] text-center">
           {/*
            * ENTER-ONLY, and not the `AnimatePresence mode="wait"` crossfade
            * `SessionJourney` uses for the same line.
@@ -132,9 +148,11 @@ export function TaskJourney({
 function StepStar({
   state,
   label,
+  sublabel,
 }: {
   state: "done" | "active" | "ahead";
   label: string;
+  sublabel: string | null;
 }) {
   return (
     <div className="relative h-5 w-5 shrink-0">
@@ -181,6 +199,18 @@ function StepStar({
       >
         {label}
       </span>
+      {/* Absolute and width-capped: the rail's spacing is fixed arithmetic, so
+          a long readout must not be able to push a star sideways. */}
+      {sublabel && (
+        <span
+          title={sublabel}
+          className={`absolute left-1/2 top-[35px] block w-[68px] -translate-x-1/2 truncate text-center font-mono text-[9px] ${
+            state === "active" ? "text-static" : "text-static/60"
+          }`}
+        >
+          {sublabel}
+        </span>
+      )}
     </div>
   );
 }

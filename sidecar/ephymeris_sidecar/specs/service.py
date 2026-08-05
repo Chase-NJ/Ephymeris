@@ -215,6 +215,7 @@ def paradigms_payload() -> dict[str, Any]:
                 "template": p.template,
                 "templateVersion": p.template_version,
                 "fixes": dict(p.topology),
+                "ramped": list(p.ramped),
                 "questions": [
                     {
                         "id": q.id,
@@ -267,6 +268,31 @@ def capabilities_payload(topology: dict[str, Any]) -> dict[str, Any]:
         "knobs": list(caps.knobs),
         "template": str(name),
         "templateVersion": int(version),
+        # The template's own prose, which until now stopped at the sidecar --
+        # `timing_defaults`/`outcome_defaults` were read only by the skeleton
+        # generator. They are the ONLY written-down account of what a duration
+        # is for and what an outcome class means (each `note` cites the firmware
+        # field it mirrors), so a form that wants to explain a row rather than
+        # merely label it has no other source. Emitted per-topology because that
+        # is what they are: go/no-go's `correct` is a different fact.
+        "timingHelp": {
+            tid: {
+                "note": d.note,
+                "wireKey": d.wire_key,
+                "ms": int(d.ms),
+            }
+            for tid, d in caps.timing_defaults.items()
+        },
+        "outcomeHelp": {
+            cls: {
+                "note": o.note,
+                "trigger": o.trigger,
+                "terminal": o.terminal,
+                "delay": o.delay,
+                "strobe": o.strobe,
+            }
+            for cls, o in caps.outcome_defaults.items()
+        },
     }
 
 

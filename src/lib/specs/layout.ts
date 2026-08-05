@@ -35,7 +35,7 @@
  */
 
 import type { SpecGraph, SpecGraphEdge, SpecGraphNode } from "./types";
-import { scoredClass } from "./selection";
+import { scoredClass, sid } from "./selection";
 
 export interface LaidOutNode {
   node: SpecGraphNode;
@@ -66,15 +66,65 @@ export interface BandBox {
   y1: number;
 }
 
+/**
+ * An edge with exactly one endpoint in scope, drawn as a short arrow to a cap.
+ *
+ * A scoped picture that simply dropped these would be a lie of omission: the
+ * whole point of drawing one epoch is that its abort chains LEAVE, and a band-4
+ * picture whose scoring edge stops at the frame edge reads as a rendering bug
+ * rather than as "and then the trial ends". Empty on an unscoped layout.
+ */
+export interface LaidOutStub {
+  edge: SpecGraphEdge;
+  /** The in-scope endpoint. */
+  from: { x: number; y: number };
+  /** The cap, `STUB_LEN` away. */
+  to: { x: number; y: number };
+  direction: "out" | "in";
+  /** Precomputed here, never in the renderer — `HELD → sampling · S10`. */
+  label: string;
+  /** The whole sentence, for the `<title>`: the far node's own label too. */
+  detail: string;
+  labelX: number;
+  labelY: number;
+  /** The out-of-scope endpoint's band, so a renderer can tint the cap. */
+  otherBand: number;
+}
+
 export interface SpecLayout {
   nodes: LaidOutNode[];
   edges: LaidOutEdge[];
+  stubs: LaidOutStub[];
   bands: BandBox[];
   width: number;
   height: number;
   laneCount: number;
   /** The x of the return rail — the vertical track ADVANCE/REPEAT arcs ride. */
   returnRailX: number;
+}
+
+/**
+ * Which part of the machine a layout draws.
+ *
+ * `band` is the wizard's epoch step; `nodes` is an explicit set spanning bands,
+ * which the outcome step needs because the outcome epoch is NOT band 4 — the
+ * template stamps a terminal with whatever band was current when its class was
+ * first referenced, so `term_repeat` is in band 1 and `term_advance` in band 3,
+ * and a go/no-go task has no band 4 at all.
+ */
+export type LayoutScope =
+  | { kind: "all" }
+  | { kind: "band"; band: number }
+  | { kind: "nodes"; nodes: ReadonlySet<number> };
+
+export interface LayoutOptions {
+  scope?: LayoutScope;
+  /**
+   * ADVANCE/REPEAT arcs. Off for a scoped view: in a band-1 scope both ends of
+   * the repeat arc are in scope, and drawing "a trial repeats" across a picture
+   * about how a trial BEGINS is noise the TRIAL_REPEAT hexagon already covers.
+   */
+  returns?: boolean;
 }
 
 export const BAND_LABELS: Record<number, string> = {
@@ -129,8 +179,26 @@ const RETURN_GUTTER = 36;
 const MARGIN_TOP = 12;
 /** Without this the last row's strobe line clipped at the SVG edge. */
 const MARGIN_BOTTOM = 22;
-/** Text room to the right of each node before the next lane begins. */
+/** Text room to the right of each node before the next lane begins.
+ *
+ * DELIBERATELY NOT PER-VIEW. A scoped picture is roomier and it is tempting to
+ * widen the budget for it, but then the same node's label reads differently in
+ * the wizard and the Designer — the "graph and review artifact must not
+ * disagree" rule, one level down. */
 export const LABEL_BUDGET = LANE_PITCH_X - 22;
+
+/** A scoped view has no band-header column to reserve, so it reclaims it. */
+const SCOPED_GUTTER_X = 16;
+/**
+ * Tighter rows for a scoped view, and unlike `LABEL_BUDGET` this one is
+ * legitimately per-view: `NODE_PITCH_Y` is sized for a canvas the operator pans
+ * around, while an epoch slice has to be legible as a fixed header. Nothing
+ * cross-view is claimed about vertical spacing — only about ORDER, which the
+ * dense rank preserves exactly.
+ */
+const SCOPED_NODE_PITCH_Y = 38;
+/** How far a boundary-crossing arrow reaches before its cap. */
+const STUB_LEN = 22;
 
 /** JetBrains Mono advance ≈ 0.6 em. Character arithmetic, not measurement —
  * the same string always truncates the same way. Callers put the full string
@@ -279,7 +347,59 @@ function laneOf(
   return lanes;
 }
 
-export function layoutSpecGraph(graph: SpecGraph): SpecLayout {
+/**
+ * The wizard's per-epoch picture. A thin reading of `layoutSpecGraph`.
+ *
+ * The important half is what it does NOT do: it never builds a subgraph. See
+ * the scope note in `layoutSpecGraph`.
+ */
+export function layoutEpoch(graph: SpecGraph, band: number): SpecLayout {
+  return layoutSpecGraph(graph, { scope: { kind: "band", band }, returns: false });
+}
+
+/** The outcome step's picture: an explicit node set, spanning bands. */
+export function layoutNodes(
+  graph: SpecGraph,
+  nodes: ReadonlySet<number>,
+): SpecLayout {
+  return layoutSpecGraph(graph, { scope: { kind: "nodes", nodes }, returns: false });
+}
+
+export const EMPTY_LAYOUT: SpecLayout = {
+  nodes: [],
+  edges: [],
+  stubs: [],
+  bands: [],
+  width: 0,
+  height: 0,
+  laneCount: 0,
+  returnRailX: 0,
+};
+
+/**
+ * STRUCTURE IS DECIDED GLOBALLY; ONLY COORDINATES ARE SCOPED.
+ *
+ * Everything down to `lanes`/`pos` runs over the whole graph however narrow the
+ * scope is, and that is not an optimisation — it is the only correct order.
+ *
+ * - `reachesLaterBand` is *definitionally* global: it asks whether a node can
+ *   reach a LATER band. Hand it a band-1 subgraph and nothing can, so the spine
+ *   comes out empty, the last-band chain fallback below fires on the wrong
+ *   band, and every branch collapses into a single column — precisely the
+ *   grgl_2odor bug rule 3 exists to prevent.
+ * - `originsOf` needs to see the spine node a branch descends from, which a
+ *   scoped node array does not contain.
+ * - `graph.nodes[i].index === i` is load-bearing throughout this file and in
+ *   every caller (a diagnostic joins on the real node index). Filtering the
+ *   node array would silently repoint every edge. So scoping MASKS; it never
+ *   filters.
+ *
+ * Deciding globally is also what makes the wizard's band-3 picture and the
+ * Designer's band-3 rows agree about ordering, which rule 2 requires.
+ */
+export function layoutSpecGraph(graph: SpecGraph, opts?: LayoutOptions): SpecLayout {
+  const scope: LayoutScope = opts?.scope ?? { kind: "all" };
+  const withReturns = opts?.returns ?? true;
   const spine = reachesLaterBand(graph);
 
   /*
@@ -385,31 +505,105 @@ export function layoutSpecGraph(graph: SpecGraph): SpecLayout {
     bandHeight.set(band, 1 + Math.max(0, ...members.map((i) => pos[i]!)));
   }
 
-  // y per band, stacked with headers and gaps.
+  /* ------------------------------------------------------------------ */
+  /* Phase B — coordinates, and the only half the scope touches.        */
+  /* ------------------------------------------------------------------ */
+
+  const inScope = (i: number): boolean => {
+    const node = graph.nodes[i];
+    if (!node) return false;
+    switch (scope.kind) {
+      case "all":
+        return true;
+      case "band":
+        return node.band === scope.band;
+      case "nodes":
+        return scope.nodes.has(i);
+    }
+  };
+  const members = graph.nodes.map((_, i) => i).filter(inScope);
+  if (members.length === 0) return EMPTY_LAYOUT;
+
   const bands: BandBox[] = [];
   const yOf = new Array<number>(graph.nodes.length).fill(0);
-  let cursor = MARGIN_TOP;
-  for (const band of bandsSorted) {
-    const members = bandOf.get(band)!;
-    const y0 = cursor;
-    const rows = bandHeight.get(band)!;
-    for (const i of members) {
-      yOf[i] = y0 + BAND_HEADER_H + pos[i]! * NODE_PITCH_Y + 18;
+  let xOf: (i: number) => number;
+  let laneCount: number;
+  let height: number;
+  let gutter: number;
+
+  if (scope.kind === "all") {
+    // y per band, stacked with headers and gaps. Unchanged, byte for byte —
+    // the Designer must get exactly the picture it got before scopes existed.
+    let cursor = MARGIN_TOP;
+    for (const band of bandsSorted) {
+      const bandMembers = bandOf.get(band)!;
+      const y0 = cursor;
+      const rows = bandHeight.get(band)!;
+      for (const i of bandMembers) {
+        yOf[i] = y0 + BAND_HEADER_H + pos[i]! * NODE_PITCH_Y + 18;
+      }
+      const y1 = y0 + BAND_HEADER_H + rows * NODE_PITCH_Y;
+      bands.push({ band, label: BAND_LABELS[band] ?? `band ${band}`, y0, y1 });
+      cursor = y1 + BAND_GAP_Y;
     }
-    const y1 = y0 + BAND_HEADER_H + rows * NODE_PITCH_Y;
-    bands.push({ band, label: BAND_LABELS[band] ?? `band ${band}`, y0, y1 });
-    cursor = y1 + BAND_GAP_Y;
+    height = cursor - BAND_GAP_Y + MARGIN_BOTTOM;
+    gutter = GUTTER_X;
+    laneCount = 1 + Math.max(0, ...lanes);
+    xOf = (i) => GUTTER_X + lanes[i]! * LANE_PITCH_X;
+  } else {
+    /*
+     * DENSE-RANK BOTH AXES OVER THE SCOPED SET.
+     *
+     * Vertically that collapses the empty rows a scope leaves behind — the
+     * outcome view spans bands 1 to 4 and would otherwise carry 400px of
+     * nothing between `out_no_engage` and `score_correct` — while preserving
+     * order and keeping co-row nodes on one row.
+     *
+     * Horizontally the key is `(band, lane)` and NOT bare `lane`, because
+     * `laneOf` restarts lane numbering per band: band 1's lane 1 and band 3's
+     * lane 1 are unrelated branches, and ranking on the bare number would
+     * stack two different penalty chains into one column.
+     */
+    const rowKey = (i: number) => graph.nodes[i]!.band * 1e6 + pos[i]!;
+    const rowRank = denseRank(members.map(rowKey));
+    for (const i of members) {
+      yOf[i] = MARGIN_TOP + 10 + rowRank(rowKey(i)) * SCOPED_NODE_PITCH_Y;
+    }
+
+    const colKey = (i: number) => graph.nodes[i]!.band * 1e6 + lanes[i]!;
+    // Ordered by the index of each column's first member, so reading left to
+    // right follows the listing — rule 2, restated for a scoped picture.
+    const colOrder = [...new Set(members.map(colKey))].sort(
+      (a, b) =>
+        members.find((i) => colKey(i) === a)! - members.find((i) => colKey(i) === b)!,
+    );
+    const colOf = new Map(colOrder.map((k, n) => [k, n]));
+    gutter = SCOPED_GUTTER_X;
+    laneCount = colOrder.length;
+    xOf = (i) => gutter + (colOf.get(colKey(i)) ?? 0) * LANE_PITCH_X;
+
+    const rows = 1 + Math.max(...members.map((i) => rowRank(rowKey(i))));
+    height = MARGIN_TOP + 10 + rows * SCOPED_NODE_PITCH_Y + MARGIN_BOTTOM;
+    // One box per band present, spanning its own rows. A scoped renderer draws
+    // no header column, but the caption above the picture still wants the name.
+    for (const band of bandsSorted) {
+      const own = members.filter((i) => graph.nodes[i]!.band === band);
+      if (own.length === 0) continue;
+      bands.push({
+        band,
+        label: BAND_LABELS[band] ?? `band ${band}`,
+        y0: Math.min(...own.map((i) => yOf[i]!)) - 18,
+        y1: Math.max(...own.map((i) => yOf[i]!)) + 18,
+      });
+    }
   }
-  const height = cursor - BAND_GAP_Y + MARGIN_BOTTOM;
 
-  const laneCount = 1 + Math.max(0, ...lanes);
-  const xOf = (i: number) => GUTTER_X + lanes[i]! * LANE_PITCH_X;
-  const rightmostLabel = GUTTER_X + (laneCount - 1) * LANE_PITCH_X + 13 + LABEL_BUDGET;
-  const returnRailX = rightmostLabel + 24;
-  const width = returnRailX + RETURN_GUTTER - 24;
+  const rightmostLabel = gutter + (laneCount - 1) * LANE_PITCH_X + 13 + LABEL_BUDGET;
+  const returnRailX = withReturns ? rightmostLabel + 24 : rightmostLabel;
+  const width = withReturns ? returnRailX + RETURN_GUTTER - 24 : rightmostLabel + STUB_LEN;
 
-  const nodes: LaidOutNode[] = graph.nodes.map((node, i) => ({
-    node,
+  const nodes: LaidOutNode[] = members.map((i) => ({
+    node: graph.nodes[i]!,
     x: xOf(i),
     y: yOf[i]!,
   }));
@@ -432,10 +626,70 @@ export function layoutSpecGraph(graph: SpecGraph): SpecLayout {
 
   const buckets = new Map<string, number>();
   const at = (i: number) => ({ x: xOf(i), y: yOf[i]! });
-  const edges: LaidOutEdge[] = graph.edges.map((edge) => {
+
+  /*
+   * Three fates for an edge, decided by how much of it is in scope.
+   *
+   * Iteration stays in `graph.edges` array order throughout, including the
+   * skips, so the label-bucket collision pass resolves the same way on every
+   * compile of the same spec — determinism, same as everywhere else here.
+   */
+  const stubs: LaidOutStub[] = [];
+  const edges: LaidOutEdge[] = [];
+  for (const edge of graph.edges) {
+    const srcIn = inScope(edge.src);
+    const dstIn = inScope(edge.dst);
+    const ret = isReturn(edge);
+    if (!srcIn && !dstIn) continue;
+    if (ret && !withReturns) continue;
+
+    if (!srcIn || !dstIn) {
+      // A return leaving the scope says nothing a reader of one epoch needs.
+      if (ret) continue;
+      const here = srcIn ? edge.src : edge.dst;
+      const there = srcIn ? edge.dst : edge.src;
+      const other = graph.nodes[there];
+      if (!other) continue;
+      const anchor = at(here);
+      // Down when the far node comes later in the machine, up when earlier —
+      // so an abort chain leaving band 1 points down and band 4's inbound
+      // arrival points down INTO its first node, both reading as flow.
+      const forward =
+        other.band * 1e6 + (pos[there] ?? 0) > graph.nodes[here]!.band * 1e6 + (pos[here] ?? 0);
+      const dy = forward ? STUB_LEN : -STUB_LEN;
+      const from = srcIn ? anchor : { x: anchor.x, y: anchor.y + dy };
+      const to = srcIn ? { x: anchor.x, y: anchor.y + dy } : anchor;
+      /*
+       * TRIGGER FIRST, THEN WHERE IT GOES.
+       *
+       * Naming only the far node made the two edges band 1 shares with band 2 —
+       * `commit --HELD--> sample_0` leaving, and `sample_0 --BROKEN-->
+       * mark_hold_break` arriving — render as the same sentence twice, with
+       * only the arrowhead telling them apart. The trigger is the fact that
+       * distinguishes them, and the epoch is what a reader of one epoch wants
+       * next; the far node's own label rides in the title.
+       */
+      const band = BAND_LABELS[other.band] ?? `band ${other.band}`;
+      stubs.push({
+        edge,
+        from,
+        to,
+        direction: srcIn ? "out" : "in",
+        label: srcIn
+          ? `${edge.trigger} → ${band} · ${sid(there)}`
+          : `${edge.trigger} ← ${band} · ${sid(there)}`,
+        detail: srcIn
+          ? `on ${edge.trigger}, continues to ${sid(there)} ${other.label} in ${band}`
+          : `arrives on ${edge.trigger} from ${sid(there)} ${other.label} in ${band}`,
+        labelX: anchor.x + 13,
+        labelY: anchor.y + dy + (forward ? 4 : -2),
+        otherBand: other.band,
+      });
+      continue;
+    }
+
     const from = at(edge.src);
     const to = at(edge.dst);
-    const ret = isReturn(edge);
 
     let bow = 0;
     if (!ret) {
@@ -468,8 +722,18 @@ export function layoutSpecGraph(graph: SpecGraph): SpecLayout {
       labelY += occupants * 11;
     }
 
-    return { edge, from, to, isReturn: ret, label, labelX, labelY, labelAnchor, bow };
-  });
+    edges.push({ edge, from, to, isReturn: ret, label, labelX, labelY, labelAnchor, bow });
+  }
 
-  return { nodes, edges, bands, width, height, laneCount, returnRailX };
+  return { nodes, edges, stubs, bands, width, height, laneCount, returnRailX };
+}
+
+/**
+ * Positions in a sorted unique key list — the collapse that makes a scoped
+ * picture compact without reordering anything.
+ */
+function denseRank(keys: number[]): (key: number) => number {
+  const sorted = [...new Set(keys)].sort((a, b) => a - b);
+  const rank = new Map(sorted.map((k, i) => [k, i]));
+  return (key) => rank.get(key) ?? 0;
 }

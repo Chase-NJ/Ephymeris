@@ -376,6 +376,117 @@ def test_add_stimulus_and_trial_type():
 
 
 # --------------------------------------------------------------------------- #
+# Removing a trial type: the CONTEXT SCHEDULE is the half that is easy to
+# forget. `contingency.context_schedule[].targets` is keyed by trial type id,
+# so deleting the row alone leaves a reversal pointing at nothing.
+# --------------------------------------------------------------------------- #
+
+
+def remove_trial_type(doc: dict, tt_id: str) -> None:
+    """`removeTrialType`, mirrored."""
+    types = doc["contingency"]["trial_types"]
+    assert len(types) > 1, "the pool must not empty -- the op refuses the last one"
+    doc["contingency"]["trial_types"] = [t for t in types if t["id"] != tt_id]
+    for row in doc["contingency"].get("context_schedule") or []:
+        row.get("targets", {}).pop(tt_id, None)
+
+
+def test_removing_a_trial_type_cleans_every_context_row():
+    """The cleanup, asserted on the DOCUMENT rather than through a compile.
+
+    A context schedule cannot be compiled at all today: TG230 refuses any block
+    boundary because the v1 table has no way to represent one, and says so
+    rather than dropping it silently (v2 will). So there is no compiling spec
+    that exercises this, and pinning it here is the only place the rule is
+    written down outside `operations.ts` itself.
+
+    It is still worth pinning, because the failure it prevents outlives the
+    limitation: `targets` is keyed BY TRIAL TYPE ID, so a delete that touches
+    only `trial_types` leaves a reversal naming something that no longer
+    exists — and it will start compiling, and start being wrong, the day v2
+    lands.
+    """
+    doc = load("two_afc")
+    ids = [t["id"] for t in doc["contingency"]["trial_types"]]
+    assert len(ids) >= 2
+
+    doc["contingency"]["context_schedule"] = [
+        {
+            "at_trial": 0,
+            "context": "acquisition",
+            "targets": {ids[0]: "left_well", ids[1]: "right_well"},
+        },
+        {
+            "at_trial": 50,
+            "context": "reversal",
+            "targets": {ids[0]: "right_well", ids[1]: "left_well"},
+        },
+    ]
+
+    remove_trial_type(doc, ids[0])
+
+    for row in doc["contingency"]["context_schedule"]:
+        assert ids[0] not in row["targets"], "a reversal still names the deleted type"
+        assert ids[1] in row["targets"], "the surviving type lost its override"
+    assert len(doc["contingency"]["context_schedule"]) == 2, "rows were dropped, not cleaned"
+
+    # And with the (currently uncompilable) schedule removed, what is left is a
+    # task that really does compile.
+    del doc["contingency"]["context_schedule"]
+    compile_ok(doc, "two_afc")
+
+
+def test_removing_a_trial_type_that_no_schedule_names_is_still_fine():
+    """The common case: no context schedule at all, so there is nothing to clean."""
+    doc = load("two_afc")
+    ids = [t["id"] for t in doc["contingency"]["trial_types"]]
+    remove_trial_type(doc, ids[0])
+    assert doc["contingency"].get("context_schedule") in (None, [])
+    compile_ok(doc, "two_afc")
+
+
+# --------------------------------------------------------------------------- #
+# Removing a stimulus: blocked while a stage still names it, because the repair
+# is a CHOICE (drop the trial type, or re-point the stage) the op cannot make.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_stimulus_a_trial_type_still_presents_cannot_be_dropped():
+    """The negative case, and the reason the op refuses rather than cascading.
+
+    Deleting the stimulus and leaving the stage is exactly TG220 — a reference
+    to something that no longer exists. This asserts the compiler really does
+    reject it, so the block in `removeStimulus` is protecting against a real
+    failure rather than being defensive.
+    """
+    doc = load("two_afc")
+    stim = doc["contingency"]["stimuli"][0]["id"]
+    users = [
+        t["id"] for t in doc["contingency"]["trial_types"] if stim in t.get("stages", [])
+    ]
+    assert users, "the fixture must have a trial type presenting this stimulus"
+
+    doc["contingency"]["stimuli"] = [
+        s for s in doc["contingency"]["stimuli"] if s["id"] != stim
+    ]
+    result = compiler.compile(yaml.safe_dump(doc, sort_keys=False), spec_id="two_afc")
+    errors = [d for d in list(result.bag) if d.severity.name == "ERROR"]
+    assert errors, "dropping a presented stimulus must not compile"
+
+
+def test_a_stimulus_nothing_presents_can_be_dropped():
+    doc = load("two_afc")
+    doc["contingency"]["stimuli"].append(
+        {"id": "odor_spare", "emitter": "odor_line_3", "on_code": "ODOR_3_ON"}
+    )
+    compile_ok(doc, "two_afc")
+    doc["contingency"]["stimuli"] = [
+        s for s in doc["contingency"]["stimuli"] if s["id"] != "odor_spare"
+    ]
+    compile_ok(doc, "two_afc")
+
+
+# --------------------------------------------------------------------------- #
 # Adding a response option: a correction budget is EXTENDED, never invented.
 # --------------------------------------------------------------------------- #
 

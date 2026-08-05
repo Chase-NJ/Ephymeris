@@ -67,11 +67,15 @@ import type {
 export type OpInvocation =
   | { op: "addSamplingStage" }
   | { op: "removeSamplingStage" }
-  | { op: "addResponseOption" }
+  /** `channel` names which response channel to bind; absent takes the first
+   * free one, which is what the Designer's block has always done. */
+  | { op: "addResponseOption"; channel?: string }
   | { op: "removeResponseOption"; port: string }
   | { op: "removePortBinding"; port: string }
   | { op: "addStimulus" }
+  | { op: "removeStimulus"; id: string }
   | { op: "addTrialType" }
+  | { op: "removeTrialType"; id: string }
   | { op: "setResponseMode"; mode: "n_alternative" | "go_nogo" }
   | { op: "setCommitHold"; on: boolean }
   | { op: "setRetentionDelay"; on: boolean }
@@ -689,7 +693,9 @@ export function proposeTopology(
     case "addResponseOption":
     case "removePortBinding":
     case "addStimulus":
+    case "removeStimulus":
     case "addTrialType":
+    case "removeTrialType":
     case "setCorrectRewarded":
     case "addStageRow":
     case "removeStageRow":
@@ -710,7 +716,9 @@ const TITLES: Record<OpId, string> = {
   removeResponseOption: "Remove a response option",
   removePortBinding: "Remove a port binding",
   addStimulus: "Add a stimulus",
+  removeStimulus: "Remove a stimulus",
   addTrialType: "Add a trial type",
+  removeTrialType: "Remove a trial type",
   setResponseMode: "Switch response mode",
   setCommitHold: "Commitment hold",
   setRetentionDelay: "Retention delay",
@@ -736,7 +744,7 @@ export function runOp(
       removeSamplingStage(b, ctx);
       break;
     case "addResponseOption":
-      addResponseOption(b, ctx);
+      addResponseOption(b, ctx, invocation.channel);
       break;
     case "removeResponseOption":
       removeResponseOption(b, ctx, invocation.port);
@@ -747,8 +755,14 @@ export function runOp(
     case "addStimulus":
       addStimulus(b, ctx);
       break;
+    case "removeStimulus":
+      removeStimulus(b, invocation.id);
+      break;
     case "addTrialType":
       addTrialType(b, ctx);
+      break;
+    case "removeTrialType":
+      removeTrialType(b, invocation.id);
       break;
     case "setResponseMode":
       setResponseMode(b, ctx, invocation.mode);
@@ -870,7 +884,7 @@ function removeSamplingStage(b: Op, ctx: OpContext): void {
   reconcileOutcomes(b, ctx.next);
 }
 
-function addResponseOption(b: Op, ctx: OpContext): void {
+function addResponseOption(b: Op, ctx: OpContext, want?: string): void {
   // Computed from the registry, never hardcoded: the day the channel registry
   // grows a third response channel (and the vocabulary its codes), a re-sync
   // of the vendored compiler turns this op on with no frontend edit.
@@ -889,7 +903,23 @@ function addResponseOption(b: Op, ctx: OpContext): void {
     return;
   }
 
-  const [channelName, channel] = free[0]!;
+  /*
+   * WHICH channel, when the caller names one.
+   *
+   * The Designer's block never asked — it takes the first free channel, which
+   * is the right answer for a button labelled "Add a response option" on a rig
+   * with two. The wizard's tiles ARE the channels, so a click there means a
+   * specific one; `want` carries that and the unnamed call keeps the old
+   * behaviour exactly.
+   */
+  const picked = want === undefined ? free[0]! : free.find(([name]) => name === want);
+  if (!picked) {
+    b.blocked = bound.has(want!)
+      ? `${want} is already bound to a port.`
+      : `The channel registry declares no free response channel called "${want}".`;
+    return;
+  }
+  const [channelName, channel] = picked;
   const ports = portsOf(b.doc);
   const name = uniqueId(channelName, new Set(Object.keys(ports)));
   b.set(
@@ -1061,6 +1091,42 @@ function addStimulus(b: Op, ctx: OpContext): void {
   );
 }
 
+/**
+ * Drop a stimulus, once nothing presents it.
+ *
+ * BLOCKED RATHER THAN CASCADING. Deleting a stimulus a trial type still names
+ * would leave a `stages` entry pointing at nothing — TG220 — and the repair is
+ * a choice (drop the trial type, or point that stage somewhere else) that this
+ * op cannot make on the operator's behalf. So it names the trial types and
+ * stops, which is the same shape `removePortBinding` uses for a port an outcome
+ * still rewards through.
+ */
+function removeStimulus(b: Op, id: string): void {
+  const stimuli = stimuliOf(b.doc);
+  const index = stimuli.findIndex((s) => String(s["id"] ?? "") === id);
+  if (index < 0) {
+    b.blocked = `No stimulus named "${id}" is declared.`;
+    return;
+  }
+  const users = trialTypesOf(b.doc)
+    .filter((t) => ((t["stages"] as unknown[]) ?? []).some((s) => String(s) === id))
+    .map((t, i) => String(t["id"] ?? i));
+  if (users.length > 0) {
+    b.blocked =
+      `${users.join(", ")} still present${users.length === 1 ? "s" : ""} ${id}. ` +
+      `Remove ${users.length === 1 ? "that trial type" : "those trial types"} first, ` +
+      `or point the stage at another stimulus.`;
+    return;
+  }
+  if (stimuli.length === 1 && knobNumber(b.doc, "n_sampling_stages", 1) > 0) {
+    b.blocked =
+      "This is the only stimulus, and the sampling epoch presents one. " +
+      "Drop the sampling stage first if the task shows nothing.";
+    return;
+  }
+  b.del(`contingency.stimuli[${index}]`, `remove stimulus ${id}`);
+}
+
 function addTrialType(b: Op, ctx: OpContext): void {
   const types = trialTypesOf(b.doc);
   if (types.length >= 16) {
@@ -1141,6 +1207,51 @@ function addTrialType(b: Op, ctx: OpContext): void {
     `add trial type ${String(id)}`,
   );
   void ctx;
+}
+
+/**
+ * Drop a trial type, and every reference the document holds to it.
+ *
+ * THE CONTEXT SCHEDULE IS THE HALF THAT IS EASY TO FORGET.
+ * `contingency.context_schedule[].targets` is a map KEYED BY TRIAL TYPE ID, so
+ * deleting the row alone leaves a reversal pointing at a trial type that no
+ * longer exists — the same class of dangling reference `renameTimingId` exists
+ * to prevent for durations, and TG221's neighbourhood. Every row is cleaned,
+ * not just the first.
+ *
+ * The pool must not empty: a task with no trial types presents nothing and the
+ * selection policy has nothing to draw, so the last one is refused here rather
+ * than left for the compiler to reject after the click.
+ */
+function removeTrialType(b: Op, id: string): void {
+  const types = trialTypesOf(b.doc);
+  const index = types.findIndex((t) => String(t["id"] ?? "") === id);
+  if (index < 0) {
+    b.blocked = `No trial type named "${id}" is declared.`;
+    return;
+  }
+  if (types.length <= 1) {
+    b.blocked =
+      "This is the only trial type — a task needs at least one, or there is " +
+      "nothing to draw from. Map another stimulus first, then remove this one.";
+    return;
+  }
+
+  b.del(`contingency.trial_types[${index}]`, `remove trial type ${id}`);
+
+  const contingency = asRec(b.doc["contingency"]);
+  const schedule = contingency?.["context_schedule"];
+  if (Array.isArray(schedule)) {
+    for (const [i, row] of schedule.entries()) {
+      const targets = asRec(asRec(row)?.["targets"]);
+      if (targets && id in targets) {
+        b.del(
+          `contingency.context_schedule[${i}].targets.${id}`,
+          `context row ${i}: drop the ${id} override`,
+        );
+      }
+    }
+  }
 }
 
 function setResponseMode(b: Op, ctx: OpContext, mode: "n_alternative" | "go_nogo"): void {

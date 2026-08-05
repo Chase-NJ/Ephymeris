@@ -102,6 +102,18 @@ class Paradigm:
     def rewarded(self) -> bool:
         return bool(self.contingency.get("rewarded", True))
 
+    @property
+    def ramped(self) -> tuple[str, ...]:
+        """Timing ids this shape expects to ramp, NAMES ONLY.
+
+        Deliberately not consumed by `skeleton()`. A stage schedule needs trial
+        boundaries and per-stage values, and a paradigm declares neither -- so
+        generating one here would be inventing exactly the numbers the
+        no-invented-values rule exists to forbid. It is the wizard's Run step
+        that asks, and this is the suggestion it offers.
+        """
+        return tuple(str(i) for i in self.policy.get("ramped", ()))
+
 
 @lru_cache(maxsize=1)
 def _schema() -> dict:

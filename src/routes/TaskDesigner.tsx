@@ -15,7 +15,7 @@ import {
 import { useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
-import { Button, Select } from "@/components/common/controls";
+import { Button, Segmented, Select } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { DiagnosticsPanel } from "@/components/specs/DiagnosticsPanel";
@@ -164,7 +164,15 @@ export function TaskDesigner() {
             )}
           </div>
 
-          <Segmented value={view} onChange={setView} />
+          <Segmented
+            value={view}
+            onChange={setView}
+            label="Designer view"
+            options={[
+              { value: "graph", label: "Graph" },
+              { value: "parameters", label: "Parameters" },
+            ]}
+          />
           <Button
             variant="primary"
             disabled={!dirty || session.saving || !connected}
@@ -465,33 +473,6 @@ function DiagnosticsDrawer({
         </div>
       )}
     </div>
-  );
-}
-
-function Segmented({
-  value,
-  onChange,
-}: {
-  value: "graph" | "parameters";
-  onChange: (next: "graph" | "parameters") => void;
-}) {
-  return (
-    <span className="flex overflow-hidden rounded-sm border border-halo">
-      {(["graph", "parameters"] as const).map((key) => (
-        <button
-          key={key}
-          type="button"
-          onClick={() => onChange(key)}
-          className={`px-2.5 py-1 text-[11px] capitalize transition-colors ${
-            value === key
-              ? "bg-halo/70 text-starlight"
-              : "text-static hover:text-starlight"
-          }`}
-        >
-          {key}
-        </button>
-      ))}
-    </span>
   );
 }
 

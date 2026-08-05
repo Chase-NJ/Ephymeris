@@ -10,6 +10,7 @@ import type {
   SpecSchema,
   StrobeRegistry,
 } from "@/lib/specs/types";
+import { useExplain } from "./ExplainTile";
 import { ChipsRow, SelectRow } from "./rows";
 
 /**
@@ -20,17 +21,37 @@ import { ChipsRow, SelectRow } from "./rows";
  * vocabulary doesn't name or a channel the pinout doesn't carry would compile
  * to a TG210/TG223 anyway — offering it would be manufacturing an error.
  */
-export function SpecField({
-  path,
-  overlayKey,
-  meta,
-  value,
-  baseline,
-  schema,
-  doc,
-  placed,
-  onChange,
-}: {
+/**
+ * The wrapper that reports focus, and the one place it needs to happen.
+ *
+ * Every generated spec field in the app goes through this dispatcher, so a
+ * single reporting shell here covers the wizard, the Designer's form and the
+ * Inspector — and the shared `FieldRow`/`rows.tsx` components that the session
+ * screens also use stay untouched. `onFocusCapture` rather than `onFocus`
+ * because the focusable element is the input INSIDE the row, not this div;
+ * hover is the pointer twin of the same report.
+ *
+ * The blur/leave paths deliberately do NOT clear the focus. A definition that
+ * vanishes the moment the pointer moves toward it is unreadable, and the next
+ * field to be focused replaces it anyway.
+ */
+export function SpecField(props: SpecFieldProps) {
+  const { report } = useExplain();
+  const announce = () =>
+    report({
+      overlayKey: props.overlayKey,
+      path: props.path,
+      meta: props.meta,
+      value: props.value,
+    });
+  return (
+    <div onFocusCapture={announce} onMouseEnter={announce}>
+      <SpecFieldBody {...props} />
+    </div>
+  );
+}
+
+interface SpecFieldProps {
   /** Concrete path — `timing[3].ms` — for diagnostics lookup. */
   path: string;
   /** Overlay key — `timing[].ms`. */
@@ -42,7 +63,19 @@ export function SpecField({
   doc: SpecDocument;
   placed: PlacedDiagnostics | null;
   onChange: (next: unknown) => void;
-}) {
+}
+
+function SpecFieldBody({
+  path,
+  overlayKey,
+  meta,
+  value,
+  baseline,
+  schema,
+  doc,
+  placed,
+  onChange,
+}: SpecFieldProps) {
   const error = placed ? firstError(errorsFor(placed, path, overlayKey)) : undefined;
 
   const strobeOptions = useMemo(() => {

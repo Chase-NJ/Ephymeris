@@ -1,10 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  LINK_OPACITY_DIM,
-  LINK_STROKE,
-  NODE_PRIMARY,
-} from "@/components/chrome/constellationStyle";
+import { LINK_OPACITY_DIM, LINK_STROKE } from "@/components/chrome/constellationStyle";
 import type { PlacedDiagnostics } from "@/lib/specs/diagnostics";
 import {
   fitMono,
@@ -15,7 +11,8 @@ import {
   type SpecLayout,
 } from "@/lib/specs/layout";
 import { BAND_TITLES, sid, type Selection } from "@/lib/specs/selection";
-import type { SpecGraph as SpecGraphData, SpecGraphNode } from "@/lib/specs/types";
+import type { SpecGraph as SpecGraphData } from "@/lib/specs/types";
+import { ArrowMarker, edgePath, NodeShape } from "./nodeShape";
 
 /**
  * The compiled machine, as the Designer's primary surface — read top to
@@ -253,19 +250,7 @@ export function SpecCanvas({
           role="img"
           aria-label="Compiled state machine"
         >
-          <defs>
-            <marker
-              id="spec-arrow"
-              viewBox="0 0 8 8"
-              refX={7}
-              refY={4}
-              markerWidth={7}
-              markerHeight={7}
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 8 4 L 0 8 z" fill={LINK_STROKE} opacity={0.55} />
-            </marker>
-          </defs>
+          <ArrowMarker id="spec-arrow" />
 
           <BandLanes
             layout={layout}
@@ -304,13 +289,7 @@ export function SpecCanvas({
               );
             }
 
-            const midY = (from.y + to.y) / 2;
-            const d =
-              from.x === to.x
-                ? bow === 0
-                  ? `M ${from.x} ${from.y + 9} L ${to.x} ${to.y - 11}`
-                  : `M ${from.x} ${from.y + 9} C ${from.x + bow} ${midY}, ${to.x + bow} ${midY}, ${to.x} ${to.y - 11}`
-                : `M ${from.x} ${from.y + 9} C ${from.x + bow} ${midY}, ${to.x + bow} ${midY}, ${to.x} ${to.y - 11}`;
+            const d = edgePath(from, to, bow);
 
             return (
               <g key={edge.index} opacity={faded ? 0.18 : 1}>
@@ -647,66 +626,6 @@ function ZoomBar({
   );
 }
 
-/**
- * Shape by primitive — the distinction the derived graph cannot draw:
- * circle DELAY · ring WAIT_ENTRY · square HOLD · open square WAIT_EXIT ·
- * bar PULSE · hexagon TERMINAL. Fill by band, so the rows read as the
- * listing's own sections.
- */
-function NodeShape({ node, flagged }: { node: SpecGraphNode; flagged: boolean }) {
-  const fill = BAND_FILL[node.band] ?? NODE_PRIMARY;
-  const stroke = flagged ? "var(--color-status-error)" : "var(--color-halo)";
-  const r = 7;
-  switch (node.type) {
-    case "WAIT_ENTRY":
-      return (
-        <>
-          <circle r={r} fill="var(--color-void)" stroke={fill} strokeWidth={2} />
-          <circle r={2.2} fill={fill} />
-          {flagged && <circle r={r + 3} fill="none" stroke={stroke} strokeWidth={1} />}
-        </>
-      );
-    case "HOLD":
-      return (
-        <rect x={-6.5} y={-6.5} width={13} height={13} rx={2} fill={fill} stroke={stroke} />
-      );
-    case "WAIT_EXIT":
-      return (
-        <rect
-          x={-6.5}
-          y={-6.5}
-          width={13}
-          height={13}
-          rx={2}
-          fill="var(--color-void)"
-          stroke={fill}
-          strokeWidth={2}
-        />
-      );
-    case "PULSE":
-      return (
-        <rect x={-8} y={-3.5} width={16} height={7} rx={1.5} fill={fill} stroke={stroke} />
-      );
-    case "TERMINAL":
-      return (
-        <path
-          d="M 0 -8 L 7 -4 L 7 4 L 0 8 L -7 4 L -7 -4 Z"
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={1}
-        />
-      );
-    default: // DELAY
-      return <circle r={r} fill={fill} stroke={stroke} strokeWidth={1} />;
-  }
-}
-
 /** How far a pointer must travel before the gesture stops being a click. */
 const DRAG_SLOP = 4;
 
-const BAND_FILL: Record<number, string> = {
-  1: "var(--color-pulsar)",
-  2: "var(--color-series-2, #7ea8c8)",
-  3: "var(--color-series-3, #c8b57e)",
-  4: "var(--color-ion)",
-};

@@ -39,6 +39,7 @@ export function StructureBlocks({
   caps,
   schema,
   placed,
+  covered,
   onChange,
 }: {
   band: number;
@@ -47,11 +48,25 @@ export function StructureBlocks({
   caps: SpecCapabilities | null;
   schema: SpecSchema;
   placed: PlacedDiagnostics | null;
+  /**
+   * Ops the HOST already offers as a direct gesture, so this must not offer
+   * them as a button too.
+   *
+   * The wizard's `ResponseMap` makes a port tile the add/remove and a dropped
+   * stimulus the trial type; a button beside those would be two surfaces for
+   * one edit, which is the thing the Inspector rule exists to prevent. The
+   * Designer passes nothing and keeps every block, because it has no such
+   * gesture — the blocks are the only way it can reach these ops at all, and
+   * dropping them there would strand it.
+   */
+  covered?: readonly OpInvocation["op"][];
   onChange: (next: SpecDocument) => void;
 }) {
   const [active, setActive] = useState<OpInvocation | null>(null);
 
-  const blocks = blocksFor(band, doc);
+  const blocks = blocksFor(band, doc).filter(
+    (b) => !(covered ?? []).includes(b.invocation.op),
+  );
   if (blocks.length === 0) return null;
 
   if (active !== null) {

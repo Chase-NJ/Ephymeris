@@ -387,6 +387,45 @@ class StrategyPoint:
         return {"trial": self.trial, "x": _round(self.x), "y": _round(self.y), "n": self.n}
 
 
+@dataclass(frozen=True)
+class TrialRecord:
+    """One classified trial (§9.11) — the tape the tallies are summed from."""
+
+    #: 0-based position in the stream's trial order.
+    index: int
+    #: The condition code that opened the trial — one of `boundaries_for`'s
+    #: union, so a `ConditionOutcomes.trigger_code` matches it directly.
+    trigger_code: int
+    #: The internal classification (`_classify_trials`' spelling).
+    outcome: str
+    #: Trial open, in ms from the run's earliest recorded timestamp. `None`
+    #: when the file carries no usable clock at either end of the subtraction.
+    at_ms: int | None
+    #: Trial open → the code that settled the outcome. `None` for
+    #: no-response/aborted trials, which nothing settles.
+    latency_ms: int | None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "triggerCode": self.trigger_code,
+            "outcome": _WIRE_OUTCOME[self.outcome],
+            "atMs": self.at_ms,
+            "latencyMs": self.latency_ms,
+        }
+
+
+#: Wire spellings are hyphenated, matching `RunStatus`/`ProfileSource`; the
+#: internal names keep the underscore `Counter` keys `_tally` already uses.
+_WIRE_OUTCOME = {
+    "rewarded": "rewarded",
+    "hold_failed": "hold-failed",
+    "wrong_well": "wrong-well",
+    "no_response": "no-response",
+    "aborted": "aborted",
+}
+
+
 #: The clean-end reason, matching `sessions/runner.py`'s literal exactly.
 CLEAN_STOP_REASON = "BF_END_SESSION received"
 
@@ -414,6 +453,31 @@ def codes_of(document: dict[str, Any]) -> list[int]:
             if isinstance(code, int) and not isinstance(code, bool):
                 codes.append(code)
     return codes
+
+
+def _pairs_of(document: dict[str, Any]) -> list[tuple[int, int | None]]:
+    """`(code, timestamp | None)` pairs, aligned with `codes_of`'s output.
+
+    One pass rather than a zip of `codes_of` and `_timestamps`: those two skip
+    malformed rows *independently*, so on a file where one row has a bad code
+    and another a bad timestamp, zipping their outputs silently offsets every
+    later timestamp by a row. Filtering on the code here — the same rule
+    `codes_of` applies — keeps index *i* of this list the same event as index
+    *i* of that one, with the timestamp merely `None` where it is unusable.
+    """
+    raw = document.get("ts_data")
+    if not isinstance(raw, list):
+        return []
+    out: list[tuple[int, int | None]] = []
+    for pair in raw:
+        if isinstance(pair, (list, tuple)) and len(pair) >= 1:
+            code = pair[0]
+            if isinstance(code, int) and not isinstance(code, bool):
+                ts = pair[1] if len(pair) >= 2 else None
+                if not isinstance(ts, int) or isinstance(ts, bool):
+                    ts = None
+                out.append((code, ts))
+    return out
 
 
 def _duration_ms(document: dict[str, Any]) -> int | None:
@@ -569,17 +633,25 @@ def engagement_of(
 
 def _classify_trials(
     codes: list[int], boundaries: frozenset[int], vocab: _Vocabulary
-) -> Iterator[tuple[int, str]]:
-    """`(opening code, classification)` per trial, delimited as the metrics are.
+) -> Iterator[tuple[int, int | None, int, str]]:
+    """`(open index, settle index, opening code, classification)` per trial.
 
-    Uses `boundaries_for`'s union rather than a single trigger for the same
-    reason the metrics do: a trial abandoned when the next odor fires must
-    close there, or its outcome is stolen by whichever trial answers next.
+    Delimited as the metrics are: uses `boundaries_for`'s union rather than a
+    single trigger for the same reason the metrics do — a trial abandoned when
+    the next odor fires must close there, or its outcome is stolen by
+    whichever trial answers next.
 
     The opening code rides along so a caller can split the tally per condition
-    (§3.9) without a second, separately-drifting pass over the stream.
+    (§3.9) without a second, separately-drifting pass over the stream. The two
+    indices — positions into `codes`, the settle index `None` for a trial
+    nothing settled — ride along for the same reason: the per-trial tape
+    (§9.11) must come from *this* loop, because a second classifier would
+    drift from the first and the tape would stop agreeing with the tallies
+    printed beside it.
     """
     open_trial = False
+    open_index = 0
+    settle_index: int | None = None
     trigger = 0
     sampled = False
     outcome: str | None = None
@@ -591,11 +663,12 @@ def _classify_trials(
         # behavioural category; one it never engaged with is not the same thing.
         return "no_response" if sampled else "aborted"
 
-    for code in codes:
+    for index, code in enumerate(codes):
         if code in boundaries:
             if open_trial:
-                yield trigger, settle()
-            open_trial, trigger, sampled, outcome = True, code, False, None
+                yield open_index, settle_index, trigger, settle()
+            open_trial, open_index, trigger = True, index, code
+            settle_index, sampled, outcome = None, False, None
             continue
         if not open_trial:
             continue
@@ -608,9 +681,12 @@ def _classify_trials(
                 outcome = "hold_failed"
             elif code in vocab.wrong_well:
                 outcome = "wrong_well"
+            else:
+                continue
+            settle_index = index
 
     if open_trial:
-        yield trigger, settle()
+        yield open_index, settle_index, trigger, settle()
 
 
 def _tally(classifications: Iterable[str]) -> TrialOutcomes:
@@ -681,7 +757,62 @@ def _classified_trials(
     vocab = _vocabulary(profile)
     if not vocab.usable:
         return None
-    return list(_classify_trials(codes, boundaries, vocab))
+    return [
+        (trigger, outcome)
+        for _, _, trigger, outcome in _classify_trials(codes, boundaries, vocab)
+    ]
+
+
+def trials_of(document: dict[str, Any], profile: TaskProfile | None) -> list[TrialRecord]:
+    """The per-trial tape (§9.11), or `[]` when the profile can't express one.
+
+    The same `_classify_trials` pass `outcomes_of`/`conditions_of` sum over,
+    kept as a sequence — so tallying this list by class reproduces the run's
+    `TrialOutcomes`, and grouping it by `trigger_code` reproduces its
+    `ConditionOutcomes`. That identity is pinned by test; a second classifier
+    here would let the tape and the tallies drift apart silently.
+
+    Times are relative to the run's *earliest* timestamp rather than its
+    first, for `_duration_ms`'s reason: a finalized file is written in arrival
+    order, but a hand-edited or concatenated one need not be, and a negative
+    "elapsed" reads as a behaviour instead of being caught. A latency that
+    still comes out negative on such a file is nulled, not reported.
+    """
+    if profile is None:
+        return []
+    boundaries = boundaries_for(profile)
+    if not boundaries:
+        return []
+    vocab = _vocabulary(profile)
+    if not vocab.usable:
+        return []
+    pairs = _pairs_of(document)
+    codes = [code for code, _ in pairs]
+    stamps = [ts for _, ts in pairs if ts is not None]
+    base = min(stamps) if stamps else None
+
+    out: list[TrialRecord] = []
+    for index, (open_index, settle_index, trigger, outcome) in enumerate(
+        _classify_trials(codes, boundaries, vocab)
+    ):
+        open_ts = pairs[open_index][1]
+        settle_ts = pairs[settle_index][1] if settle_index is not None else None
+        at_ms = open_ts - base if open_ts is not None and base is not None else None
+        latency_ms = (
+            settle_ts - open_ts
+            if settle_ts is not None and open_ts is not None and settle_ts >= open_ts
+            else None
+        )
+        out.append(
+            TrialRecord(
+                index=index,
+                trigger_code=trigger,
+                outcome=outcome,
+                at_ms=at_ms,
+                latency_ms=latency_ms,
+            )
+        )
+    return out
 
 
 def summarize(

@@ -3,8 +3,15 @@ import { useId, useMemo } from "react";
 
 import { useRevealOnView } from "@/components/charts/reveal";
 import { useAnalyticsStore, useIsHighlighted } from "@/lib/analytics/context";
-import type { AnalyticsSummary, ProfileGroup } from "@/lib/analytics/types";
-import { binFor, cellAt, labelColor, pivotRuns, type Cell } from "@/lib/analytics/view";
+import type { AnalyticsSummary } from "@/lib/analytics/types";
+import {
+  binFor,
+  cellAt,
+  labelColor,
+  pivotRuns,
+  taskLabels,
+  type Cell,
+} from "@/lib/analytics/view";
 
 /**
  * Animals × sessions (`data.md` §11.3).
@@ -22,6 +29,10 @@ const CELL = 1;
 const GAP = 0.12;
 const GROUP_GAP = 0.5;
 const MIN_PX_PER_COLUMN = 34;
+/** The task header strip's height, in cell units — room for one line of
+ *  task labels above the grid, marking where the cohort changed task. */
+const HEADER_H = 0.55;
+
 /** Label gutter, in the same unit space as the cells.
  *
  *  Row labels live *inside* the SVG rather than in an HTML column beside it:
@@ -32,8 +43,6 @@ const LABEL_W = 2.6;
 
 export function CohortHeatmap(props: {
   summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
-  metricId: string | null;
   sessionScope: string;
   /** Changes when the data does — replays the column-by-column reveal. */
   revealKey: string;
@@ -56,15 +65,11 @@ export function CohortHeatmap(props: {
 
 function HeatmapBody({
   summary,
-  profile,
-  metricId,
   sessionScope,
   revealKey,
   scroll = true,
 }: {
   summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
-  metricId: string | null;
   sessionScope: string;
   revealKey: string;
   scroll?: boolean;
@@ -78,26 +83,39 @@ function HeatmapBody({
 
   const rows = useMemo(() => layoutRows(summary), [summary]);
 
-  // Scoped to one task profile, like every other panel (§4.3). A shaping
-  // column beside a discrimination column shares a colour scale while the two
-  // numbers mean different things — the surface would read as a performance
-  // collapse where the task simply changed. Runs that failed to decode are
-  // kept: their profile is still known, and "ran but scored nothing" is a
-  // distinction §6.1 exists to preserve.
-  const runs = useMemo(
-    () => (profile ? summary.runs.filter((run) => run.profileHash === profile.hash) : summary.runs),
-    [summary, profile],
+  // Every session, every task. The cell value is each run's **overall pooled
+  // accuracy** — fraction correct at whatever that animal was doing that day
+  // (§3.7) — so a shaping cell and a discrimination cell are the same kind of
+  // number at different difficulty. The task header row is the disclosure: a
+  // column of suddenly-worse cells under a new task label is a task change,
+  // not a cohort forgetting. Runs that failed to decode are kept: "ran but
+  // scored nothing" is a distinction §6.1 exists to preserve.
+  const sessions = summary.sessions;
+  const labels = useMemo(() => taskLabels(summary), [summary]);
+  // Dominant task per session column, for the header strip and boundaries.
+  const columnTasks = useMemo(
+    () =>
+      sessions.map((session) => {
+        const counts = new Map<string, number>();
+        for (const run of summary.runs) {
+          if (run.sessionId !== session.id) continue;
+          const hash = run.profileHash ?? "";
+          counts.set(hash, (counts.get(hash) ?? 0) + 1);
+        }
+        let best = "";
+        let most = -1;
+        for (const [hash, count] of counts) {
+          if (count > most) [best, most] = [hash, count];
+        }
+        return { hash: best, mixed: counts.size > 1 };
+      }),
+    [summary, sessions],
   );
-  const sessions = useMemo(() => {
-    if (!profile) return summary.sessions;
-    const inProfile = new Set(runs.map((run) => run.sessionId));
-    return summary.sessions.filter((session) => inProfile.has(session.id));
-  }, [summary, profile, runs]);
-  const omitted = summary.sessions.length - sessions.length;
 
   const pivot = useMemo(
-    () => pivotRuns(runs, metricId, summary.minCountedTrials),
-    [runs, metricId, summary.minCountedTrials],
+    // metricId null → each run's pooled overall (§3.7), the honest default.
+    () => pivotRuns(summary.runs, null, summary.minCountedTrials),
+    [summary],
   );
 
   if (summary.sessions.length === 0) {
@@ -110,35 +128,20 @@ function HeatmapBody({
     );
   }
 
-  if (sessions.length === 0) {
-    return (
-      <div className="surface rounded-md p-4">
-        <p className="text-[12px] leading-relaxed text-static">
-          No sessions ran{" "}
-          <span className="text-starlight">{profile?.taskName ?? "this task"}</span>. Pick
-          another task to see its sessions.
-        </p>
-      </div>
-    );
-  }
-
   const columns = sessions.length;
   const width = LABEL_W + columns * (CELL + GAP);
-  const height = rows.length === 0 ? CELL : rows[rows.length - 1]!.y + CELL;
+  const body = rows.length === 0 ? CELL : rows[rows.length - 1]!.y + CELL;
+  const height = HEADER_H + body;
 
   return (
     <div className="surface rounded-md p-4" ref={ref}>
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-[11px] text-static">
           Animals × sessions
-          {profile ? <span className="ml-2 text-static/70">{profile.taskName}</span> : null}
-          {/* Say what was left out — a filter that silently drops columns is
-              indistinguishable from an archive that never had them. */}
-          {omitted > 0 && (
-            <span className="ml-2 text-static/60">
-              · {omitted} session{omitted === 1 ? "" : "s"} on another task hidden
-            </span>
-          )}
+          <span className="ml-2 text-static/70">
+            fraction correct at that day&rsquo;s task — labels above mark the
+            task changes
+          </span>
         </span>
         <Scale />
       </div>
@@ -172,17 +175,26 @@ function HeatmapBody({
                 />
               </pattern>
             </defs>
+            <TaskHeader
+              columnTasks={columnTasks}
+              labels={labels}
+              gridHeight={body}
+            />
             {rows.map((row) => (
               <RowLabel key={`label-${row.animalId}`} row={row} />
             ))}
             {rows.map((row) =>
-              sessions.map((session, column) => (
+              sessions.map((session, column) => {
+                const cell = cellAt(pivot, row.animalId, session.id);
+                return (
                 <HeatCell
                   key={`${row.animalId}-${session.id}`}
-                  cell={cellAt(pivot, row.animalId, session.id)}
+                  cell={cell}
                   x={LABEL_W + column * (CELL + GAP)}
-                  y={row.y}
-                  scoped={profile !== null}
+                  y={HEADER_H + row.y}
+                  taskLabel={
+                    cell.run ? (labels.get(cell.run.profileHash ?? "") ?? null) : null
+                  }
                   patternId={patternId}
                   // The surface fills in the order the sessions happened, so
                   // the reveal reads as history being laid down rather than as
@@ -199,12 +211,87 @@ function HeatmapBody({
                   }}
                   onHover={(on) => store.hoverAnimal(on ? row.animalId : null)}
                 />
-              )),
+                );
+              }),
             )}
           </svg>
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The task strip above the grid: a label where a run of columns starts a new
+ * dominant task, and a dashed rule down the grid at each boundary. This is
+ * what lets every session share one surface honestly — the colour scale is
+ * "fraction correct", and the header says at what.
+ */
+function TaskHeader({
+  columnTasks,
+  labels,
+  gridHeight,
+}: {
+  columnTasks: Array<{ hash: string; mixed: boolean }>;
+  labels: Map<string, string>;
+  gridHeight: number;
+}) {
+  const starts: Array<{ column: number; hash: string }> = [];
+  columnTasks.forEach((task, column) => {
+    if (column === 0 || task.hash !== columnTasks[column - 1]!.hash) {
+      starts.push({ column, hash: task.hash });
+    }
+  });
+  // A single-task archive needs no header — the panel title already says
+  // what the numbers are, and one label over everything would be noise.
+  if (starts.length <= 1) return null;
+
+  return (
+    <g>
+      {starts.map(({ column, hash }, index) => {
+        const x = LABEL_W + column * (CELL + GAP);
+        const label = labels.get(hash) ?? "unknown";
+        const until = index + 1 < starts.length ? starts[index + 1]!.column : columnTasks.length;
+        const mixed = columnTasks
+          .slice(column, until)
+          .some((task) => task.mixed);
+        // A label only where it fits inside its own segment — two-column
+        // alternations would otherwise print labels through each other, and
+        // an overlapped label is worse than none: the boundary rule still
+        // marks the change, and any cell's hover names its task. ~0.16 units
+        // per glyph at this font size, measured, not guessed.
+        const room = until * (CELL + GAP) - column * (CELL + GAP) - 0.1;
+        const fits = (label.length + (mixed ? 2 : 0)) * 0.16 <= room;
+        return (
+          <g key={`${hash}-${column}`}>
+            {fits && (
+              <text
+                x={x}
+                y={HEADER_H - 0.18}
+                fontFamily="var(--font-mono)"
+                fontSize={0.26}
+                fill="var(--color-static)"
+                opacity={0.8}
+              >
+                {label}
+                {mixed ? " +" : ""}
+              </text>
+            )}
+            {column > 0 && (
+              <line
+                x1={x - GAP / 2}
+                y1={0}
+                x2={x - GAP / 2}
+                y2={HEADER_H + gridHeight}
+                stroke="var(--color-halo)"
+                strokeWidth={0.03}
+                strokeDasharray="0.12 0.12"
+              />
+            )}
+          </g>
+        );
+      })}
+    </g>
   );
 }
 
@@ -217,7 +304,7 @@ function RowLabel({ row }: { row: Row }) {
   return (
     <text
       x={LABEL_W - 0.2}
-      y={row.y + CELL / 2}
+      y={HEADER_H + row.y + CELL / 2}
       textAnchor="end"
       dominantBaseline="central"
       fontFamily="var(--font-mono)"
@@ -233,7 +320,7 @@ function HeatCell({
   cell,
   x,
   y,
-  scoped,
+  taskLabel,
   patternId,
   reveal,
   seen,
@@ -247,8 +334,9 @@ function HeatCell({
   cell: Cell;
   x: number;
   y: number;
-  /** Whether the grid is filtered to one task profile. */
-  scoped: boolean;
+  /** The task the cell's run was on — the per-cell half of the disclosure the
+   *  header strip makes per column. Null when nothing ran. */
+  taskLabel: string | null;
   /** This grid's own hatch pattern — see `HeatmapBody`. */
   patternId: string;
   reveal: string;
@@ -274,7 +362,9 @@ function HeatCell({
     transition: { duration: 0.28, delay },
   };
 
-  const title = `${animalName} · ${sessionLabel}\n${describe(cell, scoped)}`;
+  const title = `${animalName} · ${sessionLabel}${
+    taskLabel ? ` · ${taskLabel}` : ""
+  }\n${describe(cell)}`;
 
   // Absent is an outline and never a fill: a pale cell would read as "got
   // everything wrong" rather than "didn't run" (§6.1).
@@ -354,12 +444,9 @@ function HeatCell({
   );
 }
 
-function describe(cell: Cell, scoped: boolean): string {
+function describe(cell: Cell): string {
   if (cell.kind === "absent") {
-    // Scoped to a task, an empty cell means "not on *this* task" — the animal
-    // may well have run something else that day, and one session really can
-    // hold shaping and discrimination side by side across a cohort.
-    if (!cell.run) return scoped ? "no run on this task" : "did not run";
+    if (!cell.run) return "did not run";
     if (cell.run.status === "missing") return `no data file — ${cell.run.detail ?? ""}`;
     if (cell.run.status === "unreadable") return `file unreadable — ${cell.run.detail ?? ""}`;
     return "ran, but produced no scored metrics";
@@ -401,12 +488,16 @@ interface Row {
   y: number;
 }
 
+/** Numeric-aware, so `remy2` sorts before `remy10` — the session summary's
+ *  ordering rule, applied to the rows here too. */
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 /** Rows grouped by group, with a gap between groups. */
 function layoutRows(summary: AnalyticsSummary): Row[] {
   const order = new Map(summary.groups.map((group) => [group.id, group.order]));
   const animals = [...summary.animals].sort((a, b) => {
     const byGroup = (order.get(a.groupId) ?? 0) - (order.get(b.groupId) ?? 0);
-    return byGroup !== 0 ? byGroup : a.name.localeCompare(b.name);
+    return byGroup !== 0 ? byGroup : collator.compare(a.name, b.name);
   });
 
   let y = 0;

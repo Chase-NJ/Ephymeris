@@ -1,15 +1,16 @@
 import { motion } from "framer-motion";
+import { useMemo } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
+import { HowToRead } from "@/components/charts/HowToRead";
 import { useHasHighlight, useIsHighlighted, useAnalyticsStore } from "@/lib/analytics/context";
 import type {
   AnalyticsSummary,
-  ProfileGroup,
   RunSeries,
   RunSummary,
   StrategyPoint,
 } from "@/lib/analytics/types";
-import { declaredMetrics } from "@/lib/analytics/view";
+import { declaredMetrics, taskLabels, twoMetricGroups } from "@/lib/analytics/view";
 import {
   NoPlane,
   PLANE_VIEWBOX,
@@ -45,34 +46,46 @@ import {
  */
 export function SessionStrategy({
   summary,
-  profile,
   colors,
   runs,
   series,
   revealKey,
 }: {
   summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
   colors: Map<string, string>;
+  /** Every run in the selected session, whatever task (`session.ts`). */
   runs: RunSummary[];
   series: RunSeries[];
   revealKey: string;
 }) {
-  const axes = declaredMetrics(profile);
   const names = new Map(summary.animals.map((animal) => [animal.id, animal.name]));
+  const labels = useMemo(() => taskLabels(summary), [summary]);
+
+  // Self-scoped, like the across-session plane: of the session's runs, the
+  // most-run task that declares exactly two conditions gets the plane, and
+  // the runs it leaves out are named below rather than silently absent. A
+  // session almost never mixes two two-condition tasks; when it does, the
+  // note says which one the plane is showing.
+  const profile = useMemo(() => {
+    const candidates = twoMetricGroups(summary);
+    let best = null;
+    let most = 0;
+    for (const group of candidates) {
+      const count = runs.filter((run) => run.profileHash === group.hash).length;
+      if (count > most) [best, most] = [group, count];
+    }
+    return best;
+  }, [summary, runs]);
+  const axes = declaredMetrics(profile);
 
   if (!profile || axes.length !== 2) {
-    return (
-      <NoPlane
-        taskName={profile?.taskName ?? null}
-        metricCount={axes.length}
-        hasProfile={profile !== null}
-      />
-    );
+    return <NoPlane hasRuns={runs.length > 0} />;
   }
 
   const [xMetric, yMetric] = axes;
-  const walks = runs
+  const planeRuns = runs.filter((run) => run.profileHash === profile.hash);
+  const elsewhere = runs.length - planeRuns.length;
+  const walks = planeRuns
     .map((run) => ({
       run,
       points: series.find((entry) => entry.runId === run.runId)?.trail ?? [],
@@ -85,7 +98,9 @@ export function SessionStrategy({
         title={
           <span>
             Strategy within this session
-            <span className="ml-2 text-static/70">one point per trial</span>
+            <span className="ml-2 text-static/70">
+              one point per trial · {labels.get(profile.hash) ?? profile.taskName}
+            </span>
           </span>
         }
         yTop="1.0"
@@ -125,13 +140,23 @@ export function SessionStrategy({
           least one trial, and nothing in this session reached that.
         </p>
       )}
+      {/* A data disclosure, not education — stays outside the fold. */}
+      {elsewhere > 0 && (
+        <p className="mt-1 font-mono text-[9px] leading-relaxed text-static/60">
+          {elsewhere} run{elsewhere === 1 ? "" : "s"} on other tasks in this
+          session have no plane here — the session summary below carries them.
+        </p>
+      )}
 
-      <StrategyNote xMetric={xMetric!} yMetric={yMetric!} />
-      <p className="mt-1 text-[10px] leading-relaxed text-static/80">
-        Hollow marker is where the animal started, filled is where it ended;
-        the path fades in along the way. Position is the rolling window, so it
-        is the strategy running at that moment rather than the session average.
-      </p>
+      <HowToRead>
+        <StrategyNote xMetric={xMetric!} yMetric={yMetric!} />
+        <p className="mt-1">
+          Hollow marker is where the animal started, filled is where it ended;
+          the path fades in along the way. Position is the rolling window, so
+          it is the strategy running at that moment rather than the session
+          average.
+        </p>
+      </HowToRead>
     </StrategyPanel>
   );
 }

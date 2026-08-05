@@ -310,7 +310,7 @@ Every route is a child of `<AppShell />`, wired in `src/App.tsx`.
 | `/task/designer/:specId` | `routes/TaskDesigner.tsx` | The spec editor, built around the compiled machine graph ([specs.md §5](specs.md)) |
 | `/task/bench` | `routes/TaskBench.tsx` | Probe a board and load a table. Permanent "not for animal use" strip; `?spec=<id>` preselects |
 | `/task/hardware` | `routes/TaskHardware.tsx` | **Rig wiring**: the channel→pin map this rig is actually built to, edited on a board diagram ([specs.md §9](specs.md)) |
-| `/task/sketches` | `routes/TaskSketches.tsx` | The `task.json` library: sketch picker, derived trial-flow graph, and the **only** editor for `settings.taskDefaults` |
+| `/sketches` | `routes/TaskSketches.tsx` | The bundled `task.json` library (its own sidebar tab): sketch browser, derived trial-flow graph, the hover explain tile, and the **only** editor for `settings.taskDefaults` |
 | `/analytics` | `routes/Analytics.tsx` | The Observatory — one route, no tabs; cohort/session/animal are filters |
 | `/config` | `routes/Config.tsx` | **Bind boxes**: constellation, box→board bindings, handshake, utility baseline, baud, `arduino-cli` |
 | `/settings` | `routes/Settings.tsx` | Storage and interface only |
@@ -407,7 +407,7 @@ Payload shapes are guarded from both sides: the generated `CommandArgsMap`/`Comm
 - **`port.output` is batched at ~20 Hz**, not one message per line, and is never persisted beyond a capped in-memory ring buffer (~2000 lines/port).
 - **Client-side timeouts don't cancel sidecar work.** Default 15 s; `port.flash` gets 300 s and `sketches.refresh` 60 s. The sidecar remains the authority on what actually happened.
 
-### 6.3 The five that silently corrupt
+### 6.3 The six that silently corrupt
 
 Each is documented in place with a `[!CAUTION]` in the owning document. They share a property: getting them wrong produces plausible output rather than an error.
 
@@ -418,6 +418,7 @@ Each is documented in place with a `[!CAUTION]` in the owning document. They sha
 | A new **column** needs a `MIGRATIONS` entry, a new table does not | [data.md §6.3](data.md#63-changing-the-schema) | The column appears only on freshly-created databases |
 | `CODEC_VERSION` must be bumped when the maths changes | [data.md §9](data.md#9-derived-metrics) | Cached summaries keep serving the old definition with no symptom |
 | The PNG export's five rules — off-screen not hidden, forced `seen`, `skipAnimations`, cleared pin, 1× scale | [data.md §10.6](data.md) | A figure that looks deliberate but is blank, dimmed, half-drawn or cropped |
+| A corpus session's firmware generation is its abort-path strobe **order**, not which codes it contains | [TaskGraph.md §7.1](TaskGraph.md#71-the-corpus-now-spans-two-firmware-generations) | Eleven v1 sessions replay against the model and reject, reading as a modelling gap |
 
 ### 6.4 Dependency policy
 

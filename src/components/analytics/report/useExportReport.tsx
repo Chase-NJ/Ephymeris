@@ -101,11 +101,12 @@ export function useExportReport() {
 }
 
 /**
- * What the file gets called. Cohort and task lead so a folder of these sorts
- * into something readable, and the date is ISO for the same reason.
+ * What the file gets called. Cohort leads so a folder of these sorts into
+ * something readable, and the date is ISO for the same reason. No task in the
+ * name any more — the sheet spans every task the archive holds.
  */
 export function reportFilename(input: ReportInput): string {
-  const parts = [slug(input.cohortName), slug(input.profile?.taskName ?? "task")];
+  const parts = [slug(input.cohortName)];
   if (input.session) {
     parts.push(
       `${slug(input.session.prefixName)}-${slug(input.session.sessionNumber)}`,

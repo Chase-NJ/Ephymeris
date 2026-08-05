@@ -142,8 +142,10 @@ export function StrategyNote({
   xMetric: ProfileMetricInfo;
   yMetric: ProfileMetricInfo;
 }) {
+  // No border or text sizing of its own: it renders inside `HowToRead`,
+  // which owns the disclosure chrome and the prose style.
   return (
-    <div className="mt-2 border-t border-halo pt-2 text-[10px] leading-relaxed text-static/80">
+    <div>
       {/* The axis→metric mapping is already in the frame's footer directly
           above, so this opens with what a position *means* instead. */}
       <p>Each axis is that condition&rsquo;s fraction correct.</p>
@@ -192,22 +194,12 @@ export function StrategyPanel({ children }: { children: ReactNode }) {
  * (§4.3): "this task declares three conditions" is actionable, an empty box is
  * not.
  */
-export function NoPlane({
-  taskName,
-  metricCount,
-  hasProfile,
-}: {
-  taskName: string | null;
-  metricCount: number;
-  hasProfile: boolean;
-}) {
+export function NoPlane({ hasRuns }: { hasRuns: boolean }) {
   return (
     <StrategyPanel>
       <p className="text-[12px] leading-relaxed text-static">
-        {hasProfile
-          ? `${taskName ?? "This task"} declares ${metricCount} ${
-              metricCount === 1 ? "condition" : "conditions"
-            }. The strategy space needs exactly two — one per axis.`
+        {hasRuns
+          ? "No task here declares two conditions — the strategy plane needs one per axis, so a shaping-only archive has nothing to plot yet."
           : "No scored runs yet, so there is no strategy to plot."}
       </p>
     </StrategyPanel>

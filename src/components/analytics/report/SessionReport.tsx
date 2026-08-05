@@ -27,7 +27,7 @@ export function SessionReport({
   input: ReportInput;
   session: SessionListItem;
 }) {
-  const { summary, profile, colors, metricId, sessionRuns, sessionSeries } = input;
+  const { summary, colors, sessionAllRuns, sessionSeries } = input;
   // See `CohortReport` — kept distinct from the live tree's for the SVG ids.
   const revealKey = `${input.revealKey}:report`;
 
@@ -37,19 +37,12 @@ export function SessionReport({
           cannot scroll, so the roster must be allowed to run past the tile
           beside it rather than be quietly cropped. */}
       <div className="grid grid-cols-[224px_minmax(0,1fr)] items-start gap-3">
-        <AnimalRail
-          summary={summary}
-          profile={profile}
-          colors={colors}
-          metricId={metricId}
-          scroll={false}
-        />
+        <AnimalRail summary={summary} colors={colors} scroll={false} />
         <div className="grid min-w-0 grid-cols-2 gap-3">
           <SessionStrategy
             summary={summary}
-            profile={profile}
             colors={colors}
-            runs={sessionRuns}
+            runs={sessionAllRuns}
             series={sessionSeries}
             revealKey={revealKey}
           />
@@ -57,9 +50,9 @@ export function SessionReport({
               trajectories rather than one dot per session. */}
           <LearningCurves
             summary={summary}
-            profile={profile}
             colors={colors}
             sessionScope={session.id}
+            sessionRuns={sessionAllRuns}
             series={sessionSeries}
           />
         </div>
@@ -70,13 +63,13 @@ export function SessionReport({
           narrow screen — changing the figure based on nothing to do with it. */}
       <SessionSummary
         summary={summary}
-        profile={profile}
         colors={colors}
         session={session}
-        runs={sessionRuns}
+        runs={sessionAllRuns}
         series={sessionSeries}
         revealKey={revealKey}
         columns={2}
+        interactive={false}
       />
     </div>
   );

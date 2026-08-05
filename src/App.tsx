@@ -38,7 +38,7 @@ export default function App() {
         <Route path="/task/designer/:specId" element={<TaskDesigner />} />
         <Route path="/task/hardware" element={<TaskHardware />} />
         <Route path="/task/bench" element={<TaskBench />} />
-        <Route path="/task/sketches" element={<TaskSketches />} />
+        <Route path="/sketches" element={<TaskSketches />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/config" element={<Config />} />
         <Route path="/settings" element={<Settings />} />

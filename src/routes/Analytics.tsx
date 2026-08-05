@@ -25,17 +25,17 @@ import {
   reportFilename,
   useExportReport,
 } from "@/components/analytics/report/useExportReport";
+import { AccuracyTrend } from "@/components/analytics/AccuracyTrend";
 import { EffortTrend } from "@/components/analytics/EffortTrend";
+import { TaskStrip } from "@/components/analytics/TaskStrip";
 import { Footnote } from "@/components/analytics/Footnote";
 import { LearningCurves } from "@/components/analytics/LearningCurves";
 import { OutcomeMix } from "@/components/analytics/OutcomeMix";
-import { ResponseTrend } from "@/components/analytics/ResponseTrend";
-import { RewardedTrend } from "@/components/analytics/RewardedTrend";
 import { SessionRail } from "@/components/analytics/SessionRail";
 import { SessionStrategy } from "@/components/analytics/SessionStrategy";
 import { SessionSummary } from "@/components/analytics/SessionSummary";
 import { StrategySpace } from "@/components/analytics/StrategySpace";
-import { Button, Select } from "@/components/common/controls";
+import { Button } from "@/components/common/controls";
 import { errorMessage, recover, rescan } from "@/lib/analytics/commands";
 import {
   useAnalyticsStore,
@@ -51,24 +51,22 @@ import {
 import { useRunSeries } from "@/lib/analytics/series";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
 import type {
-  AnalyticsSummary,
   DiskSession,
   RecoverResult,
   RescanResult,
   RunSummary,
 } from "@/lib/analytics/types";
+import { sessionRunsOf } from "@/lib/analytics/session";
 import {
   buildAnimalColors,
-  dominantProfile,
   findSessionByFolder,
-  runsInProfile,
+  sessionOutcomePoints,
+  taskLabels,
 } from "@/lib/analytics/view";
 import { useCohorts } from "@/lib/cohorts/context";
 import { springPanel } from "@/lib/motion";
 import { useSidecar } from "@/lib/ws/context";
 
-/** Stable empty reference, so the profile memo isn't invalidated every render. */
-const NO_PROFILES: AnalyticsSummary["profileGroups"] = [];
 const NO_RUNS: RunSummary[] = [];
 
 /**
@@ -97,8 +95,6 @@ export function Analytics() {
   const [rescanning, setRescanning] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [rescanNote, setRescanNote] = useState<string | null>(null);
-  const [metricId, setMetricId] = useState<string | null>(null);
-  const [profileHash, setProfileHash] = useState<string | null>(null);
   // Bumped whenever the data underneath changes identity — a cohort swap or a
   // rescan. Panels key their draw-on animations off it, so a reveal replays
   // for genuinely new data and not for a hover.
@@ -161,8 +157,6 @@ export function Analytics() {
     pendingFolder.current = landing.sessionFolder
       ? { cohortId: landing.cohortId, folder: landing.sessionFolder }
       : null;
-    setMetricId(null);
-    setProfileHash(null);
     setReveal((n) => n + 1);
     void store.refresh(client, landing.cohortId);
   }, [
@@ -199,23 +193,23 @@ export function Analytics() {
     void store.load(client, cohortId);
   }, [client, connected, cohortId, store, version]);
 
-  // §4.3 — every panel is scoped to one task profile, because metrics from
-  // different tasks are not comparable even when they share an axis count.
-  // The dominant profile is only the default: a cohort that ran shaping and
-  // then discrimination has both, and which one you want to look at is a
-  // question only the reader can answer.
-  const profiles = summary?.profileGroups ?? NO_PROFILES;
-  const profile = useMemo(
-    () =>
-      profiles.find((group) => group.hash === profileHash) ??
-      dominantProfile(summary),
-    [profiles, profileHash, summary],
-  );
+  // §4.3, inverted: there is no dashboard-wide task filter. The outcome
+  // panels pool every run and disclose the task mix (the strip and the
+  // dashed change rules); the panels whose metrics genuinely cannot cross
+  // tasks — the strategy planes — scope themselves and offer a panel-local
+  // switch. Nothing the archive holds is ever silently hidden.
   const colors = useMemo(
     () => buildAnimalColors(summary?.animals ?? []),
     [summary],
   );
-  const activeMetric = metricId ?? profile?.metrics[0]?.id ?? null;
+  const outcomePoints = useMemo(
+    () => (summary ? sessionOutcomePoints(summary) : []),
+    [summary],
+  );
+  const labels = useMemo(
+    () => (summary ? taskLabels(summary) : new Map<string, string>()),
+    [summary],
+  );
   const revealKey = `${cohortId ?? ""}:${reveal}`;
   const selectedSession = useMemo(
     () =>
@@ -224,19 +218,20 @@ export function Analytics() {
         : (sessions.find((session) => session.id === sessionScope) ?? null),
     [sessions, sessionScope],
   );
-  // Fetched once here rather than in each panel: selecting a session puts the
-  // summary tile, the within-session strategy walk and the learning curves on
-  // screen together, and all three want the same `analytics.series` reply.
-  const sessionRuns = useMemo(
+  // Every run in the selected session, whatever task it was on and whether
+  // or not it decoded (`session.ts`) — the one list every session-scope panel
+  // reads, each scoping itself from there. Fetched once here because
+  // selecting a session puts the summary tile, the within-session strategy
+  // walk and the learning curves on screen together, and all three want the
+  // same `analytics.series` reply.
+  const sessionAllRuns = useMemo(
     () =>
       selectedSession && summary
-        ? runsInProfile(summary.runs, profile).filter(
-            (run) => run.sessionId === selectedSession.id,
-          )
+        ? sessionRunsOf(summary, selectedSession.id)
         : NO_RUNS,
-    [summary, profile, selectedSession],
+    [summary, selectedSession],
   );
-  const sessionSeries = useRunSeries(client, sessionRuns);
+  const sessionSeries = useRunSeries(client, sessionAllRuns);
 
   // §10.6 — the export composes the very panels above out of these same props,
   // which is what keeps the PNG and the screen from drifting apart. The scope
@@ -248,25 +243,21 @@ export function Analytics() {
       summary
         ? {
             summary,
-            profile,
             colors,
-            metricId: activeMetric,
             cohortName: active?.name ?? "All cohorts",
             revealKey,
             session: selectedSession,
-            sessionRuns,
+            sessionAllRuns,
             sessionSeries,
           }
         : null,
     [
       summary,
-      profile,
       colors,
-      activeMetric,
       active?.name,
       revealKey,
       selectedSession,
-      sessionRuns,
+      sessionAllRuns,
       sessionSeries,
     ],
   );
@@ -350,8 +341,6 @@ export function Analytics() {
               <CohortLanding
                 cohorts={cohorts}
                 onPick={(next) => {
-                  setMetricId(null);
-                  setProfileHash(null);
                   setReveal((n) => n + 1);
                   store.selectCohort(next);
                 }}
@@ -394,42 +383,15 @@ export function Analytics() {
                 </h1>
                 <ChangeCohort
                   name={active?.name ?? "All cohorts"}
-                  onBack={() => {
-                    setMetricId(null);
-                    setProfileHash(null);
-                    store.selectCohort(null);
-                  }}
+                  onBack={() => store.selectCohort(null)}
                 />
               </div>
             </div>
+            {/* No Task or Metric selector. The panels below show the whole
+                archive and scope themselves where a task boundary is real
+                (§4.3) — the reader never has to maintain a filter to be sure
+                they are seeing everything. */}
             <div className="flex items-center gap-2">
-              {profiles.length > 1 && (
-                <Select
-                  label="Task"
-                  value={profile?.hash ?? ""}
-                  options={profiles.map((group) => ({
-                    value: group.hash,
-                    label: `${group.taskName ?? "Unnamed task"} · ${group.runCount}`,
-                  }))}
-                  onChange={(next) => {
-                    // Metrics are declared per task, so the current selection
-                    // usually doesn't exist on the incoming one.
-                    setMetricId(null);
-                    setProfileHash(next);
-                  }}
-                />
-              )}
-              {profile && profile.metrics.length > 1 && (
-                <Select
-                  label="Metric"
-                  value={activeMetric ?? ""}
-                  options={profile.metrics.map((metric) => ({
-                    value: metric.id,
-                    label: metric.label,
-                  }))}
-                  onChange={(next) => setMetricId(next)}
-                />
-              )}
               <Button
                 variant="outline"
                 onClick={() => void runRescan()}
@@ -564,6 +526,52 @@ export function Analytics() {
                 </p>
               )}
 
+              {/* Selecting a session opens it up, and the summary answers
+              first: it lands directly under the rail that made the selection,
+              not below three screens of cohort-scale panels. The cohort views
+              compare sessions; this one is the inside of a single one. */}
+              <AnimatePresence mode="wait">
+                {selectedSession && (
+                  <SessionSummary
+                    key={selectedSession.id}
+                    summary={summary}
+                    colors={colors}
+                    session={selectedSession}
+                    runs={sessionAllRuns}
+                    series={sessionSeries}
+                    revealKey={revealKey}
+                  />
+                )}
+              </AnimatePresence>
+
+              {/* Across sessions, the headline answer leads: the combined
+              accuracy figure, then what it cost (effort) and what happened
+              instead (outcome mix). One pooled figure per session, every
+              task — the strip and the dashed rules are the disclosure. The
+              strip, the accuracy tile and the two below share x slots
+              (`sessionOutcomePoints`), so a session sits above itself in all
+              of them — this run stays unbroken and nothing may be inserted
+              between them. */}
+              {sessionScope === ALL_SESSIONS && (
+                <>
+                  {/* `mt-1.5` on top of the parent's gap: the trends are a
+                      different altitude of answer than the rail above, and
+                      the seam wants a visible breath. */}
+                  <div className="mt-1.5">
+                    <TaskStrip points={outcomePoints} labels={labels} />
+                  </div>
+                  <AccuracyTrend
+                    summary={summary}
+                    colors={colors}
+                    revealKey={revealKey}
+                  />
+                  <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
+                    <EffortTrend summary={summary} revealKey={revealKey} />
+                    <OutcomeMix summary={summary} revealKey={revealKey} />
+                  </div>
+                </>
+              )}
+
               {/* The rail shares a row with the strategy tile and nothing else.
               It used to be one grid item beside the whole stack, which — grid
               items stretching by default — drew it as tall as every panel to
@@ -573,38 +581,32 @@ export function Analytics() {
                 {/* Stretches to the row so the rail has a height to cap against —
                 see `AnimalRail`'s `scroll`. */}
                 <div className="lg:relative">
-                  <AnimalRail
-                    summary={summary}
-                    profile={profile}
-                    colors={colors}
-                    metricId={activeMetric}
-                  />
+                  <AnimalRail summary={summary} colors={colors} />
                 </div>
-                <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
+                <div className="grid min-w-0 grid-cols-1 items-start gap-3 xl:grid-cols-2">
+                  {/* `items-start`: these two tiles must not share a height —
+                  opening one's "how to read this" would stretch the other's
+                  chart, since its plots fill their tile. Each takes its own
+                  height and the charts keep a fixed plot budget instead. */}
                   {/* §4.4 — the two strategy panels share one plane and swap,
                   never coexist: a line in one spans weeks and a line in the
                   other spans an hour, and the frame cannot tell them apart. */}
                   {selectedSession ? (
                     <SessionStrategy
                       summary={summary}
-                      profile={profile}
                       colors={colors}
-                      runs={sessionRuns}
+                      runs={sessionAllRuns}
                       series={sessionSeries}
                       revealKey={revealKey}
                     />
                   ) : (
-                    <StrategySpace
-                      summary={summary}
-                      profile={profile}
-                      colors={colors}
-                    />
+                    <StrategySpace summary={summary} colors={colors} />
                   )}
                   <LearningCurves
                     summary={summary}
-                    profile={profile}
                     colors={colors}
                     sessionScope={sessionScope}
+                    sessionRuns={sessionAllRuns}
                     series={sessionSeries}
                   />
                 </div>
@@ -615,68 +617,9 @@ export function Analytics() {
               container, so it is the one with something to do with the room. */}
               <CohortHeatmap
                 summary={summary}
-                profile={profile}
-                metricId={activeMetric}
                 sessionScope={sessionScope}
                 revealKey={revealKey}
               />
-
-              {/* The outcome trends are across-session by nature: one session
-              has a single pooled figure, and the summary below shows that
-              per animal instead of flattening it to a dot. All three share
-              x slots (`sessionOutcomePoints`), so a session sits above
-              itself in every panel — which is why these four stay a single
-              unbroken run and nothing may be inserted between them. */}
-              {sessionScope === ALL_SESSIONS && (
-                <>
-                  <RewardedTrend
-                    summary={summary}
-                    profile={profile}
-                    colors={colors}
-                    revealKey={revealKey}
-                  />
-                  {/* Directly below rewarded accuracy, and full width like it:
-                  the two share x slots and a denominator, so the gap
-                  between the curves is the hold-failure rate — a reading
-                  that only survives if a session sits above itself and
-                  both plots are the same shape. */}
-                  <ResponseTrend
-                    summary={summary}
-                    profile={profile}
-                    colors={colors}
-                    revealKey={revealKey}
-                  />
-                  <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
-                    <EffortTrend
-                      summary={summary}
-                      profile={profile}
-                      revealKey={revealKey}
-                    />
-                    <OutcomeMix
-                      summary={summary}
-                      profile={profile}
-                      revealKey={revealKey}
-                    />
-                  </div>
-                </>
-              )}
-
-              {/* Selecting a session opens it up: the cohort views compare
-              sessions, this one is the inside of a single one. */}
-              <AnimatePresence mode="wait">
-                {selectedSession && (
-                  <SessionSummary
-                    key={selectedSession.id}
-                    summary={summary}
-                    profile={profile}
-                    colors={colors}
-                    session={selectedSession}
-                    runs={sessionRuns}
-                    series={sessionSeries}
-                    revealKey={revealKey}
-                  />
-                )}
-              </AnimatePresence>
 
               <Footnote
                 summary={summary}

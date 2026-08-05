@@ -1,5 +1,7 @@
 import { motion } from "framer-motion";
-import { ChartLine, Orbit, Radio, Settings, Users, Workflow } from "lucide-react";
+import { ChartLine, Orbit, Radio, Settings, Users, Workflow,
+  FileCode2,
+} from "lucide-react";
 import { useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
 import type { LucideIcon } from "lucide-react";
@@ -62,6 +64,10 @@ const NAV_MAIN: readonly NavItem[] = [
 ];
 
 const NAV_BOTTOM: readonly NavItem[] = [
+  // Above Settings, below the workflow tabs: the sketches ship with Ephymeris,
+  // so the library is part of the app rather than part of any one experiment's
+  // workflow — furniture, not a stop in the session flow.
+  { to: "/sketches", label: "Sketches", icon: FileCode2 },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 

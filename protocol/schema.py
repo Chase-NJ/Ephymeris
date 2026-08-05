@@ -653,8 +653,9 @@ SHAPES = (
             f(
                 "recorded",
                 BOOL,
-                doc="True when this machine's database holds a session row for the folder — "
-                "false for a session another Ephymeris machine wrote into the shared archive.",
+                doc="True when this machine's database knows the folder — a session row, or "
+                "adopted runs from a rescan (§8.1 writes no session row on purpose). False only "
+                "for a folder another Ephymeris machine wrote that no rescan here has adopted.",
             ),
         ),
         doc="One session folder found on disk, identified by name alone (`sessions/paths.py`). "
@@ -941,6 +942,38 @@ SHAPES = (
         doc="One sample of the within-session strategy walk (`data.md` §11.1).",
     ),
     Shape(
+        "TrialRecord",
+        obj(
+            f("index", INT, doc="0-based position in the stream's trial order."),
+            f(
+                "triggerCode",
+                INT,
+                doc="The condition code that opened this trial — one of "
+                "`boundaries_for`'s union, so a `ConditionOutcomes.triggerCode` "
+                "matches it directly.",
+            ),
+            f(
+                "outcome",
+                lit("rewarded", "hold-failed", "wrong-well", "no-response", "aborted"),
+            ),
+            f(
+                "atMs",
+                nullable(INT),
+                doc="Trial open, in ms from the run's first recorded timestamp. "
+                "Null when the file carries no usable clock.",
+            ),
+            f(
+                "latencyMs",
+                nullable(INT),
+                doc="Trial open → the code that settled the outcome. Null for "
+                "no-response/aborted trials, which nothing settles.",
+            ),
+        ),
+        doc="One classified trial (`data.md` §9.11) — the same classification "
+        "pass the outcome tallies come from, kept as a sequence instead of "
+        "being summed away.",
+    ),
+    Shape(
         "RunSeries",
         obj(
             f("runId", STR),
@@ -955,6 +988,15 @@ SHAPES = (
                 "conditions. Cannot be assembled client-side from `metrics`: "
                 "those are indexed by each metric's own counted trials, which "
                 "interleave.",
+            ),
+            f(
+                "trials",
+                ListOf(Ref("TrialRecord")),
+                doc="Every trial in stream order. Empty when the profile can't "
+                "express outcomes, on the same rule as `RunSummary.outcomes`. "
+                "Tallying this list reproduces the run's `TrialOutcomes` and, "
+                "grouped by `triggerCode`, its `ConditionOutcomes` — pinned by "
+                "test, so the tape and the tallies can never disagree.",
             ),
         ),
     ),
@@ -1130,6 +1172,16 @@ SHAPES = (
                 ANY,
                 doc="The knobs this paradigm pins, as a topology fragment. What "
                 "is absent is what the operator may still move in the Designer.",
+            ),
+            f(
+                "ramped",
+                ListOf(STR),
+                doc="Timing ids this shape expects a shaping ramp to move — NAMES "
+                "only. The skeleton generator deliberately does not consume them: "
+                "a stage schedule needs trial boundaries and per-stage values, "
+                "and a paradigm declares neither, so emitting one would invent "
+                "exactly the numbers the generator is forbidden to invent. The "
+                "wizard's session step offers them as a suggestion instead.",
             ),
             f("questions", ListOf(Ref("ParadigmQuestion"))),
         ),
@@ -1458,10 +1510,50 @@ SHAPES = (
             f("knobs", ListOf(STR)),
             f("template", STR),
             f("templateVersion", INT),
+            f(
+                "timingHelp",
+                MapOf(
+                    obj(
+                        f("note", STR),
+                        f(
+                            "wireKey",
+                            nullable(STR),
+                            doc="The legacy START token this duration mirrors.",
+                        ),
+                        f("ms", INT, doc="The template's own default, for reference."),
+                    )
+                ),
+                doc="Keyed by timing id. The template's `timing_defaults` prose — "
+                "each duration's firmware provenance, which is the only place a "
+                "duration's MEANING is written down. Carried so a form can explain "
+                "a row rather than only label it.",
+            ),
+            f(
+                "outcomeHelp",
+                MapOf(
+                    obj(
+                        f("note", STR),
+                        f("trigger", STR),
+                        f("terminal", STR),
+                        f("delay", STR, doc="The timing id this class waits in."),
+                        f("strobe", nullable(STR)),
+                    )
+                ),
+                doc="Keyed by outcome class. The template's `outcome_defaults` — "
+                "what each class MEANS, not merely that it exists. `outcomeClasses` "
+                "says which are produced; this says why one is a discrimination "
+                "error and another carries no evidence at all.",
+            ),
         ),
         doc="What a topology produces (roadmap Phase 6): the palette's validity "
         "model. A pure function of the knobs, so the form re-gates its rows the "
-        "instant one moves, before any compile returns.",
+        "instant one moves, before any compile returns.\n\n"
+        "`timingHelp`/`outcomeHelp` are the template's own `timing_defaults` and "
+        "`outcome_defaults`, which the skeleton generator already reads. They ride "
+        "here rather than on `specs.schema` because they are a function of the "
+        "TOPOLOGY — go/no-go's `correct` is a different fact from n-alternative's — "
+        "and a copy in the frontend would be a second definition of what a duration "
+        "is for.",
     ),
     Shape(
         "SpecsUpdatedData",

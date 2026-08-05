@@ -20,7 +20,8 @@ Three screens edit settings. **The split is by subject, not by shape.**
 |---|---|---|
 | ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
 | 📡 **Config** (`/config`) | *Which board is box 3?* | Constellation layout, box→board bindings, handshake test, utility baseline, default baud, `arduino-cli` path |
-| 🔀 **Task** (`/task*`) | *What is the animal doing, and what is the box built out of?* | The task-spec Designer, wizard and bench; the channel→pin map (`/task/hardware`); sketch inspection over the bundled library and per-sketch task parameters (`/task/sketches`) |
+| 🔀 **Task** (`/task*`) | *What is the animal doing, and what is the box built out of?* | The task-spec Designer, wizard and bench; the channel→pin map (`/task/hardware`) |
+| 📄 **Sketches** (`/sketches`) | *What firmware ships with the app, and how does this rig run it?* | The bundled sketch library, each sketch's derived trial flow, and per-sketch task parameters (`settings.taskDefaults`). Its own tab (bottom of the sidebar, above Settings) because the sketches come **with** Ephymeris — the library is part of the app, not part of one experiment's workflow |
 
 > [!NOTE]
 > **Both of the first two rows are about wiring, and they are different wirings.**
@@ -54,7 +55,7 @@ Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/set
 | `constellation` | `string \| null` | `null` | **Config** → Constellation | Zodiac layout id for the box-status constellation. `null` = the legacy fixed layout. **Shell-only** |
 | `constellationSlots` | `Record<string, number>` | `{}` | **Config** → Constellation (drag) | Which star each box sits on, box number as a string key. **Shell-only** |
 | `boxSetupComplete` | `boolean` | `false` | Set by the wizard | Gates the first-run wizard on `/config`. **Shell-only** |
-| `taskDefaults` | `Record<string, Record<string, unknown>>` | `{}` | **Task** | This rig's default task parameters, per sketch. **Shell-only** |
+| `taskDefaults` | `Record<string, Record<string, unknown>>` | `{}` | **Sketches** | This rig's default task parameters, per sketch. **Shell-only** |
 
 > [!IMPORTANT]
 > **The sidecar reads only six of these** — `arduinoCliPath`, `utilitySketchName`, `dataDirectory`, `backupDirectory`, `defaultBaud`, `boxes` — and ignores the rest. That is why adding a settings field is deliberately a **non-event**: the shell-only keys needed no sidecar change at all. Removing one is a non-event on the same grounds: the retired `arduinoDirectory` is dropped by `normalizeSettings` on load, and a stale store still carrying it (or the path-valued `utilitySketchPath`, which heals to its basename) disturbs nothing.

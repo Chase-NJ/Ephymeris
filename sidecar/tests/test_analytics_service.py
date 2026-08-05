@@ -621,6 +621,27 @@ async def test_recent_sessions_sees_unrecorded_archive_folders(rig: Rig) -> None
     assert sessions[0]["cohortName"] == "Batch A"
 
 
+async def test_recent_sessions_marks_adopted_folders_recorded(rig: Rig) -> None:
+    """Adoption writes `adopted_runs`, never a `sessions` row (§8.1) — but an
+    adopted folder is indexed on this machine, and reporting it `recorded:
+    False` forever told the user to run the rescan they had already run."""
+    foreign = rig.root / "2O-Bdisc" / "2O-Bdisc_2_2026-07-28" / "behavior.json"
+    foreign.mkdir(parents=True)
+    (foreign / "remy2_2O-Bdisc_2_2026-07-28_101010.json").write_text(
+        json.dumps({"rat": "remy2", "ts_data": [[101, 0]], "stop_reason": "x"}),
+        encoding="utf-8",
+    )
+
+    before = await rig.service.recent_sessions()
+    assert [s["recorded"] for s in before["sessions"]] == [False]
+
+    result = await rig.service.rescan(rig.cohort.id)
+    assert result["adopted"] == 1
+
+    after = await rig.service.recent_sessions()
+    assert [s["recorded"] for s in after["sessions"]] == [True]
+
+
 async def test_recent_sessions_honours_limit_and_skips_dateless_folders(rig: Rig) -> None:
     for number, date in (("1", "2026-07-01"), ("2", "2026-07-02"), ("3", "2026-07-03")):
         session = rig.add_session(number, date)

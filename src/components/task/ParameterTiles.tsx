@@ -31,6 +31,7 @@ export function ParameterTiles({
   onChange,
   onHoverGroup,
   registerTile,
+  quiet = false,
 }: {
   profile: TaskProfile | null;
   model: TaskGraphModel;
@@ -41,6 +42,8 @@ export function ParameterTiles({
   onHoverGroup: (group: string | null) => void;
   /** Lets the route scroll a tile into view when its node is clicked. */
   registerTile: (group: string, el: HTMLElement | null) => void;
+  /** Forwarded to `ConfigFields` — the explain tile carries the prose. */
+  quiet?: boolean;
 }) {
   const groups = useMemo(() => {
     const declared = new Set<string>();
@@ -56,7 +59,9 @@ export function ParameterTiles({
   const statesFor = (group: string) => nodesGovernedBy(model, group).map((n) => n.label);
 
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+    // Two columns at most: the library/explain column owns ~240px of the
+    // page, and three-across made every row a crush of truncated labels.
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
       {groups.map((group, index) => {
         const fields = profile.config.filter((f) => f.group === group);
         const changed = fields.filter(
@@ -111,6 +116,7 @@ export function ParameterTiles({
               baseline={baseline}
               onChange={onChange}
               only={group}
+              quiet={quiet}
             />
           </motion.section>
         );

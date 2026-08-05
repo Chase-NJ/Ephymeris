@@ -1,12 +1,20 @@
 import { motion } from "framer-motion";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
+import { HowToRead } from "@/components/charts/HowToRead";
+import { Segmented } from "@/components/common/controls";
 import { HIGHLIGHT_DRAW } from "@/components/charts/reveal";
 import { edgesWithGaps, segmentsWithGaps, type Point } from "@/components/charts/UnitChart";
 import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
 import type { AnalyticsSummary, ProfileGroup, RunSummary } from "@/lib/analytics/types";
-import { chronological, declaredMetrics, runsInProfile } from "@/lib/analytics/view";
+import {
+  chronological,
+  declaredMetrics,
+  runsInProfile,
+  taskLabels,
+  twoMetricGroups,
+} from "@/lib/analytics/view";
 import {
   NoPlane,
   PLANE_VIEWBOX,
@@ -39,35 +47,55 @@ import {
  */
 export function StrategySpace({
   summary,
-  profile,
   colors,
 }: {
   summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
   colors: Map<string, string>;
 }) {
+  // The one panel that must scope to a single task: its axes are that task's
+  // two declared conditions, and a GRGL point beside an EZ-variant point on
+  // shared axes is a category error (§4.3). So it scopes *itself* — the
+  // most-run two-condition task by default, the rest one click away on a
+  // panel-local switch — instead of asking the dashboard for a filter.
+  const planes = useMemo(() => twoMetricGroups(summary), [summary]);
+  const labels = useMemo(() => taskLabels(summary), [summary]);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const profile =
+    planes.find((group) => group.hash === chosen) ?? planes[0] ?? null;
   const trails = useMemo(() => buildTrails(summary, profile), [summary, profile]);
   const axes = declaredMetrics(profile);
 
   if (!profile || axes.length !== 2) {
-    return (
-      <NoPlane
-        taskName={profile?.taskName ?? null}
-        metricCount={axes.length}
-        hasProfile={profile !== null}
-      />
-    );
+    return <NoPlane hasRuns={summary.runs.length > 0} />;
   }
 
   const [xMetric, yMetric] = axes;
+  const elsewhere = summary.runs.length - profile.runCount;
 
   return (
     <StrategyPanel>
       <ChartFrame
         title={
-          <span>
-            Strategy space
-            <span className="ml-2 text-static/70">one point per session</span>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>
+              Strategy space
+              <span className="ml-2 text-static/70">one point per session</span>
+            </span>
+            {planes.length > 1 ? (
+              <Segmented
+                value={profile.hash}
+                onChange={setChosen}
+                label="Task on the plane"
+                options={planes.map((group) => ({
+                  value: group.hash,
+                  label: labels.get(group.hash) ?? (group.taskName ?? "task"),
+                }))}
+              />
+            ) : (
+              <span className="font-mono text-[9px] text-static/70">
+                {labels.get(profile.hash) ?? profile.taskName}
+              </span>
+            )}
           </span>
         }
         yTop="1.0"
@@ -100,7 +128,19 @@ export function StrategySpace({
           ))}
         </svg>
       </ChartFrame>
-      <StrategyNote xMetric={xMetric!} yMetric={yMetric!} />
+      {/* A data disclosure, not education — stays outside the fold. */}
+      {elsewhere > 0 && (
+        <p className="mt-1 font-mono text-[9px] leading-relaxed text-static/60">
+          {elsewhere} run{elsewhere === 1 ? "" : "s"} on other tasks
+          {planes.length > 1
+            ? " — switch the plane above to see the two-condition ones"
+            : " have no two-condition plane"}
+          .
+        </p>
+      )}
+      <HowToRead>
+        <StrategyNote xMetric={xMetric!} yMetric={yMetric!} />
+      </HowToRead>
     </StrategyPanel>
   );
 }

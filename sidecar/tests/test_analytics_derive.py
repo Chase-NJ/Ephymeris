@@ -9,6 +9,8 @@ Control, and that disagreement is the failure nobody would notice.
 
 from __future__ import annotations
 
+from collections import Counter
+
 from ephymeris_sidecar.analytics import derive
 from ephymeris_sidecar.tasks.metrics import compute_series
 from ephymeris_sidecar.tasks.profile import parse_profile
@@ -352,6 +354,7 @@ def test_a_run_that_offered_nothing_reports_null_rates_not_zero() -> None:
 REWARDED_3 = [103, 226, 248, 252, 369]
 HOLD_FAIL_3 = [103, 226, 248, 250]
 WRONG_3 = [103, 226, 249, 258]
+NO_RESPONSE_3 = [103, 226]
 ABORTED_3 = [103, 225]
 
 
@@ -416,6 +419,82 @@ def test_conditions_ride_along_on_the_summary() -> None:
     assert payload["conditions"][1]["outcomes"]["wrongWell"] == 1
     # Empty, not null, when the profile can't express an outcome at all.
     assert derive.summarize(document(HIT_1), PROFILE).to_json()["conditions"] == []
+
+
+# --- §9.11 the per-trial tape ----------------------------------------------
+
+
+def test_the_tape_tallied_reproduces_the_outcome_tally() -> None:
+    """The load-bearing identity: the tape and the tallies are one pass.
+
+    If a second classifier ever crept in, the tape could disagree with the
+    numbers printed beside it and nothing else would notice — this is the
+    alarm for that.
+    """
+    codes = (REWARDED_1 + HOLD_FAIL_1 + WRONG_1 + NO_RESPONSE_1 + ABORTED_1) * 3
+    tape = derive.trials_of(document(codes), FULL_PROFILE)
+    tallied = Counter(t.outcome for t in tape)
+    out = derive.outcomes_of(codes, FULL_PROFILE)
+    assert out is not None
+    assert tallied["rewarded"] == out.rewarded
+    assert tallied["hold_failed"] == out.hold_failed
+    assert tallied["wrong_well"] == out.wrong_well
+    assert tallied["no_response"] == out.no_response
+    assert tallied["aborted"] == out.aborted
+    assert len(tape) == out.trials
+
+
+def test_the_tape_grouped_by_trigger_reproduces_the_conditions() -> None:
+    codes = REWARDED_1 + WRONG_3 + HOLD_FAIL_1 + NO_RESPONSE_3
+    tape = derive.trials_of(document(codes), FULL_PROFILE)
+    for condition in derive.conditions_of(codes, FULL_PROFILE):
+        own = [t for t in tape if t.trigger_code == condition.trigger_code]
+        assert len(own) == condition.outcomes.trials
+        assert (
+            sum(1 for t in own if t.outcome == "rewarded")
+            == condition.outcomes.rewarded
+        )
+
+
+def test_the_tape_is_in_stream_order_with_contiguous_indices() -> None:
+    tape = derive.trials_of(document(REWARDED_1 + WRONG_1 + ABORTED_1), FULL_PROFILE)
+    assert [t.index for t in tape] == [0, 1, 2]
+    assert [t.outcome for t in tape] == ["rewarded", "wrong_well", "aborted"]
+
+
+def test_the_tape_is_empty_when_the_vocabulary_cannot_express_an_outcome() -> None:
+    assert derive.trials_of(document(HIT_1 + HIT_3), PROFILE) == []
+    assert derive.trials_of(document(HIT_1), None) == []
+
+
+def test_tape_times_are_relative_to_the_earliest_timestamp() -> None:
+    # 1s spacing from `document`: trial 0 opens at code index 0, trial 1 at
+    # index 5 (REWARDED_1 is five codes long).
+    tape = derive.trials_of(document(REWARDED_1 + WRONG_1), FULL_PROFILE)
+    assert tape[0].at_ms == 0
+    assert tape[1].at_ms == 5000
+    # Latency: odor 1 at index 0 settles on FLUID at index 3 → 3s.
+    assert tape[0].latency_ms == 3000
+    # Wrong well: opens at 5, settles on WATER_POKE_ERROR_L at 8 → 3s.
+    assert tape[1].latency_ms == 3000
+
+
+def test_unsettled_trials_carry_no_latency() -> None:
+    tape = derive.trials_of(document(NO_RESPONSE_1 + ABORTED_1), FULL_PROFILE)
+    assert [t.outcome for t in tape] == ["no_response", "aborted"]
+    assert all(t.latency_ms is None for t in tape)
+
+
+def test_a_clockless_file_nulls_times_without_dropping_trials() -> None:
+    doc = {"ts_data": [[code] for code in REWARDED_1 + WRONG_1]}
+    tape = derive.trials_of(doc, FULL_PROFILE)
+    assert [t.outcome for t in tape] == ["rewarded", "wrong_well"]
+    assert all(t.at_ms is None and t.latency_ms is None for t in tape)
+
+
+def test_the_wire_spelling_is_hyphenated() -> None:
+    tape = derive.trials_of(document(HOLD_FAIL_1 + NO_RESPONSE_1), FULL_PROFILE)
+    assert [t.to_json()["outcome"] for t in tape] == ["hold-failed", "no-response"]
 
 
 # --- §4.4 the within-session strategy walk ---------------------------------

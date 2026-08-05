@@ -3,8 +3,8 @@ import { useMemo } from "react";
 import { DrawOn } from "@/components/charts/DrawOn";
 import { LINK_STROKE } from "@/components/chrome/constellationStyle";
 import { useAnalyticsStore, useIsHighlighted, usePinnedAnimal } from "@/lib/analytics/context";
-import type { AnalyticsSummary, ProfileGroup } from "@/lib/analytics/types";
-import { chronological, pickMetric, runsInProfile } from "@/lib/analytics/view";
+import type { AnalyticsSummary } from "@/lib/analytics/types";
+import { chronological, pickMetric } from "@/lib/analytics/view";
 
 /**
  * The roster, grouped, with each animal's trend (`data.md` §10.3).
@@ -15,15 +15,11 @@ import { chronological, pickMetric, runsInProfile } from "@/lib/analytics/view";
  */
 export function AnimalRail({
   summary,
-  profile,
   colors,
-  metricId,
   scroll = true,
 }: {
   summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
   colors: Map<string, string>;
-  metricId: string | null;
   /**
    * Whether the rail caps at its row's height and scrolls, or grows to fit.
    *
@@ -46,10 +42,7 @@ export function AnimalRail({
    */
   scroll?: boolean;
 }) {
-  const trends = useMemo(
-    () => buildTrends(summary, profile, metricId),
-    [summary, profile, metricId],
-  );
+  const trends = useMemo(() => buildTrends(summary), [summary]);
 
   const grouped = useMemo(() => {
     const order = new Map(summary.groups.map((g) => [g.id, g.order]));
@@ -57,7 +50,10 @@ export function AnimalRail({
       .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
       .map((group) => ({
         group,
-        animals: summary.animals.filter((animal) => animal.groupId === group.id),
+        animals: summary.animals
+          .filter((animal) => animal.groupId === group.id)
+          // Numeric-aware, the session summary's rule: remy2 before remy10.
+          .sort((a, b) => collator.compare(a.name, b.name)),
       }))
       .filter((entry) => entry.animals.length > 0);
   }, [summary]);
@@ -204,21 +200,24 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
   );
 }
 
-function buildTrends(
-  summary: AnalyticsSummary,
-  profile: ProfileGroup | null,
-  metricId: string | null,
-): Map<string, number[]> {
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+/**
+ * Every animal's whole history — all tasks, each run at its pooled overall
+ * accuracy (§3.7). The sparkline answers "which way is this going", and a
+ * history that silently skipped every session on another task would answer it
+ * about a different animal than the one in the room.
+ */
+function buildTrends(summary: AnalyticsSummary): Map<string, number[]> {
   const out = new Map<string, number[]>();
-  const eligible = runsInProfile(summary.runs, profile);
   for (const animal of summary.animals) {
     const runs = chronological(
-      eligible.filter((run) => run.animalId === animal.id),
+      summary.runs.filter((run) => run.animalId === animal.id),
       summary.sessions,
     );
     const values: number[] = [];
     for (const run of runs) {
-      const metric = pickMetric(run, metricId);
+      const metric = pickMetric(run, null);
       if (metric?.pSession !== null && metric?.pSession !== undefined) {
         values.push(metric.pSession);
       }

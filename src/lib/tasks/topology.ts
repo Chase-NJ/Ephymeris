@@ -192,6 +192,27 @@ export const GROUP_ORDER: readonly string[] = [
   "Anti-bias selection",
 ];
 
+/**
+ * The groups the mapping step promotes to the top of per-box tuning.
+ *
+ * These are the values the lab actually turns on the fly, animal by animal,
+ * session by session — a correction budget opened for a rat that has started
+ * side-biasing, the lazy-penalty escalation armed for one that has stopped
+ * initiating. Everything else in a profile is set once on the Sketches page
+ * and then left alone, so "first" here is decided by frequency of change,
+ * not by trial order.
+ *
+ * An app-level registry (like `GROUP_ORDER` above) rather than a `task.json`
+ * flag, deliberately: any new key in a profile changes its `profile_hash` and
+ * permanently splits a sketch's historical runs from its future ones in
+ * Analytics. A profile that declares neither group simply gets no quick-tune
+ * section.
+ */
+export const QUICK_TUNE_GROUPS: readonly string[] = [
+  "Correction trials",
+  "Abstention penalty",
+];
+
 /** Sort a profile's declared groups into trial order, unknown ones last. */
 export function orderGroups(groups: Iterable<string>): string[] {
   const rank = new Map(GROUP_ORDER.map((name, index) => [name, index]));

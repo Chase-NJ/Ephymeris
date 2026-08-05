@@ -720,8 +720,9 @@ export interface DiskSession {
   date: string;
   folderPath: string;
   /**
-   * True when this machine's database holds a session row for the folder — false for a session
-   * another Ephymeris machine wrote into the shared archive.
+   * True when this machine's database knows the folder — a session row, or adopted runs from a
+   * rescan (§8.1 writes no session row on purpose). False only for a folder another Ephymeris
+   * machine wrote that no rescan here has adopted.
    */
   recorded: boolean;
 }
@@ -974,6 +975,31 @@ export interface StrategyPoint {
   n: number;
 }
 
+/**
+ * One classified trial (`data.md` §9.11) — the same classification pass the outcome tallies come
+ * from, kept as a sequence instead of being summed away.
+ */
+export interface TrialRecord {
+  /** 0-based position in the stream's trial order. */
+  index: number;
+  /**
+   * The condition code that opened this trial — one of `boundaries_for`'s union, so a
+   * `ConditionOutcomes.triggerCode` matches it directly.
+   */
+  triggerCode: number;
+  outcome: "rewarded" | "hold-failed" | "wrong-well" | "no-response" | "aborted";
+  /**
+   * Trial open, in ms from the run's first recorded timestamp. Null when the file carries no
+   * usable clock.
+   */
+  atMs: number | null;
+  /**
+   * Trial open → the code that settled the outcome. Null for no-response/aborted trials, which
+   * nothing settles.
+   */
+  latencyMs: number | null;
+}
+
 export interface RunSeries {
   runId: string;
   mode: "rolling" | "cumulative";
@@ -985,6 +1011,13 @@ export interface RunSeries {
    * each metric's own counted trials, which interleave.
    */
   trail: StrategyPoint[];
+  /**
+   * Every trial in stream order. Empty when the profile can't express outcomes, on the same rule
+   * as `RunSummary.outcomes`. Tallying this list reproduces the run's `TrialOutcomes` and,
+   * grouped by `triggerCode`, its `ConditionOutcomes` — pinned by test, so the tape and the
+   * tallies can never disagree.
+   */
+  trials: TrialRecord[];
 }
 
 export interface SeriesResult {
@@ -1152,6 +1185,14 @@ export interface ParadigmSummary {
    * still move in the Designer.
    */
   fixes: unknown;
+  /**
+   * Timing ids this shape expects a shaping ramp to move — NAMES only. The skeleton generator
+   * deliberately does not consume them: a stage schedule needs trial boundaries and per-stage
+   * values, and a paradigm declares neither, so emitting one would invent exactly the numbers the
+   * generator is forbidden to invent. The wizard's session step offers them as a suggestion
+   * instead.
+   */
+  ramped: string[];
   questions: ParadigmQuestion[];
 }
 
@@ -1421,6 +1462,11 @@ export interface SpecCompileResult {
 /**
  * What a topology produces (roadmap Phase 6): the palette's validity model. A pure function of
  * the knobs, so the form re-gates its rows the instant one moves, before any compile returns.
+ * `timingHelp`/`outcomeHelp` are the template's own `timing_defaults` and `outcome_defaults`,
+ * which the skeleton generator already reads. They ride here rather than on `specs.schema`
+ * because they are a function of the TOPOLOGY — go/no-go's `correct` is a different fact from
+ * n-alternative's — and a copy in the frontend would be a second definition of what a duration is
+ * for.
  */
 export interface SpecCapabilities {
   outcomeClasses: string[];
@@ -1429,6 +1475,18 @@ export interface SpecCapabilities {
   knobs: string[];
   template: string;
   templateVersion: number;
+  /**
+   * Keyed by timing id. The template's `timing_defaults` prose — each duration's firmware
+   * provenance, which is the only place a duration's MEANING is written down. Carried so a form
+   * can explain a row rather than only label it.
+   */
+  timingHelp: Record<string, { note: string; wireKey: string | null; ms: number }>;
+  /**
+   * Keyed by outcome class. The template's `outcome_defaults` — what each class MEANS, not merely
+   * that it exists. `outcomeClasses` says which are produced; this says why one is a
+   * discrimination error and another carries no evidence at all.
+   */
+  outcomeHelp: Record<string, { note: string; trigger: string; terminal: string; delay: string; strobe: string | null }>;
 }
 
 export interface SpecsUpdatedData {

@@ -204,9 +204,9 @@ The metric definitions behind these payloads are in [data.md §9](data.md#9-deri
 |---|---|---|---|
 | `sessions.list` | `{cohortId, includeAborted?}` | `{sessions: [SessionListItem]}` | Belongs to the `sessions.*` family rather than `analytics.*` because session history is independently useful. **Must never touch the filesystem**, so selectors populate instantly. Returns a chronological `ordinal` derived from `(date, startedAt)` — never from `sessionNumber`, which is free text. `SessionListItem` is the trimmed listing form of `Session` (no `prefixId`/`groupRuns`, plus `ordinal` and `runCount`) and is the same shape `analytics.summary` embeds — one emitter serves both |
 | `analytics.summary` | `{cohortId, sessionIds?, animalIds?, minCountedTrials?}` | cohort table — sessions, animals, run summaries, profile groups, counts, warnings | One call per cohort; every session and animal selection filters it client-side. The heatmap and the strategy space are the same data, so they share one command. Run summaries are a **flat list, not a matrix** — a matrix has nowhere to put two runs for one animal and session, which really happens |
-| `analytics.series` | `{runIds: [], mode?, metricIds?}` | `{series: [RunSeries], warnings}` | Learning-curve data. **Plural** so "all six animals in this session" is one call; the list is capped server-side. The x-axis is the counted-trial index and is implicit. Each `RunSeries` also carries `trail` — the within-session walk through the strategy plane (`data.md` §11.1) as `[StrategyPoint]`. It rides here rather than in its own command because the file is already open and decoded, and it is **always rolling** whatever `mode` says. Empty unless the profile declares exactly two conditions, and **not** derivable client-side from `metrics`: those are indexed by each metric's own counted trials, which interleave |
+| `analytics.series` | `{runIds: [], mode?, metricIds?}` | `{series: [RunSeries], warnings}` | Learning-curve data. **Plural** so "all six animals in this session" is one call; the list is capped server-side. The x-axis is the counted-trial index and is implicit. Each `RunSeries` also carries `trail` — the within-session walk through the strategy plane (`data.md` §11.1) as `[StrategyPoint]`. It rides here rather than in its own command because the file is already open and decoded, and it is **always rolling** whatever `mode` says. Empty unless the profile declares exactly two conditions, and **not** derivable client-side from `metrics`: those are indexed by each metric's own counted trials, which interleave. Each `RunSeries` also carries `trials` — the per-trial tape (`data.md` §9.11) as `[TrialRecord]` in stream order, from the same classification pass the outcome tallies are summed from; empty when the profile can't express outcomes |
 | `analytics.rescan` | `{cohortId, adoptOrphans?}` | `{scanned, adopted, orphans: [RescanOrphan], cohortId}` | The explicit archive walk, for files no run record points at. Same pattern as `sketches.refresh` and `backup.syncNow`: expensive reconciliation is a deliberate user action, never a side effect of opening a view |
-| `analytics.recentSessions` | `{limit?}` | `{sessions: [DiskSession]}` | The N most recent session folders across every active cohort's archive, ordered by folder-name date. **Directory names only — no file is ever opened**, which is what keeps this cheap enough for the Dashboard where the rescan deliberately is not. Each `DiskSession` carries the identity a folder name alone can assert (`sessions/paths.py`'s parsers, both date spellings): cohort, prefix, session number, ISO date, path, and `recorded` — whether this machine's database holds a session row for that folder. `recorded: false` is the point of the command: a session another Ephymeris machine wrote into the shared archive is real history and belongs on the landing page, but it has no run record here until a rescan adopts it |
+| `analytics.recentSessions` | `{limit?}` | `{sessions: [DiskSession]}` | The N most recent session folders across every active cohort's archive, ordered by folder-name date. **Directory names only — no file is ever opened**, which is what keeps this cheap enough for the Dashboard where the rescan deliberately is not. Each `DiskSession` carries the identity a folder name alone can assert (`sessions/paths.py`'s parsers, both date spellings): cohort, prefix, session number, ISO date, path, and `recorded` — whether this machine's database knows that folder: a session row, **or adopted runs from a rescan**, which deliberately writes no session row (`data.md` §8.1). `recorded: false` is the point of the command: a session another Ephymeris machine wrote into the shared archive is real history and belongs on the landing page, but it has no record here until a rescan adopts it — and once one has, the flag clears |
 | `sessions.recover` | `{cohortId}` | `{scanned, recovered, failed, entries: [RecoveredTsv], cohortId, dataFolder, folderMissing}` (`RecoverResult`) | The crash-recovery backfill (`data.md` §12, §11): rebuilds `.json`/`.mat` from orphaned write-ahead `.tsv` files — same traversal as the rescan's walk, same explicit-action discipline. Each `RecoveredTsv` entry is `{tsvPath, jsonPath, status, nEvents, stopReason, reason}`; a footer-carrying `.tsv` keeps its recorded `stop_reason`, a footer-less (crashed) one gets `"recovered after crash"`. Rejected with `SESSION_INVALID` while any box is running — a live run's `.tsv` has no `.json` yet and is not an orphan |
 
 A corrupt or missing file is **data, not an error** — it yields a run with a non-ok status plus a warning, and the command still succeeds. One unreadable `.json` must never blank a year of history.
@@ -258,8 +258,8 @@ The task-spec compiler's surface ([specs.md](specs.md), [TaskGraph.md](TaskGraph
 | `specs.get` | `{specId}` | `{specId, origin, text, raw}` | `text` is the YAML source verbatim, comments and all; `raw` is the parsed document or `null` when it won't parse — the form binds to `raw`, and the compile that runs on mount is what reports *why* a null one won't parse |
 | `specs.schema` | — | `{schema, overlay: <SpecOverlay>, strobes, channels, limits, templates}` | Everything a form needs, once, on route mount. Served from the registry **files** — the same bytes the compiler validates against, so a picker cannot offer a value the compiler then rejects. `channels` is the one composed member: a channel is two files now (what it *means*, and where it *is* on this box), so what goes on the wire is the compiler's own resolved view of both, which is a stronger guarantee than either half. The frontend must never hold its own copy of a registry. `overlay` is the one member with a declared shape; see below |
 | `specs.compile` | `{text, specId?}` | `<SpecCompileResult>` | Stateless; the live per-edit call. Takes **text**, not a dict — the LOAD pass (schema validation, TG1xx, the YAML `on:` trap) checks things that only exist before parsing, so the editor compiles exactly the bytes it would save. Runs in a worker thread behind a semaphore of 1; the frontend debounces ~120 ms and discards stale replies by `corr` |
-| `specs.capabilities` | `{topology}` | `<SpecCapabilities>` | Which outcome classes and timing ids this topology produces — the palette's validity model, from the template's own `capabilities()`. A pure function of the knobs (half-built topologies welcome; unspecified knobs take the schema defaults), so the form re-gates its rows the instant a knob moves, before any compile returns |
-| `specs.paradigms` | — | `{paradigms: [ParadigmSummary]}` | Every shape a new task can start from, in gallery order. **A paradigm is a shape, not a spec**: it names a template, fixes the knobs that make a kind of experiment what it is, and declares what to ask about the rest. Its own command rather than a member of `specs.schema` because that reply is what the *form* needs on route mount and is fetched by the Designer, which has no use for paradigms — while the gallery and the wizard need paradigms and never the overlay. Static for the life of the process |
+| `specs.capabilities` | `{topology}` | `<SpecCapabilities>` | Which outcome classes and timing ids this topology produces — the palette's validity model, from the template's own `capabilities()`. A pure function of the knobs (half-built topologies welcome; unspecified knobs take the schema defaults), so the form re-gates its rows the instant a knob moves, before any compile returns. Carries `timingHelp` and `outcomeHelp` alongside `outcomeClasses`/`requiredTiming`; see below |
+| `specs.paradigms` | — | `{paradigms: [ParadigmSummary]}` | Every shape a new task can start from, in gallery order. **A paradigm is a shape, not a spec**: it names a template, fixes the knobs that make a kind of experiment what it is, and declares what to ask about the rest. `ramped` is the one member the skeleton generator deliberately does **not** consume — it names the timing ids a shaping ramp is expected to move, and a stage schedule additionally needs trial boundaries and per-stage values that no paradigm declares, so generating one would invent precisely the numbers the generator is forbidden to invent. The wizard's session step offers them as a suggestion the operator applies. Its own command rather than a member of `specs.schema` because that reply is what the *form* needs on route mount and is fetched by the Designer, which has no use for paradigms — while the gallery and the wizard need paradigms and never the overlay. Static for the life of the process |
 | `specs.skeleton` | `{paradigmId, specId, answers, label?, description?}` | `{text, result}` | A first draft for a paradigm, and the compile of it. Returns **text** for the same reason `specs.compile` takes it — the LOAD pass checks things that only exist before parsing, and the editor must hold the exact bytes it would save. The compile rides along so the wizard's first render already has a graph: one round trip, and *"it compiles at every step"* is true from step zero rather than from step one. **Pure — it writes nothing**, so creating a task stays `specs.save` and rename-and-save keeps its single definition. The generator emits no value it did not read from an existing authority (the paradigm, the template's `capabilities()`, the channel registry, the strobe vocabulary, or the operator's answer), which is what stops it being a second definition of what a minimal legal spec is |
 | `specs.save` | `{specId, text}` | `{entry, result}` | **Always saves, even with ERROR diagnostics** — a half-finished spec must be savable; the gate is upload, not save. Writes land under the sidecar's app-data dir (`<data_dir>/specs/user/`), like session files and `ephymeris.db` — no Tauri fs capability involved. The frontend passes the *document's own* `spec_id` as the target, so renaming the id and saving creates a copy; a parsed document whose `spec_id` disagrees with the target is refused (`SPEC_INVALID`) because the id names the file, the table, and what a board reports after an upload. The reply carries the compile of what was just written |
 | `specs.delete` | `{specId}` | `{entry: null}` | Deletes the spec. **One meaning, where there used to be three** — nothing ships as a spec, so there is no bundled version underneath to fall back to and nothing that can be read-only. The reply keeps `entry` and always returns null, so a client rendering the result of a delete need not special-case its absence |
@@ -323,6 +323,40 @@ The graph is the compiled **machine** graph — six node primitives (`DELAY`/`WA
 ```
 
 `widget` is deliberately **not** a literal union: the renderer carries a documented default case, so an overlay that gains a widget degrades to a plain input rather than failing to compile. The other four members (`schema`, `strobes`, `channels`, `limits`) stay untyped `any` on purpose — those are passthrough JSON the frontend reads with lookups, not a shape it binds a form to.
+
+**`capabilities()` carries prose as well as a validity model.**
+
+```jsonc
+// SpecCapabilities — a pure function of the topology knobs.
+{
+  "outcomeClasses": ["correct", "hold_break", "no_engage", "omission", "wrong"],
+  "requiredTiming": ["t_zero", "t_arm", "t_engage_win", "t_poll_interval", "…"],
+  "knobs": ["n_sampling_stages", "retention_delay", "response_mode", "…"],
+  "template": "four_epoch", "templateVersion": 2,
+
+  // The template's own `timing_defaults`, keyed by timing id. `note` is the
+  // firmware field this duration mirrors — the only place a duration's MEANING
+  // is written down — and `wireKey` is the legacy START token it corresponds
+  // to (null when it has none). `ms` is the template's default, for reference
+  // only: the document's own value is the authority.
+  "timingHelp": {
+    "t_commit_hold": { "note": "odorPokeHold at BehaviorBox.h:1176 — the pre-odor commitment hold.",
+                       "wireKey": "S0P", "ms": 500 }
+  },
+
+  // The template's own `outcome_defaults`, keyed by outcome class. `note` says
+  // what the class MEANS — why one ending is a discrimination error and another
+  // carries no evidence at all — which `outcomeClasses` cannot: it says only
+  // which classes exist. `delay` names the timing id the class waits in.
+  "outcomeHelp": {
+    "no_engage": { "note": "No stimulus was presented, so the trial carries no evidence about discrimination: scored invalid and repeated, never counted as an error.",
+                   "trigger": "TIMEOUT", "terminal": "TRIAL_INVALID",
+                   "delay": "t_pen_noengage", "strobe": "LAZY_RAT" }
+  }
+}
+```
+
+Both help maps ride here rather than on `specs.schema` because they are a function of the **topology**, not of the build: go/no-go's `correct` is a genuinely different fact from n-alternative's (a different trigger, a different strobe, a different sentence). They are the same values the skeleton generator already reads, so nothing new is defined — what changes is that a form can now explain a row instead of only labelling it.
 
 ### 3.7 Rig wiring
 
@@ -580,6 +614,23 @@ ISO-8601 strings.
 { "trial": 84,                      // counted trials across BOTH conditions
   "x": 0.9, "y": 0.55,              // rolling P per condition, authored order
   "n": 20 }                         // the smaller of the two window lengths
+
+// TrialRecord — one classified trial of the per-trial tape (data.md §9.11).
+// Each RunSeries carries these as `trials`, in stream order — the SAME
+// classification pass the outcome tallies are summed from, kept as a
+// sequence: tallying the list by outcome reproduces the run's TrialOutcomes,
+// and grouping it by triggerCode reproduces its ConditionOutcomes (pinned by
+// test). Empty when the profile can't express outcomes, on the same rule as
+// RunSummary.outcomes.
+{ "index": 12,                      // 0-based position in trial order
+  "triggerCode": 101,               // the condition code that opened the trial —
+                                    // matches ConditionOutcomes.triggerCode
+  "outcome": "hold-failed",         // rewarded | hold-failed | wrong-well |
+                                    // no-response | aborted
+  "atMs": 421876,                   // trial open, ms from the run's earliest
+                                    // timestamp; null with no usable clock
+  "latencyMs": 2310 }               // trial open → the settling code; null for
+                                    // no-response/aborted, which nothing settles
 
 // TelemetryMetric — one rolling live-metric value (session.telemetry)
 { "id": "p_r_odor1", "value": 0.85, "n": 20 }   // value = P(hit); n = counted trials in window

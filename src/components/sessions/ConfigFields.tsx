@@ -3,6 +3,7 @@ import { ChevronRight, RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { FieldRow } from "@/components/common/FieldRow";
+import { useSketchExplain } from "@/components/task/SketchExplain";
 import { springSnappy } from "@/lib/motion";
 import type { ConfigField, TaskProfile } from "@/lib/sessions/types";
 
@@ -38,6 +39,8 @@ export function ConfigFields({
   onChange,
   disabled = false,
   only,
+  exclude,
+  quiet = false,
 }: {
   profile: TaskProfile | null;
   config: Record<string, unknown>;
@@ -58,6 +61,22 @@ export function ConfigFields({
    * validation, clamping or the changed-marker.
    */
   only?: string;
+  /**
+   * Skip these groups entirely — the mapping step renders them separately as
+   * its quick-tune strip (`TaskConfigForm`), and a field that appears twice
+   * in one form is a field whose two rows will eventually disagree in the
+   * reader's head even while the state keeps them honest.
+   */
+  exclude?: readonly string[];
+  /**
+   * Drop the inline help captions — for the Sketches page, where the explain
+   * tile carries the prose and forty captioned rows were the wall this form
+   * used to be. The label keeps its `title` tooltip, and the same
+   * hover/focus that would read a caption populates the tile instead. The
+   * mapping step stays captioned: it has no tile, and a form that only
+   * speaks on hover would be worse for keyboard use there.
+   */
+  quiet?: boolean;
 }) {
   const [openAdvanced, setOpenAdvanced] = useState<Record<string, boolean>>({});
 
@@ -73,8 +92,10 @@ export function ConfigFields({
       else bySection.set(key, [field]);
     }
     const all = [...bySection.entries()];
-    return only === undefined ? all : all.filter(([name]) => name === only);
-  }, [profile, only]);
+    if (only !== undefined) return all.filter(([name]) => name === only);
+    if (exclude !== undefined) return all.filter(([name]) => !exclude.includes(name));
+    return all;
+  }, [profile, only, exclude]);
 
   if (!profile || profile.config.length === 0) return null;
 
@@ -127,6 +148,7 @@ export function ConfigFields({
                 field={field}
                 value={config[field.metadataKey] ?? field.default}
                 baseline={baseline[field.metadataKey]}
+                quiet={quiet}
                 onChange={(v) => set(field.metadataKey, v)}
               />
             ))}
@@ -164,6 +186,7 @@ export function ConfigFields({
                           field={field}
                           value={config[field.metadataKey] ?? field.default}
                           baseline={baseline[field.metadataKey]}
+                          quiet={quiet}
                           onChange={(v) => set(field.metadataKey, v)}
                         />
                       ))}
@@ -183,25 +206,38 @@ function Field({
   field,
   value,
   baseline,
+  quiet,
   onChange,
 }: {
   field: ConfigField;
   value: unknown;
   baseline: unknown;
+  quiet: boolean;
   onChange: (next: unknown) => void;
 }) {
+  // The one dispatcher every profile field goes through, so reporting from
+  // here covers this rig's defaults form in one place (`SketchExplain`). The
+  // context's default `report` is a no-op, which is what keeps the mapping
+  // step — same form, no provider — untouched. `onFocusCapture` rather than
+  // `onFocus` because the focusable element is the input inside the row, and
+  // blur deliberately does not clear: a definition that vanishes as the
+  // pointer moves toward it is unreadable, and the next focus replaces it.
+  const { report } = useSketchExplain();
+  const announce = () => report({ field, value });
   return (
-    <FieldRow
-      label={field.label}
-      help={field.help}
-      unit={field.unit}
-      type={field.type}
-      value={value}
-      fallback={field.default}
-      baseline={baseline}
-      min={field.min}
-      max={field.max}
-      onChange={onChange}
-    />
+    <div onFocusCapture={announce} onMouseEnter={announce}>
+      <FieldRow
+        label={field.label}
+        help={quiet ? undefined : field.help}
+        unit={field.unit}
+        type={field.type}
+        value={value}
+        fallback={field.default}
+        baseline={baseline}
+        min={field.min}
+        max={field.max}
+        onChange={onChange}
+      />
+    </div>
   );
 }

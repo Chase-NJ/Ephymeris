@@ -958,20 +958,23 @@ These never error, and are the ones to know about when something looks wrong but
 
 ## 10. The Task screen
 
-The Task tab is a small **route family**, not one page. It used to be a single scroll carrying two whole systems — the spec workbench stacked on the sketch sections — where everything was visible at once and nothing was the front door. `/task` is now a landing page leading with the **Task Designer**; the sketch half lives at `/task/sketches` and is described below, and everything about the Designer and the bench is [specs.md](specs.md). A spec remains a sibling artifact to a `task.json`, never an extension of it ([§4.1](#41-why-derived-not-declared)).
+The Task tab is a small **route family**, not one page. It used to be a single scroll carrying two whole systems — the spec workbench stacked on the sketch sections — where everything was visible at once and nothing was the front door. `/task` is now a landing page leading with the **Task Designer**; everything about the Designer and the bench is [specs.md](specs.md). The sketch half is its **own top-level tab**, `/sketches`, at the bottom of the sidebar above Settings — the sketches ship with Ephymeris, so the library is part of the app rather than part of any one experiment's workflow — and is described below. A spec remains a sibling artifact to a `task.json`, never an extension of it ([§4.1](#41-why-derived-not-declared)).
 
 > [!IMPORTANT]
-> **`/task/sketches` is the only editor for `settings.taskDefaults`**, and `SessionMapping` reads that map on every session ([§6.1](#61-the-three-layer-merge)). If this page is ever removed or folded away, the stored per-sketch overrides keep being merged into every `START` line with nothing able to show or clear them — the silent-wrong-value failure this document's other cautions are about. Retire it only alongside the merge layer itself.
+> **`/sketches` is the only editor for `settings.taskDefaults`**, and `SessionMapping` reads that map on every session ([§6.1](#61-the-three-layer-merge)). If this page is ever removed or folded away, the stored per-sketch overrides keep being merged into every `START` line with nothing able to show or clear them — the silent-wrong-value failure this document's other cautions are about. Retire it only alongside the merge layer itself.
 
-### 10.1 `/task/sketches`
+### 10.1 `/sketches`
+
+A sticky left column (the library and the explain tile) beside the selected sketch's content:
 
 | Section | Contents |
 |---|---|
-| **Sketch** | The **Sketch** picker (grouped `category / name`) over the bundled library, with a status note naming the shipped sketch count and a rescan. Picking a sketch loads its profile over `tasks.getProfile` |
+| **Library** (left, sticky) | `SketchLibrary`: the bundled sketches as a browsable list grouped by category — not a dropdown, because the library ships with the app and is the dozen entries the operator returns to. Each row carries an `N tuned` chip when `settings.taskDefaults` holds overrides for it, so which sketches this rig has moved off the author's values is visible without opening each one. `LibraryStatusNote` (count + rescan) sits in the card's footer. Selecting loads the profile over `tasks.getProfile` |
+| **Explain tile** (left, sticky) | `SketchExplain` — the wizard's `ExplainTile` motif worn by the sketch library. Follows focus, one definition at a time: hovering or focusing any parameter on the right renders that field's help, its `START` wire token, unit and type, its authored default and clamp range, this rig's divergence from it, and the states its group governs. A hovered *group* describes the moment of the trial it owns; at rest it describes the selected sketch. Because the tile carries the prose, the form runs **`quiet`** — `ConfigFields` drops the inline captions here (the label keeps its tooltip), which is what turned forty captioned rows back into a scannable column. The mapping step keeps its captions: it mounts the same form with no provider, and the report hook's default is a no-op |
 | **Error strip** | A malformed `task.json` message — surfaced, not swallowed |
 | **Trial flow** | Header shows `taskName` and the condition count; body is `TaskGraph`. When `!usable`, prose instead: *"…declares no behavioural strobes. Utility sketches are driven from Debug Mode instead"* or *"This sketch has no task.json, so it runs a bare START…"* |
 | **Task rail** | The same nodes as a compact strip, pinned to the top once the diagram scrolls away. Pin detection uses an `IntersectionObserver` on a 1 px sentinel — a sticky element never stops intersecting its own scroller. Its measured height is published as `--task-rail-h` for the tiles' `scroll-margin-top` |
-| **Parameters** | `ParameterTiles`: one card per `group`, ordered by `orderGroups`, subtitled with the nodes that group governs. Hover a tile → lights the governed states; click a state → scrolls to its tile. A "Reset all N" button |
+| **Parameters** | `ParameterTiles`: one card per `group`, ordered by `orderGroups`, subtitled with the nodes that group governs, two columns at most beside the library column. Hover a tile → lights the governed states; click a state → scrolls to its tile; hover a field → the explain tile. A "Reset all N" button |
 
 **`TaskGraph` has two modes**: *shape* (the diagram alone) and *live* (a `liveNode` walks a token). Returns are the faintest thing on the canvas and are never labelled. Outcome fills are borrowed from the analytics outcome palette, exported so `TaskRail` cannot disagree with the diagram.
 

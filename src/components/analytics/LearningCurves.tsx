@@ -1,4 +1,5 @@
 import { ChartFrame } from "@/components/charts/ChartFrame";
+import { HowToRead } from "@/components/charts/HowToRead";
 import { DrawOn } from "@/components/charts/DrawOn";
 import { HIGHLIGHT_DRAW } from "@/components/charts/reveal";
 import {
@@ -12,31 +13,31 @@ import {
 } from "@/components/charts/UnitChart";
 import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
-import type {
-  AnalyticsSummary,
-  ProfileGroup,
-  RunSeries,
-  RunSummary,
-} from "@/lib/analytics/types";
-import {
-  chronological,
-  declaredMetrics,
-  pickMetric,
-  runsInProfile,
-} from "@/lib/analytics/view";
+import type { AnalyticsSummary, RunSeries, RunSummary } from "@/lib/analytics/types";
+import { chronological, pickMetric } from "@/lib/analytics/view";
 
 /**
  * P(correct) over time (`data.md` §11.2).
  *
- * Two resolutions, chosen by the session selector: across sessions it is one
- * point per session at whole-session P; within one session it is the rolling
- * value per counted trial, from the `analytics.series` reply the route fetches
- * once for every panel that needs it.
+ * Two resolutions, chosen by the session selector — and two different
+ * scopings, each decided by the panel rather than by a filter:
  *
- * The x axis is **trial index, never time**. Timestamps are elapsed since each
- * animal's own start, animals in one session begin minutes apart, and stream
- * t=0 trails the recorded start by the handshake — so a shared time axis would
- * be quietly wrong.
+ * - **Across sessions**: one chart, each animal's whole history at its
+ *   pooled overall accuracy (§3.7) — every run, whatever task it was on,
+ *   because "how is this animal doing" is a question about the animal, not
+ *   about one task. Per-condition histories are the strategy space's job;
+ *   here they would be one chart per task per condition, unreadable at
+ *   cohort scale.
+ * - **Within one session**: the rolling value per counted trial for each
+ *   condition any of the session's runs declares, from the
+ *   `analytics.series` reply the route fetches once. Conditions are the
+ *   union across the session's runs — a mixed-task session grows charts
+ *   rather than hiding runs.
+ *
+ * The x axis is **trial index / run ordinal, never time**. Timestamps are
+ * elapsed since each animal's own start, animals in one session begin minutes
+ * apart, and stream t=0 trails the recorded start by the handshake — so a
+ * shared time axis would be quietly wrong.
  *
  * Each animal's band and curve draw in a per-animal `<CurveLayer>` inside the
  * chart rather than through `UnitChart`'s `series` prop, because the layer is
@@ -44,34 +45,108 @@ import {
  * stroke weight, the rest drop to a dim opacity, and only these small layers
  * re-render on hover.
  */
+/** Fixed plot heights (the trends' `PLOT_PX` pattern) — deliberate, not
+ *  aspect- or row-driven, so a neighbouring tile's disclosure opening can
+ *  never stretch a curve. Two session-scope charts roughly match the
+ *  strategy plane's height; the single cohort chart gets the sum. */
+const SESSION_PLOT_PX = 168;
+const COHORT_PLOT_PX = 300;
+
 export function LearningCurves({
   summary,
-  profile,
   colors,
   sessionScope,
+  sessionRuns,
   series,
 }: {
   summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
   colors: Map<string, string>;
   sessionScope: string;
+  /** The selected session's runs — every one, whatever task (`session.ts`).
+   *  Empty across sessions. */
+  sessionRuns: RunSummary[];
   /** The selected session's trajectories. Empty across sessions, where the
    *  curves are built from the summary's per-session scalars instead. */
   series: RunSeries[];
 }) {
   const withinSession = sessionScope !== ALL_SESSIONS;
-  const runsInScope = withinSession
-    ? runsInProfile(summary.runs, profile).filter((r) => r.sessionId === sessionScope)
-    : [];
 
-  // Within a session the pooled figure has no series: `analytics.series`
-  // replays each declared condition separately, and pooling interleaved trials
-  // into one rolling window would need a different accumulator than the one
-  // the live path uses. Rather than render an empty chart, the pooled view is
-  // simply a session-level summary and appears only across sessions.
-  const charts = withinSession ? declaredMetrics(profile) : (profile?.metrics ?? []);
+  if (withinSession) {
+    // One chart per condition any run in the session declares, in first-seen
+    // authored order — the session table's union rule (`session.ts`).
+    const conditions: Array<{ id: string; label: string }> = [];
+    for (const run of sessionRuns) {
+      for (const metric of run.metrics) {
+        if (!conditions.some((entry) => entry.id === metric.id)) {
+          conditions.push({ id: metric.id, label: metric.label });
+        }
+      }
+    }
 
-  if (!profile || charts.length === 0) {
+    if (conditions.length === 0) {
+      return (
+        <div className="surface rounded-md p-4">
+          <p className="text-[12px] leading-relaxed text-static">
+            No scored runs in this session — curves appear once a run with a
+            task profile has been recorded.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      // Fixed plot heights, own tile height: the grid row is `items-start`,
+      // so this tile neither stretches to the strategy plane's height (the
+      // old dead surface) nor re-stretches its charts when the neighbour's
+      // "how to read this" opens.
+      <div className="surface flex flex-col gap-4 rounded-md p-4">
+        {conditions.map((condition) => (
+          <div key={condition.id}>
+            <ChartFrame
+              title={
+                <span>
+                  {condition.label}
+                  <span className="ml-2 text-static/70">rolling, per trial</span>
+                </span>
+              }
+              yTop="1.0"
+              yBottom="0.0"
+              xLeft="trial 1"
+              xRight="last"
+            >
+              <div style={{ height: SESSION_PLOT_PX }}>
+                <UnitChart
+                  height={46}
+                  className="h-full w-full"
+                  references={[{ y: 0.5 }]}
+                >
+                  {withinSessionLayers(series, sessionRuns, condition.id, colors).map(
+                    (layer) => (
+                      <CurveLayer key={layer.key} layer={layer} height={46} />
+                    ),
+                  )}
+                </UnitChart>
+              </div>
+            </ChartFrame>
+          </div>
+        ))}
+        <HowToRead>
+          <p>
+            Each line is one animal&rsquo;s rolling P(hit) for this condition at
+            the task&rsquo;s authored window, one point per counted trial.
+          </p>
+          <p className="mt-1">
+            The x axis is trial index, never wall time: animals start minutes
+            apart and each stream&rsquo;s clock starts at its own handshake, so
+            a shared time axis would quietly misalign them.
+          </p>
+        </HowToRead>
+      </div>
+    );
+  }
+
+  const layers = acrossSessionLayers(summary, colors);
+  if (layers.length === 0) {
     return (
       <div className="surface rounded-md p-4">
         <p className="text-[12px] leading-relaxed text-static">
@@ -84,32 +159,44 @@ export function LearningCurves({
 
   return (
     <div className="surface flex flex-col gap-4 rounded-md p-4">
-      {charts.map((metric) => (
+      <div>
         <ChartFrame
-          key={metric.id}
           title={
             <span>
-              {metric.label}
+              Overall accuracy
               <span className="ml-2 text-static/70">
-                {withinSession ? "rolling, per trial" : "whole session, per session"}
+                whole session, per session · every task
               </span>
             </span>
           }
           yTop="1.0"
           yBottom="0.0"
-          xLeft={withinSession ? "trial 1" : "first"}
-          xRight={withinSession ? "last" : "latest"}
+          xLeft="first"
+          xRight="latest"
         >
-          <UnitChart height={46} references={[{ y: 0.5 }]}>
-            {(withinSession
-              ? withinSessionLayers(series, runsInScope, metric.id, colors)
-              : acrossSessionLayers(summary, profile, metric.id, colors)
-            ).map((layer) => (
-              <CurveLayer key={layer.key} layer={layer} height={46} />
-            ))}
-          </UnitChart>
+          <div style={{ height: COHORT_PLOT_PX }}>
+            <UnitChart height={46} className="h-full w-full" references={[{ y: 0.5 }]}>
+              {layers.map((layer) => (
+                <CurveLayer key={layer.key} layer={layer} height={46} />
+              ))}
+            </UnitChart>
+          </div>
         </ChartFrame>
-      ))}
+      </div>
+      <HowToRead>
+        <p>
+          One line per animal, one point per run, at the run&rsquo;s accuracy
+          pooled across every condition — the only single number that can tell
+          learning from a side bias (§9.7). Each run is scored at whatever task
+          it ran that day; the task strip below marks where that changed.
+        </p>
+        <p className="mt-1">
+          The ribbon behind a line is its 95% Wilson interval — wide where a
+          session scored few trials, so thin evidence is drawn rather than
+          hidden. The x axis is each animal&rsquo;s own run order, not calendar
+          time; the session rail above is where a gap in days is real.
+        </p>
+      </HowToRead>
     </div>
   );
 }
@@ -195,6 +282,8 @@ function withinSessionLayers(
     const metric = run.metrics.find((m) => m.id === metricId);
     if (!metric || metric.values.length < 2) return [];
     const animalId = animalOf.get(run.runId) ?? "";
+    // A series for a run outside this session (stale fetch) draws nothing.
+    if (animalId === "") return [];
     const points = metric.values.map((value, index) => ({
       x: index / (metric.values.length - 1),
       y: value,
@@ -211,68 +300,47 @@ function withinSessionLayers(
   });
 }
 
+/** Every run, pooled overall per run (§3.7) — `pickMetric(run, null)`. */
 function acrossSessionLayers(
   summary: AnalyticsSummary,
-  profile: ProfileGroup | null,
-  metricId: string,
   colors: Map<string, string>,
 ): CurveLayerData[] {
   return summary.animals.flatMap((animal) => {
-    const points = acrossSessionPoints(summary, profile, animal.id, metricId);
+    const runs = chronological(
+      summary.runs.filter((run) => run.animalId === animal.id),
+      summary.sessions,
+    );
+    const points = runs.map((run, index) => {
+      const value = pickMetric(run, null)?.pSession;
+      return value === null || value === undefined
+        ? null
+        : { x: runs.length === 1 ? 0.5 : index / (runs.length - 1), y: value };
+    });
     const segments =
       points.filter(Boolean).length >= 2 ? segmentsWithGaps(points) : [];
-    const band = acrossSessionBand(summary, profile, animal.id, metricId);
-    if (segments.length === 0 && band === null) return [];
+
+    const band: BandPoint[] = [];
+    if (runs.length >= 2) {
+      runs.forEach((run, index) => {
+        const metric = pickMetric(run, null);
+        if (!metric || metric.wilsonLow === null || metric.wilsonHigh === null) return;
+        band.push({
+          x: index / (runs.length - 1),
+          low: metric.wilsonLow,
+          high: metric.wilsonHigh,
+        });
+      });
+    }
+
+    if (segments.length === 0 && band.length < 2) return [];
     return [
       {
         key: animal.id,
         animalId: animal.id,
         color: colors.get(animal.id) ?? "var(--color-series-1)",
         segments,
-        band,
+        band: band.length >= 2 ? band : null,
       },
     ];
-  });
-}
-
-function acrossSessionBand(
-  summary: AnalyticsSummary,
-  profile: ProfileGroup | null,
-  animalId: string,
-  metricId: string,
-): BandPoint[] | null {
-  const runs = chronological(
-    runsInProfile(summary.runs, profile).filter((r) => r.animalId === animalId),
-    summary.sessions,
-  );
-  if (runs.length < 2) return null;
-  const points: BandPoint[] = [];
-  runs.forEach((run, index) => {
-    const metric = pickMetric(run, metricId);
-    if (!metric || metric.wilsonLow === null || metric.wilsonHigh === null) return;
-    points.push({
-      x: index / (runs.length - 1),
-      low: metric.wilsonLow,
-      high: metric.wilsonHigh,
-    });
-  });
-  return points.length < 2 ? null : points;
-}
-
-function acrossSessionPoints(
-  summary: AnalyticsSummary,
-  profile: ProfileGroup | null,
-  animalId: string,
-  metricId: string,
-) {
-  const runs = chronological(
-    runsInProfile(summary.runs, profile).filter((r) => r.animalId === animalId),
-    summary.sessions,
-  );
-  return runs.map((run, index) => {
-    const value = pickMetric(run, metricId)?.pSession;
-    return value === null || value === undefined
-      ? null
-      : { x: runs.length === 1 ? 0.5 : index / (runs.length - 1), y: value };
   });
 }

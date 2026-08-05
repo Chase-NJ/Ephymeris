@@ -99,6 +99,48 @@ export function Toggle({
   );
 }
 
+/**
+ * A segmented control — a handful of mutually exclusive views behind one
+ * strip of buttons. The selector for things a `Select` would hide: every
+ * option stays visible, and switching is one click, not two.
+ */
+export function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: T;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  onChange: (next: T) => void;
+  /** Accessible name for the group. */
+  label: string;
+}) {
+  return (
+    <span
+      role="group"
+      aria-label={label}
+      className="flex overflow-hidden rounded-sm border border-halo"
+    >
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+          className={`px-2.5 py-1 text-[11px] transition-colors ${
+            value === option.value
+              ? "bg-halo/70 text-starlight"
+              : "text-static hover:text-starlight"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 export function Select<T extends string | number>({
   value,
   options,

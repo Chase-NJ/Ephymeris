@@ -1,12 +1,15 @@
+import { useMemo } from "react";
+
+import { AccuracyTrend } from "@/components/analytics/AccuracyTrend";
 import { AnimalRail } from "@/components/analytics/AnimalRail";
 import { CohortHeatmap } from "@/components/analytics/CohortHeatmap";
 import { EffortTrend } from "@/components/analytics/EffortTrend";
 import { LearningCurves } from "@/components/analytics/LearningCurves";
 import { OutcomeMix } from "@/components/analytics/OutcomeMix";
-import { ResponseTrend } from "@/components/analytics/ResponseTrend";
-import { RewardedTrend } from "@/components/analytics/RewardedTrend";
 import { StrategySpace } from "@/components/analytics/StrategySpace";
+import { TaskStrip } from "@/components/analytics/TaskStrip";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
+import { sessionOutcomePoints, taskLabels } from "@/lib/analytics/view";
 
 import type { ReportInput } from "./ReportSheet";
 
@@ -14,8 +17,9 @@ import type { ReportInput } from "./ReportSheet";
  * The across-session sheet — the cohort compared with itself over time.
  *
  * Same panels as the dashboard's `ALL_SESSIONS` scope, in the same order: the
- * rail beside the strategy tile and learning curves, then the heatmap full
- * width, then the four x-slot-sharing trends as one unbroken run.
+ * x-slot-sharing run first (task strip, the combined accuracy figure, effort
+ * and outcome mix), then the rail beside the strategy tile and learning
+ * curves, then the heatmap full width.
  *
  * One deliberate difference throughout. Every grid here is a plain
  * `grid-cols-2` rather than the route's `xl:` variant, because Tailwind's
@@ -27,14 +31,26 @@ import type { ReportInput } from "./ReportSheet";
  * The masthead carries its date range instead.
  */
 export function CohortReport({ input }: { input: ReportInput }) {
-  const { summary, profile, colors, metricId } = input;
+  const { summary, colors } = input;
   // Distinct from the live tree's, because both are mounted at once and
   // `SessionStrategy` builds SVG gradient ids out of it — two identical ids in
   // one document and every `url(#…)` resolves to the first.
   const revealKey = `${input.revealKey}:report`;
+  const points = useMemo(() => sessionOutcomePoints(summary), [summary]);
+  const labels = useMemo(() => taskLabels(summary), [summary]);
 
   return (
     <div className="flex flex-col gap-3">
+      {/* The headline run leads, exactly as on screen: strip, the combined
+          accuracy figure, then effort and outcome mix — all sharing x slots,
+          one unbroken run. */}
+      <TaskStrip points={points} labels={labels} />
+      <AccuracyTrend summary={summary} colors={colors} revealKey={revealKey} />
+      <div className="grid min-w-0 grid-cols-2 gap-3">
+        <EffortTrend summary={summary} revealKey={revealKey} />
+        <OutcomeMix summary={summary} revealKey={revealKey} />
+      </div>
+
       {/* `items-start` so a short roster gives a compact card here too, the
           way the capped rail does on screen. The rail itself takes
           `scroll={false}`: a rasterizer captures a scroll container as
@@ -43,20 +59,14 @@ export function CohortReport({ input }: { input: ReportInput }) {
           may make this row taller than the strategy tile — which is the right
           trade for a figure that cannot be scrolled. */}
       <div className="grid grid-cols-[224px_minmax(0,1fr)] items-start gap-3">
-        <AnimalRail
-          summary={summary}
-          profile={profile}
-          colors={colors}
-          metricId={metricId}
-          scroll={false}
-        />
+        <AnimalRail summary={summary} colors={colors} scroll={false} />
         <div className="grid min-w-0 grid-cols-2 gap-3">
-          <StrategySpace summary={summary} profile={profile} colors={colors} />
+          <StrategySpace summary={summary} colors={colors} />
           <LearningCurves
             summary={summary}
-            profile={profile}
             colors={colors}
             sessionScope={ALL_SESSIONS}
+            sessionRuns={[]}
             series={[]}
           />
         </div>
@@ -64,34 +74,10 @@ export function CohortReport({ input }: { input: ReportInput }) {
 
       <CohortHeatmap
         summary={summary}
-        profile={profile}
-        metricId={metricId}
         sessionScope={ALL_SESSIONS}
         revealKey={revealKey}
         scroll={false}
       />
-
-      {/* Stacked full-width and never side by side, exactly as on screen:
-          the two share x slots and a denominator, so the vertical gap
-          between the curves *is* the hold-failure rate — a reading that
-          only survives if a session sits above itself in both. Effort and
-          outcome mix share those slots too, so all four stay one run. */}
-      <RewardedTrend
-        summary={summary}
-        profile={profile}
-        colors={colors}
-        revealKey={revealKey}
-      />
-      <ResponseTrend
-        summary={summary}
-        profile={profile}
-        colors={colors}
-        revealKey={revealKey}
-      />
-      <div className="grid min-w-0 grid-cols-2 gap-3">
-        <EffortTrend summary={summary} profile={profile} revealKey={revealKey} />
-        <OutcomeMix summary={summary} profile={profile} revealKey={revealKey} />
-      </div>
     </div>
   );
 }

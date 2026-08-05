@@ -529,7 +529,7 @@ Wilson rather than the normal approximation because this data lives at small *n*
 
 ### 9.7 Pooled accuracy — the honest single number
 
-Alongside each declared metric, a run carries **`overall`**: correct trials over scored trials, pooled across every condition. It is offered first in the metric selector and is what the heatmap, the animal rail, and the session rail use by default.
+Alongside each declared metric, a run carries **`overall`**: correct trials over scored trials, pooled across every condition. It is what the heatmap, the animal rail, the session rail and the across-session learning curves read — the one metric-derived number defined the same way on every profile (§10).
 
 > [!IMPORTANT]
 > **Why this exists, discovered by looking at real output.** A single metric cannot show a side bias. An animal that pokes right on every trial scores ~1.0 on "P(R | Odor 1)" and ~0.0 on "P(L | Odor 3)". A heatmap keyed on the first declared metric therefore paints a **completely bias-locked animal as one of the best in the cohort** — the exact opposite of what the heatmap exists to show. Pooled, that animal sits at chance, which is the truth.
@@ -607,13 +607,27 @@ From which **`pEngaged = poked / presented`** — the participation rate — wit
 > [!CAUTION]
 > Matched by **anchored** name, and for a sharper reason here than anywhere else: `LIGHTS_OFF` is the same word and the opposite edge, and an unanchored match would roughly **double `presented`** while still looking plausible.
 
+### 9.11 The per-trial tape
+
+The tallies above answer *how often*; the session summary's expanded tile answers *when* — streaks, side-bias episodes, the moment an animal stopped working — and no aggregate can carry that. So `analytics.series` also returns each run's trials as a sequence: `TrialRecord {index, triggerCode, outcome, atMs, latencyMs}`, in stream order.
+
+- **The tape is the same classification pass §9.8's tally is summed from** — `_classify_trials` yields it and `_tally` consumes it; there is no second classifier to drift. The identity is pinned by test: tallying `trials_of` by outcome reproduces `outcomes_of`, and grouping it by `triggerCode` reproduces `conditions_of`. If the tape and the numbers beside it ever disagree, that test is the alarm.
+- `outcome` is the §9.8 classification, spelled hyphenated on the wire (`hold-failed`, `no-response`, …).
+- `atMs` is the trial's opening code, in ms from the run's **earliest** timestamp — earliest rather than first for `durationMs`'s reason: a hand-edited or concatenated file need not be ordered, and a negative elapsed time reads as a behaviour instead of being caught. `latencyMs` is open → the code that settled the outcome, null for `no-response`/`aborted` (nothing settles them) and nulled rather than reported when a disordered file would make it negative.
+- Empty — not null — when the profile can't express outcomes, on the same rule as `outcomes` itself (§9.8).
+- Rides on `analytics.series` rather than a command of its own: the file is already open and decoded there, and the panel that wants the tape is on screen with the ones that want the series. Like the series, it is deliberately uncached (§8.3).
+
 ---
 
 ## 10. The Observatory
 
-**One route, `/analytics`. No sub-routes, no tabs.** Cohort, task, session, and animal are persistent selectors, and the panels react to them.
+**One route, `/analytics`. No sub-routes, no tabs.** Cohort, session, and animal are persistent selectors, and the panels react to them.
 
-The **task** selector appears only when a cohort's archive holds more than one Task Profile, and defaults to the dominant one. It is not a convenience: a real cohort runs shaping before discrimination, and the profiles are not comparable — a shaping profile declares one condition where a discrimination profile declares two. Every panel is scoped by it, and changing task resets the metric selection.
+**There is no task filter.** There used to be one, and it existed for a real reason — a real cohort runs shaping before discrimination, and the declared metrics are not comparable across profiles — but it solved the incomparability by hiding part of the archive, and a dashboard where "9 sessions on another task" are invisible looks complete when it isn't. The rule is now split by what actually varies across tasks:
+
+- **The outcome tallies and the engagement ladder are vocabulary-defined** (§9.8, §9.10), identical measurements on every task — so the panels built on them (the combined accuracy figure, effort, outcome mix, the heatmap, the rails) show **every run** and disclose the task instead: the task strip (§11.9), a dashed rule in each trend where the dominant task changes, a task header row on the heatmap, and the task mix in every hover title. What changes across tasks is *difficulty*, and the disclosure is what keeps an accuracy cliff at a boundary reading as a task change rather than a cohort forgetting.
+- **The declared metrics remain incomparable**, so the panels that plot them — the two strategy planes — scope *themselves* to one two-condition profile (most-run first) and say what they left out; when the archive holds more than one two-condition task, the plane carries a panel-local switch. The learning-curves panel plots each run's pooled overall accuracy (§9.7) for the same reason: it is the one metric-derived number defined the same way on every profile.
+- The old metric selector is gone with it: the heatmap and rail read pooled overall accuracy (the honest default, §9.7), and the per-condition numbers live where conditions are already side by side — the strategy planes, the session summary, and the per-session curves.
 
 ### 10.1 Selection is a filter, not a navigation event
 
@@ -641,14 +655,16 @@ The rail is also the browse surface, so it is a visualization in its own right r
 
 Two collisions a date axis cannot resolve by itself:
 
-- **Same-day sessions** share a position. They fan out horizontally around their date, and a day is never drawn narrower than the widest such fan, so one date's cluster can never drift across the next and make a real break look shorter than it was.
+- **Same-day sessions** share a position. They zigzag over **two rows** around their date — halving the cluster's horizontal span, because the minimum day width is global and one six-rerun day used to widen every quiet day in the rail. A day is still never drawn narrower than its own cluster, so one date can never drift across the next and make a real break look shorter than it was. Stacked marks share an x, so their number labels are suppressed except on the selected one.
 - **Dense stretches** would overlap their labels. Per-mark session numbers appear only when the tightest pair can hold them, and date labels thin out on the same principle.
+
+The rail **opens scrolled to the recent end** — the reader's question is almost always about the latest sessions — and keeps the selected mark in view (a Dashboard row can select a session the rail has never shown). Edge fades appear over whichever side has more to scroll to, because a scroller with no visible edge reads as a static picture.
 
 A session that recorded nothing is drawn **hollow**, not grey: "nothing to score" and "scored badly" must not look alike.
 
 ### 10.3 The animal rail
 
-One row per animal, grouped by the cohort's groups — since groups are usually the experimental conditions and the comparison is usually between them. Each row carries the animal's identity colour, a sparkline of its across-session trend, and its latest value in JetBrains Mono. Hover previews, click pins.
+One row per animal, grouped by the cohort's groups — since groups are usually the experimental conditions and the comparison is usually between them (names numeric-aware within a group, §11.4's rule). Each row carries the animal's identity colour, a sparkline of its across-session trend — every run, at pooled overall accuracy (§9.7), so the history is the animal's and not one task's — and its latest value in JetBrains Mono. Hover previews, click pins.
 
 **The rail shares its row with the strategy tile and nothing else, and it caps at that tile's height.** It used to be a single grid item beside the *whole* panel stack, and grid items stretch, so a twelve-animal list ending around 450px was drawn on a card that kept going for another 1200px of empty surface. Everything below now spans the full content width instead of being indented behind it — which is what freed the space §11.3's heatmap moved up into.
 
@@ -733,6 +749,10 @@ The panel that separates *learning* from *being lucky*. An animal at 70% correct
 
 For a profile declaring exactly two metrics, each session-animal pair becomes one point: **x** = `pSession` of `liveMetrics[0]`, **y** = `pSession` of `liveMetrics[1]`.
 
+**The plane scopes itself** (§10): of the archive's two-condition profiles it shows the most-run, named in the title; when more than one exists, a panel-local segmented switch swaps the plane — a GRGL point and an EZ-variant point on shared axes remain a category error even though both declare two metrics. Runs it cannot plot are counted below the frame, never silently absent. The within-session panel (§11.1's twin at trial resolution) scopes the same way from the selected session's own runs.
+
+**The reading key is folded.** The region/axis prose (`StrategyNote`) sits behind a `how to read this` disclosure — the graph-tile motif shared with the learning curves — because a chart's key is useful once per reader and was standing taller than the plane. The fold is education only: data disclosures ("N runs on other tasks") stay outside it, and report sheets render the key open with the toggle hidden, since paper cannot be clicked.
+
 | Position | Meaning |
 |---|---|
 | Top-right `(1,1)` | Perfect discrimination — correct on both conditions |
@@ -784,8 +804,10 @@ P(correct) over time, at whichever resolution the session selector implies.
 
 | Scope | x axis | y | Source |
 |---|---|---|---|
-| One session | counted trial index | rolling P(hit) at the authored `windowSize` | the rolling series |
-| All sessions | session, positioned by date | `pSession` | one point per session |
+| One session | counted trial index | rolling P(hit) at the authored `windowSize`, one chart per condition any of the session's runs declares | the rolling series |
+| All sessions | each animal's own run ordinal | pooled overall accuracy per run (§9.7), one chart | one point per run |
+
+Across sessions the panel is **one chart of overall accuracy over every run, whatever task** — "how is this animal doing" is a question about the animal, and per-condition histories per task would be a wall of sparse charts (the strategy space carries the per-condition story). Within a session the charts are the union of the session's declared conditions, so a mixed-task session grows charts rather than hiding runs.
 
 One line per animal in its identity colour; the highlighted animal gains weight, the rest drop to a dim opacity. Chance at 0.5, dashed. A Wilson band behind each line, drawn at low opacity so six overlapping bands stay readable.
 
@@ -794,13 +816,13 @@ One line per animal in its identity colour; the highlighted animal gains weight,
 
 ### 11.3 The cohort heatmap
 
-Rows are animals grouped by group; columns are sessions in chronological order; each cell is that animal's `pSession` for that session. It answers "who is learning and who is stuck" across a whole cohort in about two seconds, which no line chart does.
+Rows are animals grouped by group (name order numeric-aware within a group, §11.4's rule); columns are **every session in chronological order**; each cell is that run's pooled overall accuracy (§9.7) — fraction correct at whatever that animal was doing that day. It answers "who is learning and who is stuck" across a whole cohort in about two seconds, which no line chart does.
 
-**Columns are scoped to the selected task profile**, not to every session the cohort ever ran. Sessions with no run on that task are dropped from the axis, and the count dropped is stated in the header — a filter that silently removes columns is indistinguishable from an archive that never had them. Without this the surface put a shaping column beside a discrimination column on one colour scale, and **a change of *task* read as a collapse in *performance***.
+**A task header row above the grid marks where the dominant task changes**, with a dashed rule dropped through the columns at each boundary, and every cell's hover names its run's task. This is what lets all sessions share one colour scale honestly: the scale means "fraction correct", the header says at what, and a column of suddenly-worse cells under a new label reads as the task change it is rather than a performance collapse. (The panel used to solve this by scoping its columns to the selected task and dropping the rest — which traded one misreading for a surface that looked complete while hiding sessions.) A session that mixed tasks is marked `+` on its header segment.
 
 The heatmap is also a selector: clicking a cell selects that animal and that session, a row header selects the animal across all sessions, a column header selects the whole session.
 
-**It sits directly under the rail row, spanning the full content width.** It is the one panel whose width is set by how much archive there is rather than by its container — fixed pixels per session — so it is the one with something to do with the room, and the ~236px the capped rail freed (§10.3) is real. That is a delay, not a reprieve: the width still grows with session count, so a fifty-session cohort scrolls sideways regardless. It also means the heatmap's columns never lined up with the four trend panels' x slots and nothing was lost by moving it away from them — its columns are task-scoped and drop sessions, theirs are not.
+**It sits directly under the rail row, spanning the full content width.** It is the one panel whose width is set by how much archive there is rather than by its container — fixed pixels per session — so it is the one with something to do with the room, and the ~236px the capped rail freed (§10.3) is real. That is a delay, not a reprieve: the width still grows with session count, so a fifty-session cohort scrolls sideways regardless.
 
 **Four cell states that must never be confused:**
 
@@ -820,33 +842,53 @@ Values are shown **in the cell**, in mono, with the label colour flipping betwee
 
 ### 11.4 The session summary
 
-Selecting a session opens it up beneath the cohort views. **One card per animal**, not one row — the per-condition counts need a second dimension.
+Selecting a session opens it up **directly beneath the session rail** — the summary answers the click where it happened, not below three screens of cohort-scale panels. Inside: a comparison table, then **one card per animal** — the per-condition counts need a second dimension a row can't give, and the table gives the at-a-glance comparison six cards can't.
+
+**Every animal that ran is in the panel, in animal-name order.** The across-session panels are scoped to one task profile because their metrics must be comparable; the summary deliberately is not — it is a roll call, and an animal missing from it reads as "didn't run", which is the one thing the panel must never say wrongly. Two consequences:
+
+- A run on a *different sketch* appears with its program named on its tile and in the table's Program column; conditions its task doesn't declare are dashed, not zeroed.
+- A run that can't be scored — missing file, unreadable file, no task profile — appears **muted with the reason**, never as a row of zeroes. "This animal earned nothing" and "we cannot say" are different claims (§9.8's rule, applied to the panel).
+- The name order is numeric-aware (`remy2` before `remy10`) and stable across sessions, so the grid stops reshuffling by whichever box happened to start first.
+- The headline's pooled percentages appear **only when every scored run shares one profile** — pooling across tasks mixes denominators that mean different things, so a mixed-task session states the mix and points at the table.
+
+**The table**: `animal · start · end · sampled · per condition {sampled, P(correct)} · program`. Start/end are the run's own local wall-clock times. The condition columns are the union of what the session's runs declare, in authored order — derived from the task profiles, never written down. `P(correct)` **is `pRewarded` — reward delivered, the animal held** — deliberately stricter than §9.8's response accuracy, and the header and legend both say so because the two look interchangeable and are not. Under `minCountedTrials` administered trials a cell dims and carries its n — flagged, never suppressed (§9.5).
 
 Each card answers, in this order:
 
 | | |
 |---|---|
-| **Offered · trials · administered · aborted** | The effort header. Administered is every accuracy's denominator, so it is stated before any rate — and `offered` leads, because it is the outermost denominator and the one count nothing else on the card can reveal. Hovering spells out the two ladder gaps |
-| **Per condition**, one row each, in authored order | `administered`, then `rewarded` and `correct` each as `count · rate` over **that condition's** administered trials, beside that condition's within-session trajectory |
-| **Rewarded vs response** | The two accuracies, as **one** bar, not two |
-| **Outcome composition** | How the administered trials resolved |
+| **Name · program · box** then **offered · trials · administered · aborted** | Who, on what, and the effort. Administered is every accuracy's denominator, so it is stated before any rate — and `offered` leads, because it is the outermost denominator and the one count nothing else on the card can reveal. Hovering spells out the two ladder gaps |
+| **Per condition**, one row each, in authored order | `administered`, `rewarded` as `count · rate` over **that condition's** administered trials, then **how that condition's trials resolved** as a stacked outcome bar, beside the condition's within-session trajectory |
+| **All administered trials** | The whole run's resolution as one bar — the total the per-odor rows visibly sum into |
 
-- **The two accuracies share one track.** Response accuracy is `(rewarded + holdFailed) / administered` and rewarded is `rewarded / administered`, so the second is a **subset** of the first. Drawing rewarded as a filled span *inside* the response span makes the containment structural, and the remaining segment **is** the hold-failure rate rather than a number the reader has to subtract.
-- **The outcome bar is scaled by administered count**, not normalised per animal: a rat that engaged with half as many trials reads as half a bar rather than a full bar of different proportions.
+- **The per-odor bars are scaled by that condition's administered count** against the card's widest condition, and the run-level bar likewise against the card's own width: a rat that engaged with half as many trials reads as half a bar rather than a full bar of different proportions.
+- The old *rewarded vs side* bar is gone — its numbers were already printed on the card, and the question the card now answers per odor (fail-to-hold vs wrong-well vs no-response) is the one operators actually ask.
 
-### 11.5 Rewarded and response accuracy across sessions
+**Clicking a card expands it** (single-open, full row width) into four per-animal views behind a segmented selector:
 
-Two panels, stacked, deliberately not one:
+| | |
+|---|---|
+| **Tape** | Every trial in session order, one lane per condition, coloured by resolution — built from §9.11's per-trial records. Streaks, side-bias episodes and the moment an animal stopped working live here and in no aggregate. Aborted trials draw at half height. Hover gives time-into-session and answer latency |
+| **Trajectory** | The rolling per-condition series at full size — the sparkline's honest version. The warm-up, where the window is still filling, draws dashed and dim |
+| **By odor** | The per-condition composition with its numbers spelled out. Sourced from the run's own tallies, so it renders even when the series call failed |
+| **Engagement** | §9.10's ladder as a funnel — offered → engaged → odor delivered → sampled → rewarded, each gap named. The one view that says whether a low accuracy is a discrimination problem or an animal that never came to the port |
 
-- **Rewarded accuracy** — what was actually earned. Cohort-pooled per session (summed trials, not averaged proportions) with a 95% Wilson band, saying `fluid delivered` in the frame so the basis is never in doubt.
-- **Response accuracy** — the same question asked of the **choice** instead of the **drop**. Same x slots, same `administered` denominator, same Wilson treatment, same hollow-mark rule, **same accent colour**.
+The export sheet renders the same panel with interaction off: the table and every card, collapsed.
+
+### 11.5 Accuracy across sessions — response and rewarded, one plot
+
+The page's headline figure, first under the session rail. Two lines on one chart, cohort-pooled per session (summed trials, not averaged proportions):
+
+- **Response accuracy** — the **choice**: the correct well was answered, hold or not. Drawn in Starlight, the colour the session summary already prints this figure in.
+- **Rewarded accuracy** — the **drop**: fluid actually delivered. Drawn in `OUTCOME_STYLE.rewarded`, likewise the summary's own colour for it.
+- **The shaded area between them is the consummatory hold-failure rate**, filled with `holdFailed`'s colour at low opacity — so the same behaviour keeps the same colour from a session card's bar to the archive-scale figure, and the gap reads as a *quantity* rather than as a distance to be estimated between two stacked panels (which is what this used to be).
+
+Same x slots, same `administered` denominator, same hollow-mark rule for both lines; each gets a faint 95% Wilson ribbon on its *own* numerator, because an interval is per-figure and the two have different numerators.
 
 > [!IMPORTANT]
-> **Everything is held identical so the two can be read against each other**, because this line is always the higher of the two and **the vertical gap between them is the consummatory hold-failure rate.** Giving response accuracy its own colour would imply the two measure different things rather than the same thing at two strictnesses. The one place they differ is the band: each gets a Wilson interval on its *own* numerator.
->
-> **The Squeekstreet archive is the argument for this panel.** Across its 30 sessions response accuracy climbs 0.55 → 0.99 while rewarded accuracy stays flat and even falls, 0.64 → 0.26 → 0.44; the gap widens from 0.09 to 0.60. Read on the rewarded panel alone, that cohort looks like it never learned the task or got worse at it. **It learned the discrimination almost perfectly and simply does not hold for the fluid** — the opposite conclusion, and one no single panel could have reached.
+> **The Squeekstreet archive is the argument for this figure.** Across its 30 sessions response accuracy climbs 0.55 → 0.99 while rewarded accuracy stays flat and even falls, 0.64 → 0.26 → 0.44; the gap widens from 0.09 to 0.60. Read on the rewarded line alone, that cohort looks like it never learned the task or got worse at it. **It learned the discrimination almost perfectly and simply does not hold for the fluid** — the opposite conclusion, and one no single line could have reached. On one plot that story is the widening orange band.
 
-Both share one x-slot list with §11.6 and §11.7 — one point per session with at least one outcome tally — so a session sits above itself in all four. Hovering an animal fades the cohort figure back and overlays that animal's own line on the same slots. Sessions the animal sat out bridge dashed rather than interpolating.
+Shares its x-slot list with §11.6 and §11.7 — one point per session with at least one outcome tally — so a session sits above itself in all three, and the task strip (§11.9) sits directly above with its boundaries on the same slots. Hovering an animal fades the cohort figure back and overlays that animal's own response/rewarded pair in its identity colour. Sessions the animal sat out bridge dashed rather than interpolating. The reading key lives behind the `how to read this` fold (§11.1's motif).
 
 ### 11.6 Effort across sessions
 
@@ -901,6 +943,12 @@ Worst-case pairwise separation is **ΔE ≈ 10 under normal, deuteranopic, and p
 > **A finding worth recording.** Void, Nebula, Halo, Static and Starlight all sit at **hue 285–295** — the entire neutral stack is tinted toward Pulsar's 291. That is *why* the app reads as one coherent thing rather than a dark theme with a purple accent bolted on, and it is the rule any future token should respect.
 
 ---
+
+### 11.9 The task strip
+
+A slim strip above the trend run — the combined accuracy figure (§11.5), effort and outcome mix: one segment per unbroken run of sessions sharing a dominant task, labelled with the program name (the session summary's chip vocabulary), on **the trends' own session slots** — so a segment boundary here sits vertically above the dashed task-change rule each trend draws at the same x. Hovering a segment gives the session range it spans and, for sessions that mixed tasks (marked `+`), the full per-session mix.
+
+It exists because the trends deliberately pool every task (§10): the pooled measurements are identical across tasks but the difficulty is not, and the strip is what keeps that pooling honest. It renders nothing for a single-task archive — one label over everything would be noise — and nothing within a session selection, where the summary's Program column already carries the fact.
 
 ## 12. Crash recovery
 

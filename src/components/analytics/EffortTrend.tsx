@@ -4,10 +4,13 @@ import { useMemo } from "react";
 import { ChartFrame } from "@/components/charts/ChartFrame";
 import { useRevealOnView } from "@/components/charts/reveal";
 import { UnitChart } from "@/components/charts/UnitChart";
-import type { AnalyticsSummary, ProfileGroup } from "@/lib/analytics/types";
+import type { AnalyticsSummary } from "@/lib/analytics/types";
 import {
+  describeTaskMix,
   sessionOutcomePoints,
   sessionSlot,
+  taskChanges,
+  taskLabels,
   type SessionOutcomePoint,
 } from "@/lib/analytics/view";
 
@@ -37,13 +40,13 @@ import {
 
 const HEIGHT = 54;
 
-/** Fixed rather than aspect-driven, for the reason `RewardedTrend` states —
- *  and the same value, so the row below it reads as one band. */
+/** Fixed rather than aspect-driven, for the reason `AccuracyTrend` states —
+ *  this panel spans half the column, and an aspect-driven height would put a
+ *  trend line in a field of empty plot. */
 const PLOT_PX = 132;
 
 export function EffortTrend(props: {
   summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
   /** Changes when the data does — remounts the body, so the reveal re-arms
    *  and again waits to be seen (§2.7). */
   revealKey: string;
@@ -51,15 +54,10 @@ export function EffortTrend(props: {
   return <EffortBody key={props.revealKey} {...props} />;
 }
 
-function EffortBody({
-  summary,
-  profile,
-}: {
-  summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
-}) {
+function EffortBody({ summary }: { summary: AnalyticsSummary }) {
   const { ref, seen } = useRevealOnView();
-  const points = useMemo(() => sessionOutcomePoints(summary, profile), [summary, profile]);
+  const points = useMemo(() => sessionOutcomePoints(summary), [summary]);
+  const labels = useMemo(() => taskLabels(summary), [summary]);
 
   if (points.length === 0) return null;
 
@@ -72,6 +70,10 @@ function EffortBody({
     { offered: 0, administered: 0 },
   );
   const width = barWidth(points.length);
+  const changes = taskChanges(points).map((change) => ({
+    from: { x: change.x, y: 0 },
+    to: { x: change.x, y: 1 },
+  }));
 
   return (
     <div className="surface rounded-md p-4" ref={ref}>
@@ -97,7 +99,7 @@ function EffortBody({
         }
       >
         <div style={{ height: PLOT_PX }}>
-          <UnitChart height={HEIGHT} className="h-full w-full">
+          <UnitChart height={HEIGHT} className="h-full w-full" references={changes}>
             {points.map((point, index) => (
               <EffortBar
                 key={point.session.id}
@@ -106,6 +108,7 @@ function EffortBody({
                 width={width}
                 max={maxTrials}
                 seen={seen}
+                labels={labels}
                 // Bars surface in the order the sessions happened, so the
                 // reveal reads as history being laid down (§2.7).
                 delay={sessionSlot(index, points.length) * 0.5}
@@ -124,6 +127,7 @@ function EffortBar({
   width,
   max,
   seen,
+  labels,
   delay,
 }: {
   point: SessionOutcomePoint;
@@ -131,6 +135,7 @@ function EffortBar({
   width: number;
   max: number;
   seen: boolean;
+  labels: Map<string, string>;
   delay: number;
 }) {
   const { administered } = point.outcomes;
@@ -144,7 +149,7 @@ function EffortBar({
       animate={{ opacity: seen ? 1 : 0 }}
       transition={{ duration: 0.28, delay }}
     >
-      <title>{describeBar(point)}</title>
+      <title>{describeBar(point, labels)}</title>
       {total > administered && (
         <rect
           x={x}
@@ -182,7 +187,7 @@ function offered(point: SessionOutcomePoint): number {
   return point.engagement.known ? point.engagement.presented : point.outcomes.trials;
 }
 
-function describeBar(point: SessionOutcomePoint): string {
+function describeBar(point: SessionOutcomePoint, labels: Map<string, string>): string {
   const { session, outcomes, engagement } = point;
   // The full ladder when the profile can express it — the two gaps are
   // different behaviours (never engaged vs let go before odor) and the bar
@@ -195,7 +200,10 @@ function describeBar(point: SessionOutcomePoint): string {
       `${outcomes.aborted} aborted`
     : `${outcomes.trials} trials · ${outcomes.administered} administered · ` +
       `${outcomes.aborted} aborted`;
-  return `${session.prefixName}_${session.sessionNumber} · ${session.date}\n${effort}`;
+  return (
+    `${session.prefixName}_${session.sessionNumber} · ${session.date}` +
+    ` · ${describeTaskMix(point.tasks, labels)}\n${effort}`
+  );
 }
 
 /** Bar width in viewBox units — a slice of the slot spacing, capped so a

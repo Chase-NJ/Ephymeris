@@ -256,12 +256,17 @@ class AnalyticsService:
             # screen as the ones that want the series. It is empty for any
             # profile that doesn't declare exactly two conditions.
             trail = derive.strategy_trail(result.document, resolved.profile)
+            # The per-trial tape rides along for the same reason the trail
+            # does: the file is already open and decoded, and the panel that
+            # wants it is on the same screen as the ones that want the series.
+            trials = derive.trials_of(result.document, resolved.profile)
             out.append(
                 {
                     "runId": run_id,
                     "mode": mode,
                     "metrics": [m.to_json() for m in metrics],
                     "trail": [p.to_json() for p in trail],
+                    "trials": [t.to_json() for t in trials],
                 }
             )
         return {"series": out, "warnings": warnings}
@@ -294,6 +299,20 @@ class AnalyticsService:
                 _normalize(s.folder_path)
                 for s in self._sessions.list_sessions(cohort.id, include_aborted=True)
                 if s.folder_path
+            }
+            # Adopted folders are indexed too. Adoption deliberately writes no
+            # `sessions` row (§8.1), so without this a folder adopted via
+            # rescan reported `recorded: false` forever — and the Dashboard
+            # badge told the user to run the rescan they had already run. The
+            # synthetic sessions carry the same folder the walk yields
+            # (`reader.session_folder_of`), so the two sides agree by
+            # construction. One indexed read per cohort (`idx_adopted_cohort`)
+            # keeps this Dashboard-cheap.
+            synthetic, _ = _synthetic_sessions(
+                self._repo.adopted_for_cohort(cohort.id), cohort.id
+            )
+            recorded |= {
+                _normalize(s.folder_path) for s in synthetic if s.folder_path
             }
             for session_dir in reader.walk_session_dirs(cohort.data_folder):
                 parsed = parse_session_folder(session_dir.name)

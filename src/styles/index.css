@@ -268,6 +268,25 @@
     display: none;
   }
 
+  /* A hairline scrollbar for in-tile horizontal rails (the session
+     timeline). The document scrollbar's 10px is right for a page and heavy
+     for a strip of dots; this one stays out of the way and brightens under
+     the pointer. */
+  .scrollbar-slim {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--color-halo) 75%, transparent) transparent;
+  }
+  .scrollbar-slim::-webkit-scrollbar {
+    height: 5px;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--color-halo) 75%, transparent);
+    border-radius: 999px;
+  }
+  .scrollbar-slim:hover::-webkit-scrollbar-thumb {
+    background: var(--color-halo);
+  }
+
   /* §2.4 HUD panels docked over a live 3D scene — the Dashboard's tile column,
      following the treatment NodeDetail and StarPanel established. Translucent
      so the sky reads through, blurred so the panel's own text stays legible.

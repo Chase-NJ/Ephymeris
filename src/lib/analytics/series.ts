@@ -22,7 +22,13 @@ const NONE: RunSeries[] = [];
 
 export function useRunSeries(client: SidecarClient, runs: RunSummary[]): RunSeries[] {
   const [series, setSeries] = useState<RunSeries[]>(NONE);
-  const ids = runs.map((run) => run.runId).join(",");
+  // The sidecar rejects the whole request past MAX_SERIES_RUNS (24), not the
+  // excess. A session normally holds ≤6 runs, but restarts and duplicate
+  // adoptions can pile on — better a few missing trajectories than none.
+  const ids = runs
+    .slice(0, 24)
+    .map((run) => run.runId)
+    .join(",");
 
   useEffect(() => {
     if (!ids) {

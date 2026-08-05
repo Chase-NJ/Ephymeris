@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/common/controls";
 import { useAnalyticsStore } from "@/lib/analytics/context";
@@ -35,6 +35,10 @@ import { binFor, daysBetween } from "@/lib/analytics/view";
 const MARK = 11;
 /** Horizontal step between same-day marks. */
 const MARK_GAP = 17;
+/** How far a same-day cluster's odd marks lift off the axis. Two rows halve a
+ *  cluster's horizontal span, which is what stops one six-rerun day from
+ *  widening every quiet day in the rail (`pxPerDay` is global). */
+const ROW_LIFT = 13;
 /** Floor on a day's width, so a dense week still reads as a week. */
 const MIN_PX_PER_DAY = 34;
 const MIN_SPAN_WIDTH = 300;
@@ -58,10 +62,52 @@ export function SessionRail({
   const store = useAnalyticsStore();
   const stats = useMemo(() => sessionStats(summary), [summary]);
   const layout = useMemo(() => layOut(sessions), [sessions]);
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const [overflow, setOverflow] = useState({ left: false, right: false });
+
+  // Which archive is on the rail — not how many sessions it has. Keyed on the
+  // endpoints so a rescan that appends a session re-anchors to the new end,
+  // while a mere re-render (hover, selection) never yanks the scroll position.
+  const archiveKey = `${sessions[0]?.id ?? ""}:${sessions[sessions.length - 1]?.id ?? ""}`;
+
+  const syncOverflow = () => {
+    const el = scroller.current;
+    if (!el) return;
+    setOverflow({
+      left: el.scrollLeft > 2,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2,
+    });
+  };
+
+  // Open at the recent end: the reader's question is almost always about the
+  // latest sessions, and a rail that opens on week one answers last month.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth;
+    syncOverflow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [archiveKey]);
+
+  // Keep the selected mark in view — the Dashboard arrival path selects a
+  // session this rail has never shown. Manual arithmetic rather than
+  // `scrollIntoView`, which would also scroll the page vertically.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || selected === ALL_SESSIONS) return;
+    const mark = el.querySelector<HTMLElement>(`[data-session-id="${CSS.escape(selected)}"]`);
+    if (!mark) return;
+    const centre = mark.offsetLeft + mark.offsetWidth / 2;
+    const target = centre - el.clientWidth / 2;
+    if (Math.abs(el.scrollLeft - target) > el.clientWidth / 4) {
+      el.scrollTo({ left: target, behavior: "smooth" });
+    }
+    syncOverflow();
+  }, [selected, archiveKey]);
 
   if (sessions.length === 0) {
     return (
-      <div className="surface rounded-md px-4 py-3">
+      <div className="rounded-md px-4 py-3">
         <p className="text-[12px] text-static">
           No sessions recorded for this cohort yet.
         </p>
@@ -73,7 +119,10 @@ export function SessionRail({
   const selectedSession = sessions.find((s) => s.id === selected) ?? null;
 
   return (
-    <div className="surface rounded-md px-4 py-3">
+    // No surface: the rail floats on the sky, its marks reading as the small
+    // constellation they are. The panels below keep their cards; the rail is
+    // chrome-free navigation above them.
+    <div className="rounded-md px-4 py-3">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-[11px] text-static">
           Sessions
@@ -87,18 +136,25 @@ export function SessionRail({
         </Button>
       </div>
 
-      <div className="mt-1 overflow-x-auto pb-1">
-        <div className="relative h-[62px]" style={{ width }}>
+      {/* `relative` wrapper so the edge fades can sit over the scroller —
+          a scroller with no visible edge reads as a static picture. */}
+      <div className="relative">
+        <div
+          ref={scroller}
+          className="scrollbar-slim mt-1 overflow-x-auto pb-1"
+          onScroll={syncOverflow}
+        >
+          <div className="relative h-[62px]" style={{ width }}>
           {/* The axis itself, drawn only across the span the data occupies. */}
-          <div
-            className="absolute border-t border-halo"
-            style={{ left: PAD, right: PAD, top: AXIS_Y }}
-          />
+            <div
+              className="absolute border-t border-static/25"
+              style={{ left: PAD, right: PAD, top: AXIS_Y }}
+            />
 
           {ticks.map((tick) => (
             <div key={tick.date}>
               <div
-                className="absolute w-px bg-halo"
+                className="absolute w-px bg-static/30"
                 style={{ left: tick.x, top: AXIS_Y, height: 4 }}
               />
               {tick.labelled && (
@@ -112,22 +168,28 @@ export function SessionRail({
             </div>
           ))}
 
-          {marks.map((mark) => {
-            const stat = stats.get(mark.session.id) ?? EMPTY_STAT;
-            const isSelected = selected === mark.session.id;
-            return (
-              <SessionMark
-                key={mark.session.id}
-                session={mark.session}
-                x={mark.x}
-                stat={stat}
-                selected={isSelected}
-                showNumber={showNumbers || isSelected}
-                onSelect={() => store.selectSession(mark.session.id)}
-              />
-            );
-          })}
+            {marks.map((mark) => {
+              const stat = stats.get(mark.session.id) ?? EMPTY_STAT;
+              const isSelected = selected === mark.session.id;
+              return (
+                <SessionMark
+                  key={mark.session.id}
+                  session={mark.session}
+                  x={mark.x}
+                  lift={mark.lift}
+                  stat={stat}
+                  selected={isSelected}
+                  // Stacked cluster marks share an x, so their labels would
+                  // print through each other — the selected one wins alone.
+                  showNumber={(showNumbers && !mark.clustered) || isSelected}
+                  onSelect={() => store.selectSession(mark.session.id)}
+                />
+              );
+            })}
+          </div>
         </div>
+        {overflow.left && <EdgeFade side="left" />}
+        {overflow.right && <EdgeFade side="right" />}
       </div>
 
       {/* One line that names what is selected, so the rail doesn't rely on a
@@ -173,9 +235,24 @@ function SelectedLine({ session, stat }: { session: SessionListItem; stat: Stat 
   );
 }
 
+/** The scrim that says "there is more this way". Void-tinted rather than a
+ *  solid, because `.surface` is translucent over the sky. */
+function EdgeFade({ side }: { side: "left" | "right" }) {
+  return (
+    <span
+      aria-hidden
+      className={`pointer-events-none absolute inset-y-0 w-7 ${side === "left" ? "left-0" : "right-0"}`}
+      style={{
+        background: `linear-gradient(to ${side === "left" ? "right" : "left"}, color-mix(in srgb, var(--color-void) 80%, transparent), transparent)`,
+      }}
+    />
+  );
+}
+
 function SessionMark({
   session,
   x,
+  lift,
   stat,
   selected,
   showNumber,
@@ -183,12 +260,15 @@ function SessionMark({
 }: {
   session: SessionListItem;
   x: number;
+  /** True for a cluster's odd marks, drawn a row above the axis. */
+  lift: boolean;
   stat: Stat;
   selected: boolean;
   showNumber: boolean;
   onSelect: () => void;
 }) {
   const scored = stat.mean !== null;
+  const centreY = AXIS_Y - (lift ? ROW_LIFT : 0);
   return (
     <>
       {showNumber && (
@@ -203,6 +283,7 @@ function SessionMark({
       )}
       <motion.button
         type="button"
+        data-session-id={session.id}
         onClick={onSelect}
         whileHover={{ scale: 1.25 }}
         whileTap={{ scale: 0.95 }}
@@ -212,16 +293,20 @@ function SessionMark({
         title={tooltip(session, stat)}
         // The button is the hit target and is comfortably larger than the dot
         // it draws — a 3px mark is not something to ask anyone to click.
-        className="absolute flex items-center justify-center rounded-full focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-starlight"
+        className="group absolute flex items-center justify-center rounded-full focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-starlight"
         style={{
           left: x - MARK_GAP / 2,
-          top: AXIS_Y - MARK_GAP / 2,
+          top: centreY - MARK_GAP / 2,
           width: MARK_GAP,
           height: MARK_GAP,
         }}
       >
         <span
-          className="block rounded-full"
+          // Hovering lights the mark in its own colour — a session-mark glow,
+          // never one on the Pulsar accent (the theme's no-glow rule protects
+          // the accent, not the data). Inline `boxShadow` on the selected mark
+          // wins over the hover class, so the ring never flickers.
+          className="block rounded-full transition-[box-shadow] duration-150 group-hover:[box-shadow:0_0_9px_1px_var(--mark-glow)]"
           style={{
             width: MARK,
             height: MARK,
@@ -229,8 +314,11 @@ function SessionMark({
             // score" and "scored badly" must not look alike.
             background: scored ? binFor(stat.mean!).fill : "transparent",
             border: scored ? "none" : "1px dashed var(--color-static)",
-            boxShadow: selected ? "0 0 0 2px var(--color-starlight)" : "none",
-          }}
+            "--mark-glow": scored ? binFor(stat.mean!).fill : "var(--color-static)",
+            boxShadow: selected
+              ? "0 0 0 2px var(--color-starlight), 0 0 12px 2px color-mix(in srgb, var(--color-starlight) 40%, transparent)"
+              : undefined,
+          } as React.CSSProperties}
         />
       </motion.button>
     </>
@@ -267,6 +355,11 @@ function shortDate(iso: string): string {
 interface Mark {
   session: SessionListItem;
   x: number;
+  /** Odd cluster members sit a row above the axis (`ROW_LIFT`). */
+  lift: boolean;
+  /** Part of a same-day cluster — its number label is suppressed unless
+   *  selected, since stacked marks share an x. */
+  clustered: boolean;
 }
 
 interface Tick {
@@ -306,8 +399,10 @@ function layOut(sessions: SessionListItem[]): {
     else byDate.set(session.date, [session]);
   }
 
+  // Same-day marks zigzag over two rows, so a cluster's horizontal span is
+  // set by ceil(n/2) columns — one dense rerun day used to widen every day.
   const widest = Math.max(...[...byDate.values()].map((group) => group.length));
-  const clusterSpan = (widest - 1) * MARK_GAP;
+  const clusterSpan = (Math.ceil(widest / 2) - 1) * MARK_GAP;
   // A day has to be at least as wide as the widest same-day cluster plus a
   // gap, or two dates' clusters overlap and the axis understates a real break.
   const pxPerDay = Math.max(MIN_PX_PER_DAY, clusterSpan + MARK_GAP);
@@ -325,13 +420,24 @@ function layOut(sessions: SessionListItem[]): {
     const labelled = x - lastLabelX >= DATE_LABEL_MIN_GAP;
     if (labelled) lastLabelX = x;
     ticks.push({ date, x, labelled });
+    const columns = Math.ceil(group.length / 2);
     group.forEach((session, index) => {
-      marks.push({ session, x: x + (index - (group.length - 1) / 2) * MARK_GAP });
+      marks.push({
+        session,
+        x: x + (Math.floor(index / 2) - (columns - 1) / 2) * MARK_GAP,
+        lift: index % 2 === 1,
+        clustered: group.length > 1,
+      });
     });
   }
 
-  // Per-mark numbers only when the tightest pair can hold them.
-  const gaps = marks.slice(1).map((mark, i) => mark.x - marks[i]!.x);
+  // Per-mark numbers only when the tightest pair of *label positions* can
+  // hold them. Stacked marks share an x and are excluded — their labels are
+  // suppressed per mark instead (`clustered`).
+  const xs = [...new Set(marks.filter((m) => !m.clustered).map((m) => m.x))].sort(
+    (a, b) => a - b,
+  );
+  const gaps = xs.slice(1).map((x, i) => x - xs[i]!);
   const showNumbers = gaps.length === 0 || Math.min(...gaps) >= LABEL_MIN_GAP;
 
   return { marks, ticks, width, days, showNumbers };

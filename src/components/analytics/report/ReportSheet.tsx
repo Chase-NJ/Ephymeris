@@ -5,7 +5,6 @@ import { Footnote } from "@/components/analytics/Footnote";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
 import type {
   AnalyticsSummary,
-  ProfileGroup,
   RunSeries,
   RunSummary,
   SessionListItem,
@@ -36,14 +35,14 @@ import { SessionReport } from "./SessionReport";
  *  all in hand for the live panels. */
 export interface ReportInput {
   summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
   colors: Map<string, string>;
-  metricId: string | null;
   cohortName: string;
   revealKey: string;
   /** `null` exports the cohort; a session exports that session. */
   session: SessionListItem | null;
-  sessionRuns: RunSummary[];
+  /** Every run in the selected session, whatever task (`session.ts`) — the
+   *  panels scope themselves from it, exactly as on screen. */
+  sessionAllRuns: RunSummary[];
   sessionSeries: RunSeries[];
 }
 
@@ -176,7 +175,7 @@ export function ReportSheet({
 }
 
 /**
- * Who, what task, which metric, and when — the provenance a screenshot loses.
+ * Who, what tasks, and when — the provenance a screenshot loses.
  *
  * The date range is here rather than implied by the panels because the sheet
  * has no `SessionRail`: the heatmap's x axis is evenly spaced by session index,
@@ -184,10 +183,7 @@ export function ReportSheet({
  * a fortnight is a different experiment from twelve over three months.
  */
 function Masthead({ input }: { input: ReportInput }) {
-  const { summary, profile, session, metricId, cohortName } = input;
-
-  const metricLabel =
-    profile?.metrics.find((metric) => metric.id === metricId)?.label ?? null;
+  const { summary, session, cohortName } = input;
 
   const span = useMemo(() => {
     const dates = [...summary.sessions]
@@ -202,9 +198,15 @@ function Masthead({ input }: { input: ReportInput }) {
     return first === last ? first : `${first} → ${last}`;
   }, [summary]);
 
+  // Every task the sheet spans, most-run first — the sheet no longer scopes
+  // to one, so the masthead names them all.
+  const tasks = [...summary.profileGroups]
+    .sort((a, b) => b.runCount - a.runCount)
+    .map((group) => group.taskName ?? "Unnamed task")
+    .join(" · ");
+
   const facts = [
-    profile?.taskName ?? "Unnamed task",
-    metricLabel,
+    tasks || null,
     span ? `${summary.sessions.length} sessions · ${span}` : null,
     `exported ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
   ].filter(Boolean);

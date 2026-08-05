@@ -5,13 +5,15 @@ import { barLeft, barWidth } from "@/components/analytics/EffortTrend";
 import { ChartFrame } from "@/components/charts/ChartFrame";
 import { useRevealOnView } from "@/components/charts/reveal";
 import { UnitChart } from "@/components/charts/UnitChart";
-import type { AnalyticsSummary, ProfileGroup } from "@/lib/analytics/types";
+import type { AnalyticsSummary } from "@/lib/analytics/types";
 import {
   OUTCOME_STYLE,
+  describeTaskMix,
   poolOutcomes,
-  runsInProfile,
   sessionOutcomePoints,
   sessionSlot,
+  taskChanges,
+  taskLabels,
   type OutcomeKey,
   type PooledOutcomes,
   type SessionOutcomePoint,
@@ -46,7 +48,6 @@ const STACK: readonly OutcomeKey[] = ["rewarded", "holdFailed", "wrongWell", "no
 
 export function OutcomeMix(props: {
   summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
   /** Changes when the data does — remounts the body, so the reveal re-arms
    *  and again waits to be seen (§2.7). */
   revealKey: string;
@@ -54,19 +55,18 @@ export function OutcomeMix(props: {
   return <MixBody key={props.revealKey} {...props} />;
 }
 
-function MixBody({
-  summary,
-  profile,
-}: {
-  summary: AnalyticsSummary;
-  profile: ProfileGroup | null;
-}) {
+function MixBody({ summary }: { summary: AnalyticsSummary }) {
   const { ref, seen } = useRevealOnView();
-  const points = useMemo(() => sessionOutcomePoints(summary, profile), [summary, profile]);
+  const points = useMemo(() => sessionOutcomePoints(summary), [summary]);
+  const labels = useMemo(() => taskLabels(summary), [summary]);
 
   if (points.length === 0) return null;
 
-  const overall = poolOutcomes(runsInProfile(summary.runs, profile));
+  const overall = poolOutcomes(summary.runs);
+  const changes = taskChanges(points).map((change) => ({
+    from: { x: change.x, y: 0 },
+    to: { x: change.x, y: 1 },
+  }));
   const width = barWidth(points.length);
 
   return (
@@ -89,7 +89,11 @@ function MixBody({
         // crushing the dates on either side of it.
       >
         <div style={{ height: PLOT_PX }}>
-          <UnitChart height={HEIGHT} className="h-full w-full" references={[{ y: 0.5 }]}>
+          <UnitChart
+            height={HEIGHT}
+            className="h-full w-full"
+            references={[{ y: 0.5 }, ...changes]}
+          >
             {points.map((point, index) =>
               point.outcomes.administered === 0 ? null : (
                 <MixBar
@@ -98,6 +102,7 @@ function MixBody({
                   x={barLeft(index, points.length, width)}
                   width={width}
                   seen={seen}
+                  labels={labels}
                   // Bars surface in session order, like the effort panel and
                   // the heatmap columns (§2.7).
                   delay={sessionSlot(index, points.length) * 0.5}
@@ -117,12 +122,14 @@ function MixBar({
   x,
   width,
   seen,
+  labels,
   delay,
 }: {
   point: SessionOutcomePoint;
   x: number;
   width: number;
   seen: boolean;
+  labels: Map<string, string>;
   delay: number;
 }) {
   const administered = point.outcomes.administered;
@@ -141,7 +148,7 @@ function MixBar({
       animate={{ opacity: seen ? 1 : 0 }}
       transition={{ duration: 0.28, delay }}
     >
-      <title>{describeBar(point)}</title>
+      <title>{describeBar(point, labels)}</title>
       {segments.map((segment) => (
         <rect
           key={segment.key}
@@ -156,10 +163,11 @@ function MixBar({
   );
 }
 
-function describeBar(point: SessionOutcomePoint): string {
+function describeBar(point: SessionOutcomePoint, labels: Map<string, string>): string {
   const { session, outcomes } = point;
   return (
-    `${session.prefixName}_${session.sessionNumber} · ${session.date}\n` +
+    `${session.prefixName}_${session.sessionNumber} · ${session.date}` +
+    ` · ${describeTaskMix(point.tasks, labels)}\n` +
     `${outcomes.administered} administered — ${shares(outcomes)}`
   );
 }

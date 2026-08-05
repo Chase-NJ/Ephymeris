@@ -27,6 +27,7 @@ export type {
   AnalyticsSummary,
   MetricSeries,
   StrategyPoint,
+  TrialRecord,
   RunSeries,
   SeriesResult,
   RescanOrphan,

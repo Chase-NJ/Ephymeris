@@ -270,6 +270,7 @@ def test_analytics_derive_payloads_match_schema() -> None:
     for name, value in (
         ("MetricSeries", derive.series(document, profile)[0].to_json()),
         ("StrategyPoint", derive.strategy_trail(document, profile)[0].to_json()),
+        ("TrialRecord", derive.trials_of(document, profile)[0].to_json()),
     ):
         assert validate(("ref", name), value) == [], name
 
@@ -308,6 +309,36 @@ def test_discovery_payloads_match_schema() -> None:
     # The damaged arm explicitly, since a dev machine will rarely produce it.
     damaged = SketchLibraryStatus("damaged", None, "missing", "bundled")
     assert validate(("ref", "SketchLibraryStatus"), damaged.to_json()) == []
+
+
+def test_capabilities_payload_matches_schema() -> None:
+    """The real emitter, over every topology the templates can be asked about.
+
+    `timingHelp`/`outcomeHelp` are the reason this is worth pinning: they are
+    projections of the template's own `timing_defaults`/`outcome_defaults`, so a
+    template that adds an outcome class or a duration adds a wire key here
+    without anyone touching `service.py`. The go/no-go arm is not decoration —
+    it is the only topology whose `correct` comes from `_GONOGO_CORRECT`, and
+    the only one whose class set omits `wrong`/`omission`/`hold_fail`.
+    """
+    from ephymeris_sidecar.specs import compiler, service
+
+    if not compiler.available():
+        pytest.skip("spec compiler unavailable (jsonschema/pyyaml not installed)")
+
+    for topology in (
+        {},
+        {"response_mode": "go_nogo"},
+        {"response_mode": "n_alternative", "n_sampling_stages": 3, "retention_delay": True},
+        {"commit_hold": False, "n_sampling_stages": 0},
+    ):
+        payload = service.capabilities_payload(topology)
+        assert validate(("ref", "SpecCapabilities"), payload) == [], topology
+        # Every class the topology produces can be explained, and every
+        # required duration too — a help map covering some of them would be
+        # worse than one covering none, since the gaps read as "no comment".
+        assert set(payload["outcomeHelp"]) == set(payload["outcomeClasses"]), topology
+        assert set(payload["requiredTiming"]) <= set(payload["timingHelp"]), topology
 
 
 def test_event_data_specs_cover_every_event() -> None:

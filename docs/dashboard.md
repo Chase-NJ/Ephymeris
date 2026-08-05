@@ -202,7 +202,7 @@ Route `/`. Two columns of translucent HUD tiles docked over the full-bleed sky. 
 >
 > It keeps a single link, to Config, and only when no box is bound — that is the one repair a click on the sky cannot perform. It also carries one quiet mono line at its foot, *select a box for its console*, shown only when boxes **are** bound: the only standing sign that per-box consoles exist. Deliberately a note and not a link, because it names a gesture and there is no single box to send anyone to.
 
-The Analytics sparkline is **the earned-drop rate, not choice accuracy** — a correct choice that failed the hold counts against it ([data.md §9.8](data.md#98-rewarded-accuracy-vs-response-accuracy)). Fixed shared domain with a guide line at 0.5 so cohorts compare at a glance, and the latest value prints beside the line so the number is never colour-alone. The recent-session rows come from folder names only, never a file open — so sessions **another** Ephymeris machine wrote into a shared data directory appear here marked "not indexed," where this machine's database could never see them.
+The Analytics sparkline is **the earned-drop rate, not choice accuracy** — a correct choice that failed the hold counts against it ([data.md §9.8](data.md#98-rewarded-accuracy-vs-response-accuracy)). Fixed shared domain with a guide line at 0.5 so cohorts compare at a glance, and the latest value prints beside the line so the number is never colour-alone. The recent-session rows come from folder names only, never a file open — so sessions **another** Ephymeris machine wrote into a shared data directory appear here marked "not indexed," where this machine's database could never see them. The badge clears once a rescan adopts the folder — adopted runs count as indexed even though adoption writes no session row ([data.md §8.1](data.md#81-orphan-adoption)).
 
 ---
 
@@ -423,6 +423,8 @@ A per-box card grid. This is a **confirm-and-configure step, not a console.** Ea
 - **Task config sub-form** — appears once a sketch is chosen, *only if that sketch has a profile*. Fields, labels, defaults and grouping come straight from the profile's `config` array.
 
   **Collapsed to a summary line by default**, showing how many values differ from the rig's saved defaults. It is collapsed because a behaviour sketch now declares forty-odd parameters: six cards' worth expanded inline would bury this step's actual job — confirming which animal is in which box, on which sketch — under two hundred inputs.
+
+  **Opened, the pane leads with Quick tune** — the groups in `topology.ts`'s `QUICK_TUNE_GROUPS` registry (the correction budgets and the lazy-penalty escalation), because those are the values the lab actually turns per animal, per day; everything else follows under "all parameters" in the sketch's own order, each group appearing exactly once. The registry is app-level like `GROUP_ORDER`, never a `task.json` key — a new profile key would change `profile_hash` and split a sketch's history in Analytics. The collapsed summary marks quick-tune overrides too (`2 overridden · quick tune`), so a card already says at a glance whether it carries the usual pair of knobs or something deeper.
 
 Configured **per box, independently**, matching real practice. Each box seeds from the merged profile + rig defaults ([tasks.md §6.1](tasks.md#61-the-three-layer-merge)) rather than from the profile alone, so "independently" costs nothing when every box wants the same thing.
 

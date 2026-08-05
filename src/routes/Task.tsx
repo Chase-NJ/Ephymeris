@@ -4,7 +4,6 @@ import {
   CircleAlert,
   Copy,
   CpuIcon,
-  FileCode2,
   Plus,
   Rocket,
   Waypoints,
@@ -53,7 +52,6 @@ export function Task() {
   /* `hidden` keeps `blank` out: it is what the hero above already does, not one
    * of the alternatives to it. */
   const templates = useMemo(() => paradigms.filter((p) => !p.hidden), [paradigms]);
-  const { discovery } = useSettings();
   const { settings } = useSettings();
 
   const [error, setError] = useState<string | null>(null);
@@ -248,14 +246,6 @@ export function Task() {
                       </span>
                     </CardFooterNote>
                   </SummaryCard>
-
-                  <SummaryCard
-                    icon={FileCode2}
-                    label="Sketches"
-                    status={`${discovery.sketches.length} in the library`}
-                    onOpen={() => navigate("/task/sketches")}
-                    empty="The firmware sketches that run today's sessions, their trial flow, and this rig's default parameters for each."
-                  />
                 </div>
               </div>
             </>

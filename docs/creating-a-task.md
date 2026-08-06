@@ -302,7 +302,7 @@ them by changing what the rig declares, not by editing the compiler.
 > **You get as many response ports as your rig declares response channels.** The
 > shipped wiring declares two of `kind: response` — `right_well` and `left_well` —
 > so *Add a response option* blocks once both are bound, and the message says so
-> by counting the registry. **Declare a third in Task → Rig wiring and the block
+> by counting the registry. **Declare a third in the Rig tab's wiring editor and the block
 > turns itself on**, with no edit anywhere in the app. The real ceiling above that
 > is seven: `TG_MAX_WATCH` is eight watched channels and one of them is the
 > engagement port.

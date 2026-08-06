@@ -14,7 +14,6 @@ import { Settings } from "./routes/Settings";
 import { Task } from "./routes/Task";
 import { TaskBench } from "./routes/TaskBench";
 import { TaskDesigner } from "./routes/TaskDesigner";
-import { TaskHardware } from "./routes/TaskHardware";
 import { TaskNew } from "./routes/TaskNew";
 import { TaskSketches } from "./routes/TaskSketches";
 
@@ -32,14 +31,34 @@ export default function App() {
         {/* The Task family. Flat, like every other route here — `AppShell` is
             the one layout route, and its `RouteTransition` keys on pathname
             through `useOutlet()`, which a second nested outlet would confuse.
-            `Sidebar` prefix-matches, so the nav pill stays lit across all five. */}
+            `Sidebar` prefix-matches, so the nav pill stays lit across all six. */}
         <Route path="/task" element={<Task />} />
         <Route path="/task/new" element={<TaskNew />} />
         <Route path="/task/designer/:specId" element={<TaskDesigner />} />
-        <Route path="/task/hardware" element={<TaskHardware />} />
+        {/* Rig wiring lives on the Rig screen now (`RigWiringEditor` inside
+            `routes/Config.tsx`) — box↔board and channel↔pin are different
+            wirings but one subject. The old route redirects like `/sketches`
+            does, and for the same reason. */}
+        <Route path="/task/hardware" element={<Navigate to="/config" replace />} />
         <Route path="/task/bench" element={<TaskBench />} />
-        <Route path="/sketches" element={<TaskSketches />} />
+        {/* The sketch library joined the Task family and gave up its sidebar
+            tab: it is one of the things a task can be made of, so it belongs
+            behind the tab that asks what the animal does rather than beside it.
+            **The page itself is unchanged and must stay reachable** — it is the
+            only editor for `settings.taskDefaults` (`tasks.md` §10), which the
+            mapping step merges into every `START` line whether or not anything
+            can show it. */}
+        <Route path="/task/sketches" element={<TaskSketches />} />
+        {/* Its old address, kept as a redirect rather than left to the `*`
+            catch-all: a stale link landing on the Dashboard reads as the page
+            having been deleted. */}
+        <Route path="/sketches" element={<Navigate to="/task/sketches" replace />} />
         <Route path="/analytics" element={<Analytics />} />
+        {/* The route spelling stays `/config` while the tab reads **Rig**. The
+            name is the user's word for the screen; the path is an internal
+            address that every doc, and this app's own history, already spells
+            this way — renaming it would churn both to no one's benefit, since a
+            desktop app never shows its URL. `routes/Config.tsx` likewise. */}
         <Route path="/config" element={<Config />} />
         <Route path="/settings" element={<Settings />} />
         {/* Two-step session setup (`dashboard.md` §7.2–§4); the runner

@@ -44,7 +44,9 @@ DB_FILENAME = "ephymeris.db"
 #: v5 added animals.cage (`cohorts.md` §1) — the home-cage grouping label.
 #: v6 added session_animal_runs.config_json / params_hash (`tasks.md` §6.1)
 #: — the task parameters a run actually used, now that they are operator-set.
-SCHEMA_VERSION = 6
+#: v7 added adopted_runs.file_mtime_ns / file_size (`data.md` §8.7) — the stat
+#: an adoption was taken from, so a rescan can skip a file it has already read.
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -182,7 +184,14 @@ CREATE TABLE IF NOT EXISTS adopted_runs (
     started_at     TEXT NOT NULL,
     sketch_name    TEXT,            -- the document's `sketch` field, verbatim
     sketch_path    TEXT,            -- that name resolved against the Arduino Directory at adoption
-    adopted_at     TEXT NOT NULL
+    adopted_at     TEXT NOT NULL,
+    -- The stat this row was adopted from, so the next rescan can tell an
+    -- already-adopted file from one it still has to read (`data.md` §8.7).
+    -- Same freshness key `run_metrics_cache` uses, for the same reason: it is
+    -- answerable without opening the file. NULL on rows adopted before v7,
+    -- which simply re-read once and then carry a stat like everything else.
+    file_mtime_ns  INTEGER,
+    file_size      INTEGER
 );
 """
 
@@ -268,6 +277,18 @@ def _to_v6(conn: sqlite3.Connection) -> None:
     add_column(conn, "session_animal_runs", "params_hash", "TEXT")
 
 
+def _to_v7(conn: sqlite3.Connection) -> None:
+    """v6 → v7: the stat an adoption was taken from (`data.md` §8.7).
+
+    NULL on every pre-existing adoption, and that is the safe direction: a row
+    with no recorded stat is never treated as fresh, so the first rescan after
+    this migration re-reads exactly as it always did and records a stat on the
+    way through. The saving starts one scan later rather than on a guess.
+    """
+    add_column(conn, "adopted_runs", "file_mtime_ns", "INTEGER")
+    add_column(conn, "adopted_runs", "file_size", "INTEGER")
+
+
 def _to_v5(conn: sqlite3.Connection) -> None:
     """v4 → v5: the home-cage grouping label (`cohorts.md` §1).
 
@@ -291,6 +312,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _to_v4,
     5: _to_v5,
     6: _to_v6,
+    7: _to_v7,
 }
 
 

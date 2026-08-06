@@ -1,6 +1,14 @@
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useReducer, useState } from "react";
-import { ArrowRight, ChartLine, Radio, Rocket, Users } from "lucide-react";
+import {
+  ArrowRight,
+  ChartLine,
+  FileCode2,
+  Radio,
+  Rocket,
+  Users,
+  Workflow,
+} from "lucide-react";
 import { useNavigate } from "react-router";
 
 import {
@@ -9,6 +17,11 @@ import {
   CardRow,
   SummaryCard,
 } from "@/components/common/SummaryCard";
+import {
+  EntranceTile,
+  RigMotif,
+  TaskMotif,
+} from "@/components/dashboard/EntranceTile";
 import { NODE_FILL, useBoxHealth, type BoxHealth } from "@/components/chrome/ConstellationStatus";
 import { DebugConstellation } from "@/components/debug/DebugConstellation";
 import { SessionDock } from "@/components/sessions/SessionDock";
@@ -32,14 +45,18 @@ import { useSidecar } from "@/lib/ws/context";
  * wallpaper. Everything else docks over it as two columns of translucent HUD
  * tiles: **command** on the left (the hero CTA, then whatever sessions are in
  * flight, directly under it — "what do I do now" in one stack) and **overview**
- * on the right (Cohorts, Rig, Analytics).
+ * on the right: a paired row of entrance tiles (Rig, Task — the two tabs that
+ * had no presence here, `EntranceTile`), then the three readouts (Cohorts,
+ * Boxes, Analytics).
  *
  * Selecting a star here hands off to Debug, where the box's instrument panel
  * lives — the selection and camera ride along, so the arrival flight lands in
- * the other view mid-move. **That gesture is the rig's only entrance**, which
- * is why the Rig tile is a readout with no header link: the sky on this page
- * already *is* the rig, so a card offering to navigate to it was a third route
- * to where the user was already standing. Its rows do what its stars do.
+ * the other view mid-move. **That gesture is the only entrance to a box**,
+ * which is why the Boxes tile is a readout with no header link: the sky on this
+ * page already *is* the rig, so a card offering to navigate to it was a third
+ * route to where the user was already standing. Its rows do what its stars do.
+ * The Rig *entrance* tile is not a counterexample — it opens the wiring screen,
+ * which is a different place than the rig itself.
  *
  * Data stays cheap: providers the app already holds, the app-level analytics
  * cache, and `analytics.recentSessions` (folder names only). No spinners.
@@ -189,6 +206,52 @@ export function Dashboard() {
           className="scrollbar-none pointer-events-none absolute inset-y-0 right-0 w-[392px] overflow-y-auto p-4 pl-0"
         >
           <div className="pointer-events-auto flex flex-col gap-3">
+            {/* The two tabs that had no presence here — the rig's wiring and
+                the task — as a paired row of doors above the readouts. They are
+                compact and side by side precisely so they don't read as two
+                more cards to scan: one glance says "these are places to go",
+                and the column's three readouts follow underneath. */}
+            <div className="grid grid-cols-2 gap-3">
+              <EntranceTile
+                icon={Radio}
+                label="Rig"
+                caption="Which board is box 3?"
+                status={
+                  boundBindings.length === 0
+                    ? "nothing bound"
+                    : `${boundBindings.length} box${boundBindings.length === 1 ? "" : "es"} bound`
+                }
+                motif={<RigMotif />}
+                onOpen={() => navigate("/config")}
+              />
+              <EntranceTile
+                icon={Workflow}
+                label="Task"
+                caption="What the animal does"
+                motif={<TaskMotif />}
+                onOpen={() => navigate("/task")}
+                // The sketch library lost its sidebar tab when it moved into
+                // the Task family, so the one-click path to it lands here: it
+                // is still the path that runs animals, and burying it two
+                // clicks deep would have been a demotion nobody asked for.
+                footer={
+                  <button
+                    type="button"
+                    onClick={() => navigate("/task/sketches")}
+                    className="group/link flex items-center gap-1.5 font-mono text-[10px] text-static transition-colors hover:text-starlight"
+                  >
+                    <FileCode2 size={11} strokeWidth={1.75} />
+                    Sketches
+                    <ArrowRight
+                      size={10}
+                      strokeWidth={2}
+                      className="transition-transform group-hover/link:translate-x-0.5"
+                    />
+                  </button>
+                }
+              />
+            </div>
+
             <SummaryCard
               icon={Users}
               label="Cohorts"
@@ -218,23 +281,30 @@ export function Dashboard() {
               )}
             </SummaryCard>
 
-            {/* The rig, as a readout rather than a destination. The sky on this
-                page *is* the rig, and selecting a box — by clicking its star or
-                one of these rows — is what opens its instrument panel; a header
-                that also navigated to "Debug Mode" was offering a third route
-                to a place the page already was. So the header states rig health
-                and nothing more, and the rows carry the one real gesture. */}
+            {/* The boxes, as a readout rather than a destination. The sky on
+                this page *is* the rig, and selecting a box — by clicking its
+                star or one of these rows — is what opens its instrument panel;
+                a header that also navigated to "Debug Mode" was offering a
+                third route to a place the page already was. So the header
+                states health and nothing more, and the rows carry the one real
+                gesture.
+
+                **Called Boxes, not Rig.** It was Rig until the Config tab took
+                that name, at which point the column would have carried two
+                tiles labelled Rig — one a door to the wiring screen, one a
+                readout that deliberately goes nowhere. Boxes is also just what
+                it is: the status counts boxes and every row is one. */}
             <SummaryCard
               icon={Radio}
-              label="Rig"
+              label="Boxes"
               status={
                 boundBindings.length === 0
-                  ? "no boxes"
+                  ? "none bound"
                   : `${connectedCount}/${boundBindings.length} connected`
               }
               empty={
                 boundBindings.length === 0
-                  ? "No boxes bound yet — box setup in Config binds each one to a board."
+                  ? "No boxes bound yet — the Rig tab binds each one to a board."
                   : null
               }
             >
@@ -269,10 +339,13 @@ export function Dashboard() {
                 );
               })}
               {/* The one thing an unbound rig needs, and the one thing that
-                  isn't reachable by clicking the sky. */}
+                  isn't reachable by clicking the sky. Kept even though the Rig
+                  tile above now offers the same destination: this line appears
+                  exactly when the reader has just been told there are no boxes,
+                  which is the moment the route matters most. */}
               {boundBindings.length === 0 && (
                 <CardFooterLink onClick={() => navigate("/config")}>
-                  box setup in Config
+                  bind boxes on the Rig tab
                 </CardFooterLink>
               )}
               {/* Debug has no sidebar entry — it is this page with the camera

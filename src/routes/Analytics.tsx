@@ -36,6 +36,7 @@ import { SessionStrategy } from "@/components/analytics/SessionStrategy";
 import { SessionSummary } from "@/components/analytics/SessionSummary";
 import { StrategySpace } from "@/components/analytics/StrategySpace";
 import { Button } from "@/components/common/controls";
+import { FolderButton } from "@/components/common/FolderButton";
 import { errorMessage, recover, rescan } from "@/lib/analytics/commands";
 import {
   useAnalyticsStore,
@@ -53,6 +54,7 @@ import { ALL_SESSIONS } from "@/lib/analytics/store";
 import type {
   DiskSession,
   RecoverResult,
+  RescanPruned,
   RescanResult,
   RunSummary,
 } from "@/lib/analytics/types";
@@ -392,6 +394,16 @@ export function Analytics() {
                 (§4.3) — the reader never has to maintain a filter to be sure
                 they are seeing everything. */}
             <div className="flex items-center gap-2">
+              {/* First in the row: the only button here about *where the data
+                  lives* rather than about maintaining the index. The path
+                  rides the summary (§9) — the same string the folder-missing
+                  warning names. */}
+              {summary && (
+                <FolderButton
+                  path={summary.dataFolder}
+                  label="Data folder"
+                />
+              )}
               <Button
                 variant="outline"
                 onClick={() => void runRescan()}
@@ -659,6 +671,11 @@ function describeRescan(result: RescanResult): string {
       `skipped ${result.duplicates} duplicate cop${result.duplicates === 1 ? "y" : "ies"} of runs already found`,
     );
   }
+  // Deletions are stated, always. A reconciliation that quietly dropped rows
+  // is indistinguishable from a walk that failed to find them, and this is the
+  // one number in the note that the operator can't recover by clicking again.
+  const pruned = prunedRecords(result.pruned);
+  if (pruned) parts.push(pruned);
   const unmatched = result.orphans.filter((o) => o.animalId === null).length;
   if (unmatched > 0) {
     parts.push(
@@ -677,6 +694,36 @@ function describeRescan(result: RescanResult): string {
   if (parts.length === 1)
     return `${parts[0]} — everything on disk is already indexed.`;
   return `${parts.join("; ")}.`;
+}
+
+/**
+ * The prune clause of the rescan note (`data.md` §8.6), or null when nothing
+ * was removed — which is the overwhelmingly common case and doesn't deserve a
+ * sentence.
+ *
+ * Says **records**, and says it about the files rather than about the data: the
+ * rescan removes this app's bookkeeping and has never touched the archive, and
+ * an operator reading "removed 4 sessions" with no qualifier has every reason
+ * to wonder which of the two just happened.
+ */
+function prunedRecords(pruned: RescanPruned): string | null {
+  const parts: string[] = [];
+  if (pruned.runs > 0) parts.push(`${pruned.runs} run${plural(pruned.runs)}`);
+  if (pruned.adopted > 0) parts.push(`${pruned.adopted} adopted run${plural(pruned.adopted)}`);
+  if (pruned.sessions > 0) {
+    parts.push(`${pruned.sessions} session${plural(pruned.sessions)}`);
+  }
+  if (parts.length === 0) return null;
+  return `dropped the records of ${joinList(parts)} whose files are no longer on disk`;
+}
+
+function plural(n: number): string {
+  return n === 1 ? "" : "s";
+}
+
+function joinList(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
 /**

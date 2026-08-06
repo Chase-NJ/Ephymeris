@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ChevronUp, CircleAlert, FileCode2 } from "lucide-react";
+import { ArrowLeft, ChevronUp, CircleAlert, FileCode2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -8,6 +8,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import { useNavigate } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
@@ -29,10 +30,12 @@ import { useSidecar } from "@/lib/ws/context";
 
 /**
  * Sketches — the firmware library that ships with Ephymeris, its trial flow,
- * and this rig's parameters. A top-level tab (bottom of the sidebar, above
- * Settings): the sketches are part of the app, not part of any one
- * experiment's workflow, which is why this page is no longer a door inside
- * Task.
+ * and this rig's parameters. `/task/sketches`, one of the Task family: a sketch
+ * is one of the things a task can be made of, so it belongs behind the tab that
+ * asks what the animal does. It spent a while as its own top-level tab on the
+ * reasoning that the sketches ship *with the app* rather than with any one
+ * experiment — true of where they come from, but the operator looks for them by
+ * what they are for, and that is Task.
  *
  * This is the pre-spec path and it is still the one that runs animals. Every
  * behaviour sketch compiles its own `runTrial()`; a task spec is a SIBLING
@@ -63,6 +66,7 @@ import { useSidecar } from "@/lib/ws/context";
  * (`TaskRail`), lit by the same set.
  */
 export function TaskSketches() {
+  const navigate = useNavigate();
   const { settings, update, discovery, refreshSketches, loaded } = useSettings();
   const { client, status } = useSidecar();
   const connected = status === "connected";
@@ -218,7 +222,15 @@ export function TaskSketches() {
         className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
       >
         <section className="pointer-events-auto mx-auto max-w-6xl px-8 py-8">
-          <div className="flex items-center gap-3">
+          {/* The way back, now that this page is inside the Task family rather
+              than beside it — the same ghost arrow `/task/bench` carries, so
+              the siblings are left the same way. */}
+          <Button variant="ghost" onClick={() => navigate("/task")}>
+            <ArrowLeft size={13} strokeWidth={1.75} />
+            Task
+          </Button>
+
+          <div className="mt-3 flex items-center gap-3">
             <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
               <FileCode2 size={18} strokeWidth={1.75} className="text-pulsar" />
             </span>

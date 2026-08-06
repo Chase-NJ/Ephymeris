@@ -1,12 +1,18 @@
 import { motion } from "framer-motion";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { CircleAlert, Settings as SettingsIcon } from "lucide-react";
+import { useMemo } from "react";
 
+import { useBoxHealth } from "@/components/chrome/ConstellationStatus";
 import { Toggle } from "@/components/common/controls";
+import { ConstellationBoard } from "@/components/config/ConstellationBoard";
+import { ConstellationPicker } from "@/components/config/ConstellationPicker";
 import { BackupStatusNote } from "@/components/settings/BackupStatusNote";
 import { DirectoryField } from "@/components/settings/DirectoryField";
 import { SettingGroup, SettingRow } from "@/components/settings/SettingRow";
 import { useBackupStatus } from "@/lib/backup/useBackupStatus";
+import { reconcileSlots } from "@/lib/constellations/slots";
+import { zodiacById } from "@/lib/constellations/zodiac";
 import { springPanel } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
@@ -14,17 +20,49 @@ import { useSidecar } from "@/lib/ws/context";
 /**
  * Settings (settings.md §4) — storage and interface.
  *
- * Everything hardware-shaped (boxes, baud, arduino-cli)
- * lives in Config (§4.6); this screen is what's left. Deliberately usable
+ * Everything hardware-shaped (boxes, baud, arduino-cli, wiring)
+ * lives on the Rig tab (§4.6); this screen is what's left. Deliberately usable
  * while the sidecar is down — that's the whole reason settings are
  * shell-owned. Nothing here is gated on the WebSocket; only the backup
  * readout goes quiet.
+ *
+ * **The constellation moved here from the Rig screen**, and the move is the
+ * argument: which zodiac the status display draws, and which star a box sits
+ * on, style how the rig is *shown* — the sidebar widget and the Dashboard sky —
+ * and never touch how it is wired. Interface, filed under Interface. The slot
+ * map still follows box add/remove automatically (`Config.onBoxesChange`
+ * reconciles it), so this section can be ignored forever and stay honest.
  */
 export function Settings() {
   const { settings, update, loaded, saveError } = useSettings();
   const { status } = useSidecar();
   const backup = useBackupStatus();
+  const health = useBoxHealth();
   const connected = status === "connected";
+
+  const boundNumbers = useMemo(
+    () =>
+      settings.boxes.filter((b) => b.hardwareId !== null).map((b) => b.box),
+    [settings.boxes],
+  );
+  const labels = useMemo(
+    () => Object.fromEntries(settings.boxes.map((b) => [b.box, b.label])),
+    [settings.boxes],
+  );
+  const chosen = zodiacById(settings.constellation);
+
+  function onPickConstellation(id: string) {
+    const constellation = zodiacById(id);
+    if (!constellation) return;
+    void update({
+      constellation: id,
+      constellationSlots: reconcileSlots(
+        constellation,
+        settings.constellationSlots,
+        boundNumbers,
+      ),
+    });
+  }
 
   return (
     // Every route sits on the rig's sky. Not decoration: a route that mounts no
@@ -118,6 +156,48 @@ export function Settings() {
                   onChange={(reducedMotion) => void update({ reducedMotion })}
                 />
               </SettingRow>
+            </SettingGroup>
+
+            <SettingGroup title="Constellation">
+              <div className="px-4 py-3.5">
+                <p className="pb-2 text-[12px] leading-relaxed text-static">
+                  How the status display draws your boxes — the widget at the
+                  foot of the sidebar and the Dashboard&rsquo;s sky. Pure
+                  presentation: nothing here changes how the rig is wired.
+                </p>
+                {chosen ? (
+                  <>
+                    <div className="mx-auto max-w-[460px]">
+                      <ConstellationBoard
+                        constellation={chosen}
+                        slots={settings.constellationSlots}
+                        boxes={boundNumbers}
+                        labels={labels}
+                        health={health}
+                        onSlotsChange={(constellationSlots) =>
+                          void update({ constellationSlots })
+                        }
+                      />
+                    </div>
+                    <p className="mt-1 text-center text-[11px] text-static">
+                      {chosen.name} — drag a box to a different star to
+                      rearrange.
+                    </p>
+                  </>
+                ) : (
+                  <p className="pb-2 text-[12px] leading-relaxed text-static">
+                    No constellation chosen yet — the status display uses the
+                    plain layout. Pick one below.
+                  </p>
+                )}
+                <div className="mt-3">
+                  <ConstellationPicker
+                    selected={settings.constellation}
+                    boxCount={boundNumbers.length}
+                    onSelect={onPickConstellation}
+                  />
+                </div>
+              </div>
             </SettingGroup>
           </fieldset>
 

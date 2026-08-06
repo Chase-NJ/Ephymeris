@@ -3,7 +3,7 @@ import { HandshakeIndicator } from "./HandshakeIndicator";
 import type { useHandshakeTest } from "@/lib/hardware/useHandshakeTest";
 import type { BoxBinding } from "@/lib/settings/schema";
 
-/** One handshake-test card per bound box — shared by the wizard and Config. */
+/** One handshake-test card per bound box, for the Rig screen's Boxes group. */
 export function HandshakeList({
   bound,
   handshake,

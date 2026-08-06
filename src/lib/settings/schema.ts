@@ -75,7 +75,6 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
   // Null = the legacy fixed layout, until the user picks a zodiac (§4.6).
   constellation: null,
   constellationSlots: {},
-  boxSetupComplete: false,
   // No rig defaults until someone sets one on Config; every sketch starts on
   // the values its own task.json declares (`tasks.md` §6.1).
   taskDefaults: {},
@@ -189,7 +188,6 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
         ? constellation
         : null,
     constellationSlots: normalizeSlots(value["constellationSlots"]),
-    boxSetupComplete: value["boxSetupComplete"] === true,
     taskDefaults: normalizeTaskDefaults(value["taskDefaults"]),
   };
 }

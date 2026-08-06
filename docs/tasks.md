@@ -958,12 +958,12 @@ These never error, and are the ones to know about when something looks wrong but
 
 ## 10. The Task screen
 
-The Task tab is a small **route family**, not one page. It used to be a single scroll carrying two whole systems — the spec workbench stacked on the sketch sections — where everything was visible at once and nothing was the front door. `/task` is now a landing page leading with the **Task Designer**; everything about the Designer and the bench is [specs.md](specs.md). The sketch half is its **own top-level tab**, `/sketches`, at the bottom of the sidebar above Settings — the sketches ship with Ephymeris, so the library is part of the app rather than part of any one experiment's workflow — and is described below. A spec remains a sibling artifact to a `task.json`, never an extension of it ([§4.1](#41-why-derived-not-declared)).
+The Task tab is a small **route family**, not one page. It used to be a single scroll carrying two whole systems — the spec workbench stacked on the sketch sections — where everything was visible at once and nothing was the front door. `/task` is now a landing page leading with the **Task Designer**; everything about the Designer and the bench is [specs.md](specs.md). The sketch half is `/task/sketches`, one of the family, reached from the landing's Sketches tile and from the Dashboard's Task tile. (It spent a while as its own top-level tab, `/sketches`, which now redirects — the sketches do ship with Ephymeris, but the operator looks for them by what they are for, not where they come from.) It is described below. A spec remains a sibling artifact to a `task.json`, never an extension of it ([§4.1](#41-why-derived-not-declared)).
 
 > [!IMPORTANT]
-> **`/sketches` is the only editor for `settings.taskDefaults`**, and `SessionMapping` reads that map on every session ([§6.1](#61-the-three-layer-merge)). If this page is ever removed or folded away, the stored per-sketch overrides keep being merged into every `START` line with nothing able to show or clear them — the silent-wrong-value failure this document's other cautions are about. Retire it only alongside the merge layer itself.
+> **`/task/sketches` is the only editor for `settings.taskDefaults`**, and `SessionMapping` reads that map on every session ([§6.1](#61-the-three-layer-merge)). If this page is ever removed or folded away, the stored per-sketch overrides keep being merged into every `START` line with nothing able to show or clear them — the silent-wrong-value failure this document's other cautions are about. Retire it only alongside the merge layer itself.
 
-### 10.1 `/sketches`
+### 10.1 `/task/sketches`
 
 A sticky left column (the library and the explain tile) beside the selected sketch's content:
 

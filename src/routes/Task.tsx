@@ -4,6 +4,7 @@ import {
   CircleAlert,
   Copy,
   CpuIcon,
+  FileCode2,
   Plus,
   Rocket,
   Waypoints,
@@ -215,18 +216,34 @@ export function Task() {
                 </div>
 
                 <div className="flex flex-col gap-3">
-                  {/* RIG WIRING SITS WITH TASK, not Config, even though Config
-                      owns "how is this rig wired" (settings.md §1). Every
-                      hardware value in task creation comes from here — response
-                      ports, reward lines, stimulus lines — and filing it a tab
-                      away from the thing that consumes it would be filing by
-                      category rather than by use. */}
+                  {/* Rig wiring lives on the Rig screen now — box↔board and
+                      channel↔pin are one subject there. This card stays
+                      because every hardware value in task creation comes from
+                      the channel map, and the flow that consumes it deserves a
+                      door to it; the door just crosses a tab, like the
+                      Dashboard's tiles do. */}
                   <SummaryCard
                     icon={Waypoints}
                     label="Rig wiring"
                     status={`${channelCount} channels`}
-                    onOpen={() => navigate("/task/hardware")}
-                    empty="Which pin each channel is on. Everything a task can reach — the ports, the reward lines, the stimulus lines — is what this says it is."
+                    onOpen={() => navigate("/config")}
+                    empty="Which pin each channel is on. Everything a task can reach — the ports, the reward lines, the stimulus lines — is what this says it is. On the Rig tab, with the rest of the rig."
+                  />
+
+                  {/* The sketch library, which used to be its own sidebar tab.
+                      It sits with Rig wiring and the Bench rather than beside
+                      the spec library on the left, because those three are the
+                      *parts* a task is assembled from while the left column is
+                      the tasks themselves. It is deliberately not a count of
+                      sketches: the library list is `settings.discovery`, which
+                      this page doesn't otherwise read, and the tile's job is to
+                      be a door rather than a readout. */}
+                  <SummaryCard
+                    icon={FileCode2}
+                    label="Sketches"
+                    status="shipped firmware"
+                    onOpen={() => navigate("/task/sketches")}
+                    empty="The behaviour sketches that ship with Ephymeris, each one's trial flow, and this rig's parameters for them — the path that runs animals today."
                   />
 
                   <SummaryCard

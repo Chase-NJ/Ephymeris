@@ -425,7 +425,7 @@ A malformed `task.json` on the fallback path degrades to `no-metrics` rather tha
 
 **Profile resolution is memoized per pass, and deliberately not across passes.** Making that memo outlive the pass would freeze exactly what §8.3's read-time resolution keeps thawed.
 
-**Never delete a cache entry because a file vanished** — mark it stale and keep serving it. A briefly unreachable network share must not erase history from the heatmap. Same principle the backup mirror holds to.
+**Never delete a cache entry because a file vanished** — mark it stale and keep serving it. A briefly unreachable network share must not erase history from the heatmap. Same principle the backup mirror holds to. That is a rule about the **read** path, which cannot tell a deletion from an unplugged drive; the one operation that can is [§8.6](#86-pruning--records-the-disk-no-longer-has).
 
 **A corrupt file caches its negative result** under the same key, so it is not re-parsed on every open, and surfaces as a warning. **A bad file is data, not an error** — one unreadable `.json` must never blank a year of history.
 
@@ -438,6 +438,55 @@ A malformed `task.json` on the fallback path degrades to `no-metrics` rather tha
 - **Reads are sequential in a single worker thread, not a pool.** Six boxes are `fsync`ing per strobe, and a thread pool would multiply disk contention against the write-ahead log that carries the durability guarantee.
 - **Runs are handed to that worker in chunks.** This strengthens the rule rather than bending it — the runs inside a chunk are still read one after another on one thread, and chunking *reduces* the number of distinct executor threads the pass touches. The chunk is small enough that a batch of misses can't hold the event loop off a live `port.output` flush.
 - **Persisted cache writes go in one transaction per job.** Individual commits would mark the database dirty repeatedly and trigger a whole-file copy to the backup target each time.
+
+### 8.6 Pruning — records the disk no longer has
+
+Adoption ([§8.1](#81-database-first-walk-on-demand)) reconciles one direction: files with no record. The other direction has its own failure, and it is the more misleading of the two — a **record with no file**. Delete a session's folder and nothing in the app ever removes its rows, so [§8.4](#84-caching-and-codec_version)'s keep-the-last-good-summary rule goes on serving that session's numbers into the heatmap and the curves indefinitely. The data is gone and the analysis of it isn't.
+
+So the rescan prunes as well as adopts. It is the right and only place for it: the walk is already an explicit user action, and it is the one moment the operator has said *reconcile against what is actually there*. The passive summary path is untouched and still refuses to delete anything — it cannot tell the two cases below apart, and the rescan can.
+
+> [!CAUTION]
+> **Absence is only evidence when the storage is reachable.** `exists() == False` answers two unrelated questions with one word: *the operator deleted this* and *this volume isn't mounted today*. Acting on the second would let a single rescan with the archive drive unplugged erase a cohort's history — the exact failure §8.4's stale-summary rule exists to prevent, reintroduced by the mechanism meant to clear genuinely dead records. So a path counts as gone only when **some ancestor of it is readable**. A deleted tree always leaves one (the drive root at worst); an unmounted volume leaves none, not even `E:\` or `//server/share`.
+
+Four more refusals, each preferring a stale record to a wrong deletion:
+
+| Situation | Why it is not a deletion |
+|---|---|
+| **No recorded file path** | Nothing was observed. The summary already reports this run as `missing` with its own distinct reason |
+| **A `stat` that fails for any reason other than absence** | A permission error is not a deletion. Same missing-vs-unreadable line `stat_run` draws |
+| **A `.json` whose write-ahead `.tsv` is still there** | That run's data is intact and [§12](#12-crash-recovery) will rebuild the document from it. Pruning would discard the `animal_id`, `profile_hash` and `config_json` that make a recovered run worth more than adoption could ever reconstruct from a filename |
+| **A path that is present but the wrong kind of thing** | A session folder replaced by a file is a broken archive, and reporting it is a different job than this one |
+
+What gets removed, and the order it happens in:
+
+1. **Recorded runs** (`session_animal_runs`) whose file is gone, and **adoptions** (`adopted_runs`) whose file is gone — or whose file a *run record* now claims. That second case is not about absence at all: the walk skips a path a record points at, so an adoption made before that record existed is never revisited, and the file reaches the summary twice — once as the run, once as its adoption. Silent double-counting of a run, arriving from the side deduplication doesn't watch. [§8.1](#81-database-first-walk-on-demand) decides it: the record wins.
+2. **Their cached summaries** — the cache is what was actually still serving numbers, so a pruned run whose cache row survived would leave its scores behind in a row nothing points at.
+3. **Sessions**, but only where *both* halves hold: the folder is gone **and** no run of that session survived. Folder-gone alone would delete a session whose runs were written elsewhere, which is exactly the shape a cohort relocated with `moveExisting: false` leaves ([cohorts.md §8](cohorts.md#8-the-data-folder)). No-runs alone would delete every aborted session — one never wrote a file, and its folder is real.
+
+Runs are swept before sessions so the session pass can ask whether anything still points at a session rather than inferring it from the folder.
+
+**A session that is still open is never deleted**, and that rule lives in the repository rather than in the caller: `configuring` and `running` describe a session the runner is holding right now, whose folder legitimately may not exist yet.
+
+The result reports `pruned: {runs, sessions, adopted}` and the Observatory says so in the rescan note — a reconciliation that silently deleted rows would be indistinguishable from a bug in the walk. **Records only.** The rescan has never written to the archive and still doesn't; it removes the app's own bookkeeping, which is the same line [cohorts.md §9](cohorts.md#9-deleting-a-cohort) draws from the other side.
+
+### 8.7 Carrying adoptions forward
+
+Adoption used to be repeated in full on every rescan. Every file in the archive was opened, parsed, matched and written back — and since the row is keyed on run identity and the inputs are the same file and the same roster, the second scan spent all of that recomputing the first scan's answer. On a 354-run cohort that is 354 reads and 354 row rewrites per click, and on the machine whose archive lives on a network share, all of it over the wire. The rewrite is the more expensive half: every commit marks the whole database dirty for backup ([§7.3](#73-ephymerisdb)), so an archive's worth of identical rows is also a whole-file copy to a possibly-networked target, per click.
+
+So a file is **carried forward** — not read, not written — when three things hold:
+
+1. An adopted row exists for its **run identity**.
+2. That row names **this same path**.
+3. The file's **mtime and size** match what the row was adopted from.
+
+The third is what keeps this a cache rather than a do-it-once flag, and it is deliberately the same freshness key `run_metrics_cache` uses ([§8.4](#84-caching-and-codec_version)) for the same reason: it is answerable from a `stat`, so a carried file is never opened. Edit a document, or let [recovery](#12-crash-recovery) rewrite one, and the next rescan reads it again and refreshes the row in place.
+
+> [!CAUTION]
+> **The second condition is the load-bearing one — same run is not the same file.** Which copy of a duplicated run wins is a *content* decision ([§8.2](#82-what-adoption-handles)'s `_prefer`: the copy whose document names its `sketch` can be decoded and the other cannot), so a second copy must still be read and judged. Carrying by identity alone would let whichever copy happened to be adopted first keep the row forever — and in the real archive **30 runs carry `sketch` only in the consolidated copy**, so that is not a hypothetical ordering quibble, it is 30 runs that decode or don't.
+>
+> The mirror of the same rule: a carried row **holds its slot** in the scan rather than standing aside. Skipping it outright would leave a later, poorer copy the only candidate the walk read, and it would replace a good row by default rather than on merit.
+
+A row adopted before schema v7 has no recorded stat and is therefore never fresh: it is re-read once, gains a stat, and is carried from then on. `adopted` in the result counts **what this scan decided**, so a rescan that changed nothing now reports `0` and the Observatory says *everything on disk is already indexed* — which is the true answer, where "adopted 354" every time was not.
 
 ---
 

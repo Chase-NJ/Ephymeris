@@ -552,10 +552,104 @@ def test_a_v2_database_gets_both_column_migrations(tmp_path: Path) -> None:
         assert "config_json" in runs and "params_hash" in runs
         assert "duration_minutes" in table_columns(db.conn, "sessions")
         assert "cage" in table_columns(db.conn, "animals")
+        assert "file_mtime_ns" in table_columns(db.conn, "adopted_runs")
     finally:
         db.close()
 
     assert user_version(path) == SCHEMA_VERSION
+
+
+# --- the real v6 -> v7 migration ------------------------------------------
+
+
+def write_v6_database(path: Path) -> None:
+    """A v6 file: everything through the run-parameter columns, with an
+    `adopted_runs` table that carries **no** stat columns. Pinned as a literal
+    like its siblings above — importing today's `SCHEMA` would test this code
+    against itself."""
+    write_v5_database(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("ALTER TABLE session_animal_runs ADD COLUMN config_json TEXT")
+        conn.execute("ALTER TABLE session_animal_runs ADD COLUMN params_hash TEXT")
+        conn.execute(
+            """
+            CREATE TABLE adopted_runs (
+                id             TEXT PRIMARY KEY,
+                cohort_id      TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
+                animal_id      TEXT NOT NULL,
+                file_path      TEXT NOT NULL,
+                prefix_name    TEXT NOT NULL,
+                session_number TEXT NOT NULL,
+                date           TEXT,
+                started_at     TEXT NOT NULL,
+                sketch_name    TEXT,
+                sketch_path    TEXT,
+                adopted_at     TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO adopted_runs (id, cohort_id, animal_id, file_path,"
+            " prefix_name, session_number, date, started_at, sketch_name,"
+            " sketch_path, adopted_at) VALUES"
+            " ('adopted:abc', 'c1', 'a1', '/data/x.json', '2O-Bdisc', '01',"
+            "  '2026-06-16', '2026-06-16T12:00:22', 'GRGL', NULL, '2026-06-16T13:00:00')"
+        )
+        conn.execute("PRAGMA user_version = 6")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_v6_gains_the_adoption_stat_columns(tmp_path: Path) -> None:
+    """The freshness key that lets a rescan skip a file it already read
+    (`data.md` §8.7). Two columns in one migration, so both are checked."""
+    path = tmp_path / "ephymeris.db"
+    write_v6_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        columns = table_columns(db.conn, "adopted_runs")
+        assert "file_mtime_ns" in columns
+        assert "file_size" in columns
+        # Writable, not merely present in the metadata.
+        db.conn.execute(
+            "UPDATE adopted_runs SET file_mtime_ns = ?, file_size = ?"
+            " WHERE id = 'adopted:abc'",
+            (1234567890, 4096),
+        )
+        row = db.conn.execute(
+            "SELECT file_mtime_ns, file_size FROM adopted_runs"
+        ).fetchone()
+        assert (row["file_mtime_ns"], row["file_size"]) == (1234567890, 4096)
+    finally:
+        db.close()
+
+    assert user_version(path) == SCHEMA_VERSION
+
+
+def test_an_adoption_from_before_v7_is_never_treated_as_fresh(tmp_path: Path) -> None:
+    """NULL is the safe direction: a row with no recorded stat cannot be
+    recognised as unchanged, so the first rescan after the migration re-reads
+    the file exactly as it always did and records a stat on the way through.
+    Defaulting these to 0 instead would carry every old row forward on a
+    freshness claim nothing ever checked."""
+    path = tmp_path / "ephymeris.db"
+    write_v6_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        row = db.conn.execute(
+            "SELECT file_mtime_ns, file_size FROM adopted_runs"
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert row["file_mtime_ns"] is None
+    assert row["file_size"] is None
 
 
 # --- the downgrade case ---------------------------------------------------

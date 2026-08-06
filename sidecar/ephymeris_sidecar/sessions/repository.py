@@ -70,6 +70,12 @@ def _new_id() -> str:
     return str(uuid.uuid4())
 
 
+def _id_chunks(ids: list[str], size: int = 400) -> list[list[str]]:
+    """Bounded `IN (...)` batches — SQLite's variable limit is 999 on older
+    builds, and a real archive's cohort has thousands of runs."""
+    return [ids[i : i + size] for i in range(0, len(ids), size)]
+
+
 class SessionRepository:
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -255,6 +261,55 @@ class SessionRepository:
                 ),
             )
             self._db.conn.commit()
+
+    # --- pruning (data.md §8.6) -------------------------------------------
+    #
+    # The only deletions in this repository, and they exist for one caller:
+    # `analytics.rescan`'s reconciliation. A run record outlives its file
+    # forever otherwise — nothing else in the app ever removes one — and
+    # Analytics keeps serving that run's last good numbers, so a session the
+    # operator deleted from disk goes on charting.
+    #
+    # This removes **bookkeeping only**, the same line the cohort delete draws
+    # (`cohorts.md` §9): the app deletes its own records, never the user's data.
+    # Here that is inverted and holds all the same — the data is already gone,
+    # and the record is what's left over.
+
+    def delete_runs(self, run_ids: list[str]) -> int:
+        if not run_ids:
+            return 0
+        removed = 0
+        with self._db.lock:
+            for chunk in _id_chunks(run_ids):
+                marks = ",".join("?" * len(chunk))
+                cursor = self._db.conn.execute(
+                    f"DELETE FROM session_animal_runs WHERE id IN ({marks})",
+                    tuple(chunk),
+                )
+                removed += cursor.rowcount
+            self._db.conn.commit()
+        return removed
+
+    def delete_sessions(self, session_ids: list[str]) -> int:
+        """Drop session rows. The caller decides which; this only enforces the
+        one rule no caller may override — **a session that is still open is
+        never deleted.** `configuring` and `running` describe a session the
+        runner is holding right now, whose folder legitimately may not exist
+        yet, and whose disappearance mid-flow would strand it."""
+        if not session_ids:
+            return 0
+        removed = 0
+        with self._db.lock:
+            for chunk in _id_chunks(session_ids):
+                marks = ",".join("?" * len(chunk))
+                cursor = self._db.conn.execute(
+                    f"DELETE FROM sessions WHERE id IN ({marks})"
+                    " AND status NOT IN ('configuring', 'running')",
+                    tuple(chunk),
+                )
+                removed += cursor.rowcount
+            self._db.conn.commit()
+        return removed
 
     def runs_for(self, session_id: str) -> list[SessionAnimalRun]:
         with self._db.lock:

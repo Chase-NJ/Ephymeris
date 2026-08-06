@@ -4,11 +4,11 @@
 
 > **What this is** · Every configurable value, where it is edited, and the rig-level machinery those values drive.
 >
-> **Owns** · The Config / Settings / Task split · all eleven settings keys · persistence and the push to the sidecar · box→board bindings · board discovery · **the hardware utility baseline** · the handshake test.
+> **Owns** · The Rig / Settings / Task split · all ten settings keys · persistence and the push to the sidecar · box→board bindings · board discovery · **the hardware utility baseline** · the handshake test.
 >
 > **Read with** · [dashboard.md](dashboard.md) (the port state machine these values feed) · [tasks.md](tasks.md) (the bundled sketch library and rig task defaults) · [data.md](data.md) (what the data and backup directories mean).
 
-**Contents** — [1. The split](#1-the-split) · [2. The eleven keys](#2-the-eleven-keys) · [3. Persistence & push](#3-persistence--push) · [4. The Settings screen](#4-the-settings-screen) · [5. The Config screen](#5-the-config-screen) · [6. Box bindings](#6-box-bindings) · [7. Board discovery](#7-board-discovery) · [8. **The utility baseline**](#8-the-hardware-utility-baseline) · [9. The handshake test](#9-the-handshake-test)
+**Contents** — [1. The split](#1-the-split) · [2. The ten keys](#2-the-ten-keys) · [3. Persistence & push](#3-persistence--push) · [4. The Settings screen](#4-the-settings-screen) · [5. The Rig screen](#5-the-rig-screen-config) · [6. Box bindings](#6-box-bindings) · [7. Board discovery](#7-board-discovery) · [8. **The utility baseline**](#8-the-hardware-utility-baseline) · [9. The handshake test](#9-the-handshake-test)
 
 ---
 
@@ -19,18 +19,20 @@ Three screens edit settings. **The split is by subject, not by shape.**
 | Screen | Answers | Owns |
 |---|---|---|
 | ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
-| 📡 **Config** (`/config`) | *Which board is box 3?* | Constellation layout, box→board bindings, handshake test, utility baseline, default baud, `arduino-cli` path |
-| 🔀 **Task** (`/task*`) | *What is the animal doing, and what is the box built out of?* | The task-spec Designer, wizard and bench; the channel→pin map (`/task/hardware`) |
-| 📄 **Sketches** (`/sketches`) | *What firmware ships with the app, and how does this rig run it?* | The bundled sketch library, each sketch's derived trial flow, and per-sketch task parameters (`settings.taskDefaults`). Its own tab (bottom of the sidebar, above Settings) because the sketches come **with** Ephymeris — the library is part of the app, not part of one experiment's workflow |
+| 📡 **Rig** (`/config`) | *Which board is box 3, and what does every pin do?* | Box→board bindings (add/remove/name, with per-row health), the handshake test, the utility baseline, **the channel→pin wiring editor** (formerly `/task/hardware`), default baud, `arduino-cli` path. **The tab is labelled Rig; the route and `routes/Config.tsx` keep the old spelling** — the label is the operator's word for the subject, the path is an internal address nothing displays |
+| 🔀 **Task** (`/task*`) | *What is the animal doing?* | The task-spec Designer, wizard and bench; the bundled sketch library (`/task/sketches`, below). The channel→pin map moved to Rig — its landing card keeps a door there |
+| 📄 **Sketches** (`/task/sketches`) | *What firmware ships with the app, and how does this rig run it?* | The bundled sketch library, each sketch's derived trial flow, and per-sketch task parameters (`settings.taskDefaults`). One of the Task family now — it spent a while as its own sidebar tab (`/sketches`, which redirects) on the reasoning that the sketches ship *with the app*; true of where they come from, but the operator looks for them by what they are for, and that is Task. The Dashboard's Task tile carries a one-click shortcut |
 
 > [!NOTE]
 > **Both of the first two rows are about wiring, and they are different wirings.**
-> Config binds a **box number to a board** — runtime indirection, per rig, changing
-> whenever a board is swapped or Windows renumbers a COM port. Task → Rig wiring
-> binds a **channel to a pin** — compile-time input, per box generation, baked into
-> every table the compiler emits ([specs.md §9](specs.md)). The screens are named
-> **Bind boxes** and **Rig wiring** so the distinction survives being spoken aloud;
-> the Config step used to be called "Map hardware", which collided.
+> The Rig tab binds a **box number to a board** — runtime indirection, per rig,
+> changing whenever a board is swapped or Windows renumbers a COM port. Task → Rig
+> wiring binds a **channel to a pin** — compile-time input, per box generation,
+> baked into every table the compiler emits ([specs.md §9](specs.md)). The screens
+> are named **Bind boxes** and **Rig wiring** so the distinction survives being
+> spoken aloud; the box-setup step used to be called "Map hardware", which
+> collided. The tab taking the name **Rig** is the same move one level up: the
+> word the screen's own halves already used.
 
 > [!NOTE]
 > **This row has been decided twice.** The first split (Settings → Config) was by *shape*: hardware-ish vs storage-ish. The second (Config → Task) is by *subject*, and the forcing function was volume — making every firmware parameter operator-tunable turned a three-field panel into forty-odd fields, which is not a row on a hardware page.
@@ -39,7 +41,7 @@ Three screens edit settings. **The split is by subject, not by shape.**
 
 ---
 
-## 2. The eleven keys
+## 2. The ten keys
 
 Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/settings/schema.ts); the shape is generated into `src/lib/ws/protocol.ts`.
 
@@ -47,14 +49,13 @@ Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/set
 |---|---|---|---|---|
 | `dataDirectory` | `string \| null` | `null` | **Settings** → Storage | Where session data is written ([data.md §1](data.md#1-directory-structure)). Blank/whitespace normalizes to `null` |
 | `backupDirectory` | `string \| null` | `null` | **Settings** → Storage | Second copy of session files and the cohort database on another drive or share ([data.md §7](data.md#7-backup-mirroring)). Setting it does **not** backfill |
-| `arduinoCliPath` | `string \| null` | `null` | **Config** → Hardware | Override for the bundled `arduino-cli`. Empty string coerces to `null` |
-| `utilitySketchName` | `string \| null` | `null` | **Config** → Hardware | The baseline every idle box is returned to ([§8](#8-the-hardware-utility-baseline)), by sketch **folder name** — the same key `taskDefaults` uses, because the bundled library's path is per-install while the name survives an update. `null` turns the baseline off |
-| `defaultBaud` | `number` | **`115200`** | **Config** → Hardware, and the setup wizard | Starting baud for each console. Debug Mode allows a per-box override. Options: 9600, 19200, 38400, 57600, 115200, 230400, 250000. **The default only applies to a fresh install** — the value is persisted, so an existing machine keeps whatever its store holds |
-| `boxes` | `BoxBinding[]` | `[]` | **Config** → Boxes, and the wizard | The user-managed box list — see [§6](#6-box-bindings) |
+| `arduinoCliPath` | `string \| null` | `null` | **Rig** → Hardware | Override for the bundled `arduino-cli`. Empty string coerces to `null` |
+| `utilitySketchName` | `string \| null` | `null` | **Rig** → Utility baseline | The baseline every idle box is returned to ([§8](#8-the-hardware-utility-baseline)), by sketch **folder name** — the same key `taskDefaults` uses, because the bundled library's path is per-install while the name survives an update. `null` turns the baseline off |
+| `defaultBaud` | `number` | **`115200`** | **Rig** → Hardware | Starting baud for each console. Debug Mode allows a per-box override. Options: 9600, 19200, 38400, 57600, 115200, 230400, 250000. **The default only applies to a fresh install** — the value is persisted, so an existing machine keeps whatever its store holds |
+| `boxes` | `BoxBinding[]` | `[]` | **Rig** → Boxes | The user-managed box list — see [§6](#6-box-bindings) |
 | `reducedMotion` | `boolean` | `false` | **Settings** → Interface | Forces reduced motion on regardless of the system setting (which is always respected on top). **Shell-only** |
-| `constellation` | `string \| null` | `null` | **Config** → Constellation | Zodiac layout id for the box-status constellation. `null` = the legacy fixed layout. **Shell-only** |
-| `constellationSlots` | `Record<string, number>` | `{}` | **Config** → Constellation (drag) | Which star each box sits on, box number as a string key. **Shell-only** |
-| `boxSetupComplete` | `boolean` | `false` | Set by the wizard | Gates the first-run wizard on `/config`. **Shell-only** |
+| `constellation` | `string \| null` | `null` | **Settings** → Constellation | Zodiac layout id for the box-status constellation. `null` = the legacy fixed layout. **Shell-only** |
+| `constellationSlots` | `Record<string, number>` | `{}` | **Settings** → Constellation (drag), and box add/remove on Rig (reconciled) | Which star each box sits on, box number as a string key. **Shell-only** |
 | `taskDefaults` | `Record<string, Record<string, unknown>>` | `{}` | **Sketches** | This rig's default task parameters, per sketch. **Shell-only** |
 
 > [!IMPORTANT]
@@ -93,7 +94,7 @@ flowchart LR
 
 **Storage details.** `settings.json` in the app data directory, a single `"settings"` key, opened with `autoSave: false` and an explicit `save()` after every `set`. A *rejected* open promise is deliberately never cached, so one transient IO failure doesn't poison the session. Load failures fall back to the defaults so the screens stay usable.
 
-Save failures surface as a persistent note on both Config and Settings: *"Couldn't save to disk — your change may not survive a restart."*
+Save failures surface as a persistent note on both Rig and Settings: *"Couldn't save to disk — your change may not survive a restart."*
 
 > [!NOTE]
 > The sidecar's own settings parser is **deliberately lenient** — an unknown key is a non-event, and a malformed value degrades to a default rather than killing the process that owns the ports.
@@ -116,28 +117,31 @@ Two groups. Nothing here is gated on the WebSocket; only the backup readout goes
 
 - **Reduced motion** — forces it on. The system preference is always respected on top, so this only ever adds restraint.
 
+### Constellation
+
+Moved here from the Rig screen, and the move is the argument: which zodiac the status display draws, and which star a box sits on, style how the rig is *shown* — the sidebar widget and the Dashboard sky — and never touch how it is wired. Interface, filed under Interface.
+
+- **The interactive board** — drag a box to a different star to rearrange; per-box health lights the nodes.
+- **The zodiac picker** — twelve hand-authored layouts ([§5.2](#52-zodiac-layouts)); layouts with fewer stars than configured boxes are disabled rather than distorted.
+
+The slot map follows box add/remove made on the Rig tab automatically (`reconcileSlots` runs in the same settings write), so this section can be ignored forever and stay honest.
+
 ---
 
-## 5. The Config screen
+## 5. The Rig screen (`/config`)
 
-Three groups, plus a **Run setup again** action in the header.
+One screen, in the order a rig comes up in — a workbench, wider than the settings forms.
 
 | Group | Contents |
 |---|---|
-| **Constellation** | The interactive board (drag a box to a star) and the zodiac picker |
-| **Boxes** | The bindings table, plus the per-box handshake test |
-| **Hardware** | The utility sketch panel (with **Reflash boxes**), the default baud select, and the `arduino-cli` path override |
+| **Boxes** | The bindings table — add/remove a box, name it, bind it to a board — with a per-row health dot (the sidebar constellation's states and colours), plus the per-box handshake test |
+| **Utility baseline** | The utility sketch panel: which sketch idle boxes rest on, the per-box baseline state, and **Reflash boxes** |
+| **Wiring** | The channel→pin editor (`RigWiringEditor`, formerly `/task/hardware`): the board map selects, the inspector rail edits, and a save that would break tasks previews and asks first |
+| **Hardware** | The default baud select and the `arduino-cli` path override |
 
-### 5.1 The first-run wizard
+**There is no setup wizard.** There was — five linear steps over the same surfaces, gated on a `boxSetupComplete` flag — and it is retired along with the flag: with the page itself reading in setup order and the Boxes table opening on its own "add one for each box" prompt, a second, modal way through the same four surfaces was a maintenance cost with no second story to tell. First run simply lands here. (A stale store's `boxSetupComplete` is ignored, like `arduinoDirectory` before it.)
 
-Opens instead of the normal view until `boxSetupComplete` is set. **Five linear steps:** map hardware → nickname boxes → per-box handshake → pick a constellation → done.
-
-In-route rather than a modal — a multi-minute guided flow is not "transient," and vibrancy stays reserved for the sidebar and true modals.
-
-> [!IMPORTANT]
-> **The wizard never traps.** Back always works, **Skip setup** is always visible and just sets the flag, and a failed handshake never blocks advancing — the hardware may simply be off.
-
-Steps 1–2 write through to settings immediately; the constellation choice is **local until Finish**, so an abandoned run leaves no half-chosen layout. The gate renders nothing until settings are `loaded`, or the wizard would flash for every configured user on every launch. "Run setup again" re-opens it without clearing the flag.
+The constellation board and picker are on **Settings → Constellation** now ([§4](#4-the-settings-screen)): they style the status display and never touch the hardware. The slot map still follows box add/remove made here — `reconcileSlots` runs in the same settings write.
 
 ### 5.2 Zodiac layouts
 
@@ -168,7 +172,7 @@ BoxBinding = { box: number; hardwareId: string | null; label: string }
 > [!NOTE]
 > **Gates are on *bound*, not *detected*.** Detection only downgrades a label. A cohort can be fully configured — animals assigned to boxes 1–6 — before any hardware is connected, and the sidecar validates a cohort's `boxNumber` against the bare 1–6 range only, never against which boards happen to be bound right now. That is what keeps a cohort editable on the other lab machine.
 
-**Re-binding.** A board swap is a routine lab event. Bindings live in Config with a re-runnable wizard and a per-box handshake test to confirm a swap took. What is still open is proactive surfacing — *"a new board appeared, bind it to box 3?"* — rather than the user knowing to open Config.
+**Re-binding.** A board swap is a routine lab event. Bindings live on the Rig tab with a per-box handshake test to confirm a swap took. What is still open is proactive surfacing — *"a new board appeared, bind it to box 3?"* — rather than the user knowing to open the Rig tab.
 
 > [!WARNING]
 > **A stale handler must never survive a rebind.** Close the port before rebinding, or rebind only while `IDLE`. This is the same rule that makes the handshake test close a box already in `PASSTHROUGH` before running.
@@ -204,10 +208,10 @@ The reason to want it is concrete. Before this, the state of a board between ses
 | Trigger | Notes |
 |---|---|
 | **On startup** | When the presence poll first reports the rig. The cold case: nothing is known about any board, so every bound box is a candidate |
-| **When a board appears** | Replugged, or newly bound in Config |
+| **When a board appears** | Replugged, or newly bound on the Rig tab |
 | **When a port falls back to `IDLE`** | A run finishing, a console closing, an error acknowledged. Hooking the **transition** rather than each command means every path to idleness is covered by one rule, including ones added later |
 | **When a session lets go** | `sessions.end`, `sessions.switchGroup`, or `sessions.abandon`. Switch Group restores *immediately* rather than waiting for the whole session, because the operator's very next act is walking the rig to swap animals — and that walk is what wants the lights |
-| **On demand** | Config's **Reflash boxes** button, the only path that passes `force` |
+| **On demand** | The Rig tab's **Reflash boxes** button, the only path that passes `force` |
 
 Restores run **one box at a time, sequentially**, for the same reason the session flash sequence does.
 

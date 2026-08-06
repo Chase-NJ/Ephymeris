@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ChartLine } from "lucide-react";
+import { ArrowLeft, ChartLine, LayoutGrid } from "lucide-react";
 
 import { CohortIcon } from "@/components/cohorts/CohortIcon";
 import type { CohortSummary } from "@/lib/cohorts/types";
@@ -87,19 +87,45 @@ export function CohortLanding({
   );
 }
 
-/** The "back to the picker" control, sized to sit inline with the selectors. */
+/**
+ * The "back to the picker" control — a breadcrumb, not a caption.
+ *
+ * This used to render `← {cohort name}`, which named the wrong thing: an
+ * arrow beside the *current* cohort's name reads as "you are here", and
+ * nothing on screen said where clicking would go. An affordance is only as
+ * good as the destination it names, so the clickable part now says
+ * **All cohorts** — the same wording the cohort editor's back button uses —
+ * with the tile-grid icon of the landing it returns to, and the current
+ * cohort's name follows as plain text. `[⊞ All cohorts] / The Remy's` is the
+ * standard breadcrumb grammar: the link goes up, the label states where you
+ * are.
+ */
 export function ChangeCohort({ name, onBack }: { name: string; onBack: () => void }) {
   return (
-    <motion.button
-      type="button"
-      onClick={onBack}
-      whileHover={{ x: -2 }}
-      transition={springSnappy}
-      className="flex items-center gap-1.5 text-[12px] text-static transition-colors hover:text-starlight"
-      title="Choose a different cohort"
-    >
-      <span aria-hidden>←</span>
-      <span className="max-w-[160px] truncate">{name}</span>
-    </motion.button>
+    <span className="mt-1 flex items-center gap-2 text-[12px]">
+      <motion.button
+        type="button"
+        onClick={onBack}
+        whileHover={{ x: -2 }}
+        whileTap={{ scale: 0.98 }}
+        transition={springSnappy}
+        // The group class carries the hover to the arrow: the chip brightens
+        // and the arrow leans into the direction travel will happen.
+        className="group flex items-center gap-1.5 rounded-sm border border-halo bg-nebula px-2 py-1 text-static transition-colors hover:border-static/70 hover:bg-halo/50 hover:text-starlight"
+        title="Back to the cohort tiles"
+      >
+        <ArrowLeft
+          size={12}
+          strokeWidth={1.75}
+          className="transition-transform group-hover:-translate-x-0.5"
+        />
+        <LayoutGrid size={12} strokeWidth={1.75} />
+        All cohorts
+      </motion.button>
+      <span aria-hidden className="text-static/50">
+        /
+      </span>
+      <span className="max-w-[180px] truncate text-starlight">{name}</span>
+    </span>
   );
 }

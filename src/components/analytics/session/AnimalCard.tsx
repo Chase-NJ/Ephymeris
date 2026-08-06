@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 
 import { DrawOn } from "@/components/charts/DrawOn";
@@ -19,7 +19,7 @@ import type {
   TrialOutcomes,
 } from "@/lib/analytics/types";
 import { OUTCOME_STYLE } from "@/lib/analytics/view";
-import { springSnappy } from "@/lib/motion";
+import { springPanel, springSnappy } from "@/lib/motion";
 
 import { AnimalDetail } from "./AnimalDetail";
 
@@ -86,8 +86,17 @@ export function AnimalCard({
       onPointerEnter={() => store.hoverAnimal(run.animalId)}
       onPointerLeave={() => store.hoverAnimal(null)}
       initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ ...springSnappy, delay: index * 0.04 }}
+      // The stagger belongs to the entrance alone, spelled inside the target:
+      // the top-level `transition` also governs the `layout` glide to and from
+      // the focus slot, and a per-index delay there turns the promotion into a
+      // laggy shuffle. The glide itself gets the panel spring — it is a card
+      // travelling across the grid, not a small control settling.
+      animate={{
+        opacity: 1,
+        y: 0,
+        transition: { ...springSnappy, delay: index * 0.04 },
+      }}
+      transition={{ ...springSnappy, layout: springPanel }}
     >
       <div
         className={`px-3 py-2.5 ${toggle ? "cursor-pointer" : ""}`}
@@ -188,9 +197,31 @@ export function AnimalCard({
         )}
       </div>
 
-      {expanded && !reason && (
-        <AnimalDetail run={run} series={series} color={color} revealKey={revealKey} />
-      )}
+      {/* The drawer slides open rather than popping in: height animates to
+          measured auto and back to zero, clipped while in motion. `initial=
+          {false}` so a card that mounts already-open (never today, cheap
+          insurance) doesn't replay the reveal. On a swap, the closing card's
+          exit runs while the opening card's entrance does — one continuous
+          hand-off instead of a cut. */}
+      <AnimatePresence initial={false}>
+        {expanded && !reason && (
+          <motion.div
+            key="detail"
+            className="overflow-hidden"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={springPanel}
+          >
+            <AnimalDetail
+              run={run}
+              series={series}
+              color={color}
+              revealKey={revealKey}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

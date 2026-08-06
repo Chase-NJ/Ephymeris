@@ -260,8 +260,6 @@ export interface EphymerisSettings {
   constellation: string | null;
   /** Box number (string key, JSON) → star index in the chosen constellation. Shell-only. */
   constellationSlots: Record<string, number>;
-  /** First-run box setup finished or explicitly skipped; gates the Config wizard. Shell-only. */
-  boxSetupComplete: boolean;
   /**
    * Sketch folder name → this rig's default task parameters for it, keyed by `metadataKey`
    * (`tasks.md` §6.1). Keyed by NAME, not path: the two lab machines keep their Arduino
@@ -939,6 +937,12 @@ export interface AnalyticsCounts {
 /** The whole cohort table in one call; selections filter it client-side. */
 export interface AnalyticsSummary {
   cohortId: string;
+  /**
+   * The cohort's data folder, verbatim. The Observatory's open-folder button wants exactly this
+   * string, and the handler has the cohort in hand already — fetching the full cohort (roster and
+   * all) client-side for one path would be the wrong shape of call.
+   */
+  dataFolder: string;
   sessions: SessionListItem[];
   animals: AnalyticsAnimal[];
   groups: Group[];
@@ -1045,9 +1049,35 @@ export interface RescanOrphan {
   reason: string | null;
 }
 
+/**
+ * What the rescan removed because the disk no longer has it (§8.6). Bookkeeping only — the rescan
+ * never deletes a file.
+ */
+export interface RescanPruned {
+  /** Recorded `session_animal_runs` rows dropped. */
+  runs: number;
+  /**
+   * Sessions dropped once nothing was left pointing at them — their folder is gone and no run of
+   * theirs survived.
+   */
+  sessions: number;
+  /** `adopted_runs` rows dropped. */
+  adopted: number;
+}
+
 export interface RescanResult {
   scanned: number;
+  /**
+   * What this scan **decided** — not how many adopted rows the cohort has. A file already adopted
+   * from that same path and unchanged since is carried forward unread, so a rescan that changed
+   * nothing reports 0 (§8.7).
+   */
   adopted: number;
+  /**
+   * Records reconciled away. Only ever counts paths that are **reachable and absent** — a path
+   * under an unreachable root is left alone, so an unplugged drive can't erase history (§8.6).
+   */
+  pruned: RescanPruned;
   /**
    * Extra copies of an already-seen run, skipped. A hand-managed archive often keeps a
    * consolidated copy beside the per-prefix originals; adopting both would double every animal

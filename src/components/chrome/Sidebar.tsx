@@ -1,7 +1,5 @@
 import { motion } from "framer-motion";
-import { ChartLine, Orbit, Radio, Settings, Users, Workflow,
-  FileCode2,
-} from "lucide-react";
+import { ChartLine, Orbit, Radio, Settings, Users, Workflow } from "lucide-react";
 import { useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
 import type { LucideIcon } from "lucide-react";
@@ -24,10 +22,10 @@ import { useRunningSession } from "@/lib/sessions/context";
  * (see `AppShell`); the glass has to have something to be glass over.
  * Two groups: the working destinations at the top, and Settings pinned to the
  * bottom just above the constellation widget — the macOS convention of app
- * preferences living at the edge of the list. **Config sits in the top group,
+ * preferences living at the edge of the list. **Rig sits in the top group,
  * directly under Dashboard**: it is how *this rig* is wired, so it belongs
  * beside the sky it describes rather than filed away with preferences — the
- * Dashboard's Rig tile links straight to it when no box is bound. The
+ * Dashboard's Rig tile links straight to it. The
  * Dashboard owns the primary
  * action *and* the way back to a running session — the Launch nav item is
  * retired (§3.2): its content docks beside the Dashboard's hero CTA, so the
@@ -57,17 +55,20 @@ const NAV_MAIN: readonly NavItem[] = [
     // same reasoning `/session/*` already gets.
     match: (p) => p === "/" || p.startsWith("/session") || p.startsWith("/debug"),
   },
-  { to: "/config", label: "Config", icon: Radio },
+  // **Rig**, at the route still spelled `/config` (see `App.tsx`). The tab is
+  // named for its subject — this rig's wiring, all of it: box→board bindings,
+  // the utility baseline, and the channel→pin editor that used to live on Task.
+  { to: "/config", label: "Rig", icon: Radio },
   { to: "/cohorts", label: "Cohorts", icon: Users },
   { to: "/task", label: "Task", icon: Workflow },
   { to: "/analytics", label: "Analytics", icon: ChartLine },
 ];
 
+// Settings alone. The sketch library used to sit here as its own tab; it is now
+// `/task/sketches`, reached from the Task landing and from the Dashboard's Task
+// tile — a sketch is one of the things a task can be made of, so a tab of its
+// own was filing it by where it came from rather than by what it is for.
 const NAV_BOTTOM: readonly NavItem[] = [
-  // Above Settings, below the workflow tabs: the sketches ship with Ephymeris,
-  // so the library is part of the app rather than part of any one experiment's
-  // workflow — furniture, not a stop in the session flow.
-  { to: "/sketches", label: "Sketches", icon: FileCode2 },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 

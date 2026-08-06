@@ -576,7 +576,7 @@ export function SessionMapping() {
                 </p>
                 <p className="mt-0.5 text-[12px] text-static">
                   Flashing stops at the first one that fails, after the boxes
-                  before it have already been flashed. Bind them in Config, or
+                  before it have already been flashed. Bind them on the Rig tab, or
                   move these animals to boxes that are set up.
                 </p>
               </div>

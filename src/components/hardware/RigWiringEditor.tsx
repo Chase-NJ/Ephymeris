@@ -1,23 +1,10 @@
-import { motion } from "framer-motion";
-import {
-  ArrowLeft,
-  CircleAlert,
-  Hand,
-  Plus,
-  RotateCcw,
-  Save,
-  Trash2,
-  Waypoints,
-} from "lucide-react";
+import { CircleAlert, Hand, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router";
 
 import { Button, Select } from "@/components/common/controls";
 import { FieldRow } from "@/components/common/FieldRow";
 import { RowDensityContext } from "@/components/common/rowDensity";
-import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { BoardMap } from "@/components/hardware/BoardMap";
-import { InspectorRail } from "@/components/specs/InspectorRail";
 import {
   KINDS,
   kindColor,
@@ -25,29 +12,29 @@ import {
   type RigDocument,
 } from "@/lib/hardware/types";
 import { useRig } from "@/lib/hardware/useRig";
-import { PANEL_TRAVEL, springPanel } from "@/lib/motion";
 
 /**
- * Rig wiring — which pin each channel is on, and what it means.
+ * The channel→pin editor, as a section rather than a screen.
  *
- * NOT "Map hardware", which `SetupWizard` already calls its first step. That
- * one binds a BOX to a BOARD: a runtime indirection, per rig, changing on every
- * board swap, and wrong loudly (the port will not open). This binds a CHANNEL to
- * a PIN: compiler input, baked into every table, and wrong silently — the wrong
- * valve fires and the listing looks correct. Two screens with one name is a
- * support call, so that step is "Bind boxes" now.
- *
- * It lives on Task rather than Config despite Config owning "how is this rig
- * wired" (`settings.md` §1), because the task creator derives every hardware
- * value from it — response ports, reward lines, stimulus lines. Putting it a
- * tab away from the thing that consumes it would be filing by category rather
- * than by use.
+ * This was the whole of `/task/hardware` until the Rig screen absorbed it —
+ * the route's shell (sky, back button, full-height split) stayed behind and
+ * died with it; the editor itself moved here unchanged in behaviour. It still
+ * binds a CHANNEL to a PIN: compiler input, baked into every table, and wrong
+ * silently — which is why the preview round trip, the problems list, and the
+ * would-break-tasks gate all survive the move intact (`useRig`).
  *
  * THE MAP SELECTS, THE RAIL EDITS — `SpecCanvas`'s division, for the same
- * reason: two surfaces for one field eventually disagree.
+ * reason: two surfaces for one field eventually disagree. Embedded, the rail
+ * is a fixed right column inside the section instead of the resizable
+ * `InspectorRail` (that one exists for strobe pickers twenty characters wide;
+ * a channel's fields are short).
+ *
+ * Saving stays the editor's own gesture, not the page's: everything else on
+ * the Rig screen writes through `useSettings` per change, but a wiring edit
+ * can break saved tasks, so it keeps its explicit Save with the preflight
+ * (`RIG_WOULD_BREAK_TASKS`) in front of it.
  */
-export function TaskHardware() {
-  const navigate = useNavigate();
+export function RigWiringEditor() {
   const rig = useRig();
   const [selected, setSelected] = useState<string | null>(null);
   const [carried, setCarried] = useState<string | null>(null);
@@ -97,8 +84,7 @@ export function TaskHardware() {
    * in a dialog. The rail is already the place a channel's fields are edited,
    * so a new one arriving selected with its fields open is the same gesture as
    * editing an existing one — and a modal would cover the board the operator is
-   * choosing a pin from, which is the reason `StructureBlocks` is a card and
-   * not a dialog either.
+   * choosing a pin from.
    */
   function addChannel() {
     if (!doc) return;
@@ -134,11 +120,11 @@ export function TaskHardware() {
   /**
    * Rename a channel in both halves at once.
    *
-   * A CHANNEL NAME IS WHAT A SPEC REFERENCES, so this is the one edit on this
-   * screen that can break a saved task by itself — and it will show up in
-   * `breaks` as TG223, which is the whole point of computing that before the
-   * write. Key order is preserved because the map's reading order is the
-   * document's, and a rename that shuffled the board would look like a move.
+   * A CHANNEL NAME IS WHAT A SPEC REFERENCES, so this is the one edit here that
+   * can break a saved task by itself — and it will show up in `breaks` as
+   * TG223, which is the whole point of computing that before the write. Key
+   * order is preserved because the map's reading order is the document's, and a
+   * rename that shuffled the board would look like a move.
    */
   function renameChannel(from: string, to: string) {
     if (!doc || !to || to === from || doc.channels[to]) return;
@@ -173,20 +159,16 @@ export function TaskHardware() {
   const canSave = rig.dirty && errors === 0 && !rig.saving;
 
   return (
-    <Shell>
-      <header className="flex shrink-0 items-center gap-3 border-b border-halo px-4 py-2.5">
-        <Button variant="ghost" onClick={() => navigate("/task")} title="Back to Task">
-          <ArrowLeft size={13} strokeWidth={1.75} />
-        </Button>
-        <div className="min-w-0 flex-1">
-          <div className="font-display text-[14px] text-starlight">Rig wiring</div>
-          <div className="font-mono text-[10px] text-static">
-            {rig.status
-              ? `${rig.status.board || "board"} · ${
-                  rig.status.custom ? "this rig's own" : "as shipped"
-                } · ${rig.status.pinoutHash}`
-              : "loading…"}
-          </div>
+    <div>
+      {/* The editor's own action strip — status on the left, the write
+          controls on the right. */}
+      <div className="flex items-center gap-3 border-b border-halo px-4 py-2.5">
+        <div className="min-w-0 flex-1 font-mono text-[10px] text-static">
+          {rig.status
+            ? `${rig.status.board || "board"} · ${
+                rig.status.custom ? "this rig's own" : "as shipped"
+              } · ${rig.status.pinoutHash}`
+            : "loading…"}
         </div>
         {rig.checking && (
           <span className="font-mono text-[10px] text-static">checking…</span>
@@ -216,7 +198,7 @@ export function TaskHardware() {
           <Save size={12} strokeWidth={1.75} />
           {rig.saving ? "Saving…" : "Save"}
         </Button>
-      </header>
+      </div>
 
       {rig.loadError && (
         <p
@@ -228,12 +210,12 @@ export function TaskHardware() {
       )}
 
       {doc === null ? (
-        <div className="flex flex-1 items-center justify-center text-[12px] text-static">
+        <p className="px-4 py-6 text-center text-[12px] text-static">
           {rig.loadError ? "" : "Reading this rig's wiring…"}
-        </div>
+        </p>
       ) : (
-        <div className="flex min-h-0 flex-1">
-          <div className="scrollbar-none flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-5">
+        <div className="grid grid-cols-1 items-start gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+          <div className="flex min-w-0 flex-col gap-4">
             {carried !== null && (
               <div className="flex items-center gap-2 rounded-sm border border-pulsar/60 bg-pulsar/10 px-3 py-1.5 text-[11px] text-starlight">
                 <Hand size={12} strokeWidth={1.75} />
@@ -319,7 +301,9 @@ export function TaskHardware() {
             )}
           </div>
 
-          <InspectorRail>
+          {/* The inspector column. `lg:sticky` so a long problems list scrolls
+              under a rail that keeps the selected channel's fields in reach. */}
+          <div className="rounded-sm border border-halo px-3 py-1 lg:sticky lg:top-4">
             <RowDensityContext.Provider value="stacked">
               <ChannelInspector
                 doc={doc}
@@ -334,10 +318,10 @@ export function TaskHardware() {
                 }}
               />
             </RowDensityContext.Provider>
-          </InspectorRail>
+          </div>
         </div>
       )}
-    </Shell>
+    </div>
   );
 }
 
@@ -559,23 +543,3 @@ function RenameRow({
     </label>
   );
 }
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="relative h-full">
-      {/* Mounted at zero opacity rather than omitted: a route with no
-          constellation triggers a real stage release and a ~300 ms stall. */}
-      <SkyBackdrop opacity={0} />
-      <motion.div
-        initial={{ opacity: 0, y: PANEL_TRAVEL }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={springPanel}
-        className="absolute inset-0 flex flex-col"
-      >
-        {children}
-      </motion.div>
-    </div>
-  );
-}
-
-export { Waypoints as RigWiringIcon };

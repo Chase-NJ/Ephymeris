@@ -164,12 +164,6 @@ SHAPES = (
                 "constellation. Shell-only.",
             ),
             f(
-                "boxSetupComplete",
-                BOOL,
-                doc="First-run box setup finished or explicitly skipped; gates "
-                "the Config wizard. Shell-only.",
-            ),
-            f(
                 "taskDefaults",
                 MapOf(MapOf(ANY)),
                 doc="Sketch folder name → this rig's default task parameters for "
@@ -896,6 +890,15 @@ SHAPES = (
         "AnalyticsSummary",
         obj(
             f("cohortId", STR),
+            f(
+                "dataFolder",
+                STR,
+                doc="The cohort's data folder, verbatim. The Observatory's "
+                "open-folder button wants exactly this string, and the handler "
+                "has the cohort in hand already — fetching the full cohort "
+                "(roster and all) client-side for one path would be the wrong "
+                "shape of call.",
+            ),
             f("sessions", ListOf(Ref("SessionListItem"))),
             f("animals", ListOf(Ref("AnalyticsAnimal"))),
             f("groups", ListOf(Ref("Group"))),
@@ -1030,10 +1033,39 @@ SHAPES = (
         ),
     ),
     Shape(
+        "RescanPruned",
+        obj(
+            f("runs", INT, doc="Recorded `session_animal_runs` rows dropped."),
+            f(
+                "sessions",
+                INT,
+                doc="Sessions dropped once nothing was left pointing at them — "
+                "their folder is gone and no run of theirs survived.",
+            ),
+            f("adopted", INT, doc="`adopted_runs` rows dropped."),
+        ),
+        doc="What the rescan removed because the disk no longer has it (§8.6). "
+        "Bookkeeping only — the rescan never deletes a file.",
+    ),
+    Shape(
         "RescanResult",
         obj(
             f("scanned", INT),
-            f("adopted", INT),
+            f(
+                "adopted",
+                INT,
+                doc="What this scan **decided** — not how many adopted rows the "
+                "cohort has. A file already adopted from that same path and "
+                "unchanged since is carried forward unread, so a rescan that "
+                "changed nothing reports 0 (§8.7).",
+            ),
+            f(
+                "pruned",
+                Ref("RescanPruned"),
+                doc="Records reconciled away. Only ever counts paths that are "
+                "**reachable and absent** — a path under an unreachable root is "
+                "left alone, so an unplugged drive can't erase history (§8.6).",
+            ),
             f(
                 "duplicates",
                 INT,
@@ -1987,10 +2019,26 @@ COMMANDS = (
     ),
     Command(
         "analytics.rescan",
-        args=obj(f("cohortId", STR), f("adoptOrphans", BOOL, optional=True)),
+        args=obj(
+            f(
+                "cohortId",
+                STR,
+            ),
+            f(
+                "adoptOrphans",
+                BOOL,
+                optional=True,
+                doc="Defaults true. False makes the scan **read-only**: nothing "
+                "is adopted and nothing is pruned, so a caller can ask what the "
+                "walk sees without changing the index.",
+            ),
+        ),
         result=Ref("RescanResult"),
         doc="The explicit archive walk — expensive reconciliation is a "
-        "deliberate user action, never a side effect of opening a view.",
+        "deliberate user action, never a side effect of opening a view. "
+        "Reconciliation runs **both ways**: files no record points at are "
+        "adopted, and records pointing at files the disk no longer has are "
+        "pruned (§8.6).",
     ),
     Command(
         "analytics.recentSessions",

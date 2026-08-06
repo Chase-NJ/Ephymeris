@@ -528,7 +528,7 @@ function Reveal({
  *
  * Doubles as the create flow's spine: each checkpoint corresponds to a section
  * below, so the strip reads as "where am I" and not only "what's missing". The
- * current step's bar widens the way the setup wizard's step dots do — one
+ * current step's bar widens the way the task wizard's step dots do — one
  * shared idiom for the same idea.
  */
 function ReadinessStrip({

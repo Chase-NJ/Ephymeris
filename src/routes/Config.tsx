@@ -1,15 +1,13 @@
 import { motion } from "framer-motion";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
-import { CircleAlert, Radio, RefreshCw } from "lucide-react";
+import { CircleAlert, Radio } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useBoxHealth } from "@/components/chrome/ConstellationStatus";
-import { Button, Select, TextInput } from "@/components/common/controls";
-import { ConstellationBoard } from "@/components/config/ConstellationBoard";
-import { ConstellationPicker } from "@/components/config/ConstellationPicker";
+import { Select, TextInput } from "@/components/common/controls";
 import { HandshakeList } from "@/components/config/HandshakeList";
-import { SetupWizard } from "@/components/config/SetupWizard";
 import { UtilitySketchPanel } from "@/components/config/UtilitySketchPanel";
+import { RigWiringEditor } from "@/components/hardware/RigWiringEditor";
 import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
 import { SettingGroup, SettingRow } from "@/components/settings/SettingRow";
 import { reconcileSlots } from "@/lib/constellations/slots";
@@ -23,19 +21,37 @@ import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Config — everything box-related in one place (settings.md §5).
+ * Rig — everything about this rig's hardware, on one screen (settings.md §5).
  *
- * Wiring, and only wiring: box→board bindings, the zodiac constellation
- * layout, the handshake test, the hardware utility baseline, default baud, and
- * the arduino-cli path. Settings keeps storage and interface.
+ * **The screen is called Rig; the route and this file are still `config`.** The
+ * name is the operator's word for the subject; the path is an internal address
+ * the docs and this app's history already spell one way. See `App.tsx`.
  *
- * The Arduino Directory and a sketch's task parameters live on the Task tab
- * instead — they are about the task rather than about this rig's hardware, and
- * a behaviour profile's forty-odd parameters swamped this page.
+ * Top to bottom it follows the order a rig comes up in: **Boxes** (bind a box
+ * number to a board, name it, watch it come alive — with the handshake test to
+ * prove a binding took), **Utility baseline** (the resting firmware and what
+ * it is doing right now), **Wiring** (the channel→pin map the task compiler
+ * consumes), then the two knobs that rarely move (baud, `arduino-cli`).
  *
- * First visit runs the setup wizard, gated on the persisted
- * `boxSetupComplete` flag — and on `loaded`, because before the store loads
- * every flag reads false and the wizard would flash for everyone.
+ * Two things used to live here and moved out, in opposite directions:
+ *
+ * - **The constellation board and picker are on Settings now.** They style the
+ *   status display — which star a box sits on — and never touch the hardware,
+ *   so they were interface filed under wiring. `onBoxesChange` still
+ *   reconciles the slot map, because *this* screen is where boxes appear and
+ *   disappear, and the slot map has to follow whether or not anyone visits
+ *   Settings.
+ * - **The setup wizard is gone entirely.** It was five linear steps over the
+ *   same four surfaces this page now shows at once; with the page itself
+ *   reading in setup order, a second, modal way through it was a maintenance
+ *   cost with no second story to tell. First run simply lands here with an
+ *   empty Boxes table and its own "add one for each box" prompt.
+ *
+ * **Wiring joined it from the other side** (`RigWiringEditor`, formerly
+ * `/task/hardware`): binding a box to a board and binding a channel to a pin
+ * are different wirings — runtime vs compile-time — but they are one subject,
+ * and the Task landing keeps a door here for the flow that consumes the
+ * channel map.
  */
 export function Config() {
   const { settings, update, discovery, loaded, saveError } = useSettings();
@@ -43,7 +59,6 @@ export function Config() {
   const health = useBoxHealth();
   const handshake = useHandshakeTest();
   const utility = useUtilityStatus();
-  const [wizardOpen, setWizardOpen] = useState(false);
   const [reflashing, setReflashing] = useState(false);
   const connected = status === "connected";
 
@@ -51,19 +66,11 @@ export function Config() {
     () => settings.boxes.filter((b) => b.hardwareId !== null),
     [settings.boxes],
   );
-  const boundNumbers = useMemo(() => bound.map((b) => b.box), [bound]);
-  const labels = useMemo(
-    () => Object.fromEntries(settings.boxes.map((b) => [b.box, b.label])),
-    [settings.boxes],
-  );
-  const chosen = zodiacById(settings.constellation);
 
-  if (!loaded) return null;
-  if (!settings.boxSetupComplete || wizardOpen) {
-    return <SetupWizard onExit={() => setWizardOpen(false)} />;
-  }
-
-  /** Box edits keep the slot map honest in the same settings write. */
+  /** Box edits keep the constellation slot map honest in the same settings
+   * write — the board lives on Settings now, but boxes are added and removed
+   * *here*, and a slot map pointing at a box that no longer exists would
+   * scramble the status display for everyone who never opens Settings. */
   function onBoxesChange(boxes: BoxBinding[]) {
     const nextBound = boxes
       .filter((b) => b.hardwareId !== null)
@@ -99,19 +106,6 @@ export function Config() {
     }
   }
 
-  function onPickConstellation(id: string) {
-    const constellation = zodiacById(id);
-    if (!constellation) return;
-    void update({
-      constellation: id,
-      constellationSlots: reconcileSlots(
-        constellation,
-        settings.constellationSlots,
-        boundNumbers,
-      ),
-    });
-  }
-
   return (
     // Every route sits on the rig's sky. Not decoration: a route that mounts no
     // constellation is the only thing that releases the shared canvas, and that
@@ -128,20 +122,20 @@ export function Config() {
         transition={springPanel}
         className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
       >
-        <section className="pointer-events-auto mx-auto max-w-3xl px-10 py-9">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
-                <Radio size={18} strokeWidth={1.75} className="text-pulsar" />
-              </span>
-              <h1 className="font-display text-[22px] text-starlight">
-                Config
-              </h1>
+        {/* Wider than the settings screens (max-w-3xl): the wiring editor's
+            board map wants the room, and the page is a workbench now, not a
+            form. */}
+        <section className="pointer-events-auto mx-auto max-w-5xl px-10 py-9">
+          <div className="flex items-center gap-3">
+            <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
+              <Radio size={18} strokeWidth={1.75} className="text-pulsar" />
+            </span>
+            <div className="min-w-0">
+              <h1 className="font-display text-[22px] text-starlight">Rig</h1>
+              <p className="font-mono text-[10px] text-static/70">
+                which board is box 3, what it rests on, and what every pin does
+              </p>
             </div>
-            <Button variant="ghost" onClick={() => setWizardOpen(true)}>
-              <RefreshCw size={13} strokeWidth={1.75} />
-              Run setup again
-            </Button>
           </div>
 
           {saveError && (
@@ -155,52 +149,20 @@ export function Config() {
           )}
 
           <fieldset disabled={!loaded} className="contents">
-            <SettingGroup title="Constellation">
-              <div className="px-4 py-3.5">
-                {chosen ? (
-                  <>
-                    <div className="mx-auto max-w-[460px]">
-                      <ConstellationBoard
-                        constellation={chosen}
-                        slots={settings.constellationSlots}
-                        boxes={boundNumbers}
-                        labels={labels}
-                        health={health}
-                        onSlotsChange={(constellationSlots) =>
-                          void update({ constellationSlots })
-                        }
-                      />
-                    </div>
-                    <p className="mt-1 text-center text-[11px] text-static">
-                      {chosen.name} — drag a box to a different star to
-                      rearrange.
-                    </p>
-                  </>
-                ) : (
-                  <p className="pb-2 text-[12px] leading-relaxed text-static">
-                    No constellation chosen yet — the status display uses the
-                    plain layout. Pick one below.
-                  </p>
-                )}
-                <div className="mt-3">
-                  <ConstellationPicker
-                    selected={settings.constellation}
-                    boxCount={boundNumbers.length}
-                    onSelect={onPickConstellation}
-                  />
-                </div>
-              </div>
-            </SettingGroup>
-
             <SettingGroup title="Boxes">
               <BoxBindingsTable
                 boxes={settings.boxes}
+                health={health}
                 onChange={onBoxesChange}
               />
               <div className="border-t border-halo px-4 py-3.5">
-                <div className="pb-2 text-[13px] font-medium text-starlight">
+                <div className="pb-0.5 text-[13px] font-medium text-starlight">
                   Handshake test
                 </div>
+                <p className="pb-2 text-[12px] leading-relaxed text-static">
+                  Proof a binding took: opens the box&rsquo;s console and waits
+                  for its firmware to announce itself.
+                </p>
                 <HandshakeList
                   bound={bound}
                   handshake={handshake}
@@ -209,7 +171,7 @@ export function Config() {
               </div>
             </SettingGroup>
 
-            <SettingGroup title="Hardware">
+            <SettingGroup title="Utility baseline">
               <UtilitySketchPanel
                 sketches={discovery.sketches}
                 boxes={settings.boxes}
@@ -222,7 +184,16 @@ export function Config() {
                 }
                 onReflash={() => void reflashBaseline()}
               />
+            </SettingGroup>
 
+            {/* The channel→pin map. Its own save discipline, deliberately not
+                the page's write-per-change: a wiring edit can break saved
+                tasks, so it previews, lists what would break, and asks. */}
+            <SettingGroup title="Wiring — every pin, and what it means">
+              <RigWiringEditor />
+            </SettingGroup>
+
+            <SettingGroup title="Hardware">
               <SettingRow
                 label="Default baud rate"
                 description="Starting value for each console. Debug Mode allows a per-box override."
@@ -259,11 +230,12 @@ export function Config() {
           <p className="mt-6 px-1 text-[11px] leading-relaxed text-static/70">
             Hardware settings are stored by the app shell and pushed to the
             backend whenever they change, so this screen keeps working even when
-            the backend doesn&rsquo;t. Only the handshake test and directory
-            scan need it.
+            the backend doesn&rsquo;t. The handshake test, the baseline readout
+            and the wiring editor are the parts that need it.
           </p>
         </section>
       </motion.div>
     </div>
   );
 }
+

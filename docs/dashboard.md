@@ -87,7 +87,7 @@ This is the one place the astronomy metaphor is spent deliberately — it isn't 
 | Rule | Detail |
 |---|---|
 | **Only bound boxes appear** | A rig running two boxes shows two nodes, not two nodes and four permanently grey ones implying four boards are missing. The caption reads `N/M boxes`, or `no boxes configured` |
-| **Positions are pinned per assigned star** | A box sits on its star until the user drags it elsewhere in Config. Positions are what make the map glanceable, so they must never reflow as health changes |
+| **Positions are pinned per assigned star** | A box sits on its star until the user drags it elsewhere on the Rig tab. Positions are what make the map glanceable, so they must never reflow as health changes |
 | **The frame reflows, not the layout** | In zodiac mode the frame fits the **whole** asterism, occupied stars and empty alike — the recognizable shape is the point, and it must not warp as boxes come and go |
 | **Marks keep a constant apparent size** | Node radius and line width scale with the frame, so zooming spreads the *spacing* rather than inflating the dots |
 | **An edge needs both endpoints** | A sparse selection (boxes 1 and 6) can show unconnected nodes — honest, since there is no adjacency to report |
@@ -191,16 +191,20 @@ Route `/`. Two columns of translucent HUD tiles docked over the full-bleed sky. 
 
 ### 3.2 The overview column (right)
 
+The column opens with a **paired row of entrance tiles** — Rig and Task, the two tabs that otherwise had no presence on the landing (`components/dashboard/EntranceTile.tsx`). They are deliberately not `SummaryCard`s: a card whose body is rows promises a readout, and these have nothing to read out — they are doors. Same `.hud` glass, squarer shape, and each carries an animated **motif** about its destination: the Rig tile a pin header with a trace that draws itself to a box on hover, the Task tile a trial advancing through a four-node flow. Hover lifts the tile and plays the motif; nothing glows and nothing gradients (§1.2) — movement and a single Pulsar stroke are the whole vocabulary. The Task tile's footer is a one-click shortcut to `/task/sketches`, the standing replacement for the retired Sketches sidebar tab.
+
 | Card | Contents |
 |---|---|
+| **Rig** (entrance) | Opens the Rig tab (`/config`). Caption is the tab's own question — *which board is box 3* — plus the bound-box count |
+| **Task** (entrance) | Opens `/task`; the footer link opens `/task/sketches` directly |
 | **Cohorts** | Active cohorts with animal/group counts; rows open the editor, deferring to the grid past five rows. Header opens `/cohorts` |
-| **Rig** | One row per bound box with a health dot, label, and state. Clicking a row sets the rig selection and lands in Debug with the camera already flying — exactly as clicking its star does |
+| **Boxes** | One row per bound box with a health dot, label, and state. Clicking a row sets the rig selection and lands in Debug with the camera already flying — exactly as clicking its star does |
 | **Analytics** | A reward-accuracy sparkline per cohort, plus the three most recent sessions read from the archive itself |
 
 > [!NOTE]
-> **The Rig tile is a readout, not a destination.** Its header states rig health (`n/m connected`) and carries no link or arrow, because the sky on this page **is** the rig and selecting a box is what opens its panel. `SummaryCard`'s `onOpen` is optional for exactly this reason, and its absence is the signal — *a card with one is a destination, a card without one is a readout.*
+> **The Boxes tile is a readout, not a destination.** (It was named Rig until the Config tab took that name — two tiles labelled Rig, one a door and one deliberately not, would have been a column arguing with itself.) Its header states health (`n/m connected`) and carries no link or arrow, because the sky on this page **is** the rig and selecting a box is what opens its panel. `SummaryCard`'s `onOpen` is optional for exactly this reason, and its absence is the signal — *a card with one is a destination, a card without one is a readout.*
 >
-> It keeps a single link, to Config, and only when no box is bound — that is the one repair a click on the sky cannot perform. It also carries one quiet mono line at its foot, *select a box for its console*, shown only when boxes **are** bound: the only standing sign that per-box consoles exist. Deliberately a note and not a link, because it names a gesture and there is no single box to send anyone to.
+> It keeps a single link, to the Rig tab, and only when no box is bound — that is the one repair a click on the sky cannot perform. It also carries one quiet mono line at its foot, *select a box for its console*, shown only when boxes **are** bound: the only standing sign that per-box consoles exist. Deliberately a note and not a link, because it names a gesture and there is no single box to send anyone to.
 
 The Analytics sparkline is **the earned-drop rate, not choice accuracy** — a correct choice that failed the hold counts against it ([data.md §9.8](data.md#98-rewarded-accuracy-vs-response-accuracy)). Fixed shared domain with a guide line at 0.5 so cohorts compare at a glance, and the latest value prints beside the line so the number is never colour-alone. The recent-session rows come from folder names only, never a file open — so sessions **another** Ephymeris machine wrote into a shared data directory appear here marked "not indexed," where this machine's database could never see them. The badge clears once a rescan adopts the folder — adopted runs count as indexed even though adoption writes no session row ([data.md §8.1](data.md#81-orphan-adoption)).
 

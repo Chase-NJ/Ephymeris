@@ -85,7 +85,7 @@ Both platforms run the same three-process arrangement. The only real differences
 | Node.js | 20+ | |
 | Python | 3.12+ | |
 | Rust | stable | via [rustup](https://rustup.rs) |
-| `arduino-cli` | recent | On `PATH`, or set an explicit path in **Config** |
+| `arduino-cli` | recent | On `PATH`, or set an explicit path on the **Rig** tab |
 
 <details open>
 <summary><strong>🪟 Windows 11</strong></summary>
@@ -154,7 +154,7 @@ Point the app at your own folders and hardware — the bundled sketch library is
 
 | Step | Where | What |
 |---|---|---|
-| 1 | **Config** | A five-step box-setup wizard opens on first launch. Bind each box 1–6 to a connected board (listed by USB serial), nickname them, optionally run the handshake test, pick a constellation. Skippable — the same things are on the Config screen directly. See [settings.md §5](settings.md#5-the-config-screen). |
+| 1 | **Rig** | Add a row per behavior box, bind each to a connected board (listed by USB serial), nickname them, optionally run the handshake test. All on the Rig tab directly (route `/config`) — the old five-step wizard is retired; the page reads in setup order and first run simply lands on it. See [settings.md §5](settings.md#5-the-rig-screen-config). |
 | 2 | **Task** | Nothing to configure — sketches ship with the app ([tasks.md §2](tasks.md#2-the-bundled-sketch-library)). The screen names how many this build carries. |
 | 3 | **Settings → Data directory** | Where session data is written. Optionally a **Backup directory** on another drive or share. See [data.md §1](data.md#1-directory-structure). |
 
@@ -281,7 +281,7 @@ Talks to the sidecar over the WebSocket only.
 | `styles/index.css` | **The theme.** Tailwind v4 `@theme` block — every colour, font, and radius token. There is no `tailwind.config.js` |
 | `components/chrome/` | Persistent shell: sidebar, titlebar, starfield, constellation status widget |
 | `components/cohorts/` | Cohort grid, editor panels, procedural icon, Auto-Balance |
-| `components/config/` | Setup wizard, interactive constellation board, zodiac picker, handshake indicator/list |
+| `components/config/` | Interactive constellation board, zodiac picker (rendered on Settings), handshake indicator/list, utility sketch panel |
 | `components/task/` | The derived state-machine graph (`TaskGraph`, also docked live in Mission Control), the same nodes as a pinned strip (`TaskRail`), and the per-group parameter tiles |
 | `components/specs/` | The Designer's parts: the machine-graph canvas (`SpecCanvas`), the selection-driven `SpecInspector`, the generated `SpecForm`/`SpecField`, the diagnostics list, the listing diff, the shared `ParadigmCard` (glyph, accent, and the first sentence of `affords`), the wizard's `TaskJourney` rail and `TaskShape` summary, and the bench panel |
 | `components/common/SummaryCard.tsx` | The HUD tile — icon, label, status, divider, rows. Shared by the Dashboard and the Task tab so the two "tiles over the sky" pages are one motif |
@@ -309,10 +309,10 @@ Every route is a child of `<AppShell />`, wired in `src/App.tsx`.
 | `/task` | `routes/Task.tsx` | Landing: the Task Designer hero over the rig's sky, the spec library as cards, and the Bench/Sketches doors |
 | `/task/designer/:specId` | `routes/TaskDesigner.tsx` | The spec editor, built around the compiled machine graph ([specs.md §5](specs.md)) |
 | `/task/bench` | `routes/TaskBench.tsx` | Probe a board and load a table. Permanent "not for animal use" strip; `?spec=<id>` preselects |
-| `/task/hardware` | `routes/TaskHardware.tsx` | **Rig wiring**: the channel→pin map this rig is actually built to, edited on a board diagram ([specs.md §9](specs.md)) |
-| `/sketches` | `routes/TaskSketches.tsx` | The bundled `task.json` library (its own sidebar tab): sketch browser, derived trial-flow graph, the hover explain tile, and the **only** editor for `settings.taskDefaults` |
+| `/task/hardware` | *(redirects to `/config`)* | **Rig wiring** merged into the Rig screen — the channel→pin editor is `components/hardware/RigWiringEditor.tsx`, a section of `routes/Config.tsx` ([specs.md §9](specs.md)) |
+| `/task/sketches` | `routes/TaskSketches.tsx` | The bundled `task.json` library (one of the Task family; the old `/sketches` tab redirects): sketch browser, derived trial-flow graph, the hover explain tile, and the **only** editor for `settings.taskDefaults` |
 | `/analytics` | `routes/Analytics.tsx` | The Observatory — one route, no tabs; cohort/session/animal are filters |
-| `/config` | `routes/Config.tsx` | **Bind boxes**: constellation, box→board bindings, handshake, utility baseline, baud, `arduino-cli` |
+| `/config` | `routes/Config.tsx` | The **Rig** tab (label renamed; route kept): **Bind boxes** — constellation, box→board bindings, handshake, utility baseline, baud, `arduino-cli` |
 | `/settings` | `routes/Settings.tsx` | Storage and interface only |
 | `/debug` | `routes/DebugMode.tsx` | Per-box instrument panel. **No nav entry** — reached by selecting a box |
 | `/session/new` | `routes/SessionConfig.tsx` | Session setup step 1 — cohort, prefix, number, time limit |
@@ -407,7 +407,7 @@ Payload shapes are guarded from both sides: the generated `CommandArgsMap`/`Comm
 - **`port.output` is batched at ~20 Hz**, not one message per line, and is never persisted beyond a capped in-memory ring buffer (~2000 lines/port).
 - **Client-side timeouts don't cancel sidecar work.** Default 15 s; `port.flash` gets 300 s and `sketches.refresh` 60 s. The sidecar remains the authority on what actually happened.
 
-### 6.3 The six that silently corrupt
+### 6.3 The eight that silently corrupt
 
 Each is documented in place with a `[!CAUTION]` in the owning document. They share a property: getting them wrong produces plausible output rather than an error.
 
@@ -419,6 +419,8 @@ Each is documented in place with a `[!CAUTION]` in the owning document. They sha
 | `CODEC_VERSION` must be bumped when the maths changes | [data.md §9](data.md#9-derived-metrics) | Cached summaries keep serving the old definition with no symptom |
 | The PNG export's five rules — off-screen not hidden, forced `seen`, `skipAnimations`, cleared pin, 1× scale | [data.md §10.6](data.md) | A figure that looks deliberate but is blank, dimmed, half-drawn or cropped |
 | A corpus session's firmware generation is its abort-path strobe **order**, not which codes it contains | [TaskGraph.md §7.1](TaskGraph.md#71-the-corpus-now-spans-two-firmware-generations) | Eleven v1 sessions replay against the model and reject, reading as a modelling gap |
+| The rescan's prune acts on **reachable and absent**, never on `exists() == False` alone | [data.md §8.6](data.md#86-pruning--records-the-disk-no-longer-has) | One rescan with the archive drive unplugged erases a cohort's history |
+| Carrying an adoption forward keys on identity **and path**, never identity alone | [data.md §8.7](data.md#87-carrying-adoptions-forward) | Whichever copy of a duplicated run was adopted first keeps the row — 30 runs in the real archive decode only from the other copy |
 
 ### 6.4 Dependency policy
 
@@ -494,9 +496,9 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 | # | Item |
 |---|---|
 | **10** | **Multi-port batching for Debug Mode.** The *session* flash sequence is strictly sequential and halts at first failure, and that's built. Still open: whether Debug Mode wants a "flash all 6" affordance at all, whether it shares the halt policy, and whether it would be one command with six progress streams or six independent commands. |
-| **11** | **Full settings schema.** The eleven implemented keys ([settings.md §2](settings.md#2-the-eleven-keys)) are a starting point, not final. The sidecar reads only six and ignores the rest, so adding a field is deliberately a non-event — proven by the four shell-only keys, which needed no sidecar change at all. |
+| **11** | **Full settings schema.** The ten implemented keys ([settings.md §2](settings.md#2-the-ten-keys)) are a starting point, not final. The sidecar reads only six and ignores the rest, so adding a field is deliberately a non-event — proven by the shell-only keys, which needed no sidecar change at all. |
 | **12** | **Back-pressure policy for `port.output`.** Currently unbounded send, relying on the ring buffer cap. No policy exists for a frontend that cannot keep up with 20 Hz × 6 boards. Not observed as a problem — but undefined. |
-| **14** | **Box→board re-binding UX.** A board swap is a routine lab event. Partially addressed: bindings live in Config with a re-runnable wizard and a per-box handshake test to confirm a swap took. Still open is proactive surfacing — "a new board appeared, bind it to box 3?" — rather than the user knowing to open Config. |
+| **14** | **Box→board re-binding UX.** A board swap is a routine lab event. Partially addressed: bindings live on the Rig tab with a per-box handshake test to confirm a swap took. Still open is proactive surfacing — "a new board appeared, bind it to box 3?" — rather than the user knowing to open the Rig tab. |
 | **15** | **Live filesystem watcher for the sketch library.** Scan-on-trigger (settings push, manual refresh, route mount) was judged sufficient — doubly so now the library only changes when the app does. |
 | **16** | **Archive has no confirmation.** Deliberate — archive is the reversible everyday action and only permanent delete is gated. Revisit if it proves too easy to trigger on a large cohort. |
 | **30** | **Installer signing and a CI build.** The shipped installer is unsigned, so every fresh lab machine shows the SmartScreen dialog once. A code-signing certificate (or Azure Trusted Signing) would remove that. Separately, the installer is built by hand via `npm run package`; a Windows CI build would make the artifact reproducible and untie it from any one machine's `arduino-cli`. Neither blocks the two lab machines. |

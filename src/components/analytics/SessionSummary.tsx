@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 
 import { AnimalCard } from "@/components/analytics/session/AnimalCard";
 import { SessionTable } from "@/components/analytics/session/SessionTable";
+import { FolderButton } from "@/components/common/FolderButton";
 import { conditionColumns } from "@/lib/analytics/session";
 import type {
   AnalyticsSummary,
@@ -72,9 +73,37 @@ export function SessionSummary({
   // compete for a reading nobody asked for.
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  // The open card is **promoted to a focus slot** — the first cell of the
+  // grid, full width, directly under the table — rather than expanding in
+  // place. In place, "which card grew" depended on where that animal happened
+  // to sit, so clicking down the table meant chasing the expansion around the
+  // grid (and scrolling after it). One slot means every row click lands the
+  // card in the same spot; the layout spring on each card makes the promotion
+  // legible as movement rather than a cut.
+  const ordered = useMemo(() => {
+    const focus = runs.find((run) => run.runId === expanded);
+    return focus ? [focus, ...runs.filter((run) => run !== focus)] : runs;
+  }, [runs, expanded]);
+
+  function toggleCard(runId: string) {
+    const next = expanded === runId ? null : runId;
+    setExpanded(next);
+    if (next !== null) {
+      // Nudge the focus slot into view when opening — `nearest` so it is a
+      // no-op in the common case where the slot already sits right under the
+      // table the user just clicked. The anchor is the grid container, whose
+      // top edge doesn't move during the reorder, not the travelling card.
+      requestAnimationFrame(() => {
+        document
+          .getElementById("session-animal-cards")
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    }
+  }
+
   if (runs.length === 0) {
     return (
-      <div className="surface rounded-md p-4">
+      <div className="surface flex flex-wrap items-center justify-between gap-3 rounded-md p-4">
         <p className="text-[12px] leading-relaxed text-static">
           No runs recorded in{" "}
           <span className="font-mono text-starlight">
@@ -82,6 +111,15 @@ export function SessionSummary({
           </span>
           .
         </p>
+        {/* Still offered: a session with no readable runs is exactly the one
+            whose folder someone wants to look inside. */}
+        {interactive && session.folderPath && (
+          <FolderButton
+            path={session.folderPath}
+            label="Session folder"
+            size="sm"
+          />
+        )}
       </div>
     );
   }
@@ -93,13 +131,24 @@ export function SessionSummary({
       animate={{ opacity: 1, y: 0 }}
       transition={springSnappy}
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <span className="text-[11px] text-static">
-          Session summary
-          <span className="ml-2 font-mono text-starlight">
-            {session.prefixName}_{session.sessionNumber}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="flex items-center gap-2 text-[11px] text-static">
+          <span>
+            Session summary
+            <span className="ml-2 font-mono text-starlight">
+              {session.prefixName}_{session.sessionNumber}
+            </span>
+            <span className="ml-2 text-static/70">{session.date}</span>
           </span>
-          <span className="ml-2 text-static/70">{session.date}</span>
+          {/* Gated on `interactive`: this panel is also the export sheet
+              (`data.md` §10.6), and a button in a PNG is a lie. */}
+          {interactive && session.folderPath && (
+            <FolderButton
+              path={session.folderPath}
+              label="Session folder"
+              size="sm"
+            />
+          )}
         </span>
         <Headline runs={runs} />
       </div>
@@ -111,24 +160,16 @@ export function SessionSummary({
           names={names}
           colors={colors}
           minCounted={summary.minCountedTrials}
-          onSelect={
-            interactive
-              ? (runId) => {
-                  setExpanded(runId);
-                  // The card the row names may be below the fold.
-                  requestAnimationFrame(() => {
-                    document
-                      .getElementById(`session-animal-${runId}`)
-                      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                  });
-                }
-              : null
-          }
+          selectedRunId={expanded}
+          onSelect={interactive ? toggleCard : null}
         />
       </div>
 
-      <div className={`mt-3 grid gap-2 ${CARD_GRID[columns]}`}>
-        {runs.map((run, index) => (
+      <div
+        id="session-animal-cards"
+        className={`mt-3 grid scroll-mt-3 gap-2 ${CARD_GRID[columns]}`}
+      >
+        {ordered.map((run, index) => (
           <AnimalCard
             key={run.runId}
             run={run}
@@ -138,11 +179,7 @@ export function SessionSummary({
             index={index}
             revealKey={revealKey}
             expanded={expanded === run.runId}
-            onToggle={
-              interactive
-                ? (runId) => setExpanded((prev) => (prev === runId ? null : runId))
-                : null
-            }
+            onToggle={interactive ? toggleCard : null}
           />
         ))}
       </div>

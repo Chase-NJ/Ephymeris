@@ -61,6 +61,13 @@ pub fn run() {
         // write exactly the file the user picked and nothing else
         // (dashboard.md §6.3).
         .plugin(tauri_plugin_fs::init())
+        // Present only for the open-folder buttons in Analytics (`data.md`
+        // §10.1): hands a directory the app already knows to the OS file
+        // manager. The capability grants `open-path` alone — no URL opening —
+        // because a data folder can live anywhere the operator pointed a
+        // cohort (other drives, network shares), so the path scope is broad
+        // and the verb is kept narrow instead.
+        .plugin(tauri_plugin_opener::init())
         .manage(sidecar::SidecarState::default())
         .invoke_handler(tauri::generate_handler![sidecar::sidecar_endpoint])
         .setup(|app| {

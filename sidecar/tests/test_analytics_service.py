@@ -12,6 +12,8 @@ so a good half of these are about files that are wrong in some way.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -177,6 +179,8 @@ async def test_summary_scores_every_run(rig: Rig) -> None:
     assert payload["counts"]["runs"] == 2
     assert payload["counts"]["decoded"] == 2
     assert payload["warnings"] == []
+    # Verbatim, not normalized: the open-folder button hands this to the OS.
+    assert payload["dataFolder"] == str(rig.root)
     by_animal = {r["animalId"]: r for r in payload["runs"]}
     assert by_animal["a1"]["metrics"][0]["pSession"] == 0.75
     assert by_animal["a2"]["metrics"][0]["pSession"] == 0.5
@@ -571,6 +575,188 @@ async def test_rescan_ignores_files_outside_a_behavior_json_folder(rig: Rig) -> 
 
     result = await rig.service.rescan(rig.cohort.id)
     assert result["scanned"] == 0
+
+
+# --- §8.6 pruning: records the disk no longer has ---------------------------
+#
+# The mirror image of adoption, and the one direction nothing else in the app
+# covers. Deleting a session's folder used to leave its rows behind forever,
+# and §8.3's keep-the-last-good-summary rule then went on charting it — which
+# is what these protect against, in both directions.
+
+
+async def test_a_deleted_session_stops_appearing_after_a_rescan(rig: Rig) -> None:
+    """The whole point: a session thrown away on disk leaves Analytics."""
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "a1", HIT_1 * 5)
+    rig.add_run(session, "a2", HIT_1 * 5)
+    before = await rig.service.summary(rig.cohort.id)
+    assert before["counts"]["decoded"] == 2
+
+    shutil.rmtree(rig.sessions.get_session(session).folder_path)
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["pruned"] == {"runs": 2, "sessions": 1, "adopted": 0}
+    after = await rig.service.summary(rig.cohort.id)
+    assert after["runs"] == []
+    assert after["sessions"] == []
+
+
+async def test_pruning_clears_the_cached_summary_too(rig: Rig) -> None:
+    """The cache is what was actually still serving the numbers (§8.4), so a
+    surviving cache row would leave a deleted run's scores in the database
+    under an id nothing points at."""
+    session = rig.add_session("1", "2026-07-22")
+    run_id = rig.add_run(session, "a1", HIT_1 * 5)
+    await rig.service.summary(rig.cohort.id)
+    assert rig.profiles.load_cached([run_id])
+
+    shutil.rmtree(rig.sessions.get_session(session).folder_path)
+    await rig.service.rescan(rig.cohort.id)
+
+    assert rig.profiles.load_cached([run_id]) == {}
+
+
+async def test_a_run_whose_file_went_but_whose_folder_stayed_keeps_its_session(
+    rig: Rig,
+) -> None:
+    """Both halves are required. A folder that is still there is a session that
+    still happened, whatever became of one animal's file."""
+    session = rig.add_session("1", "2026-07-22")
+    kept = rig.add_run(session, "a1", HIT_1 * 5)
+    lost = rig.add_run(session, "a2", HIT_1 * 5)
+    Path(rig.sessions.runs_for(session)[1].file_path).unlink()
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["pruned"]["runs"] == 1
+    assert result["pruned"]["sessions"] == 0
+    assert [s.id for s in rig.sessions.list_sessions(rig.cohort.id)] == [session]
+    assert [r.id for r in rig.sessions.runs_for(session)] == [kept]
+    assert lost not in {r.id for r in rig.sessions.runs_for(session)}
+
+
+async def test_an_aborted_session_survives_while_its_folder_does(rig: Rig) -> None:
+    """No-runs alone would delete every aborted session — one never wrote a
+    file, and its folder is real."""
+    folder = rig.root / "2O-Bdisc" / "2O-Bdisc_2_2026-07-23"
+    folder.mkdir(parents=True)
+    aborted = rig.sessions.create_session(
+        rig.cohort.id, rig.prefix, "2", "2026-07-23", str(folder)
+    )
+    rig.sessions.set_status(aborted.id, "aborted")
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["pruned"]["sessions"] == 0
+    assert len(rig.sessions.list_sessions(rig.cohort.id, include_aborted=True)) == 1
+
+
+async def test_an_open_session_is_never_pruned(rig: Rig) -> None:
+    """`configuring` and `running` describe a session the runner is holding
+    right now, whose folder legitimately does not exist yet."""
+    open_session = rig.sessions.create_session(
+        rig.cohort.id, rig.prefix, "3", "2026-07-24", str(rig.root / "nope" / "gone")
+    )
+
+    result = await rig.service.rescan(rig.cohort.id)
+    assert result["pruned"]["sessions"] == 0
+
+    rig.sessions.set_status(open_session.id, "running")
+    result = await rig.service.rescan(rig.cohort.id)
+    assert result["pruned"]["sessions"] == 0
+    assert rig.sessions.get_session(open_session.id).status == "running"
+
+
+async def test_a_recoverable_run_is_not_pruned(rig: Rig) -> None:
+    """A `.json` whose write-ahead `.tsv` survives is the crash case (§12), and
+    its record carries the animal, profile and parameters that make recovery
+    worth more than re-adopting the file from its filename."""
+    session = rig.add_session("1", "2026-07-22")
+    run_id = rig.add_run(session, "a1", HIT_1 * 5)
+    path = Path(rig.sessions.runs_for(session)[0].file_path)
+    tsv = path.parent.parent / "behavior.tsv" / f"{path.stem}.tsv"
+    tsv.parent.mkdir(parents=True, exist_ok=True)
+    tsv.write_text("# rat: remy1\n101\t0\n", encoding="utf-8")
+    path.unlink()
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["pruned"]["runs"] == 0
+    assert [r.id for r in rig.sessions.runs_for(session)] == [run_id]
+
+
+async def test_a_run_with_no_recorded_path_is_not_pruned(rig: Rig) -> None:
+    """Nothing was observed, so nothing is concluded. The summary already
+    reports this run with its own distinct reason."""
+    session = rig.add_session("1", "2026-07-22")
+    rig.sessions.record_animal_run(
+        SessionAnimalRun(
+            id="r-nofile", session_id=session, animal_id="a1", box_number=1,
+            sketch_path=str(rig.sketch), file_path=None, started_at="t",
+        )
+    )
+    result = await rig.service.rescan(rig.cohort.id)
+    assert result["pruned"]["runs"] == 0
+    assert len(rig.sessions.runs_for(session)) == 1
+
+
+async def test_an_unreachable_data_folder_prunes_nothing(rig: Rig) -> None:
+    """The guard that holds on every platform: with the archive unreachable,
+    every file under it reads as absent, and a rescan there would erase the
+    cohort. `folderMissing` already says so — it must also stop the prune."""
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "a1", HIT_1 * 5)
+    await rig.service.summary(rig.cohort.id)
+    shutil.rmtree(rig.root)
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["folderMissing"] is True
+    assert result["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}
+    assert len(rig.sessions.runs_for(session)) == 1
+    payload = await rig.service.summary(rig.cohort.id)
+    assert payload["runs"][0]["stale"] is True, "still serving the last good value"
+
+
+async def test_a_read_only_rescan_prunes_nothing(rig: Rig) -> None:
+    """`adoptOrphans: false` means *don't change the index* — both ways."""
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "a1", HIT_1 * 5)
+    shutil.rmtree(rig.sessions.get_session(session).folder_path)
+
+    result = await rig.service.rescan(rig.cohort.id, adopt_orphans=False)
+
+    assert result["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}
+    assert len(rig.sessions.runs_for(session)) == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="drive letters are a Windows shape")
+async def test_a_record_on_an_unmounted_volume_is_left_alone(rig: Rig) -> None:
+    """A record pointing *outside* the cohort folder can't lean on
+    `folderMissing`, so absence there has to prove the storage is reachable.
+    An unplugged or re-lettered volume leaves no readable ancestor at all —
+    which is the lab machines' version of this failure (§8.6)."""
+    letter = next(
+        (c for c in "ZYXWVU" if not Path(f"{c}:\\").exists()), None
+    )
+    if letter is None:  # pragma: no cover - every letter in use
+        pytest.skip("no unused drive letter to stand in for an unplugged one")
+
+    session = rig.add_session("1", "2026-07-22")
+    rig.sessions.record_animal_run(
+        SessionAnimalRun(
+            id="r-elsewhere", session_id=session, animal_id="a1", box_number=1,
+            sketch_path=str(rig.sketch),
+            file_path=f"{letter}:\\Archive\\Batch A\\behavior.json\\remy1.json",
+            started_at="t",
+        )
+    )
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["pruned"]["runs"] == 0
+    assert len(rig.sessions.runs_for(session)) == 1
 
 
 # --- listing ---------------------------------------------------------------

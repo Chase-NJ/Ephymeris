@@ -174,8 +174,8 @@ class AnalyticsRepository:
                 "INSERT OR REPLACE INTO adopted_runs"
                 " (id, cohort_id, animal_id, file_path, prefix_name,"
                 "  session_number, date, started_at, sketch_name, sketch_path,"
-                "  adopted_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  adopted_at, file_mtime_ns, file_size)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         entry.id,
@@ -189,6 +189,8 @@ class AnalyticsRepository:
                         entry.sketch_name,
                         entry.sketch_path,
                         _now(),
+                        entry.file_mtime_ns,
+                        entry.file_size,
                     )
                     for entry in entries
                 ],
@@ -203,6 +205,46 @@ class AnalyticsRepository:
                 (cohort_id,),
             ).fetchall()
         return [_hydrate_adopted(row) for row in rows]
+
+    def delete_adopted(self, ids: list[str]) -> int:
+        """Drop adoptions whose files the disk no longer has (`data.md` §8.6).
+
+        Safe in a way pruning a *recorded* run is not: an adopted row holds
+        nothing that isn't re-derivable from the file it names, so a row deleted
+        in error costs one rescan. The judgement about *whether* the file is
+        really gone belongs to the caller, and is the part that matters.
+        """
+        if not ids:
+            return 0
+        removed = 0
+        with self._db.lock:
+            for chunk in _chunks(ids, 400):
+                marks = ",".join("?" * len(chunk))
+                cursor = self._db.conn.execute(
+                    f"DELETE FROM adopted_runs WHERE id IN ({marks})", tuple(chunk)
+                )
+                removed += cursor.rowcount
+            self._db.conn.commit()
+        return removed
+
+    def forget_cached(self, run_ids: list[str]) -> None:
+        """Drop cached summaries for runs that no longer exist.
+
+        The cache is what actually *serves* a deleted session's numbers: a
+        missing file keeps its last good summary on purpose (§8.3), so a run
+        whose record is being pruned would otherwise leave its scores behind in
+        a row nothing points at.
+        """
+        if not run_ids:
+            return
+        with self._db.lock:
+            for chunk in _chunks(run_ids, 400):
+                marks = ",".join("?" * len(chunk))
+                self._db.conn.execute(
+                    f"DELETE FROM run_metrics_cache WHERE run_id IN ({marks})",
+                    tuple(chunk),
+                )
+            self._db.conn.commit()
 
     def adopted_by_id(self, run_id: str) -> "AdoptedRun | None":
         with self._db.lock:
@@ -268,6 +310,12 @@ class AdoptedRun:
     started_at: str
     sketch_name: str | None
     sketch_path: str | None
+    #: The stat the adoption was taken from (`data.md` §8.7). Its only job is to
+    #: let the next rescan recognise a file it has already read — the same
+    #: mtime+size key `CacheKey` uses, and answerable without opening anything.
+    #: `None` on a row written before v7, which is read as "unknown, so re-read".
+    file_mtime_ns: int | None = None
+    file_size: int | None = None
 
 
 def _hydrate_adopted(row: sqlite3.Row) -> AdoptedRun:
@@ -282,6 +330,8 @@ def _hydrate_adopted(row: sqlite3.Row) -> AdoptedRun:
         started_at=row["started_at"],
         sketch_name=row["sketch_name"],
         sketch_path=row["sketch_path"],
+        file_mtime_ns=row["file_mtime_ns"],
+        file_size=row["file_size"],
     )
 
 

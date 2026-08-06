@@ -35,6 +35,7 @@ export function SessionTable({
   names,
   colors,
   minCounted,
+  selectedRunId = null,
   onSelect,
 }: {
   runs: RunSummary[];
@@ -42,7 +43,11 @@ export function SessionTable({
   names: Map<string, string>;
   colors: Map<string, string>;
   minCounted: number;
-  /** Null renders the rows inert — the export sheet cannot be clicked. */
+  /** The run whose card is open in the focus slot — its row stays lit so the
+      table says which animal the card below belongs to. */
+  selectedRunId?: string | null;
+  /** Toggles a card open/closed. Null renders the rows inert — the export
+      sheet cannot be clicked. */
   onSelect: ((runId: string) => void) | null;
 }) {
   // One template shared by the header and every row — the app's table idiom.
@@ -101,6 +106,7 @@ export function SessionTable({
             template={template}
             minCounted={minCounted}
             index={index}
+            selected={selectedRunId === run.runId}
             onSelect={onSelect}
           />
         ))}
@@ -122,6 +128,7 @@ function TableRow({
   template,
   minCounted,
   index,
+  selected,
   onSelect,
 }: {
   run: RunSummary;
@@ -131,23 +138,46 @@ function TableRow({
   template: string;
   minCounted: number;
   index: number;
+  selected: boolean;
   onSelect: ((runId: string) => void) | null;
 }) {
   const store = useAnalyticsStore();
   const highlighted = useIsHighlighted(run.animalId);
   const reason = unscoredReason(run);
+  // An unscored run's card has nothing to expand into (`AnimalCard` withholds
+  // its own toggle for the same reason), so its row offers no click either —
+  // a row that "opens" an unexpandable card reads as a broken click.
+  const toggle = reason ? null : onSelect;
 
   return (
     <motion.div
       className={`grid items-center gap-x-2 border-b border-halo/50 py-1.5 transition-colors ${
-        highlighted ? "bg-halo/40" : ""
-      } ${reason ? "opacity-60" : ""} ${onSelect ? "cursor-pointer" : ""}`}
+        selected ? "bg-halo/60" : highlighted ? "bg-halo/40" : ""
+      } ${reason ? "opacity-60" : ""} ${toggle ? "cursor-pointer" : ""}`}
       style={{ gridTemplateColumns: template }}
       onPointerEnter={() => store.hoverAnimal(run.animalId)}
       onPointerLeave={() => store.hoverAnimal(null)}
-      onClick={onSelect ? () => onSelect(run.runId) : undefined}
-      role={onSelect ? "button" : undefined}
-      title={onSelect ? `Open ${name}'s card` : undefined}
+      onClick={toggle ? () => toggle(run.runId) : undefined}
+      role={toggle ? "button" : undefined}
+      tabIndex={toggle ? 0 : undefined}
+      onKeyDown={
+        toggle
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                toggle(run.runId);
+              }
+            }
+          : undefined
+      }
+      aria-expanded={toggle ? selected : undefined}
+      title={
+        toggle
+          ? selected
+            ? `Close ${name}'s card`
+            : `Open ${name}'s card`
+          : undefined
+      }
       initial={{ opacity: 0, y: 3 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ ...springSnappy, delay: index * 0.03 }}
@@ -155,10 +185,12 @@ function TableRow({
       <span className="flex min-w-0 items-center gap-1.5">
         <span
           className="size-2 shrink-0 rounded-full"
-          style={{ background: color, opacity: highlighted ? 1 : 0.85 }}
+          style={{ background: color, opacity: highlighted || selected ? 1 : 0.85 }}
         />
         <span
-          className={`truncate text-[11px] ${highlighted ? "text-starlight" : "text-static"}`}
+          className={`truncate text-[11px] ${
+            highlighted || selected ? "text-starlight" : "text-static"
+          }`}
         >
           {name}
         </span>

@@ -59,7 +59,7 @@ export function DebugMode() {
 
   const boundBoxes = useBoundBoxes();
 
-  // A box can be unbound in Config while its detail view is open elsewhere.
+  // A box can be unbound on the Rig tab while its detail view is open elsewhere.
   useEffect(() => {
     if (selected !== null && !boundBoxes.includes(selected)) setSelected(null);
   }, [selected, boundBoxes]);

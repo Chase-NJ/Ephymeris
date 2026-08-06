@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { Minus, Plus } from "lucide-react";
 
+import { NODE_FILL, type BoxHealth } from "@/components/chrome/ConstellationStatus";
 import { Button, Select, TextInput } from "@/components/common/controls";
 import { useBoardPresence } from "@/lib/hardware/context";
 import { springPanel } from "@/lib/motion";
@@ -21,9 +22,15 @@ import { BOX_COUNT, nextAvailableBox, newBinding, type BoxBinding } from "@/lib/
  */
 export function BoxBindingsTable({
   boxes,
+  health,
   onChange,
 }: {
   boxes: BoxBinding[];
+  /** Per-box liveness for the status dot — the same states, same colours, as
+      the sidebar constellation, so a box is the same colour everywhere. The
+      dot took the constellation board's job when that moved to Settings: this
+      table is now where "is box 3 actually alive" gets answered. */
+  health?: Partial<Record<number, BoxHealth>>;
   onChange: (next: BoxBinding[]) => void;
 }) {
   const detected = useBoardPresence();
@@ -44,6 +51,13 @@ export function BoxBindingsTable({
 
   const boundElsewhere = (hardwareId: string, box: number) =>
     boxes.some((b) => b.box !== box && b.hardwareId === hardwareId);
+
+  const HEALTH_TITLE: Record<BoxHealth, string> = {
+    nominal: "active",
+    idle: "connected",
+    absent: "not detected",
+    fault: "error",
+  };
 
   return (
     <div className="px-4 py-3.5">
@@ -86,7 +100,17 @@ export function BoxBindingsTable({
                 transition={springPanel}
                 className="grid grid-cols-[38px_1fr_1.4fr_28px] items-center gap-x-3"
               >
-                <span className="font-mono text-[12px] text-static">{binding.box}</span>
+                <span className="flex items-center gap-1.5 font-mono text-[12px] text-static">
+                  {health && (
+                    <span
+                      aria-hidden
+                      title={HEALTH_TITLE[health[binding.box] ?? "absent"]}
+                      className="size-[7px] shrink-0 rounded-full"
+                      style={{ background: NODE_FILL[health[binding.box] ?? "absent"] }}
+                    />
+                  )}
+                  {binding.box}
+                </span>
 
                 <TextInput
                   label={`Label for box ${binding.box}`}

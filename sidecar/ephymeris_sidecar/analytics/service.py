@@ -190,6 +190,7 @@ class AnalyticsService:
 
         return {
             "cohortId": cohort_id,
+            "dataFolder": cohort.data_folder,
             "sessions": [s.to_list_item(index + 1) for index, s in enumerate(sessions)],
             "animals": [
                 {
@@ -336,12 +337,20 @@ class AnalyticsService:
     # --- rescan ------------------------------------------------------------
 
     async def rescan(self, cohort_id: str, *, adopt_orphans: bool = True) -> dict[str, Any]:
-        """Walk the archive for files no run record points at (§8.1).
+        """Reconcile a cohort's records against its archive, both ways (§8.1, §8.6).
 
-        The database-first path covers everything this app recorded. This
+        The database-first path covers everything this app recorded. The walk
         covers what it didn't: runs finalized with no active session, a crash
         between the file write and the commit, and files restored from the
         backup mirror or copied from the other lab machine.
+
+        And the **prune** covers the other direction, which nothing else in the
+        app does: records whose files the disk no longer has. A deleted session
+        leaves its rows behind forever otherwise, and §8.3's deliberate "a
+        missing file keeps its last good summary" rule then keeps charting it —
+        correct for an unplugged drive, wrong for a session the operator threw
+        away. Rescan is where that gets resolved because it is the one moment
+        the operator has explicitly said *the disk is the truth now*.
         """
         if self._lock.locked():
             raise AnalyticsBusy("an analytics scan is already running")
@@ -351,12 +360,29 @@ class AnalyticsService:
             folder_exists = await asyncio.to_thread(
                 lambda: Path(cohort.data_folder).expanduser().is_dir()
             )
+            # Prune before the walk, so `known` is built from surviving records
+            # and a run whose file *moved* is re-adopted in the same pass
+            # rather than pruned on one scan and re-found on the next.
+            pruned = (
+                await asyncio.to_thread(self._prune, cohort_id)
+                if adopt_orphans and folder_exists
+                else {"runs": 0, "sessions": 0, "adopted": 0}
+            )
             runs = await asyncio.to_thread(self._sessions.runs_for_cohort, cohort_id)
             known = {
                 _normalize(r.file_path) for r in runs if r.file_path
             }
             await self._progress(cohort_id, "walking", 0, 0)
             found = await asyncio.to_thread(reader.walk_session_files, cohort.data_folder)
+
+            # Which of those files this cohort has already adopted, unchanged
+            # since (§8.7). One thread hop and one stat per file, against a walk
+            # that would otherwise open and parse every one of them again.
+            carried = (
+                await asyncio.to_thread(self._carry_over, found, known, cohort_id)
+                if adopt_orphans
+                else {}
+            )
 
             orphans: list[dict[str, Any]] = []
             # Keyed by run identity, not path: a hand-managed archive often
@@ -368,13 +394,26 @@ class AnalyticsService:
             for path in found:
                 if _normalize(str(path)) in known:
                     continue
+                identity = reader.run_identity(path)
+                settled = carried.get(identity)
+                if settled is not None and _same_path(settled.file_path, path):
+                    if identity in best:
+                        # Another copy of this run already claimed the slot this
+                        # scan and was judged on merit. This one is the extra.
+                        duplicates += 1
+                        continue
+                    # Already adopted from this exact file, and the file has not
+                    # changed. Held in `best` rather than skipped outright: a
+                    # *duplicate* copy must still win on merit through `_prefer`
+                    # rather than by being the only candidate in the room.
+                    best[identity] = settled
+                    continue
                 entry, adoption = await asyncio.to_thread(
                     self._describe_orphan, path, cohort, cohort_id
                 )
                 if adoption is None:
                     orphans.append(entry)
                     continue
-                identity = reader.run_identity(path)
                 incumbent = best.get(identity)
                 if incumbent is None:
                     best[identity] = adoption
@@ -384,26 +423,176 @@ class AnalyticsService:
                 if _prefer(adoption, incumbent):
                     best[identity] = adoption
 
-            adoptable = list(best.values())
+            # Only what this scan actually decided. A row carried over unchanged
+            # is left alone rather than rewritten with identical values: every
+            # commit marks the whole database dirty for backup (§7.3), so
+            # rewriting an archive's worth of rows per click is a whole-file
+            # copy to a possibly-networked target per click. `is not` rather
+            # than equality — a carried row that a duplicate copy beat is a
+            # genuine change and must be written.
+            adoptable = [
+                entry
+                for identity, entry in best.items()
+                if carried.get(identity) is not entry
+            ]
             adopted = 0
             if adopt_orphans and adoptable:
-                # INSERT OR REPLACE on the deterministic id: a re-run refreshes
-                # (a renamed sketch resolves again, a re-rostered animal
-                # re-matches) rather than duplicating.
+                # INSERT OR REPLACE on the deterministic id, so a file whose
+                # content changed since adoption refreshes its row in place
+                # rather than duplicating it.
                 await asyncio.to_thread(self._repo.store_adopted, adoptable)
                 adopted = len(adoptable)
+            if carried:
+                log.info(
+                    "analytics: rescan of cohort %s reused %d already-adopted"
+                    " files and read %d",
+                    cohort_id,
+                    len(carried),
+                    len(found) - len(carried),
+                )
 
             await self._progress(cohort_id, "walking", len(found), len(found))
 
         return {
             "scanned": len(found),
             "adopted": adopted,
+            "pruned": pruned,
             "duplicates": duplicates,
             "orphans": orphans,
             "cohortId": cohort_id,
             "dataFolder": cohort.data_folder,
             "folderMissing": not folder_exists,
         }
+
+    # --- pruning (§8.6) ----------------------------------------------------
+
+    def _prune(self, cohort_id: str) -> dict[str, int]:
+        """Drop records for files the disk demonstrably no longer has.
+
+        One worker-thread hop for the whole pass, like the rest of this module:
+        it is a stat per record and a handful of batched `DELETE`s, and the
+        service lock is already held.
+
+        Ordering matters twice. Runs go first so that the session sweep can ask
+        the honest question — *is anything still pointing at this session?* —
+        rather than guessing from the folder alone, and so that a run already on
+        its way out cannot claim a file on behalf of a record that is about to
+        stop existing.
+        """
+        removed_runs: list[str] = []
+        for run in self._sessions.runs_for_cohort(cohort_id):
+            if _is_gone(run.file_path):
+                removed_runs.append(run.id)
+
+        run_count = self._sessions.delete_runs(removed_runs)
+
+        # Adoptions go for either of two reasons. The file being gone is the
+        # obvious one. The other is a recorded run that now owns the file: the
+        # walk skips a path a run record claims, so an adoption made *before*
+        # that record existed is never revisited and quietly doubles the run in
+        # every panel — the one failure the whole deduplication exists to
+        # prevent, arriving from the side it doesn't watch. Database-first
+        # (§8.1) decides it: the record wins and the adoption goes.
+        claimed = {
+            _normalize(run.file_path)
+            for run in self._sessions.runs_for_cohort(cohort_id)
+            if run.file_path
+        }
+        removed_adopted = [
+            entry.id
+            for entry in self._repo.adopted_for_cohort(cohort_id)
+            if _is_gone(entry.file_path) or _normalize(entry.file_path) in claimed
+        ]
+
+        adopted_count = self._repo.delete_adopted(removed_adopted)
+        # The cache is the thing that was actually still serving numbers, so it
+        # is cleared for every pruned run of either kind.
+        self._repo.forget_cached(removed_runs + removed_adopted)
+
+        # A session is dropped only once nothing is left that points at it: its
+        # folder is gone *and* it has no surviving runs. Both halves are needed.
+        # Folder-gone alone would delete the record of a session whose runs were
+        # written elsewhere (a cohort relocated with `moveExisting: false` leaves
+        # exactly that shape). No-runs alone would delete every aborted session,
+        # which never wrote a file in the first place and whose folder is real.
+        surviving = self._sessions.run_counts_by_session(cohort_id)
+        doomed = [
+            session.id
+            for session in self._sessions.list_sessions(cohort_id, include_aborted=True)
+            if not surviving.get(session.id)
+            and _is_gone(session.folder_path, kind="folder")
+        ]
+        # `delete_sessions` refuses an open session; count what it actually did.
+        session_count = self._sessions.delete_sessions(doomed)
+
+        if run_count or adopted_count or session_count:
+            log.info(
+                "analytics: pruned %d run records, %d adoptions and %d sessions"
+                " for cohort %s — their files are no longer on disk",
+                run_count,
+                adopted_count,
+                session_count,
+                cohort_id,
+            )
+        return {
+            "runs": run_count,
+            "sessions": session_count,
+            "adopted": adopted_count,
+        }
+
+    # --- carrying adoptions forward (§8.7) ---------------------------------
+
+    def _carry_over(
+        self, found: list[Path], known: set[str], cohort_id: str
+    ) -> dict[str, AdoptedRun]:
+        """The adoptions this walk does not need to redo, by run identity.
+
+        Adoption used to be repeated in full on every rescan: each of an
+        archive's files was opened, parsed and written back, so a cohort with a
+        few hundred runs paid a few hundred reads and a full row rewrite per
+        click — on the machine whose archive lives on a network share, over the
+        wire. Nothing came of it. The row is keyed on run identity and the
+        inputs are the same file and the same roster, so the second scan
+        recomputed the first scan's answer.
+
+        A file is carried forward when three things hold, and the third is the
+        one that keeps this honest:
+
+        1. An adopted row exists for its **run identity**.
+        2. That row names **this same path** — not merely the same run. Which
+           copy of a duplicated run won is a content decision (`_prefer`), so a
+           second copy has to be read and judged, never assumed.
+        3. The file's **mtime and size** match what the row was adopted from —
+           the same freshness key `run_metrics_cache` uses (§8.4), and the
+           reason this is a cache rather than a "do it once" flag. Edit the
+           document, or let recovery rewrite it, and the next rescan reads it
+           again and refreshes the row.
+
+        A row from before v7 has no recorded stat and is therefore never fresh:
+        it is re-read once, gains a stat, and is carried from then on.
+        """
+        index = {
+            reader.run_identity(Path(entry.file_path)): entry
+            for entry in self._repo.adopted_for_cohort(cohort_id)
+        }
+        out: dict[str, AdoptedRun] = {}
+        for path in found:
+            if _normalize(str(path)) in known:
+                continue
+            identity = reader.run_identity(path)
+            entry = index.get(identity)
+            if entry is None or entry.file_mtime_ns is None or entry.file_size is None:
+                continue
+            if not _same_path(entry.file_path, path):
+                continue
+            stat = reader.stat_run(path)
+            if (
+                stat.ok
+                and stat.mtime_ns == entry.file_mtime_ns
+                and stat.size == entry.file_size
+            ):
+                out[identity] = entry
+        return out
 
     def _describe_orphan(
         self, path: Path, cohort: Any, cohort_id: str
@@ -479,6 +668,11 @@ class AnalyticsService:
             started_at=started_at,
             sketch_name=sketch_name,
             sketch_path=sketch_path,
+            # Free: `read_run` stats before it parses and hands both back, so
+            # recording what this adoption was taken from costs nothing here and
+            # is what lets the next rescan skip the file entirely (§8.7).
+            file_mtime_ns=result.mtime_ns,
+            file_size=result.size,
         )
 
     # --- indexing ----------------------------------------------------------
@@ -845,6 +1039,75 @@ def _parameter_mismatches(
         for digest, variants in seen.items()
         if len(variants) > 1
     ]
+
+
+def _is_gone(path: str | None, *, kind: str = "run-file") -> bool:
+    """Is this path **reachable and absent** — as opposed to just unreachable?
+
+    This is the whole safety of the prune, and the distinction is not
+    cosmetic. `exists() is False` answers two completely different questions
+    with one word: *the operator deleted this* and *this volume isn't mounted
+    right now*. Acting on the second would let one rescan with a drive
+    unplugged erase a cohort's history, which is the exact failure §8.3's
+    keep-the-last-good-summary rule exists to prevent — so it must not be
+    reintroduced by the mechanism that finally clears genuinely dead records.
+
+    So absence only counts when the storage is demonstrably there: some
+    ancestor of the path must be readable. A deleted tree always leaves one
+    (the drive root at worst); an unmounted volume leaves none, not even
+    `E:\\` or `//server/share`.
+
+    Three further refusals, each an honest "can't tell" rather than a guess:
+
+    * **No recorded path** — nothing to observe. Reported as `missing` by the
+      summary already, with its own distinct reason.
+    * **A path that can't be `stat`ed for any reason other than not being
+      there** — a permission error is not a deletion.
+    * **A `.json` whose write-ahead `.tsv` is still on disk** — that run's data
+      is intact and `sessions.recover` will rebuild the document from it
+      (`data.md` §12). Pruning it would throw away the `animal_id`,
+      `profile_hash` and `config_json` that make the recovered file worth more
+      than the orphan adoption could ever reconstruct from a filename.
+    """
+    if not path:
+        return False
+    target = Path(path).expanduser()
+    try:
+        target.stat()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    else:
+        # Something is there. Whether it is the *kind* of thing expected is a
+        # different question and not this one's business: a session folder
+        # replaced by a file is a broken archive, not a deletion.
+        return False
+
+    if kind == "run-file":
+        try:
+            if reader.sibling_tsv(target).is_file():
+                return False
+        except OSError:  # pragma: no cover - unreadable mount
+            return False
+
+    return _storage_is_reachable(target)
+
+
+def _storage_is_reachable(target: Path) -> bool:
+    """Can we see *any* of the path's ancestry? Bottom-up, so a deleted leaf
+    costs one stat and an unmounted volume costs the depth of the path."""
+    for ancestor in target.parents:
+        try:
+            if ancestor.is_dir():
+                return True
+        except OSError:  # pragma: no cover - unreadable mount
+            return False
+    return False
+
+
+def _same_path(recorded: str, found: Path) -> bool:
+    return _normalize(recorded) == _normalize(str(found))
 
 
 def _normalize(path: str) -> str:

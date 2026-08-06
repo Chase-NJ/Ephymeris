@@ -430,6 +430,192 @@ async def test_rescan_is_idempotent(rig: LegacyRig) -> None:
     assert len(rig.repo.adopted_for_cohort(rig.cohort.id)) == 1
 
 
+async def test_a_second_rescan_does_not_read_the_files_again(
+    rig: LegacyRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§8.7. Adoption used to be redone in full on every click — every file
+    opened, parsed and written back — to recompute the first scan's answer from
+    the same inputs. On the machine whose archive is a network share that was
+    the whole archive pulled over the wire per click."""
+    for n in range(3):
+        rig.add_legacy_run("remy1", HIT_1 * 5, number=f"0{n + 1}")
+    first = await rig.service.rescan(rig.cohort.id)
+    assert first["adopted"] == 3
+
+    reads: list[Path] = []
+    real_read = reader.read_run
+    monkeypatch.setattr(
+        reader, "read_run", lambda p: (reads.append(Path(p)), real_read(p))[1]
+    )
+    second = await rig.service.rescan(rig.cohort.id)
+
+    assert reads == [], "not one file was opened"
+    assert second["scanned"] == 3, "still reported honestly"
+    assert second["adopted"] == 0, "nothing new was decided"
+    assert len(rig.repo.adopted_for_cohort(rig.cohort.id)) == 3
+
+
+async def test_a_carried_row_is_not_rewritten(rig: LegacyRig) -> None:
+    """Every commit marks the database dirty for backup (§7.3), so rewriting an
+    archive's worth of identical rows is a whole-file copy to a possibly
+    networked target per click."""
+    rig.add_legacy_run("remy1", HIT_1 * 5)
+    await rig.service.rescan(rig.cohort.id)
+    [before] = rig.repo.adopted_for_cohort(rig.cohort.id)
+
+    commits: list[int] = []
+    rig.db.conn.on_commit = lambda: commits.append(1)
+    await rig.service.rescan(rig.cohort.id)
+    rig.db.conn.on_commit = None
+
+    assert commits == [], "no write at all when nothing changed"
+    [after] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert after == before
+
+
+async def test_an_edited_file_is_read_again_and_refreshes_its_row(
+    rig: LegacyRig,
+) -> None:
+    """The skip is a cache with a stat key, not a do-it-once flag. A document
+    edited on disk — or rewritten by crash recovery — must be picked up."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5, sketch=None)
+    await rig.service.rescan(rig.cohort.id)
+    [before] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert before.sketch_name is None
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["sketch"] = "GRGL_2-Odor"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    os.utime(path, ns=(before.file_mtime_ns + 10**9, before.file_mtime_ns + 10**9))
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["adopted"] == 1
+    [after] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert after.id == before.id, "refreshed in place, never duplicated"
+    assert after.sketch_name == "GRGL_2-Odor"
+
+
+async def test_a_duplicate_copy_is_still_judged_against_a_carried_row(
+    rig: LegacyRig,
+) -> None:
+    """The one thing the skip must not assume. Which copy of a duplicated run
+    wins is a *content* decision (`_prefer`), so a second copy is read and
+    judged rather than losing by default to whichever was adopted first — the
+    real archive has 30 runs whose only decodable version is the consolidated
+    copy."""
+    rig.add_legacy_run("remy1", HIT_1 * 5, group="ZZ_per-prefix", sketch=None)
+    await rig.service.rescan(rig.cohort.id)
+    [poor] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert poor.sketch_name is None
+
+    richer = rig.add_legacy_run("remy1", HIT_1 * 5, group="ALL", sketch="GRGL_2-Odor")
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["duplicates"] == 1
+    [winner] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert winner.id == poor.id, "one run, one row"
+    assert winner.file_path == str(richer)
+    assert winner.sketch_name == "GRGL_2-Odor"
+
+
+async def test_a_carried_row_still_beats_a_poorer_duplicate(rig: LegacyRig) -> None:
+    """The other direction of the same rule: holding the slot is what stops a
+    later, poorer copy quietly replacing an adopted row by being the only
+    candidate the scan happened to read."""
+    kept = rig.add_legacy_run("remy1", HIT_1 * 5, group="ALL", sketch="GRGL_2-Odor")
+    await rig.service.rescan(rig.cohort.id)
+
+    rig.add_legacy_run("remy1", HIT_1 * 5, group="ZZ_per-prefix", sketch=None)
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["duplicates"] == 1
+    assert result["adopted"] == 0
+    [winner] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert winner.file_path == str(kept)
+
+
+async def test_an_adoption_yields_to_a_run_record_that_claims_its_file(
+    rig: LegacyRig,
+) -> None:
+    """Database-first (§8.1), enforced in both directions.
+
+    The walk skips a path a run record claims, so an adoption made *before*
+    that record existed was never revisited — and the file then reached the
+    summary twice, once as `r1` and once as its adoption. Silent double-counting
+    of a run, which is the exact failure deduplication exists to prevent,
+    arriving from the side it doesn't watch."""
+    from ephymeris_sidecar.sessions.models import SessionAnimalRun
+
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    await rig.service.rescan(rig.cohort.id)
+    assert len(rig.repo.adopted_for_cohort(rig.cohort.id)) == 1
+
+    prefix = rig.sessions.create_prefix("2O-Bdisc")
+    session = rig.sessions.create_session(
+        rig.cohort.id, prefix, "01", "2026-06-16", str(path.parent.parent)
+    )
+    rig.sessions.record_animal_run(
+        SessionAnimalRun(
+            id="r1", session_id=session.id, animal_id="a1", box_number=1,
+            sketch_path=str(rig.sketch), file_path=str(path),
+            started_at="2026-06-16T12:00:22+00:00",
+        )
+    )
+
+    result = await rig.service.rescan(rig.cohort.id)
+    assert result["adopted"] == 0
+    assert result["pruned"]["adopted"] == 1, "the superseded adoption is dropped"
+    assert rig.repo.adopted_for_cohort(rig.cohort.id) == []
+    payload = await rig.service.summary(rig.cohort.id)
+    assert [r["runId"] for r in payload["runs"]] == ["r1"], "the record, not a copy"
+
+
+async def test_an_adoption_is_dropped_when_its_file_goes(rig: LegacyRig) -> None:
+    """The prune (§8.6) reaches adoptions too, and this is the easy half: an
+    adopted row holds nothing that isn't re-derivable from the file it names,
+    so a row deleted in error costs exactly one rescan."""
+    kept = rig.add_legacy_run("remy1", HIT_1 * 5, number="01")
+    gone = rig.add_legacy_run("remy2", HIT_1 * 5, number="02")
+    await rig.service.rescan(rig.cohort.id)
+    assert len(rig.repo.adopted_for_cohort(rig.cohort.id)) == 2
+
+    gone.unlink()
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["pruned"]["adopted"] == 1
+    surviving = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert [entry.file_path for entry in surviving] == [str(kept)]
+    # The synthetic session it was the only run of goes with it — those are
+    # grouped from the surviving rows rather than stored, so nothing else has
+    # to be cleaned up for that to be true.
+    payload = await rig.service.summary(rig.cohort.id)
+    assert len(payload["sessions"]) == 1
+    assert result["pruned"]["sessions"] == 0, "no session row ever existed to delete"
+
+
+async def test_a_moved_archive_is_re_adopted_rather_than_lost(rig: LegacyRig) -> None:
+    """Pruning runs *before* the walk, so a run whose file moved is re-adopted
+    in the same pass. Ordered the other way this would delete the row the walk
+    had just refreshed."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    await rig.service.rescan(rig.cohort.id)
+    [before] = rig.repo.adopted_for_cohort(rig.cohort.id)
+
+    moved = rig.root / "moved" / path.parent.parent.name / path.parent.name / path.name
+    moved.parent.mkdir(parents=True, exist_ok=True)
+    path.replace(moved)
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    [after] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert after.id == before.id, "same run identity, same row"
+    assert after.file_path == str(moved)
+    assert result["adopted"] == 1
+    payload = await rig.service.summary(rig.cohort.id)
+    assert payload["runs"][0]["status"] == "ok"
+
+
 async def test_a_recorded_run_is_never_adopted_twice(rig: LegacyRig) -> None:
     """Database-first: a file a run record already points at is skipped."""
     from ephymeris_sidecar.sessions.models import SessionAnimalRun

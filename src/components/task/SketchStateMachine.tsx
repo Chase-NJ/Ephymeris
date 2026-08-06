@@ -144,19 +144,22 @@ export function SketchStateMachine({
           rather than a tooltip so the eye learns one place to read and the
           diagram never reflows under the pointer. */}
       <p className="mt-2 min-h-[2.25em] border-t border-halo/60 pt-2 font-mono text-[11px] leading-snug text-static">
-        {hoverNode ? (
-          <>
-            <span className="text-starlight">{hoverNode.label}</span>
-            {hoverNode.detail && <> — {hoverNode.detail}</>}
-            {tunedByLine(hoverNode, declared)}
-          </>
-        ) : hoverGroup ? (
+        {/* Group first, node second: on a chip both hovers are live and the
+            highlight is already showing the group's territory — the sentence
+            has to describe the same thing the geometry does. */}
+        {hoverGroup ? (
           <>
             <span className="text-starlight">{hoverGroup}</span> tunes{" "}
             {model.nodes
               .filter((n) => n.governedBy.includes(hoverGroup))
               .map((n) => n.label)
               .join(" · ") || "nothing on this task"}
+          </>
+        ) : hoverNode ? (
+          <>
+            <span className="text-starlight">{hoverNode.label}</span>
+            {hoverNode.detail && <> — {hoverNode.detail}</>}
+            {tunedByLine(hoverNode, declared)}
           </>
         ) : (
           <span className="text-static/60">
@@ -477,14 +480,13 @@ function NodeGlyph({
             fontSize={2.05}
             className={covered ? "fill-pulsar" : "fill-static"}
             style={{ opacity: chipOpacity, transition: "opacity 160ms, fill 160ms", cursor: "pointer" }}
-            onPointerEnter={(event) => {
-              event.stopPropagation();
-              onChipEnter(chip.group);
-            }}
-            onPointerLeave={(event) => {
-              event.stopPropagation();
-              onChipLeave();
-            }}
+            // The hover handlers must NOT stopPropagation: React synthesizes
+            // enter/leave from pointerout/over, so stopping the chip's leave
+            // also swallowed the node <g>'s — leaving the graph *from a chip*
+            // left the node ringed and its pills lit forever. Only the click
+            // stays fenced, so a chip click doesn't double as a node click.
+            onPointerEnter={() => onChipEnter(chip.group)}
+            onPointerLeave={() => onChipLeave()}
             onClick={(event) => {
               event.stopPropagation();
               onChipClick(chip.group);

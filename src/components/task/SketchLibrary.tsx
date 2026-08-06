@@ -43,7 +43,7 @@ export function SketchLibrary({
   }
 
   return (
-    <div className="surface rounded-md p-3">
+    <div className="hud rounded-md p-3">
       <div className="flex items-baseline justify-between gap-2 px-1">
         <span className="text-[11px] text-static">Library</span>
         <span className="font-mono text-[9px] tabular-nums text-static/70">

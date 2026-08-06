@@ -1,6 +1,9 @@
 # Task Specs
 
-![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![owner](https://img.shields.io/badge/owns-specs_·_compiler_·_bench-8B7EC8?style=flat-square) ![animals](https://img.shields.io/badge/animal_use-not_yet-C96C6C?style=flat-square)
+![status](https://img.shields.io/badge/status-UI_removed_·_backend_built-C9A96C?style=flat-square) ![owner](https://img.shields.io/badge/owns-specs_·_compiler_·_bench-8B7EC8?style=flat-square) ![animals](https://img.shields.io/badge/animal_use-not_yet-C96C6C?style=flat-square)
+
+> [!IMPORTANT]
+> **The frontend described in §4–§7 was removed on 2026-08-06, pending a fresh UI.** The landing page, wizard (`/task/new`), Designer (`/task/designer`), bench page (`/task/bench`), and everything under `src/components/specs/` and `src/lib/specs/` are gone from the tree; `/task` now opens straight into the sketch viewer ([tasks.md §10](tasks.md#10-the-task-tab)). **Everything sidecar-side is intact and unchanged**: the compiler (`taskgraph/`), every `specs.*` wire command, the upload path (`ports/upload.py`, the `UPLOADING` state), the paradigms, and the no-session invariant. `sidecar/tests/test_spec_operations.py` also survives — it was always documented as the design's proof rather than a mirror of the implementation, and it is now the design record the rebuild starts from. The sections below are kept as that record: they describe decisions (and their reasons) the next UI should not have to rediscover.
 
 > **What this is** · The task-spec editor under the Task tab: a declarative task compiled into a state table that a fixed on-board interpreter walks. **Tasks stop being firmware and become data** — a new task ships without touching C++.
 >

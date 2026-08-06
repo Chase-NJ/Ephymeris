@@ -3,7 +3,6 @@ import { useEffect, useMemo, useReducer, useState } from "react";
 import {
   ArrowRight,
   ChartLine,
-  FileCode2,
   Radio,
   Rocket,
   Users,
@@ -224,31 +223,15 @@ export function Dashboard() {
                 motif={<RigMotif />}
                 onOpen={() => navigate("/config")}
               />
+              {/* No footer shortcut any more: /task opens straight into the
+                  sketch viewer, so a "Sketches" link would be a second door
+                  into the same room. */}
               <EntranceTile
                 icon={Workflow}
                 label="Task"
-                caption="What the animal does"
+                caption="What the animal does — the sketch library"
                 motif={<TaskMotif />}
                 onOpen={() => navigate("/task")}
-                // The sketch library lost its sidebar tab when it moved into
-                // the Task family, so the one-click path to it lands here: it
-                // is still the path that runs animals, and burying it two
-                // clicks deep would have been a demotion nobody asked for.
-                footer={
-                  <button
-                    type="button"
-                    onClick={() => navigate("/task/sketches")}
-                    className="group/link flex items-center gap-1.5 font-mono text-[10px] text-static transition-colors hover:text-starlight"
-                  >
-                    <FileCode2 size={11} strokeWidth={1.75} />
-                    Sketches
-                    <ArrowRight
-                      size={10}
-                      strokeWidth={2}
-                      className="transition-transform group-hover/link:translate-x-0.5"
-                    />
-                  </button>
-                }
               />
             </div>
 

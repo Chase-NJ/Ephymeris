@@ -20,8 +20,7 @@ Three screens edit settings. **The split is by subject, not by shape.**
 |---|---|---|
 | ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
 | 📡 **Rig** (`/config`) | *Which board is box 3, and what does every pin do?* | Box→board bindings (add/remove/name, with per-row health), the handshake test, the utility baseline, **the channel→pin wiring editor** (formerly `/task/hardware`), default baud, `arduino-cli` path. **The tab is labelled Rig; the route and `routes/Config.tsx` keep the old spelling** — the label is the operator's word for the subject, the path is an internal address nothing displays |
-| 🔀 **Task** (`/task*`) | *What is the animal doing?* | The task-spec Designer, wizard and bench; the bundled sketch library (`/task/sketches`, below). The channel→pin map moved to Rig — its landing card keeps a door there |
-| 📄 **Sketches** (`/task/sketches`) | *What firmware ships with the app, and how does this rig run it?* | The bundled sketch library, each sketch's derived trial flow, and per-sketch task parameters (`settings.taskDefaults`). One of the Task family now — it spent a while as its own sidebar tab (`/sketches`, which redirects) on the reasoning that the sketches ship *with the app*; true of where they come from, but the operator looks for them by what they are for, and that is Task. The Dashboard's Task tile carries a one-click shortcut |
+| 🔀 **Task** (`/task`) | *What is the animal doing?* | The sketch viewer: the bundled library, each sketch's derived state machine with its parameters mapped onto it, and per-sketch task parameters (`settings.taskDefaults`). The spec-creator UI is removed pending a rebuild ([specs.md](specs.md)); the channel→pin map is on Rig |
 
 > [!NOTE]
 > **Both of the first two rows are about wiring, and they are different wirings.**

@@ -5,7 +5,7 @@ import { nodesGovernedBy, type TaskGraphModel } from "@/lib/tasks/topology";
 
 /**
  * What the parameter under the cursor actually means — the wizard's
- * `ExplainTile` motif (`components/specs/ExplainTile.tsx`), worn by the
+ * `ExplainTile` motif (born in the removed spec editor), worn by the
  * sketch library.
  *
  * Same three rules as the original. IT FOLLOWS FOCUS, ONE DEFINITION AT A

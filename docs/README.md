@@ -282,11 +282,9 @@ Talks to the sidecar over the WebSocket only.
 | `components/chrome/` | Persistent shell: sidebar, titlebar, starfield, constellation status widget |
 | `components/cohorts/` | Cohort grid, editor panels, procedural icon, Auto-Balance |
 | `components/config/` | Interactive constellation board, zodiac picker (rendered on Settings), handshake indicator/list, utility sketch panel |
-| `components/task/` | The derived state-machine graph (`TaskGraph`, also docked live in Mission Control), the same nodes as a pinned strip (`TaskRail`), and the per-group parameter tiles |
-| `components/specs/` | The Designer's parts: the machine-graph canvas (`SpecCanvas`), the selection-driven `SpecInspector`, the generated `SpecForm`/`SpecField`, the diagnostics list, the listing diff, the shared `ParadigmCard` (glyph, accent, and the first sentence of `affords`), the wizard's `TaskJourney` rail and `TaskShape` summary, and the bench panel |
+| `components/task/` | The sketch viewer's parts: `SketchStateMachine` (the derived machine with the parameter mapping drawn on), `TaskGraph` (kept solely for Mission Control's live panel), `ParameterInspector` (group pills + one group's fields — selection instead of scrolling), the library list, and the explain tile |
 | `components/common/SummaryCard.tsx` | The HUD tile — icon, label, status, divider, rows. Shared by the Dashboard and the Task tab so the two "tiles over the sky" pages are one motif |
 | `components/hardware/` | `BoardMap` — the Mega2560 pin diagram Rig wiring selects and drags on, ported from `ConstellationBoard` |
-| `lib/specs/selection.ts` | **Graph → the fields that produced it**, and the inverse. Joins on data the compiler and the document share, never on template symbol names ([specs.md §5](specs.md)) |
 | `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view |
 | `components/debug/` | Constellation landing, per-box detail, scrollback, flash dialog, state badges, utility controls |
 | `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, journey rail, placement banner, and `ConfigFields` (the one grouped renderer for a profile's `config`) |
@@ -306,11 +304,9 @@ Every route is a child of `<AppShell />`, wired in `src/App.tsx`.
 | `/` | `routes/Dashboard.tsx` | Landing: full-bleed 3D rig sky with a hero launch CTA, the session dock, and Cohorts/Rig/Analytics summary cards |
 | `/cohorts` | `routes/Cohorts.tsx` | Cohort browser — card grid, search/sort/archived toggle |
 | `/cohorts/new`, `/cohorts/:id` | `routes/CohortEditor.tsx` | Create (progressive reveal) or manage (all at once) a cohort |
-| `/task` | `routes/Task.tsx` | Landing: the Task Designer hero over the rig's sky, the spec library as cards, and the Bench/Sketches doors |
-| `/task/designer/:specId` | `routes/TaskDesigner.tsx` | The spec editor, built around the compiled machine graph ([specs.md §5](specs.md)) |
-| `/task/bench` | `routes/TaskBench.tsx` | Probe a board and load a table. Permanent "not for animal use" strip; `?spec=<id>` preselects |
+| `/task` | `routes/TaskSketches.tsx` | The sketch viewer — the whole of the tab. The spec-creator routes (landing, wizard, Designer, bench) are removed pending a fresh UI ([specs.md](specs.md)); the sidecar spec system is intact |
 | `/task/hardware` | *(redirects to `/config`)* | **Rig wiring** merged into the Rig screen — the channel→pin editor is `components/hardware/RigWiringEditor.tsx`, a section of `routes/Config.tsx` ([specs.md §9](specs.md)) |
-| `/task/sketches` | `routes/TaskSketches.tsx` | The bundled `task.json` library (one of the Task family; the old `/sketches` tab redirects): sketch browser, derived trial-flow graph, the hover explain tile, and the **only** editor for `settings.taskDefaults` |
+| `/task/sketches` | *(redirects to `/task`)* | Former address of the sketch viewer, as is `/sketches` — the viewer is the tab now. Still the **only** editor for `settings.taskDefaults` |
 | `/analytics` | `routes/Analytics.tsx` | The Observatory — one route, no tabs; cohort/session/animal are filters |
 | `/config` | `routes/Config.tsx` | The **Rig** tab (label renamed; route kept): **Bind boxes** — constellation, box→board bindings, handshake, utility baseline, baud, `arduino-cli` |
 | `/settings` | `routes/Settings.tsx` | Storage and interface only |
@@ -476,7 +472,7 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 </td></tr>
 <tr><td><b>6</b></td><td>
 
-**No frontend test runner or linter.** `tsc --noEmit` is the entire automated frontend check — no vitest, jest, eslint, prettier, or biome, and no test file anywhere under `src/`. The wire mirrors are guarded by the contract test, so the highest-risk surface is covered; but store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`), the session flow's step transitions, `lib/tasks/topology.ts`, and now the spec editor's `lib/specs/` (the document path helpers, `layout.ts`, the diagnostics fan-out, and `selection.ts`) are untested code paths. The layout's invariants were verified once by compiling all five specs and running the real `layout.ts` under esbuild — a ritual, not a regression test; `selection.ts` got the same treatment against `gonogo`'s real compiled table (every node resolved to at least one producing field) and is the highest-value target the day a runner lands, being pure and entirely about a mapping that must not silently drift.
+**No frontend test runner or linter.** `tsc --noEmit` is the entire automated frontend check — no vitest, jest, eslint, prettier, or biome, and no test file anywhere under `src/`. The wire mirrors are guarded by the contract test, so the highest-risk surface is covered; but store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`), the session flow's step transitions, and `lib/tasks/topology.ts` are untested code paths. (The spec editor's `lib/specs/` was removed with the spec UI on 2026-08-06 — `specs.md` carries what its verification rituals had established, for the rebuild.)
 
 </td></tr>
 <tr><td><b>31</b></td><td>

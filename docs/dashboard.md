@@ -191,12 +191,12 @@ Route `/`. Two columns of translucent HUD tiles docked over the full-bleed sky. 
 
 ### 3.2 The overview column (right)
 
-The column opens with a **paired row of entrance tiles** — Rig and Task, the two tabs that otherwise had no presence on the landing (`components/dashboard/EntranceTile.tsx`). They are deliberately not `SummaryCard`s: a card whose body is rows promises a readout, and these have nothing to read out — they are doors. Same `.hud` glass, squarer shape, and each carries an animated **motif** about its destination: the Rig tile a pin header with a trace that draws itself to a box on hover, the Task tile a trial advancing through a four-node flow. Hover lifts the tile and plays the motif; nothing glows and nothing gradients (§1.2) — movement and a single Pulsar stroke are the whole vocabulary. The Task tile's footer is a one-click shortcut to `/task/sketches`, the standing replacement for the retired Sketches sidebar tab.
+The column opens with a **paired row of entrance tiles** — Rig and Task, the two tabs that otherwise had no presence on the landing (`components/dashboard/EntranceTile.tsx`). They are deliberately not `SummaryCard`s: a card whose body is rows promises a readout, and these have nothing to read out — they are doors. Same `.hud` glass, squarer shape, and each carries an animated **motif** about its destination: the Rig tile a pin header with a trace that draws itself to a box on hover, the Task tile a trial advancing through a four-node flow. Hover lifts the tile and plays the motif; nothing glows and nothing gradients (§1.2) — movement and a single Pulsar stroke are the whole vocabulary. The Task tile opens `/task`, which is the sketch viewer itself — it briefly carried a footer shortcut to a separate sketches page, retired when the viewer became the tab.
 
 | Card | Contents |
 |---|---|
 | **Rig** (entrance) | Opens the Rig tab (`/config`). Caption is the tab's own question — *which board is box 3* — plus the bound-box count |
-| **Task** (entrance) | Opens `/task`; the footer link opens `/task/sketches` directly |
+| **Task** (entrance) | Opens `/task` — the sketch viewer |
 | **Cohorts** | Active cohorts with animal/group counts; rows open the editor, deferring to the grid past five rows. Header opens `/cohorts` |
 | **Boxes** | One row per bound box with a health dot, label, and state. Clicking a row sets the rig selection and lands in Debug with the camera already flying — exactly as clicking its star does |
 | **Analytics** | A reward-accuracy sparkline per cohort, plus the three most recent sessions read from the archive itself |

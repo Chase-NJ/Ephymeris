@@ -24,12 +24,12 @@ import type { ConfigField, TaskProfile } from "@/lib/sessions/types";
  * before any of this existed. There is no second code path for "simple"
  * profiles to fall out of sync with.
  *
- * The LEAF lives in `common/FieldRow.tsx` and is shared with the spec editor
- * (`components/specs/`). That split is deliberate and has a boundary: the two
- * forms serve different document shapes — a flat `config[]` keyed by
- * `metadataKey` here, a nested spec document there — and must not converge
- * above the leaf, or this file's grouping/reset/advanced logic grows a second
- * mode. What IS shared is exactly the behaviour that must never diverge:
+ * The LEAF lives in `common/FieldRow.tsx` (the removed spec editor shared it,
+ * and its successor should again). That split is deliberate and has a
+ * boundary: forms over different document shapes — a flat `config[]` keyed by
+ * `metadataKey` here, a nested spec document there — must not converge above
+ * the leaf, or this file's grouping/reset/advanced logic grows a second mode.
+ * What IS shared is exactly the behaviour that must never diverge:
  * clamp-never-reject, and the mid-typing "not a number" escape hatch.
  */
 export function ConfigFields({

@@ -64,10 +64,8 @@ const NAV_MAIN: readonly NavItem[] = [
   { to: "/analytics", label: "Analytics", icon: ChartLine },
 ];
 
-// Settings alone. The sketch library used to sit here as its own tab; it is now
-// `/task/sketches`, reached from the Task landing and from the Dashboard's Task
-// tile — a sketch is one of the things a task can be made of, so a tab of its
-// own was filing it by where it came from rather than by what it is for.
+// Settings alone. The sketch library used to sit here as its own tab; the Task
+// tab now opens straight into it, so the library needs no entry of its own.
 const NAV_BOTTOM: readonly NavItem[] = [
   { to: "/settings", label: "Settings", icon: Settings },
 ];

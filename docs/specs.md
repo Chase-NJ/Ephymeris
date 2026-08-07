@@ -481,7 +481,7 @@ The bench is **its own route** (`/task/bench`, reached from the landing page or 
 
 ## 9. Rig wiring
 
-The wiring editor on the Rig tab (`components/hardware/RigWiringEditor.tsx`, a section of `routes/Config.tsx`; its old route `/task/hardware` redirects) is where an operator says which pin
+The wiring editor on the Rig tab (`components/hardware/RigWiringEditor.tsx`, its own page at `/config/wiring` — `routes/RigWiring.tsx`, behind the Rig landing's Wiring door; its old route `/task/hardware` redirects) is where an operator says which pin
 each channel is on. Before it existed, `taskgraph/hardware/behaviorbox_mega2560.v1.json`
 was a transcription of `BehaviorBox.h` shipped inside the package and read-only in
 a frozen build — `active_pinout_id()`'s docstring called it "a BUILD-TIME choice,

@@ -305,10 +305,11 @@ Every route is a child of `<AppShell />`, wired in `src/App.tsx`.
 | `/cohorts` | `routes/Cohorts.tsx` | Cohort browser — card grid, search/sort/archived toggle |
 | `/cohorts/new`, `/cohorts/:id` | `routes/CohortEditor.tsx` | Create (progressive reveal) or manage (all at once) a cohort |
 | `/task` | `routes/TaskSketches.tsx` | The sketch viewer — the whole of the tab. The spec-creator routes (landing, wizard, Designer, bench) are removed pending a fresh UI ([specs.md](specs.md)); the sidecar spec system is intact |
-| `/task/hardware` | *(redirects to `/config`)* | **Rig wiring** merged into the Rig screen — the channel→pin editor is `components/hardware/RigWiringEditor.tsx`, a section of `routes/Config.tsx` ([specs.md §9](specs.md)) |
+| `/task/hardware` | *(redirects to `/config/wiring`)* | Former address of **Rig wiring** ([specs.md §9](specs.md)) |
 | `/task/sketches` | *(redirects to `/task`)* | Former address of the sketch viewer, as is `/sketches` — the viewer is the tab now. Still the **only** editor for `settings.taskDefaults` |
 | `/analytics` | `routes/Analytics.tsx` | The Observatory — one route, no tabs; cohort/session/animal are filters |
-| `/config` | `routes/Config.tsx` | The **Rig** tab (label renamed; route kept): **Bind boxes** — constellation, box→board bindings, handshake, utility baseline, baud, `arduino-cli` |
+| `/config` | `routes/Config.tsx` | The **Rig** tab (label renamed; route kept), as a column of HUD tiles: box→board bindings, handshake, utility baseline, the Wiring door, baud, `arduino-cli` |
+| `/config/wiring` | `routes/RigWiring.tsx` | **Rig wiring** — the channel→pin editor (`components/hardware/RigWiringEditor.tsx`) plus the pin table (`components/hardware/PinTable.tsx`), behind the Rig landing's Wiring door ([settings.md §5.1](settings.md)) |
 | `/settings` | `routes/Settings.tsx` | Storage and interface only |
 | `/debug` | `routes/DebugMode.tsx` | Per-box instrument panel. **No nav entry** — reached by selecting a box |
 | `/session/new` | `routes/SessionConfig.tsx` | Session setup step 1 — cohort, prefix, number, time limit |

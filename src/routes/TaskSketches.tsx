@@ -214,8 +214,19 @@ export function TaskSketches() {
 
           {/* Centre: the machine, vertically centred in what the columns
               leave. It is the page's hero the way the constellation is the
-              Dashboard's — the columns are furniture around it. */}
-          <div className="absolute inset-y-0 left-[300px] right-[384px] flex items-center px-4 xl:right-[416px]">
+              Dashboard's — the columns are furniture around it.
+
+              `exit` is not optional here (AppShell's rule: the route transition
+              only travels, nothing else will fade a page out). This wrapper
+              didn't own one, so on every navigation away the machine tile sat
+              fully opaque over the incoming page while the two columns faded —
+              the graph "lingered". The wrapper rather than the tile carries it
+              so the error/empty/loading states leave the same way. */}
+          <motion.div
+            exit={{ opacity: 0 }}
+            transition={springPanel}
+            className="absolute inset-y-0 left-[300px] right-[384px] flex items-center px-4 xl:right-[416px]"
+          >
             {error ? (
               <div
                 className="pointer-events-auto flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
@@ -277,7 +288,7 @@ export function TaskSketches() {
                 )}
               </motion.section>
             )}
-          </div>
+          </motion.div>
 
           {/* Right: the parameter rail. Travels in like the Dashboard's
               overview column — same distance, same spring. */}

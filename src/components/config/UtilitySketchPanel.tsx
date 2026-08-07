@@ -47,7 +47,7 @@ export function UtilitySketchPanel({
     path === null ? null : (sketches.find((s) => s.path === path)?.name ?? null);
 
   return (
-    <div className="border-b border-halo px-4 py-3.5">
+    <div className="px-4 py-3.5">
       <div className="flex items-start justify-between gap-8">
         <div className="min-w-0 pt-0.5">
           <div className="text-[13px] font-medium text-starlight">

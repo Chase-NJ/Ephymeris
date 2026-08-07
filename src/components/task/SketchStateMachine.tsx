@@ -10,6 +10,7 @@ import type {
   TaskGraphModel,
   TaskNode,
 } from "@/lib/tasks/topology";
+import { useElementWidth } from "@/lib/useElementWidth";
 
 /**
  * The sketch's state machine, as the page's centrepiece tile.
@@ -37,6 +38,15 @@ import type {
  *
  * Outcome colours come from `fillFor`, the same mapping `OutcomeMix` and the
  * live panel use — "rewarded" is one colour everywhere in this app.
+ *
+ * **Drawn in CSS pixels, not a scaled viewBox.** The first version scaled a
+ * fixed frame to the column's width, which made every window resize a
+ * font-size change — the machine ballooned and shrank with the window. Here
+ * type, node radii and strokes are constant, and the measured width goes into
+ * the *layout*: columns spread to fill what the tile has, clamped to a band
+ * (see the geometry section) so labels never collide at the narrow end and
+ * edges never sprawl at the wide one. Resizing the window now slides states
+ * closer or further apart; it never changes what a label reads like.
  */
 export function SketchStateMachine({
   model,
@@ -59,8 +69,9 @@ export function SketchStateMachine({
   onNodeClick: (node: TaskNode) => void;
   /** A chip click selects exactly the group it names. */
   onSelectGroup: (group: string) => void;
-  /** Rendered height cap. The HUD layout gives the machine the column, so the
-      default suits a centrepiece; pass less where it shares a scroll. */
+  /** Safety cap on rendered height. The drawing's height is fixed by its
+      content now, so this only bites on unusually short windows — where the
+      whole drawing shrinks uniformly rather than overflowing the tile. */
   maxHeight?: string;
 }) {
   const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
@@ -92,7 +103,9 @@ export function SketchStateMachine({
     return null; // rest — nothing dimmed
   }, [model, hoverGroup, hoverNode]);
 
-  const frame = useMemo(() => frameFor(model), [model]);
+  const [host, hostWidth] = useElementWidth<HTMLDivElement>();
+  const layoutWidth = Math.min(Math.max(hostWidth ?? FALLBACK_W, MIN_W), MAX_W);
+  const frame = useMemo(() => frameFor(model, layoutWidth), [model, layoutWidth]);
 
   function enterNode(node: TaskNode) {
     setHoverNode(node);
@@ -104,11 +117,17 @@ export function SketchStateMachine({
   }
 
   return (
-    <div>
+    <div ref={host}>
+      {/* Three regimes off two style rules: inside the clamp band the drawing
+          is 1:1 (width = layout width = host width); on a tile wider than
+          MAX_W it stops growing and centres; on one narrower than MIN_W the
+          MIN_W layout shrinks uniformly via maxWidth — the one place viewBox
+          scaling survives, as graceful degradation below the supported band
+          rather than as the sizing model. */}
       <svg
-        viewBox={frame.viewBox}
-        className="w-full"
-        style={{ maxHeight }}
+        viewBox={`0 0 ${frame.width} ${frame.height}`}
+        className="mx-auto block"
+        style={{ width: frame.width, maxWidth: "100%", maxHeight }}
         role="img"
         aria-label="The task's state machine, derived from its strobe vocabulary"
       >
@@ -227,35 +246,72 @@ function tunedByLine(node: TaskNode, declared: Set<string>): ReactNode {
 
 // --- geometry ---------------------------------------------------------------
 
-/** Row → y. Wider than the model's unit rows so labels and chips breathe. */
-const ROW_H = 15;
-/** Node radius, in frame units. */
-const R = 3.1;
+/*
+ * Everything below is CSS pixels. The model's columns (authored, ~6–140) map
+ * onto whatever horizontal room the tile offers; its rows (unit-spaced) map
+ * onto a FIXED vertical rhythm. So width is the fluid axis — the one a window
+ * resize actually changes — and height is a property of the task's shape, not
+ * of the window. Type and marks stay constant either way.
+ */
+
+/** The width band the fluid layout serves. Below MIN_W the narrowest column
+ *  gap (~18/134 of the span) no longer clears a centred chip, so the whole
+ *  drawing scales down uniformly instead — the HUD's fixed columns leave the
+ *  machine ~(window − 990px), so that regime is real on a 1280-wide window
+ *  and the honest answer there is a smaller correct drawing, not colliding
+ *  labels. Above MAX_W added width is only longer edges, so the drawing
+ *  centres instead. Between them, rendering is 1:1. */
+const MIN_W = 460;
+const MAX_W = 1000;
+/** Pre-measurement layout width. One frame at most — the tile fades in over
+ *  it, so a settle from here is never visible. */
+const FALLBACK_W = 720;
+
+/** Vertical rhythm: px per model row unit. Sized so the deepest chip stack
+ *  (an odor arm's four) clears the next fan-out row below it. */
+const ROW_PX = 52;
+/** Node radius. */
+const R = 9;
+
+/** Horizontal pads. The right one only shelters the ITI; the outcome column's
+ *  right-anchored labels fit because the model keeps a whole column of room
+ *  between it and the frame edge. */
+const PAD_L = 30;
+const PAD_R = 30;
+/** Above the top row: room for an `above`-anchored label when the top row is
+ *  the spine (a single-outcome task — a fanned one puts squares up there). */
+const PAD_T = 30;
+/** How far the deepest return arc sweeps below the lowest node; `repeat`'s
+ *  nests 16px shallower. The abort chips end ~36px below their nodes, so the
+ *  shallower arc still clears them. */
+const RETURN_DEPTH = 62;
+const PAD_B = RETURN_DEPTH + 16;
 
 interface Frame {
-  viewBox: string;
+  width: number;
+  height: number;
   x: (n: TaskNode) => number;
   y: (n: TaskNode) => number;
+  /** y of the lowest node — the return arcs hang from it. */
+  lowY: number;
 }
 
-function frameFor(model: TaskGraphModel): Frame {
-  const xs = model.nodes.map((n) => n.column);
-  const ys = model.nodes.map((n) => n.row * ROW_H);
-  const minX = Math.min(...xs, 0) - 10;
-  const maxX = Math.max(...xs, 100) + 12;
-  const minY = Math.min(...ys, 0) - 14;
-  // The bottom pad covers the return arcs, which dip RETURN_DEPTH below the
-  // lowest node — sizing off the nodes alone clipped the ITI→Light sweep.
-  const maxY = Math.max(...ys, 0) + RETURN_DEPTH + 6;
+function frameFor(model: TaskGraphModel, width: number): Frame {
+  const cols = model.nodes.map((n) => n.column);
+  const rows = model.nodes.map((n) => n.row);
+  const minCol = Math.min(...cols);
+  const colSpan = Math.max(Math.max(...cols) - minCol, 1);
+  const minRow = Math.min(...rows);
+  const lowY = PAD_T + (Math.max(...rows) - minRow) * ROW_PX;
+  const innerW = width - PAD_L - PAD_R;
   return {
-    viewBox: `${minX} ${minY} ${maxX - minX} ${maxY - minY}`,
-    x: (n) => n.column,
-    y: (n) => n.row * ROW_H,
+    width,
+    height: lowY + PAD_B,
+    x: (n) => PAD_L + ((n.column - minCol) / colSpan) * innerW,
+    y: (n) => PAD_T + (n.row - minRow) * ROW_PX,
+    lowY,
   };
 }
-
-/** How far the deepest return arc sweeps below the lowest node. */
-const RETURN_DEPTH = 26;
 
 // --- edges ------------------------------------------------------------------
 
@@ -273,14 +329,11 @@ function pathFor(edge: TaskEdge, model: TaskGraphModel, frame: Frame): string {
     // Sweep beneath the whole machine, back to the start — the two returns
     // nest at different depths instead of overlapping. Both stay inside the
     // frame because `frameFor` pads by RETURN_DEPTH.
-    const low = Math.max(
-      ...model.nodes.map((n) => frame.y(n)),
-    );
-    const depth = low + (edge.from === "iti" ? RETURN_DEPTH : RETURN_DEPTH - 10);
+    const depth = frame.lowY + (edge.from === "iti" ? RETURN_DEPTH : RETURN_DEPTH - 16);
     return `M ${x1} ${y1 + R} C ${x1} ${depth}, ${x2} ${depth}, ${x2} ${y2 + R}`;
   }
 
-  const dx = Math.max((x2 - x1) / 2, 6);
+  const dx = Math.max((x2 - x1) / 2, 20);
   return `M ${x1 + R} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2 - R} ${y2}`;
 }
 
@@ -307,10 +360,10 @@ function edgeStroke(edge: TaskEdge): string {
  * exactly where a label about *leaving* that node shouldn't sit.
  */
 function labelPos(x1: number, y1: number, x2: number, y2: number) {
-  if (Math.abs(y2 - y1) < 4) {
-    return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 1.8 };
+  if (Math.abs(y2 - y1) < 14) {
+    return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 7 };
   }
-  return { x: x1 + (x2 - x1) * 0.6, y: y1 + (y2 - y1) * 0.68 + 2.4 };
+  return { x: x1 + (x2 - x1) * 0.6, y: y1 + (y2 - y1) * 0.68 + 12 };
 }
 
 function EdgePath({
@@ -340,11 +393,10 @@ function EdgePath({
         d={d}
         fill="none"
         stroke={on ? "var(--color-pulsar)" : edgeStroke(edge)}
-        strokeWidth={on ? 0.7 : 0.5}
+        strokeWidth={on ? 1.4 : 1}
         strokeDasharray={
-          edge.kind === "abort" || edge.kind === "return" ? "1.6 1.8" : undefined
+          edge.kind === "abort" || edge.kind === "return" ? "6 7" : undefined
         }
-        vectorEffect="non-scaling-stroke"
         style={{ transition: "stroke 160ms" }}
       />
       {edge.label && from && to && (
@@ -352,7 +404,7 @@ function EdgePath({
           {...labelPos(frame.x(from), frame.y(from), frame.x(to), frame.y(to))}
           textAnchor="middle"
           className="fill-static font-mono"
-          fontSize={2.1}
+          fontSize={9}
           opacity={0.75}
         >
           {edge.label}
@@ -396,13 +448,13 @@ function NodeGlyph({
   const fill = fillFor(node);
 
   const anchor = node.labelAnchor ?? "below";
-  const labelX = anchor === "right" ? x + R + 2 : x;
-  const labelY = anchor === "right" ? y + 1 : anchor === "above" ? y - R - 2.6 : y + R + 4.4;
+  const labelX = anchor === "right" ? x + R + 6 : x;
+  const labelY = anchor === "right" ? y + 4 : anchor === "above" ? y - R - 9 : y + R + 15;
   const textAnchor = anchor === "right" ? "start" : "middle";
 
   // Chips stack under the label (or trail it, for right-anchored nodes).
-  const chipX = anchor === "right" ? x + R + 2 : x;
-  const chipY0 = anchor === "right" ? y + 4.6 : anchor === "above" ? y + R + 4 : labelY + 3.4;
+  const chipX = anchor === "right" ? x + R + 6 : x;
+  const chipY0 = anchor === "right" ? y + 17 : anchor === "above" ? y + R + 14 : labelY + 12;
 
   return (
     <g
@@ -418,10 +470,9 @@ function NodeGlyph({
           cy={y}
           fill="none"
           stroke="var(--color-pulsar)"
-          strokeWidth={0.55}
-          vectorEffect="non-scaling-stroke"
+          strokeWidth={1.3}
           initial={{ r: R, opacity: 0 }}
-          animate={{ r: R + 1.6, opacity: 1 }}
+          animate={{ r: R + 5, opacity: 1 }}
           transition={springSnappy}
         />
       )}
@@ -432,12 +483,11 @@ function NodeGlyph({
           y={y - R}
           width={R * 2}
           height={R * 2}
-          rx={1.1}
+          rx={3}
           fill={fill}
           fillOpacity={0.22}
           stroke={fill}
-          strokeWidth={0.5}
-          vectorEffect="non-scaling-stroke"
+          strokeWidth={1}
         />
       ) : (
         <circle
@@ -447,9 +497,8 @@ function NodeGlyph({
           fill="var(--color-nebula)"
           stroke={node.kind === "abort" ? "var(--color-static)" : "var(--color-starlight)"}
           strokeOpacity={node.kind === "abort" ? 0.55 : 0.8}
-          strokeWidth={0.5}
-          strokeDasharray={node.kind === "abort" ? "1.3 1.3" : undefined}
-          vectorEffect="non-scaling-stroke"
+          strokeWidth={1}
+          strokeDasharray={node.kind === "abort" ? "5 5" : undefined}
         />
       )}
 
@@ -457,7 +506,7 @@ function NodeGlyph({
         x={labelX}
         y={labelY}
         textAnchor={textAnchor}
-        fontSize={2.9}
+        fontSize={11}
         className={lit ? "fill-starlight" : "fill-static"}
         style={{ transition: "fill 160ms" }}
       >
@@ -475,9 +524,9 @@ function NodeGlyph({
           <text
             key={chip.short}
             x={chipX}
-            y={chipY0 + index * 3}
+            y={chipY0 + index * 12}
             textAnchor={textAnchor}
-            fontSize={2.05}
+            fontSize={9}
             className={covered ? "fill-pulsar" : "fill-static"}
             style={{ opacity: chipOpacity, transition: "opacity 160ms, fill 160ms", cursor: "pointer" }}
             // The hover handlers must NOT stopPropagation: React synthesizes

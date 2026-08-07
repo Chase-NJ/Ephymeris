@@ -8,6 +8,7 @@ import { Cohorts } from "./routes/Cohorts";
 import { Dashboard } from "./routes/Dashboard";
 import { DebugMode } from "./routes/DebugMode";
 import { MissionControl } from "./routes/MissionControl";
+import { RigWiring } from "./routes/RigWiring";
 import { SessionConfig } from "./routes/SessionConfig";
 import { SessionMapping } from "./routes/SessionMapping";
 import { Settings } from "./routes/Settings";
@@ -32,12 +33,12 @@ export default function App() {
             which the mapping step merges into every `START` line whether or
             not anything can show it. */}
         <Route path="/task" element={<TaskSketches />} />
-        {/* Rig wiring lives on the Rig screen (`RigWiringEditor` inside
-            `routes/Config.tsx`) — box↔board and channel↔pin are different
-            wirings but one subject. Old addresses redirect rather than fall
-            to the catch-all: a stale link landing on the Dashboard reads as
-            the page having been deleted. */}
-        <Route path="/task/hardware" element={<Navigate to="/config" replace />} />
+        {/* Rig wiring is a subpage of the Rig screen — box↔board and
+            channel↔pin are different wirings but one subject, so the editor
+            lives at `/config/wiring` behind the landing's Wiring door. Old
+            addresses redirect rather than fall to the catch-all: a stale link
+            landing on the Dashboard reads as the page having been deleted. */}
+        <Route path="/task/hardware" element={<Navigate to="/config/wiring" replace />} />
         <Route path="/task/sketches" element={<Navigate to="/task" replace />} />
         <Route path="/sketches" element={<Navigate to="/task" replace />} />
         <Route path="/analytics" element={<Analytics />} />
@@ -47,6 +48,7 @@ export default function App() {
             this way — renaming it would churn both to no one's benefit, since a
             desktop app never shows its URL. `routes/Config.tsx` likewise. */}
         <Route path="/config" element={<Config />} />
+        <Route path="/config/wiring" element={<RigWiring />} />
         <Route path="/settings" element={<Settings />} />
         {/* Two-step session setup (`dashboard.md` §7.2–§4); the runner
             takes over at /session/:id/control. */}

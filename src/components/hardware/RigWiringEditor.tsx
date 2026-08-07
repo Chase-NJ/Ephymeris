@@ -11,32 +11,43 @@ import {
   type RigChannel,
   type RigDocument,
 } from "@/lib/hardware/types";
-import { useRig } from "@/lib/hardware/useRig";
+import type { RigSession } from "@/lib/hardware/useRig";
 
 /**
- * The channel→pin editor, as a section rather than a screen.
+ * The channel→pin editor — the working half of the wiring page.
  *
- * This was the whole of `/task/hardware` until the Rig screen absorbed it —
- * the route's shell (sky, back button, full-height split) stayed behind and
- * died with it; the editor itself moved here unchanged in behaviour. It still
- * binds a CHANNEL to a PIN: compiler input, baked into every table, and wrong
+ * This was the whole of `/task/hardware`, then a section of the Rig screen,
+ * and is now the centrepiece of `/config/wiring` (`routes/RigWiring.tsx`),
+ * behind the Wiring door on the Rig landing. Through every move it has bound a
+ * CHANNEL to a PIN: compiler input, baked into every table, and wrong
  * silently — which is why the preview round trip, the problems list, and the
- * would-break-tasks gate all survive the move intact (`useRig`).
+ * would-break-tasks gate survive each move intact (`useRig`).
+ *
+ * THE SESSION AND THE SELECTION ARE THE PAGE'S, NOT THIS COMPONENT'S. The
+ * wiring page also renders the pin table, and the two surfaces must read one
+ * document and share one selection — a table row and a board cell that
+ * disagreed about "the selected channel" would be the two-surfaces bug this
+ * editor's own rail rule exists to prevent, one level up.
  *
  * THE MAP SELECTS, THE RAIL EDITS — `SpecCanvas`'s division, for the same
- * reason: two surfaces for one field eventually disagree. Embedded, the rail
- * is a fixed right column inside the section instead of the resizable
- * `InspectorRail` (that one exists for strobe pickers twenty characters wide;
- * a channel's fields are short).
+ * reason: two surfaces for one field eventually disagree. The rail is a fixed
+ * right column rather than the resizable `InspectorRail` (that one exists for
+ * strobe pickers twenty characters wide; a channel's fields are short).
  *
  * Saving stays the editor's own gesture, not the page's: everything else on
  * the Rig screen writes through `useSettings` per change, but a wiring edit
  * can break saved tasks, so it keeps its explicit Save with the preflight
  * (`RIG_WOULD_BREAK_TASKS`) in front of it.
  */
-export function RigWiringEditor() {
-  const rig = useRig();
-  const [selected, setSelected] = useState<string | null>(null);
+export function RigWiringEditor({
+  rig,
+  selected,
+  onSelect,
+}: {
+  rig: RigSession;
+  selected: string | null;
+  onSelect: (channel: string | null) => void;
+}) {
   const [carried, setCarried] = useState<string | null>(null);
 
   const doc = rig.doc;
@@ -104,7 +115,7 @@ export function RigWiringEditor() {
       channels: { ...doc.channels, [name]: { kind: "emitter", label: name } },
       pins: { ...doc.pins, [name]: { index: pin } },
     });
-    setSelected(name);
+    onSelect(name);
   }
 
   function removeChannel(name: string) {
@@ -114,7 +125,7 @@ export function RigWiringEditor() {
     delete channels[name];
     delete pins[name];
     edit({ ...doc, channels, pins });
-    setSelected(null);
+    onSelect(null);
   }
 
   /**
@@ -139,7 +150,7 @@ export function RigWiringEditor() {
       if (entry.well === from) entry.well = to;
     }
     edit({ ...doc, channels, pins: rekey(doc.pins) });
-    setSelected(to);
+    onSelect(to);
   }
 
   /** `well` absent means "not plumbed", so clearing it DELETES the key rather
@@ -214,7 +225,7 @@ export function RigWiringEditor() {
           {rig.loadError ? "" : "Reading this rig's wiring…"}
         </p>
       ) : (
-        <div className="grid grid-cols-1 items-start gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+        <div className="grid grid-cols-1 items-start gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_280px]">
           <div className="flex min-w-0 flex-col gap-4">
             {carried !== null && (
               <div className="flex items-center gap-2 rounded-sm border border-pulsar/60 bg-pulsar/10 px-3 py-1.5 text-[11px] text-starlight">
@@ -231,7 +242,7 @@ export function RigWiringEditor() {
               doc={doc}
               selected={selected}
               carried={carried}
-              onSelect={setSelected}
+              onSelect={onSelect}
               onCarry={setCarried}
               onMove={movePin}
               problemPins={problemPins}
@@ -302,8 +313,11 @@ export function RigWiringEditor() {
           </div>
 
           {/* The inspector column. `lg:sticky` so a long problems list scrolls
-              under a rail that keeps the selected channel's fields in reach. */}
-          <div className="rounded-sm border border-halo px-3 py-1 lg:sticky lg:top-4">
+              under a rail that keeps the selected channel's fields in reach.
+              `surface-inset`, not `.hud`: the editor sits inside a frosted tile
+              now, and frosting inside frosting reads muddier than a flat lift
+              (`index.css` §2.4). */}
+          <div className="surface-inset rounded-sm px-3 py-1 lg:sticky lg:top-4">
             <RowDensityContext.Provider value="stacked">
               <ChannelInspector
                 doc={doc}
@@ -314,7 +328,7 @@ export function RigWiringEditor() {
                 onRemove={removeChannel}
                 onCarry={(name) => {
                   setCarried(name);
-                  setSelected(name);
+                  onSelect(name);
                 }}
               />
             </RowDensityContext.Provider>

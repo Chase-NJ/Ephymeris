@@ -1,23 +1,33 @@
 import { motion } from "framer-motion";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
-import { CircleAlert, Radio } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  Anchor,
+  ArrowRight,
+  CircleAlert,
+  CircuitBoard,
+  Radio,
+  SlidersHorizontal,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router";
 
 import { useBoxHealth } from "@/components/chrome/ConstellationStatus";
 import { Select, TextInput } from "@/components/common/controls";
 import { HandshakeList } from "@/components/config/HandshakeList";
 import { UtilitySketchPanel } from "@/components/config/UtilitySketchPanel";
-import { RigWiringEditor } from "@/components/hardware/RigWiringEditor";
+import { SettingRow } from "@/components/settings/SettingRow";
 import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
-import { SettingGroup, SettingRow } from "@/components/settings/SettingRow";
 import { reconcileSlots } from "@/lib/constellations/slots";
 import { zodiacById } from "@/lib/constellations/zodiac";
+import { getRig } from "@/lib/hardware/commands";
+import type { RigDocument } from "@/lib/hardware/types";
 import { useUtilityStatus } from "@/lib/hardware/context";
 import { useHandshakeTest } from "@/lib/hardware/useHandshakeTest";
-import { springPanel } from "@/lib/motion";
+import { springPanel, springSnappy } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
 import { BAUD_RATES, type BoxBinding } from "@/lib/settings/schema";
-import { CMD } from "@/lib/ws/protocol";
+import { CMD, EVT } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -27,11 +37,19 @@ import { useSidecar } from "@/lib/ws/context";
  * name is the operator's word for the subject; the path is an internal address
  * the docs and this app's history already spell one way. See `App.tsx`.
  *
+ * **A column of HUD tiles now, in the Dashboard's idiom** — frosted glass over
+ * the rig's sky, each tile a subject with an icon header and one live fact
+ * (`SummaryCard`'s header grammar, `EntranceTile`'s hover vocabulary). Still a
+ * scrolling column rather than the Dashboard's fixed columns, because these
+ * tiles are *forms*: the bindings table grows a row per box and the baseline
+ * panel a chip per box, and a layout that cannot scroll caps the rig.
+ *
  * Top to bottom it follows the order a rig comes up in: **Boxes** (bind a box
  * number to a board, name it, watch it come alive — with the handshake test to
  * prove a binding took), **Utility baseline** (the resting firmware and what
- * it is doing right now), **Wiring** (the channel→pin map the task compiler
- * consumes), then the two knobs that rarely move (baud, `arduino-cli`).
+ * it is doing right now), **Wiring** (a door now, not a section — the
+ * channel→pin editor lives at `/config/wiring` behind it, `RigWiring.tsx`),
+ * then the two knobs that rarely move (baud, `arduino-cli`).
  *
  * Two things used to live here and moved out, in opposite directions:
  *
@@ -47,18 +65,20 @@ import { useSidecar } from "@/lib/ws/context";
  *   cost with no second story to tell. First run simply lands here with an
  *   empty Boxes table and its own "add one for each box" prompt.
  *
- * **Wiring joined it from the other side** (`RigWiringEditor`, formerly
- * `/task/hardware`): binding a box to a board and binding a channel to a pin
- * are different wirings — runtime vs compile-time — but they are one subject,
- * and the Task landing keeps a door here for the flow that consumes the
- * channel map.
+ * **Wiring joined it from Task and then earned its own room.** Binding a box
+ * to a board and binding a channel to a pin are different wirings — runtime vs
+ * compile-time — but one subject, so the door is here; the editor is a
+ * workbench that fought this page's forms for width, so the room is its own
+ * route. The Task landing keeps a door to the flow that consumes the map.
  */
 export function Config() {
+  const navigate = useNavigate();
   const { settings, update, discovery, loaded, saveError } = useSettings();
   const { client, status } = useSidecar();
   const health = useBoxHealth();
   const handshake = useHandshakeTest();
   const utility = useUtilityStatus();
+  const wiring = useWiringSummary();
   const [reflashing, setReflashing] = useState(false);
   const connected = status === "connected";
 
@@ -66,6 +86,9 @@ export function Config() {
     () => settings.boxes.filter((b) => b.hardwareId !== null),
     [settings.boxes],
   );
+  const connectedCount = bound.filter(
+    (b) => (health[b.box] ?? "absent") !== "absent",
+  ).length;
 
   /** Box edits keep the constellation slot map honest in the same settings
    * write — the board lives on Settings now, but boxes are added and removed
@@ -122,9 +145,8 @@ export function Config() {
         transition={springPanel}
         className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
       >
-        {/* Wider than the settings screens (max-w-3xl): the wiring editor's
-            board map wants the room, and the page is a workbench now, not a
-            form. */}
+        {/* Wider than the settings screens (max-w-3xl): the bindings table
+            wants the room, and the page is a workbench now, not a form. */}
         <section className="pointer-events-auto mx-auto max-w-5xl px-10 py-9">
           <div className="flex items-center gap-3">
             <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
@@ -149,89 +171,108 @@ export function Config() {
           )}
 
           <fieldset disabled={!loaded} className="contents">
-            <SettingGroup title="Boxes">
-              <BoxBindingsTable
-                boxes={settings.boxes}
-                health={health}
-                onChange={onBoxesChange}
-              />
-              <div className="border-t border-halo px-4 py-3.5">
-                <div className="pb-0.5 text-[13px] font-medium text-starlight">
-                  Handshake test
-                </div>
-                <p className="pb-2 text-[12px] leading-relaxed text-static">
-                  Proof a binding took: opens the box&rsquo;s console and waits
-                  for its firmware to announce itself.
-                </p>
-                <HandshakeList
-                  bound={bound}
-                  handshake={handshake}
-                  connected={connected}
-                />
-              </div>
-            </SettingGroup>
-
-            <SettingGroup title="Utility baseline">
-              <UtilitySketchPanel
-                sketches={discovery.sketches}
-                boxes={settings.boxes}
-                value={settings.utilitySketchName}
-                status={utility}
-                busy={reflashing}
-                connected={connected}
-                onChange={(utilitySketchName) =>
-                  void update({ utilitySketchName })
+            <div className="mt-7 flex flex-col gap-5">
+              <RigTile
+                icon={Radio}
+                label="Boxes"
+                status={
+                  bound.length === 0
+                    ? "nothing bound"
+                    : `${connectedCount}/${bound.length} connected`
                 }
-                onReflash={() => void reflashBaseline()}
-              />
-            </SettingGroup>
-
-            {/* The channel→pin map. Its own save discipline, deliberately not
-                the page's write-per-change: a wiring edit can break saved
-                tasks, so it previews, lists what would break, and asks. */}
-            <SettingGroup title="Wiring — every pin, and what it means">
-              <RigWiringEditor />
-            </SettingGroup>
-
-            <SettingGroup title="Hardware">
-              <SettingRow
-                label="Default baud rate"
-                description="Starting value for each console. Debug Mode allows a per-box override."
               >
-                <Select
-                  label="Default baud rate"
-                  value={settings.defaultBaud}
-                  options={BAUD_RATES.map((b) => ({
-                    value: b,
-                    label: String(b),
-                  }))}
-                  onChange={(defaultBaud) => void update({ defaultBaud })}
+                <BoxBindingsTable
+                  boxes={settings.boxes}
+                  health={health}
+                  onChange={onBoxesChange}
                 />
-              </SettingRow>
+                <div className="border-t border-halo px-4 py-3.5">
+                  <div className="pb-0.5 text-[13px] font-medium text-starlight">
+                    Handshake test
+                  </div>
+                  <p className="pb-2 text-[12px] leading-relaxed text-static">
+                    Proof a binding took: opens the box&rsquo;s console and waits
+                    for its firmware to announce itself.
+                  </p>
+                  <HandshakeList
+                    bound={bound}
+                    handshake={handshake}
+                    connected={connected}
+                  />
+                </div>
+              </RigTile>
 
-              <SettingRow
-                label="arduino-cli path"
-                description="Leave empty to use the bundled binary. Override only if you need a specific install."
+              <RigTile
+                icon={Anchor}
+                label="Utility baseline"
+                status={settings.utilitySketchName ?? "off"}
               >
-                <TextInput
-                  label="arduino-cli path override"
-                  mono
-                  value={settings.arduinoCliPath ?? ""}
-                  placeholder="bundled"
-                  onChange={(v) =>
-                    void update({ arduinoCliPath: v.trim() === "" ? null : v })
+                <UtilitySketchPanel
+                  sketches={discovery.sketches}
+                  boxes={settings.boxes}
+                  value={settings.utilitySketchName}
+                  status={utility}
+                  busy={reflashing}
+                  connected={connected}
+                  onChange={(utilitySketchName) =>
+                    void update({ utilitySketchName })
                   }
-                  className="w-[280px]"
+                  onReflash={() => void reflashBaseline()}
                 />
-              </SettingRow>
-            </SettingGroup>
+              </RigTile>
+
+              {/* The channel→pin map, as a door. The editor kept its own save
+                  discipline through every move — preview, list what would
+                  break, ask — and now keeps its own page too. */}
+              <WiringDoor
+                status={wiring}
+                onOpen={() => navigate("/config/wiring")}
+              />
+
+              <RigTile
+                icon={SlidersHorizontal}
+                label="Hardware"
+                status={`${settings.defaultBaud} baud`}
+              >
+                <SettingRow
+                  label="Default baud rate"
+                  description="Starting value for each console. Debug Mode allows a per-box override."
+                >
+                  <Select
+                    label="Default baud rate"
+                    value={settings.defaultBaud}
+                    options={BAUD_RATES.map((b) => ({
+                      value: b,
+                      label: String(b),
+                    }))}
+                    onChange={(defaultBaud) => void update({ defaultBaud })}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="arduino-cli path"
+                  description="Leave empty to use the bundled binary. Override only if you need a specific install."
+                >
+                  <TextInput
+                    label="arduino-cli path override"
+                    mono
+                    value={settings.arduinoCliPath ?? ""}
+                    placeholder="bundled"
+                    onChange={(v) =>
+                      void update({ arduinoCliPath: v.trim() === "" ? null : v })
+                    }
+                    className="w-[280px]"
+                  />
+                </SettingRow>
+              </RigTile>
+            </div>
           </fieldset>
 
           <p className="mt-6 px-1 text-[11px] leading-relaxed text-static/70">
             Hardware settings are stored by the app shell and pushed to the
             backend whenever they change, so this screen keeps working even when
             the backend doesn&rsquo;t. The handshake test, the baseline readout
-            and the wiring editor are the parts that need it.
+            and the wiring page are the parts that need it.
           </p>
         </section>
       </motion.div>
@@ -239,3 +280,208 @@ export function Config() {
   );
 }
 
+/**
+ * One subject, as a HUD tile — `SummaryCard`'s header grammar (pulsar icon,
+ * label, one mono fact on the right) over that subject's working surface.
+ *
+ * Not `SummaryCard` itself: that component's body is a row list with its own
+ * padding and its header can be a destination, while these bodies are forms
+ * that manage their own edges and the header goes nowhere. Not `SettingGroup`
+ * either — its title sits *outside* the card, which read as a document; the
+ * HUD idiom puts the name on the glass.
+ */
+function RigTile({
+  icon: Icon,
+  label,
+  status,
+  children,
+}: {
+  icon: LucideIcon;
+  label: string;
+  /** One live fact, in the header's right corner. */
+  status?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="hud overflow-hidden rounded-md">
+      <div className="flex items-center gap-3 border-b border-halo px-4 py-3">
+        <Icon size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
+        <span className="text-[13px] font-medium text-starlight">{label}</span>
+        {status && (
+          <span className="ml-auto shrink-0 font-mono text-[11px] text-static">
+            {status}
+          </span>
+        )}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/**
+ * The Wiring door — `EntranceTile`'s vocabulary at the landing's full width.
+ *
+ * A door and not a summary, exactly like the Dashboard's entrance tiles: the
+ * destination is a workbench, and a tile that previewed its board here would
+ * be a second, read-only rendering of a document whose whole page exists one
+ * click away. On hover the tile lifts, the rule brightens, and the motif runs
+ * a trace — one channel being wired, the gesture the room behind the door
+ * exists for. Matte throughout: movement and a single accent, no glow (§1.2).
+ */
+function WiringDoor({
+  status,
+  onOpen,
+}: {
+  /** The live fact line, once the wiring document has been read. */
+  status: string | null;
+  onOpen: () => void;
+}) {
+  return (
+    <motion.button
+      type="button"
+      onClick={onOpen}
+      initial="idle"
+      animate="idle"
+      whileHover="hover"
+      whileTap={{ scale: 0.995 }}
+      variants={{ idle: { y: 0 }, hover: { y: -2 } }}
+      transition={springSnappy}
+      className="hud group relative flex w-full items-center gap-4 overflow-hidden rounded-md py-3.5 pl-4 pr-0 text-left transition-colors hover:border-static/40"
+    >
+      <CircuitBoard
+        size={18}
+        strokeWidth={1.75}
+        className="shrink-0 self-start text-pulsar"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1 text-[13px] font-medium text-starlight">
+          Wiring
+          <ArrowRight
+            size={11}
+            strokeWidth={2}
+            className="text-static transition-transform group-hover:translate-x-0.5"
+          />
+        </span>
+        <span className="mt-0.5 block text-[11px] leading-snug text-static">
+          Every pin, and what it means — the channel→pin map every task compiles
+          against.
+        </span>
+        {status && (
+          <span className="mt-1 block font-mono text-[10px] text-static/70">
+            {status}
+          </span>
+        )}
+      </span>
+      {/* The motif bleeds off the tile's right edge, clipped by it — texture at
+          the corner of the eye, not a picture competing with the words. */}
+      <span
+        aria-hidden
+        className="pointer-events-none -my-3.5 shrink-0 self-center opacity-70 transition-opacity group-hover:opacity-100"
+      >
+        <WiringMotif />
+      </span>
+    </motion.button>
+  );
+}
+
+/**
+ * The door's motif: `RigMotif`'s picture — a pin header, one trace being run
+ * to a box — redrawn wider for a full-width tile. Reads the `idle`/`hover`
+ * variants of the door it sits in.
+ */
+function WiringMotif() {
+  return (
+    <svg width="168" height="62" viewBox="0 0 168 62" fill="none" aria-hidden>
+      {/* Two rows of pads — a pin header, seen from above. */}
+      {[0, 1].map((row) =>
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((col) => (
+          <rect
+            key={`${row}-${col}`}
+            x={8 + col * 12}
+            y={10 + row * 12}
+            width="5"
+            height="5"
+            rx="1"
+            fill="var(--color-halo)"
+          />
+        )),
+      )}
+      {/* The pad the trace leaves from. */}
+      <motion.rect
+        x={44}
+        y={22}
+        width="5"
+        height="5"
+        rx="1"
+        variants={{
+          idle: { fill: "var(--color-static)", opacity: 0.5 },
+          hover: { fill: "var(--color-pulsar)", opacity: 1 },
+        }}
+        transition={springSnappy}
+      />
+      {/* The trace: down, right, down — orthogonal, like a routed track. */}
+      <motion.path
+        d="M46.5 27 V37 H112 V42"
+        stroke="var(--color-pulsar)"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        variants={{
+          idle: { pathLength: 0, opacity: 0.35 },
+          hover: { pathLength: 1, opacity: 1 },
+        }}
+        transition={{ duration: 0.45, ease: "easeOut" }}
+      />
+      {/* The box the trace lands on. */}
+      <rect
+        x={99}
+        y={42}
+        width="26"
+        height="13"
+        rx="2"
+        stroke="var(--color-static)"
+        strokeOpacity="0.45"
+        strokeWidth="1"
+      />
+    </svg>
+  );
+}
+
+/**
+ * The door's one live fact: how many channels the wiring document declares,
+ * and whether it is this rig's own or the pinout the build shipped. The same
+ * `hardware.get` the editor opens with — read-only here, refreshed when
+ * another surface saves, and quietly absent until the backend answers.
+ */
+function useWiringSummary(): string | null {
+  const { client, status } = useSidecar();
+  const [summary, setSummary] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (status !== "connected") return;
+    let cancelled = false;
+    const load = () =>
+      void getRig(client)
+        .then((reply) => {
+          if (cancelled) return;
+          const doc = reply.document as RigDocument;
+          const channels = Object.keys(doc.channels ?? {}).length;
+          setSummary(
+            `${channels} channel${channels === 1 ? "" : "s"} · ${
+              reply.status.custom ? "this rig's own" : "as shipped"
+            }`,
+          );
+        })
+        .catch(() => {
+          // The door works without its fact line; the page behind it is where
+          // a load failure is surfaced with room to explain itself.
+        });
+    load();
+    const off = client.on(EVT.HARDWARE_UPDATED, load);
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [client, status]);
+
+  return summary;
+}

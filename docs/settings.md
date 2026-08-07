@@ -19,7 +19,7 @@ Three screens edit settings. **The split is by subject, not by shape.**
 | Screen | Answers | Owns |
 |---|---|---|
 | ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
-| 📡 **Rig** (`/config`) | *Which board is box 3, and what does every pin do?* | Box→board bindings (add/remove/name, with per-row health), the handshake test, the utility baseline, **the channel→pin wiring editor** (formerly `/task/hardware`), default baud, `arduino-cli` path. **The tab is labelled Rig; the route and `routes/Config.tsx` keep the old spelling** — the label is the operator's word for the subject, the path is an internal address nothing displays |
+| 📡 **Rig** (`/config`) | *Which board is box 3, and what does every pin do?* | Box→board bindings (add/remove/name, with per-row health), the handshake test, the utility baseline, **the channel→pin wiring editor** (its own page at `/config/wiring`, behind the landing's Wiring door; formerly `/task/hardware`), default baud, `arduino-cli` path. **The tab is labelled Rig; the route and `routes/Config.tsx` keep the old spelling** — the label is the operator's word for the subject, the path is an internal address nothing displays |
 | 🔀 **Task** (`/task`) | *What is the animal doing?* | The sketch viewer: the bundled library, each sketch's derived state machine with its parameters mapped onto it, and per-sketch task parameters (`settings.taskDefaults`). The spec-creator UI is removed pending a rebuild ([specs.md](specs.md)); the channel→pin map is on Rig |
 
 > [!NOTE]
@@ -129,14 +129,23 @@ The slot map follows box add/remove made on the Rig tab automatically (`reconcil
 
 ## 5. The Rig screen (`/config`)
 
-One screen, in the order a rig comes up in — a workbench, wider than the settings forms.
+One screen, in the order a rig comes up in — a column of HUD tiles in the Dashboard's idiom (frosted glass over the rig's sky, an icon header and one live mono fact per tile), still scrolling because these tiles are *forms* that grow with the rig.
 
-| Group | Contents |
+| Tile | Contents |
 |---|---|
-| **Boxes** | The bindings table — add/remove a box, name it, bind it to a board — with a per-row health dot (the sidebar constellation's states and colours), plus the per-box handshake test |
-| **Utility baseline** | The utility sketch panel: which sketch idle boxes rest on, the per-box baseline state, and **Reflash boxes** |
-| **Wiring** | The channel→pin editor (`RigWiringEditor`, formerly `/task/hardware`): the board map selects, the inspector rail edits, and a save that would break tasks previews and asks first |
-| **Hardware** | The default baud select and the `arduino-cli` path override |
+| **Boxes** | The bindings table — add/remove a box, name it, bind it to a board — with a per-row health dot (the sidebar constellation's states and colours), plus the per-box handshake test. Header fact: connected/bound counts |
+| **Utility baseline** | The utility sketch panel: which sketch idle boxes rest on, the per-box baseline state, and **Reflash boxes**. Header fact: the sketch name, or `off` |
+| **Wiring** | A **door**, not a section: a full-width entrance tile in `EntranceTile`'s hover vocabulary (the tile lifts, a trace draws itself across a pin-header motif) opening the editor's own page at `/config/wiring` ([§5.1](#51-the-wiring-page-configwiring)). Fact line: channel count, and whether the wiring is this rig's own or as shipped |
+| **Hardware** | The default baud select and the `arduino-cli` path override. Header fact: the baud |
+
+### 5.1 The wiring page (`/config/wiring`)
+
+The channel→pin editor (`RigWiringEditor`, hosted by `routes/RigWiring.tsx`; formerly `/task/hardware`, then a section of the landing), with the room a workbench wants. The rules are unchanged through every move: the board map selects and moves, the inspector rail edits, and a save that would break tasks previews and asks first.
+
+Two surfaces, one document, one selection — the **page** owns the `useRig` session and the selected channel; the editor and the table rent them:
+
+- **The editor tile** — the action strip (status, problems count, Reset/Revert/Save), the board map, the legend, and the problems / would-break lists.
+- **The pin table** (`PinTable`) — every configured channel as a listing, sorted by pin number: pin, channel name with its kind colour, kind, label, and a detail column (a response port's strobe slot, a reward line's `serves`/`not plumbed`, a watch bit). It edits nothing — a row click performs the map's own select gesture, so the two surfaces can never disagree; it reads the live document, unsaved edits included.
 
 **There is no setup wizard.** There was — five linear steps over the same surfaces, gated on a `boxSetupComplete` flag — and it is retired along with the flag: with the page itself reading in setup order and the Boxes table opening on its own "add one for each box" prompt, a second, modal way through the same four surfaces was a maintenance cost with no second story to tell. First run simply lands here. (A stale store's `boxSetupComplete` is ignored, like `arduinoDirectory` before it.)
 

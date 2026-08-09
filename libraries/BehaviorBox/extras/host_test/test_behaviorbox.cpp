@@ -78,13 +78,43 @@ int main() {
     assert(a.nextDelay(true)==12000); }
 
   // --- AntiBiasSelector: returns a valid pointer; pushes against expressed bias ---
-  TrialType goR(true,1,3,2,101,253,357), goL(true,3,4,0,103,252,369);
-  { AntiBiasSelector s(&goR,&goL,20,0.5,0.05,0.95,6);
-    const TrialType* t = s.selectNext(); assert(t==&goR || t==&goL);
+  //     `rightWell`/`leftWell` rather than raw pins: the selector splits the
+  //     table by comparing correctWell against them, which is what lets it stop
+  //     knowing a pin number.
+  TrialType goR(true,1,rightWell,2,101,253,357), goL(true,3,leftWell,0,103,252,369);
+  const TrialType twoSided[] = { goR, goL };
+  { AntiBiasSelector s(twoSided,2,20,0.5,0.05,0.95,6);
+    const TrialType* t = s.selectNext(); assert(t==&twoSided[0] || t==&twoSided[1]);
     // Feed 20 RIGHT choices -> estimator should now favor LEFT selections.
     for(int i=0;i<20;i++) s.recordChoice(true);
-    int left=0; for(int i=0;i<200;i++){ if(s.selectNext()==&goL) left++; }
+    int left=0; for(int i=0;i<200;i++){ if(s.selectNext()==&twoSided[1]) left++; }
     assert(left > 120); }   // strong (not absolute) push to the under-chosen side
+
+  // --- ...and with two types per side it still de-biases the SIDE, presenting
+  //     both of that side's odors. This is the case the two-pointer selector
+  //     could not express at all.
+  { TrialType r2(true,5,rightWell,2,102,253,357), l2(true,7,leftWell,0,104,252,369);
+    const TrialType four[] = { goR, r2, goL, l2 };
+    AntiBiasSelector s(four,4,20,0.5,0.05,0.95,32);
+    int right=0, seenR0=0, seenR1=0;
+    for(int i=0;i<400;i++){
+      const TrialType* t = s.selectNext();
+      if(t->correctWell==rightWell){ right++; if(t==&four[0]) seenR0++; else seenR1++; }
+    }
+    assert(right > 150 && right < 250);      // no side bias with no history
+    assert(seenR0 > 0 && seenR1 > 0); }      // both right-hand odors presented
+
+  // --- a one-sided table is legal and must not fault: every draw falls through
+  //     to the only side there is.
+  { const TrialType oneSided[] = { goR };
+    AntiBiasSelector s(oneSided,1);
+    for(int i=0;i<50;i++) assert(s.selectNext()==&oneSided[0]); }
+
+  // --- a no-go type has no side, so the selector never presents it ---
+  { TrialType nogo(false,9,SENTINEL,SENTINEL,105,0,0);
+    const TrialType mixed[] = { goR, goL, nogo };
+    AntiBiasSelector s(mixed,3);
+    for(int i=0;i<200;i++) assert(s.selectNext() != &mixed[2]); }
 
   // --- generateTrials: honors weights, fills exactly numTrials ---
   { TrialWeight pool[] = { {goR, 3}, {goL, 1} };
@@ -166,14 +196,29 @@ int main() {
     assert(!escalationArmed(p, 0) && !escalationArmed(p, 79));
     assert(escalationArmed(p, 80)); }
 
-  // --- applyShapingDefaults: the shaping bare-START baseline + its schedule ---
-  { TaskParams p; applyShapingDefaults(p);
+  // --- the shaping schedule now arrives on the wire, not from a compiled-in
+  //     defaults function. Same numbers the retired applyShapingDefaults() set,
+  //     walked the same way -- what changed is who supplies them.
+  { TaskParams p; parseStart("START POL=2 LZD=4000 NPH=5000 "
+      "S0T=0 S0P=10 S0H=10 S0W=10000 S0O=8000 S1T=20 S1P=100 S1H=50 S1W=10000 S1O=8000 "
+      "S2T=25 S2P=125 S2H=250 S2W=5000 S2O=8000 S3T=50 S3P=250 S3H=500 S3W=2000 S3O=4000 "
+      "S4T=100 S4P=500 S4H=500 S4W=2000 S4O=4000", p);
     assert(p.pollingRate==2 && p.lazyRatDelay==4000 && p.noPokeHoldTimeout==5000);
     assert(p.odorPokeHold==10 && p.odorPortTimeout==8000);
     applyStage(p, 20);  assert(p.odorPokeHold==100 && p.fluidWellHold==50);
     applyStage(p, 25);  assert(p.odorPokeHold==125 && p.fluidWellPoll==5000);
     applyStage(p, 50);  assert(p.odorPokeHold==250 && p.odorPortTimeout==4000);
     applyStage(p, 100); assert(p.odorPokeHold==500); }
+
+  // --- an un-parsed TaskParams is already a valid one-row ramp. The rows above
+  //     row 0 carry a count no session reaches, so nothing engages them; this is
+  //     what the constructor replaced a five-row brace initialiser to guarantee,
+  //     and getting it wrong reads as a ramp that never advanced.
+  { TaskParams p;
+    assert(p.stage[0].trials == 0);
+    for (int i = 1; i < NUM_STAGES; i++) assert(p.stage[i].trials == STAGE_UNREACHABLE);
+    applyStage(p, 0);      assert(p.odorPokeHold==500 && p.fluidWellHold==200);
+    applyStage(p, 100000); assert(p.odorPokeHold==500); }
 
   // --- outcomeDelay: the outcome is now carried, not inferred from the delay.
   //     These three values are operator-typed and may legally collide; that used
@@ -197,6 +242,37 @@ int main() {
     assert(p.lazyEscalationStage==4 && p.trialSeed==2147483646UL);
     assert(p.stage[2].fluidWellPoll==5000 && p.stage[4].odorPokeHold==500);
     assert(p.maxConsecutiveSide==6 && p.fluidPinTimes[3]==100); }
+
+  // --- THE CROSS-REPO CHECK: the exact line Ephymeris builds for the shipped
+  //     GRGL profile, parsed by the parser that will receive it.
+  //
+  //     These two repos agree by convention and nothing enforces it: the app
+  //     reads wire keys out of task.json, this parser reads them out of
+  //     TASK_PARAM_LIST, and START_LINE_MAX is written down twice. A key the app
+  //     sends and the firmware does not know is ignored in silence -- the
+  //     session simply runs on the compiled-in value. Pasting the real line here
+  //     is the cheapest thing that would notice.
+  //
+  //     Regenerate after editing GRGL/task.json:
+  //       build_start_command(load_profile(<GRGL>), {f.metadata_key: f.default})
+  { char line[START_LINE_MAX];
+    int n = snprintf(line, sizeof(line),
+      "START ERR=20000 ITI=4000 NPH=10000 NWP=2000 PRM=1000 POL=5 LZD=6000 "
+      "LAZY=1 LZS=6000 LZM=30000 LZG=0 FL1=100 FL2=100 FL3=100 FL4=100 NT=1000 "
+      "PW1=1 PW2=1 BS=30 CL=0 CR=0 BW=20 MCS=10 DBS=0.5 PMN=0.02 PMX=0.98 "
+      "S0P=500 S0H=200 S0W=2000 S0O=4000 SEED=2147483646");
+    assert(n > 0 && (size_t)n < sizeof(line));
+    TaskParams p; parseStartCommand(line, p);
+    // One assertion per group, so a dropped token names which one went.
+    assert(p.errorDelay==20000 && p.standardITI==4000);          // trial timing
+    assert(p.lazyRatDelay==6000 && p.lazyEscalationEnabled);     // abstention
+    assert(p.fluidPinTimes[0]==100 && p.fluidPinTimes[3]==100);  // reward volume
+    assert(p.numTrials==1000 && p.blockSize==30);                // session
+    assert(p.poolWeights[0]==1 && p.poolWeights[1]==1);          // trial pool
+    assert(p.correctionLeft==0 && p.correctionRight==0);         // correction
+    assert(p.biasWindow==20 && p.maxConsecutiveSide==10);        // anti-bias
+    assert(p.odorPokeHold==500 && p.fluidWellPoll==2000);        // holds, via row 0
+    assert(p.trialSeed==2147483646UL); }
 
   printf("ALL HEADER LOGIC TESTS PASSED\n");
   return 0;

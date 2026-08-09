@@ -9,6 +9,10 @@
 # the full AVR compile, and only a real box proves a solenoid fires.
 #
 # Usage:  sh run_box.sh
+#
+# On a Windows machine with no clang/gcc, MSVC Build Tools compile it unchanged:
+#   cl /EHsc /std:c++14 /D_CRT_SECURE_NO_WARNINGS /Ibox_shim /I..\.. /TP \
+#      test_box_utility.cpp
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB="$HERE/../.."          # the BehaviorBox library root (holds BehaviorBox.h)

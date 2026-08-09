@@ -62,6 +62,7 @@ SAFETY
   app is the only thing that starts anything.
 ==================================*/
 
+#include "TaskPins.h"    // GENERATED: this rig's pins. Must precede BehaviorBox.h.
 #include <BehaviorBox.h> // shared pinout + CommandReader + emitStatus
 
 const unsigned long baudRate = 115200;                      // Serial baud (matches the app)

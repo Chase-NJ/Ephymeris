@@ -3,28 +3,34 @@
   =============
   Author: Chase Johnston (2026)
 
-  THE single shared header for every sketch in this repo -- behavior tasks
-  (GRGL / shaping), the simulator, and the utility/cleaning sketches all include
-  it. It is the one source of truth for:
+  THE single shared header for every sketch in this repo -- the GRGL task, the
+  simulator, and the utility/cleaning sketch all include it. It is the one
+  source of truth for:
 
-    * the Hart-lab behavior-box PINOUT (IR sensors, trial light, N.O. vacuum,
-      12 odor solenoids, 4 fluid solenoids) -- identical on all 6 boxes, so it
-      lives here instead of being copy-pasted into each sketch;
-    * the STROBE VOCABULARY (the BF_* host codes) -- one definition mirrored by
-      every task.json `strobes` map;
     * the SERIAL PROTOCOL helpers shared with the Ephymeris app: the strobe
       emitter, the blocking START reader, the non-blocking STOP poll, and (for
       utility sketches) a non-blocking command reader + a STATUS emitter;
     * TaskParams -- EVERY operator-tunable parameter, and the one declarative
       list (TASK_PARAM_LIST) from which the START-line parser is generated. The
-      app fills this from the sketch's task.json, so a parameter is tuned per
-      sketch and per run instead of being recompiled;
+      app fills this from the task profile's task.json, so a parameter is tuned
+      per profile and per run instead of being recompiled;
     * the reusable TRIAL primitives (TrialClock, TrialType, TrialWeight +
       generateTrials) and the session POLICY classes (anti-bias selection,
       the lazy-penalty escalator, per-side correction budgets);
-    * the TRIAL RUNNER -- one loop for every behavior sketch. Shaping and GRGL
-      run the same trial and differ only in which policies they hand it, so all
-      five behavior sketches are a trial pool plus setup/loop wiring.
+    * the TRIAL RUNNER -- one loop for every behavior task. A weighted pool and
+      live anti-bias selection run the same trial and differ only in which
+      policies they hand it, which is why GRGL.ino covers both in ~110 lines.
+
+  It pulls the box's PINOUT and STROBE VOCABULARY in from BoxPins.h and
+  BoxStrobes.h. Both are guarded, so a sketch that includes a GENERATED
+  `TaskPins.h` first compiles against this rig's own wiring -- that is how a
+  task profile authored in Ephymeris reaches the firmware, and it is the reason
+  neither is a `const int` here any more.
+
+  WHAT IS DELIBERATELY NOT HERE: the trial table. Trial types name pins and
+  strobe codes and are per-profile, so they live in the sketch (generated as
+  `TaskTrials.h`, or hand-written for a one-off). This header knows what a
+  TrialType IS and never which ones exist.
 
   Reached by every sketch as an Arduino library: the Ephymeris sidecar passes the
   repo-root `libraries/` folder to `arduino-cli compile --libraries <...>`
@@ -53,91 +59,21 @@
 #include <string.h>
 
 /* ============================================================= *
- *  1. PINOUT -- identical on every box (was duplicated per sketch)
- * ============================================================= */
-/* IR sensors */
-const int odorPort  = 2;  // Odor port
-const int rightWell = 3;  // Right-well
-const int leftWell  = 4;  // Left-well
-
-/* Trial light & normally-open vacuum */
-const int trialLight = 36; // Trial light
-const int vac        = 40; // N.O.V.
-
-const int NUM_ODORS  = 12;
-const int NUM_FLUIDS = 4;
-
-/* Odor solenoids */
-const int Odors[NUM_ODORS] = {
-    22, // Odor 1
-    24, // Odor 2
-    26, // Odor 3
-    28, // Odor 4
-    30, // Odor 5
-    32, // Odor 6
-    23, // Odor 7
-    25, // Odor 8
-    27, // Odor 9
-    29, // Odor 10
-    31, // Odor 11
-    33  // Odor 12
-};
-
-/* Fluid solenoids: { left , left , right , right } */
-const int Fluids[NUM_FLUIDS] = {
-    42, // [0]: Left-well  reward 1
-    44, // [1]: Left-well  reward 2
-    46, // [2]: Right-well reward 1
-    48  // [3]: Right-well reward 2
-};
+ *  1. THE BOX ITSELF -- pins and strobe codes
+ * ============================================================= *
+ *  Both are guarded definitions in their own headers so a GENERATED header can
+ *  override them. A sketch that includes `TaskPins.h` before this file compiles
+ *  against this rig's own wiring and vocabulary; one that includes nothing gets
+ *  the box as built. See BoxPins.h.
+ *
+ *  Included here rather than left to each sketch so that a sketch cannot get
+ *  half of it -- the trial runner below reads `odorPort`, `Fluids[]` and the
+ *  BF_* codes directly. */
+#include "BoxPins.h"
+#include "BoxStrobes.h"
 
 /* ============================================================= *
- *  2. STROBE VOCABULARY -- BF_* host codes (mirror of task.json `strobes`)
- * ============================================================= */
-#define BF_START_SESSION        221 // Sent at recording start (timestamp 0)
-#define BF_LIGHTS_ON            222 // Sent when trialLight is written HIGH
-#define BF_LAZY_RAT             223 // Sent when rat fails to initiate trial
-#define BF_ODOR_POKE            224 // Sent when rat pokes odor port
-#define BF_ODOR_UNPOKE_EARLY    225 // Sent when rat fails to hold odor poke for odorPokeHold
-#define BF_ODOR_UNPOKE          226 // Sent after rat successfully samples odor
-#define BF_LIGHTS_OFF           233 // Sent when trialLight is written LOW inside a trial
-#define BF_INVALID_TRIAL        234 // Trial aborted (lazy rat or poke-hold failure)
-#define BF_END_CORRECT_ITI      242 // Sent after correct-response intertrial interval
-#define BF_END_INCORRECT_ITI    243 // Sent after errorDelay intertrial interval
-#define BF_END_SESSION          246 // Sent at end of session (sessionComplete = true)
-#define BF_ODOR_OFF             247 // Sent when we close N.O.V. (directing odor AWAY from port)
-#define BF_WATER_POKE_L         248 // Sent when rat pokes left fluid well
-#define BF_WATER_POKE_R         249 // Sent when rat pokes right fluid well
-#define BF_WATER_UNPOKE_EARLY_L 250 // Sent when rat fails to hold left well for fluidWellHold
-#define BF_WATER_UNPOKE_EARLY_R 251 // Sent when rat fails to hold right well for fluidWellHold
-#define BF_FLUID_L              252 // Delivered at start of first drop on left
-#define BF_FLUID_R              253 // Delivered at start of first drop on right
-#define BF_WATER_UNPOKE_L       254 // Sent when rat unpokes left well
-#define BF_WATER_UNPOKE_R       255 // Sent when rat unpokes right well
-#define BF_WATER_POKE_NONE      256 // After a correct response on a No-Go trial
-#define BF_WATER_POKE_ERROR_L   257 // Sent when rat incorrectly responds at left well
-#define BF_WATER_POKE_ERROR_R   258 // Sent when rat incorrectly responds at right well
-#define BF_RESP_OMIT            262 // Response window expired after complete sampling
-#define BF_STOP_FLUID_G_R       357 // Sent when we stop right-well fluid delivery
-#define BF_STOP_FLUID_G_L       369 // Sent when we stop left-well fluid delivery
-
-/* Distinct Odor-ON codes (one per odor line the task presents) */
-#define BF_ODOR_1_ON 101
-#define BF_ODOR_2_ON 102
-#define BF_ODOR_3_ON 103
-#define BF_ODOR_4_ON 104
-#define BF_ODOR_5_ON 105
-#define BF_ODOR_6_ON 106
-
-/* Indices into Fluids[] / FluidPinTimes[] (+ the no-go sentinel) */
-#define LEFT_WELL_FL_1  0
-#define LEFT_WELL_FL_2  1
-#define RIGHT_WELL_FL_1 2
-#define RIGHT_WELL_FL_2 3
-#define SENTINEL       -1
-
-/* ============================================================= *
- *  3. TRIAL PRIMITIVES
+ *  2. TRIAL PRIMITIVES
  * ============================================================= */
 /* Encapsulates trial timestamps relative to recording start (millis-based). */
 struct TrialClock
@@ -185,12 +121,18 @@ struct TrialType
 };
 
 /* Lets a task manipulate the proportion of each trial type it administers.
-   Used by the block-shuffled generateTrials() below (shaping sketches). */
+   Used by the block-shuffled generateTrials() below (pool-mode tasks). */
 struct TrialWeight
 {
   const TrialType *type;
   int weight;
 
+  /*  The default exists so a sketch can declare `TrialWeight pool[N];` at file
+      scope and fill it after START, once the weights have arrived. A zero
+      weight is never drawn, so an unfilled slot is inert rather than wrong --
+      and generateTrials() falls back to equal weights if EVERY slot is zero,
+      because a division by the total is the alternative. */
+  TrialWeight() : type(NULL), weight(0) {}
   TrialWeight(const TrialType &type, int weight) : type(&type), weight(weight) {}
 };
 
@@ -267,7 +209,7 @@ inline void generateTrials(const TrialType *trials[], int numTrials, int blockSi
 }
 
 /* ============================================================= *
- *  4. SERIAL PROTOCOL helpers (shared with the Ephymeris app)
+ *  3. SERIAL PROTOCOL helpers (shared with the Ephymeris app)
  * ============================================================= */
 /*  void emitStrobe(TrialClock&, int) ->
     Emit one strobe in the canonical "%03d\t<ms>" form the app's IN_SESSION
@@ -390,7 +332,7 @@ inline void emitStatus(const char *body)
 }
 
 /* ============================================================= *
- *  5. HARDWARE helpers (keyed off the shared pinout above)
+ *  4. HARDWARE helpers (keyed off the shared pinout above)
  * ============================================================= */
 /*  Blanket turn-off of all outputs (safe to call at any time).
 
@@ -458,17 +400,54 @@ inline void flashLight(int duration, int pollMs)
 }
 
 /* ============================================================= *
- *  6. TASK PARAMETERS -- the whole START-command surface
+ *  5. TASK PARAMETERS -- the whole START-command surface
  * ============================================================= */
 /* Largest sliding bias window the anti-bias selector's ring buffer can hold. */
 #define BEHAVIOR_MAX_BIAS_WINDOW 32
 
-/*  Number of rows in the ramp table. Five is what both existing schedules use
-    (a forgiving stage 0 plus four steps toward the full task). */
+/*  Number of rows in the ramp table.
+
+    GUARDED, so a generated `TaskPins.h` sets it -- a profile that ramps over
+    three stages compiles three rows and sends fifteen fewer START tokens, and
+    one that does not ramp at all compiles one. Five is the lab's historical
+    schedule (a forgiving stage 0 plus four steps toward the full task) and is
+    what a sketch with no generated header still gets.
+
+    IT MUST MOVE WITH BOX_STAGE_KEY_LIST BELOW. The count sizes `stage[]`; the
+    key list decides which rows the START parser can reach. A count of 5 with a
+    key list of 3 leaves rows 3 and 4 unreachable but allocated -- harmless. The
+    reverse silently writes past the end of the array. */
+#ifndef NUM_STAGES
 #define NUM_STAGES 5
+#endif
+
+/*  How many trial types a profile may declare.
+
+    GUARDED for the same reason as NUM_STAGES: a generated header declares the
+    profile's own count, and it must move with BOX_POOL_KEY_LIST below. Four is
+    the historical shaping pool -- two go-right options and two go-left.
+
+    ONE CAP, TWO READERS. It sizes `poolWeights[]`, so the weighted pool cannot
+    address a type it has no weight for; and it sizes AntiBiasSelector's two
+    side lists, so live selection cannot address one it never indexed. Splitting
+    them into two constants would mean a table legal for one selection mode and
+    silently truncated by the other. */
+#ifndef BOX_MAX_TRIAL_TYPES
+#define BOX_MAX_TRIAL_TYPES 4
+#endif
+
+/*  The trial count no session reaches, so a ramp row carrying it never engages.
+    32767 rather than a rounder large number because `trials` is an int and an
+    int is 16 bits on AVR -- 100000 wraps to -31072, a count every trial
+    satisfies, which is the last row engaging from trial 0. */
+#define STAGE_UNREACHABLE 32767
 
 /*  One row of the ramp: the four holds/windows that a shaping schedule walks,
-    and the completed-trial count at which this row takes over. */
+    and the completed-trial count at which this row takes over.
+
+    Deliberately a plain aggregate -- no default member initialisers -- so that
+    `StageStep{0, 10, 10, 10000, 8000}` stays legal under C++11, which is what
+    the Arduino AVR core compiles with. TaskParams' constructor fills the array. */
 struct StageStep
 {
   int trials;          // completed trials at which this row engages
@@ -486,9 +465,10 @@ struct StageStep
     owns its own instance and the host fills it from the START line, which is
     what makes the values per-sketch, per-run, and recorded with the data.
 
-    The in-class defaults are the FULL-TASK (GRGL_2-Odor) values, so a bare
-    "START" with no tokens still reproduces exactly the legacy behavior. Shaping
-    sketches call applyShapingDefaults() for their own bare-START baseline.
+    The in-class defaults are the FULL-TASK values, so a bare "START" with no
+    tokens still reproduces exactly the legacy behavior. That path is only ever
+    a hand-typed console session or an older host -- the app sends every field
+    the profile declares.
 
     Adding a parameter is two lines: a field here and a row in TASK_PARAM_LIST. */
 struct TaskParams
@@ -503,7 +483,12 @@ struct TaskParams
   int standardITI = 4000;         // intertrial interval on correct trials
   int primingDelay = 1000;        // odor primed before the trial light
   int pollingRate = 5;            // IR sensor polling interval (ms)
-  int fluidPinTimes[NUM_FLUIDS] = {100, 100, 100, 100}; // per-line open time = reward volume
+  /*  Per-line open time; the open time IS the delivered volume. The initialiser
+      names four because FL1-FL4 are four wire keys and this box has four lines
+      -- a box generation with more would zero-fill the tail, and a 0 ms reward
+      is a dry well that reports a correct trial. The assert below is what makes
+      that a build failure instead. */
+  int fluidPinTimes[NUM_FLUIDS] = {100, 100, 100, 100};
 
   /* --- session policy --- */
   int correctionLeft = 0;            // CL: leading correction budget, LEFT-correct trials
@@ -517,7 +502,9 @@ struct TaskParams
   /* --- trial generation --- */
   int numTrials = 1000;              // session cap
   int blockSize = 30;                // pool proportions enforced within each block
-  int poolWeights[4] = {1, 0, 0, 0}; // shaping only; ignored where selection is live
+  int poolWeights[BOX_MAX_TRIAL_TYPES] = {1}; // pool mode only; ignored where selection is live
+                                              // (the rest zero-fill, which is what
+                                              // "present only the first type" means)
 
   /* --- adaptive anti-bias selection (ignored by shaping) --- */
   int biasWindow = 20;         // sliding window of recent expressed choices
@@ -527,14 +514,27 @@ struct TaskParams
   float pSideMax = 0.98f;      // deterministic, which would itself be a cue
 
   /* --- the ramp ---
-     Row 0 is live from trial 0. A task that does not ramp leaves rows 1..4 at
-     the sentinel count, which no session can reach, so they never engage. */
-  StageStep stage[NUM_STAGES] = {
-      {0, 500, 200, 2000, 4000},
-      {32767, 500, 200, 2000, 4000},
-      {32767, 500, 200, 2000, 4000},
-      {32767, 500, 200, 2000, 4000},
-      {32767, 500, 200, 2000, 4000}};
+     Filled by the constructor below rather than a brace initialiser, because
+     NUM_STAGES is a generated constant now and a fixed five-row list would not
+     track it. Row 0 is live from trial 0; every later row starts at the
+     unreachable count, so a task that does not ramp never engages one. */
+  StageStep stage[NUM_STAGES];
+
+  /*  Fills `stage[]`, and exists so that no sketch can forget to.
+
+      A brace initialiser cannot follow a generated NUM_STAGES, and a shorter
+      literal list would leave the tail zero-filled -- `trials == 0` on the last
+      row, which is that row engaging from trial 0 and the ramp appearing never
+      to have advanced. This is the one construction that cannot get it wrong. */
+  TaskParams()
+  {
+    for (int i = 0; i < NUM_STAGES; i++)
+      stage[i] = StageStep{STAGE_UNREACHABLE, 500, 200, 2000, 4000};
+    /*  Row 0's own `trials` is never read -- liveStage() scans down to i > 0 and
+        falls through to 0 -- but it is set anyway so a printed table reads
+        honestly and so nothing downstream has to know that. */
+    stage[0].trials = 0;
+  }
 
   /* --- live holds/windows, rewritten by applyStage() ---
      The trial runner reads ONLY these four; nothing reads stage[] directly. */
@@ -548,6 +548,14 @@ struct TaskParams
      the board's own clock. */
   unsigned long trialSeed = 0;
 };
+
+/*  See fluidPinTimes above: the four FL* wire keys and the four-element
+    initialiser both assume this. A box generation that re-declares
+    BOX_NUM_FLUIDS must extend both, and should fail here rather than water one
+    well for 0 ms. */
+static_assert(NUM_FLUIDS == 4,
+              "fluidPinTimes and the FL1-FL4 wire keys both assume four fluid "
+              "lines; extend TASK_PARAM_LIST and the initialiser together");
 
 /*  int liveStage(const TaskParams&, int completedTrials) ->
     Index of the ramp row in force at this trial count. Scans DESCENDING with
@@ -581,73 +589,28 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
   return liveStage(p, completedTrials) >= p.lazyEscalationStage;
 }
 
-/*  void applyShapingDefaults(TaskParams&) ->
-    The shaping sketches' bare-START baseline: the original ShapingTimings values
-    and the original 20/25/50/100 stage schedule. Only a bare START (an older
-    host, or a hand-typed console session) ever sees these -- the app sends every
-    field from the sketch's task.json. */
-inline void applyShapingDefaults(TaskParams &p)
-{
-  p.errorDelay = 20000;
-  p.nogoWellPoll = 2000;
-  p.lazyRatDelay = 4000;
-  p.noPokeHoldTimeout = 5000;
-  p.standardITI = 4000;
-  p.primingDelay = 1000;
-  p.pollingRate = 2;
-  //                trials  poke  well  pollWindow  portTimeout
-  p.stage[0] = StageStep{0, 10, 10, 10000, 8000};
-  p.stage[1] = StageStep{20, 100, 50, 10000, 8000};
-  p.stage[2] = StageStep{25, 125, 250, 5000, 8000};
-  p.stage[3] = StageStep{50, 250, 500, 2000, 4000};
-  p.stage[4] = StageStep{100, 500, 500, 2000, 4000};
-  applyStage(p, 0);
-}
+/*  Which pool slots and which ramp rows the START grammar can reach.
 
-/*  void applyEasedShapingDefaults(TaskParams&) ->
-    The shaping_*_EZ baseline: the same schedule stretched out and started softer,
-    for an animal that is struggling with the standard shaping ramp. Same shape,
-    more trials per step and a longer runway before the holds bite. */
-inline void applyEasedShapingDefaults(TaskParams &p)
-{
-  applyShapingDefaults(p);
-  p.lazyRatDelay = 3000;       // a shorter penalty: re-engaging is what we want
-  p.noPokeHoldTimeout = 3000;
-  //                trials  poke  well  pollWindow  portTimeout
-  p.stage[0] = StageStep{0, 10, 10, 15000, 12000};
-  p.stage[1] = StageStep{40, 50, 25, 12000, 10000};
-  p.stage[2] = StageStep{80, 125, 100, 8000, 8000};
-  p.stage[3] = StageStep{140, 250, 250, 5000, 6000};
-  p.stage[4] = StageStep{220, 500, 500, 2000, 4000};
-  applyStage(p, 0);
-}
+    GUARDED, and each must agree with its count above -- BOX_MAX_TRIAL_TYPES and
+    NUM_STAGES. A key list SHORTER than its count leaves the tail unreachable
+    from the wire, which is merely wasteful; a key list LONGER writes past the
+    end of the array, which is not. A generated `TaskPins.h` emits both halves
+    together, which is the only reason this is safe to make variable.
 
-/*  void applyEasedDiscriminationDefaults(TaskParams&) ->
-    The GRGL_2-Odor_EZ baseline: the full discrimination task, entered through a
-    forgiving ramp instead of at full strictness. The anti-bias clamps are pulled
-    in as well, so a rat still learning the contingency is not starved as hard as
-    the full task starves a fixed-side rat.
+    The defaults are the historical four-slot pool and five-row ramp, so a
+    sketch with no generated header parses exactly the line it always did. */
+#ifndef BOX_POOL_KEY_LIST
+#define BOX_POOL_KEY_LIST                   \
+  P_INT("PW1", poolWeights[0])              \
+  P_INT("PW2", poolWeights[1])              \
+  P_INT("PW3", poolWeights[2])              \
+  P_INT("PW4", poolWeights[3])
+#endif
 
-    lazyEscalationStage points at the last row: escalating the abstention penalty
-    against an animal that is still being shaped punishes it for the ramp. */
-inline void applyEasedDiscriminationDefaults(TaskParams &p)
-{
-  p.lazyEscalationStage = NUM_STAGES - 1;
-  p.pSideMin = 0.05f;
-  p.pSideMax = 0.95f;
-  p.maxConsecutiveSide = 6;
-  //                trials  poke  well  pollWindow  portTimeout
-  p.stage[0] = StageStep{0, 10, 10, 10000, 8000};
-  p.stage[1] = StageStep{15, 100, 50, 10000, 8000};
-  p.stage[2] = StageStep{30, 200, 200, 5000, 6000};
-  p.stage[3] = StageStep{50, 350, 350, 3000, 4000};
-  /* Row 4 IS the full task, so it matches GRGL_2-Odor exactly. It used to set a
-     350 ms well hold, against both its own docblock and the 200 ms the real task
-     uses -- which made the eased sketch's final stage stricter than the task it
-     was easing into. */
-  p.stage[4] = StageStep{80, 500, 200, 2000, 4000};
-  applyStage(p, 0);
-}
+#ifndef BOX_STAGE_KEY_LIST
+#define BOX_STAGE_KEY_LIST                  \
+  P_STAGE(0) P_STAGE(1) P_STAGE(2) P_STAGE(3) P_STAGE(4)
+#endif
 
 /*  TASK_PARAM_LIST -- the single declarative list of wire keys.
 
@@ -677,10 +640,6 @@ inline void applyEasedDiscriminationDefaults(TaskParams &p)
   P_INT("LZG", lazyEscalationStage)         \
   P_INT("NT", numTrials)                    \
   P_INT("BS", blockSize)                    \
-  P_INT("PW1", poolWeights[0])              \
-  P_INT("PW2", poolWeights[1])              \
-  P_INT("PW3", poolWeights[2])              \
-  P_INT("PW4", poolWeights[3])              \
   P_INT("BW", biasWindow)                   \
   P_INT("MCS", maxConsecutiveSide)          \
   P_FLOAT("DBS", debiasStrength)            \
@@ -688,7 +647,8 @@ inline void applyEasedDiscriminationDefaults(TaskParams &p)
   P_FLOAT("PMX", pSideMax)                  \
   P_BOOL("LAZY", lazyEscalationEnabled)     \
   P_ULONG("SEED", trialSeed)                \
-  P_STAGE(0) P_STAGE(1) P_STAGE(2) P_STAGE(3) P_STAGE(4)
+  BOX_POOL_KEY_LIST                         \
+  BOX_STAGE_KEY_LIST
 
 /*  One ramp row's five keys: S<n>T trials, S<n>P poke hold, S<n>H well hold,
     S<n>W well poll, S<n>O odor-port timeout. */
@@ -729,7 +689,7 @@ inline void clampTaskParams(TaskParams &p)
   if (p.pSideMax < p.pSideMin) p.pSideMax = p.pSideMin;
   for (int i = 0; i < NUM_FLUIDS; i++)
     if (p.fluidPinTimes[i] < 0) p.fluidPinTimes[i] = 0;
-  for (int i = 0; i < 4; i++)
+  for (int i = 0; i < BOX_MAX_TRIAL_TYPES; i++)
     if (p.poolWeights[i] < 0) p.poolWeights[i] = 0;
 }
 
@@ -817,26 +777,66 @@ inline unsigned long beginSessionRng(const TaskParams &p)
 }
 
 /* ============================================================= *
- *  7. SESSION POLICY (anti-bias selection, penalties, correction budgets)
+ *  6. SESSION POLICY (anti-bias selection, penalties, correction budgets)
  * ============================================================= */
 /*  Adaptive anti-bias trial selection. Owns the sliding-window estimate of the
     rat's recent expressed side preference and the next-side draw that pushes
     AGAINST it, clamped so selection never collapses into a deterministic
-    (cue-able) pattern, with a hard cap on same-side runs. Pin-agnostic: speaks
-    in bool wentRight / presentedRight and returns one of the two go-trials
-    passed at construction. Tuning constants that differ between sketches are
-    constructor arguments. */
+    (cue-able) pattern, with a hard cap on same-side runs.
+
+    IT SELECTS A SIDE, NOT A TRIAL TYPE. The bias estimate is over the animal's
+    expressed left/right choices, so a side is the only thing it has an opinion
+    about; having drawn one it picks UNIFORMLY among that side's types. With one
+    type per side -- the shipped 2-odor task -- that draw has a single candidate
+    and the behaviour is bit-for-bit what the two-pointer version did. With two
+    odors meaning go-right, it presents them equally often while still
+    de-biasing the side, which is the thing the animal can be biased about.
+
+    Pin-agnostic: it speaks in `bool wentRight` / `presentedRight` and reads the
+    trial table it was handed. A type's side is `correctWell == rightWell`, so
+    nothing here knows a pin number.
+
+    A NO-GO TYPE IS NEVER SELECTED. It has no correct side (`correctWell` is the
+    sentinel), so it belongs to neither list and this class cannot present it —
+    a withhold task uses the weighted pool instead. */
 class AntiBiasSelector
 {
 public:
-  AntiBiasSelector(const TrialType *goRight, const TrialType *goLeft,
+  /*  `types` is the profile's trial table and must outlive the selector; both
+      are file-scope in a sketch, so this is a pointer rather than a copy. */
+  AntiBiasSelector(const TrialType *types, int count,
                    int biasWindow = 20, float debiasStrength = 0.5f,
                    float pSideMin = 0.02f, float pSideMax = 0.98f,
                    int maxConsecutiveSide = 10)
-      : _goRight(goRight), _goLeft(goLeft),
-        _window(biasWindow < BEHAVIOR_MAX_BIAS_WINDOW ? biasWindow : BEHAVIOR_MAX_BIAS_WINDOW),
+      : _window(biasWindow < BEHAVIOR_MAX_BIAS_WINDOW ? biasWindow : BEHAVIOR_MAX_BIAS_WINDOW),
         _debias(debiasStrength), _pMin(pSideMin), _pMax(pSideMax),
-        _maxRun(maxConsecutiveSide) {}
+        _maxRun(maxConsecutiveSide)
+  {
+    bind(types, count);
+  }
+
+  /*  Split the trial table into the two side lists, once.
+
+      Done here rather than scanned per selection because the table is fixed for
+      the run and `selectNext()` is on the trial path. `_nRight`/`_nLeft` being
+      zero is not an error to trap on a microcontroller -- `selectNext()` falls
+      back to the other side, and to type 0 if the table has no go trials at
+      all, so a mis-declared profile runs one condition rather than hanging or
+      dereferencing nothing. */
+  void bind(const TrialType *types, int count)
+  {
+    _types = types;
+    _nRight = _nLeft = 0;
+    for (int i = 0; i < count && i < BOX_MAX_TRIAL_TYPES; i++)
+    {
+      if (!types[i].isGo || types[i].correctWell == SENTINEL)
+        continue;
+      if (types[i].correctWell == rightWell)
+        _right[_nRight++] = i;
+      else
+        _left[_nLeft++] = i;
+    }
+  }
 
   /*  Adopt the run's tuning from the parsed START line. Necessary because the
       selector is a global, constructed long before START arrives; call once,
@@ -900,12 +900,35 @@ public:
       _selectedRun = 1;
     }
 
-    return chooseRight ? _goRight : _goLeft;
+    return pickFrom(chooseRight);
   }
 
 private:
-  const TrialType *_goRight;
-  const TrialType *_goLeft;
+  /*  One type from the chosen side, uniformly.
+
+      Falls through to the other side when the chosen one is empty rather than
+      returning nothing: a table with go-right types only is a legal one-sided
+      task, and it should run rather than fault. The final `&_types[0]` is only
+      reachable if the table declares no go trials at all, which the app refuses
+      to generate -- it exists so this returns a valid pointer on every path. */
+  const TrialType *pickFrom(bool wantRight) const
+  {
+    const int *side = wantRight ? _right : _left;
+    int n = wantRight ? _nRight : _nLeft;
+    if (n == 0)
+    {
+      side = wantRight ? _left : _right;
+      n = wantRight ? _nLeft : _nRight;
+    }
+    if (n == 0)
+      return &_types[0];
+    return &_types[side[n == 1 ? 0 : (int)random(0, n)]];
+  }
+
+  const TrialType *_types = NULL;
+  int _right[BOX_MAX_TRIAL_TYPES] = {0};
+  int _left[BOX_MAX_TRIAL_TYPES] = {0};
+  int _nRight = 0, _nLeft = 0;
   int _window;
   float _debias, _pMin, _pMax;
   int _maxRun;
@@ -993,7 +1016,7 @@ private:
 };
 
 /* ============================================================= *
- *  8. TRIAL RUNNER -- one loop, shared by every behavior sketch
+ *  7. TRIAL RUNNER -- one loop, shared by every behavior sketch
  * ============================================================= */
 /*  The shaping sketches and the GRGL sketches ran two copies of what is
     structurally the same trial: prime odor, light on, await poke, verify the

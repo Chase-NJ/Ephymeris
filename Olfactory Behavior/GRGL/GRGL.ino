@@ -1,33 +1,43 @@
 /*
 Author: Chase Johnston
-Date: June 25th, 2026
 Purpose:
-  A binary odor discrimination task.
-    Odor 1 - Go-right - SANDALWOOD      ->  ~50% of trials (assuming no per-rat bias)
-    Odor 3 - Go-left  - ORANGE EXTRACT  ->  ~50% of trials (assuming no per-rat bias)
+  THE olfactory behaviour task. One sketch for every profile the lab runs --
+  two-odor discrimination, shaping, eased variants of either.
 
-  Notable Features:
-  - Anti-bias selection
-  - Integration with the Ephymeris app
-  - Per-side correction trials
-  - Togglable (and stage-gated) lazy rat delay escalation
+  It replaced six near-identical sketches (GRGL_2-Odor, GRGL_2-Odor_EZ,
+  shaping_GR/GL and their _EZ siblings). Those differed by ONE substantive line
+  each: which bare-START defaults they applied, and which pool weight they set.
+  Everything an experiment actually varies -- the trial table, the pin map, the
+  ramp, every timing and penalty -- now arrives from Ephymeris instead:
 
-  This sketch is ONLY: the two go-trial types, the session policy objects, and
-  the setup/loop wiring. The trial runner lives in BehaviorBox.h, shared with
-  every other behavior sketch -- which is what keeps this sketch and its GRGL_2-Odor_EZ sibling
-  from drifting apart, as two hand-maintained copies of the loop had.
+    * at COMPILE time, in the two generated headers included below. The trial
+      table, the pin map, the strobe selection, how many ramp rows exist and
+      which selector runs. None of these fit on a START line, and pins have to
+      be constants anyway.
+    * at START time, on the START line. Every timing, hold, window, penalty,
+      reward volume, anti-bias clamp and stage threshold. So tuning a run costs
+      a serial line, not a rebuild -- which is what lets one flashed binary
+      serve six boxes running the same task with different reward volumes.
 
-  EVERY timing, hold, window, penalty, reward volume, anti-bias clamp and stage
-  threshold arrives from the app on the START line and is declared in this
-  sketch's task.json -- tuned per run in the Config page, not by reflashing. The
-  values applied by clampTaskParams() below are only
-  the bare-START fallback for a hand-typed console session or an older host.
+  Features, all of them driven by the profile rather than by this file:
+  - anti-bias selection, or a block-shuffled weighted pool
+  - a shaping ramp of any length, including none
+  - the escalating lazy-rat penalty, stage-gated
+  - per-side correction trials
+
+  This sketch is ONLY the session policy objects and the setup/loop wiring. The
+  trial runner lives in BehaviorBox.h, shared with every other sketch here --
+  which is what kept the six copies from drifting, and is why deleting them cost
+  nothing.
 */
 
-#include <BehaviorBox.h> // pins, strobes, TaskParams, session policy + the shared trial runner
+#include "TaskPins.h"    // GENERATED: pins, strobes, counts, selection mode.
+                         // Must precede BehaviorBox.h -- it overrides that
+                         // header's guarded defaults, and cannot name a type.
+#include <BehaviorBox.h> // the trial runner, TaskParams, the policy classes
+#include "TaskTrials.h"  // GENERATED: kTrials[] / kTrialCount. Needs TrialType.
 
 /* ======== Session wiring ======== */
-const unsigned long baudRate = 115200;    // Serial baud (matches the app)
 int currentTrial = 0;         // # of trials advanced this session
 bool sessionComplete = false; // Session start / end guard
 
@@ -37,38 +47,26 @@ TrialClock clock;  // trial timestamps
 /* recordEvent -> emitStrobe (BehaviorBox.h) bound to this sketch's clock. */
 void recordEvent(int eventCode) { emitStrobe(clock, eventCode); }
 
-/* ===== TRIAL TYPES =====
-   Two go trials -- one per side. The AntiBiasSelector picks between them live,
-   using the adaptive anti-bias logic, not a fixed pool. */
-const TrialType goRight1(
-    true,             // Is this a go trial?
-    Odors[0],         // Odor 1
-    rightWell,        // Correct response: right fluid well
-    RIGHT_WELL_FL_1,  // Index into Fluids[] & params.fluidPinTimes[]
-    BF_ODOR_1_ON,     // Strobe for odor on
-    BF_FLUID_R,       // Strobe for right fluid
-    BF_STOP_FLUID_G_R // Strobe for stop right fluid
-);
-const TrialType goLeft1(
-    true,
-    Odors[2], // Odor 3
-    leftWell,
-    LEFT_WELL_FL_1,
-    BF_ODOR_3_ON,
-    BF_FLUID_L,
-    BF_STOP_FLUID_G_L);
-
 /* ===== Session policy (BehaviorBox.h) =====
    The anti-bias ring buffer + selection, the lazy-penalty escalator and the
    per-side correction budgets each live in their own small class. They are
    globals, so they are constructed long before START arrives -- each one adopts
    the run's parameters in configure(), called once after the line is parsed. */
-AntiBiasSelector selector(&goRight1, &goLeft1);
+AntiBiasSelector selector(kTrials, kTrialCount);
 AbstentionPenalty abstention;
 CorrectionPolicy correction;
 TrialPolicy policy; // the three, handed to the shared runner
 
 const TrialType *currentTrialPtr = nullptr; // re-selected only when we advance
+
+#if BOX_SELECTION_MODE == BOX_SELECT_POOL
+/*  Pool mode: the whole sequence is drawn once, at START, from the profile's
+    weights. `MAX_TRIALS` is the compile-time size of the array; params.numTrials
+    is the runtime cap and is clamped to it in setup(). */
+const int MAX_TRIALS = 1000;
+TrialWeight pool[BOX_MAX_TRIAL_TYPES];
+const TrialType *trials[MAX_TRIALS];
+#endif
 
 /* Housekeeping for starting a new experiment session */
 void beginNewSession()
@@ -92,16 +90,14 @@ void setup()
   initBoxHardware(); // configure every box pin + land all outputs LOW
 
   sessionComplete = true;
-  Serial.begin(baudRate);
-
-  /* Bare-START fallback only -- the app overwrites all of this from task.json. */
-  clampTaskParams(params);
+  Serial.begin(BOX_BAUD_RATE);
 
   /* Wait for the START token from the app.
      1. The host opens the port (which resets the Mega via DTR).
      2. We land here, announce READY so the app can arm its start button.
      3. Block until a "START" line arrives carrying this run's parameters and
-        its SEED. A bare "START" keeps every default set above. */
+        its SEED. A bare "START" keeps every default in TaskParams -- the
+        full-task values, for a hand-typed console session or an older host. */
   digitalWrite(trialLight, HIGH); // Light on == armed, waiting for GO
   delay(50);                      // Let the post-reset serial settle
   Serial.println("READY");        // Tell the app we're ready to begin
@@ -132,6 +128,19 @@ void setup()
      out over beginSessionRng() in BehaviorBox.h. */
   beginSessionRng(params);
 
+#if BOX_SELECTION_MODE == BOX_SELECT_POOL
+  /* Seed FIRST, then build the sequence -- generateTrials() draws from the
+     already-seeded stream and must never seed itself. Two seeding sites is how
+     a fixed seed creeps back in unnoticed, and it did: every shaping session
+     ever run drew the identical trial order because the sequence was built in
+     setup() from a compile-time constant, before START had even arrived. */
+  if (params.numTrials > MAX_TRIALS)
+    params.numTrials = MAX_TRIALS; // trials[] is a fixed allocation
+  for (int i = 0; i < kTrialCount; i++)
+    pool[i] = TrialWeight(kTrials[i], params.poolWeights[i]);
+  generateTrials(trials, params.numTrials, params.blockSize, pool, kTrialCount);
+#endif
+
   // The "armed" indicator going out, not a trial event: the clock is
   // stamped by beginNewSession() on the next line, so a BF_LIGHTS_OFF here
   // would carry a pre-session timestamp and precede BF_START_SESSION.
@@ -153,6 +162,22 @@ void loop()
     return;
   }
 
+#if BOX_SELECTION_MODE == BOX_SELECT_POOL
+  /* The sequence was drawn at START; walk it. No policy: a pool task has no
+     anti-bias estimate, no escalating abstention penalty and no correction
+     budgets, and advances on any COMPLETED trial. */
+  if (runTrial(*trials[currentTrial], params, clock, nullptr, currentTrial))
+  {
+    currentTrial++;                   // Advance only on a completed trial
+    applyStage(params, currentTrial); // Ramp holds/windows for the new count
+    if (currentTrial >= params.numTrials)
+      endCurrentSession();
+  }
+  else
+  {
+    recordEvent(BF_INVALID_TRIAL); // Trial aborted -- repeat the same slot
+  }
+#else
   /* Pick the next trial live. We only re-select when the previous trial
      ADVANCED; a trial that returns false (an abort, or an in-block correction
      error) keeps currentTrialPtr so the SAME side is re-presented. */
@@ -174,4 +199,5 @@ void loop()
   {
     recordEvent(BF_INVALID_TRIAL); // Trial aborted -- repeat the same side
   }
+#endif
 }

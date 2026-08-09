@@ -1,12 +1,27 @@
 /*
-GRGL_Sim.ino -- serial simulator for the GRGL 2-odor task.
+GRGL_Sim.ino -- rig simulator for the GRGL 2-odor task.
 Author: Chase Johnston
 
-Emits the strobe stream the real GRGL_2-Odor sketch would, over the same serial
+Emits the strobe stream the real GRGL sketch would, over the same serial
 protocol (announce "READY", wait for a "START" line, emit a "SEED<TAB>value"
 line, then send tab-separated "CODE<TAB>MS" lines), so the app can be exercised
-end-to-end without an Arduino wired to the rig. No pins are driven -- this only
-talks serial, so it runs on any board.
+end-to-end with no animal in the box.
+
+IT DRIVES THE REAL HARDWARE. Odor valves open, the trial light comes on, the
+vacuum closes, fluid lines pulse -- on this rig's own pins, because it includes
+the generated `TaskPins.h` exactly as a task profile does. So a session here is
+a full rehearsal of the box: you can stand at it and watch a trial happen. It
+used to talk serial only and run on any bare board; that made it a test of the
+APP and nothing else, and left the one thing you cannot check from a desk --
+that the wiring drives what the strobes claim -- untested.
+
+> CAUTION: THE FLUID LINES OPEN. A default session is 200 trials and every
+> correct one pulses a reward line for `fluidPinTimes` milliseconds. Run it with
+> the fluid lines dry, or with a catch vessel under the wells, unless you mean
+> to dispense. Everything else it drives is a valve or a lamp.
+
+It still runs on a board that is wired to nothing: `digitalWrite` to an
+unconnected pin is harmless, and the strobe stream is identical either way.
 
 A "STOP" line is honoured at the next trial boundary, exactly as the real
 firmware's checkForStop(): the trial in progress completes, then the session
@@ -73,13 +88,15 @@ checkResponse() in BehaviorBox.h):
                            ODOR_UNPOKE_EARLY, INVALID_TRIAL
 */
 
+#include "TaskPins.h"    // GENERATED: this rig's pins. Must precede BehaviorBox.h.
 #include <BehaviorBox.h> // strobe vocabulary, TaskParams, the shared anti-bias selector
 
-const unsigned long baudRate = 115200; // must match the app
+// The serial rate comes from BoxPins.h (BOX_BAUD_RATE), so it moves with the
+// rest of the fleet rather than being restated here.
 
 /* ===== Real-time by default =====
    1 = every gap is the real phase duration, which is the point of the sketch.
-   A larger value divides every delay in ONE place (emit() + interTrialGap()),
+   A larger value divides every delay in ONE place (emit() + beginTrial()),
    compressing the session to 1/SIM_SPEEDUP wall-clock time with the codes and
    their order unchanged. Only ever raise it for a throwaway smoke test: the
    printed timestamps stop being a real session's, so every duration the app
@@ -128,10 +145,19 @@ const float HOLD_FAIL_PROB_L = 0.06;
 const int SIM_POLICY = POLICY_ODOR;
 
 /* The trial types and the selector are the firmware's own (BehaviorBox.h), not a
-   mirror of them -- the sim's job is to exercise the real logic. */
-const TrialType simGoRight(true, Odors[0], rightWell, RIGHT_WELL_FL_1, BF_ODOR_1_ON, BF_FLUID_R, BF_STOP_FLUID_G_R);
-const TrialType simGoLeft(true, Odors[2], leftWell, LEFT_WELL_FL_1, BF_ODOR_3_ON, BF_FLUID_L, BF_STOP_FLUID_G_L);
-AntiBiasSelector selector(&simGoRight, &simGoLeft);
+   mirror of them -- the sim's job is to exercise the real logic.
+
+   A TABLE, in the shape a generated TaskTrials.h emits: the selector takes
+   (types, count) and splits it into side lists rather than taking the two
+   pointers it once did. Slot 0 is go-right; `simGoRight` names it so the
+   comparison at the selection site below still reads as a side test. */
+const TrialType simTrials[] = {
+    TrialType(true, Odors[0], rightWell, RIGHT_WELL_FL_1, BF_ODOR_1_ON, BF_FLUID_R, BF_STOP_FLUID_G_R),
+    TrialType(true, Odors[2], leftWell, LEFT_WELL_FL_1, BF_ODOR_3_ON, BF_FLUID_L, BF_STOP_FLUID_G_L),
+};
+const int simTrialCount = (int)(sizeof(simTrials) / sizeof(simTrials[0]));
+const TrialType *const simGoRight = &simTrials[0];
+AntiBiasSelector selector(simTrials, simTrialCount);
 
 /* The lazy penalty is the firmware's own escalator, for the same reason the
    selector is: a flat lazyRatDelay is not what a real abstention costs. GRGL
@@ -143,12 +169,62 @@ AbstentionPenalty abstention;
 
 unsigned long sessionStart = 0;
 
+/* The trial being run, so `actuate()` knows which odor and fluid line to drive.
+   Set once per trial by beginTrial(); never null after the first one. */
+const TrialType *activeTrial = NULL;
+
+/*  Drive the hardware this strobe reports.
+
+    ONE SWITCH, DERIVED FROM runTrial(). Every pin write the real trial runner
+    performs sits next to a strobe, so the strobe stream is a complete
+    description of what the box should be doing -- which is what makes this
+    faithful rather than a second animation of the same idea. If the two ever
+    disagree, the strobe is right and this is wrong: the stream is what gets
+    recorded.
+
+    The real runner writes some pins just before their strobe and some just
+    after (odor OFF before ODOR_OFF; the vacuum after the odor-on code). Doing
+    them all just before is a difference of microseconds against phases measured
+    in hundreds of milliseconds, and it keeps the mapping one table instead of
+    two. The one place the ordering carries real duration -- the fluid pulse --
+    is exact anyway: the line opens at FLUID and closes at STOP_FLUID, and the
+    gap between them IS fluidPinTimes. */
+void actuate(int code)
+{
+  if (code == BF_LIGHTS_ON)
+    digitalWrite(trialLight, HIGH);
+  else if (code == BF_LIGHTS_OFF)
+    digitalWrite(trialLight, LOW);
+  else if (activeTrial == NULL)
+    return;
+  else if (code == activeTrial->odorOnCode)
+    digitalWrite(vac, HIGH); // close the N.O.V., directing odor to the port
+  else if (code == BF_ODOR_OFF || code == BF_ODOR_UNPOKE_EARLY)
+  {
+    digitalWrite(activeTrial->odorPin, LOW);
+    digitalWrite(vac, LOW);
+  }
+  else if (code == BF_LAZY_RAT)
+  {
+    // The abstention path drops both before its penalty, exactly as runTrial()
+    // does -- a valve left open through a 30 s escalated penalty would empty an
+    // odor bottle into the manifold.
+    digitalWrite(activeTrial->odorPin, LOW);
+    digitalWrite(trialLight, LOW);
+  }
+  else if (code == activeTrial->fluidEventCode)
+    digitalWrite(Fluids[activeTrial->rewardIndex], HIGH);
+  else if (code == activeTrial->stopFluidCode)
+    digitalWrite(Fluids[activeTrial->rewardIndex], LOW);
+}
+
 /* Print one event in the rig's standard "CODE<TAB>MS" format, then wait out the
    phase that follows it. `gap` is the REAL duration of that phase, so at the
    default SIM_SPEEDUP of 1 the wait is exactly what the firmware would spend
    there; this division is the one place the whole stream could be compressed. */
 void emit(int code, int gap)
 {
+  actuate(code);
   unsigned long ts = millis() - sessionStart;
   char buf[16];
   sprintf(buf, "%03d\t%lu", code, ts);
@@ -158,10 +234,35 @@ void emit(int code, int gap)
     delay(d);
 }
 
-/* The inter-trial gap: the firmware's odor priming before the next lights-on. */
-void interTrialGap()
+/*  Open this trial's odor line and hold it for the priming window.
+
+    THE ORDER IS THE POINT, and it is why this replaced a bare inter-trial
+    delay. runTrial() primes the valve, waits primingDelay, and only then raises
+    the light -- a controlled latency so the odor has reached the port before
+    the animal is invited. Delaying first and priming afterward printed the same
+    strobes and drove the box wrong: at a real rig you would watch the light and
+    the valve come on together. */
+void beginTrial(const TrialType *trial)
 {
+  activeTrial = trial;
+  digitalWrite(trial->odorPin, HIGH);
   delay(params.primingDelay / SIM_SPEEDUP);
+}
+
+/*  Land every line low at the trial boundary.
+
+    Belt and braces over `actuate()`, which already drops each pin on the strobe
+    that reports it. The paths out of a trial are many and one of them ending
+    with a valve open is a failure nothing reports -- the stream would look
+    perfect. */
+void endTrial()
+{
+  if (activeTrial == NULL)
+    return;
+  digitalWrite(activeTrial->odorPin, LOW);
+  digitalWrite(Fluids[activeTrial->rewardIndex], LOW);
+  digitalWrite(trialLight, LOW);
+  digitalWrite(vac, LOW);
 }
 
 /* Accuracy "learning curve" for POLICY_ODOR: a cubic smoothstep S-curve from
@@ -378,7 +479,8 @@ void waitForStart(TaskParams &p)
 
 void setup()
 {
-  Serial.begin(baudRate);
+  initBoxHardware(); // configure every box pin + land all outputs LOW
+  Serial.begin(BOX_BAUD_RATE);
   delay(50); // let the post-reset serial settle
 
   /* Bare-START fallback only -- the app always sends NT. Kept well below the real
@@ -398,7 +500,7 @@ void setup()
   abstention.configure(params); // base, step, ceiling and the GUI on/off toggle
 
   sessionStart = millis();
-  emit(BF_START_SESSION, params.primingDelay); // odor priming before the first lights-on
+  emit(BF_START_SESSION, 0); // the priming window now opens inside the loop
 
   int completed = 0; // advancing trials, which is what the stage ramp counts
   for (int i = 0; i < params.numTrials; i++)
@@ -409,9 +511,15 @@ void setup()
       break;
 
     // 1. The firmware's own selector picks this trial's correct side.
-    bool goRight = (selector.selectNext() == &simGoRight);
+    const TrialType *trial = selector.selectNext();
+    bool goRight = (trial == simGoRight);
 
-    // 2. Engagement: abstain more early (warm-up) and late (satiation), steady
+    // 2. Prime the odor and hold it: the valve opens, primingDelay elapses, and
+    //    only then does the light come on. Selecting BEFORE the gap is what
+    //    makes that possible -- there is no odor to prime until a side is drawn.
+    beginTrial(trial);
+
+    // 3. Engagement: abstain more early (warm-up) and late (satiation), steady
     //    in between. Always < 1, so administered trials persist at both ends.
     if (grglFrand() < abortProbAt(i))
     {
@@ -422,11 +530,11 @@ void setup()
         earlyOdorPreVac();
       else
         earlyOdorSampling(goRight);
-      interTrialGap();
+      endTrial();
       continue; // an abort does not advance, so the ramp does not move
     }
 
-    // 3. Administered trial: the simulated rat picks a well per its policy.
+    // 4. Administered trial: the simulated rat picks a well per its policy.
     bool ratRight = ratGoesRight(goRight, i);
     bool correct = (ratRight == goRight);
     int outcome;
@@ -443,13 +551,16 @@ void setup()
     }
     goTrial(goRight, outcome);
     selector.recordChoice(ratRight); // expressed side feeds the anti-bias estimate
+    endTrial();
 
     completed++;
     applyStage(params, completed); // walk the ramp, so a staged profile is visible
-    interTrialGap();
   }
 
   emit(BF_END_SESSION, 0);
+  // Same last act as the real firmware's endCurrentSession(): nothing is left
+  // energised on a box that may sit powered for hours after a run.
+  shutdownHardware();
 }
 
 void loop()

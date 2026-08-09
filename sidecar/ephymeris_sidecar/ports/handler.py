@@ -183,16 +183,6 @@ class PortHandler:
             self._set_state(PortState.IDLE, reason)
             return self._state
 
-    def echo(self, direction: str, text: str) -> None:
-        """Put one line into the console ring buffer from outside the handler.
-
-        The table uploader's mirror: during `UPLOADING` the handler has no
-        serial and no reader thread, so this is the only writer — no race with
-        the read loop is possible. Filtered upstream to headline lines only;
-        the ring's 2000-line cap is for debug output, not hex dumps.
-        """
-        self._emit(OutputLine("rx" if direction == "rx" else "tx", text, time.time()))
-
     def release_for(self, next_state: PortState, reason: str) -> bool:
         """Hand the port to a flash or reset, returning whether to auto-resume.
 

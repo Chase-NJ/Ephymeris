@@ -43,3 +43,20 @@ export const springModal: Transition = {
  * being swapped rather than one thing blinking out and another appearing.
  */
 export const PANEL_TRAVEL = 24;
+
+/**
+ * A page's tile stack arriving as a cascade — parent takes `CASCADE`, each
+ * tile takes `RISE`, and the panels assemble top-down 55 ms apart instead of
+ * slamming in on one frame. One clock here rather than one per page, so every
+ * tab's entrance carries the same rhythm; the whole cascade stays under a
+ * quarter second, which reads as one entrance rather than a slideshow.
+ */
+export const CASCADE = {
+  hidden: {},
+  shown: { transition: { staggerChildren: 0.055 } },
+};
+
+export const RISE = {
+  hidden: { opacity: 0, y: 10 },
+  shown: { opacity: 1, y: 0, transition: springPanel },
+};

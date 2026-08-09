@@ -10,7 +10,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
-import { Button, Select } from "@/components/common/controls";
+import { Button } from "@/components/common/controls";
+import { Dropdown } from "@/components/common/Dropdown";
 import { RatPlacementBanner } from "@/components/sessions/RatPlacementBanner";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
@@ -535,10 +536,11 @@ export function SessionMapping() {
             </div>
           )}
 
-          {/* A dead end otherwise: the picker can only show "— select a sketch —",
-          the flow keeps asking for a sketch, and nothing says where sketches
-          come from. This is the ordinary first-run state, and the state after
-          the Arduino Directory moves. */}
+          {/* A dead end otherwise: the picker can only show "— none —", the
+          flow keeps asking for a sketch, and nothing says where sketches come
+          from. The library ships with the app now, so an empty one means the
+          install is damaged — and the fix an operator can actually reach is a
+          saved task profile, which discovery serves like any other sketch. */}
           {connected && sketches.length === 0 && (
             <div className="mt-4 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
               <div className="min-w-0">
@@ -549,9 +551,9 @@ export function SessionMapping() {
                   No sketches found.
                 </p>
                 <p className="mt-0.5 text-[12px] text-static">
-                  Set the Arduino Directory to the folder holding your sketch
-                  categories, then come back — there is nothing to flash until
-                  then.
+                  The bundled library came up empty — the install may be
+                  damaged. A task saved on the Task tab is flashable too, and
+                  would appear here.
                 </p>
               </div>
               <div className="shrink-0">
@@ -581,7 +583,9 @@ export function SessionMapping() {
                 </p>
               </div>
               <div className="shrink-0">
-                <Button onClick={() => navigate("/task")}>Open Task</Button>
+                {/* The advice says "the Rig tab", so the button goes there —
+                    it used to open Task, one tab past where the fix lives. */}
+                <Button onClick={() => navigate("/config")}>Open Rig</Button>
               </div>
             </div>
           )}
@@ -699,19 +703,21 @@ export function SessionMapping() {
                       <div className="flex w-5 shrink-0 items-center justify-center">
                         {mapping.sketchPath !== null && <FlowArrow />}
                       </div>
-                      <Select
+                      <Dropdown
                         label={`Box for ${animal?.name ?? "animal"}`}
+                        size="regular"
                         value={String(mapping.box)}
                         // All six stay selectable — a box can be assigned before
                         // its board is bound — but an unbound one says so here
                         // rather than only failing at flash time.
                         options={[1, 2, 3, 4, 5, 6].map((n) => ({
                           value: String(n),
-                          label: configuredBoxes.has(n)
-                            ? `Box ${n}`
-                            : `Box ${n} · unbound`,
+                          label: `Box ${n}`,
+                          ...(configuredBoxes.has(n) ? {} : { detail: "unbound" }),
                         }))}
+                        placeholder="box"
                         disabled={phase !== "review"}
+                        className="w-[110px] shrink-0"
                         onChange={(v) =>
                           setMappings((prev) =>
                             prev.map((m) =>

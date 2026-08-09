@@ -17,13 +17,26 @@
 A **task** is a behaviour sketch plus an optional `task.json` sibling that describes it. That description is what lets Ephymeris render a configuration form, draw the trial-flow diagram, build the `START` command, and score live metrics — for a sketch the app has never seen.
 
 > [!IMPORTANT]
-> **No sketch is special-cased in app code.** Drive everything off the profile. If you find yourself writing `if (sketchName === "GRGL_2-Odor")`, the profile is missing a declaration.
+> **No sketch is special-cased in app code.** Drive everything off the profile. If you find yourself writing `if (sketchName === "GRGL")`, the profile is missing a declaration.
 
 A sketch with **no** `task.json` is fully supported. It gets a bare `START`, no config form, and a raw scrolling strobe log instead of charts. Not every sketch is a scored task.
 
+### 1.1 Two places a value can come from
+
+There is exactly one behaviour sketch — `GRGL` — and everything an experiment varies reaches it one of two ways. Which way is not a preference; it follows from what the firmware can accept.
+
+| | Arrives at | Carries | Changing it costs |
+|---|---|---|---|
+| **Generated headers** | compile time | the trial table, the channel→pin map, the strobe selection, how many ramp stages exist, which selector runs | a rebuild + reflash |
+| **The `START` line** | run time | every timing, hold, window, penalty, reward volume, anti-bias clamp and stage threshold | a serial line |
+
+The dividing line is the [`START_LINE_MAX` cap](#63-the-line-length-cap). A trial table and a pin map do not fit on a 640-byte line, and pins have to be compile-time constants anyway. Everything that *does* fit stays on the wire, which is what lets **one flashed binary serve six boxes tuned differently** — the per-box overrides at mapping would otherwise mean six compiles.
+
+The two headers are `TaskPins.h` (pure preprocessor, included *before* `<BehaviorBox.h>`, which guards every pin and strobe definition with `#ifndef`) and `TaskTrials.h` (constructs `TrialType`, so it comes *after*). A sketch with neither compiles against the box as built — which is how the shipped `GRGL/` folder runs the lab's historical 2-odor task from a bare checkout.
+
 ```mermaid
 flowchart LR
-    A["📁 sketch folder<br/><code>GRGL_2-Odor/</code>"] --> B["<code>GRGL_2-Odor.ino</code>"]
+    A["📁 sketch folder<br/><code>GRGL/</code>"] --> B["<code>GRGL.ino</code>"]
     A --> C["<code>task.json</code><br/><i>optional</i>"]
     C --> D["config form<br/><i>ConfigFields</i>"]
     C --> E["trial-flow graph<br/><i>topology.ts</i>"]
@@ -38,7 +51,7 @@ flowchart LR
 
 Sketches **ship with the app**, and the shipped library is the **only** source of flashable sketches. There is no configured directory and no arbitrary-file fallback — one source of truth is what makes the error states in [§2.4](#24-error-and-empty-states) unambiguous, and shipping it is what makes the library a fact about the build rather than a setting someone can get wrong.
 
-The deliberate trade, stated plainly: **adding or changing a sketch needs a new build.** The library is staged at build time by `scripts/stage-sketches.mjs` from two sources — the lab's firmware repo (behaviour sketches + `libraries/BehaviorBox`, still a sibling checkout) and this repo's own `firmware/` (`TaskRunner_*` interpreter sketches + `libraries/TaskInterpreter`) — with both `libraries/` collections merged into the one root that reaches `arduino-cli --libraries`. The Task screen names the sketch count so an operator can say which library they have.
+The deliberate trade, stated plainly: **adding or changing a sketch needs a new build.** The library is staged at build time by `scripts/stage-sketches.mjs` from the lab's firmware repo (behaviour sketches + `libraries/BehaviorBox`, still a sibling checkout), whose `libraries/` collection becomes the one root that reaches `arduino-cli --libraries`. The Task screen names the sketch count so an operator can say which library they have.
 
 > [!WARNING]
 > **The rule that causes the most confusion.** A folder is a valid sketch **only if it contains a `.ino` whose filename matches the folder's own name** — `clean_flush/clean_flush.ino`, never `clean_flush/main.ino`. This is arduino-cli's requirement, not ours. Folders that fail it are **skipped and reported**, never silently dropped.
@@ -69,29 +82,26 @@ Resolution order, mirroring how the shell already picks a sidecar interpreter (`
 │       └── task.json            ← optional; makes it app-drivable
 ├── Olfactory Behavior/          ← a category holding sub-categories
 │   ├── 01_Shaping/              ← a sub-category
-│   │   ├── shaping_GL/
-│   │   │   └── shaping_GL.ino
-│   │   └── shaping_GR/
-│   │       └── shaping_GR.ino
-│   └── 02_Bdisc/
-│       ├── GRGL_2-Odor/
-│       │   ├── GRGL_2-Odor.ino
-│       │   └── task.json
+│   └── GRGL/                    ← the behaviour task
+│       ├── GRGL.ino
+│       ├── TaskPins.h           ← generated: pins, strobes, counts, mode
+│       ├── TaskTrials.h         ← generated: the trial table
+│       └── task.json
+├── Utility/
+│   ├── BOX_Utility/             ← the baseline; drives every channel
+│   └── GRGL_Sim/                ← drives a real box with no animal in it
 │       └── libraries/           ← reserved at any depth; not passed to compile
-├── Bench/                       ← interpreter sketches from firmware/ (bench only)
-│   └── TaskRunner_Dev/
-│       └── TaskRunner_Dev.ino
-└── libraries/                   ← reserved name, not a category; the MERGED root
-    ├── BehaviorBox/             ← from the firmware repo
-    │   ├── BehaviorBox.h
-    │   └── BehaviorBox.cpp
-    └── TaskInterpreter/         ← from <repo>/firmware
+└── libraries/                   ← reserved name, not a category; the compile root
+    └── BehaviorBox/             ← from the firmware repo
+        ├── BehaviorBox.h
+        ├── BoxPins.h
+        └── BoxStrobes.h
 ```
 
 | Rule | Detail |
 |---|---|
 | **Categories** | Any top-level folder other than `libraries/` (matched case-insensitively). Names are **not** hardcoded — "Utility" and "Olfactory Behavior" are examples, not an enum. |
-| **Nesting** | Categories may nest. The scan descends until it finds sketches, up to **5 levels**. A sketch's category is **the folder directly containing it** — `shaping_GL` files under `01_Shaping`, not `Olfactory Behavior`. |
+| **Nesting** | Categories may nest. The scan descends until it finds sketches, up to **5 levels**. A sketch's category is **the folder directly containing it** — `GRGL` files under `Olfactory Behavior`. |
 | **Sketch folders are terminal** | Once a folder is recognised as a valid sketch, its contents (`src/`, `extras/`, …) belong to it and are not scanned further. |
 | **Hidden folders** | Anything beginning with `.` is ignored **silently**. Reporting `.git/objects` as unreadable would bury genuine problems in noise. |
 | **Sketches need a category** | A valid sketch folder sitting directly at the root is reported as skipped — it has no category to be filed under. |
@@ -139,7 +149,7 @@ Three distinct states plus a derived note — and every non-ok state now means a
 
 ## 3. `task.json` reference
 
-The file sits **sibling to the `.ino`** inside the sketch's own folder. It is **per-sketch, never shared across a family**: `GRGL_2-Odor` and `GRGL_2-Odor_EZ` share session logic, but a profile declares *this sketch's* vocabulary and config surface, and sharing one file risks it silently drifting out of sync with one of the two.
+The file sits **sibling to the `.ino`** inside the sketch's own folder, and is **per-sketch, never shared**: a profile declares *this sketch's* vocabulary and config surface, and one file serving two sketches drifts out of sync with one of them.
 
 Authority: [`sidecar/ephymeris_sidecar/tasks/profile.py`](../sidecar/ephymeris_sidecar/tasks/profile.py) — the parser is the only enforcement point.
 
@@ -312,7 +322,7 @@ A `"kind": "utility"` profile makes a cleaning/priming/self-test sketch first-cl
 
 ### 3.7 `legacyNames`
 
-A finalized run records `sketch` as a **name**, and the archive walk resolves that name against the bundled library to find the profile that can score it. For anything this app wrote, the name is the folder's and resolution is exact. Data written by whatever the lab used before is not so lucky — a real archive records `"Shape - L"` where the library holds `shaping_GL`.
+A finalized run records `sketch` as a **name**, and the archive walk resolves that name against the bundled library to find the profile that can score it. For anything this app wrote, the name is the folder's and resolution is exact. Data written by whatever the lab used before is not so lucky — a real archive records `"Shape - L"`, and the sketch that ran it no longer exists under that name.
 
 > [!CAUTION]
 > Because the library ships with the app, dropping a sketch from the bundle — or editing away a `legacyNames` entry — makes every archived run recorded under that name stop decoding, **with a warning rather than an error**. `tests/test_bundled_library_covers_archives.py` pins the names the lab's real archives contain; keep it current when a new archive appears.
@@ -322,7 +332,7 @@ A finalized run records `sketch` as a **name**, and the archive walk resolves th
 ```
 
 > [!IMPORTANT]
-> **Declared, never inferred.** Matching `"Shape - L"` to `shaping_GL` by resemblance would decode real data with the wrong strobe map and produce confident, wrong numbers. Resemblance is not evidence. So the mapping is a one-line assertion by the person who knows, sitting in the profile it belongs to — where it travels with the sketch and is reviewable in a diff.
+> **Declared, never inferred.** Matching `"Shape - L"` to a sketch by resemblance would decode real data with the wrong strobe map and produce confident, wrong numbers. Resemblance is not evidence. So the mapping is a one-line assertion by the person who knows, sitting in the profile it belongs to — where it travels with the sketch and is reviewable in a diff.
 
 Only the archive walk reads this. It never picks a sketch to flash, never shows in the picker, and has no effect on a live session. An unresolvable name is not an error: the run decodes to `no-metrics` and its detail **names the sketch it wanted**.
 
@@ -389,7 +399,7 @@ export interface TaskGraphModel {
 | `outcome` | How an administered trial resolved. Coloured to match the analytics outcome palette, so the graph and `OutcomeMix` agree at a glance |
 | `abort` | The trial ended without an answer, and is re-presented |
 
-**The layout frame.** Nodes carry authored coordinates in a 100-wide space; `TaskGraph` refits the viewBox from the actual extents.
+**The layout frame.** Nodes carry authored coordinates in a 100-wide space; the drawing refits from the actual extents.
 
 ```ts
 const COL = { start: 6, awaitPoke: 24, odor: 42, sample: 60,
@@ -813,7 +823,7 @@ flowchart LR
 `task.json`, **sibling to the `.ino`**, inside the sketch's own folder:
 
 ```
-Olfactory Behavior/02_Bdisc/MyTask/
+Olfactory Behavior/MyTask/
 ├── MyTask.ino      ← must match the folder name
 └── task.json
 ```
@@ -958,27 +968,240 @@ These never error, and are the ones to know about when something looks wrong but
 
 ## 10. The Task screen
 
-The Task tab **is the sketch viewer**: `/task` opens straight into it, with the last-viewed sketch reopened (falling back to the library's first entry). The spec-creator surfaces that briefly shared this tab — landing page, wizard, Designer, bench — were removed 2026-08-06 pending a fresh UI ([specs.md](specs.md)); the sidecar compiler and every `specs.*` command are untouched. Old addresses (`/sketches`, `/task/sketches`) redirect here. A spec remains a sibling artifact to a `task.json`, never an extension of it ([§4.1](#41-why-derived-not-declared)).
+`/task` is the **task-profile editor**. It replaced the sketch *viewer*: a
+viewer could show what a sketch declared, and this decides it.
 
 > [!IMPORTANT]
-> **`/task` is the only editor for `settings.taskDefaults`**, and `SessionMapping` reads that map on every session ([§6.1](#61-the-three-layer-merge)). If this page is ever removed or folded away, the stored per-sketch overrides keep being merged into every `START` line with nothing able to show or clear them — the silent-wrong-value failure this document's other cautions are about. Retire it only alongside the merge layer itself.
-
-### 10.1 The sketch viewer
-
-**The Dashboard's HUD layout** (`dashboard.md` §3): the rig's sky is the page, and three fixed regions float over it — nothing scrolls the page, so the machine and the fields being tuned are always on screen together. That co-presence is what the highlight link is *for*; the previous long-scroll layout put one end of it below the fold whenever the other was in use.
+> **The Dashboard's HUD layout survives, and so does its point** (`dashboard.md`
+> §3): the machine and the thing being edited stay on screen together, because
+> the diagram is the fastest check that an edit did what was meant. What changed
+> is that the CENTRE column scrolls — there are three editors in it now, and
+> only the first is a hero. The page still does not scroll, so the rail stays
+> put.
 
 | Region | Contents |
 |---|---|
-| **Left column** | The page title, then `SketchLibrary`: the bundled sketches as a browsable list grouped by category — not a dropdown, because the library ships with the app and is the dozen entries the operator returns to. Each row carries an `N tuned` chip when `settings.taskDefaults` holds overrides for it. `LibraryStatusNote` (count + rescan) sits in the card's footer; selecting loads the profile over `tasks.getProfile`. The **explain tile** (`SketchExplain`) sits beneath: follows focus, one definition at a time — a hovered field's help, `START` token, unit, authored default, clamp range and this rig's divergence; a hovered *group* describes the moment of the trial it owns; at rest, the selected sketch. Because the tile carries the prose, the form runs **`quiet`**. The viewer reopens the last-viewed sketch (per machine, `localStorage`), falling back to the first *behaviour* sketch — never the bench interpreter |
-| **Centre** | The **state machine**, vertically centred — the page's hero the way the constellation is the Dashboard's. A `.hud` glass tile; body is `SketchStateMachine` — the derived machine with every tunable group pinned to the states it governs as subtle mono chips (the six ramp groups collapse to one `holds` chip). Hovering a group pill dims every state the group does not govern and rings the rest; hovering a state lights the rail pills that tune it and the caption strip at the tile's foot says the relationship in words. When `!usable`, prose instead: *"…declares no behavioural strobes…"* or *"This sketch has no task.json…"*. A malformed `task.json` error strip renders here too — surfaced, not swallowed |
-| **Right rail** | `ParameterInspector`: every declared group as a **pill** (ordered by `orderGroups`, a Pulsar dot marking groups this rig changed), with the selected group's fields beneath — so configuring any parameter is a *selection*, never a scroll. Clicking a pill, a machine chip, or a state all land on the same group; a per-group "Reset n" and a rail-level "Reset all N" above it |
+| **Left** | `TaskLibrary` — this rig's profiles grouped by category, each carrying a problem count; beneath it the five presets a new task starts from, and `LibraryStatusNote`. The library note is kept from the viewer because a profile is generated *from* the bundled root sketch, so "the install is damaged" is the one thing that stops a task existing at all — and with the sketch list gone this is the only place it shows |
+| **Centre** | The derived **state machine** (`SketchStateMachine`, unchanged), then `TrialTypeTable`, then `StageRamp` |
+| **Right** | `ParameterInspector`, unchanged from the viewer — group pills, one group's fields, a Pulsar dot on every group this profile pins |
 
-**`TaskGraph` survives for one consumer**: Mission Control's live star panel, where a `liveNode` walks a token across the same derived model. The sketch viewer no longer uses it (and `TaskRail`, the pinned strip, is gone entirely) — `SketchStateMachine` draws the same nodes with the parameter mapping as the point. Outcome fills stay borrowed from the analytics outcome palette via `fillFor`, exported so the two drawings — and `OutcomeMix` — cannot disagree.
+**Every redraw comes from `tasks.preview`.** The state machine is derived from
+the profile the *current* definition compiles to, not from a saved file, so
+adding a trial type grows an arm before the save. That same round trip is what
+validates, because most of the eight rules depend on the wiring and the frontend
+holds no copy of it.
 
-> [!NOTE]
-> **The model carries no per-edge counts, and the machinery for them is gone rather than dormant.** An earlier version tagged each edge with the `derive.py` bucket that would fill it; nothing ever passed them, because the only place a graph and a live run coexist is Mission Control — and a partial mid-session tally is exactly the number that must not be shown, reading as a result while the trials it summarises are still arriving. Analytics owns recorded figures, on panels built to caveat them. If per-edge figures are ever wanted they belong to a *finished* run and should arrive as a separate overlay, not as an optional field every edge in `topology.ts` has to think about.
+### 10.1 The trial table
 
-Only values **diverging** from the sketch's own `task.json` defaults are persisted into `taskDefaults`, and an empty diff deletes the sketch's entry entirely.
+The screen this whole system exists for. *"Odor 1 is go-right here and go-left
+on the bench next door"* used to be a firmware edit; it is a dropdown now.
+
+Every cell is a **channel name** or a **code name**, never a pin and never an
+index — the rig's wiring supplies the options, so a channel that was renamed or
+removed shows as a diagnostic against the row that binds it rather than as a
+task that compiles and drives nothing.
+
+> [!CAUTION]
+> **Row order is the contract.** Slot *i* is pool weight `PW<i+1>` is
+> `kTrials[i]` in the generated firmware, so reordering the table re-weights a
+> pool task. That is why there is no drag handle, and why the weight column
+> lives *on* the row rather than in the parameter rail, where it would outlive
+> the row it describes.
+
+Each row carries a **contingency sentence** in plain language — *"odor line 3 →
+left well, paid from fluid 2 (plumbed to right well)"*. It is the one rendering
+that catches `TSK103` by eye before the diagnostic does.
+
+The onset-code picker offers a **numbered line turning on** (`ODOR_3_ON`, and a
+hypothetical `TONE_2_ON` on a box with speakers). Matching a bare `_ON` suffix
+offered `LIGHTS_ON`, the trial-availability cue the runner emits on every trial:
+a task that picked it would announce two conditions with one code and every
+analysis would pool them, silently.
+
+### 10.2 The ramp
+
+Four values, declared **per row, never once**. The firmware rewrites all four
+from `stage[]` on every completed trial, so a single field per value would
+appear to work and then be silently overwritten around trial 15–20. The whole
+schedule is on screen at once, and a row that engages is a row you can see.
+
+Row 0 has no "engages at" — it is live from trial 0 by construction, and
+`liveStage()` never reads its count. A one-row ramp is a task that does not
+ramp, which is the common case; hence "Add stage" rather than a fixed five.
+
+A new row is **seeded from the one before it**, never from a defaults table. A
+stage that appeared carrying numbers nobody chose reads as deliberate.
+
+### 10.3 The `START` meter
+
+The header carries the built line's length against `START_LINE_MAX`.
+
+> [!CAUTION]
+> **It is not decoration.** That cap is the one budget an operator can exhaust
+> without noticing: the firmware truncates an overlong line **in silence** and
+> runs the session on whichever values happened to fit ([§6.3](#63-the-line-length-cap)).
+> Adding a stage costs five tokens, so the number is worth watching while the
+> ramp grows rather than being explained afterward.
+
+### 10.4 What `settings.taskDefaults` is now
+
+Still the middle merge layer ([§6.1](#61-the-three-layer-merge)), still read by
+`SessionMapping` on every session, and **no longer edited here**. A profile's
+own values are the bottom layer and are edited on this screen; a rig default is
+a different thing and its editor went with the sketch viewer.
+
+> [!WARNING]
+> Stored `taskDefaults` entries keyed by a retired sketch's folder name are
+> **inert** rather than wrong: `defaultConfig` iterates the *profile's* fields,
+> so a key no sketch declares cannot reach a `START` line. They are dead weight
+> in the store, not a hazard — but nothing can currently clear them.
+
+---
+
+## 11. Task profiles — the operator's task
+
+`docs/tasks.md` §1–§10 describe a `task.json` as something a *sketch author*
+writes. A **task profile** is the same thing authored on the Task tab instead:
+the app holds a **definition**, and generates the sketch and its `task.json`
+from that plus this rig's wiring.
+
+```
+<data_dir>/tasks/
+    <id>.json                  the DEFINITION — the operator's document
+    <category>/<name>/         the GENERATED sketch, found by discovery
+        <name>.ino             the bundled GRGL root, copied verbatim
+        TaskPins.h             pins, strobes, counts, selection mode
+        TaskTrials.h           the trial table
+        task.json              an ordinary profile, read by ordinary code
+```
+
+**The generated folder is a sketch, and that is the whole design.** `discovery`
+scans this root as a second library (`source: "rig"`), so `port.flash`, the
+session flow, `tasks.getProfile`, `settings.taskDefaults` and Analytics all
+operate on a profile-backed run with **no special case anywhere**. It is the
+walk-back [§2.1](#21-location) names: *a hidden additional library that appends
+to the bundle, never a return of the configured root.*
+
+### 11.1 What a definition holds
+
+Four answers, and nothing derivable:
+
+| | |
+|---|---|
+| `trials[]` | which trials the animal sees — each naming an **odor channel**, a **response channel**, a **reward channel** and an **onset strobe** |
+| `selectionMode` | `antibias` (draw a side against recent bias, then a type from that side) or `pool` (a block-shuffled weighted sequence drawn at `START`) |
+| `stages[]` | the shaping ramp, one row to as many as fit the line |
+| `params{}` | only what **diverges** from the field catalogue's default |
+
+A definition stores no pin number and no strobe code. That indirection is what
+makes *"odor line 3 means go-left on this rig"* an edit to one document rather
+than to firmware — and it is why a rewiring can be costed before it is written.
+
+> [!CAUTION]
+> **`params` holds only divergences, for the same reason `taskDefaults` does.**
+> Storing the full merged set would mean a catalogue change — a corrected range,
+> a better help string — could never reach a profile somebody already saved.
+
+### 11.2 The field catalogue
+
+`taskdef/fields.py` declares every tunable once: the wire key, the label, the
+unit, the range and the prose. It replaced the same forty-odd rows hand-copied
+into seven `task.json` files, where retuning one sketch's help text left six
+others saying something else.
+
+> [!CAUTION]
+> **It is a cross-repo mirror of `TASK_PARAM_LIST` and nothing enforces it at
+> runtime.** A key here that the firmware does not parse is accepted, sent, and
+> **silently ignored** — the session runs on the compiled-in value with nothing
+> reporting a problem.
+
+Three families are *not* in the catalogue, because only the definition knows how
+many of each exist: the ramp rows, the pool weights (one per trial type), and
+the reward volumes (one per fluid line the rig declares).
+
+### 11.3 The nine diagnostics
+
+Each names a failure that is silent without it. `TSK103`, `TSK105` and `TSK109`
+are the three that produce plausible-looking wrong **data** rather than an
+obvious failure.
+
+| | |
+|---|---|
+| `TSK101` | a channel this rig does not have — the pin never fires |
+| `TSK102` | a channel of the wrong kind — a valve driven as a sensor |
+| `TSK103` | **a reward line serving the other well** — the row reads *"odor 3 → left"*, the animal answers left, and the water arrives on the right |
+| `TSK104` | a strobe code that is not declared — an unlabelled number in the data |
+| `TSK105` | **two types sharing an onset code** — two conditions, one label, pooled by every analysis without a word |
+| `TSK106` | a ramp that is not ascending — `liveStage()` scans down, so the row simply never engages |
+| `TSK107` | a `START` line over the cap — the firmware truncates in silence ([§6.3](#63-the-line-length-cap)) |
+| `TSK108` | a table with no presentable trial — a session that runs nothing |
+| `TSK109` | **a pool whose weights are all zero** — `generateTrials()` would divide by the total, so it falls back to equal weights; the box runs a uniform pool while the table on screen says otherwise. Pool mode only: anti-bias draws a side and weights nothing |
+
+A definition with diagnostics **still saves**. A half-finished task must be
+savable; the gate is flashing, not saving.
+
+### 11.4 Presets
+
+Five, one per sketch the lab ran before the firmware was unified. They differed
+by one substantive line apiece, so what they really were is five sets of
+*numbers* over one task — which is exactly what a preset is.
+
+**A preset is not a task.** Instantiating one yields a definition the operator
+owns, so editing a preset in a later build cannot reach back into a study
+already running on it. Each carries its own `legacyNames`, because the name a
+historical run recorded is a fact about *that* task: `Shape - R` belongs to the
+go-right shaping preset and nowhere else.
+
+### 11.5 Regeneration
+
+Every stored profile is regenerated on `tasks.save` and again on every
+`hardware.save` / `hardware.reset`.
+
+> [!CAUTION]
+> **A wiring change must regenerate, and the failure is invisible if it does
+> not.** Pin numbers are compiled into `TaskPins.h`. A folder generated under
+> the old wiring would flash the old pins — it still compiles, the session still
+> runs, and the only symptom is a valve that never fires.
+
+### 11.6 The bundled sketches follow the wiring too
+
+A task profile is generated against the rig's wiring, so it drives the right
+pins by construction. The sketches that *ship* were not — they compiled against
+`BoxPins.h`'s defaults, which are the box as built.
+
+> [!CAUTION]
+> **On a rewired rig that is silently wrong.** `utility.identify` lights whatever
+> is on the old trial-light pin; `GRGL_Sim` opens whatever is on the old odor
+> line. The sketch still compiles, the session still runs, and the strobe stream
+> still reads perfectly — the only symptom is hardware that does not move.
+
+So the app rebuilds them (`taskdef/bundled.py`). Every bundled sketch that asks
+for one gets a copy under `<data_dir>/rig/sketches/<category>/<name>/` with a
+generated `TaskPins.h`, and discovery serves that copy **in place of** the
+bundled original.
+
+| | |
+|---|---|
+| **Opting in** | The sketch's `.ino` contains `#include "TaskPins.h"`. That is the whole signal — derived from the source, so there is no manifest to fall out of sync, and it is greppable |
+| **Replace, not append** | A rebuild is the *same* sketch with this rig's pins. It keeps `source: "bundled"`, so nothing downstream learns which copy it got; offering both would make flashing a coin flip |
+| **When** | At startup, and on every `hardware.save` / `hardware.reset`. One call site — `Application._rebuild_for_wiring` — rebuilds profiles *and* bundled sketches, because splitting them is how one gets forgotten |
+| **Pins only** | No counts, no trial table, no strobe overrides. Those are what a *profile* adds; a bundled sketch references only codes its own `BoxStrobes.h` defines |
+| **On failure** | The bundled entry stands and the rig runs the shipped pins. A rig that cannot flash at all is a far worse failure than one flashing a wrong pin, and the wrong pin is visible the moment somebody watches the box |
+
+`GRGL_Sim` is the reason this stopped being optional. It used to talk serial only
+— which made it a test of the *app* and nothing else. It now drives the box:
+valves, light, vacuum and fluid lines, on this rig's pins, so a session is a full
+rehearsal you can stand at the bench and watch. **Its fluid lines really open**,
+so run it dry or with a catch vessel unless you mean to dispense.
+
+### 11.7 Analytics at the cutover
+
+A generated profile has its own `profile_hash`, so grouping on
+`(profile_hash, params_hash)` splits at the changeover from the retired sketches.
+That is **correct** — it is a different declaration — and unavoidable, since an
+old hash cannot be recomputed. `legacyNames` keeps archive adoption working, so
+historical runs still decode; what changes is that they group separately from
+runs made on the profile that replaced them.
 
 ---
 

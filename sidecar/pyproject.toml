@@ -12,21 +12,18 @@ dependencies = [
     # failed grpcio install degrades flashing to the old path, never breaks it.
     "grpcio>=1.60",
     "protobuf>=5",
-    # The task-spec compiler (docs/TaskGraph.md). A SECOND exception to the
-    # two-dependency rule, and an explicitly weaker one than grpcio's: grpcio has
-    # the subprocess backend behind it, so a failed wheel degrades flashing rather
-    # than removing it, and nothing can stand in for a compiler. So the fence is
-    # around scope instead — ephymeris_sidecar/specs/compiler.py guards the import,
-    # every specs.* handler reports SPEC_COMPILER_UNAVAILABLE if it failed, and the
-    # legacy task.json path and the whole session flow are untouched either way.
-    # That fence outlived the vendoring it was written alongside, because it was
-    # never about where the compiler's source lived: a rig that cannot compile a
-    # spec must still be able to run a session.
-    # jsonschema drags the native rpds-py, which is the part that can actually fail
-    # to install; a packaged build resolves it once and freezes the result, so lab
-    # machines never run pip for it.
+    # Validation for the two operator-authored documents: the rig wiring
+    # (hardware/store.py) and a task profile. A SECOND exception to the
+    # two-dependency rule, and a weaker one than grpcio's — grpcio has the
+    # subprocess backend behind it, so a failed wheel degrades flashing rather
+    # than removing it, and there is no second validator to fall back to. So the
+    # fence is around SCOPE instead: every import of it is inside the function
+    # that needs it, a failure disables the wiring and profile editors, and
+    # flashing, the session flow and everything already saved keep working.
+    # jsonschema drags the native rpds-py, which is the part that can actually
+    # fail to install; a packaged build resolves it once and freezes the result,
+    # so lab machines never run pip for it.
     "jsonschema>=4.20",
-    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -52,17 +49,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["ephymeris_sidecar*"]
 
-# The compiler's data files. `taskgraph/paths.py` resolves all four directories
-# package-relative and treats them as present in every install, so a wheel that
-# dropped them would import cleanly and then fail to compile anything.
-#
-# `templates` is listed as `*/*.py` rather than picked up as code because a
-# template family directory has no `__init__.py` — see templates/__init__.py for
-# why that is deliberate. To setuptools they are therefore data, which is also
-# exactly how `load()` treats them.
+# The registries. `rig/paths.py` resolves both directories package-relative and
+# treats them as present in every install, so a wheel that dropped them would
+# import cleanly and then be unable to name a single pin or strobe.
 [tool.setuptools.package-data]
-"ephymeris_sidecar.taskgraph" = ["schema/*.json", "hardware/*.json", "paradigms/*.yaml"]
-"ephymeris_sidecar.taskgraph.templates" = ["*/*.py"]
+"ephymeris_sidecar.rig" = ["schema/*.json", "hardware/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

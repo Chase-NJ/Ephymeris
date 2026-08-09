@@ -1,7 +1,0 @@
-# TG210 — a strobe name not in the append-only vocabulary.
-_expect: TG210
-_why: >-
-  Ephymeris records a real bug where a sketch emitted codes it had not declared:
-  nothing errored and every layer degraded silently.
-_patch:
-  contingency.ports.left_well.enter_code: WATER_POKE_MIDDLE

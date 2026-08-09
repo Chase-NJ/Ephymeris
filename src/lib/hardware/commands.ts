@@ -7,8 +7,7 @@ import type { RigDocument } from "./types";
 /**
  * The four `hardware.*` calls.
  *
- * `preview` and `save` take the whole document rather than a patch, for the
- * same reason `specs.compile` takes text rather than a parsed dict: the checks
+ * `preview` and `save` take the whole document rather than a patch: the checks
  * that matter run over the document as a whole — two channels sharing a pin,
  * two ports claiming one strobe slot — and a patch would make the sidecar
  * reconstruct the thing it was about to check.

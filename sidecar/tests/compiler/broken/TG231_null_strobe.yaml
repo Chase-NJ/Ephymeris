@@ -1,9 +1,0 @@
-# TG231 — a silent transition on a spec with no equivalence target.
-_expect: TG231
-_why: >-
-  WARN, not ERROR: silence is correct where bit-identity with runTrial() demands it,
-  and wrong where it does not. This fixture has no reproduces_sketch, so the message
-  should suggest RESP_OMIT rather than defend the silence (D4).
-_delete: ["meta.reproduces_sketch"]
-_patch:
-  contingency.outcome_map.omission.strobe: null

@@ -110,11 +110,6 @@ class UtilityBaseline:
             box: BoxBaseline(box=box) for box in range(1, BOX_COUNT + 1)
         }
         self._held = False
-        #: The BENCH hold (`specs.md`): suspended restores while the Task
-        #: screen's bench panel is preparing boxes. A separate flag from the
-        #: session hold on purpose -- releasing the bench must never release
-        #: a rig a confirmed session mapping owns, and vice versa.
-        self._bench_held = False
         self._queue: set[int] = set()
         self._forced: set[int] = set()
         self._worker: asyncio.Task[None] | None = None
@@ -161,24 +156,6 @@ class UtilityBaseline:
     async def _on_hold(self) -> None:
         await self.identify_all_off()
         await self.publish()
-
-    def set_bench_hold(self, held: bool) -> None:
-        """The Task screen's bench panel is (or is done) preparing boxes.
-
-        Without this, a table upload ends with the port falling IDLE and the
-        baseline quietly reflashing BOX_Utility over the interpreter sketch --
-        the uploaded table dies with it, and nothing errors. In-memory only:
-        a crashed client leaves it set until app restart, which errs on the
-        side of NOT reflashing.
-        """
-        if self._bench_held == held:
-            return
-        self._bench_held = held
-        if held:
-            self._queue.clear()
-            log.info("utility baseline held: the bench panel is preparing boxes")
-        else:
-            log.info("utility baseline bench hold released")
 
     async def stop(self) -> None:
         """Leave no box lit and no port held open on the way out."""
@@ -228,7 +205,7 @@ class UtilityBaseline:
         no reply timeout should ever be asked to cover. `utility.updated`
         carries the progress.
         """
-        if self._held or self._bench_held or not self._settings.utility_sketch_name:
+        if self._held or not self._settings.utility_sketch_name:
             # No baseline configured is a supported way to run the app, not a
             # degraded one — so it costs nothing and reports nothing.
             return
@@ -266,9 +243,6 @@ class UtilityBaseline:
             return
         if self._held:
             state.state, state.detail = "held", "a session mapping owns this box"
-            return
-        if self._bench_held:
-            state.state, state.detail = "held", "the bench panel is preparing boxes"
             return
         if state.failed and not force:
             return
@@ -563,7 +537,7 @@ class UtilityBaseline:
             "sketchPath": entry.path if entry is not None else None,
             "sketchName": self._settings.utility_sketch_name,
             "canIdentify": entry is not None and profile is not None and profile.identify is not None,
-            "held": self._held or self._bench_held,
+            "held": self._held,
             "message": self._unavailable_reason(),
             "boxes": [state.to_json() for _, state in sorted(self._boxes.items())],
         }

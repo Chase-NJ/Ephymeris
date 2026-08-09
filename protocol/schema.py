@@ -55,10 +55,10 @@ SHAPES = (
     # Hardware / discovery
     Shape(
         "PortStateName",
-        lit("IDLE", "PASSTHROUGH", "FLASHING", "UPLOADING", "RESETTING", "IN_SESSION", "ERROR"),
-        doc="Per-port state machine names (`dashboard.md` §5.1). UPLOADING is a "
-        "task-spec table transfer (`specs.md`) — exclusive like FLASHING, with "
-        "the same passthrough auto-resume.",
+        lit("IDLE", "PASSTHROUGH", "FLASHING", "RESETTING", "IN_SESSION", "ERROR"),
+        doc="Per-port state machine names (`dashboard.md` §5.1). One owner at a "
+        "time: FLASHING, RESETTING and IN_SESSION are each exclusive, and the "
+        "first two force-release PASSTHROUGH and auto-resume it afterward.",
     ),
     Shape(
         "OutputLine",
@@ -783,9 +783,12 @@ SHAPES = (
     Shape("RunStatus", lit("ok", "no-metrics", "missing", "unreadable")),
     Shape(
         "ProfileSource",
-        lit("snapshot", "sketch-current", "unavailable"),
-        doc="How much the decoding can be trusted (§8.2). Three states, not two "
-        "— `sketch-current` means the profile may have changed since the run.",
+        lit("snapshot", "sketch-current", "inferred", "unavailable"),
+        doc="How much the decoding can be trusted (§8.2). Four states — "
+        "`sketch-current` means the profile may have changed since the run; "
+        "`inferred` means no profile resolved at all and the conditions were "
+        "read out of the recorded stream itself, sound because the strobe "
+        "registry is append-only but blind to conditions the animal never met.",
     ),
     Shape(
         "RunSummary",
@@ -1148,106 +1151,6 @@ SHAPES = (
         obj(f("code", STR), f("message", STR), f("detail", ANY)),
         doc="Failures with no command to attribute them to (§4).",
     ),
-    # Task specs (specs.md) — the Task-Graph compiler's surface.
-    # A spec is a SIBLING artifact to a sketch's task.json, never an extension
-    # of it: the two hash differently, and profile_hash is what Analytics
-    # groups a sketch's historical runs by.
-    #
-    # A PARADIGM IS A SHAPE, NOT A SPEC. It names a template and fixes the knobs
-    # that make a kind of experiment what it is, then says what to ask about
-    # everything else. Nothing ships as a spec any more, so this is what a new
-    # task starts from.
-    Shape(
-        "ParadigmQuestion",
-        obj(
-            f("id", STR),
-            f("label", STR),
-            f(
-                "path",
-                STR,
-                doc="A document path the spec schema already knows, so an answer "
-                "is a set on a validated location and never new structure the "
-                "paradigm invented.",
-            ),
-            f("help", nullable(STR)),
-            f(
-                "source",
-                lit("value", "channel", "stimulus", "trial_type", "strobe"),
-                doc="Where the offered options come from. `value` is free entry; "
-                "the rest are drawn from the registries the compiler validates "
-                "against, so a picker cannot offer something it would reject.",
-            ),
-            f("kind", nullable(STR), doc="For source=channel: which channel kind."),
-            f("required", BOOL),
-        ),
-        doc="One question the New Task wizard asks for this paradigm.",
-    ),
-    Shape(
-        "ParadigmSummary",
-        obj(
-            f("id", STR),
-            f("name", STR),
-            f("affords", STR, doc="What this paradigm lets you measure. Gallery copy."),
-            f("order", INT, doc="Gallery order — explicit, not alphabetical."),
-            f(
-                "hidden",
-                BOOL,
-                doc="Kept out of the gallery. True for exactly one paradigm — "
-                "`blank`, which is what a task starts from when no template is "
-                "picked. Declared rather than special-cased by id, so the "
-                "frontend holds no magic string.",
-            ),
-            f("template", STR),
-            f("templateVersion", INT),
-            f(
-                "fixes",
-                ANY,
-                doc="The knobs this paradigm pins, as a topology fragment. What "
-                "is absent is what the operator may still move in the Designer.",
-            ),
-            f(
-                "ramped",
-                ListOf(STR),
-                doc="Timing ids this shape expects a shaping ramp to move — NAMES "
-                "only. The skeleton generator deliberately does not consume them: "
-                "a stage schedule needs trial boundaries and per-stage values, "
-                "and a paradigm declares neither, so emitting one would invent "
-                "exactly the numbers the generator is forbidden to invent. The "
-                "wizard's session step offers them as a suggestion instead.",
-            ),
-            f("questions", ListOf(Ref("ParadigmQuestion"))),
-        ),
-        doc="A gallery card, and everything the wizard needs to drive its steps.",
-    ),
-    Shape(
-        "SpecOrigin",
-        lit("user"),
-        doc="Where a spec's bytes come from. One value: nothing ships as a spec, "
-        "so every task belongs to the rig that generated it from a paradigm. "
-        "Kept as a union so the field has somewhere to grow if that changes.",
-    ),
-    Shape(
-        "SpecEntry",
-        obj(
-            f("specId", STR),
-            f("label", nullable(STR), doc="meta.label, when the document parses."),
-            f("description", nullable(STR)),
-            f("origin", Ref("SpecOrigin")),
-            f("template", nullable(STR)),
-            f("templateVersion", nullable(INT)),
-            f(
-                "paradigmId",
-                nullable(STR),
-                doc="Which paradigm's SHAPE this document has, computed from the "
-                "document itself rather than recorded in it — so a task reshaped "
-                "in the Designer stops claiming to be what it started as. Null "
-                "reads honestly as Custom.",
-            ),
-            f("editedAt", nullable(STR), doc="ISO-8601."),
-        ),
-        doc="A row in the spec list. Built from a cheap parse — never a compile — "
-        "so `specs.list` stays instant however many specs exist.",
-    ),
     # ---------------------------------------------------------------- rig wiring
     Shape(
         "RigProblem",
@@ -1257,9 +1160,9 @@ SHAPES = (
             f(
                 "code",
                 nullable(STR),
-                doc="The lint rule, when one produced it — TG226 through TG229. Null "
-                "for a schema violation, which has no rule number because it is "
-                "caught before binding runs.",
+                doc="The wiring rule, when one produced it — RIG101 through RIG104. "
+                "Null for a schema violation, which has no rule number because it "
+                "is caught before the halves are composed.",
             ),
         ),
         doc="One thing wrong with a wiring document, located. Every problem is "
@@ -1273,13 +1176,20 @@ SHAPES = (
             f("derivedFrom", STR, doc="The shipped pinout this document started as."),
             f("board", STR),
             f("editedAt", nullable(STR)),
-            f("pinoutHash", STR, doc="The composed wiring's hash — the same value a compiled table carries (D22)."),
+            f(
+                "pinoutHash",
+                STR,
+                doc="The composed wiring's hash, over the fields that can change a "
+                "compiled byte. Prose and pin notes are excluded: it answers "
+                "'could these two produce different firmware?', so a reworded "
+                "rationale must not move it.",
+            ),
         ),
     ),
     Shape(
         "RigDocument",
         obj(
-            f("document", ANY, doc="The rig document itself — `{rig_version, channels, pins}`, validated against schema/rig_hardware.v1.json."),
+            f("document", ANY, doc="The rig document itself — `{rig_version, channels, pins}`, validated against rig/schema/rig_hardware.v1.json."),
             f("status", Ref("RigStatus")),
             f("problems", ListOf(Ref("RigProblem"))),
         ),
@@ -1295,8 +1205,8 @@ SHAPES = (
             f(
                 "codes",
                 ListOf(STR),
-                doc="The rules this wiring would newly break this spec with. Empty "
-                "when the spec was already failing for its own reasons.",
+                doc="What this wiring would newly break this task profile with. "
+                "Empty when the profile was already failing for its own reasons.",
             ),
         ),
         doc="A task this wiring change would break. Computed BEFORE the write.",
@@ -1309,390 +1219,134 @@ SHAPES = (
             f(
                 "breaks",
                 ListOf(Ref("RigImpact")),
-                doc="Tasks that compile today and would not after this change. "
-                "Non-empty does NOT mean the save was refused — see the command.",
+                doc="Task profiles that generate today and would not after this "
+                "change. Non-empty does NOT mean the save was refused — see the "
+                "command.",
             ),
         ),
     ),
-    # The presentation overlay (schema/task_spec.presentation.v1.json), served
-    # verbatim by specs.schema. It is typed here rather than left ANY because
-    # the editor's whole form is generated from it — an untyped overlay meant
-    # the frontend re-declared this shape by hand and cast the reply through
-    # `unknown`, which is exactly the drift the generated mirrors exist to stop.
-    # The sibling registries (schema/strobes/channels/limits) stay ANY: those
-    # are passthrough JSON the frontend reads with lookups, not a shape it
-    # binds a form to.
+    # --------------------------------------------------------------- task profiles
+    #
+    # A task profile is the operator's task: the trial table, how the next trial
+    # is chosen, the ramp, and the numbers. Saving one WRITES A SKETCH — the
+    # generated folder under `<data_dir>/tasks/` is an ordinary discovered
+    # sketch from that moment, which is why nothing below has a flashing
+    # command of its own. `port.flash` already takes it.
     Shape(
-        "SpecOverlayField",
+        "TaskDiagnostic",
         obj(
-            f("label", STR),
-            f(
-                "widget",
-                STR,
-                doc="Which input edits this field. Deliberately NOT a literal "
-                "union: the renderer carries a documented default case, so an "
-                "overlay that gains a widget in a vendor sync degrades to a "
-                "plain input instead of failing to compile.",
-            ),
-            f("group", STR, optional=True, doc="An id from `groups`."),
-            f("order", INT, optional=True),
-            f("unit", STR, optional=True),
-            f("step", NUMBER, optional=True),
-            f("help", STR, optional=True),
-            f("advanced", BOOL, optional=True),
-            f("readOnly", BOOL, optional=True),
-            f("nullable", BOOL, optional=True),
-            f("multiple", BOOL, optional=True),
-            f(
-                "channelKind",
-                STR,
-                optional=True,
-                doc="Narrows a channel picker to one kind of the channel "
-                "registry (`emitter`, `response`, `reward`).",
-            ),
-            f(
-                "options",
-                ListOf(obj(f("value", STR), f("label", STR), f("help", STR, optional=True))),
-                optional=True,
-                doc="Present only for `enum`. Every other picker draws its "
-                "options from a registry in this same reply.",
-            ),
-        ),
-        doc="One field's presentation, keyed in `SpecOverlay.fields` by its "
-        "overlay key — the same string a diagnostic's `anchor` carries, which "
-        "is what makes placing an error next to its input a lookup.",
-    ),
-    Shape(
-        "SpecOverlayGroup",
-        obj(f("id", STR), f("label", STR), f("order", INT), f("help", STR, optional=True)),
-    ),
-    Shape(
-        "SpecOverlay",
-        obj(
-            f("presentation_version", INT),
-            f("groups", ListOf(Ref("SpecOverlayGroup"))),
-            f(
-                "sections",
-                MapOf(
-                    obj(
-                        f("group", STR),
-                        f(
-                            "rows",
-                            lit("indexed", "by_id", "by_key", "object"),
-                            doc="How this section's rows are keyed. A literal "
-                            "union on purpose, unlike `widget`: each value is a "
-                            "distinct rendering branch, so a new one must fail "
-                            "the typecheck rather than silently mis-render.",
-                        ),
-                        f(
-                            "gatedBy",
-                            STR,
-                            optional=True,
-                            doc="A capabilities key — `outcome_classes` today. "
-                            "Which rows EXIST is capabilities()'s answer; which "
-                            "are VALID is the compiler's.",
-                        ),
-                    )
-                ),
-                doc="Keyed by dotted document path (`contingency.outcome_map`).",
-            ),
-            f("fields", MapOf(Ref("SpecOverlayField")), doc="Keyed by overlay key."),
-        ),
-        doc="task_spec.presentation.v1.json — the label/widget/group layer over "
-        "the JSON Schema. Vendored alongside the compiler, so the form and the "
-        "validator can never describe different documents.",
-    ),
-    Shape(
-        "SpecDiagnostic",
-        obj(
-            f("code", STR, doc="TG###; append-only, never reused."),
-            f("severity", lit("INFO", "WARN", "ERROR")),
+            f("location", STR, doc="`trials[1].rewardChannel`, `stages[2].trials`."),
             f("message", STR),
-            f(
-                "location",
-                nullable(STR),
-                doc="A dotted YAML path (`contingency.outcome_map.omission.strobe`), "
-                "a node id (`S12`), a selector, or a registry filename. Clients "
-                "should not parse it — `placement` already says where it lands.",
-            ),
-            f(
-                "placement",
-                lit("field", "row", "section", "node", "document"),
-                doc="Where this diagnostic belongs on screen, computed by the one "
-                "definition in the compiler (taskgraph/presentation.py). `field` "
-                "anchors are overlay keys, so mapping onto an input is a "
-                "dictionary lookup and never a parse.",
-            ),
-            f("anchor", nullable(STR), doc="The overlay key, section path or node id."),
-            f("detail", nullable(STR)),
-            f("help", nullable(STR), doc="Rule-level: what to do about it."),
-            f("decision", nullable(STR), doc="e.g. `D4` — a docs/taskgraph-decisions.md pointer."),
+            f("code", STR, doc="TSK101–TSK109. Each names a failure that is silent without it."),
         ),
     ),
     Shape(
-        "SpecGraphNode",
+        "TaskEntry",
         obj(
-            f("index", INT),
-            f("symbol", STR, doc="The template's node id (`engage_win`); `index` "
-              "formats to the listing's `S07`."),
+            f("id", STR),
+            f("name", STR, doc="Also the generated sketch's folder name."),
+            f("category", STR),
+            f("path", STR, doc="The generated sketch folder — what `port.flash` takes."),
             f("label", STR),
-            f("band", INT, doc="1 engagement · 2 sampling · 3 response · 4 outcome."),
-            f("type", lit("DELAY", "WAIT_ENTRY", "HOLD", "WAIT_EXIT", "PULSE", "TERMINAL")),
-            f("durationId", nullable(STR), doc="Timing id, when duration comes from the vector."),
-            f("durationMs", nullable(INT)),
-            f("strobeName", nullable(STR)),
-            f("strobe", nullable(INT)),
-            f("silentByDesign", BOOL, doc="An explicit `strobe: null` (D4), not an omission."),
-            f("watch", ListOf(STR), doc="Channel names this state watches."),
-        ),
-    ),
-    Shape(
-        "SpecGraphEdge",
-        obj(
-            f("index", INT),
-            f("src", INT),
-            f("dst", INT),
-            f("trigger", lit("TIMEOUT", "ENTER", "HELD", "BROKEN", "EXIT", "DONE", "ADVANCE", "REPEAT")),
-            f("guard", nullable(STR), doc="Human-readable guard, or null for the default edge."),
-            f("channel", nullable(STR)),
-            f("effect", nullable(STR), doc="`score:wrong`, `reward:@target` — the edge's side effect."),
-        ),
-    ),
-    Shape(
-        "SpecGraph",
-        obj(
-            f("nodes", ListOf(Ref("SpecGraphNode"))),
-            f("edges", ListOf(Ref("SpecGraphEdge"))),
-            f("entry", INT),
-        ),
-        doc="The compiled machine graph — six node primitives, trigger-keyed edges. "
-        "Deliberately NOT the derived TaskGraphModel: that describes what an animal "
-        "does; this describes what the interpreter executes.",
-    ),
-    Shape(
-        "SpecTableSummary",
-        obj(
-            f("specId", STR),
-            f("specHash", STR),
-            f("specVersion", INT),
-            f("vocabVersion", INT),
-            f("template", STR),
-            f("templateVersion", INT),
-            f("templateHash", STR),
+            f("editedAt", nullable(STR), doc="ISO-8601."),
             f(
-                "pinoutId",
-                STR,
-                doc="Which wiring resolved this table's channel names into pin bytes.",
+                "problems",
+                INT,
+                doc="How many diagnostics it currently trips. A COUNT, not the "
+                "list: this reply is drawn on every route mount and would "
+                "otherwise grow with the library.",
             ),
-            f(
-                "pinoutHash",
-                STR,
-                doc=(
-                    "The wiring's own hash, over the fields that can change a compiled "
-                    "byte — pin, kind, watch bit, well, port slot — and not over prose. "
-                    "Recorded BESIDE `specHash`, never folded into it (D22): a spec is "
-                    "identified by what it says and it says channel names, so a re-pin "
-                    "changes every table and moves no `specHash`. Without this pair the "
-                    "listing diff is blind to a rewired box, because the listing prints "
-                    "names."
-                ),
-            ),
-            f("nNodes", INT),
-            f("nEdges", INT),
-            f("nTiming", INT),
-            f("nTrialTypes", INT),
-            f("sizeBytes", INT, doc="Bytes on the wire to a board — the capacity that matters."),
-            f("crc32", STR, doc="Hex, `0x`-prefixed — matches the CLI's own rendering."),
         ),
+        doc="A row in the profile list.",
     ),
     Shape(
-        "SpecCompileResult",
+        "TaskPreset",
+        obj(f("id", STR), f("name", STR), f("summary", STR)),
+        doc="A starting point, never a task. Instantiating one produces a "
+        "definition the operator owns — so editing a preset in a later build "
+        "cannot reach back into a study already running on it.",
+    ),
+    Shape(
+        "TaskSaved",
         obj(
-            f("ok", BOOL),
-            f("diagnostics", ListOf(Ref("SpecDiagnostic"))),
+            f("entry", Ref("TaskEntry")),
+            f("diagnostics", ListOf(Ref("TaskDiagnostic"))),
             f(
-                "table",
-                nullable(Ref("SpecTableSummary")),
-                doc="Null whenever any diagnostic is an ERROR — the compiler's "
-                "structural gate, mirrored onto the wire. There is no code path "
-                "from a failing spec to a table summary.",
-            ),
-            f("graph", nullable(Ref("SpecGraph"))),
-            f(
-                "listing",
+                "sketchPath",
                 nullable(STR),
-                doc="emit.listing.render verbatim — the review artifact, byte-equal "
-                "to the checked-in specs/<id>.table.txt when the spec is unedited.",
+                doc="The generated folder, or null when the bundled root sketch "
+                "could not be read — the profile is stored either way and simply "
+                "has nothing to flash yet.",
             ),
-            f("elapsedMs", FLOAT),
         ),
-        doc="A spec that doesn't compile is a SUCCESSFUL reply carrying diagnostics, "
-        "never a command error — same discipline as Analytics' corrupt-file rule. "
-        "SPEC_INVALID is reserved for a document that isn't a document.",
     ),
     Shape(
-        "SpecCapabilities",
+        "TaskPreview",
         obj(
-            f("outcomeClasses", ListOf(STR)),
+            f("diagnostics", ListOf(Ref("TaskDiagnostic"))),
             f(
-                "requiredTiming",
-                ListOf(STR),
-                doc="Ordered — the form renders timing rows in exactly this order.",
-            ),
-            f("knobs", ListOf(STR)),
-            f("template", STR),
-            f("templateVersion", INT),
-            f(
-                "timingHelp",
-                MapOf(
-                    obj(
-                        f("note", STR),
-                        f(
-                            "wireKey",
-                            nullable(STR),
-                            doc="The legacy START token this duration mirrors.",
-                        ),
-                        f("ms", INT, doc="The template's own default, for reference."),
-                    )
-                ),
-                doc="Keyed by timing id. The template's `timing_defaults` prose — "
-                "each duration's firmware provenance, which is the only place a "
-                "duration's MEANING is written down. Carried so a form can explain "
-                "a row rather than only label it.",
+                "startLineLength",
+                INT,
+                doc="Bytes the built START line would occupy, seed included.",
             ),
             f(
-                "outcomeHelp",
-                MapOf(
-                    obj(
-                        f("note", STR),
-                        f("trigger", STR),
-                        f("terminal", STR),
-                        f("delay", STR, doc="The timing id this class waits in."),
-                        f("strobe", nullable(STR)),
-                    )
-                ),
-                doc="Keyed by outcome class. The template's `outcome_defaults` — "
-                "what each class MEANS, not merely that it exists. `outcomeClasses` "
-                "says which are produced; this says why one is a discrimination "
-                "error and another carries no evidence at all.",
+                "startLineMax",
+                INT,
+                doc="The firmware's cap, so the editor can show headroom without "
+                "hardcoding it. Over it is TSK107 and a refused generation — "
+                "`readLineInto()` truncates in silence, so this is checked "
+                "rather than trusted.",
+            ),
+            f("profile", Ref("TaskProfile"), doc="What this definition compiles to."),
+            f(
+                "catalogueDefaults",
+                MapOf(ANY),
+                doc="`metadataKey` → the value this field has with NO override, "
+                "keyed the same way `profile.config[].default` is. The editor "
+                "needs both to know which values this profile actually pins: a "
+                "definition stores only divergences, so a value merely EQUAL to "
+                "the catalogue's must not be written into it — that would freeze "
+                "it against a later correction to the range or the default.",
             ),
         ),
-        doc="What a topology produces (roadmap Phase 6): the palette's validity "
-        "model. A pure function of the knobs, so the form re-gates its rows the "
-        "instant one moves, before any compile returns.\n\n"
-        "`timingHelp`/`outcomeHelp` are the template's own `timing_defaults` and "
-        "`outcome_defaults`, which the skeleton generator already reads. They ride "
-        "here rather than on `specs.schema` because they are a function of the "
-        "TOPOLOGY — go/no-go's `correct` is a different fact from n-alternative's — "
-        "and a copy in the frontend would be a second definition of what a duration "
-        "is for.",
+        doc="A pure compile of an unsaved definition. Writes nothing.",
     ),
     Shape(
-        "SpecsUpdatedData",
-        obj(f("specs", ListOf(Ref("SpecEntry")))),
+        "TasksUpdatedData",
+        obj(f("tasks", ListOf(Ref("TaskEntry")))),
     ),
+    # ------------------------------------------------------------ strobe vocabulary
     Shape(
-        "DiffLine",
-        obj(f("op", lit(" ", "+", "-")), f("text", STR)),
-    ),
-    Shape(
-        "DiffHunk",
+        "StrobeCode",
         obj(
-            f(
-                "section",
-                STR,
-                doc="The listing section the hunk falls in — STATES, TIMING VECTOR, "
-                "TRIAL TYPES, STAGE SCHEDULE, DWELL BUDGET — so a change reads as "
-                '"3 states added in the sampling band" rather than "line 71 moved".',
-            ),
-            f("lines", ListOf(Ref("DiffLine"))),
+            f("name", STR),
+            f("code", INT),
+            f("origin", STR, doc="`firmware` (transcribed from BehaviorBox.h) or `ephymeris`."),
+            f("emittedOn", STR, optional=True),
+            f("rationale", STR, optional=True),
         ),
     ),
     Shape(
-        "SpecListingDiff",
-        obj(
-            f("specId", STR),
-            f("baseline", lit("saved", "spec"), doc="Which BEFORE side was used."),
-            f("changed", BOOL),
-            f(
-                "before",
-                nullable(Ref("SpecTableSummary")),
-                doc="Null when that side does not compile. The summaries carry the "
-                "headline (26 → 29 states) and the provenance strip — spec_hash and "
-                "template_hash move on EVERY edit, so they are excluded from the "
-                "hunks and shown once here instead of topping every diff.",
-            ),
-            f("after", nullable(Ref("SpecTableSummary"))),
-            f("hunks", ListOf(Ref("DiffHunk"))),
-            f("added", INT),
-            f("removed", INT),
-        ),
-        doc="A diff of the LISTING — the checked-in review artifact — never of the "
-        "YAML. The listing is what a reviewer reads upstream, so it is what a "
-        "topology change is reviewed against here (roadmap Phase 6).",
+        "RetiredStrobe",
+        obj(f("name", STR), f("code", INT)),
+        doc="Emitted by firmware this repository no longer contains. Reserved "
+        "forever: reissuing one would merge two unrelated event types in any "
+        "analysis spanning the change.",
     ),
     Shape(
-        "SpecArtifact",
+        "StrobeVocabulary",
         obj(
-            f("kind", lit("spec", "listing", "lint", "table_json", "table_bin", "bench")),
-            f("filename", STR),
-            f("text", nullable(STR)),
-            f("base64", nullable(STR), doc="Only table_bin — the packed wire bytes."),
+            f("version", INT),
+            f("codeMin", INT),
+            f("codeMax", INT, doc="999 — a wire-format limit. The host parser is ^\\d{1,3}\\t\\d+$."),
+            f("freeRanges", ListOf(ListOf(INT)), doc="Inclusive [lo, hi] pairs a new code may come from."),
+            f("codes", ListOf(Ref("StrobeCode"))),
+            f("retired", ListOf(Ref("RetiredStrobe"))),
+            f("portSlots", MapOf(MapOf(STR)), doc="Slot number → its six per-port code names."),
         ),
-    ),
-    Shape(
-        "BoardCapabilities",
-        obj(
-            f("box", INT),
-            f(
-                "present",
-                BOOL,
-                doc="False when the board announced no CAP line — un-migrated "
-                "firmware, the legacy bare-START path. Not an error; it means "
-                "'flash the interpreter sketch first' and the UI offers exactly "
-                "that.",
-            ),
-            f("baud", INT, doc="The rate that actually answered (transport detect)."),
-            f("values", MapOf(INT), doc="Numeric CAP keys — PROTO, WIRE, MAX_NODES…"),
-            f("text", MapOf(STR), doc="Text CAP keys — SKETCH, SPEC…"),
-            f("banner", ListOf(STR), doc="Everything the board said up to READY, verbatim."),
-        ),
-    ),
-    Shape(
-        "UploadProgressData",
-        obj(
-            f("box", INT),
-            f(
-                "phase",
-                lit("detect", "probe", "transfer", "verify"),
-                doc="detect = finding the baud · probe = reading CAP · transfer = "
-                "chunks moving · verify = awaiting TABLE OK.",
-            ),
-            f("chunk", nullable(INT), doc="Confirmed BY THE BOARD — counted at its ACK."),
-            f("chunks", nullable(INT)),
-            f("text", nullable(STR)),
-        ),
-    ),
-    Shape(
-        "UploadResult",
-        obj(
-            f("box", INT),
-            f("specId", STR),
-            f("specHash", STR),
-            f("nBytes", INT),
-            f("chunks", INT),
-            f("crc32", STR),
-            f(
-                "digest",
-                STR,
-                doc="The body digest the board echoed. CRC says the bytes arrived; "
-                "the digest says they decoded into the right fields — a transfer "
-                "can be perfect and a decode wrong, and only this catches it.",
-            ),
-            f("seconds", FLOAT),
-            f("notes", ListOf(STR), doc="Advisory CAP notes — a dimension the board didn't announce."),
-            f("caps", Ref("BoardCapabilities")),
-        ),
+        doc="The append-only strobe registry. Codes are never renumbered, never "
+        "repurposed and never deleted — four years of recorded sessions carry "
+        "them.",
     ),
 )
 
@@ -1899,7 +1553,92 @@ COMMANDS = (
         args=obj(f("sketchPath", STR)),
         result=union(Ref("TaskProfile"), obj(f("profile", NULL))),
         doc="Reads the task.json sibling of the sketch's .ino. A sketch with "
-        "none returns `{profile: null}` — fully supported.",
+        "none returns `{profile: null}` — fully supported. Works the same on a "
+        "bundled sketch and on one generated from a task profile, which is the "
+        "point of generating a real sketch folder.",
+    ),
+    # ---------------------------------------------------------- task profiles
+    #
+    # NOTHING HERE FLASHES. Saving generates a sketch folder that `discovery`
+    # then finds, so `port.flash` takes it by path like any other — which is
+    # what keeps the session flow, `taskDefaults` and Analytics free of a
+    # special case for a profile-backed run.
+    Command(
+        "tasks.list",
+        result=obj(f("tasks", ListOf(Ref("TaskEntry")))),
+        doc="This rig's saved task profiles. Reads each definition and validates "
+        "it, never generates — the list stays cheap however many exist.",
+        section="Task profiles (tasks.md §11)",
+    ),
+    Command(
+        "tasks.get",
+        args=obj(f("taskId", STR)),
+        result=obj(
+            f("definition", ANY, doc="The definition document, verbatim."),
+            f("diagnostics", ListOf(Ref("TaskDiagnostic"))),
+        ),
+        doc="One definition and everything currently wrong with it. The "
+        "diagnostics are recomputed rather than stored, because most of them "
+        "depend on the WIRING — a task saved clean can be broken by a rewiring "
+        "it never saw.",
+    ),
+    Command(
+        "tasks.preview",
+        args=obj(f("definition", ANY)),
+        result=Ref("TaskPreview"),
+        doc="Compile an unsaved definition and say what is wrong with it, "
+        "writing nothing. The editor calls it as the operator types, so a "
+        "problem lands against the field that caused it; it also carries the "
+        "built `START` line's length, which is the one budget an operator can "
+        "exhaust without noticing.",
+    ),
+    Command(
+        "tasks.save",
+        args=obj(f("definition", ANY)),
+        result=Ref("TaskSaved"),
+        doc="Write the definition and regenerate its sketch. **Always saves, "
+        "even with diagnostics** — a half-finished task must be savable, and the "
+        "gate is flashing, not saving. Refused only when the name collides with "
+        "a bundled sketch, which would make the picker ambiguous. Broadcasts "
+        "`tasks.updated` and `sketches.updated`, since a profile is a sketch.",
+    ),
+    Command(
+        "tasks.delete",
+        args=obj(f("taskId", STR)),
+        result=obj(f("deleted", BOOL)),
+        doc="Remove the definition and its generated sketch. Idempotent: "
+        "deleting what is already gone is a successful `{deleted: false}`, "
+        "because two clients racing on the same task is not an error.",
+    ),
+    Command(
+        "tasks.presets",
+        result=obj(f("presets", ListOf(Ref("TaskPreset")))),
+        doc="The tasks this lab was running before the firmware was unified, as "
+        "starting points. Static for the life of the process.",
+    ),
+    Command(
+        "tasks.fromPreset",
+        args=obj(
+            f("presetId", STR),
+            f("taskId", STR),
+            f("name", STR, optional=True),
+        ),
+        result=obj(
+            f("definition", ANY),
+            f("diagnostics", ListOf(Ref("TaskDiagnostic"))),
+        ),
+        doc="A fresh definition from a preset. **PURE — it writes nothing**, so "
+        "creating a task stays `tasks.save` and there is one definition of what "
+        "saving means. The id and name are the caller's: two tasks from one "
+        "preset is the normal case, and reusing the preset's id would make the "
+        "second overwrite the first.",
+    ),
+    Command(
+        "rig.strobes",
+        result=Ref("StrobeVocabulary"),
+        doc="The whole strobe registry, for the Rig tab's viewer and for the "
+        "task editor's code picker. Static unless a code is added.",
+        section="Strobe vocabulary (tasks.md §3.3)",
     ),
     Command(
         "sessions.suggestNumber",
@@ -2063,86 +1802,15 @@ COMMANDS = (
         "is running: a live run's .tsv has no .json yet and is not an orphan.",
         section="Crash recovery (data.md §12, §11)",
     ),
-    # Task specs
-    Command(
-        "specs.list",
-        result=obj(f("specs", ListOf(Ref("SpecEntry")))),
-        doc="Enumerate the spec library. Reads headers, never compiles.",
-        section="Task specs (specs.md)",
-    ),
-    Command(
-        "specs.get",
-        args=obj(f("specId", STR)),
-        result=obj(
-            f("specId", STR),
-            f("origin", Ref("SpecOrigin")),
-            f("text", STR, doc="The YAML source, verbatim — comments and all."),
-            f(
-                "raw",
-                ANY,
-                doc="The parsed document, or null if the text will not parse. The "
-                "form binds to this; the text is the escape hatch and the save "
-                "payload.",
-            ),
-        ),
-    ),
-    Command(
-        "specs.schema",
-        result=obj(
-            f("schema", ANY, doc="schema/task_spec.v1.json, verbatim."),
-            f(
-                "overlay",
-                Ref("SpecOverlay"),
-                doc="task_spec.presentation.v1.json — labels/widgets/groups. The "
-                "one registry in this reply that is typed, because the editor "
-                "generates its whole form from it.",
-            ),
-            f("strobes", ANY, doc="strobe_vocab.v1.json — codes with their rationale."),
-            f("channels", ANY, doc="channels.v1.json — the box pinout, by kind."),
-            f("limits", ANY, doc="limits.v1.json — hard ceilings, each with rationale."),
-            f(
-                "templates",
-                ListOf(obj(f("name", STR), f("version", INT), f("sourceHash", STR))),
-            ),
-        ),
-        doc="Everything a form needs, in one call on route mount. Served from the "
-        "vendored registry FILES — the same bytes the compiler validates against, "
-        "so a picker cannot offer a value the compiler then rejects. The frontend "
-        "must never hold its own copy of a registry.",
-    ),
-    Command(
-        "specs.compile",
-        args=obj(
-            f("text", STR, doc="The document as it would be saved — the LOAD pass "
-              "(schema validation, TG1xx, the YAML `on:` trap) checks things that "
-              "only exist before parsing, so the wire carries text, not a dict."),
-            f("specId", STR, optional=True),
-        ),
-        result=Ref("SpecCompileResult"),
-        doc="Stateless; the live per-edit call. Runs in a worker thread behind a "
-        "semaphore of 1 — a synchronous compile on the loop would stall the 20 Hz "
-        "output flush and, mid-session, the fsync-per-strobe write path. The "
-        "frontend debounces (~120 ms) and discards stale replies by corr.",
-    ),
-    Command(
-        "specs.capabilities",
-        args=obj(
-            f("topology", ANY, doc="The topology knobs as the form holds them — "
-              "may be half-built; unspecified knobs take the schema's defaults."),
-        ),
-        result=Ref("SpecCapabilities"),
-        doc="Pure function of six scalars; no I/O, no debounce, called on every "
-        "knob change. This is what re-gates the timing rows and outcome cards "
-        "before any compile returns.",
-    ),
     # ---------------------------------------------------------------- rig wiring
     #
     # THE WIRING IS NOT A SETTING, and these four commands are why. Settings are
     # shell-owned, pushed one-directionally, leniently parsed and silently
     # defaulting to a working value — right for a directory path, catastrophic
     # for a pin number, which has no safe default and fails by firing the wrong
-    # valve. This is the specs.* pattern instead: a sidecar-owned document,
-    # validated on the way in, with every problem located.
+    # valve. So the wiring is a sidecar-owned DOCUMENT instead: validated on the
+    # way in, refused when it is the wrong shape, and every problem located on
+    # the field that caused it.
     Command(
         "hardware.get",
         result=Ref("RigDocument"),
@@ -2190,161 +1858,6 @@ COMMANDS = (
         "shipped with. The reply is `hardware.get`'s, so the editor re-renders "
         "from one shape either way.",
     ),
-    Command(
-        "specs.paradigms",
-        result=obj(f("paradigms", ListOf(Ref("ParadigmSummary")))),
-        doc="Every paradigm a new task can start from, in gallery order. Its own "
-        "command rather than a member of specs.schema: that reply is everything "
-        "the FORM needs on route mount and is fetched by the Designer, which has "
-        "no use for paradigms — while the gallery and the wizard need paradigms "
-        "and not the overlay. Static for the life of the process.",
-    ),
-    Command(
-        "specs.skeleton",
-        args=obj(
-            f("paradigmId", STR),
-            f("specId", STR, doc="Written into the document, since the id names "
-              "the file, the compiled table, and what a board reports."),
-            f("answers", ANY, doc="{questionId: value} for the paradigm's own "
-              "questions. An unanswered question leaves the generator's value."),
-            f("label", nullable(STR), optional=True),
-            f("description", nullable(STR), optional=True),
-        ),
-        result=obj(
-            f("text", STR, doc="The YAML a save would write."),
-            f("result", Ref("SpecCompileResult")),
-        ),
-        doc="A first draft for a paradigm: the document, plus the compile of it. "
-        "TEXT rather than a dict because the LOAD pass checks things that only "
-        "exist before parsing, and the editor must hold the exact bytes it would "
-        "save. The compile rides along so the wizard's first render already has a "
-        "graph — one round trip, and 'it compiles at every step' is true from step "
-        "zero. PURE: it writes nothing, so creating a task stays specs.save and "
-        "rename-and-save keeps its single definition. Runs in the same worker "
-        "thread and semaphore as specs.compile, because it compiles.",
-    ),
-    Command(
-        "specs.save",
-        args=obj(
-            f("specId", STR, doc="The save target — the frontend passes the "
-              "document's own spec_id, so renaming the id and saving creates a "
-              "copy rather than moving a file."),
-            f("text", STR),
-        ),
-        result=obj(f("entry", Ref("SpecEntry")), f("result", Ref("SpecCompileResult"))),
-        doc="ALWAYS saves, even with ERROR diagnostics — a half-finished spec "
-        "must be savable; the gate is upload, not save. Writes go under the "
-        "sidecar's own app-data dir, like session files and ephymeris.db — no "
-        "Tauri fs capability is involved. The frontend passes the document's own "
-        "spec_id as the target, so renaming the id and saving creates a copy.",
-    ),
-    Command(
-        "specs.delete",
-        args=obj(f("specId", STR)),
-        result=obj(
-            f("entry", nullable(Ref("SpecEntry")), doc="Always null — see below."),
-        ),
-        doc="Deletes the spec. One meaning, where there used to be three: nothing "
-        "ships as a spec, so there is no bundled version underneath to fall back "
-        "to and nothing that can be read-only. `entry` stays in the reply shape "
-        "and is always null, so a client that renders the result of a delete does "
-        "not have to special-case its absence.",
-    ),
-    Command(
-        "specs.diff",
-        args=obj(
-            f("specId", STR),
-            f(
-                "text",
-                STR,
-                optional=True,
-                doc="The AFTER side: the editor's unsaved document. Absent = the "
-                "stored file, for reviewing a saved edit.",
-            ),
-            f(
-                "againstSpecId",
-                STR,
-                optional=True,
-                doc="Compare against another spec entirely — how the shaping_gr / "
-                "shaping_gr_ez 'pure timing delta' claim gets read. Overrides "
-                "`baseline`.",
-            ),
-        ),
-        result=Ref("SpecListingDiff"),
-        doc="A deliberate Review action, never per-keystroke — the baselines live "
-        "server-side and shipping two full listings per edit would be waste.",
-    ),
-    Command(
-        "specs.export",
-        args=obj(
-            f("specId", STR),
-            f("text", STR, optional=True, doc="Export the editor's document instead of the stored file."),
-            f("artifacts", ListOf(STR), doc="Which kinds; unknown names are ignored."),
-        ),
-        result=obj(f("artifacts", ListOf(Ref("SpecArtifact")))),
-        doc="Returns bytes IN THE REPLY; the frontend writes them through a "
-        "dialog-picked path. That keeps 'no wire command writes an arbitrary "
-        "file' intact — the sidecar's own writes stay under its data dir.",
-    ),
-    # Bench boxes (specs.md) — probe and table upload. NOTE the structural
-    # invariant: no command here or anywhere ties a spec to a SESSION.
-    # sessions.confirmMapping does not learn a specId and port.startSession is
-    # untouched — that door opens at Phase 5's exit criteria, not before.
-    Command(
-        "board.capabilities",
-        args=obj(
-            f("box", INT),
-            f(
-                "baud",
-                INT,
-                optional=True,
-                doc="Skip detection and probe at this rate. Absent = try 115200 "
-                "then 9600 — the two the fleet actually contains during the "
-                "rollout. NOT settings.defaultBaud, which is the console default.",
-            ),
-        ),
-        result=Ref("BoardCapabilities"),
-        doc="Read a board's CAP banner and stop — what a box says about itself, "
-        "changing nothing on it. Costs one DTR reset (opening the port is the "
-        "reset). Requires the port IDLE or PASSTHROUGH; auto-resumes the latter.",
-        section="Bench boxes (specs.md)",
-    ),
-    Command(
-        "board.uploadTable",
-        args=obj(
-            f("box", INT),
-            f("specId", STR),
-            f(
-                "text",
-                STR,
-                optional=True,
-                doc="Upload the editor's document instead of the stored file. "
-                "COMPILED SERVER-SIDE EITHER WAY — a client-supplied table is "
-                "never trusted; the structural gate stays in the compiler.",
-            ),
-        ),
-        result=Ref("UploadResult"),
-        doc="Compile → detect baud → CAP check → chunked transfer → CRC+digest "
-        "verify. The capability check runs BEFORE any byte of table, so a board "
-        "that can't hold this task says so in milliseconds and names both "
-        "numbers. Progress streams on `upload.progress` with this command's "
-        "corr. The port lands back in IDLE (or resumes PASSTHROUGH); the "
-        "utility baseline's bench hold decides whether it STAYS there.",
-    ),
-    Command(
-        "utility.benchHold",
-        args=obj(f("held", BOOL)),
-        result=Ref("UtilityStatus"),
-        doc="Suspend baseline restores while the bench panel is open. WITHOUT "
-        "this, a table upload ends with the port falling IDLE, the baseline "
-        "quietly reflashing BOX_Utility over the interpreter, and the uploaded "
-        "table dying with it — a bug no existing test caught because nothing "
-        "before this ever flashed a non-baseline sketch outside a session. A "
-        "SEPARATE flag from the session hold, so a bench release can never "
-        "release a rig a confirmed mapping owns. In-memory only: a client that "
-        "crashes leaves it set until app restart, which errs on the side of "
-        "not reflashing.",
-    ),
 )
 
 
@@ -2378,9 +1891,9 @@ EVENTS = (
         "hardware.updated",
         Ref("RigStatus"),
         doc="Broadcast after a successful save or reset. Every open client must "
-        "drop what it cached from `specs.schema`: that reply carries the composed "
-        "channel map, whose comment used to say it 'cannot change while the app "
-        "is running, because changing it means shipping a new build'. It can now.",
+        "drop any cached copy of the channel map: it used to be a fact about the "
+        "build, fixed for the life of the process, and it is now a fact about "
+        "this rig that an operator can change between two reads.",
     ),
     Event(
         "utility.updated",
@@ -2401,15 +1914,12 @@ EVENTS = (
     ),
     Event("sidecar.error", Ref("SidecarErrorData"), doc="Failures with no command to attribute to."),
     Event(
-        "specs.updated",
-        Ref("SpecsUpdatedData"),
-        doc="Push-on-change and replayed on connect — the sketches.updated pattern.",
-    ),
-    Event(
-        "upload.progress",
-        Ref("UploadProgressData"),
-        doc="Streamed during board.uploadTable, carrying the causing command's "
-        "corr — the flash.progress precedent, verbatim.",
+        "tasks.updated",
+        Ref("TasksUpdatedData"),
+        doc="This rig's task profiles changed — saved, deleted, or regenerated "
+        "because the wiring moved. Replayed on connect and pushed on change, "
+        "the `sketches.updated` pattern. It arrives WITH a `sketches.updated`, "
+        "never instead of one: a saved profile is also a new sketch.",
     ),
 )
 
@@ -2447,41 +1957,26 @@ ERRORS = (
         "The wiring document is not a wiring document — wrong shape, or too "
         "large. NOT a wiring MISTAKE: a document that is well-formed and "
         "describes an impossible box is a successful hardware.preview reply "
-        "carrying located problems, exactly as a spec that will not compile is a "
-        "successful specs.compile.",
+        "carrying located problems.",
     ),
     ErrorCode(
         "RIG_WOULD_BREAK_TASKS",
-        "hardware.save without `confirm` on a change that would stop a task "
-        "compiling. detail carries them. Retry with confirm: true to proceed — "
-        "the app does not veto a rewiring, it refuses to let one happen "
+        "hardware.save without `confirm` on a change that would stop a saved task "
+        "profile generating. detail carries them. Retry with confirm: true to "
+        "proceed — the app does not veto a rewiring, it refuses to let one happen "
         "unnoticed.",
     ),
-    ErrorCode("SPEC_NOT_FOUND", "No spec with that id in the library."),
     ErrorCode(
-        "SPEC_INVALID",
-        "The document isn't a document — not a string, or too large. NOT a "
-        "compile failure: a spec that doesn't compile is a successful "
-        "specs.compile reply carrying diagnostics.",
+        "TASK_NOT_FOUND",
+        "No task profile with that id on this rig.",
     ),
     ErrorCode(
-        "SPEC_COMPILER_UNAVAILABLE",
-        "The vendored Task-Graph compiler failed to import (README.md §6.4). "
-        "detail carries the ImportError. The legacy task.json path and the "
-        "session flow are unaffected.",
-    ),
-    ErrorCode(
-        "UPLOAD_REFUSED",
-        "The board cannot take this table and said so before any byte moved: no "
-        "CAP line (un-migrated firmware — flash the interpreter sketch first), a "
-        "protocol/wire-format mismatch, or a capacity the table exceeds. detail "
-        "carries the comparison.",
-    ),
-    ErrorCode(
-        "UPLOAD_FAILED",
-        "The transfer itself broke: no rate answered, the board went quiet "
-        "mid-transfer, TABLE FAIL, or a CRC/digest mismatch. A partial upload "
-        "leaves the board's table invalid, so it will refuse to run it.",
+        "TASK_INVALID",
+        "The definition is not a definition — wrong shape, too large, an "
+        "unusable id or name, or a name that collides with a bundled sketch. "
+        "NOT the same as a task that will not run: a well-formed definition "
+        "describing an impossible task is a successful reply carrying located "
+        "diagnostics, exactly as a wiring document is.",
     ),
     ErrorCode("INTERNAL", "Unhandled sidecar exception; also carried by sidecar.error."),
 )

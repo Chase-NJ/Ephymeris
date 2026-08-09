@@ -1,7 +1,0 @@
-# TG221 — stages[] length disagrees with n_sampling_stages.
-_expect: TG221
-_why: >-
-  @stim[$stage] is resolved per stage, so a trial type with the wrong number of
-  stimuli has no binding for at least one sampling node.
-_patch:
-  contingency.trial_types[0].stages: [odor1, odor3]

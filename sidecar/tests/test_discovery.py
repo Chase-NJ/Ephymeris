@@ -173,14 +173,19 @@ def test_loose_files_at_the_root_are_ignored(tmp_path: Path) -> None:
 
 
 def test_sketches_nested_below_a_subcategory_are_found(tmp_path: Path) -> None:
-    """Real lab trees group by paradigm *and* stage, not a flat two levels."""
-    make_sketch(tmp_path, "Olfactory Behavior/01_Shaping", "shaping_GL")
-    make_sketch(tmp_path, "Olfactory Behavior/02_Bdisc", "GRGL_2-Odor")
-    make_sketch(tmp_path, "Utility", "PRIME_Lines")
+    """Real lab trees group by paradigm *and* stage, not a flat two levels.
+
+    The names here are synthetic: this exercises the SHAPE of the tree, and
+    using the bundle's own names would make the test read as a claim about what
+    ships.
+    """
+    make_sketch(tmp_path, "Olfactory Behavior/01_Early", "one_deep")
+    make_sketch(tmp_path, "Olfactory Behavior/02_Later", "also_deep")
+    make_sketch(tmp_path, "Utility", "shallow")
 
     result = discover()
 
-    assert {s.name for s in result.sketches} == {"shaping_GL", "GRGL_2-Odor", "PRIME_Lines"}
+    assert {s.name for s in result.sketches} == {"one_deep", "also_deep", "shallow"}
     assert result.skipped == []
 
 

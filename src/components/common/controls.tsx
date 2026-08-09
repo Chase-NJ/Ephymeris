@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import type { ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { springSnappy } from "@/lib/motion";
 
@@ -200,6 +200,166 @@ export function Select<T extends string | number>({
   );
 }
 
+/**
+ * The one numeric entry control — every tunable number in the app types through
+ * this.
+ *
+ * IT HOLDS A DRAFT WHILE FOCUSED, and that is the whole design. Three separate
+ * inputs used to parse and commit on every keystroke, which made the field
+ * uneditable in three compounding ways:
+ *
+ *  - **Backspace could not clear it.** An emptied input committed immediately —
+ *    to the default here, to `0` in the ramp table — so the character came back
+ *    as fast as it was deleted and the only way to change a value was to append
+ *    to it.
+ *  - **Clamping fought the typist.** `min` applied per keystroke, so on a field
+ *    floored at 100 the first digit of "250" snapped to 100 and the rest landed
+ *    on the end of it. The operator got 1002 and no indication why.
+ *  - **Decimals could not be typed.** `parseFloat("5.")` is 5, which re-rendered
+ *    as "5" and ate the point; the next digit made 55 rather than 5.5.
+ *
+ * The draft is raw text, so a half-typed value stays exactly as typed. What
+ * parses is reported up **live and unclamped** — the preview, the state machine
+ * and the diagnostics keep following along — and blur is what COMMITS: clamped
+ * into range, or back to `fallback` if what is on screen is not a number. So the
+ * transient disagreement lasts exactly as long as the caret is in the box, and
+ * a field left holding nonsense visibly snaps to the value the box would run on
+ * rather than quietly disagreeing with it.
+ *
+ * FOCUS SELECTS THE WHOLE ENTRY, so typing replaces the line rather than
+ * inserting into it — the ordinary way to retune a number is to click it and
+ * type the new one.
+ *
+ * `type="text"` rather than `type="number"`: a number input refuses to display
+ * text it cannot parse, so it blanks itself on "1." or "-" and takes the draft
+ * with it. It also treats a stray scroll over a focused field as an edit.
+ */
+export function NumberInput({
+  value,
+  fallback,
+  integer = false,
+  min,
+  max,
+  label,
+  title,
+  mono = true,
+  align = "left",
+  invalid = false,
+  autoFocus = false,
+  className = "",
+  onChange,
+}: {
+  /** The committed value. Tolerates a non-number so a legacy stored string still renders. */
+  value: unknown;
+  /** What an emptied or unreadable entry commits to on blur. */
+  fallback: unknown;
+  /** Truncate to a whole number on commit. */
+  integer?: boolean;
+  min?: number | undefined;
+  max?: number | undefined;
+  label: string;
+  title?: string | undefined;
+  mono?: boolean;
+  align?: "left" | "right";
+  /** An external problem with this value — styles the border, nothing else. */
+  invalid?: boolean;
+  /** For a row the user just created and is about to fill — the ramp's new
+   *  stage. Focus selects the seeded value, so typing replaces it outright. */
+  autoFocus?: boolean;
+  /** Layout-only additions (widths) — visual identity stays here. */
+  className?: string;
+  onChange: (next: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  // Clicking into a field fires focus (where the selection is made) and then
+  // mouseup, which collapses it to a caret. Swallowing that one mouseup is what
+  // makes click-then-type replace the entry.
+  const selecting = useRef(false);
+
+  const text = draft ?? String(value ?? "");
+
+  function read(raw: string): number | null {
+    const trimmed = raw.trim();
+    if (trimmed === "") return null;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return null;
+    return integer ? Math.trunc(parsed) : parsed;
+  }
+
+  // "-", "1." and "." are on the way to a number, not a failure — flagging them
+  // would put a red border under every negative and every decimal mid-entry.
+  const partial =
+    draft !== null && (draft.trim() === "" || /^-?(\d*\.?\d*)$/.test(draft.trim()));
+  const unreadable = draft !== null && !partial && read(draft) === null;
+
+  return (
+    <input
+      type="text"
+      inputMode={integer ? "numeric" : "decimal"}
+      aria-label={label}
+      title={title}
+      value={text}
+      // eslint-disable-next-line jsx-a11y/no-autofocus -- the cell of a row
+      // the user just added; focus belongs there and nowhere else.
+      autoFocus={autoFocus}
+      onFocus={(e) => {
+        setDraft(String(value ?? ""));
+        selecting.current = true;
+        e.currentTarget.select();
+      }}
+      onMouseUp={(e) => {
+        if (!selecting.current) return;
+        selecting.current = false;
+        e.preventDefault();
+      }}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        const parsed = read(raw);
+        // Unclamped on purpose: clamping here is what turns "250" into 1002 on
+        // a floored field. The commit below is where range is enforced.
+        if (parsed !== null) onChange(parsed);
+      }}
+      onBlur={() => {
+        const parsed = draft === null ? null : read(draft);
+        setDraft(null);
+        selecting.current = false;
+        onChange(parsed === null ? (read(String(fallback)) ?? 0) : clampTo(parsed, min, max));
+      }}
+      onKeyDown={(e) => {
+        // Enter commits without leaving the field, Escape abandons the draft —
+        // both are what a spreadsheet-shaped table of numbers implies.
+        if (e.key === "Enter") e.currentTarget.blur();
+        else if (e.key === "Escape") {
+          setDraft(null);
+          e.currentTarget.blur();
+        }
+      }}
+      className={`rounded-sm border bg-nebula px-2.5 py-1.5 text-[12px] text-starlight transition-colors focus:outline-none ${
+        mono ? "font-mono" : ""
+      } ${align === "right" ? "text-right" : ""} ${
+        invalid || unreadable
+          ? "border-status-error"
+          : "border-halo hover:border-static/40 focus:border-pulsar"
+      } ${className}`}
+    />
+  );
+}
+
+/**
+ * Clamp a committed number into a field's declared range.
+ *
+ * Clamping rather than rejecting: these bounds exist to keep a typo from
+ * reaching the firmware (a zero polling rate is a hang, a bias window past the
+ * ring buffer is an overrun), and refusing the entry outright would leave the
+ * operator with no way to find out what the legal value was.
+ */
+export function clampTo(value: number, min?: number, max?: number): number {
+  if (min !== undefined && value < min) return min;
+  if (max !== undefined && value > max) return max;
+  return value;
+}
+
 export function TextInput({
   value,
   onChange,
@@ -243,7 +403,7 @@ export function TextInput({
             },
           }
         : {})}
-      className={`rounded-sm border border-halo bg-nebula px-2.5 py-1.5 text-[12px] text-starlight placeholder:text-static/60 ${
+      className={`rounded-sm border border-halo bg-nebula px-2.5 py-1.5 text-[12px] text-starlight transition-colors placeholder:text-static/60 hover:border-static/40 focus:border-pulsar focus:outline-none ${
         mono ? "font-mono" : ""
       } ${attention ? "attention-border" : ""} ${className}`}
     />

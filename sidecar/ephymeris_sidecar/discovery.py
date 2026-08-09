@@ -10,11 +10,28 @@ user-authored — a library can be missing or partial, but it can no longer be
 *misconfigured*, and "you haven't set this up yet" stopped being a state anyone
 can be in.
 
-The consequence worth stating plainly: adding a sketch now needs a new build.
-That is the deliberate trade, and `library_status()` carries the word "damaged"
-rather than "invalid" because the remedy changed with it — the old copy sent the
-user to a directory picker, and the new one has to send them to whoever
-maintains the app.
+`library_status()` therefore carries the word "damaged" rather than "invalid":
+the remedy is reinstalling, not a directory picker.
+
+TWO MORE ROOTS, AND THEY DO DIFFERENT THINGS.
+
+`<data_dir>/tasks/` holds the sketch folders the app GENERATES from this rig's
+task profiles. They are scanned exactly like bundled ones and marked
+`source: "rig"`, and they APPEND — a name that collides with a bundled sketch is
+reported and dropped. This is the walk-back `tasks.md` §2.1 names: "a hidden
+additional library that appends to the bundle, never a return of the configured
+root". It is what makes a saved profile an ordinary discovered sketch, so
+`port.flash`, the session flow and Analytics need no special case for one.
+
+`<data_dir>/rig/sketches/` holds rebuilds of the BUNDLED sketches against this
+rig's wiring (`taskdef/bundled.py`). Those REPLACE the entry they were built
+from rather than appending: a rebuild is the same sketch with the right pins,
+not a second one, and offering both would make flashing a coin flip. They keep
+`source: "bundled"` for the same reason — what they are has not changed, only
+which pins they compile against.
+
+Neither is user-configurable and neither can be pointed anywhere: the app writes
+them, the app scans them.
 
 The two rules most worth preserving:
 
@@ -63,11 +80,18 @@ LIBRARY_ENV = "EPHYMERIS_SKETCH_LIBRARY"
 BUNDLED_ENV = "EPHYMERIS_BUNDLED_SKETCHES"
 
 
+SketchSource = Literal["bundled", "rig"]
+
+
 @dataclass(frozen=True)
 class Sketch:
     category: str
     name: str
     path: str
+    #: Where it came from. `rig` means the app generated it from a task profile
+    #: on this machine, so it is regenerated on every save and every wiring
+    #: change — and editing the folder by hand is pointless.
+    source: SketchSource = "bundled"
 
 
 @dataclass(frozen=True)
@@ -133,6 +157,76 @@ def library_root() -> tuple[Path | None, LibrarySource]:
     if repo.is_dir():
         return repo, "bundled"
     return None, "bundled"
+
+
+def _apply_pinned(
+    root: Path | None,
+    sketches: list[Sketch],
+    skipped: list[SkippedEntry],
+) -> None:
+    """Serve this rig's rebuild of a bundled sketch instead of the bundled one.
+
+    Matched on (category, name), which is what a rebuild preserves. A folder
+    here that matches nothing in the bundle is REPORTED rather than offered: it
+    is a leftover from a sketch an app update removed, and flashing it would run
+    firmware this build does not contain.
+
+    Keeps `source: "bundled"` — see this module's header. A rebuild is the same
+    sketch, so nothing downstream should have to know which copy it got.
+    """
+    if root is None or not Path(root).is_dir():
+        return
+    by_key = {(s.category, s.name): i for i, s in enumerate(sketches)}
+    for folder in sorted(Path(root).glob("*/*")):
+        if not folder.is_dir() or not _is_valid_sketch(folder):
+            continue
+        index = by_key.get((folder.parent.name, folder.name))
+        if index is None:
+            skipped.append(
+                SkippedEntry(
+                    str(folder),
+                    "a rebuilt copy of a sketch this version no longer ships",
+                )
+            )
+            continue
+        sketches[index] = Sketch(
+            folder.parent.name, folder.name, str(folder), "bundled"
+        )
+
+
+def _scan_generated(
+    root: Path | None,
+    bundled_names: set[str],
+    sketches: list[Sketch],
+    skipped: list[SkippedEntry],
+    visited: set[Path],
+) -> None:
+    """Add this rig's generated task sketches, without letting one shadow a bundled one.
+
+    A generated folder that collides with a bundled name is REPORTED rather than
+    dropped or preferred. Dropping it silently would leave an operator flashing a
+    sketch they did not author while the picker showed the name they did; and
+    preferring it would let a saved profile override something that ships.
+    """
+    if root is None or not Path(root).is_dir():
+        return
+    for entry in sorted(Path(root).iterdir(), key=lambda p: p.name.lower()):
+        # `<data_dir>/tasks/` holds one `<id>.json` per definition alongside the
+        # category folders. Only directories are categories.
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        before = len(sketches)
+        _scan(entry, 1, sketches, skipped, visited, "rig")
+        for sketch in sketches[before:]:
+            if sketch.name in bundled_names:
+                skipped.append(
+                    SkippedEntry(
+                        sketch.path,
+                        f"a bundled sketch is already called {sketch.name!r}; "
+                        "rename the task profile",
+                    )
+                )
+        sketches[before:] = [s for s in sketches[before:] if s.name not in bundled_names]
 
 
 def library_status() -> SketchLibraryStatus:
@@ -202,6 +296,7 @@ def _scan(
     sketches: list[Sketch],
     skipped: list[SkippedEntry],
     visited: set[Path],
+    source: SketchSource = "bundled",
 ) -> None:
     """Walk one category folder, recursing through sub-categories.
 
@@ -229,7 +324,9 @@ def _scan(
         visited.add(real)
 
         if _is_valid_sketch(child):
-            sketches.append(Sketch(category=folder.name, name=child.name, path=str(child)))
+            sketches.append(
+                Sketch(folder.name, child.name, str(child), source)
+            )
             # Don't descend into a sketch: `src/`, `extras/` and the like are
             # its own business, not more categories.
             continue
@@ -241,11 +338,26 @@ def _scan(
             continue
 
         if depth < MAX_SCAN_DEPTH:
-            _scan(child, depth + 1, sketches, skipped, visited)
+            _scan(child, depth + 1, sketches, skipped, visited, source)
 
 
-def discover() -> SketchDiscovery:
-    """Scan the bundled sketch library, per the §2.3 algorithm."""
+def discover(
+    generated_root: Path | None = None,
+    pinned_root: Path | None = None,
+) -> SketchDiscovery:
+    """Scan the bundle, apply this rig's rebuilds, then add its task profiles.
+
+    Both roots are passed in rather than resolved here, so this module never
+    learns about the data dir — the same discipline the rig wiring keeps. Absent,
+    or missing on disk, simply means a fresh install: no rebuilds yet and no
+    profiles yet, and the bundle alone is a working library.
+
+    ORDER IS THE WHOLE ALGORITHM. The bundle is scanned first; `pinned_root`
+    REPLACES entries it was built from, because a rebuild is the same sketch
+    with this rig's pins; `generated_root` APPENDS, and a name colliding with a
+    bundled one is reported and dropped rather than silently winning. Saving a
+    profile refuses that collision up front, so this is the second line.
+    """
     status = library_status()
     if status.state != "ok" or status.path is None:
         return SketchDiscovery(library=status)
@@ -300,10 +412,15 @@ def discover() -> SketchDiscovery:
 
         _scan(entry, 1, sketches, skipped, visited)
 
+    _apply_pinned(pinned_root, sketches, skipped)
+    bundled_names = {s.name for s in sketches}
+    _scan_generated(generated_root, bundled_names, sketches, skipped, visited)
+
     # A readable library holding nothing valid is its own state. It used to mean
     # "you pointed at the wrong folder"; now it can only mean a partial install,
-    # so it reads as one.
-    if not sketches:
+    # so it reads as one. A rig profile does not rescue it: a build with no
+    # bundled sketches has no root sketch to generate FROM.
+    if not any(s.source == "bundled" for s in sketches):
         return SketchDiscovery(
             library=SketchLibraryStatus(
                 "empty",

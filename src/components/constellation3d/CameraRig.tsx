@@ -38,20 +38,13 @@ const OVERVIEW_EPSILON = 0.05;
 /** How far from a star the camera settles on arrival. */
 const ARRIVAL_DISTANCE = 3.6;
 /**
- * Where the focused star sits, as a fraction of a **half-frame** left of
- * centre — far enough left to sit clear of the panel docked right, not so far
- * that it drifts under the sidebar's glass (`dashboard.md` §9.2).
- *
- * Applied as a **projection shift** (`setViewOffset`), not by aiming the camera
- * past the star. That distinction is the whole trick: the orbit pivot stays
- * exactly on the star, so dragging turns the view around it and the star holds
- * its place in the frame at every angle. Aiming off-target — which is what the
- * old world-unit `PANEL_OFFSET` did — puts the pivot beside the star instead,
- * and since that offset is fixed in world space rather than to the camera, half
- * an orbit swings the star across the frame and behind the panel. That was
- * invisible while focusing disabled the controls outright; it is not now.
+ * Ceiling on the framing bias, as a fraction of a half-frame. The views publish
+ * where the star should sit in px (`SceneIntent.frameShift`); on a window
+ * narrow enough that the panel covers most of it, the px request would push the
+ * star under the sidebar's glass — the clamp keeps it on screen instead
+ * (`dashboard.md` §9.2).
  */
-const STAR_FRAME_BIAS = 0.2;
+const STAR_FRAME_BIAS_MAX = 0.6;
 /** §6.3 — the fly takes this long; short enough not to feel like waiting. */
 const FLIGHT_SECONDS = 1.5;
 /** Longest `delta` any time-integrated animation will honour — see the frame
@@ -93,7 +86,7 @@ interface FlightMove {
  * > reach for a mount effect.
  */
 export function CameraRig() {
-  const { attached, focusKey, focusedId, docksPanel } = useSceneIntent();
+  const { attached, focusKey, focusedId, docksPanel, frameShift } = useSceneIntent();
   const { camera, controls, size } = useThree();
   const reduceMotion = useReduceMotion();
 
@@ -245,8 +238,27 @@ export function CameraRig() {
    * The target is 0 unless a star is focused **and** this view docks a panel:
    * the bias exists solely to clear that panel, so a view without one is
    * centred.
+   *
+   * Applied as a **projection shift** (`setViewOffset`), not by aiming the
+   * camera past the star. That distinction is the whole trick: the orbit pivot
+   * stays exactly on the star, so dragging turns the view around it and the
+   * star holds its place in the frame at every angle. Aiming off-target —
+   * which is what the old world-unit `PANEL_OFFSET` did — puts the pivot
+   * beside the star instead, and since that offset is fixed in world space
+   * rather than to the camera, half an orbit swings the star across the frame
+   * and behind the panel.
+   *
+   * The geometry: `setViewOffset`'s x is `(width / 2) · bias`, so a bias of
+   * `2 · frameShift / width` lands the star exactly `frameShift` px left of
+   * centre — the midpoint of the uncovered strip when the view published
+   * `(panelOuter − leftChrome) / 2`. Recomputed on resize because `size` is
+   * reactive; the restatement effect below keeps the *animated* value pinned
+   * to pixels through the resize itself.
    */
-  const biasTarget = focusedId !== null && docksPanel ? STAR_FRAME_BIAS : 0;
+  const biasTarget =
+    focusedId !== null && docksPanel
+      ? Math.min(STAR_FRAME_BIAS_MAX, Math.max(0, (2 * frameShift) / size.width))
+      : 0;
 
   useEffect(() => {
     if (reduceMotion) {

@@ -460,7 +460,7 @@ function ChannelInspector({
         fallback=""
         baseline={entry.label ?? ""}
         onChange={(v) => onEdit(selected, { label: String(v) })}
-        help="What you call it. Display only — a spec references the channel name, so renaming a label is free and renaming a channel is not."
+        help="What you call it — &quot;sandalwood&quot; rather than &quot;odor line 1&quot;. The Task tab reads it back on every trial-type row, so this is where an odor gets its name. Display only: a task profile references the channel NAME, so renaming a label is free and renaming a channel is not."
         mono={false}
       />
 

@@ -238,22 +238,7 @@ Owns everything stateful. See [§6.4](#64-dependency-policy) before adding a run
 | `tasks/start_command.py` | Builds `START <wireKey>=<value> …`; enforces `START_LINE_MAX` (mirrored in `BehaviorBox.h`) | [tasks §6](tasks.md#6-from-values-to-the-wire) |
 | `tasks/metrics.py` | Rolling live-metric computation. Scientific output, not a UI detail | [tasks §5](tasks.md#5-live-metrics) |
 | `tasks/seed.py` | Draws the per-run `SEED` value | [tasks §6.4](tasks.md#64-seed) |
-| `utility.py` | The hardware utility baseline: what firmware each box is believed to carry, restoring idle boxes, the `identify` signal, and the bench hold | [settings §8](settings.md#8-the-hardware-utility-baseline), [specs §7](specs.md#7-the-bench) |
-| **`specs/`** | | |
-| `specs/compiler.py` | The guarded import, `self_check()` (generates a paradigm skeleton and compiles it, not just imports), registries, emitters | [specs §2](specs.md#2-the-compiler) |
-| `specs/store.py` | Where specs live — one directory of user files, and nothing else | [specs §3](specs.md#3-where-specs-live) |
-| `specs/service.py` | CompileResult → wire shapes; diagnostic placement; the listing diff; artifact export; paradigms and skeletons | [specs §4](specs.md#4-the-editor), [§6](specs.md#6-the-diff-as-a-review) |
-| `ports/upload.py` | `PortLink`: the compiler transport's `Link` over one box's own serial handle, with ACK-counted progress and the filtered console mirror | [specs §7](specs.md#7-the-bench) |
-| **`taskgraph/`** | **The task-spec compiler.** Formerly a separate repo vendored into `sidecar/vendor/`; now a first-class subpackage | [**TaskGraph.md**](TaskGraph.md) |
-| `taskgraph/paths.py` | The one place `__file__` is walked. Runtime data resolves package-relative; repo-only paths walk up for a marker and raise when frozen | [TaskGraph §5](TaskGraph.md#5-paradigm--template--hardware--spec) |
-| `taskgraph/graph.py` | The six primitives, the eight triggers, the four bands, and `TRIGGERS_FOR` — the authority for trigger totality | [TaskGraph §3](TaskGraph.md#3-six-primitives-four-epochs) |
-| `taskgraph/pipeline.py` | P0 LOAD → P1 BIND → P2 TEMPLATE → P3 EMIT+LOWER → P4 GRAPH → P5 PACK | [TaskGraph §4](TaskGraph.md#4-the-compile-pipeline) |
-| `taskgraph/paradigms.py` | The eight paradigms (seven templates + the hidden `blank`) and the skeleton generator. Defines no value — reads every one from template, registry, vocabulary or answer | [specs §3.1](specs.md#31-paradigms-and-the-skeleton) |
-| `taskgraph/templates/four_epoch/v{1,2}.py` | Knobs → nodes and edges. **Versioned by file; never edited once pinned** | [D14](taskgraph-decisions.md#d14) |
-| `taskgraph/registries.py` | `ChannelMap` composing logical channels with the active pinout; the strobe vocabulary; runtime limits | [D15](taskgraph-decisions.md#d15) |
-| `taskgraph/codegen/layout.py` | Record widths, generating **both** the Python packer and the C++ `static_assert`s | [D17](taskgraph-decisions.md#d17) |
-| `taskgraph/emit/pack.py` | The byte format: 24-byte header, 12 sections, trailing CRC | [TaskGraph §6](TaskGraph.md#6-the-byte-table-and-the-wire) |
-| `taskgraph/lint/rules_*.py` | 39 rules, banded TG1xx–TG5xx by the pass that finds them | [TaskGraph §4](TaskGraph.md#4-the-compile-pipeline) |
+| `utility.py` | The hardware utility baseline: what firmware each box is believed to carry, restoring idle boxes, and the `identify` signal | [settings §8](settings.md#8-the-hardware-utility-baseline) |
 
 ### 4.2 React frontend — `src/`
 
@@ -282,7 +267,7 @@ Talks to the sidecar over the WebSocket only.
 | `components/chrome/` | Persistent shell: sidebar, titlebar, starfield, constellation status widget |
 | `components/cohorts/` | Cohort grid, editor panels, procedural icon, Auto-Balance |
 | `components/config/` | Interactive constellation board, zodiac picker (rendered on Settings), handshake indicator/list, utility sketch panel |
-| `components/task/` | The sketch viewer's parts: `SketchStateMachine` (the derived machine with the parameter mapping drawn on), `TaskGraph` (kept solely for Mission Control's live panel), `ParameterInspector` (group pills + one group's fields — selection instead of scrolling), the library list, and the explain tile |
+| `components/task/` | The task editor's parts: `SketchStateMachine` (the derived machine with the parameter mapping drawn on, plus `LiveStateMachine` for Mission Control's live panel), `TrialTypeTable` (odor → response → reward, with a contingency sentence per row), `StageRamp`, `TaskLibrary`, `ParameterInspector`, and the explain tile |
 | `components/common/SummaryCard.tsx` | The HUD tile — icon, label, status, divider, rows. Shared by the Dashboard and the Task tab so the two "tiles over the sky" pages are one motif |
 | `components/hardware/` | `BoardMap` — the Mega2560 pin diagram Rig wiring selects and drags on, ported from `ConstellationBoard` |
 | `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view |
@@ -304,11 +289,11 @@ Every route is a child of `<AppShell />`, wired in `src/App.tsx`.
 | `/` | `routes/Dashboard.tsx` | Landing: full-bleed 3D rig sky with a hero launch CTA, the session dock, and Cohorts/Rig/Analytics summary cards |
 | `/cohorts` | `routes/Cohorts.tsx` | Cohort browser — card grid, search/sort/archived toggle |
 | `/cohorts/new`, `/cohorts/:id` | `routes/CohortEditor.tsx` | Create (progressive reveal) or manage (all at once) a cohort |
-| `/task` | `routes/TaskSketches.tsx` | The sketch viewer — the whole of the tab. The spec-creator routes (landing, wizard, Designer, bench) are removed pending a fresh UI ([specs.md](specs.md)); the sidecar spec system is intact |
-| `/task/hardware` | *(redirects to `/config/wiring`)* | Former address of **Rig wiring** ([specs.md §9](specs.md)) |
+| `/task` | `routes/Task.tsx` | The **task-profile editor**: the profile list and presets, the derived state machine, the trial table, the shaping ramp, the parameter rail |
 | `/task/sketches` | *(redirects to `/task`)* | Former address of the sketch viewer, as is `/sketches` — the viewer is the tab now. Still the **only** editor for `settings.taskDefaults` |
 | `/analytics` | `routes/Analytics.tsx` | The Observatory — one route, no tabs; cohort/session/animal are filters |
 | `/config` | `routes/Config.tsx` | The **Rig** tab (label renamed; route kept), as a column of HUD tiles: box→board bindings, handshake, utility baseline, the Wiring door, baud, `arduino-cli` |
+| `/config/strobes` | `routes/RigStrobes.tsx` | The strobe vocabulary, read-only — every code, the retired ones, and the free ranges a new one may come from |
 | `/config/wiring` | `routes/RigWiring.tsx` | **Rig wiring** — the channel→pin editor (`components/hardware/RigWiringEditor.tsx`) plus the pin table (`components/hardware/PinTable.tsx`), behind the Rig landing's Wiring door ([settings.md §5.1](settings.md)) |
 | `/settings` | `routes/Settings.tsx` | Storage and interface only |
 | `/debug` | `routes/DebugMode.tsx` | Per-box instrument panel. **No nav entry** — reached by selecting a box |
@@ -355,12 +340,7 @@ The interpreter resolves to `sidecar/.venv` unless `EPHYMERIS_SIDECAR_PYTHON` ov
 | `test_grouping.py` | 19 | Auto-Balance round-robin |
 | `test_data_folder.py` | 19 | Resolution, sanitization, collision suffixing |
 | `test_utility.py` | 18 | The baseline against the real port manager: restores only from `IDLE`, the session hold, belief invalidation, the identify handshake incl. the silent-board case. The harness deliberately feeds the retired `utilitySketchPath` key, doubling as an integration test of the basename healing |
-| `tests/compiler/` | ~900 | The compiler's own suite, moved in with it: the six passes, every lint rule, the templates, the packer, the transport, gates A–F against the off-target board. Test data comes from generated skeletons (`tgpaths.py`), not from checked-in specs |
-| `test_compiler_imports.py` | 18 | The compiler resolves by dotted path only — `test_no_bare_taskgraph_module_exists` fails if a `sys.path` hack ever reappears; `self_check()` generates and compiles a real skeleton |
-| `test_taskgraph_docs.py` | 6 | The `two_afc` skeleton embedded in `creating-a-task.md` is byte-current **and compiles**; every `decision=` a rule carries has an anchor to land on |
-| `test_specs_service.py` | 27 | The store (id-as-filename, delete), compile payloads validate as wire shapes, diagnostic placement, the listing diff, paradigms and skeletons, export |
 | `test_bundled_library_covers_archives.py` | 3 | Every sketch name the lab's real archives record resolves against the bundled library — the guard on Analytics' orphan decoding |
-| `test_upload_link.py` | 8 | `PortLink` framing/deadlines/ACK-counted progress/mirror filtering against a scripted serial; the `UPLOADING` bracket through the real `PortManager` |
 | `test_wire_shapes.py` | 16 | Validator semantics + real `to_json` emitters conform to `protocol/schema.py` |
 | `test_session_runner.py` | 13 | Runner orchestration, including the end-all finalization drain |
 | `test_in_session.py` | 13 | `IN_SESSION` entry/exit sequence |
@@ -404,7 +384,7 @@ Payload shapes are guarded from both sides: the generated `CommandArgsMap`/`Comm
 - **`port.output` is batched at ~20 Hz**, not one message per line, and is never persisted beyond a capped in-memory ring buffer (~2000 lines/port).
 - **Client-side timeouts don't cancel sidecar work.** Default 15 s; `port.flash` gets 300 s and `sketches.refresh` 60 s. The sidecar remains the authority on what actually happened.
 
-### 6.3 The eight that silently corrupt
+### 6.3 The seven that silently corrupt
 
 Each is documented in place with a `[!CAUTION]` in the owning document. They share a property: getting them wrong produces plausible output rather than an error.
 
@@ -415,7 +395,6 @@ Each is documented in place with a `[!CAUTION]` in the owning document. They sha
 | A new **column** needs a `MIGRATIONS` entry, a new table does not | [data.md §6.3](data.md#63-changing-the-schema) | The column appears only on freshly-created databases |
 | `CODEC_VERSION` must be bumped when the maths changes | [data.md §9](data.md#9-derived-metrics) | Cached summaries keep serving the old definition with no symptom |
 | The PNG export's five rules — off-screen not hidden, forced `seen`, `skipAnimations`, cleared pin, 1× scale | [data.md §10.6](data.md) | A figure that looks deliberate but is blank, dimmed, half-drawn or cropped |
-| A corpus session's firmware generation is its abort-path strobe **order**, not which codes it contains | [TaskGraph.md §7.1](TaskGraph.md#71-the-corpus-now-spans-two-firmware-generations) | Eleven v1 sessions replay against the model and reject, reading as a modelling gap |
 | The rescan's prune acts on **reachable and absent**, never on `exists() == False` alone | [data.md §8.6](data.md#86-pruning--records-the-disk-no-longer-has) | One rescan with the archive drive unplugged erases a cohort's history |
 | Carrying an adoption forward keys on identity **and path**, never identity alone | [data.md §8.7](data.md#87-carrying-adoptions-forward) | Whichever copy of a duplicated run was adopted first keeps the row — 30 runs in the real archive decode only from the other copy |
 
@@ -427,14 +406,13 @@ Sidecar runtime dependencies were **deliberately just `pyserial` and `websockets
 
 **`grpcio` + `protobuf`**, for the arduino-cli daemon backend. The policy's concern — an install that fails and takes a feature with it — is answered structurally: the subprocess backend remains as the fallback, and `create_board_tool` degrades to it (loudly, in the log) when `grpcio` doesn't import or the daemon won't start. A lab machine where the wheel failed loses live compiler streaming, never flashing. `grpcio-tools` is dev-only.
 
-**`jsonschema` + `pyyaml`**, for the task-spec compiler ([TaskGraph.md](TaskGraph.md)). This one is **weaker, deliberately, and should not be read as the same grant.** There is no second implementation to fall back to — nothing stands in for a compiler the way a subprocess stands in for a daemon. So the fence is drawn around *scope* instead of capability:
+**`jsonschema`**, for validating the two operator-authored documents: the rig wiring (`hardware/store.py`) and a task profile. This one is **weaker, deliberately, and should not be read as the same grant.** There is no second validator to fall back to. So the fence is drawn around *scope* instead of capability:
 
-- `ephymeris_sidecar/specs/compiler.py` guards the import and exposes `available()`.
-- Every `specs.*` and `board.uploadTable` handler reports `SPEC_COMPILER_UNAVAILABLE` with the original `ImportError` in `detail`.
-- The Task screen renders one banner, and **the legacy `task.json` half of that screen, flashing, and the entire session flow are untouched.** A lab machine that cannot compile a spec can still run sessions.
-- The sidecar says which it is in one line at startup, because in a packaged build the realistic failure is a dropped PyInstaller `--add-data` entry whose only other symptom is a banner on a screen nobody has opened yet.
+- Every import of it is inside the function that needs it, never at module scope — a failed wheel must not take down the process that owns six serial ports.
+- A failure disables the wiring and profile **editors** and nothing else: flashing, the session flow, and every profile already saved keep working, because a saved profile's generated sketch is already on disk.
+- It reports itself as a located problem on the document being edited, rather than as a crash.
 
-`pyyaml` is low-risk (universal wheels, pure-Python fallback). `jsonschema` drags `attrs`, `referencing` and **`rpds-py`**, a Rust extension — that is the one that can genuinely fail, on a CPython newer than its wheel matrix. A packaged build resolves it once on the packaging machine and freezes the result, so the exposure is dev and packaging machines, not the lab.
+`jsonschema` drags `attrs`, `referencing` and **`rpds-py`**, a Rust extension — that is the one that can genuinely fail, on a CPython newer than its wheel matrix. A packaged build resolves it once on the packaging machine and freezes the result, so the exposure is dev and packaging machines, not the lab.
 
 Frontend dependencies are less constrained (the 3D stack is `three` + `@react-three/fiber` + `@react-three/drei`, and `modern-screenshot` rasterizes the Analytics PNG export) because they are bundled at build time — npm install never runs on the lab machines, so the failure mode this policy exists to prevent doesn't reach them.
 
@@ -473,17 +451,7 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 </td></tr>
 <tr><td><b>6</b></td><td>
 
-**No frontend test runner or linter.** `tsc --noEmit` is the entire automated frontend check — no vitest, jest, eslint, prettier, or biome, and no test file anywhere under `src/`. The wire mirrors are guarded by the contract test, so the highest-risk surface is covered; but store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`), the session flow's step transitions, and `lib/tasks/topology.ts` are untested code paths. (The spec editor's `lib/specs/` was removed with the spec UI on 2026-08-06 — `specs.md` carries what its verification rituals had established, for the rebuild.)
-
-</td></tr>
-<tr><td><b>31</b></td><td>
-
-**The spec editor is verified on macOS only.** The compiler freezes and self-checks in the packaged sidecar, and the whole bench path ran against a real Mega — all on this Mac. Windows, the actual lab target, has run none of it: not the frozen data layout, not `rpds-py`'s wheel on the lab's Python, not `PortLink` against a COM port (where open/reset semantics genuinely differ). First Windows packaging run should start at `compiler.self_check()`'s startup line, which was built for exactly this.
-
-</td></tr>
-<tr><td><b>32</b></td><td>
-
-**A crashed client leaves the bench hold set.** `utility.benchHold` is in-memory and released by the bench panel's unmount; a webview that dies while it is held leaves baseline restores suspended until app restart. Deliberate — erring toward *not* reflashing — but the symptom is "boxes mysteriously stop returning to baseline", and `UtilityStatus.held` is the place to look.
+**No frontend test runner or linter.** `tsc --noEmit` is the entire automated frontend check — no vitest, jest, eslint, prettier, or biome, and no test file anywhere under `src/`. The wire mirrors are guarded by the contract test, so the highest-risk surface is covered; but store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`), the session flow's step transitions, and `lib/tasks/topology.ts` are untested code paths.
 
 </td></tr>
 </table>
@@ -524,13 +492,12 @@ Small things that are true today and will confuse a reader who assumes otherwise
 - **`kind` in a task profile is a convention, not a schema gate.** `tasks/profile.py` parses `config`, `strobes`, `liveMetrics`, `controls`, and `telemetry` from every profile regardless of `kind`. A `utility` profile carrying `liveMetrics` is accepted and simply never scored. Worth *enforcing* only if it ever causes confusion in the lab. *(item 23)*
 - **`RatPlacementBanner.tsx` is ~780 lines**, by a wide margin the largest file in `src/`. That is not complexity to be refactored away: it is a hand-authored isometric SVG animation — six pose tables across nine choreography phases, an articulated hand, a rat drawn as bezier paths. It contains no data logic at all.
 - **`components/charts/DrawOn.tsx` is how a chart line draws itself on**, and `pathLength` is not — it is unusable alongside the `vector-effect="non-scaling-stroke"` every chart here relies on, and leaves an upscaled line permanently broken into chunks rather than merely animating oddly.
-- **`GraphCounts` in `TaskGraph.tsx` is defined and wired, but no caller passes `counts`.** Deliberate: partial mid-session tallies must not be shown.
 
 ---
 
 ## 8. Documentation map
 
-Ten documents. This one is the entry point.
+Six documents. This one is the entry point.
 
 | If you need to know… | Read |
 |---|---|
@@ -541,10 +508,6 @@ Ten documents. This one is the entry point.
 | What lands on disk, the database, the metrics, the Observatory | [**data.md**](data.md) |
 | Every settings key, box bindings, the utility baseline | [**settings.md**](settings.md) |
 | The exact shape of any command, event, payload, or error code | [**websocket-protocol.md**](websocket-protocol.md) |
-| Task specs in the app: the editor, the wizard, where specs live, the bench | [**specs.md**](specs.md) |
-| **How the task compiler works** — layers, primitives, the pipeline, the byte format | [**TaskGraph.md**](TaskGraph.md) |
-| **How to author a task**, layer by layer, for someone designing an experiment | [**creating-a-task.md**](creating-a-task.md) |
-| Why the compiler is shaped the way it is — 21 decisions, each naming its rejected alternative | [taskgraph-decisions.md](taskgraph-decisions.md) |
 
 ### 8.1 Conventions
 

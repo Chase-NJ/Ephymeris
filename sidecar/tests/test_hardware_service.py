@@ -1,10 +1,8 @@
 """`hardware.*` — the payloads, and the impact check that gates a save.
 
-The rule this module inherits from `specs/service.py`: a document that is
-WELL-FORMED and describes an impossible box is not a command error. It is a
-successful reply carrying located problems, exactly as a spec that will not
-compile is a successful `specs.compile`. `RIG_INVALID` is for a document that is
-not a document.
+The rule this module rests on: a document that is WELL-FORMED and describes an
+impossible box is not a command error. It is a successful reply carrying located
+problems. `RIG_INVALID` is for a document that is not a document.
 
 `conftest.py` sets `EPHYMERIS_WIRE_VALIDATE=1` globally, so every payload built
 here is checked against `protocol/schema.py` on the way out. That is what makes
@@ -13,18 +11,19 @@ these tests cover the wire shape and not just the values.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from ephymeris_sidecar.hardware import service, store
-from ephymeris_sidecar.specs import store as spec_store
-from ephymeris_sidecar.taskgraph import paradigms, registries
+from ephymeris_sidecar.rig import registry
 
 
 @pytest.fixture(autouse=True)
 def _shipped_wiring():
-    registries.set_rig_source(None)
+    registry.set_rig_source(None)
     yield
-    registries.set_rig_source(None)
+    registry.set_rig_source(None)
 
 
 @pytest.fixture
@@ -32,13 +31,33 @@ def rig_store(tmp_path):
     return store.HardwareStore(tmp_path)
 
 
+class FakeTaskStore:
+    """The contract `impact_of` needs from a task-profile store.
+
+    Two methods: `list_entries()` and `failures(id)`. `failures` MUST read the
+    wiring currently in force rather than a cached answer — that is the whole
+    mechanism by which installing a hypothetical wiring and asking again
+    produces a before/after difference. Binding a set of channel names and
+    reporting the missing ones is exactly what the real store does, minus the
+    generation.
+    """
+
+    def __init__(self, tasks: dict[str, set[str]]) -> None:
+        self._tasks = tasks
+
+    def list_entries(self):
+        return [{"id": tid, "label": tid.upper()} for tid in sorted(self._tasks)]
+
+    def failures(self, task_id: str) -> set[str]:
+        bound = self._tasks.get(task_id, set())
+        present = registry.channels().names()
+        return {f"missing:{name}" for name in sorted(bound - present)}
+
+
 @pytest.fixture
-def specs(tmp_path):
-    """A spec library with one task in it, saved against the shipped wiring."""
-    s = spec_store.SpecStore(tmp_path)
-    text = paradigms.to_yaml(paradigms.skeleton(paradigms.get("two_afc"), spec_id="grgl"))
-    s.save("grgl", text)
-    return s
+def tasks():
+    """A profile library with one task in it, saved against the shipped wiring."""
+    return FakeTaskStore({"grgl": {"odor_port", "left_well", "right_well", "fluid_2"}})
 
 
 def rig(**edits) -> dict:
@@ -63,7 +82,7 @@ def test_an_unedited_rig_gets_the_shipped_wiring_as_an_editable_document(rig_sto
     assert payload["status"]["custom"] is False
     assert payload["problems"] == []
     assert payload["document"]["channels"]["odor_port"]["kind"] == "engagement"
-    assert payload["status"]["pinoutHash"] == registries.channels().content_hash()
+    assert payload["status"]["pinoutHash"] == registry.channels().content_hash()
 
 
 def test_a_broken_document_is_still_served(rig_store):
@@ -72,11 +91,11 @@ def test_a_broken_document_is_still_served(rig_store):
     rig_store.root.mkdir(parents=True, exist_ok=True)
     doc = rig()
     doc["pins"]["trial_light"]["index"] = 200
-    rig_store.path.write_text(__import__("json").dumps(doc), encoding="utf-8")
+    rig_store.path.write_text(json.dumps(doc), encoding="utf-8")
 
     payload = service.document_payload(rig_store)
     assert payload["document"]["pins"]["trial_light"]["index"] == 200
-    assert [p["code"] for p in payload["problems"]] == ["TG227"]
+    assert [p["code"] for p in payload["problems"]] == ["RIG102"]
 
 
 # --------------------------------------------------------------------------- #
@@ -95,24 +114,8 @@ def test_a_sense_violation_carries_its_rule():
     """Pin 200 is a legal integer and not a pin a Mega has — schema-clean,
     rule-dirty, which is exactly the split."""
     problems = service.problems_for(rig(pins={"trial_light": {"index": 200}}))
-    assert [p["code"] for p in problems] == ["TG227"]
+    assert [p["code"] for p in problems] == ["RIG102"]
     assert "0-53" in problems[0]["message"]
-
-
-def test_the_binding_range_is_bounded_twice_and_the_schema_wins():
-    """`CH_BIND_RESERVED_FROM` is 0xF0 and the schema caps `index` at 239, so a
-    pin in the binding range never reaches TG227 through this path.
-
-    That is the overlap `rules_spec_direct.py` describes and it is deliberate:
-    the schema says what is well-formed, the rule owns the SEMANTIC, and a
-    safety-critical bound living only in the schema is one that disappears the
-    day someone relaxes the schema. The rule's own coverage is direct, in
-    tests/compiler/test_rules_wiring.py.
-    """
-    problems = service.problems_for(rig(pins={"trial_light": {"index": 0xF5}}))
-    assert problems
-    assert all(p["code"] is None for p in problems)
-    assert problems[0]["location"] == "pins.trial_light.index"
 
 
 def test_shape_is_reported_before_sense():
@@ -125,7 +128,7 @@ def test_shape_is_reported_before_sense():
 def test_every_problem_is_reported_not_just_the_first():
     doc = rig(pins={"trial_light": {"index": 200}, "vacuum": {"index": 200}})
     codes = {p["code"] for p in service.problems_for(doc)}
-    assert codes == {"TG227", "TG228"}
+    assert codes == {"RIG102", "RIG103"}
 
 
 # --------------------------------------------------------------------------- #
@@ -133,65 +136,78 @@ def test_every_problem_is_reported_not_just_the_first():
 # --------------------------------------------------------------------------- #
 
 
-def test_deleting_a_bound_channel_names_the_task_it_breaks(rig_store, specs):
+def test_deleting_a_bound_channel_names_the_task_it_breaks(rig_store, tasks):
     """Full channel authoring means an operator can delete a channel a saved
-    task binds. TG223 catches it at compile — by which time the wiring is
-    written and the task is broken."""
+    task binds. Catching it at generation would be too late — by then the wiring
+    is written and the task is broken."""
     doc = rig()
     doc["channels"].pop("left_well")
     doc["pins"].pop("left_well")
 
-    breaks = service.impact_of(doc, specs)
+    breaks = service.impact_of(doc, tasks)
     assert [b["specId"] for b in breaks] == ["grgl"]
-    assert "TG223" in breaks[0]["codes"]
+    assert "missing:left_well" in breaks[0]["codes"]
     assert breaks[0]["label"]
 
 
-def test_a_harmless_repin_breaks_nothing(rig_store, specs):
-    assert service.impact_of(rig(pins={"left_well": {"index": 12}}), specs) == []
+def test_a_harmless_repin_breaks_nothing(rig_store, tasks):
+    assert service.impact_of(rig(pins={"left_well": {"index": 12}}), tasks) == []
 
 
-def test_a_task_already_failing_is_not_blamed_on_the_wiring(rig_store, specs):
+def test_a_task_already_failing_is_not_blamed_on_the_wiring(rig_store):
     """NEWLY is load-bearing: listing a task that was already broken would bury
     the ones this change actually broke."""
-    specs.save("broken", "spec_version: 1\nspec_id: broken\n")  # missing everything
+    two = FakeTaskStore({
+        "grgl": {"odor_port", "left_well"},
+        "broken": {"a_channel_that_never_existed"},
+    })
 
     doc = rig()
     doc["channels"].pop("left_well")
     doc["pins"].pop("left_well")
 
-    assert [b["specId"] for b in service.impact_of(doc, specs)] == ["grgl"]
+    assert [b["specId"] for b in service.impact_of(doc, two)] == ["grgl"]
 
 
-def test_the_impact_check_leaves_the_wiring_it_found(rig_store, specs):
+def test_the_impact_check_leaves_the_wiring_it_found(rig_store, tasks):
     """It installs a HYPOTHETICAL wiring to answer a question. Leaving it
-    installed would mean a preview silently changed what the app compiles."""
-    before = registries.channels().content_hash()
-    service.impact_of(rig(pins={"left_well": {"index": 12}}), specs)
-    assert registries.channels().content_hash() == before
-    assert registries.current_rig_source() is None
+    installed would mean a preview silently changed what the app generates."""
+    before = registry.channels().content_hash()
+    service.impact_of(rig(pins={"left_well": {"index": 12}}), tasks)
+    assert registry.channels().content_hash() == before
+    assert registry.current_rig_source() is None
 
 
-def test_the_impact_check_restores_even_when_a_compile_explodes(rig_store, specs, monkeypatch):
-    from ephymeris_sidecar.specs import compiler
+def test_the_impact_check_restores_even_when_a_task_explodes(rig_store):
+    """The restore is in a `finally` precisely because the thing it wraps can
+    raise. A hypothetical wiring surviving a crash is the worst outcome here:
+    every later generation would silently use it."""
+    class Exploding(FakeTaskStore):
+        def __init__(self):
+            super().__init__({"grgl": {"left_well"}})
+            self.calls = 0
 
-    calls = {"n": 0}
+        def failures(self, task_id):
+            self.calls += 1
+            if self.calls > 1:
+                raise RuntimeError("task store exploded")
+            return super().failures(task_id)
 
-    def boom(*a, **kw):
-        calls["n"] += 1
-        if calls["n"] > 1:
-            raise RuntimeError("compiler exploded")
-        return compiler.compile(*a, **kw)
-
-    before = registries.channels().content_hash()
-    monkeypatch.setattr(compiler, "compile", boom)
-    service.impact_of(rig(pins={"left_well": {"index": 12}}), specs)
-    assert registries.channels().content_hash() == before
+    before = registry.channels().content_hash()
+    with pytest.raises(RuntimeError):
+        service.impact_of(rig(pins={"left_well": {"index": 12}}), Exploding())
+    assert registry.channels().content_hash() == before
+    assert registry.current_rig_source() is None
 
 
-def test_an_empty_library_costs_nothing(rig_store, tmp_path):
-    empty = spec_store.SpecStore(tmp_path / "empty")
-    assert service.impact_of(rig(), empty) == []
+def test_an_empty_library_costs_nothing(rig_store):
+    assert service.impact_of(rig(), FakeTaskStore({})) == []
+
+
+def test_a_rig_with_no_task_store_yet_reports_no_breaks(rig_store):
+    """None is "none stored yet", which is the honest empty answer rather than a
+    special case the caller has to know about."""
+    assert service.impact_of(rig(), None) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -199,24 +215,24 @@ def test_an_empty_library_costs_nothing(rig_store, tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def test_preview_describes_the_wiring_in_force_not_the_draft(rig_store, specs):
+def test_preview_describes_the_wiring_in_force_not_the_draft(rig_store, tasks):
     """The operator is comparing a draft against what the rig is doing now; a
     status echoing the draft back would answer a question nobody asked."""
-    payload = service.preview_payload(rig_store, rig(pins={"left_well": {"index": 12}}), specs)
+    payload = service.preview_payload(rig_store, rig(pins={"left_well": {"index": 12}}), tasks)
     assert payload["status"]["custom"] is False
-    assert payload["status"]["pinoutHash"] == registries.channels().content_hash()
+    assert payload["status"]["pinoutHash"] == registry.channels().content_hash()
     assert payload["problems"] == []
     assert payload["breaks"] == []
 
 
-def test_preview_writes_nothing(rig_store, specs):
-    service.preview_payload(rig_store, rig(pins={"left_well": {"index": 12}}), specs)
+def test_preview_writes_nothing(rig_store, tasks):
+    service.preview_payload(rig_store, rig(pins={"left_well": {"index": 12}}), tasks)
     assert not rig_store.exists()
 
 
 def test_a_saved_rig_reports_itself_as_custom(rig_store):
     stored = rig_store.save(rig(pins={"left_well": {"index": 12}}))
-    registries.set_rig_source(rig_store.load)
+    registry.set_rig_source(rig_store.load)
 
     payload = service.saved_payload(rig_store, stored)
     assert payload["status"]["custom"] is True

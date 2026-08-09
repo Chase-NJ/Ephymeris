@@ -71,7 +71,6 @@ Immediately after a successful `auth`, the server replays current state **to tha
 3. One `sketches.updated`.
 4. One `cohorts.updated`.
 5. One `prefixes.updated`.
-6. One `specs.updated` — skipped entirely when the spec compiler is unavailable, so a client's empty spec list means "no compiler" exactly when the Task screen's banner says so.
 
 Events are otherwise emitted only when something changes, so a client connecting during a quiet period would have nothing to render and would have to guess. Guessing is exactly what §5.2 forbids.
 
@@ -252,152 +251,53 @@ Rejected with `UTILITY_UNAVAILABLE` when no utility sketch is configured or the 
 
 An `identify` pair rides on the utility sketch's own `task.json` (`tasks.md` §3.6) rather than in settings, for the same reason the rest of the Task Profile does: the app must not know that a Hart-lab box says `ON LIGHT`.
 
-### 3.6 Task specs
+### 3.6 Rig wiring
 
-The task-spec compiler's surface ([specs.md](specs.md), [TaskGraph.md](TaskGraph.md)). A spec is a **sibling artifact** to a sketch's `task.json`, never an extension of it — the two hash differently, and `profile_hash` is what Analytics groups a sketch's historical runs by.
-
-| Command | Args | Result | Notes |
-|---|---|---|---|
-| `specs.list` | — | `{specs: [SpecEntry]}` | Enumerates the library from a cheap **parse**, never a compile, so it stays instant however many specs exist. A document that won't parse still gets a row (with nulls) — a broken spec is exactly the one someone needs to find |
-| `specs.get` | `{specId}` | `{specId, origin, text, raw}` | `text` is the YAML source verbatim, comments and all; `raw` is the parsed document or `null` when it won't parse — the form binds to `raw`, and the compile that runs on mount is what reports *why* a null one won't parse |
-| `specs.schema` | — | `{schema, overlay: <SpecOverlay>, strobes, channels, limits, templates}` | Everything a form needs, once, on route mount. Served from the registry **files** — the same bytes the compiler validates against, so a picker cannot offer a value the compiler then rejects. `channels` is the one composed member: a channel is two files now (what it *means*, and where it *is* on this box), so what goes on the wire is the compiler's own resolved view of both, which is a stronger guarantee than either half. The frontend must never hold its own copy of a registry. `overlay` is the one member with a declared shape; see below |
-| `specs.compile` | `{text, specId?}` | `<SpecCompileResult>` | Stateless; the live per-edit call. Takes **text**, not a dict — the LOAD pass (schema validation, TG1xx, the YAML `on:` trap) checks things that only exist before parsing, so the editor compiles exactly the bytes it would save. Runs in a worker thread behind a semaphore of 1; the frontend debounces ~120 ms and discards stale replies by `corr` |
-| `specs.capabilities` | `{topology}` | `<SpecCapabilities>` | Which outcome classes and timing ids this topology produces — the palette's validity model, from the template's own `capabilities()`. A pure function of the knobs (half-built topologies welcome; unspecified knobs take the schema defaults), so the form re-gates its rows the instant a knob moves, before any compile returns. Carries `timingHelp` and `outcomeHelp` alongside `outcomeClasses`/`requiredTiming`; see below |
-| `specs.paradigms` | — | `{paradigms: [ParadigmSummary]}` | Every shape a new task can start from, in gallery order. **A paradigm is a shape, not a spec**: it names a template, fixes the knobs that make a kind of experiment what it is, and declares what to ask about the rest. `ramped` is the one member the skeleton generator deliberately does **not** consume — it names the timing ids a shaping ramp is expected to move, and a stage schedule additionally needs trial boundaries and per-stage values that no paradigm declares, so generating one would invent precisely the numbers the generator is forbidden to invent. The wizard's session step offers them as a suggestion the operator applies. Its own command rather than a member of `specs.schema` because that reply is what the *form* needs on route mount and is fetched by the Designer, which has no use for paradigms — while the gallery and the wizard need paradigms and never the overlay. Static for the life of the process |
-| `specs.skeleton` | `{paradigmId, specId, answers, label?, description?}` | `{text, result}` | A first draft for a paradigm, and the compile of it. Returns **text** for the same reason `specs.compile` takes it — the LOAD pass checks things that only exist before parsing, and the editor must hold the exact bytes it would save. The compile rides along so the wizard's first render already has a graph: one round trip, and *"it compiles at every step"* is true from step zero rather than from step one. **Pure — it writes nothing**, so creating a task stays `specs.save` and rename-and-save keeps its single definition. The generator emits no value it did not read from an existing authority (the paradigm, the template's `capabilities()`, the channel registry, the strobe vocabulary, or the operator's answer), which is what stops it being a second definition of what a minimal legal spec is |
-| `specs.save` | `{specId, text}` | `{entry, result}` | **Always saves, even with ERROR diagnostics** — a half-finished spec must be savable; the gate is upload, not save. Writes land under the sidecar's app-data dir (`<data_dir>/specs/user/`), like session files and `ephymeris.db` — no Tauri fs capability involved. The frontend passes the *document's own* `spec_id` as the target, so renaming the id and saving creates a copy; a parsed document whose `spec_id` disagrees with the target is refused (`SPEC_INVALID`) because the id names the file, the table, and what a board reports after an upload. The reply carries the compile of what was just written |
-| `specs.delete` | `{specId}` | `{entry: null}` | Deletes the spec. **One meaning, where there used to be three** — nothing ships as a spec, so there is no bundled version underneath to fall back to and nothing that can be read-only. The reply keeps `entry` and always returns null, so a client rendering the result of a delete need not special-case its absence |
-| `specs.diff` | `{specId, text?, baseline?, againstSpecId?}` | `<SpecListingDiff>` | A diff of the **listing** — the checked-in review artifact — never of the YAML; a topology change is reviewed here against the same rendering a reviewer reads upstream. Hunks are grouped by the listing's own ruled sections (STATES, TIMING VECTOR, …) so a change reads as *"3 states added"* rather than *"line 71 moved"*; `spec_hash`/`template_hash` move on every edit and are deliberately excluded from the hunks — the before/after summaries carry them once, as a provenance strip. `text` is the editor's unsaved document (absent = the stored file); The before side is the saved file unless `againstSpecId` names another spec — which is how a "same machine, different numbers" claim gets read, and how Shaping-R against Shaping-L shows no structural hunks. A deliberate Review action, never per-keystroke |
-| `specs.export` | `{specId, text?, artifacts}` | `{artifacts: [SpecArtifact]}` | Returns bytes **in the reply** — the spec YAML, the listing, the lint baseline, the canonical `table.json`, the packed `table.bin` (base64), the bench card — and the frontend writes them through a dialog-picked path. That keeps "no wire command writes an arbitrary file" intact: the sidecar's own writes stay under its data dir. Everything but the YAML is a function of a compiled table, so a spec that doesn't compile exports only itself |
-
-```jsonc
-// SpecCompileResult — a spec that doesn't compile is a SUCCESSFUL reply
-// carrying diagnostics, never a command error (the Analytics corrupt-file
-// discipline). SPEC_INVALID is reserved for a document that isn't a document.
-{
-  "ok": true,
-  "diagnostics": [ {
-    "code": "TG204", "severity": "ERROR",
-    "message": "…", "location": "timing[3].ms",
-    // Where it lands on screen, computed by the ONE definition in the
-    // compiler (taskgraph/presentation.py). `field` anchors are overlay keys,
-    // so mapping a diagnostic onto its input is a dictionary lookup.
-    "placement": "field" /* | "row" | "section" | "node" | "document" */,
-    "anchor": "timing[].ms",
-    "detail": "…", "help": "…", "decision": "D6"
-  } ],
-  "table": { /* SpecTableSummary */ },   // null whenever any diagnostic is an ERROR —
-                                         // the compiler's structural gate, mirrored
-  "graph": { "nodes": [/* SpecGraphNode */], "edges": [/* SpecGraphEdge */], "entry": 0 },
-  "listing": "…",   // emit.listing.render verbatim — the review artifact, byte-equal
-                    // to the checked-in specs/<id>.table.txt when the spec is unedited
-  "elapsedMs": 48.1
-}
-```
-
-The graph is the compiled **machine** graph — six node primitives (`DELAY`/`WAIT_ENTRY`/`HOLD`/`WAIT_EXIT`/`PULSE`/`TERMINAL`), trigger-keyed edges with guards and effects — deliberately not the derived `TaskGraphModel`, which describes what an animal does rather than what the interpreter executes.
-
-**One of `specs.schema`'s five registries is typed, and it is the presentation overlay.**
-
-```jsonc
-// SpecOverlay — schema/task_spec.presentation.v1.json, verbatim.
-{
-  "presentation_version": 1,
-  // SpecOverlayGroup — the form's section order.
-  "groups": [ { "id": "timing", "label": "Timing", "order": 40, "help": "…" } ],
-  // Keyed by dotted DOCUMENT path. `rows` is a literal union because each
-  // value is a distinct rendering branch; `gatedBy` names a capabilities key,
-  // and which rows EXIST is capabilities()'s answer while which are VALID is
-  // the compiler's.
-  "sections": {
-    "contingency.outcome_map": {
-      "group": "outcomes",
-      "rows": "by_key" /* | "indexed" | "by_id" | "object" */,
-      "gatedBy": "outcome_classes"
-    }
-  },
-  // SpecOverlayField, keyed by OVERLAY key — the same string a diagnostic's
-  // `anchor` carries, which is what makes placing an error next to the input
-  // that caused it a dictionary lookup rather than a parse.
-  "fields": {
-    "timing.ms": { "label": "Duration", "widget": "number", "group": "timing",
-                   "order": 20, "unit": "ms", "step": 1 }
-  }
-}
-```
-
-`widget` is deliberately **not** a literal union: the renderer carries a documented default case, so an overlay that gains a widget degrades to a plain input rather than failing to compile. The other four members (`schema`, `strobes`, `channels`, `limits`) stay untyped `any` on purpose — those are passthrough JSON the frontend reads with lookups, not a shape it binds a form to.
-
-**`capabilities()` carries prose as well as a validity model.**
-
-```jsonc
-// SpecCapabilities — a pure function of the topology knobs.
-{
-  "outcomeClasses": ["correct", "hold_break", "no_engage", "omission", "wrong"],
-  "requiredTiming": ["t_zero", "t_arm", "t_engage_win", "t_poll_interval", "…"],
-  "knobs": ["n_sampling_stages", "retention_delay", "response_mode", "…"],
-  "template": "four_epoch", "templateVersion": 2,
-
-  // The template's own `timing_defaults`, keyed by timing id. `note` is the
-  // firmware field this duration mirrors — the only place a duration's MEANING
-  // is written down — and `wireKey` is the legacy START token it corresponds
-  // to (null when it has none). `ms` is the template's default, for reference
-  // only: the document's own value is the authority.
-  "timingHelp": {
-    "t_commit_hold": { "note": "odorPokeHold at BehaviorBox.h:1176 — the pre-odor commitment hold.",
-                       "wireKey": "S0P", "ms": 500 }
-  },
-
-  // The template's own `outcome_defaults`, keyed by outcome class. `note` says
-  // what the class MEANS — why one ending is a discrimination error and another
-  // carries no evidence at all — which `outcomeClasses` cannot: it says only
-  // which classes exist. `delay` names the timing id the class waits in.
-  "outcomeHelp": {
-    "no_engage": { "note": "No stimulus was presented, so the trial carries no evidence about discrimination: scored invalid and repeated, never counted as an error.",
-                   "trigger": "TIMEOUT", "terminal": "TRIAL_INVALID",
-                   "delay": "t_pen_noengage", "strobe": "LAZY_RAT" }
-  }
-}
-```
-
-Both help maps ride here rather than on `specs.schema` because they are a function of the **topology**, not of the build: go/no-go's `correct` is a genuinely different fact from n-alternative's (a different trigger, a different strobe, a different sentence). They are the same values the skeleton generator already reads, so nothing new is defined — what changes is that a form can now explain a row instead of only labelling it.
-
-### 3.7 Rig wiring
-
-Which pin each channel is on, and what it means. Four commands, and the reason there are four rather than a settings key is that **a pin has no safe default**: the settings pipeline is shell-owned, leniently parsed and silently degrades a malformed value to a working one, which is right for a directory path and catastrophic for a number that decides which valve opens. This is the `specs.*` pattern instead — a sidecar-owned document under `<data_dir>/hardware/rig.json`, validated on the way in, with every problem located.
+Which pin each channel is on, and what it means. Four commands, and the reason there are four rather than a settings key is that **a pin has no safe default**: the settings pipeline is shell-owned, leniently parsed and silently degrades a malformed value to a working one, which is right for a directory path and catastrophic for a number that decides which valve opens. So the wiring is a sidecar-owned **document** under `<data_dir>/hardware/rig.json` instead — validated on the way in, refused when it is the wrong shape, with every problem located on the field that caused it.
 
 | Command | Args | Result | Notes |
 |---|---|---|---|
 | `hardware.get` | — | `<RigDocument>` | This rig's wiring plus everything wrong with it. A rig that has never been edited gets the **shipped pinout as an editable document**, so the editor always opens something real rather than a blank form. `document` is served even when `problems` is non-empty — refusing to show a broken document would be refusing to show the one that needs fixing |
-| `hardware.preview` | `{document}` | `<RigSaved>` | Validate and cost it, writing nothing. Two jobs with one answer: the editor calls it as the operator types, so a schema violation or TG226–229 lands against the field that caused it; and it is what the save preflight shows, because `breaks` is the honest form of "this applies to every task" |
-| `hardware.save` | `{document, confirm}` | `<RigSaved>` | Validate, then write. **Validation happens before the write**, so there is no state in which the file on disk is one the compiler refuses. `confirm: false` refuses a change that would stop a task compiling and returns them as `RIG_WOULD_BREAK_TASKS`; `confirm: true` proceeds. On success the compiler's channel cache is cleared and `hardware.updated` is broadcast |
+| `hardware.preview` | `{document}` | `<RigSaved>` | Validate and cost it, writing nothing. Two jobs with one answer: the editor calls it as the operator types, so a schema violation or a wiring rule (RIG101–104) lands against the field that caused it; and it is what the save preflight shows, because `breaks` is the honest form of "this applies to every task" |
+| `hardware.save` | `{document, confirm}` | `<RigSaved>` | Validate, then write. **Validation happens before the write**, so there is no state in which the file on disk is one the app refuses. `confirm: false` refuses a change that would stop a saved task profile generating and returns them as `RIG_WOULD_BREAK_TASKS`; `confirm: true` proceeds. On success the cached channel map is cleared and `hardware.updated` is broadcast |
 | `hardware.reset` | — | `<RigDocument>` | Back to the wiring the build shipped with. Replies in `hardware.get`'s shape so the editor re-renders from one shape either way |
 
 > [!CAUTION]
-> **A pin change applies to every task, immediately, and moves no `spec_hash`.** Specs name channels and never numbers ([D15](taskgraph-decisions.md#d15)), so re-wiring a box changes the bytes every task compiles to while its identity is unchanged. That is the split working — rewiring a box is not a new task, and folding the pinout into `spec_hash` would split an animal's history at the boundary exactly as a rename does.
+> **A pin change applies to every task, immediately, and moves no `profile_hash`.** A task profile names channels and never numbers, so re-wiring a box changes the firmware every task generates while its identity is unchanged. That is the split working — rewiring a box is not a new task, and folding the pinout into `profile_hash` would split an animal's history at the boundary exactly as a rename does.
 >
-> It is also why the compiled listing carries a `pinout` line ([D22](taskgraph-decisions.md#d22)). Without it `specs.diff` — which diffs the *listing* — showed **nothing** for a re-pin, because the listing prints channel names. The review artifact reported that nothing had changed.
+> `RigStatus.pinoutHash` is what closes the resulting provenance hole: without it, two sessions recorded as the same task could have driven different valves with nothing in the record to tell them apart.
 
-**Why `confirm` rather than a refusal.** Full channel authoring means an operator can delete a channel a saved task binds. TG223 catches that at compile — too late, since by then the wiring is written and the task is broken. So the save path recompiles every stored spec first and reports which ones a change would newly break. The app does not veto a rewiring; the operator rewired the box and the app's model of it must follow. It refuses to let one happen *unnoticed*.
+**Why `confirm` rather than a refusal.** Full channel authoring means an operator can delete a channel a saved task binds. Catching that when the task is next generated is too late, since by then the wiring is written and the task is broken. So the save path re-validates every stored profile first and reports which ones a change would *newly* break. The app does not veto a rewiring; the operator rewired the box and the app's model of it must follow. It refuses to let one happen *unnoticed*.
 
-**Failure split, by where the fault lies.** `RIG_INVALID` = the document is not a document (wrong shape, too large). A document that is well-formed and describes an impossible box — pin 300, two channels on one pin, a response port with no strobe slot — is **not** an error: it is a successful `hardware.preview` carrying located problems, exactly as a spec that will not compile is a successful `specs.compile`.
+**Failure split, by where the fault lies.** `RIG_INVALID` = the document is not a document (wrong shape, too large). A document that is well-formed and describes an impossible box — pin 300, two channels on one pin, a response port with no strobe slot — is **not** an error: it is a successful `hardware.preview` carrying located problems.
 
 ---
 
-### 3.7 Bench boxes
+### 3.7 Task profiles
 
-Probing and table upload for the interpreter firmware in `firmware/` ([specs.md](specs.md)). These commands claim the port through a dedicated `UPLOADING` state that mirrors `FLASHING` exactly — force-releases `PASSTHROUGH` on entry, auto-resumes it on success — because the ownership question is identical; what differs is that the uploader opens its **own** serial handle and holds a line-oriented request/response conversation with deadlines, which the passthrough ring buffer (drained, not consumed) cannot provide.
-
-> [!IMPORTANT]
-> **The structural invariant: no command anywhere ties a spec to a session.** `sessions.confirmMapping` does not learn a `specId`, `port.startSession` is untouched, and `UPLOADING ↔ IN_SESSION` is illegal in the transition table. The interpreter is proved off-target and has never driven a pin — a box carrying it accepts a table and reports whether it fits. That door opens at the Phase 5 exit criteria (actuator timing verified on hardware, parallel run clean), not before.
+The operator's task, and the sketch it compiles to ([tasks.md §11](tasks.md)). **Nothing here flashes.** Saving a profile writes a generated sketch folder under `<data_dir>/tasks/`, `discovery` finds it as an ordinary sketch, and `port.flash` takes it by path like any other — which is exactly what keeps the session flow, `settings.taskDefaults` and Analytics free of a special case for a profile-backed run.
 
 | Command | Args | Result | Notes |
 |---|---|---|---|
-| `board.capabilities` | `{box, baud?}` | `<BoardCapabilities>` | Read a board's `CAP` banner and stop — what a box says about itself, changing nothing on it (costs one DTR reset, since opening the port *is* the reset). `baud` absent = try 115200 then 9600, the two rates the fleet actually contains mid-rollout; the answer is cached per `hardware_id` and invalidated by any `port.flash` to that box, since flashing is precisely what changes it. **Never `settings.defaultBaud`** — that is the console default. `present: false` means an un-migrated board (no `CAP` line) — not an error; it means "flash the interpreter sketch first", and the UI offers exactly that |
-| `board.uploadTable` | `{box, specId, text?}` | `<UploadResult>` | Compile → detect → CAP check → chunked transfer → CRC+digest verify. **Compiled server-side either way** — a client-supplied table is never trusted, so the compiler's structural gate holds on the hardware path too. The capability check runs *before* any byte of table moves, so a board that can't hold this task says so in milliseconds and names both numbers. Progress streams on `upload.progress` with this command's `corr`. Success means the board echoed both the CRC (the bytes arrived) **and** the body digest (they decoded into the right fields) — a transfer can be perfect and a decode wrong, and only the second catches it |
-| `utility.benchHold` | `{held}` | `<UtilityStatus>` | Suspend baseline restores while the bench panel is open. Without it, an upload ends with the port falling `IDLE`, the baseline quietly reflashing `BOX_Utility` over the interpreter, and the uploaded table dying with it — a bug nothing had ever exercised, because nothing before this flashed a non-baseline sketch outside a session. A **separate flag** from the session hold, so releasing the bench can never release a rig a confirmed mapping owns. In-memory only: a crashed client leaves it set until app restart, which errs on the side of *not* reflashing |
+| `tasks.list` | — | `{tasks: [TaskEntry]}` | This rig's saved profiles. Reads and validates each definition, never generates, so the list stays cheap. `problems` is a **count** rather than the diagnostics — this reply is drawn on every route mount and would otherwise grow with the library |
+| `tasks.get` | `{taskId}` | `{definition, diagnostics}` | Diagnostics are **recomputed, never stored**: most depend on the WIRING, so a task saved clean can be broken by a rewiring it never saw |
+| `tasks.preview` | `{definition}` | `<TaskPreview>` | Compile an unsaved definition, writing nothing. The editor calls it as the operator types. Carries `startLineLength` against `startLineMax` because that is the one budget an operator can exhaust without noticing — the firmware truncates an overlong line **in silence** and runs on whichever values fit |
+| `tasks.save` | `{definition}` | `<TaskSaved>` | Write, then regenerate the sketch. **Always saves, even with diagnostics** — a half-finished task must be savable, and the gate is flashing, not saving. Refused only on a name that collides with a **bundled** sketch, which would make the picker ambiguous and the flash a coin flip. Broadcasts `tasks.updated` *and* `sketches.updated`, because a saved profile is also a new sketch |
+| `tasks.delete` | `{taskId}` | `{deleted}` | Removes the definition and its generated folder. Idempotent: deleting what is already gone is a successful `{deleted: false}`, since two clients racing on one task is not an error |
+| `tasks.presets` | — | `{presets: [TaskPreset]}` | The tasks this lab ran before the firmware was unified, as starting points. **A preset is not a task** — instantiating one yields a definition the operator owns, so editing a preset in a later build cannot reach back into a study already running on it |
+| `tasks.fromPreset` | `{presetId, taskId, name?}` | `{definition, diagnostics}` | A fresh definition from a preset. **Pure — it writes nothing**, so creating a task stays `tasks.save` and there is one definition of what saving means. The id and name are the caller's: two tasks from one preset is the normal case |
 
-**Failure split, by where the fault lies.** `UPLOAD_REFUSED` = the board is healthy and said no before any byte moved (no CAP, protocol/wire mismatch, capacity exceeded) — the port lands cleanly and passthrough resumes. `UPLOAD_FAILED` = the transfer itself broke (no rate answered, went quiet mid-transfer, `TABLE FAIL`, CRC/digest mismatch) — the port parks in `ERROR`, because a partial table leaves the board's state genuinely unknown (its own `table.valid` guard will refuse to run it, but nothing has confirmed that).
+> [!CAUTION]
+> **A wiring change regenerates every stored profile, and it must.** Pin numbers are compiled into each profile's `TaskPins.h`, so a folder generated under the old wiring would flash the old pins — silently, because it still compiles and the only symptom is a valve that never fires. `hardware.save` and `hardware.reset` therefore call `regenerate_all()` before replying, and broadcast `sketches.updated` when anything moved.
+
+### 3.8 Strobe vocabulary
+
+| Command | Args | Result | Notes |
+|---|---|---|---|
+| `rig.strobes` | — | `<StrobeVocabulary>` | The whole append-only registry: every code with its origin and prose, the retired codes, the free ranges a new one may come from, and the slot→codes table a response port reports with. Static unless a code is added |
+
+> [!CAUTION]
+> **Codes are never renumbered, repurposed or deleted.** Four years of recorded sessions carry them, and reissuing one silently merges two unrelated event types in any analysis spanning the change. A code whose emitter is gone moves to `retired` and stays reserved — that is a third state, neither declared nor free, and `freeRanges` excludes it.
 
 ---
 
@@ -416,13 +316,12 @@ Probing and table upload for the interpreter firmware in `firmware/` ([specs.md]
 | `session.telemetry` | `{box, animalId, metrics: [<TelemetryMetric>]}` | Pushed on every strobe that updates a rolling live metric (`dashboard.md` §10 step 7) — **not** batched at `port.output`'s 20Hz, since metric updates are far lower-frequency than raw strobes |
 | `session.animalEnded` | `{box, animalId, stopReason, filePath}` | One animal's run finalized (`dashboard.md` §10.4's `stopReason` set) |
 | `session.lifecycle` | `<ActiveSessions>` | Broadcast whenever session **identity or status** changes — create, abandon, confirmMapping, startAll, switchGroup, end. A full snapshot, not a delta: a second window learns "ended" by seeing `running: null` with zero merge logic, and snapshots cannot be mis-merged. Per-box liveness is deliberately **not** re-broadcast here — `port.state` remains that channel, and `boxes[].running` inside the snapshot is point-in-time |
-| `hardware.updated` | `<RigStatus>` | After a successful save or reset. Every client must drop what it cached from `specs.schema` — that reply carries the composed channel map, whose own comment used to say it "cannot change while the app is running, because changing it means shipping a new build". It can now |
+| `hardware.updated` | `<RigStatus>` | After a successful save or reset. Every client must drop any cached copy of the channel map. It used to be a fact about the *build*, fixed for the life of the process — a comment in the frontend said exactly that. It is now a fact about this rig, and an operator can change it between two reads |
 | `utility.updated` | `<UtilityStatus>` | The hardware utility baseline (§3.5). Sent on client connect and whenever any box's belief changes — a restore starting or finishing, a hold going on or off, an identify light. This is the only progress channel `utility.ensure` has, since that command returns before the flashing starts |
 | `backup.status` | `<BackupStatus>` | The state of Backup Directory mirroring (`data.md` §7). Sent on client connect, on every settings push that changes the directory, and whenever the mirror's state changes or it actually copies something — deliberately **not** every quiet 10s tick, so six idle boxes don't generate an event stream |
 | `analytics.progress` | `{cohortId, phase, done, total}` | Earns its place against the client's 15 s default reply timeout: the first summary after upgrading is a cold index of every historical run, and on a network-mounted data directory this is the difference between "working" and "hung". Published on phase change and every N files, following `backup.status`'s discipline — never per file |
+| `tasks.updated` | `{tasks: [TaskEntry]}` | This rig's task profiles changed — saved, deleted, or regenerated because the wiring moved. Replayed on connect and pushed on change, the `sketches.updated` pattern. It arrives **with** a `sketches.updated`, never instead of one |
 | `sidecar.error` | `{code, message, detail}` | Failures with no command to attribute them to. **Emitted** by the session runner when a mid-session `.tsv` write raises (disk full, permissions) — `data.md` §5.1. Carries `code: "INTERNAL"`, a message naming the box, and `detail: {box}` |
-| `specs.updated` | `{specs: [SpecEntry]}` | The spec library snapshot — replayed on connect (when the compiler is available) and pushed on every save/delete/acknowledge, the `sketches.updated` pattern |
-| `upload.progress` | `{box, phase, chunk, chunks, text}` | Streamed during `board.uploadTable`, carrying the causing command's `corr` — the `flash.progress` precedent verbatim. `phase` ∈ `detect` \| `probe` \| `transfer` \| `verify`; `chunk` counts **the board's acknowledgements**, not bytes this side hopes arrived |
 
 ### Shared payload shapes
 
@@ -713,13 +612,10 @@ Nothing in `port.output` is persisted by the sidecar beyond the capped in-memory
 | `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed. `detail` carries the parse error; the sketch is otherwise treated as profile-less |
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. Note that an ordinary mirroring **failure** never surfaces as a command error — there is no command to attribute it to; it appears as `state: "failed"` on `backup.status` (`data.md` §7) |
 | `UTILITY_UNAVAILABLE` | A `utility.*` command with no `utilitySketchName` set, or with one that can't be used at all — a name not among the bundled sketches, or a sketch whose profile isn't `kind: "utility"`. A *box-level* problem never raises this: it is reported as that box's `state` in the snapshot (§3.5), because "box 4 has no board" is a fact about the rig, not a failure of the command |
-| `SPEC_NOT_FOUND` | No spec with that id in the library |
 | `RIG_INVALID` | The wiring document is not a document — wrong shape, or too large. **Not** a wiring mistake: a well-formed document describing an impossible box is a successful `hardware.preview` carrying located problems |
-| `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a task compiling. `detail` carries them. Retry with `confirm: true` to proceed |
-| `SPEC_INVALID` | The document isn't a document — `text` not a string, over the size cap, or `topology` not an object. **Not** a compile failure: a spec that doesn't compile is a successful `specs.compile` reply carrying diagnostics (§3.6) |
-| `SPEC_COMPILER_UNAVAILABLE` | The task-spec compiler failed its import or self-check ([README.md §6.4](README.md#64-dependency-policy)). `detail.reason` carries the original error. Every `specs.*` command raises this; the legacy `task.json` path and the whole session flow are unaffected |
-| `UPLOAD_REFUSED` | The board cannot take this table and said so **before any byte moved**: no `CAP` line (un-migrated firmware — flash the interpreter sketch first), a protocol/wire-format mismatch, or a capacity the table exceeds. The port lands cleanly; `detail` carries the comparison (§3.7) |
-| `UPLOAD_FAILED` | The transfer itself broke: no rate answered, the board went quiet mid-transfer, `TABLE FAIL`, or a CRC/digest mismatch. The port parks in `ERROR` — a partial table leaves the board's state genuinely unknown (§3.7) |
+| `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail` carries them. Retry with `confirm: true` to proceed |
+| `TASK_NOT_FOUND` | No task profile with that id on this rig, or no preset with that id |
+| `TASK_INVALID` | The definition is not a definition — wrong shape, too large, an unusable id or name, or a name colliding with a bundled sketch. **Not** the same as a task that will not run: a well-formed definition describing an impossible task is a successful reply carrying located diagnostics (§3.7) |
 | `INTERNAL` | Unhandled sidecar exception. Also the code carried by `sidecar.error` on a mid-session write failure |
 
 > **`DIR_INVALID` has been removed** (it was defined but never raised, kept in case the reasoning reversed). The reasoning can no longer reverse: there is no configured directory to be invalid about. Library problems surface as a `SketchLibraryStatus` payload on the `settings.push` reply (§3), because the caller wants to *render* the states from `tasks.md` §2.4, not catch a failure.

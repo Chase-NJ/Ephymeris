@@ -60,6 +60,18 @@ class Cmd:
     PREFIXES_CREATE: Final = "prefixes.create"
     PREFIXES_DELETE: Final = "prefixes.delete"
     TASKS_GET_PROFILE: Final = "tasks.getProfile"
+
+    # Task profiles (tasks.md §11)
+    TASKS_LIST: Final = "tasks.list"
+    TASKS_GET: Final = "tasks.get"
+    TASKS_PREVIEW: Final = "tasks.preview"
+    TASKS_SAVE: Final = "tasks.save"
+    TASKS_DELETE: Final = "tasks.delete"
+    TASKS_PRESETS: Final = "tasks.presets"
+    TASKS_FROM_PRESET: Final = "tasks.fromPreset"
+
+    # Strobe vocabulary (tasks.md §3.3)
+    RIG_STROBES: Final = "rig.strobes"
     SESSIONS_SUGGEST_NUMBER: Final = "sessions.suggestNumber"
     SESSIONS_CREATE: Final = "sessions.create"
     SESSIONS_ABANDON: Final = "sessions.abandon"
@@ -84,28 +96,10 @@ class Cmd:
 
     # Crash recovery (data.md §12, §11)
     SESSIONS_RECOVER: Final = "sessions.recover"
-
-    # Task specs (specs.md)
-    SPECS_LIST: Final = "specs.list"
-    SPECS_GET: Final = "specs.get"
-    SPECS_SCHEMA: Final = "specs.schema"
-    SPECS_COMPILE: Final = "specs.compile"
-    SPECS_CAPABILITIES: Final = "specs.capabilities"
     HARDWARE_GET: Final = "hardware.get"
     HARDWARE_PREVIEW: Final = "hardware.preview"
     HARDWARE_SAVE: Final = "hardware.save"
     HARDWARE_RESET: Final = "hardware.reset"
-    SPECS_PARADIGMS: Final = "specs.paradigms"
-    SPECS_SKELETON: Final = "specs.skeleton"
-    SPECS_SAVE: Final = "specs.save"
-    SPECS_DELETE: Final = "specs.delete"
-    SPECS_DIFF: Final = "specs.diff"
-    SPECS_EXPORT: Final = "specs.export"
-
-    # Bench boxes (specs.md)
-    BOARD_CAPABILITIES: Final = "board.capabilities"
-    BOARD_UPLOAD_TABLE: Final = "board.uploadTable"
-    UTILITY_BENCH_HOLD: Final = "utility.benchHold"
 
 
 ALL_COMMANDS: Final[frozenset[str]] = frozenset(
@@ -132,8 +126,7 @@ class Evt:
     BACKUP_STATUS: Final = "backup.status"
     ANALYTICS_PROGRESS: Final = "analytics.progress"
     SIDECAR_ERROR: Final = "sidecar.error"
-    SPECS_UPDATED: Final = "specs.updated"
-    UPLOAD_PROGRESS: Final = "upload.progress"
+    TASKS_UPDATED: Final = "tasks.updated"
 
 
 ALL_EVENTS: Final[frozenset[str]] = frozenset(
@@ -167,11 +160,8 @@ class ErrCode:
     UTILITY_UNAVAILABLE: Final = "UTILITY_UNAVAILABLE"
     RIG_INVALID: Final = "RIG_INVALID"
     RIG_WOULD_BREAK_TASKS: Final = "RIG_WOULD_BREAK_TASKS"
-    SPEC_NOT_FOUND: Final = "SPEC_NOT_FOUND"
-    SPEC_INVALID: Final = "SPEC_INVALID"
-    SPEC_COMPILER_UNAVAILABLE: Final = "SPEC_COMPILER_UNAVAILABLE"
-    UPLOAD_REFUSED: Final = "UPLOAD_REFUSED"
-    UPLOAD_FAILED: Final = "UPLOAD_FAILED"
+    TASK_NOT_FOUND: Final = "TASK_NOT_FOUND"
+    TASK_INVALID: Final = "TASK_INVALID"
     INTERNAL: Final = "INTERNAL"
 
 
@@ -188,7 +178,7 @@ ALL_ERROR_CODES: Final[frozenset[str]] = frozenset(
 # ("obj", ((field, spec, optional), ...)).
 
 SHAPES: Final[dict[str, Any]] = {
-    "PortStateName": ('lit', ('IDLE', 'PASSTHROUGH', 'FLASHING', 'UPLOADING', 'RESETTING', 'IN_SESSION', 'ERROR')),
+    "PortStateName": ('lit', ('IDLE', 'PASSTHROUGH', 'FLASHING', 'RESETTING', 'IN_SESSION', 'ERROR')),
     "OutputLine": ('obj', (('dir', ('lit', ('rx', 'tx')), False), ('text', 'str', False), ('ts', 'float', False))),
     "DetectedBoard": ('obj', (('hardwareId', 'str', False), ('address', 'str', False), ('fqbn', ('union', ('str', 'null')), False), ('boxId', ('union', ('int', 'null')), False))),
     "LibraryState": ('lit', ('ok', 'empty', 'damaged')),
@@ -243,7 +233,7 @@ SHAPES: Final[dict[str, Any]] = {
     "TrialEngagement": ('obj', (('presented', 'int', False), ('poked', 'int', False), ('odorDelivered', 'int', False), ('noPoke', 'int', False), ('pokeAborted', 'int', False), ('pEngaged', ('union', ('float', 'null')), False), ('pDelivered', ('union', ('float', 'null')), False), ('engagedLow', ('union', ('float', 'null')), False), ('engagedHigh', ('union', ('float', 'null')), False))),
     "ConditionOutcomes": ('obj', (('metricId', 'str', False), ('label', 'str', False), ('triggerCode', 'int', False), ('outcomes', ('ref', 'TrialOutcomes'), False))),
     "RunStatus": ('lit', ('ok', 'no-metrics', 'missing', 'unreadable')),
-    "ProfileSource": ('lit', ('snapshot', 'sketch-current', 'unavailable')),
+    "ProfileSource": ('lit', ('snapshot', 'sketch-current', 'inferred', 'unavailable')),
     "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('paramsHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False))),
     "AnalyticsAnimal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('cage', ('union', ('int', 'null')), False))),
     "ProfileMetricInfo": ('obj', (('id', 'str', False), ('label', 'str', False), ('windowSize', 'int', False))),
@@ -270,33 +260,20 @@ SHAPES: Final[dict[str, Any]] = {
     "CohortsUpdatedData": ('obj', (('cohorts', ('list', ('ref', 'CohortSummary')), False),)),
     "PrefixesUpdatedData": ('obj', (('prefixes', ('list', ('ref', 'Prefix')), False),)),
     "SidecarErrorData": ('obj', (('code', 'str', False), ('message', 'str', False), ('detail', 'any', False))),
-    "ParadigmQuestion": ('obj', (('id', 'str', False), ('label', 'str', False), ('path', 'str', False), ('help', ('union', ('str', 'null')), False), ('source', ('lit', ('value', 'channel', 'stimulus', 'trial_type', 'strobe')), False), ('kind', ('union', ('str', 'null')), False), ('required', 'bool', False))),
-    "ParadigmSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('affords', 'str', False), ('order', 'int', False), ('hidden', 'bool', False), ('template', 'str', False), ('templateVersion', 'int', False), ('fixes', 'any', False), ('ramped', ('list', 'str'), False), ('questions', ('list', ('ref', 'ParadigmQuestion')), False))),
-    "SpecOrigin": ('lit', ('user',)),
-    "SpecEntry": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('description', ('union', ('str', 'null')), False), ('origin', ('ref', 'SpecOrigin'), False), ('template', ('union', ('str', 'null')), False), ('templateVersion', ('union', ('int', 'null')), False), ('paradigmId', ('union', ('str', 'null')), False), ('editedAt', ('union', ('str', 'null')), False))),
     "RigProblem": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', ('union', ('str', 'null')), False))),
     "RigStatus": ('obj', (('custom', 'bool', False), ('derivedFrom', 'str', False), ('board', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('pinoutHash', 'str', False))),
     "RigDocument": ('obj', (('document', 'any', False), ('status', ('ref', 'RigStatus'), False), ('problems', ('list', ('ref', 'RigProblem')), False))),
     "RigImpact": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('codes', ('list', 'str'), False))),
     "RigSaved": ('obj', (('status', ('ref', 'RigStatus'), False), ('problems', ('list', ('ref', 'RigProblem')), False), ('breaks', ('list', ('ref', 'RigImpact')), False))),
-    "SpecOverlayField": ('obj', (('label', 'str', False), ('widget', 'str', False), ('group', 'str', True), ('order', 'int', True), ('unit', 'str', True), ('step', ('union', ('int', 'float')), True), ('help', 'str', True), ('advanced', 'bool', True), ('readOnly', 'bool', True), ('nullable', 'bool', True), ('multiple', 'bool', True), ('channelKind', 'str', True), ('options', ('list', ('obj', (('value', 'str', False), ('label', 'str', False), ('help', 'str', True)))), True))),
-    "SpecOverlayGroup": ('obj', (('id', 'str', False), ('label', 'str', False), ('order', 'int', False), ('help', 'str', True))),
-    "SpecOverlay": ('obj', (('presentation_version', 'int', False), ('groups', ('list', ('ref', 'SpecOverlayGroup')), False), ('sections', ('map', ('obj', (('group', 'str', False), ('rows', ('lit', ('indexed', 'by_id', 'by_key', 'object')), False), ('gatedBy', 'str', True)))), False), ('fields', ('map', ('ref', 'SpecOverlayField')), False))),
-    "SpecDiagnostic": ('obj', (('code', 'str', False), ('severity', ('lit', ('INFO', 'WARN', 'ERROR')), False), ('message', 'str', False), ('location', ('union', ('str', 'null')), False), ('placement', ('lit', ('field', 'row', 'section', 'node', 'document')), False), ('anchor', ('union', ('str', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('help', ('union', ('str', 'null')), False), ('decision', ('union', ('str', 'null')), False))),
-    "SpecGraphNode": ('obj', (('index', 'int', False), ('symbol', 'str', False), ('label', 'str', False), ('band', 'int', False), ('type', ('lit', ('DELAY', 'WAIT_ENTRY', 'HOLD', 'WAIT_EXIT', 'PULSE', 'TERMINAL')), False), ('durationId', ('union', ('str', 'null')), False), ('durationMs', ('union', ('int', 'null')), False), ('strobeName', ('union', ('str', 'null')), False), ('strobe', ('union', ('int', 'null')), False), ('silentByDesign', 'bool', False), ('watch', ('list', 'str'), False))),
-    "SpecGraphEdge": ('obj', (('index', 'int', False), ('src', 'int', False), ('dst', 'int', False), ('trigger', ('lit', ('TIMEOUT', 'ENTER', 'HELD', 'BROKEN', 'EXIT', 'DONE', 'ADVANCE', 'REPEAT')), False), ('guard', ('union', ('str', 'null')), False), ('channel', ('union', ('str', 'null')), False), ('effect', ('union', ('str', 'null')), False))),
-    "SpecGraph": ('obj', (('nodes', ('list', ('ref', 'SpecGraphNode')), False), ('edges', ('list', ('ref', 'SpecGraphEdge')), False), ('entry', 'int', False))),
-    "SpecTableSummary": ('obj', (('specId', 'str', False), ('specHash', 'str', False), ('specVersion', 'int', False), ('vocabVersion', 'int', False), ('template', 'str', False), ('templateVersion', 'int', False), ('templateHash', 'str', False), ('pinoutId', 'str', False), ('pinoutHash', 'str', False), ('nNodes', 'int', False), ('nEdges', 'int', False), ('nTiming', 'int', False), ('nTrialTypes', 'int', False), ('sizeBytes', 'int', False), ('crc32', 'str', False))),
-    "SpecCompileResult": ('obj', (('ok', 'bool', False), ('diagnostics', ('list', ('ref', 'SpecDiagnostic')), False), ('table', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('graph', ('union', (('ref', 'SpecGraph'), 'null')), False), ('listing', ('union', ('str', 'null')), False), ('elapsedMs', 'float', False))),
-    "SpecCapabilities": ('obj', (('outcomeClasses', ('list', 'str'), False), ('requiredTiming', ('list', 'str'), False), ('knobs', ('list', 'str'), False), ('template', 'str', False), ('templateVersion', 'int', False), ('timingHelp', ('map', ('obj', (('note', 'str', False), ('wireKey', ('union', ('str', 'null')), False), ('ms', 'int', False)))), False), ('outcomeHelp', ('map', ('obj', (('note', 'str', False), ('trigger', 'str', False), ('terminal', 'str', False), ('delay', 'str', False), ('strobe', ('union', ('str', 'null')), False)))), False))),
-    "SpecsUpdatedData": ('obj', (('specs', ('list', ('ref', 'SpecEntry')), False),)),
-    "DiffLine": ('obj', (('op', ('lit', (' ', '+', '-')), False), ('text', 'str', False))),
-    "DiffHunk": ('obj', (('section', 'str', False), ('lines', ('list', ('ref', 'DiffLine')), False))),
-    "SpecListingDiff": ('obj', (('specId', 'str', False), ('baseline', ('lit', ('saved', 'spec')), False), ('changed', 'bool', False), ('before', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('after', ('union', (('ref', 'SpecTableSummary'), 'null')), False), ('hunks', ('list', ('ref', 'DiffHunk')), False), ('added', 'int', False), ('removed', 'int', False))),
-    "SpecArtifact": ('obj', (('kind', ('lit', ('spec', 'listing', 'lint', 'table_json', 'table_bin', 'bench')), False), ('filename', 'str', False), ('text', ('union', ('str', 'null')), False), ('base64', ('union', ('str', 'null')), False))),
-    "BoardCapabilities": ('obj', (('box', 'int', False), ('present', 'bool', False), ('baud', 'int', False), ('values', ('map', 'int'), False), ('text', ('map', 'str'), False), ('banner', ('list', 'str'), False))),
-    "UploadProgressData": ('obj', (('box', 'int', False), ('phase', ('lit', ('detect', 'probe', 'transfer', 'verify')), False), ('chunk', ('union', ('int', 'null')), False), ('chunks', ('union', ('int', 'null')), False), ('text', ('union', ('str', 'null')), False))),
-    "UploadResult": ('obj', (('box', 'int', False), ('specId', 'str', False), ('specHash', 'str', False), ('nBytes', 'int', False), ('chunks', 'int', False), ('crc32', 'str', False), ('digest', 'str', False), ('seconds', 'float', False), ('notes', ('list', 'str'), False), ('caps', ('ref', 'BoardCapabilities'), False))),
+    "TaskDiagnostic": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', 'str', False))),
+    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False))),
+    "TaskPreset": ('obj', (('id', 'str', False), ('name', 'str', False), ('summary', 'str', False))),
+    "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
+    "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('startLineLength', 'int', False), ('startLineMax', 'int', False), ('profile', ('ref', 'TaskProfile'), False), ('catalogueDefaults', ('map', 'any'), False))),
+    "TasksUpdatedData": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
+    "StrobeCode": ('obj', (('name', 'str', False), ('code', 'int', False), ('origin', 'str', False), ('emittedOn', 'str', True), ('rationale', 'str', True))),
+    "RetiredStrobe": ('obj', (('name', 'str', False), ('code', 'int', False))),
+    "StrobeVocabulary": ('obj', (('version', 'int', False), ('codeMin', 'int', False), ('codeMax', 'int', False), ('freeRanges', ('list', ('list', 'int')), False), ('codes', ('list', ('ref', 'StrobeCode')), False), ('retired', ('list', ('ref', 'RetiredStrobe')), False), ('portSlots', ('map', ('map', 'str')), False))),
 }
 
 COMMAND_ARGS: Final[dict[str, Any]] = {
@@ -326,6 +303,14 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "prefixes.create": ('obj', (('name', 'str', False),)),
     "prefixes.delete": ('obj', (('id', 'str', False),)),
     "tasks.getProfile": ('obj', (('sketchPath', 'str', False),)),
+    "tasks.list": ('obj', ()),
+    "tasks.get": ('obj', (('taskId', 'str', False),)),
+    "tasks.preview": ('obj', (('definition', 'any', False),)),
+    "tasks.save": ('obj', (('definition', 'any', False),)),
+    "tasks.delete": ('obj', (('taskId', 'str', False),)),
+    "tasks.presets": ('obj', ()),
+    "tasks.fromPreset": ('obj', (('presetId', 'str', False), ('taskId', 'str', False), ('name', 'str', True))),
+    "rig.strobes": ('obj', ()),
     "sessions.suggestNumber": ('obj', (('prefixId', 'str', False),)),
     "sessions.create": ('obj', (('cohortId', 'str', False), ('prefixId', 'str', False), ('sessionNumber', 'str', False), ('durationMinutes', 'int', True))),
     "sessions.abandon": ('obj', (('sessionId', 'str', False),)),
@@ -344,24 +329,10 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "analytics.rescan": ('obj', (('cohortId', 'str', False), ('adoptOrphans', 'bool', True))),
     "analytics.recentSessions": ('obj', (('limit', 'int', True),)),
     "sessions.recover": ('obj', (('cohortId', 'str', False),)),
-    "specs.list": ('obj', ()),
-    "specs.get": ('obj', (('specId', 'str', False),)),
-    "specs.schema": ('obj', ()),
-    "specs.compile": ('obj', (('text', 'str', False), ('specId', 'str', True))),
-    "specs.capabilities": ('obj', (('topology', 'any', False),)),
     "hardware.get": ('obj', ()),
     "hardware.preview": ('obj', (('document', 'any', False),)),
     "hardware.save": ('obj', (('document', 'any', False), ('confirm', 'bool', False))),
     "hardware.reset": ('obj', ()),
-    "specs.paradigms": ('obj', ()),
-    "specs.skeleton": ('obj', (('paradigmId', 'str', False), ('specId', 'str', False), ('answers', 'any', False), ('label', ('union', ('str', 'null')), True), ('description', ('union', ('str', 'null')), True))),
-    "specs.save": ('obj', (('specId', 'str', False), ('text', 'str', False))),
-    "specs.delete": ('obj', (('specId', 'str', False),)),
-    "specs.diff": ('obj', (('specId', 'str', False), ('text', 'str', True), ('againstSpecId', 'str', True))),
-    "specs.export": ('obj', (('specId', 'str', False), ('text', 'str', True), ('artifacts', ('list', 'str'), False))),
-    "board.capabilities": ('obj', (('box', 'int', False), ('baud', 'int', True))),
-    "board.uploadTable": ('obj', (('box', 'int', False), ('specId', 'str', False), ('text', 'str', True))),
-    "utility.benchHold": ('obj', (('held', 'bool', False),)),
 }
 
 COMMAND_RESULTS: Final[dict[str, Any]] = {
@@ -391,6 +362,14 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "prefixes.create": ('obj', (('prefix', ('ref', 'Prefix'), False),)),
     "prefixes.delete": ('obj', (('deleted', 'bool', False),)),
     "tasks.getProfile": ('union', (('ref', 'TaskProfile'), ('obj', (('profile', 'null', False),)))),
+    "tasks.list": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
+    "tasks.get": ('obj', (('definition', 'any', False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False))),
+    "tasks.preview": ('ref', 'TaskPreview'),
+    "tasks.save": ('ref', 'TaskSaved'),
+    "tasks.delete": ('obj', (('deleted', 'bool', False),)),
+    "tasks.presets": ('obj', (('presets', ('list', ('ref', 'TaskPreset')), False),)),
+    "tasks.fromPreset": ('obj', (('definition', 'any', False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False))),
+    "rig.strobes": ('ref', 'StrobeVocabulary'),
     "sessions.suggestNumber": ('obj', (('suggestion', ('union', ('str', 'null')), False), ('sameDayNumbers', ('list', 'str'), False))),
     "sessions.create": ('obj', (('session', ('ref', 'Session'), False),)),
     "sessions.abandon": ('obj', (('session', ('ref', 'Session'), False),)),
@@ -409,24 +388,10 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "analytics.rescan": ('ref', 'RescanResult'),
     "analytics.recentSessions": ('obj', (('sessions', ('list', ('ref', 'DiskSession')), False),)),
     "sessions.recover": ('ref', 'RecoverResult'),
-    "specs.list": ('obj', (('specs', ('list', ('ref', 'SpecEntry')), False),)),
-    "specs.get": ('obj', (('specId', 'str', False), ('origin', ('ref', 'SpecOrigin'), False), ('text', 'str', False), ('raw', 'any', False))),
-    "specs.schema": ('obj', (('schema', 'any', False), ('overlay', ('ref', 'SpecOverlay'), False), ('strobes', 'any', False), ('channels', 'any', False), ('limits', 'any', False), ('templates', ('list', ('obj', (('name', 'str', False), ('version', 'int', False), ('sourceHash', 'str', False)))), False))),
-    "specs.compile": ('ref', 'SpecCompileResult'),
-    "specs.capabilities": ('ref', 'SpecCapabilities'),
     "hardware.get": ('ref', 'RigDocument'),
     "hardware.preview": ('ref', 'RigSaved'),
     "hardware.save": ('ref', 'RigSaved'),
     "hardware.reset": ('ref', 'RigDocument'),
-    "specs.paradigms": ('obj', (('paradigms', ('list', ('ref', 'ParadigmSummary')), False),)),
-    "specs.skeleton": ('obj', (('text', 'str', False), ('result', ('ref', 'SpecCompileResult'), False))),
-    "specs.save": ('obj', (('entry', ('ref', 'SpecEntry'), False), ('result', ('ref', 'SpecCompileResult'), False))),
-    "specs.delete": ('obj', (('entry', ('union', (('ref', 'SpecEntry'), 'null')), False),)),
-    "specs.diff": ('ref', 'SpecListingDiff'),
-    "specs.export": ('obj', (('artifacts', ('list', ('ref', 'SpecArtifact')), False),)),
-    "board.capabilities": ('ref', 'BoardCapabilities'),
-    "board.uploadTable": ('ref', 'UploadResult'),
-    "utility.benchHold": ('ref', 'UtilityStatus'),
 }
 
 EVENT_DATA: Final[dict[str, Any]] = {
@@ -446,8 +411,7 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "backup.status": ('ref', 'BackupStatus'),
     "analytics.progress": ('ref', 'AnalyticsProgress'),
     "sidecar.error": ('ref', 'SidecarErrorData'),
-    "specs.updated": ('ref', 'SpecsUpdatedData'),
-    "upload.progress": ('ref', 'UploadProgressData'),
+    "tasks.updated": ('ref', 'TasksUpdatedData'),
 }
 
 

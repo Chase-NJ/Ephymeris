@@ -2,58 +2,44 @@
 /**
  * Every generated artifact in this repo, verified against its source.
  *
- * Four things are generated and committed, and each has the same failure mode:
+ * Two things are generated and committed, and they share a failure mode:
  * editing the source without regenerating leaves a mirror that still compiles,
  * still passes its own tests, and describes something that is no longer true.
- * `pytest` catches two of them; the other two had no gate at all until the fold
- * made `codegen` live.
  *
  *   protocol   protocol/schema.py  →  the Python and TypeScript wire mirrors
  *   typecheck  the frontend against those mirrors
- *   codegen    the compiler's registries  →  firmware/…/TaskInterpreter headers
- *   goldens    the paradigm registry  →  the listings the compiler tests pin
  *
- * All four are read-only. Run `npm run gen:protocol`, `taskgraph codegen` or
- * `taskgraph goldens` to fix whichever one fails.
+ * Both are read-only. Run `npm run gen:protocol` to fix the first; the second
+ * is fixed by fixing the frontend.
  *
  * Everything is attempted even after a failure, because the useful answer to
- * "did my registry edit land everywhere" is the whole list, not the first
+ * "did my schema edit land everywhere" is the whole list, not the first
  * casualty of it.
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
-// The compiler's checks import `ephymeris_sidecar`, so unlike gen-protocol's
-// stdlib-only generator they need the venv specifically — a system python would
-// report a missing dependency as a failed check.
-const venv = [
-  join(repoRoot, "sidecar", ".venv", "Scripts", "python.exe"),
-  join(repoRoot, "sidecar", ".venv", "bin", "python"),
-].find(existsSync);
-
-const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+// `tsc` is run through Node against the package's own entry point rather than
+// through `npx`. On Windows `npx` is `npx.cmd`, and since Node closed
+// CVE-2024-27980 `spawnSync` refuses to launch a `.cmd` without a shell — it
+// fails `EINVAL` with `status: null`, which this script then reported as a
+// failing typecheck. The check looked like it was running for as long as it
+// happened to agree with reality.
+const tsc = join(repoRoot, "node_modules", "typescript", "bin", "tsc");
 
 const checks = [
   ["protocol", process.execPath, [join(repoRoot, "scripts", "gen-protocol.mjs"), "--check"]],
-  ["typecheck", npx, ["tsc", "--noEmit"]],
-  ["codegen", venv, ["-m", "ephymeris_sidecar.taskgraph.cli", "codegen", "--check"]],
-  ["goldens", venv, ["-m", "ephymeris_sidecar.taskgraph.cli", "goldens", "--check"]],
+  ["typecheck", process.execPath, [tsc, "--noEmit"]],
 ];
 
 const failed = [];
 
 for (const [name, cmd, args] of checks) {
-  if (!cmd) {
-    console.error(`\n=== ${name} — SKIPPED: no sidecar venv (see README) ===`);
-    failed.push(name);
-    continue;
-  }
   console.log(`\n=== ${name} ===`);
   const result = spawnSync(cmd, args, { stdio: "inherit", cwd: repoRoot });
   if (result.status !== 0) failed.push(name);

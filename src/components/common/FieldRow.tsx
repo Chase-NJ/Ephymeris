@@ -1,4 +1,4 @@
-import { TextInput, Toggle } from "@/components/common/controls";
+import { NumberInput, TextInput, Toggle } from "@/components/common/controls";
 import { useRowDensity } from "@/components/common/rowDensity";
 
 /**
@@ -54,11 +54,16 @@ export function FieldRow({
   width?: string | undefined;
   onChange: (next: unknown) => void;
 }) {
-  // A number the user is mid-typing ("-", "0.") isn't a number yet, so it is
-  // held as text and reported rather than silently swallowed. The old form
-  // stored the raw string in `config`, and the START builder then quietly
-  // substituted the profile default — the operator saw their value on screen
-  // and the board ran on a different one.
+  // A number the user is mid-typing ("-", "0.") isn't a number yet. `NumberInput`
+  // holds that as a draft and commits on blur, so `config` carries a number
+  // whenever the caret is elsewhere — which is what keeps the old failure from
+  // returning: the raw string used to be stored, and the START builder then
+  // quietly substituted the profile default, so the operator saw their value on
+  // screen and the board ran on a different one.
+  //
+  // The message below therefore only fires on a value that arrived already
+  // broken — a hand-edited profile, or one written before the draft existed.
+  // It stays because a stored string is exactly the case that must not go quiet.
   const numeric = type === "int" || type === "float";
   const invalid = numeric && typeof value === "string" && value.trim() !== "";
   const changed = !Object.is(value, baseline);
@@ -103,18 +108,16 @@ export function FieldRow({
     type === "bool" ? (
       <Toggle label={label} checked={value === true} onChange={onChange} />
     ) : numeric ? (
-      <TextInput
+      <NumberInput
         label={label}
         mono={mono}
-        value={String(value ?? "")}
-        onChange={(raw) => {
-          if (raw.trim() === "") return onChange(fallback);
-          const parsed = type === "int" ? parseInt(raw, 10) : parseFloat(raw);
-          // Keep the raw text on a partial entry so the caret doesn't jump;
-          // `invalid` above is what makes that state visible.
-          onChange(Number.isNaN(parsed) ? raw : clamp(parsed, min, max));
-        }}
+        value={value}
+        fallback={fallback}
+        integer={type === "int"}
+        min={min}
+        max={max}
         className={stacked ? "w-full" : (width ?? "w-[76px]")}
+        onChange={onChange}
       />
     ) : (
       <TextInput
@@ -151,18 +154,4 @@ export function FieldRow({
       </span>
     </label>
   );
-}
-
-/**
- * Clamp a parsed number into the field's declared range.
- *
- * Clamping rather than rejecting: these bounds exist to keep a typo from
- * reaching the firmware (a zero polling rate is a hang, a bias window past the
- * ring buffer is an overrun), and silently refusing a keystroke mid-edit is
- * worse than landing on the nearest legal value.
- */
-function clamp(value: number, min?: number, max?: number): number {
-  if (min !== undefined && value < min) return min;
-  if (max !== undefined && value > max) return max;
-  return value;
 }

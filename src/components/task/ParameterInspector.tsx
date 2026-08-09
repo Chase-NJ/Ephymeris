@@ -15,6 +15,13 @@ import type { TaskProfile } from "@/lib/sessions/types";
  * which is the point: the highlight link is worthless when one end of it is
  * below the fold.
  *
+ * `exclude` drops groups another surface already owns. The task editor passes
+ * the ramp groups, because `StageRamp` edits those four holds as a table and a
+ * ramp is only legible as a sequence of rows — showing them here as well would
+ * be TWO SURFACES FOR ONE FIELD, which is the thing that eventually disagrees.
+ * An excluded group keeps its Pulsar dot logic out of the pills but is still
+ * counted as diverging, so nothing about it goes quiet.
+ *
  * The pills are the same set the machine's chips name, and the two select the
  * same state: clicking a chip, clicking a node, or clicking a pill all land
  * here. A pill lights (border, like a tile did) while a hovered state is
@@ -28,6 +35,7 @@ export function ParameterInspector({
   config,
   baseline,
   selected,
+  exclude,
   onSelect,
   onChange,
   onHoverGroup,
@@ -39,6 +47,8 @@ export function ParameterInspector({
   /** The profile's own defaults — what "changed" and "reset" are measured against. */
   baseline: Record<string, unknown>;
   selected: string | null;
+  /** Groups another editor owns. Absent means show everything. */
+  exclude?: (group: string) => boolean;
   onSelect: (group: string) => void;
   onChange: (next: Record<string, unknown>) => void;
   onHoverGroup: (group: string | null) => void;
@@ -48,10 +58,10 @@ export function ParameterInspector({
   const groups = useMemo(() => {
     const declared = new Set<string>();
     for (const field of profile?.config ?? []) {
-      if (field.group) declared.add(field.group);
+      if (field.group && !exclude?.(field.group)) declared.add(field.group);
     }
     return orderGroups(declared);
-  }, [profile]);
+  }, [profile, exclude]);
 
   if (!profile || groups.length === 0) return null;
 

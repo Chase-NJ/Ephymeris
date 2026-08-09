@@ -39,9 +39,16 @@ const OUTCOME_STYLE: Record<TrialOutcome, { fill: string; label: string }> = {
 export function LivePanels({
   live,
   strobeNames,
+  chartHeight = 44,
 }: {
   live: LiveTrials;
   strobeNames: Record<string, string>;
+  /**
+   * The `UnitChart` viewBox height. The SVGs stretch to their column, so this
+   * is really an aspect ratio — a wide column passes a smaller number to keep
+   * the three charts from towering (`StarPanel` passes 36).
+   */
+  chartHeight?: number;
 }) {
   const trials = live.trials;
 
@@ -56,9 +63,9 @@ export function LivePanels({
 
   return (
     <div className="flex flex-col gap-4">
-      <ResponsePanel live={live} strobeNames={strobeNames} />
-      <OutcomePanel live={live} />
-      <HoldPanel live={live} />
+      <ResponsePanel live={live} strobeNames={strobeNames} height={chartHeight} />
+      <OutcomePanel live={live} height={chartHeight} />
+      <HoldPanel live={live} height={chartHeight} />
     </div>
   );
 }
@@ -67,9 +74,11 @@ export function LivePanels({
 function ResponsePanel({
   live,
   strobeNames,
+  height,
 }: {
   live: LiveTrials;
   strobeNames: Record<string, string>;
+  height: number;
 }) {
   const curves = useMemo(
     () =>
@@ -119,13 +128,13 @@ function ResponsePanel({
         </span>
       }
     >
-      <UnitChart height={44} references={[{ y: 0.5 }]} series={series} />
+      <UnitChart height={height} references={[{ y: 0.5 }]} series={series} />
     </ChartFrame>
   );
 }
 
 /** Cumulative outcome composition — the stacked bands. */
-function OutcomePanel({ live }: { live: LiveTrials }) {
+function OutcomePanel({ live, height }: { live: LiveTrials; height: number }) {
   const rows = useMemo(() => cumulativeOutcomes(live.trials), [live.trials]);
 
   // Stacked as cumulative upper edges, so each band's ribbon runs between the
@@ -172,13 +181,13 @@ function OutcomePanel({ live }: { live: LiveTrials }) {
         </span>
       }
     >
-      <UnitChart height={44} bands={bands} />
+      <UnitChart height={height} bands={bands} />
     </ChartFrame>
   );
 }
 
 /** Well-hold durations, filled where the hold was met and hollow where not. */
-function HoldPanel({ live }: { live: LiveTrials }) {
+function HoldPanel({ live, height }: { live: LiveTrials; height: number }) {
   const points = useMemo(() => holdPoints(live.trials), [live.trials]);
   const threshold = useMemo(() => inferHoldThreshold(points), [points]);
 
@@ -221,7 +230,7 @@ function HoldPanel({ live }: { live: LiveTrials }) {
       }
     >
       <UnitChart
-        height={44}
+        height={height}
         references={threshold !== null ? [{ y: Math.min(1, threshold / ceiling) }] : []}
         marks={marks}
       />

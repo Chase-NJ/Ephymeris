@@ -1,9 +1,10 @@
 import { motion } from "framer-motion";
 import { useMemo, useState, type ReactNode } from "react";
 
-import { fillFor } from "@/components/task/TaskGraph";
+import { NODE_PRIMARY } from "@/components/chrome/constellationStyle";
 import { OUTCOME_STYLE } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
+import { useReduceMotion } from "@/lib/useReduceMotion";
 import type { TaskProfile } from "@/lib/sessions/types";
 import type {
   TaskEdge,
@@ -15,12 +16,13 @@ import { useElementWidth } from "@/lib/useElementWidth";
 /**
  * The sketch's state machine, as the page's centrepiece tile.
  *
- * This replaced `TaskGraph` + `TaskRail` on the sketch viewer (the old pair
- * survives only in Mission Control's live panel, where the token needs it).
- * What changed is not the model — the nodes and edges still come verbatim from
- * `taskGraph()`, the derived-never-declared machine (`tasks.md` §4) — but what
- * the drawing is *for*: the old diagram showed the trial and mentioned
- * parameters; this one is built around the mapping between them.
+ * This replaced `TaskGraph` + `TaskRail` on the sketch viewer, and the same
+ * drawing now serves Mission Control's live panel as `LiveStateMachine` below
+ * — one style for the machine everywhere it appears. What changed is not the
+ * model — the nodes and edges still come verbatim from `taskGraph()`, the
+ * derived-never-declared machine (`tasks.md` §4) — but what the drawing is
+ * *for*: the old diagram showed the trial and mentioned parameters; this one
+ * is built around the mapping between them.
  *
  * **Every tunable group is pinned to the state it governs.** Each node carries
  * subtle mono chips naming the parameter groups that tune it (`governedBy`,
@@ -48,6 +50,27 @@ import { useElementWidth } from "@/lib/useElementWidth";
  * edges never sprawl at the wide one. Resizing the window now slides states
  * closer or further apart; it never changes what a label reads like.
  */
+
+/** Node fill by kind, with outcomes borrowing the analytics palette so the
+ *  machine and `OutcomeMix` never disagree about what "rewarded" looks like.
+ *  (Moved here from the retired `TaskGraph`, which drew the same model in a
+ *  scaled viewBox.) */
+export function fillFor(node: TaskNode): string {
+  if (node.kind === "abort") return "var(--color-halo)";
+  if (node.kind !== "outcome") return NODE_PRIMARY;
+  switch (node.id) {
+    case "reward":
+    case "withheld":
+      return OUTCOME_STYLE.rewarded.fill;
+    case "hold-fail":
+      return OUTCOME_STYLE.holdFailed.fill;
+    case "wrong-well":
+      return OUTCOME_STYLE.wrongWell.fill;
+    default:
+      return OUTCOME_STYLE.noResponse.fill;
+  }
+}
+
 export function SketchStateMachine({
   model,
   profile,
@@ -105,7 +128,10 @@ export function SketchStateMachine({
 
   const [host, hostWidth] = useElementWidth<HTMLDivElement>();
   const layoutWidth = Math.min(Math.max(hostWidth ?? FALLBACK_W, MIN_W), MAX_W);
-  const frame = useMemo(() => frameFor(model, layoutWidth), [model, layoutWidth]);
+  const frame = useMemo(
+    () => frameFor(model, layoutWidth, VIEWER_GEOMETRY),
+    [model, layoutWidth],
+  );
 
   function enterNode(node: TaskNode) {
     setHoverNode(node);
@@ -191,6 +217,112 @@ export function SketchStateMachine({
   );
 }
 
+/**
+ * The same machine, live — Mission Control's panel (`dashboard.md` §9.4).
+ *
+ * One drawing, two homes: this is `SketchStateMachine`'s geometry, glyphs and
+ * palette with the parameter apparatus stripped away and a token added — the
+ * running box's own state, decoded from its strobes (`useLiveNode`), wearing
+ * the pulsing flat ring the session journey's current step wears. No chips
+ * (mid-session is not the moment to tune parameters, and the vertical room
+ * they needed belongs to the charts below — see `LIVE_GEOMETRY`), and the
+ * caption strip reads the live state instead of a hover legend; hovering a
+ * state still describes it, exactly as the viewer does.
+ *
+ * Counts are deliberately absent. The recorded figures come from derive.py
+ * over a finished run; showing a half-session's partial tallies beside a
+ * moving token would invite reading them as the run's result (`topology.ts`).
+ */
+export function LiveStateMachine({
+  model,
+  liveNode,
+}: {
+  model: TaskGraphModel;
+  /** Node the token sits on — null before the first strobe of a trial. */
+  liveNode: string | null;
+}) {
+  const reduceMotion = useReduceMotion();
+  const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
+
+  const litNodes = useMemo(
+    () => (hoverNode ? new Set([hoverNode.id]) : null),
+    [hoverNode],
+  );
+
+  const [host, hostWidth] = useElementWidth<HTMLDivElement>();
+  const layoutWidth = Math.min(Math.max(hostWidth ?? FALLBACK_W, MIN_W), MAX_W);
+  const frame = useMemo(
+    () => frameFor(model, layoutWidth, LIVE_GEOMETRY),
+    [model, layoutWidth],
+  );
+
+  const current =
+    liveNode === null ? null : (model.nodes.find((n) => n.id === liveNode) ?? null);
+
+  return (
+    <div ref={host}>
+      {/* The same three sizing regimes as the viewer — see the note there. */}
+      <svg
+        viewBox={`0 0 ${frame.width} ${frame.height}`}
+        className="mx-auto block"
+        style={{ width: frame.width, maxWidth: "100%" }}
+        role="img"
+        aria-label="The task's state machine, with the box's current state lit"
+      >
+        {model.edges.map((edge) => (
+          <EdgePath
+            key={edge.id}
+            edge={edge}
+            model={model}
+            lit={litNodes}
+            frame={frame}
+          />
+        ))}
+        {model.nodes.map((node) => (
+          <NodeGlyph
+            key={node.id}
+            node={node}
+            chips={[]}
+            lit={litNodes === null ? null : litNodes.has(node.id)}
+            hoverGroup={null}
+            frame={frame}
+            live={liveNode === node.id}
+            reduceMotion={reduceMotion}
+            onEnter={() => setHoverNode(node)}
+            onLeave={() => setHoverNode(null)}
+            onChipEnter={() => {}}
+            onChipLeave={() => {}}
+            onChipClick={() => {}}
+          />
+        ))}
+      </svg>
+
+      {/* The caption strip, repurposed as the live readout: the state the box
+          is in, said in words under the drawing that shows it. A hover
+          overrides it — the operator asking about a state outranks the
+          narration — and it returns the moment the pointer leaves. */}
+      <p className="mt-2 min-h-[2.25em] border-t border-halo/60 pt-2 font-mono text-[11px] leading-snug text-static">
+        {hoverNode ? (
+          <>
+            <span className="text-starlight">{hoverNode.label}</span>
+            {hoverNode.detail && <> — {hoverNode.detail}</>}
+          </>
+        ) : current ? (
+          <>
+            <span className="text-starlight">● {current.label}</span>
+            {current.detail && <> — {current.detail}</>}
+          </>
+        ) : (
+          <span className="text-static/60">
+            The lit state is where this box is in the trial — the token moves
+            as strobes arrive.
+          </span>
+        )}
+      </p>
+    </div>
+  );
+}
+
 // --- the parameter chips ----------------------------------------------------
 
 interface Chip {
@@ -267,9 +399,6 @@ const MAX_W = 1000;
  *  it, so a settle from here is never visible. */
 const FALLBACK_W = 720;
 
-/** Vertical rhythm: px per model row unit. Sized so the deepest chip stack
- *  (an odor arm's four) clears the next fan-out row below it. */
-const ROW_PX = 52;
 /** Node radius. */
 const R = 9;
 
@@ -278,14 +407,31 @@ const R = 9;
  *  between it and the frame edge. */
 const PAD_L = 30;
 const PAD_R = 30;
-/** Above the top row: room for an `above`-anchored label when the top row is
- *  the spine (a single-outcome task — a fanned one puts squares up there). */
-const PAD_T = 30;
-/** How far the deepest return arc sweeps below the lowest node; `repeat`'s
- *  nests 16px shallower. The abort chips end ~36px below their nodes, so the
- *  shallower arc still clears them. */
-const RETURN_DEPTH = 62;
-const PAD_B = RETURN_DEPTH + 16;
+
+/**
+ * The vertical geometry, parameterized because the drawing has two homes with
+ * different tenants below the nodes:
+ *
+ *  - `rowPx` — px per model row unit. The sketch viewer's is sized so the
+ *    deepest chip stack (an odor arm's four) clears the next fan-out row; the
+ *    live view draws no chips, so its rows sit closer.
+ *  - `padT` — above the top row: room for an `above`-anchored label when the
+ *    top row is the spine.
+ *  - `returnDepth` — how far the deepest return arc sweeps below the lowest
+ *    node; `repeat`'s nests 16px shallower. The viewer's clears the abort
+ *    chips (~36px below their nodes); the live view's clears only the labels.
+ */
+interface Geometry {
+  rowPx: number;
+  padT: number;
+  returnDepth: number;
+}
+
+/** The sketch viewer's geometry — chips under every node. */
+const VIEWER_GEOMETRY: Geometry = { rowPx: 52, padT: 30, returnDepth: 62 };
+/** The live panel's — no chips, and every vertical px competes with the
+ *  charts below it in a view that must fit the window without scrolling. */
+const LIVE_GEOMETRY: Geometry = { rowPx: 34, padT: 24, returnDepth: 48 };
 
 interface Frame {
   width: number;
@@ -294,22 +440,26 @@ interface Frame {
   y: (n: TaskNode) => number;
   /** y of the lowest node — the return arcs hang from it. */
   lowY: number;
+  /** The deepest return arc's sweep below `lowY` (see `Geometry`). */
+  returnDepth: number;
 }
 
-function frameFor(model: TaskGraphModel, width: number): Frame {
+function frameFor(model: TaskGraphModel, width: number, geometry: Geometry): Frame {
+  const { rowPx, padT, returnDepth } = geometry;
   const cols = model.nodes.map((n) => n.column);
   const rows = model.nodes.map((n) => n.row);
   const minCol = Math.min(...cols);
   const colSpan = Math.max(Math.max(...cols) - minCol, 1);
   const minRow = Math.min(...rows);
-  const lowY = PAD_T + (Math.max(...rows) - minRow) * ROW_PX;
+  const lowY = padT + (Math.max(...rows) - minRow) * rowPx;
   const innerW = width - PAD_L - PAD_R;
   return {
     width,
-    height: lowY + PAD_B,
+    height: lowY + returnDepth + 16,
     x: (n) => PAD_L + ((n.column - minCol) / colSpan) * innerW,
-    y: (n) => PAD_T + (n.row - minRow) * ROW_PX,
+    y: (n) => padT + (n.row - minRow) * rowPx,
     lowY,
+    returnDepth,
   };
 }
 
@@ -328,8 +478,9 @@ function pathFor(edge: TaskEdge, model: TaskGraphModel, frame: Frame): string {
   if (edge.kind === "return") {
     // Sweep beneath the whole machine, back to the start — the two returns
     // nest at different depths instead of overlapping. Both stay inside the
-    // frame because `frameFor` pads by RETURN_DEPTH.
-    const depth = frame.lowY + (edge.from === "iti" ? RETURN_DEPTH : RETURN_DEPTH - 16);
+    // frame because `frameFor` pads by the return depth.
+    const depth =
+      frame.lowY + (edge.from === "iti" ? frame.returnDepth : frame.returnDepth - 16);
     return `M ${x1} ${y1 + R} C ${x1} ${depth}, ${x2} ${depth}, ${x2} ${y2 + R}`;
   }
 
@@ -422,6 +573,8 @@ function NodeGlyph({
   lit,
   hoverGroup,
   frame,
+  live = false,
+  reduceMotion = false,
   onEnter,
   onLeave,
   onClick,
@@ -435,9 +588,15 @@ function NodeGlyph({
   lit: boolean | null;
   hoverGroup: string | null;
   frame: Frame;
+  /** The running box is in this state right now (`LiveStateMachine`). */
+  live?: boolean;
+  /** Gates the token's `repeat: Infinity` pulse, which `MotionConfig`'s
+   *  reduced-motion setting does not neutralise. */
+  reduceMotion?: boolean;
   onEnter: () => void;
   onLeave: () => void;
-  onClick: () => void;
+  /** Absent in the live view, where a state is a reading, not a control. */
+  onClick?: (() => void) | undefined;
   onChipEnter: (group: string) => void;
   onChipLeave: () => void;
   onChipClick: (group: string) => void;
@@ -458,7 +617,11 @@ function NodeGlyph({
 
   return (
     <g
-      style={{ opacity: dimmed ? 0.18 : 1, transition: "opacity 160ms", cursor: "pointer" }}
+      style={{
+        opacity: dimmed ? 0.18 : 1,
+        transition: "opacity 160ms",
+        cursor: onClick ? "pointer" : "default",
+      }}
       onPointerEnter={onEnter}
       onPointerLeave={onLeave}
       onClick={onClick}
@@ -477,24 +640,58 @@ function NodeGlyph({
         />
       )}
 
+      {/* The live token: `SessionJourney`'s StepStar grammar at this drawing's
+          scale — a pulsing flat ring around the occupied state, no blur, no
+          glow (§2.2). The steady inner ring keeps the state marked between
+          pulses and under reduced motion. */}
+      {live && !reduceMotion && (
+        <motion.circle
+          cx={x}
+          cy={y}
+          fill="none"
+          stroke="var(--color-starlight)"
+          strokeWidth={1}
+          initial={false}
+          animate={{ r: [R + 2, R + 13], opacity: [0.5, 0] }}
+          transition={{ duration: 1.6, repeat: Infinity, ease: "easeOut" }}
+          pointerEvents="none"
+        />
+      )}
+      {live && (
+        <circle
+          cx={x}
+          cy={y}
+          r={R + 4.5}
+          fill="none"
+          stroke="var(--color-starlight)"
+          strokeWidth={0.8}
+          opacity={0.55}
+          pointerEvents="none"
+        />
+      )}
+
       {node.kind === "outcome" ? (
-        <rect
+        // A live outcome brightens in its own colour — "rewarded" flashing
+        // green says more than a generic token colour would.
+        <motion.rect
           x={x - R}
           y={y - R}
           width={R * 2}
           height={R * 2}
           rx={3}
           fill={fill}
-          fillOpacity={0.22}
+          animate={{ fillOpacity: live ? 0.75 : 0.22 }}
+          transition={springSnappy}
           stroke={fill}
           strokeWidth={1}
         />
       ) : (
-        <circle
+        <motion.circle
           cx={x}
           cy={y}
           r={R}
-          fill="var(--color-nebula)"
+          animate={{ fill: live ? "var(--color-starlight)" : "var(--color-nebula)" }}
+          transition={springSnappy}
           stroke={node.kind === "abort" ? "var(--color-static)" : "var(--color-starlight)"}
           strokeOpacity={node.kind === "abort" ? 0.55 : 0.8}
           strokeWidth={1}
@@ -507,7 +704,7 @@ function NodeGlyph({
         y={labelY}
         textAnchor={textAnchor}
         fontSize={11}
-        className={lit ? "fill-starlight" : "fill-static"}
+        className={lit || live ? "fill-starlight" : "fill-static"}
         style={{ transition: "fill 160ms" }}
       >
         {node.label}

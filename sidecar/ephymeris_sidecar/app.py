@@ -42,13 +42,15 @@ from .sessions.models import (
 )
 from .sessions import recovery
 from .sessions.paths import resolve_session_folder
-from .specs import compiler as spec_compiler
-from .specs import service as spec_service
 from .hardware import service as hardware_service
 from .hardware import store as hardware_store
-from .specs import store as spec_store
 from .sessions.repository import SessionRepository
 from .sessions.runner import ActiveRun, BoxConfig, SessionRunner
+from .taskdef import bundled as bundled_sketches
+from .taskdef import presets as task_presets
+from .taskdef import store as taskdef_store
+from .taskdef.model import TaskDefinition, TaskDefinitionError
+from .taskdef.validate import validate as validate_task
 from .tasks import profile as task_profile
 from .tasks.start_command import build_start_command
 from .ports.handler import DEFAULT_LINE_ENDING, LINE_ENDINGS, OutputLine, PortBusy
@@ -109,7 +111,15 @@ class Application:
         # A real scan, not a placeholder: the library ships with the app, so
         # there is no "not configured yet" to wait out — a fresh launch either
         # has its sketches or is damaged, and both are knowable immediately.
-        self.discovery = discovery.discover()
+        #: This rig's task profiles, and the sketches generated from them.
+        #: Built before the first scan, because `discover()` reads its root.
+        self.task_store = taskdef_store.TaskStore(data_dir)
+        #: Where the bundled sketches are rebuilt against this rig's wiring
+        #: (`taskdef/bundled.py`). A separate root from the profiles: one holds
+        #: what the operator authored, the other a build output the app can
+        #: throw away and remake.
+        self.pinned_root = data_dir / "rig" / "sketches"
+        self.discovery = discovery.discover(self.task_store.root, self.pinned_root)
         # `legacyNames` → sketch path, built lazily by `_sketch_path_for_name`
         # and tied to the discovery it was built from. Read from an analytics
         # worker thread while `_rescan` runs on the loop, hence the lock.
@@ -132,14 +142,18 @@ class Application:
         self.analytics: AnalyticsService | None = None
         self.profiles = AnalyticsRepository(self.db)
         self._running_session_id: str | None = None
-        #: One compile at a time — see _specs_compile for why this is not
-        #: an optimisation.
-        self._spec_compile_gate = asyncio.Semaphore(1)
-        self.spec_store = spec_store.SpecStore(data_dir)
+        #: One rig operation at a time. `hardware.preview` fires on every
+        #: keystroke in the wiring editor and re-validates every stored task
+        #: profile; overlapping runs would also fight over the module-level rig
+        #: source `impact_of` installs and restores.
+        self._rig_gate = asyncio.Semaphore(1)
         #: The rig's own wiring, if it has one. Pointed at the registries here
-        #: rather than read by them, so `taskgraph` never learns about data_dir.
+        #: rather than read by them, so `rig` never learns about data_dir.
         self.hardware_store = hardware_store.HardwareStore(data_dir)
         self._install_rig_wiring()
+        #: `hardware.preview`/`save` ask it which profiles a rewiring would
+        #: newly break — before the write, which is the whole point of asking.
+        self._task_store: Any = self.task_store
         #: hardware_id → detected interpreter baud. Detection costs a boot
         #: cycle per candidate rate, so the answer is kept for the app's
         #: lifetime — and invalidated on any flash to that box, since flashing
@@ -174,6 +188,14 @@ class Application:
         self.server.register(Cmd.PREFIXES_CREATE, self._prefixes_create)
         self.server.register(Cmd.PREFIXES_DELETE, self._prefixes_delete)
         self.server.register(Cmd.TASKS_GET_PROFILE, self._tasks_get_profile)
+        self.server.register(Cmd.TASKS_LIST, self._tasks_list)
+        self.server.register(Cmd.TASKS_GET, self._tasks_get)
+        self.server.register(Cmd.TASKS_PREVIEW, self._tasks_preview)
+        self.server.register(Cmd.TASKS_SAVE, self._tasks_save)
+        self.server.register(Cmd.TASKS_DELETE, self._tasks_delete)
+        self.server.register(Cmd.TASKS_PRESETS, self._tasks_presets)
+        self.server.register(Cmd.TASKS_FROM_PRESET, self._tasks_from_preset)
+        self.server.register(Cmd.RIG_STROBES, self._rig_strobes)
         self.server.register(Cmd.COHORTS_SUGGEST_GROUPS, self._cohorts_suggest_groups)
 
         self.server.register(Cmd.SESSIONS_SUGGEST_NUMBER, self._sessions_suggest_number)
@@ -196,30 +218,25 @@ class Application:
         self.server.register(Cmd.ANALYTICS_RECENT_SESSIONS, self._analytics_recent_sessions)
         self.server.register(Cmd.SESSIONS_RECOVER, self._sessions_recover)
 
-        self.server.register(Cmd.SPECS_LIST, self._specs_list)
-        self.server.register(Cmd.SPECS_GET, self._specs_get)
-        self.server.register(Cmd.SPECS_SCHEMA, self._specs_schema)
-        self.server.register(Cmd.SPECS_COMPILE, self._specs_compile)
-        self.server.register(Cmd.SPECS_CAPABILITIES, self._specs_capabilities)
-        self.server.register(Cmd.SPECS_PARADIGMS, self._specs_paradigms)
-        self.server.register(Cmd.SPECS_SKELETON, self._specs_skeleton)
-        self.server.register(Cmd.SPECS_SAVE, self._specs_save)
-        self.server.register(Cmd.SPECS_DELETE, self._specs_delete)
-        self.server.register(Cmd.SPECS_DIFF, self._specs_diff)
-        self.server.register(Cmd.SPECS_EXPORT, self._specs_export)
         self.server.register(Cmd.HARDWARE_GET, self._hardware_get)
         self.server.register(Cmd.HARDWARE_PREVIEW, self._hardware_preview)
         self.server.register(Cmd.HARDWARE_SAVE, self._hardware_save)
         self.server.register(Cmd.HARDWARE_RESET, self._hardware_reset)
-        self.server.register(Cmd.BOARD_CAPABILITIES, self._board_capabilities)
-        self.server.register(Cmd.BOARD_UPLOAD_TABLE, self._board_upload_table)
-        self.server.register(Cmd.UTILITY_BENCH_HOLD, self._utility_bench_hold)
 
         self.server.on_client_ready(self._replay_state)
 
     def start(self) -> None:
         self.db.connect()
-        self._log_spec_compiler()
+        self._log_rig_wiring()
+        # Rebuild the bundled sketches against this rig's wiring before anything
+        # can flash one. Synchronous and on the startup path on purpose: it is a
+        # few small file copies, and doing it lazily would mean the FIRST flash
+        # after a launch could serve the shipped pins while every later one
+        # served the rig's -- a difference nobody would connect to a restart.
+        pinned = bundled_sketches.repin_all(self.pinned_root)
+        if pinned:
+            self.discovery = discovery.discover(self.task_store.root, self.pinned_root)
+            log.info("%d bundled sketch(es) rebuilt for this rig's wiring", pinned)
         loop = asyncio.get_running_loop()
         self.backup = BackupManager(
             loop=loop,
@@ -276,56 +293,60 @@ class Application:
         self.db.close()
 
     def _install_rig_wiring(self) -> None:
-        """Point the compiler's registries at this rig's wiring document.
+        """Point the registries at this rig's wiring document.
 
         Called once at construction and again after every `hardware.save`.
         `set_rig_source` clears the channel cache, which is why this must NOT be
         hung off `settings.push` -- that fires on every reconnect, and throwing
-        the compiler's registries away several times a session for no reason is
-        a real cost on a call that also does a library rescan.
+        the registries away several times a session for no reason is a real cost
+        on a call that also does a library rescan.
         """
-        from ephymeris_sidecar.taskgraph import registries
+        from ephymeris_sidecar.rig import registry
 
-        registries.set_rig_source(self.hardware_store.load)
+        registry.set_rig_source(self.hardware_store.load)
 
-    def _log_spec_compiler(self) -> None:
-        """Say once, at startup, whether the task-spec compiler came up.
+    async def _rebuild_for_wiring(self) -> None:
+        """Everything that carries a pin number, rebuilt. THE one call site.
 
-        Its two dependencies are the only ones in this sidecar with no fallback
-        behind them, so "is it there" has to be answerable from the log alone --
-        particularly in a packaged build, where the failure mode is a PyInstaller
-        data entry silently going missing and the only symptom is a banner on one
-        screen nobody has opened yet.
+        Two outputs and one trigger, deliberately. A pin is compiled into every
+        generated `TaskPins.h` — a task profile's and a bundled sketch's alike —
+        so a wiring change that rebuilt only one of them would leave the other
+        flashing the old pins. It would still compile, still run, and the only
+        symptom would be a valve that never fires. Splitting this into two calls
+        is how one of them eventually gets forgotten.
+
+        Ordering: rebuild first, then rescan, so discovery sees the new folders
+        rather than reporting the ones it is about to replace.
         """
-        from ephymeris_sidecar.specs import compiler
-
-        ok, why = compiler.self_check()
-        if not ok:
-            log.warning(
-                "task spec compiler unavailable (%s) — the Task screen's spec "
-                "editor will be disabled; sessions and flashing are unaffected",
-                why,
+        tasks = await asyncio.to_thread(self.task_store.regenerate_all)
+        pinned = await asyncio.to_thread(bundled_sketches.repin_all, self.pinned_root)
+        if tasks or pinned:
+            log.info(
+                "wiring changed: rebuilt %d task profile(s) and %d bundled sketch(es)",
+                tasks,
+                pinned,
             )
-            return
-        from ephymeris_sidecar.taskgraph import paradigms
-        from ephymeris_sidecar.taskgraph.registries import active_pinout_id
+        await self._rescan()
+        if tasks:
+            await self._broadcast_tasks()
 
-        # What ships is the ability to MAKE a task, so that is what is counted.
-        # The pinout is named because it ends up inside the packed table: a box
-        # compiled for the wrong one is a real failure with no other symptom.
+    def _log_rig_wiring(self) -> None:
+        """Say once, at startup, which wiring is in force.
+
+        The pin numbers this names are the ones written into every task
+        profile's generated firmware, so a box running the wrong wiring is a
+        real failure with no other symptom -- the valves simply fire on pins
+        nothing is plumbed to. The log line is the cheapest place to catch it.
+        """
+        from ephymeris_sidecar.rig.registry import active_pinout_id, channels
+
         status = self.hardware_store.status()
         wiring = (
-            f"rig wiring (from {status.derived_from or 'the shipped pinout'})"
+            f"this rig's own wiring (derived from {status.derived_from or 'the shipped pinout'})"
             if status.custom
-            else f"pinout {active_pinout_id()}"
+            else f"the shipped pinout {active_pinout_id()}"
         )
-        log.info(
-            "task spec compiler ready (%d paradigms, %d template versions, %s, from %s)",
-            len(paradigms.load_all()),
-            len(compiler.templates_available()),
-            wiring,
-            compiler.compiler_root(),
-        )
+        log.info("wiring: %s, %s", wiring, channels().content_hash())
 
     def _cohort_roots(self) -> list[str]:
         """Every cohort's data folder — the anchors for mirror paths (§8).
@@ -368,10 +389,9 @@ class Application:
             )
         await send(event(Evt.BOARDS_PRESENCE, {"boards": self.ports.presence_json()}))
         await send(event(Evt.SKETCHES_UPDATED, self.discovery.to_json()))
+        await send(event(Evt.TASKS_UPDATED, {"tasks": self.task_store.list_entries()}))
         await send(event(Evt.COHORTS_UPDATED, {"cohorts": await self._cohort_summaries()}))
         await send(event(Evt.PREFIXES_UPDATED, {"prefixes": await self._prefix_list()}))
-        if spec_compiler.available()[0]:
-            await send(event(Evt.SPECS_UPDATED, {"specs": self.spec_store.list_entries()}))
         if self.utility is not None:
             await send(event(Evt.UTILITY_UPDATED, self.utility.status()))
         if self.backup is not None:
@@ -787,161 +807,208 @@ class Application:
             ) from exc
         return profile.to_json() if profile is not None else {"profile": None}
 
-    # --- task specs (specs.md) ---------------------------------------------
+    # -- task profiles ------------------------------------------------------ #
+    #
+    # OFF-LOOP, because saving one writes four files and validating one composes
+    # the whole channel map, and the event loop owns six serial ports and a
+    # 20 Hz output flush. They share the rig gate rather than taking their own:
+    # `hardware.preview` installs a hypothetical wiring at module scope, and a
+    # task validating against it at the same moment would read the wrong rig.
 
-    def _require_spec_compiler(self) -> None:
-        ok, why = spec_compiler.self_check()
-        if not ok:
+    async def _tasks_list(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        async with self._rig_gate:
+            return {"tasks": await asyncio.to_thread(self.task_store.list_entries)}
+
+    async def _tasks_get(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        task_id = _str_arg(args, "taskId")
+        definition = await asyncio.to_thread(self.task_store.get, task_id)
+        if definition is None:
             raise CommandError(
-                ErrCode.SPEC_COMPILER_UNAVAILABLE,
-                "The task-spec compiler isn't available on this install — the "
-                "spec editor is disabled. Sessions and flashing are unaffected.",
-                {"reason": why},
+                ErrCode.TASK_NOT_FOUND,
+                f"No task profile called {task_id!r} on this rig.",
+                {"taskId": task_id},
             )
-
-    async def _specs_list(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        return {"specs": await asyncio.to_thread(self.spec_store.list_entries)}
-
-    async def _specs_get(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        spec_id = _str_arg(args, "specId")
-        record = await asyncio.to_thread(self.spec_store.get, spec_id)
-        if record is None:
-            raise CommandError(
-                ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
-            )
-        text = await asyncio.to_thread(record.read_text)
+        async with self._rig_gate:
+            diagnostics = await asyncio.to_thread(validate_task, definition)
         return {
-            "specId": record.spec_id,
-            "origin": record.origin,
-            "text": text,
-            # None when the text will not parse — not an error here: the editor
-            # opens what exists, and the compile that runs on mount is what
-            # reports WHY it won't parse.
-            "raw": await asyncio.to_thread(spec_store.parse_document, text),
+            "definition": definition.to_json(),
+            "diagnostics": [d.to_json() for d in diagnostics],
         }
 
-    async def _specs_schema(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        return await asyncio.to_thread(spec_compiler.registries)
+    async def _tasks_preview(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        definition = self._definition_arg(args)
+        async with self._rig_gate:
+            return await asyncio.to_thread(self._preview_payload, definition)
 
-    async def _specs_compile(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        text = args.get("text")
-        if not isinstance(text, str):
-            raise CommandError(ErrCode.SPEC_INVALID, "`text` must be a string.")
-        if len(text.encode("utf-8", errors="ignore")) > spec_store.MAX_SPEC_BYTES:
-            raise CommandError(
-                ErrCode.SPEC_INVALID,
-                f"The document is over {spec_store.MAX_SPEC_BYTES // 1024} KB — "
-                "that is not a task spec.",
-            )
-        spec_id = args.get("specId") if isinstance(args.get("specId"), str) else None
-        # Off the loop, and one at a time. This runs per keystroke (debounced
-        # client-side); a synchronous compile here would stall the 20 Hz output
-        # flush for all six ports, and mid-session the fsync-per-strobe write
-        # path. The semaphore keeps a typing burst from stacking worker threads
-        # that each hold the GIL through jsonschema's hot loop.
-        async with self._spec_compile_gate:
-            return await asyncio.to_thread(spec_service.compile_payload, text, spec_id)
+    def _preview_payload(self, definition: TaskDefinition) -> dict[str, Any]:
+        """Compile without writing, and report the line budget.
 
-    async def _specs_paradigms(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        # Reads seven small files behind an lru_cache; no thread hop earns its
-        # keep, and self_check() has already paid for the first load.
-        return spec_service.paradigms_payload()
+        The `START` length is carried because it is the one budget an operator
+        can exhaust without noticing: the firmware truncates an overlong line in
+        silence and runs on whichever values happened to fit. Showing the number
+        as it grows is cheaper than explaining the failure afterward.
+        """
+        from .taskdef import generate
+        from .tasks.start_command import START_LINE_MAX, build_start_command, with_trial_seed
 
-    async def _specs_skeleton(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        paradigm_id = args.get("paradigmId")
-        spec_id = args.get("specId")
-        if not isinstance(paradigm_id, str) or not isinstance(spec_id, str):
-            raise CommandError(
-                ErrCode.SPEC_INVALID, "`paradigmId` and `specId` must be strings."
-            )
-        if not spec_store.SPEC_ID_RE.match(spec_id):
-            raise CommandError(
-                ErrCode.SPEC_INVALID,
-                f"{spec_id!r} is not a legal spec id — the id is also a filename.",
-            )
-        answers = args.get("answers")
-        if answers is not None and not isinstance(answers, dict):
-            raise CommandError(ErrCode.SPEC_INVALID, "`answers` must be an object.")
+        diagnostics = validate_task(definition)
+        profile = generate.build_profile(definition)
+        config = {field.metadata_key: field.default for field in profile.config}
         try:
-            # Behind the same gate as compile, because it ends in one.
-            async with self._spec_compile_gate:
-                return await asyncio.to_thread(
-                    spec_service.skeleton_payload,
-                    paradigm_id,
-                    spec_id,
-                    answers,
-                    label=args.get("label"),
-                    description=args.get("description"),
-                )
-        except CommandError:
-            raise
-        except Exception as exc:
-            # A paradigm that cannot generate is an install-integrity problem --
-            # the registry shipped broken -- not a document the user can fix, so
-            # it reports as unavailable rather than as a diagnostic.
-            raise CommandError(
-                ErrCode.SPEC_COMPILER_UNAVAILABLE,
-                f"the {paradigm_id!r} paradigm could not produce a draft: {exc}",
-            ) from exc
+            line = with_trial_seed(build_start_command(profile, config), 2147483646)
+            length = len(line)
+        except task_profile.TaskProfileError:
+            # Over the cap. TSK107 already says so with the real numbers; the
+            # length is reported as the max so the meter reads full rather than
+            # empty, which is the honest rendering of "it does not fit".
+            length = START_LINE_MAX
+        # The same profile compiled with the overrides stripped. Two compiles
+        # rather than one because "what does this profile PIN" is not derivable
+        # from the merged result: a value equal to the catalogue's is
+        # indistinguishable from one that was never set, and storing it would
+        # freeze the field against a later correction.
+        from dataclasses import replace as _replace
 
-    async def _specs_capabilities(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        topology = args.get("topology")
-        if not isinstance(topology, dict):
-            raise CommandError(ErrCode.SPEC_INVALID, "`topology` must be an object.")
-        try:
-            # Synchronous on purpose: a pure function of six scalars, cheaper
-            # than the thread hop.
-            return spec_service.capabilities_payload(topology)
-        except Exception as exc:
-            # An unknown template name or a malformed knob is a caller mistake,
-            # not a compile diagnostic -- there is no document to diagnose.
-            raise CommandError(ErrCode.SPEC_INVALID, str(exc)) from exc
+        bare = generate.build_profile(_replace(definition, params={}))
+        return {
+            "diagnostics": [d.to_json() for d in diagnostics],
+            "startLineLength": length,
+            "startLineMax": START_LINE_MAX,
+            "profile": profile.to_json(),
+            "catalogueDefaults": {f.metadata_key: f.default for f in bare.config},
+        }
 
-    async def _broadcast_specs(self) -> None:
-        await self.server.broadcast(
-            event(
-                Evt.SPECS_UPDATED,
-                {"specs": await asyncio.to_thread(self.spec_store.list_entries)},
-            )
+    async def _tasks_save(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        definition = self._definition_arg(args)
+        # A generated sketch and a bundled one sharing a name makes the picker
+        # ambiguous and the flash a coin flip, so this is refused rather than
+        # reported: it is the one problem saving cannot leave for later.
+        collision = next(
+            (s for s in self.discovery.sketches
+             if s.source == "bundled" and s.name == definition.name),
+            None,
         )
+        if collision is not None:
+            raise CommandError(
+                ErrCode.TASK_INVALID,
+                f"A sketch that ships with Ephymeris is already called "
+                f"{definition.name!r}. Give this task another name.",
+                {"sketchPath": collision.path},
+            )
+
+        async with self._rig_gate:
+            diagnostics = await asyncio.to_thread(self.task_store.save, definition)
+        # The folder is a sketch from this moment, so the library must be
+        # rescanned before anyone can flash it. `_rescan` broadcasts
+        # `sketches.updated`; the task list rides alongside it.
+        await self._rescan()
+        await self._broadcast_tasks()
+
+        entry = next(
+            (e for e in self.task_store.list_entries() if e["id"] == definition.id), None
+        )
+        sketch_dir = self.task_store.sketch_dir(definition)
+        return {
+            "entry": entry,
+            "diagnostics": diagnostics,
+            "sketchPath": str(sketch_dir) if sketch_dir.is_dir() else None,
+        }
+
+    async def _tasks_delete(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        task_id = _str_arg(args, "taskId")
+        deleted = await asyncio.to_thread(self.task_store.delete, task_id)
+        if deleted:
+            await self._rescan()
+            await self._broadcast_tasks()
+        return {"deleted": deleted}
+
+    async def _tasks_presets(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        return {"presets": task_presets.summaries()}
+
+    async def _tasks_from_preset(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        preset_id = _str_arg(args, "presetId")
+        task_id = _str_arg(args, "taskId")
+        name = args.get("name") if isinstance(args.get("name"), str) else None
+        if not taskdef_store.is_usable_id(task_id):
+            raise CommandError(
+                ErrCode.TASK_INVALID,
+                f"{task_id!r} is not a usable task id — lower case, digits and "
+                "underscores, starting with a letter.",
+            )
+        try:
+            definition = task_presets.instantiate(preset_id, task_id, name)
+        except KeyError as exc:
+            raise CommandError(
+                ErrCode.TASK_NOT_FOUND,
+                f"No preset called {preset_id!r}.",
+                {"presetId": preset_id},
+            ) from exc
+        async with self._rig_gate:
+            diagnostics = await asyncio.to_thread(validate_task, definition)
+        return {
+            "definition": definition.to_json(),
+            "diagnostics": [d.to_json() for d in diagnostics],
+        }
+
+    def _definition_arg(self, args: dict[str, Any]) -> TaskDefinition:
+        """`TASK_INVALID` is for a document that is not a definition.
+
+        A well-formed definition describing an impossible task — a channel this
+        rig lacks, a reward line serving the wrong well — is NOT this. It is a
+        successful reply carrying located diagnostics, exactly as a wiring
+        document is.
+        """
+        raw = args.get("definition")
+        if not isinstance(raw, dict):
+            raise CommandError(ErrCode.TASK_INVALID, "`definition` must be an object.")
+        if len(json.dumps(raw).encode()) > taskdef_store.MAX_DEFINITION_BYTES:
+            raise CommandError(
+                ErrCode.TASK_INVALID,
+                f"The definition is over "
+                f"{taskdef_store.MAX_DEFINITION_BYTES // 1024} KB — that is not a task.",
+            )
+        try:
+            return TaskDefinition.from_json(raw)
+        except TaskDefinitionError as exc:
+            raise CommandError(ErrCode.TASK_INVALID, str(exc)) from exc
+
+    async def _broadcast_tasks(self) -> None:
+        await self.server.broadcast(
+            event(Evt.TASKS_UPDATED, {"tasks": self.task_store.list_entries()})
+        )
+
+    async def _rig_strobes(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        from .rig import registry
+
+        return await asyncio.to_thread(lambda: registry.vocabulary().to_json())
 
     # -- rig wiring -------------------------------------------------------- #
     #
-    # OFF-LOOP, all four, for the same reason specs.compile is: preview and save
-    # recompile every stored spec, and the event loop also owns six serial ports
-    # and a 20 Hz output flush. They share the spec compile gate rather than
-    # taking one of their own, because they ARE spec compiles -- several at once.
+    # OFF-LOOP, all four. Preview and save re-validate every stored task profile
+    # against the proposed wiring, and the event loop also owns six serial ports
+    # and a 20 Hz output flush. They share one gate rather than taking one each,
+    # because they are the same work -- several at once.
 
     async def _hardware_get(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
         return await asyncio.to_thread(hardware_service.document_payload, self.hardware_store)
 
     async def _hardware_preview(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
         document = self._rig_document_arg(args)
-        async with self._spec_compile_gate:
+        async with self._rig_gate:
             return await asyncio.to_thread(
                 hardware_service.preview_payload,
                 self.hardware_store,
                 document,
-                self.spec_store,
+                self._task_store,
             )
 
     async def _hardware_save(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
         document = self._rig_document_arg(args)
         confirm = bool(args.get("confirm"))
 
-        async with self._spec_compile_gate:
+        async with self._rig_gate:
             breaks = await asyncio.to_thread(
-                hardware_service.impact_of, document, self.spec_store
+                hardware_service.impact_of, document, self._task_store
             )
             if breaks and not confirm:
                 # Not an error the operator cannot pass -- it is the "shown
@@ -965,7 +1032,7 @@ class Application:
                     ]},
                 ) from exc
 
-            # The write landed, so every later compile must see it. Ordering
+            # The write landed, so every later read must see it. Ordering
             # matters: install first, then report, or the reply would describe
             # the wiring that was in force a moment ago.
             self._install_rig_wiring()
@@ -974,17 +1041,22 @@ class Application:
             )
             payload["breaks"] = breaks
 
+        # EVERY GENERATED SKETCH IS NOW STALE -- see `_rebuild_for_wiring`. This
+        # is what makes "a pin change applies to everything" true rather than a
+        # claim, and it runs outside the gate because a rescan takes it.
+        await self._rebuild_for_wiring()
         await self._announce_rig(payload["status"])
         return payload
 
     async def _hardware_reset(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        async with self._spec_compile_gate:
+        async with self._rig_gate:
             await asyncio.to_thread(self.hardware_store.reset)
             self._install_rig_wiring()
             payload = await asyncio.to_thread(
                 hardware_service.document_payload, self.hardware_store
             )
+        # Reset is a wiring change like any other -- see `_hardware_save`.
+        await self._rebuild_for_wiring()
         await self._announce_rig(payload["status"])
         return payload
 
@@ -992,8 +1064,7 @@ class Application:
         """`RIG_INVALID` is for a document that is not a document.
 
         A well-formed document describing an impossible box is NOT this -- it
-        is a successful reply carrying located problems, exactly as a spec that
-        will not compile is a successful `specs.compile`.
+        is a successful reply carrying located problems.
         """
         document = args.get("document")
         if not isinstance(document, dict):
@@ -1009,291 +1080,11 @@ class Application:
     async def _announce_rig(self, status: dict[str, Any]) -> None:
         """Tell every client the wiring moved.
 
-        `specs.schema` carries the composed channel map and the frontend caches
-        it at module scope, under a comment that used to say it cannot change
-        while the app runs. This is what makes that cache correct again.
+        The composed channel map used to be a fact about the build, cached at
+        module scope on the frontend under a comment saying it could not change
+        while the app ran. It can now, and this is what keeps that cache honest.
         """
         await self.server.broadcast(event(Evt.HARDWARE_UPDATED, status))
-
-    async def _specs_save(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        spec_id = _str_arg(args, "specId")
-        text = args.get("text")
-        if not isinstance(text, str):
-            raise CommandError(ErrCode.SPEC_INVALID, "`text` must be a string.")
-        if len(text.encode("utf-8", errors="ignore")) > spec_store.MAX_SPEC_BYTES:
-            raise CommandError(
-                ErrCode.SPEC_INVALID,
-                f"The document is over {spec_store.MAX_SPEC_BYTES // 1024} KB — "
-                "that is not a task spec.",
-            )
-        # A document whose own spec_id disagrees with the file it lands in
-        # would poison provenance: the id names the file, the table, and what a
-        # board reports back after an upload. A HALF-BUILT document (no parse,
-        # or no spec_id yet) is fine — the filename stem is its identity, which
-        # is exactly the loader's own default.
-        raw = await asyncio.to_thread(spec_store.parse_document, text)
-        declared = raw.get("spec_id") if isinstance(raw, dict) else None
-        if isinstance(declared, str) and declared != spec_id:
-            raise CommandError(
-                ErrCode.SPEC_INVALID,
-                f"The document says `spec_id: {declared}` but is being saved as "
-                f"{spec_id!r}. Change one to match the other — the frontend "
-                "saves under the document's own id, so this usually means a "
-                "stale client.",
-            )
-        try:
-            record = await asyncio.to_thread(self.spec_store.save, spec_id, text)
-        except spec_store.SpecIdInvalid as exc:
-            raise CommandError(ErrCode.SPEC_INVALID, str(exc)) from exc
-        entry = await asyncio.to_thread(self.spec_store.entry_for, record)
-        # Saving always compiles — not as a gate (a half-finished spec must be
-        # savable; the gate is upload), but because the caller is about to
-        # render the result anyway and this keeps save and display in one
-        # round trip.
-        async with self._spec_compile_gate:
-            result = await asyncio.to_thread(spec_service.compile_payload, text, spec_id)
-        await self._broadcast_specs()
-        return {"entry": entry, "result": result}
-
-    async def _specs_delete(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        spec_id = _str_arg(args, "specId")
-        if self.spec_store.get(spec_id) is None:
-            raise CommandError(
-                ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
-            )
-        await asyncio.to_thread(self.spec_store.delete, spec_id)
-        await self._broadcast_specs()
-        return {"entry": None}
-
-    async def _specs_diff(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        spec_id = _str_arg(args, "specId")
-        record = await asyncio.to_thread(self.spec_store.get, spec_id)
-        if record is None:
-            raise CommandError(
-                ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
-            )
-
-        text = args.get("text")
-        after_text = text if isinstance(text, str) else await asyncio.to_thread(record.read_text)
-
-        against = args.get("againstSpecId")
-        if isinstance(against, str) and against:
-            other = await asyncio.to_thread(self.spec_store.get, against)
-            if other is None:
-                raise CommandError(
-                    ErrCode.SPEC_NOT_FOUND, f"No spec named {against!r}.", {"specId": against}
-                )
-            before_text = await asyncio.to_thread(other.read_text)
-            baseline = "spec"
-        else:
-            # Two baselines, not three. There is no shipped version to review
-            # against any more, so a diff is either "my unsaved edits against my
-            # own file" or "this task against that one".
-            before_text, baseline = await asyncio.to_thread(record.read_text), "saved"
-
-        async with self._spec_compile_gate:
-            return await asyncio.to_thread(
-                spec_service.diff_payload, spec_id, after_text, before_text, baseline
-            )
-
-    async def _specs_export(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        spec_id = _str_arg(args, "specId")
-        kinds = args.get("artifacts")
-        if not isinstance(kinds, list) or not all(isinstance(k, str) for k in kinds):
-            raise CommandError(ErrCode.SPEC_INVALID, "`artifacts` must be a list of kinds.")
-        text = args.get("text")
-        if not isinstance(text, str):
-            record = await asyncio.to_thread(self.spec_store.get, spec_id)
-            if record is None:
-                raise CommandError(
-                    ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
-                )
-            text = await asyncio.to_thread(record.read_text)
-        async with self._spec_compile_gate:
-            return await asyncio.to_thread(spec_service.export_payload, spec_id, text, kinds)
-
-    # --- bench boxes (specs.md) --------------------------------------------
-    #
-    # The structural invariant, stated where the handlers live: NOTHING here
-    # ties a spec to a session. sessions.confirmMapping does not learn a
-    # specId, and port.startSession is untouched. The interpreter is proved
-    # off-target and has never driven a pin — a box carrying it accepts a
-    # table and reports whether it fits. Revisit at Phase 5's exit criteria.
-
-    def _detect_board_baud(self, box: int, address: str, requested: int | None) -> int:
-        """The interpreter baud for this box — cached per hardware_id.
-
-        NOT settings.defaultBaud: that is the console default, an operator
-        setting that can hold any rate the picker offers, and using it here
-        would make a board look mute whenever the two disagree. Source and
-        host defaults are both 115200 now, but a box keeps whatever rate it
-        was last flashed with — so the fleet stays mixed until every box has
-        been reflashed, which is exactly what transport detect exists for.
-        """
-        from ephymeris_sidecar.taskgraph.transport import client as tg_client
-
-        from .ports.upload import PortLink
-
-        if requested is not None:
-            return requested
-        hardware_id = self.settings.hardware_id_for(box)
-        cached = self._board_bauds.get(hardware_id) if hardware_id else None
-        if cached is not None:
-            return cached
-        baud = tg_client.detect(lambda b: PortLink(address, b, reset=True))
-        if hardware_id is not None:
-            self._board_bauds[hardware_id] = baud
-        return int(baud)
-
-    async def _board_capabilities(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        box = _box_arg(args)
-        requested = args.get("baud") if isinstance(args.get("baud"), int) else None
-
-        def work(address: str, handler) -> dict[str, Any]:  # noqa: ANN001
-            from ephymeris_sidecar.taskgraph.transport import UploadError
-            from ephymeris_sidecar.taskgraph.transport import client as tg_client
-
-            from .ports.upload import PortLink
-
-            try:
-                baud = self._detect_board_baud(box, address, requested)
-                with PortLink(address, baud, reset=True, mirror=handler.echo) as link:
-                    banner, caps = tg_client.probe(link)
-            except UploadError as exc:
-                raise CommandError(ErrCode.UPLOAD_FAILED, str(exc), {"box": box}) from exc
-            return {
-                "box": box,
-                "present": caps.present,
-                "baud": baud,
-                "values": dict(caps.values),
-                "text": dict(caps.text),
-                "banner": banner,
-            }
-
-        with _mapped_errors(box):
-            _state, _resumed, payload = await self._require_ports().with_port_for_upload(
-                box, work
-            )
-        return payload  # type: ignore[return-value]
-
-    async def _board_upload_table(self, _server, _conn, args, corr) -> dict[str, Any]:  # noqa: ANN001
-        self._require_spec_compiler()
-        box = _box_arg(args)
-        spec_id = _str_arg(args, "specId")
-        text = args.get("text")
-        if not isinstance(text, str):
-            record = await asyncio.to_thread(self.spec_store.get, spec_id)
-            if record is None:
-                raise CommandError(
-                    ErrCode.SPEC_NOT_FOUND, f"No spec named {spec_id!r}.", {"specId": spec_id}
-                )
-            text = await asyncio.to_thread(record.read_text)
-
-        # Compiled server-side, always — a client-supplied table is never
-        # trusted, so the compiler's structural gate (no table from a failing
-        # spec) holds on the hardware path too.
-        async with self._spec_compile_gate:
-            compiled = await asyncio.to_thread(spec_compiler.compile, text, spec_id=spec_id)
-        if not compiled.ok or compiled.table is None:
-            errors = [d.message for d in compiled.bag if d.severity.name == "ERROR"]
-            raise CommandError(
-                ErrCode.UPLOAD_REFUSED,
-                f"{spec_id} does not compile, so there is no table to upload.",
-                {"box": box, "errors": errors[:8]},
-            )
-        table = compiled.table
-        blob, crc = spec_compiler.table_bytes(compiled)
-
-        loop = asyncio.get_running_loop()
-
-        def emit_progress(phase: str, chunk: int | None, chunks: int | None, note: str | None):
-            data = {"box": box, "phase": phase, "chunk": chunk, "chunks": chunks, "text": note}
-            loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(
-                    self.server.broadcast(event(Evt.UPLOAD_PROGRESS, data, corr=corr))
-                )
-            )
-
-        requested = args.get("baud") if isinstance(args.get("baud"), int) else None
-
-        def work(address: str, handler) -> dict[str, Any]:  # noqa: ANN001
-            from ephymeris_sidecar.taskgraph.transport import UploadError
-            from ephymeris_sidecar.taskgraph.transport import client as tg_client
-            from ephymeris_sidecar.taskgraph.transport.caps import CapabilityError
-
-            from .ports.upload import PortLink
-
-            emit_progress("detect", None, None, None)
-            try:
-                baud = self._detect_board_baud(box, address, requested)
-                emit_progress("probe", None, None, f"board answered at {baud}")
-                with PortLink(
-                    address,
-                    baud,
-                    reset=True,
-                    on_progress=emit_progress,
-                    mirror=handler.echo,
-                ) as link:
-                    result = tg_client.upload(link, table, packed=blob)
-            except CapabilityError as exc:
-                # The board said no BEFORE any byte moved — un-migrated
-                # firmware, a wire mismatch, or a capacity the table exceeds.
-                # A healthy board answering honestly is not a port fault, so
-                # this returns a marker (the port lands cleanly, passthrough
-                # resumes) and becomes UPLOAD_REFUSED after landing. A broken
-                # TRANSFER raises instead, which parks the port in ERROR — the
-                # board's table is invalid and its state genuinely unknown.
-                return {"refused": str(exc)}
-            except UploadError as exc:
-                raise CommandError(ErrCode.UPLOAD_FAILED, str(exc), {"box": box}) from exc
-            emit_progress("verify", result.chunks, result.chunks, None)
-            return {
-                "box": box,
-                "specId": table.spec_id,
-                "specHash": table.spec_hash,
-                "nBytes": result.n_bytes,
-                "chunks": result.chunks,
-                "crc32": f"{crc:#010x}",
-                "digest": f"{result.digest:#010x}",
-                "seconds": result.seconds,
-                "notes": list(result.notes),
-                "caps": {
-                    "box": box,
-                    "present": result.caps.present,
-                    "baud": baud,
-                    "values": dict(result.caps.values),
-                    "text": dict(result.caps.text),
-                    "banner": list(result.banner),
-                },
-            }
-
-        with _mapped_errors(box):
-            _state, _resumed, payload = await self._require_ports().with_port_for_upload(
-                box, work
-            )
-        assert isinstance(payload, dict)
-        if "refused" in payload:
-            raise CommandError(ErrCode.UPLOAD_REFUSED, payload["refused"], {"box": box})
-        log.info(
-            "box %d: table %s (%s) uploaded, %d bytes",
-            box,
-            table.spec_id,
-            table.spec_hash,
-            len(blob),
-        )
-        return payload
-
-    async def _utility_bench_hold(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        if self.utility is None:
-            raise CommandError(ErrCode.INTERNAL, "hardware layer isn't running")
-        self.utility.set_bench_hold(args.get("held") is True)
-        await self.utility.publish()
-        return self.utility.status()
 
     # --- backup (data.md §7) ---------------------------------------
 
@@ -1782,7 +1573,7 @@ class Application:
     # --- internals --------------------------------------------------------
 
     async def _rescan(self) -> None:
-        self.discovery = discovery.discover()
+        self.discovery = discovery.discover(self.task_store.root, self.pinned_root)
         result = self.discovery
         log.info(
             "sketch library %s (%s): %d sketches, %d skipped",

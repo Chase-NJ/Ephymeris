@@ -1,0 +1,268 @@
+"""Everything wrong with a task definition, located.
+
+The rule this shares with the rig document: a definition that is WELL-FORMED and
+describes an impossible task is not an error, it is a successful reply carrying
+problems. `TASK_INVALID` is reserved for a document that is not a document.
+
+Every rule here fails QUIETLY without a check, which is why each is an error
+rather than a warning:
+
+  TSK101  a channel this rig does not have     -> the pin never fires
+  TSK102  a channel of the wrong kind          -> a valve driven as a sensor
+  TSK103  a reward line serving the other well -> water to the wrong side
+  TSK104  a strobe code that is not declared   -> an unlabelled event in the data
+  TSK105  two types sharing an onset code      -> two conditions, one label
+  TSK106  a stage schedule that is not ordered -> a row that never engages
+  TSK107  a START line over the cap            -> the firmware truncates in silence
+  TSK108  a table with no presentable trial    -> a session that runs nothing
+  TSK109  a pool whose weights are all zero    -> a uniform pool, silently
+
+TSK103, TSK105 and TSK109 are the three that produce plausible-looking wrong
+DATA rather than an obvious failure, and are the reason this file exists at all.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from ..rig import registry
+from ..tasks.profile import TaskProfileError
+from ..tasks.start_command import build_start_command
+from .model import TaskDefinition
+
+
+@dataclass(frozen=True)
+class Diagnostic:
+    location: str
+    message: str
+    code: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {"location": self.location, "message": self.message, "code": self.code}
+
+
+def validate(definition: TaskDefinition) -> list[Diagnostic]:
+    """Every problem, not the first.
+
+    Fixing a new task should be one pass rather than a game of whack-a-mole —
+    the same argument `ChannelMap.disagreements()` makes.
+    """
+    out: list[Diagnostic] = []
+    channels = registry.channels()
+    vocab = registry.vocabulary()
+
+    out.extend(_trial_problems(definition, channels, vocab))
+    out.extend(_pool_problems(definition))
+    out.extend(_stage_problems(definition))
+    out.extend(_line_problems(definition))
+    return out
+
+
+def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
+    out: list[Diagnostic] = []
+    seen_onsets: dict[str, int] = {}
+    presentable = 0
+
+    for i, trial in enumerate(definition.trials):
+        at = f"trials[{i}]"
+
+        emitter = channels.get(trial.odor_channel)
+        if emitter is None:
+            out.append(Diagnostic(
+                f"{at}.odorChannel",
+                f"this rig has no channel called {trial.odor_channel!r}. It was "
+                "either renamed or removed in the Rig tab's wiring editor.",
+                "TSK101",
+            ))
+        elif emitter.kind != "emitter":
+            out.append(Diagnostic(
+                f"{at}.odorChannel",
+                f"{trial.odor_channel!r} is a {emitter.kind} channel, not a "
+                "stimulus emitter. Driving it as one would fire the wrong "
+                "hardware for the whole trial.",
+                "TSK102",
+            ))
+
+        if trial.onset_strobe not in vocab:
+            out.append(Diagnostic(
+                f"{at}.onsetStrobe",
+                f"{trial.onset_strobe!r} is not a declared strobe code, so this "
+                "stimulus would announce itself with a number nothing can "
+                "decode. Add it on the Rig tab first.",
+                "TSK104",
+            ))
+        else:
+            first = seen_onsets.setdefault(trial.onset_strobe, i)
+            if first != i:
+                out.append(Diagnostic(
+                    f"{at}.onsetStrobe",
+                    f"trial type {first + 1} already announces itself with "
+                    f"{trial.onset_strobe!r}. Two conditions reporting one code "
+                    "are indistinguishable in the data — every analysis would "
+                    "pool them without saying so.",
+                    "TSK105",
+                ))
+
+        if not trial.is_go:
+            # A withhold type answers at no port and pays nothing; both being
+            # absent is the definition of it, not an omission.
+            presentable += 1
+            continue
+
+        port = channels.get(trial.response_channel) if trial.response_channel else None
+        if trial.response_channel is None:
+            out.append(Diagnostic(
+                f"{at}.responseChannel",
+                "a go trial needs a correct response port. Leave it unset only "
+                "on a no-go type, where withholding is the correct answer.",
+                "TSK101",
+            ))
+        elif port is None:
+            out.append(Diagnostic(
+                f"{at}.responseChannel",
+                f"this rig has no channel called {trial.response_channel!r}.",
+                "TSK101",
+            ))
+        elif port.kind != "response":
+            out.append(Diagnostic(
+                f"{at}.responseChannel",
+                f"{trial.response_channel!r} is a {port.kind} channel; only a "
+                "response port can answer a trial.",
+                "TSK102",
+            ))
+        elif port.port_slot is None:
+            out.append(Diagnostic(
+                f"{at}.responseChannel",
+                f"{trial.response_channel!r} declares no strobe slot, so a poke "
+                "there reports nothing at all. Set one in the Rig tab.",
+                "TSK102",
+            ))
+
+        reward = channels.get(trial.reward_channel) if trial.reward_channel else None
+        if trial.reward_channel is None:
+            out.append(Diagnostic(
+                f"{at}.rewardChannel",
+                "a go trial needs a reward line to pay from.",
+                "TSK101",
+            ))
+        elif reward is None:
+            out.append(Diagnostic(
+                f"{at}.rewardChannel",
+                f"this rig has no channel called {trial.reward_channel!r}.",
+                "TSK101",
+            ))
+        elif reward.kind != "reward":
+            out.append(Diagnostic(
+                f"{at}.rewardChannel",
+                f"{trial.reward_channel!r} is a {reward.kind} channel, not a "
+                "reward line.",
+                "TSK102",
+            ))
+        elif port is not None and reward.well and reward.well != port.name:
+            # THE ONE THAT LOOKS CORRECT ON SCREEN. The trial reads as
+            # "odor 3 -> left well", the animal answers left, and the water
+            # arrives on the right.
+            out.append(Diagnostic(
+                f"{at}.rewardChannel",
+                f"{trial.reward_channel!r} is plumbed to {reward.well!r}, but "
+                f"this trial is answered at {port.name!r}. The animal would be "
+                "rewarded at the well it did not choose.",
+                "TSK103",
+            ))
+        else:
+            presentable += 1
+
+    if definition.trials and presentable == 0:
+        out.append(Diagnostic(
+            "trials",
+            "no trial type in this table can actually be presented, so a "
+            "session would run nothing.",
+            "TSK108",
+        ))
+    if not definition.trials:
+        out.append(Diagnostic(
+            "trials", "a task needs at least one trial type.", "TSK108"
+        ))
+    return out
+
+
+def _pool_problems(definition: TaskDefinition) -> list[Diagnostic]:
+    """A weighted pool that adds up to nothing.
+
+    THE FIRMWARE ALREADY SURVIVES THIS, which is exactly why it needs saying.
+    `generateTrials()` sums the weights and would divide by that total, so an
+    all-zero pool falls back to weighting every row equally — on AVR a division
+    by zero is a silent wrong answer rather than a trap, and a hung box
+    mid-shaping would be worse than a defined session. The consequence is that
+    the box runs a UNIFORM pool and reports nothing unusual: the table on screen
+    says one thing and the session presents another, for as long as nobody
+    checks the trial counts.
+
+    The likeliest way to arrive here is zeroing rows to disable them and then
+    zeroing the last one too. A zero on SOME rows is deliberate and supported —
+    that row is inert, which is how a type is parked without deleting it — so
+    this fires only on the total, and only in the mode that reads weights at
+    all. Anti-bias selection draws a side and weights nothing.
+    """
+    if definition.selection_mode != "pool" or not definition.trials:
+        return []
+    # `<= 0` rather than `== 0`: this mirrors `generateTrials()`'s own condition,
+    # so the two agree about the edge even if a negative weight ever reaches it.
+    if sum(trial.weight for trial in definition.trials) > 0:
+        return []
+    return [Diagnostic(
+        "trials",
+        "every trial type in this pool has a weight of zero, so there is "
+        "nothing to draw from. The firmware falls back to equal weights rather "
+        "than dividing by zero, so the session would quietly run a uniform "
+        "pool instead of the proportions in this table.",
+        "TSK109",
+    )]
+
+
+def _stage_problems(definition: TaskDefinition) -> list[Diagnostic]:
+    """The ramp must be strictly ascending after row 0.
+
+    `liveStage()` scans DOWN and returns the first row whose count is reached,
+    so an out-of-order row is not an error the firmware can see — it is simply
+    a row that never engages, and the ramp appears to skip a step.
+    """
+    out: list[Diagnostic] = []
+    previous = 0
+    for i, stage in enumerate(definition.stages):
+        if i == 0:
+            # Row 0 is live from trial 0 by construction; its count is not read.
+            continue
+        if stage.trials <= previous:
+            out.append(Diagnostic(
+                f"stages[{i}].trials",
+                f"stage {i} engages at trial {stage.trials}, which is not after "
+                f"stage {i - 1}'s {previous}. The ramp is scanned downward, so "
+                "this row would never take over — the schedule would look like "
+                "it skipped a step.",
+                "TSK106",
+            ))
+        previous = max(previous, stage.trials)
+    return out
+
+
+def _line_problems(definition: TaskDefinition) -> list[Diagnostic]:
+    """The built `START` line must fit, checked rather than trusted.
+
+    `readLineInto()` truncates an overlong line and drops the rest, and the
+    board cannot report that — the session runs on whichever values happened to
+    fit. So the generator refuses instead, which is the same discipline
+    `build_start_command` already applies (`tasks.md` §6.3).
+    """
+    from .generate import build_profile  # local: generate imports this module
+
+    try:
+        profile = build_profile(definition)
+        config = {f.metadata_key: f.default for f in profile.config}
+        build_start_command(profile, config)
+    except TaskProfileError as exc:
+        return [Diagnostic("params", str(exc), "TSK107")]
+    except Exception:  # pragma: no cover - a generator crash is not a task fault
+        return []
+    return []

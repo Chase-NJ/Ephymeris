@@ -1,9 +1,0 @@
-# TG301 — a template version that does not exist.
-_expect: TG301
-_also: [TG302, TG303]
-_why: >-
-  Templates are versioned BY FILE and never edited once pinned, so template_version
-  names templates/four_epoch/v99.py -- which is absent. The companion codes follow
-  because capabilities() cannot be consulted without the template.
-_patch:
-  topology.template_version: 99

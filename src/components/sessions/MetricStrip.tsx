@@ -12,19 +12,28 @@ import type { TelemetryMetric } from "@/lib/sessions/types";
 export function MetricStrip({
   box,
   metrics,
+  bare = false,
 }: {
   box: number;
   metrics: TelemetryMetric[];
+  /**
+   * True inside a section that already provides its own chrome (`StarPanel`'s
+   * Live metrics card) — drops the tile-flow margin and divider the strip
+   * carries when it sits at the bottom of a `BoxCard`.
+   */
+  bare?: boolean;
 }) {
   if (metrics.length === 0) {
     return (
-      <p className="mt-3 text-[11px] text-static">
+      <p className={`text-[11px] text-static ${bare ? "" : "mt-3"}`}>
         No live metrics yet — they appear once trials start counting.
       </p>
     );
   }
   return (
-    <div className="mt-3 flex flex-col gap-2 border-t border-halo pt-3">
+    <div
+      className={`flex flex-col gap-2 ${bare ? "" : "mt-3 border-t border-halo pt-3"}`}
+    >
       {metrics.map((metric) => (
         <MetricRow key={metric.id} box={box} metric={metric} />
       ))}

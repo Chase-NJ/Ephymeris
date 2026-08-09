@@ -6,6 +6,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/common/controls";
 import { useBackupStatus } from "@/lib/backup/useBackupStatus";
 import { RatPlacementBanner } from "@/components/sessions/RatPlacementBanner";
+import { ElapsedClock, StateChip, clockSpan } from "@/components/sessions/BoxStatus";
 import { Constellation3D } from "@/components/sessions/Constellation3D";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { MetricStrip } from "@/components/sessions/MetricStrip";
@@ -62,6 +63,26 @@ import { useSidecar } from "@/lib/ws/context";
 /** Trials the star temperatures average over — matches `StarPanel`'s readout
  *  and the task profiles' own live-metric window, so they never disagree. */
 const ACCURACY_WINDOW = 20;
+
+/** The right rail's resting width — six tiles' worth. Mirrored in the left
+ *  rail's literal `w-[392px]` and the centre stage's `left-[392px]`. */
+const RAIL_WIDTH = 392;
+/**
+ * The rail's width while a star's panel is open. Wide enough that the panel
+ * shows the graph, charts, metrics and strobe feed without scrolling at the
+ * lab machines' 1920×1080; the camera's `frameShift` below keeps the focused
+ * star visible in the strip the chrome leaves.
+ */
+const RAIL_WIDTH_FOCUSED = 824;
+/** The sidebar's width in px — keep in sync with `--spacing-sidebar`. */
+const SIDEBAR_PX = 200;
+/**
+ * Where the focused star sits, in px left of centre: half the difference
+ * between the right-docked chrome (the focused rail) and the left chrome
+ * (sidebar + left rail), so the star lands centred in the visible strip
+ * between them (`SceneIntent.frameShift`).
+ */
+const PANEL_FRAME_SHIFT = (RAIL_WIDTH_FOCUSED - (SIDEBAR_PX + RAIL_WIDTH)) / 2;
 
 export function MissionControl() {
   const { id: sessionId } = useParams<{ id: string }>();
@@ -317,6 +338,7 @@ export function MissionControl() {
             animals={constellationAnimals}
             focusedId={focusedId}
             onFocus={setFocusedId}
+            frameShift={PANEL_FRAME_SHIFT}
           />
         )}
       </div>
@@ -463,8 +485,23 @@ export function MissionControl() {
             panel. They SWAP rather than stack — the panel is that box's tile
             opened up, and two absolutely-positioned columns fighting for one
             edge is what the panel's old self-docking amounted to. Six tiles
-            scroll inside this rail; the window itself never scrolls. */}
-        <div className="scrollbar-none pointer-events-none absolute inset-y-0 right-0 w-[392px] overflow-y-auto p-4 pr-8">
+            scroll inside this rail; the window itself never scrolls.
+
+            The rail itself widens while a panel is open: the panel needs the
+            room for its graph, charts and metrics, the tiles don't — so the
+            width belongs to the rail's state, animated on the same spring as
+            the swap. Overflow stays as the graceful fallback for windows too
+            short to show the whole panel. */}
+        <motion.div
+          initial={false}
+          animate={{ width: focusedBox ? RAIL_WIDTH_FOCUSED : RAIL_WIDTH }}
+          transition={springPanel}
+          // The max-width caps the animated width on windows too narrow for
+          // the focused rail — the panel gives up width (and falls back to
+          // wrapping) before it covers the session column. 392px = the left
+          // rail's literal width.
+          className="scrollbar-none pointer-events-none absolute inset-y-0 right-0 max-w-[calc(100%-392px)] overflow-y-auto p-4 pr-8"
+        >
           {/* `popLayout`, never `wait` — the same call `AppShell`'s route
               transition makes and for the same reason: `wait` holds the
               incoming child until the outgoing one has finished exiting, so
@@ -484,6 +521,7 @@ export function MissionControl() {
                 key={`panel-${focusedBox.box}`}
                 box={focusedBox}
                 busy={busy || !connected}
+                durationMinutes={session?.durationMinutes ?? null}
                 onStart={() => void run(() => startOne(focusedBox.box))}
                 onStop={() => void run(() => stopBox(client, focusedBox.box))}
                 onReset={() =>
@@ -515,12 +553,19 @@ export function MissionControl() {
               </motion.div>
             ) : null}
           </AnimatePresence>
-        </div>
+        </motion.div>
 
         {/* Centre stage, between the rails: the moments that are about the
             whole rig rather than one box, and that the operator has to act on
-            before anything else means much. */}
-        <div className="pointer-events-none absolute inset-y-0 left-[392px] right-[392px] flex items-center justify-center p-6">
+            before anything else means much. Its right edge follows the rail's
+            animated width so the group-swap prompt never underlaps an open
+            panel. */}
+        <motion.div
+          initial={false}
+          animate={{ right: focusedBox ? RAIL_WIDTH_FOCUSED : RAIL_WIDTH }}
+          transition={springPanel}
+          className="pointer-events-none absolute inset-y-0 left-[392px] flex items-center justify-center p-6"
+        >
           <AnimatePresence mode="popLayout">
             {groupDone && !lastGroup ? (
               /* §5.5 — the group-swap prompt: every box in this group has
@@ -586,7 +631,7 @@ export function MissionControl() {
               </motion.div>
             ) : null}
           </AnimatePresence>
-        </div>
+        </motion.div>
       </motion.div>
     </div>
   );
@@ -760,70 +805,6 @@ function BoxCard({
   );
 }
 
-/**
- * One box's run clock (§5.4): elapsed since *this box's* start, against the
- * session's optional time limit. Driven by the snapshot's `startedAt` rather
- * than a client-side stopwatch, so a reloaded window resumes mid-count. Once
- * time is up the sidecar has already sent STOP — the line says so instead of
- * counting on, because the run now ends at the board's next trial boundary.
- */
-function ElapsedClock({
-  startedAt,
-  live,
-  durationMinutes,
-}: {
-  startedAt: string | null;
-  live: boolean;
-  durationMinutes: number | null;
-}) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!live || !startedAt) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [live, startedAt]);
-
-  if (!live || !startedAt) return null;
-  const elapsed = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 1000));
-  const limit = durationMinutes !== null ? durationMinutes * 60 : null;
-  const timeUp = limit !== null && elapsed >= limit;
-
-  return (
-    <div
-      className="mt-1 font-mono text-[11px] tabular-nums text-static"
-      style={timeUp ? { color: "var(--color-status-warning)" } : undefined}
-    >
-      {clockSpan(elapsed)}
-      {limit !== null && ` / ${clockSpan(limit)}`}
-      {timeUp && " · time up — stopping at the next trial boundary"}
-    </div>
-  );
-}
-
-/** Seconds as m:ss, growing to h:mm:ss for long sessions. */
-function clockSpan(totalSeconds: number): string {
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  const mm = String(m).padStart(2, "0");
-  const ss = String(s).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
-}
-
-function StateChip({ state, reason }: { state: string; reason: string }) {
-  const color =
-    state === "IN_SESSION"
-      ? "var(--color-status-ok)"
-      : state === "ERROR"
-        ? "var(--color-status-error)"
-        : "var(--color-static)";
-  return (
-    <span
-      title={reason}
-      className="shrink-0 rounded-sm border border-halo px-1.5 py-0.5 font-mono text-[10px]"
-      style={{ color }}
-    >
-      {state}
-    </span>
-  );
-}
+// `ElapsedClock`, `clockSpan` and `StateChip` moved to
+// `components/sessions/BoxStatus.tsx` so `StarPanel` shows the same clock and
+// chip the tile does — the two are one object at two sizes.

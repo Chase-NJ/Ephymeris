@@ -12,15 +12,13 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * keep immediately: the double header runs 22/23, 24/25 … 52/53 in two rows,
  * so the odor lines — 22,24,26,28,30,32 on one row and 23,25,27,29,31,33 on the
  * other — are visibly two rows rather than a sequence. That interleaving is
- * what made `of_kind()` (which sorts by pin) return `odor_line_7` as the first
- * emitter, a trap `paradigms.py` carries a comment about. A picture of the
- * board is the shortest explanation of it.
+ * what makes `of_kind()` (which sorts by pin) return `odor_line_7` as the
+ * first emitter. A picture of the board is the shortest explanation of it.
  *
- * THE MAP SELECTS AND MOVES; THE RAIL EDITS. Same division as `SpecCanvas`
- * (`docs/specs.md` §5): clicking a pin selects its channel, dragging one moves
- * it to another pin, and everything else about a channel — its kind, its label,
- * its strobe slot — is a field in the inspector. Two surfaces for one field
- * eventually disagree.
+ * THE MAP SELECTS AND MOVES; THE RAIL EDITS. Clicking a pin selects its
+ * channel, dragging one moves it to another pin, and everything else about a
+ * channel — its kind, its label, its strobe slot — is a field in the inspector.
+ * Two surfaces for one field eventually disagree.
  *
  * Drag is raw pointer events, ported from `ConstellationBoard`: snapping needs
  * viewBox-space hit-testing anyway, and pointer capture on the SVG keeps the

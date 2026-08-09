@@ -206,38 +206,6 @@ class PortManager:
         return self._conclude(handler, address, prior_baud, resume,
                               f"flashed {sketch_name}")
 
-    async def with_port_for_upload(
-        self,
-        box: int,
-        work: Callable[[str, PortHandler], object],
-    ) -> tuple[PortState, bool, object]:
-        """Claim a port as `UPLOADING`, run blocking `work` off-loop, land it.
-
-        The bracket mirrors `flash()` exactly — force-release PASSTHROUGH on
-        entry, auto-resume it on success, `ERROR` on failure — because the
-        ownership question is identical; only who holds the serial differs
-        (`ports/upload.py` explains why the uploader opens its own).
-
-        `work(address, handler)` runs in a worker thread: the whole upload
-        conversation is blocking reads with deadlines, and a table transfer on
-        the event loop would stall the 20 Hz flush for all six ports.
-        """
-        address = self.resolve_address(box)
-        handler = self.handler(box)
-        prior_baud = handler.baud or self._settings.default_baud
-        was_passthrough = handler.release_for(PortState.UPLOADING, "table upload")
-
-        try:
-            outcome = await asyncio.to_thread(work, address, handler)
-        except Exception as exc:
-            handler.force_error(f"table upload failed: {exc}")
-            raise
-
-        state, resumed = self._conclude(
-            handler, address, prior_baud, was_passthrough, "table upload finished"
-        )
-        return state, resumed, outcome
-
     async def reset(self, box: int) -> tuple[PortState, bool]:
         """DTR-toggle reset (`dashboard.md` §6.2).
 

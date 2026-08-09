@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import { DebugConstellation } from "@/components/debug/DebugConstellation";
-import { NodeDetail } from "@/components/debug/NodeDetail";
+import { NodeDetail, PANEL_WIDTH, PANEL_WIDTH_WIDE } from "@/components/debug/NodeDetail";
 import { SidecarStatusPill } from "@/components/common/SidecarStatusPill";
 import { springPanel } from "@/lib/motion";
 import { setRigSelection, useRigSelection } from "@/lib/constellations/viewMemory";
@@ -34,6 +34,14 @@ import { useSidecar } from "@/lib/ws/context";
  * Mounting triggers a sketch rescan per `tasks.md` §2.3, so newly
  * added sketches show up without an explicit refresh.
  */
+
+/** The sidebar's width in px — keep in sync with `--spacing-sidebar`. The
+ *  scene canvas reaches under the sidebar's glass, so the visible strip of
+ *  sky starts at its right edge. */
+const SIDEBAR_PX = 200;
+/** `NodeDetail`'s `right-4` inset — part of the chrome the panel occupies. */
+const PANEL_INSET_PX = 16;
+
 export function DebugMode() {
   const navigate = useNavigate();
   const { status } = useSidecar();
@@ -124,7 +132,17 @@ export function DebugMode() {
           view in would fade the constellation the Dashboard just handed over.
           Only the chrome below animates. */}
       <div className="absolute inset-0">
-        <DebugConstellation selected={selected} onSelect={setSelected} />
+        <DebugConstellation
+          selected={selected}
+          onSelect={setSelected}
+          // Centre the focused star in the strip between the sidebar's glass
+          // and the docked panel: half the difference between the right-docked
+          // chrome (panel + inset) and the left chrome (sidebar). Follows the
+          // wide toggle, so widening re-composes the frame on the same ease.
+          frameShift={
+            ((wide ? PANEL_WIDTH_WIDE : PANEL_WIDTH) + PANEL_INSET_PX - SIDEBAR_PX) / 2
+          }
+        />
       </div>
 
       {/* Header overlay, on the title grid the Dashboard and Mission Control

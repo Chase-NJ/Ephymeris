@@ -1,9 +1,0 @@
-# TG205 — stage rows out of ascending order.
-_expect: TG205
-_why: >-
-  Rows are scanned descending with >=, so the schedule still behaves -- but a reader
-  will believe the order they see, which is how a ramp gets mis-tuned.
-_patch:
-  policy.stage_schedule:
-    - {at_trial: 100, set: {t_commit_hold: 500}}
-    - {at_trial: 20,  set: {t_commit_hold: 100}}

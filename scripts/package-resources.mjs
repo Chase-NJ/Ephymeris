@@ -6,10 +6,8 @@
  *   resources/
  *     sidecar/                PyInstaller-frozen sidecar (onedir)
  *       ephymeris-sidecar.exe
- *       _internal/ephymeris_sidecar/taskgraph/
- *         schema/ hardware/ paradigms/   the compiler's data files
- *         templates/                     plain .py on disk, not in the archive
- *                                        (see the --add-data note below)
+ *       _internal/ephymeris_sidecar/rig/
+ *         schema/ hardware/              the channel, pinout and strobe registries
  *     arduino/
  *       arduino-cli.exe       copied from this machine's PATH
  *       data/                 a clean `arduino:avr` install (core + avr-gcc +
@@ -17,7 +15,7 @@
  *                             directory, so nothing from the dev machine's own
  *                             Arduino15 rides along
  *     sketches/               the bundled sketch library, freshly staged by
- *                             stage-sketches.mjs from ../Arduino + <repo>/firmware
+ *                             stage-sketches.mjs from ../Arduino
  *
  * The shell resolves these through Tauri's resource dir and hands their
  * locations to the sidecar via EPHYMERIS_BUNDLED_* env vars; the sidecar
@@ -86,12 +84,12 @@ let resolved;
 try {
   resolved = execFileSync(
     python,
-    ["-c", "import ephymeris_sidecar as m, ephymeris_sidecar.taskgraph; print(m.__file__)"],
+    ["-c", "import ephymeris_sidecar as m, ephymeris_sidecar.rig.registry; print(m.__file__)"],
     { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], cwd: repoRoot },
   ).trim();
 } catch {
   console.error(
-    "\nthe venv cannot import ephymeris_sidecar.taskgraph (see above).\n" +
+    "\nthe venv cannot import ephymeris_sidecar.rig (see above).\n" +
       `  ${python} -m pip install -e "${sidecarDir}[dev,package]"`,
   );
   process.exit(1);
@@ -119,55 +117,22 @@ const rpcData = (sub) => {
   return `${join(sidecarDir, rel)}${sep}${rel}`;
 };
 
-// The compiler's templates are the one part of `ephymeris_sidecar` that must
-// stay plain .py ON DISK rather than go into the archive. `templates.load()`
-// resolves a version file by path and `templates.source_hash()` hashes its
-// bytes, so a frozen module would leave the listing's `template_hash` a claim
-// about bytes that never ran. `--collect-data` skips .py by design, so this is
-// the flag that ships them; the family directory has no `__init__.py`, which is
-// what stops `--collect-submodules` from also baking a copy into the archive
-// under the very name `load()` caches.
-const templateRel = join("ephymeris_sidecar", "taskgraph", "templates");
-const templateData = `${join(sidecarDir, templateRel)}${sep}${templateRel}`;
-
-/**
- * Drop `__pycache__` from the staged tree.
- *
- * `--add-data` on a directory takes it whole, and the freeze itself imports the
- * package it is analysing — so cleaning the source beforehand loses the race
- * with PyInstaller's own bytecode. Cleaning the output cannot.
- *
- * Worth doing rather than tolerating: the point of loading a template from its
- * path is that the bytes which execute are the bytes `source_hash()` recorded,
- * and a .pyc sitting next to the source is the one thing that could make that
- * untrue.
- */
-function pruneBytecode(dir) {
-  for (const entry of readdirSync(dir, { withFileTypes: true, recursive: true })) {
-    if (entry.isDirectory() && entry.name === "__pycache__") {
-      rmSync(join(entry.parentPath, entry.name), { recursive: true, force: true });
-    }
-  }
-}
-
 run(python, [
   "-m", "PyInstaller",
   "--noconfirm", "--clean", "--onedir", "--console",
   "--name", "ephymeris-sidecar",
   "--collect-submodules", "ephymeris_sidecar",
-  // schema/, hardware/ and paradigms/ — package data the analysis never sees,
-  // and without which the compiler imports and then cannot compile anything.
-  // `self_check()` is what turns a missing one into a startup line rather than
-  // a first-use failure on a lab machine.
+  // rig/schema and rig/hardware — package data the import analysis never sees,
+  // and without which the sidecar starts and then cannot name a single pin or
+  // strobe. `_log_rig_wiring()` prints the composed wiring at startup, which is
+  // what turns a missing one into a startup failure rather than a first-use one
+  // on a lab machine.
   "--collect-data", "ephymeris_sidecar",
   "--add-data", rpcData("cc"),
   "--add-data", rpcData("google"),
-  "--add-data", templateData,
   // `jsonschema` needs --collect-all rather than plain analysis because
   // `jsonschema_specifications` ships its metaschemas as package DATA, and the
-  // import analysis brings the code without them. Nothing to do with how the
-  // compiler is packaged — it was true when the tree was vendored and is still
-  // true now that it is a first-class subpackage.
+  // import analysis brings the code without them.
   "--collect-all", "jsonschema",
   "--collect-all", "jsonschema_specifications",
   // The generated arduino-cli stubs are shipped as data (above), so the one
@@ -189,7 +154,6 @@ const frozen = join(sidecarDir, "dist", "ephymeris-sidecar");
 rmSync(join(resourcesDir, "sidecar"), { recursive: true, force: true });
 mkdirSync(resourcesDir, { recursive: true });
 cpSync(frozen, join(resourcesDir, "sidecar"), { recursive: true });
-pruneBytecode(join(resourcesDir, "sidecar", "_internal", templateRel));
 console.log(`\nstaged sidecar (${sizeOf(join(resourcesDir, "sidecar"))})`);
 
 // --- 2. bundle arduino-cli -------------------------------------------------

@@ -84,7 +84,14 @@ export function RigWiring() {
               spatial. Hidden while nothing is loaded; the editor already
               carries the loading and error states. */}
           {doc !== null && (
-            <section className="hud mt-6 overflow-hidden rounded-md">
+            // Mounts once the document lands — animated so the tile joins the
+            // settled page instead of popping in under it.
+            <motion.section
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={springPanel}
+              className="hud mt-6 overflow-hidden rounded-md"
+            >
               <div className="flex items-center gap-3 border-b border-halo px-4 py-3">
                 <span className="text-[13px] font-medium text-starlight">
                   Configured pins
@@ -95,7 +102,7 @@ export function RigWiring() {
                 </span>
               </div>
               <PinTable doc={doc} selected={selected} onSelect={setSelected} />
-            </section>
+            </motion.section>
           )}
         </section>
       </motion.div>

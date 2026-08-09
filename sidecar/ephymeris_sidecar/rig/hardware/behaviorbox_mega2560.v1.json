@@ -1,0 +1,111 @@
+{
+  "pinout_version": 1,
+  "pinout_id": "behaviorbox_mega2560.v1",
+  "board": "Arduino Mega2560 R3",
+  "transcribed_from": "Arduino/libraries/BehaviorBox/BehaviorBox.h:55-92",
+  "_readme": [
+    "WHERE EACH CHANNEL IS ON THIS BOX. What each one MEANS is schema/channels.v1.json.",
+    "",
+    "To support a second box generation: copy this file, change the numbers, and point",
+    "hardware/_default.json at it. Every task profile is untouched -- provided the",
+    "channel NAMES are the same, which is exactly what resolving by name buys.",
+    "",
+    "`watch_bit` is a dense 0-based index over the WATCHABLE channels only (engagement",
+    "and response). It is declared rather than derived so that reordering this file",
+    "cannot silently change what a position means; RIG101 checks the density."
+  ],
+  "pin_range": {
+    "min": 0,
+    "max": 53,
+    "_why": "Digital pins on a Mega2560 R3. Declared so RIG102 can tell an operator 'this board has pins 0-53' rather than quoting a constant at them. A different board declares a different range."
+  },
+  "pins": {
+    "odor_port": {
+      "index": 2,
+      "watch_bit": 0,
+      "source": "BehaviorBox.h:59 const int odorPort = 2"
+    },
+    "right_well": {
+      "index": 3,
+      "watch_bit": 1,
+      "source": "BehaviorBox.h:60 const int rightWell = 3"
+    },
+    "left_well": {
+      "index": 4,
+      "watch_bit": 2,
+      "source": "BehaviorBox.h:61 const int leftWell = 4"
+    },
+    "trial_light": {
+      "index": 36,
+      "source": "BehaviorBox.h:64 const int trialLight = 36"
+    },
+    "vacuum": {
+      "index": 40,
+      "source": "BehaviorBox.h:65 const int vac = 40 (normally-open vacuum)"
+    },
+    "odor_line_1": {
+      "index": 22,
+      "source": "BehaviorBox.h:72 Odors[0]"
+    },
+    "odor_line_2": {
+      "index": 24,
+      "source": "BehaviorBox.h:73 Odors[1]"
+    },
+    "odor_line_3": {
+      "index": 26,
+      "source": "BehaviorBox.h:74 Odors[2]"
+    },
+    "odor_line_4": {
+      "index": 28,
+      "source": "BehaviorBox.h:75 Odors[3]"
+    },
+    "odor_line_5": {
+      "index": 30,
+      "source": "BehaviorBox.h:76 Odors[4]"
+    },
+    "odor_line_6": {
+      "index": 32,
+      "source": "BehaviorBox.h:77 Odors[5]"
+    },
+    "odor_line_7": {
+      "index": 23,
+      "source": "BehaviorBox.h:78 Odors[6]"
+    },
+    "odor_line_8": {
+      "index": 25,
+      "source": "BehaviorBox.h:79 Odors[7]"
+    },
+    "odor_line_9": {
+      "index": 27,
+      "source": "BehaviorBox.h:80 Odors[8]"
+    },
+    "odor_line_10": {
+      "index": 29,
+      "source": "BehaviorBox.h:81 Odors[9]"
+    },
+    "odor_line_11": {
+      "index": 31,
+      "source": "BehaviorBox.h:82 Odors[10]"
+    },
+    "odor_line_12": {
+      "index": 33,
+      "source": "BehaviorBox.h:83 Odors[11]"
+    },
+    "fluid_0": {
+      "index": 42,
+      "source": "BehaviorBox.h:88 Fluids[0] -- LEFT_WELL_FL_1"
+    },
+    "fluid_1": {
+      "index": 44,
+      "source": "BehaviorBox.h:89 Fluids[1] -- LEFT_WELL_FL_2"
+    },
+    "fluid_2": {
+      "index": 46,
+      "source": "BehaviorBox.h:90 Fluids[2] -- RIGHT_WELL_FL_1"
+    },
+    "fluid_3": {
+      "index": 48,
+      "source": "BehaviorBox.h:91 Fluids[3] -- RIGHT_WELL_FL_2"
+    }
+  }
+}

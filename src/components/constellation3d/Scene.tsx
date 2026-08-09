@@ -81,6 +81,7 @@ export function ConstellationScene({
   focusedId,
   onFocus,
   docksPanel = true,
+  frameShift = 0,
   interactive = true,
 }: {
   nodes: SceneNode[];
@@ -97,6 +98,11 @@ export function ConstellationScene({
    * Debug rather than opening anything in place.
    */
   docksPanel?: boolean;
+  /**
+   * How far left of centre the focused star should sit, in px — the docking
+   * view's own panel geometry, published to the camera (`SceneIntent`).
+   */
+  frameShift?: number;
   /** False where the sky is backdrop, not instrument — see `SceneIntent`. */
   interactive?: boolean;
 }) {
@@ -117,7 +123,7 @@ export function ConstellationScene({
 
   useLayoutEffect(() => {
     setSceneIntent(
-      { attached: true, focusKey, focusedId, docksPanel, interactive },
+      { attached: true, focusKey, focusedId, docksPanel, frameShift, interactive },
       nodes,
     );
   });

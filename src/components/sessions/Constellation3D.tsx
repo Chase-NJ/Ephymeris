@@ -55,11 +55,18 @@ export function Constellation3D({
   animals,
   focusedId,
   onFocus,
+  frameShift = 0,
 }: {
   cohortId: string;
   animals: ConstellationAnimal[];
   focusedId: string | null;
   onFocus: (animalId: string | null) => void;
+  /**
+   * Where the focused star should sit, in px left of centre — Mission
+   * Control's own panel geometry, published through to the camera
+   * (`SceneIntent`).
+   */
+  frameShift?: number;
 }) {
   // The rig's own sky, resolved the one way every view resolves it
   // (`useRigSky`). An animal stands on its box's star; an animal with no box in
@@ -168,6 +175,7 @@ export function Constellation3D({
       links={links}
       focusedId={focusedId}
       onFocus={onFocus}
+      frameShift={frameShift}
       /*
        * No camera key, because there is nothing to key. The camera is one
        * permanent object (`Scene.tsx`), so a view does not remember a pose or

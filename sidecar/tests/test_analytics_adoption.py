@@ -399,22 +399,27 @@ async def test_rescan_stays_idempotent_when_the_winning_copy_changes(
 async def test_a_sketch_is_resolved_at_read_time_not_frozen_at_adoption(
     rig: LegacyRig,
 ) -> None:
-    """A run adopted while the Arduino Directory was unset must not stay
-    permanently undecodable — the recorded path is a cache of a lookup, not a
-    fact about the run."""
+    """A run adopted while the library was unavailable must not stay decoded
+    second-hand — the recorded path is a cache of a lookup, not a fact about
+    the run. With the inference rung the run *scores* meanwhile (same stream,
+    same maths), so what upgrades on the next summary is the SOURCE."""
     rig.service._sketch_lookup = lambda name: None  # directory unavailable
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
     await rig.service.rescan(rig.cohort.id)
 
     payload = await rig.service.summary(rig.cohort.id)
-    assert payload["runs"][0]["status"] == "no-metrics"
+    assert payload["runs"][0]["status"] == "ok"
+    assert payload["runs"][0]["profileSource"] == "inferred"
+    assert payload["runs"][0]["metrics"][0]["pSession"] == 0.75
 
-    # The directory comes back. No re-adoption, just another summary.
+    # The directory comes back. No re-adoption, just another summary — and the
+    # declared profile takes over from the inference.
     rig.service._sketch_lookup = lambda name: (
         str(rig.sketch) if name == "GRGL_2-Odor" else None
     )
     payload = await rig.service.summary(rig.cohort.id)
     assert payload["runs"][0]["status"] == "ok"
+    assert payload["runs"][0]["profileSource"] == "sketch-current"
     assert payload["runs"][0]["metrics"][0]["pSession"] == 0.75
 
 
@@ -727,17 +732,35 @@ async def test_the_filename_fallback_demands_the_stem_match_its_folder(
     assert by_path[str(stray)]["animalSource"] is None
 
 
-async def test_an_unresolvable_sketch_says_why_it_scored_nothing(
+async def test_an_unresolvable_sketch_still_scores_from_its_strobes(
     rig: LegacyRig,
 ) -> None:
-    """A sketch name that no longer exists in the Arduino Directory has no
-    task.json to fall back to — honest "unavailable", not a crash (§8.2).
-
-    The lab's real archive hits this: the old software recorded human labels
-    ("Shape - L") where the directory holds folder names (`shaping_GL`). The
-    run must name the sketch it wanted, or the operator has nothing to act on.
-    """
+    """A sketch name that resolves nothing used to strand the run at
+    "no-metrics". The lab's real archive hits this — human labels ("Shape -
+    L") where the library holds folder names — and those streams are exactly
+    what the inference rung exists for: same firmware lineage, same registry,
+    so the run scores, flagged `inferred`, and its profile group is labelled
+    with the name the document recorded."""
     rig.add_legacy_run("remy1", HIT_1 * 5, sketch="Shape - L")
+
+    await rig.service.rescan(rig.cohort.id)
+    payload = await rig.service.summary(rig.cohort.id)
+
+    run = payload["runs"][0]
+    assert run["profileSource"] == "inferred"
+    assert run["status"] == "ok"
+    assert payload["counts"]["decoded"] == 1
+    group = next(g for g in payload["profileGroups"] if g["hash"] == run["profileHash"])
+    assert group["taskName"] == "Shape - L"
+
+
+async def test_an_unresolvable_sketch_with_nothing_to_infer_says_why(
+    rig: LegacyRig,
+) -> None:
+    """When the stream ALSO presents no recognisable condition, the run must
+    name the sketch it wanted — that is the one thing the operator can act on
+    (§8.3), and "no metrics" alone offers nothing to fix."""
+    rig.add_legacy_run("remy1", [222, 224, 226, 233], sketch="Shape - L")
 
     await rig.service.rescan(rig.cohort.id)
     payload = await rig.service.summary(rig.cohort.id)

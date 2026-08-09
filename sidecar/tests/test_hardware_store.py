@@ -1,41 +1,40 @@
-"""The rig wiring document: the store, the composition, and TG227-229.
+"""The rig wiring document: the store, the composition, and RIG101-104.
 
 Everything here was unreachable until the pinout became editable. The shipped
 pair is a transcription of BehaviorBox.h that lives inside the package and is
 read-only in a frozen build, so "what if the operator types pin 300" was not a
 question anyone could ask. Each of these tests is a way of asking it.
 
-The three new rules all fail QUIETLY in the absence of a check, which is why
-they are errors rather than warnings:
+The four rules all fail QUIETLY in the absence of a check, which is why they are
+errors rather than warnings:
 
-  TG227  a pin in the binding range is read by the board as a per-trial binding
-  TG228  two channels on one pin makes every reverse lookup arbitrary
-  TG229  a response port with no slot has no strobes, and compiles anyway
+  RIG101  two halves describing different boxes, or a non-dense watch_bit
+  RIG102  a pin the board does not have compiles fine and never fires
+  RIG103  two channels on one pin makes every reverse lookup arbitrary
+  RIG104  a response port with no slot has no strobes, and generates anyway
 """
 
 from __future__ import annotations
 
-import copy
 import json
 
 import pytest
 
-from ephymeris_sidecar.hardware import store
-from ephymeris_sidecar.specs import compiler
-from ephymeris_sidecar.taskgraph import paradigms, registries
+from ephymeris_sidecar.hardware import service, store
+from ephymeris_sidecar.rig import registry
 
 
 @pytest.fixture(autouse=True)
 def _shipped_wiring():
     """Every test starts and ends on the shipped pinout.
 
-    `set_rig_source` mutates module state and clears an `lru_cache` the whole
-    compiler reads, so a test that left one installed would change what every
-    later test compiles -- silently, and only when run in the same session.
+    `set_rig_source` mutates module state and clears an `lru_cache` every reader
+    shares, so a test that left one installed would change what every later test
+    resolves -- silently, and only when run in the same session.
     """
-    registries.set_rig_source(None)
+    registry.set_rig_source(None)
     yield
-    registries.set_rig_source(None)
+    registry.set_rig_source(None)
 
 
 def rig(**edits) -> dict:
@@ -48,6 +47,11 @@ def rig(**edits) -> dict:
             else:
                 doc[section].setdefault(name, {}).update(value)
     return doc
+
+
+def codes_for(doc: dict) -> set[str]:
+    """The rule codes this document trips, through the path the editor uses."""
+    return {p["code"] for p in service.problems_for(doc) if p["code"]}
 
 
 # --------------------------------------------------------------------------- #
@@ -71,21 +75,19 @@ def test_the_default_document_is_the_shipped_wiring_and_composes_back(tmp_path):
     doc = store.default_document()
     assert store.validate(doc) == []
 
-    registries.set_rig_source(lambda: doc)
-    composed = registries.channels()
-    shipped_names = {c.name for c in registries.ChannelMap(
-        registries._load("channels.v1.json"), registries._pinout()
-    )}
+    registry.set_rig_source(lambda: doc)
+    composed = registry.channels()
+    shipped_names = {c.name for c in registry.shipped_channels()}
     assert {c.name for c in composed} == shipped_names
     assert composed.disagreements() == []
     assert composed.pin_problems() == []
     assert composed.duplicate_pins() == []
-    assert composed.slot_problems(registries.vocabulary()) == []
+    assert composed.slot_problems(registry.vocabulary()) == []
 
 
 def test_a_document_that_fails_validation_is_not_written(tmp_path):
     """Validation happens BEFORE the write, so there is no state in which the
-    file on disk is one the compiler refuses."""
+    file on disk is one the app refuses."""
     s = store.HardwareStore(tmp_path)
     with pytest.raises(store.RigInvalid):
         s.save({"rig_version": 1, "channels": {}, "pins": {}})  # minProperties
@@ -128,203 +130,161 @@ def test_a_path_traversing_channel_name_dies_at_the_schema(tmp_path):
     doc["channels"]["../../evil"] = {"kind": "cue"}
     doc["pins"]["../../evil"] = {"index": 12}
     problems = store.validate(doc)
-    assert problems, "a channel name is written into specs by hand; it needs a shape"
+    assert problems, "a channel name reaches a generated header; it needs a shape"
 
 
 # --------------------------------------------------------------------------- #
-# The compiler reads the rig
+# The registries read the rig
 # --------------------------------------------------------------------------- #
 
 
-def test_a_repin_changes_the_bytes_and_not_the_spec_hash():
-    """D15, demonstrated rather than asserted.
+def test_a_repin_resolves_to_the_new_pin():
+    """A task profile names channels, never numbers, so re-wiring a box changes
+    what every task compiles to and moves no `profile_hash`. That is correct and
+    it is also the provenance hole `content_hash` exists to close."""
+    assert registry.channels().get("left_well").index != 12
 
-    A spec names channels, never numbers, so re-wiring a box changes what every
-    task compiles to and moves no spec_hash. That is correct and it is also the
-    provenance hole: without a pinout stamp these two tables are
-    indistinguishable in the record.
-    """
-    text = paradigms.to_yaml(paradigms.skeleton(paradigms.get("two_afc"), spec_id="probe"))
-
-    before = compiler.compile(text, spec_id="probe")
-    bytes_before, _ = compiler.table_bytes(before)
-
-    moved = rig(pins={"left_well": {"index": 12}})
-    registries.set_rig_source(lambda: moved)
-    after = compiler.compile(text, spec_id="probe")
-    bytes_after, _ = compiler.table_bytes(after)
-
-    assert after.ok
-    assert before.table.spec_hash == after.table.spec_hash
-    assert bytes_before != bytes_after
-    assert [p.channel for p in after.table.ports] != [p.channel for p in before.table.ports]
+    registry.set_rig_source(lambda: rig(pins={"left_well": {"index": 12}}))
+    assert registry.channels().get("left_well").index == 12
 
 
 def test_the_cache_is_cleared_on_a_rig_change_within_one_process():
-    """`channels()` is lru_cached and read on every keystroke compile. Without
-    invalidation the second compile here would return the first one's table."""
-    text = paradigms.to_yaml(paradigms.skeleton(paradigms.get("two_afc"), spec_id="probe"))
-    first, _ = compiler.table_bytes(compiler.compile(text, spec_id="probe"))
+    """`channels()` is lru_cached. Without invalidation the second read here
+    would return the first one's map."""
+    first = registry.channels().get("right_well").index
 
-    moved = rig(pins={"right_well": {"index": 11}})
-    registries.set_rig_source(lambda: moved)
-    second, _ = compiler.table_bytes(compiler.compile(text, spec_id="probe"))
-
-    assert first != second
+    registry.set_rig_source(lambda: rig(pins={"right_well": {"index": 11}}))
+    assert registry.channels().get("right_well").index == 11 != first
 
 
 # --------------------------------------------------------------------------- #
-# TG227 / TG228 / TG229
+# RIG101 / RIG102 / RIG103 / RIG104
 # --------------------------------------------------------------------------- #
 
 
-def codes_for(doc: dict) -> set[str]:
-    registries.set_rig_source(lambda: doc)
-    text = paradigms.to_yaml(paradigms.skeleton(paradigms.get("two_afc"), spec_id="probe"))
-    result = compiler.compile(text, spec_id="probe")
-    return {d.code for d in result.bag if d.severity.name == "ERROR"}
+def test_rig102_a_pin_this_board_does_not_have_is_refused():
+    assert "RIG102" in codes_for(rig(pins={"trial_light": {"index": 200}}))
 
 
-def test_tg227_a_pin_in_the_binding_range_is_refused():
-    """0xF0 up is how `lower.py` encodes "@stim[0].emitter" in the same byte.
-
-    A channel placed there is not rejected by the board — it is READ as a
-    per-trial binding, which is the quietest possible way to be wrong.
-    """
-    assert "TG227" in codes_for(rig(pins={"trial_light": {"index": 0xF2}}))
+def test_rig103_two_channels_on_one_pin_are_refused():
+    """Legal on a breadboard, never legal here: the pin table inverts pin to
+    name, and two names on one pin makes that answer arbitrary."""
+    both = registry.channels().get("trial_light").index
+    assert "RIG103" in codes_for(rig(pins={"vacuum": {"index": both}}))
 
 
-def test_tg227_a_pin_this_board_does_not_have_is_refused():
-    assert "TG227" in codes_for(rig(pins={"trial_light": {"index": 200}}))
-
-
-def test_tg228_two_channels_on_one_pin_are_refused():
-    """Legal on a breadboard, never legal here: `watch_port` inverts pin to port
-    and the bench card inverts pin to name, and both would pick arbitrarily."""
-    both = registries.channels().get("trial_light").index
-    assert "TG228" in codes_for(rig(pins={"vacuum": {"index": both}}))
-
-
-def test_tg229_a_response_port_without_a_slot_is_refused():
+def test_rig104_a_response_port_without_a_slot_is_refused():
     """The failure the slot table was built to end.
 
     It used to happen by NAME and in silence: a well not called `left_well` or
-    `right_well` got no per-port codes at all and compiled, surfacing later as
-    TG506 the first time a shape change reached for one.
+    `right_well` got no per-port codes at all, so a trial answered there reported
+    nothing.
     """
     doc = rig()
     doc["channels"]["left_well"].pop("port_slot")
-    assert "TG229" in codes_for(doc)
+    assert "RIG104" in codes_for(doc)
 
 
-def test_tg229_two_ports_on_one_slot_are_refused():
+def test_rig104_two_ports_on_one_slot_are_refused():
     doc = rig()
     doc["channels"]["left_well"]["port_slot"] = 2  # right_well already holds 2
-    assert "TG229" in codes_for(doc)
+    assert "RIG104" in codes_for(doc)
 
 
-def test_tg229_a_slot_the_vocabulary_does_not_define_is_refused():
+def test_rig104_a_slot_the_vocabulary_does_not_define_is_refused():
     doc = rig()
     doc["channels"]["left_well"]["port_slot"] = 9  # seven slots exist
-    assert "TG229" in codes_for(doc)
+    assert "RIG104" in codes_for(doc)
+
+
+def test_rig101_halves_that_describe_different_boxes_are_refused():
+    doc = rig()
+    doc["pins"].pop("vacuum")
+    assert "RIG101" in codes_for(doc)
 
 
 def test_the_shipped_wiring_trips_none_of_them():
     """The regression guard for all four: if any rule fires on the wiring the
     app ships with, it is the rule that is wrong."""
-    chans = registries.channels()
+    chans = registry.channels()
     assert chans.disagreements() == []
     assert chans.pin_problems() == []
     assert chans.duplicate_pins() == []
-    assert chans.slot_problems(registries.vocabulary()) == []
-
-
-def test_the_binding_constant_has_not_drifted():
-    """`CH_BIND_RESERVED_FROM` is a second copy of `table.CH_BIND_BASE`, taken
-    to avoid an import cycle. This is what stops it drifting silently."""
-    from ephymeris_sidecar.taskgraph.table import CH_BIND_BASE
-
-    assert registries.CH_BIND_RESERVED_FROM == CH_BIND_BASE
+    assert chans.slot_problems(registry.vocabulary()) == []
 
 
 def test_the_default_document_is_the_shipped_wiring_even_with_a_rig_installed():
     """`default_document()` must read the SHIPPED pair, not the wiring in force.
 
-    Reading `registries.channels()` would make "default" mean "whatever you last
+    Reading `registry.channels()` would make "default" mean "whatever you last
     saved" — so Reset would reset to itself — and it recurses, because
     `channels()` consults the rig source and the rig source is what asks for a
     default. Caught by a test whose lambda happened to be lazy.
     """
     shipped = store.default_document()
-    registries.set_rig_source(lambda: rig(pins={"left_well": {"index": 12}}))
+    registry.set_rig_source(lambda: rig(pins={"left_well": {"index": 12}}))
     assert store.default_document() == shipped
 
 
 # --------------------------------------------------------------------------- #
-# D22 — the provenance that makes a re-pin visible
+# The pinout hash — what makes a re-pin visible in the record
 # --------------------------------------------------------------------------- #
-
-
-def test_the_listing_diff_sees_a_repin():
-    """THE POINT OF D22, asserted directly.
-
-    Before the pinout line existed this diff was empty: every state, edge,
-    duration and trial type is identical, because the listing prints channel
-    NAMES. A rewired box produced a different table and a review artifact that
-    said nothing had changed.
-    """
-    from ephymeris_sidecar.specs import service
-
-    text = paradigms.to_yaml(paradigms.skeleton(paradigms.get("two_afc"), spec_id="probe"))
-    before = compiler.render_listing(compiler.compile(text, spec_id="probe"))
-
-    moved = rig(pins={"left_well": {"index": 12}})
-    registries.set_rig_source(lambda: moved)
-    after = compiler.render_listing(compiler.compile(text, spec_id="probe"))
-
-    # Exactly one line differs, and it is the pinout line.
-    changed = [
-        (b, a)
-        for b, a in zip(before.splitlines(), after.splitlines(), strict=True)
-        if b != a
-    ]
-    assert len(changed) == 1, changed
-    assert changed[0][0].strip().startswith("pinout")
-
-    # ...and it reaches the summary the wire carries, on both sides.
-    diff = service.diff_payload("probe", text, text, "spec")
-    assert diff["after"]["pinoutId"]
-    assert diff["after"]["pinoutHash"] == registries.channels().content_hash()
 
 
 def test_the_pinout_hash_moves_on_wiring_and_not_on_prose():
     """It answers "could these produce different bytes?", so a reworded
     rationale must not move it — a hash that changed on a typo fix would train
     people to ignore it."""
-    baseline = registries.channels().content_hash()
+    baseline = registry.channels().content_hash()
 
-    registries.set_rig_source(lambda: rig(channels={"odor_port": {"rationale": "reworded"}}))
-    assert registries.channels().content_hash() == baseline
+    registry.set_rig_source(lambda: rig(channels={"odor_port": {"rationale": "reworded"}}))
+    assert registry.channels().content_hash() == baseline
 
-    registries.set_rig_source(lambda: rig(channels={"odor_port": {"label": "nose port"}}))
-    assert registries.channels().content_hash() == baseline
+    registry.set_rig_source(lambda: rig(channels={"odor_port": {"label": "nose port"}}))
+    assert registry.channels().content_hash() == baseline
 
-    registries.set_rig_source(lambda: rig(pins={"odor_port": {"index": 7}}))
-    assert registries.channels().content_hash() != baseline
+    registry.set_rig_source(lambda: rig(pins={"odor_port": {"index": 7}}))
+    assert registry.channels().content_hash() != baseline
 
 
 def test_a_kind_change_moves_the_hash_even_though_no_pin_did():
     """`direction` comes from the kind, and a reward line that became an input
     is a real difference the pins alone cannot show."""
-    baseline = registries.channels().content_hash()
-    registries.set_rig_source(lambda: rig(channels={"fluid_3": {"kind": "cue"}}))
-    assert registries.channels().content_hash() != baseline
+    baseline = registry.channels().content_hash()
+    registry.set_rig_source(lambda: rig(channels={"fluid_3": {"kind": "cue"}}))
+    assert registry.channels().content_hash() != baseline
 
 
-def test_the_table_carries_the_wiring_that_resolved_it():
-    text = paradigms.to_yaml(paradigms.skeleton(paradigms.get("two_afc"), spec_id="probe"))
-    table = compiler.compile(text, spec_id="probe").table
-    assert table.pinout_id == registries.channels().pinout_id
-    assert table.pinout_hash == registries.channels().content_hash()
-    # ...and it is NOT the spec hash, which is the whole of D22.
-    assert table.pinout_hash != table.spec_hash
+# --------------------------------------------------------------------------- #
+# The strobe vocabulary
+# --------------------------------------------------------------------------- #
+
+
+def test_the_vocabulary_never_reissues_a_taken_or_retired_code():
+    """Append-only is a DATA guarantee: tens of thousands of recorded events
+    carry these numbers, and reissuing one merges two unrelated event types in
+    any analysis spanning the change."""
+    vocab = registry.vocabulary()
+
+    for entry in vocab:
+        assert not vocab.is_free(entry.code), entry.name
+    for code in vocab.retired:
+        assert not vocab.is_free(code), code
+
+    free = vocab.next_free()
+    assert free is not None
+    assert vocab.is_free(free)
+    assert vocab.name_of(free) is None
+    assert vocab.retired_name(free) is None
+
+
+def test_a_response_port_resolves_its_six_codes_by_slot_not_by_name():
+    """The historical `_L`/`_R` families are slots 1 and 2, so a recorded session
+    decodes exactly as it always did."""
+    vocab = registry.vocabulary()
+    left = registry.channels().get("left_well")
+    right = registry.channels().get("right_well")
+
+    assert vocab.port_slot(left.port_slot)["enter_code"] == "WATER_POKE_L"
+    assert vocab.port_slot(right.port_slot)["enter_code"] == "WATER_POKE_R"
+    assert vocab.port_slot(right.port_slot)["reward_code"] == "FLUID_R"

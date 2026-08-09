@@ -56,6 +56,15 @@ export interface SceneIntent {
    */
   docksPanel: boolean;
   /**
+   * How far left of screen centre the focused star should sit, in px, so it
+   * lands centred in the strip of sky the chrome leaves visible. Half the
+   * difference between the right-docked chrome's width and the left chrome's
+   * (`frameShift = (panelOuter − leftChrome) / 2`) — the views publish it from
+   * their own panel geometry rather than the camera hardcoding one bias for
+   * every panel width. Ignored unless a star is focused and `docksPanel`.
+   */
+  frameShift: number;
+  /**
    * Whether the sky is an instrument or a backdrop.
    *
    * False on the guided session steps, which show the rig behind their frosted
@@ -72,6 +81,7 @@ const EMPTY: SceneIntent = {
   focusKey: "",
   focusedId: null,
   docksPanel: true,
+  frameShift: 0,
   interactive: true,
 };
 
@@ -101,6 +111,7 @@ export function setSceneIntent(next: SceneIntent, liveNodes: SceneNode[]): void 
     intent.focusKey === next.focusKey &&
     intent.focusedId === next.focusedId &&
     intent.docksPanel === next.docksPanel &&
+    intent.frameShift === next.frameShift &&
     intent.interactive === next.interactive
   ) {
     return;

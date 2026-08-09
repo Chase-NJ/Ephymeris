@@ -3,7 +3,8 @@ import { ArrowRight, CircleAlert, Minus, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { Button, Select, TextInput } from "@/components/common/controls";
+import { Button, TextInput } from "@/components/common/controls";
+import { Dropdown } from "@/components/common/Dropdown";
 import { Modal } from "@/components/common/Modal";
 import { CohortIcon } from "@/components/cohorts/CohortIcon";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
@@ -13,7 +14,7 @@ import { errorMessage } from "@/lib/cohorts/commands";
 import { useActiveCohorts } from "@/lib/cohorts/context";
 import { getCohort } from "@/lib/cohorts/commands";
 import type { Cohort, CohortSummary } from "@/lib/cohorts/types";
-import { springPanel, springSnappy } from "@/lib/motion";
+import { CASCADE, RISE, springPanel, springSnappy } from "@/lib/motion";
 import {
   createPrefix,
   createSession,
@@ -195,6 +196,10 @@ export function SessionConfig() {
             </div>
           )}
 
+          {/* The two groups and the actions cascade in — the walkthrough's
+              first screen assembling top-down, in the order it is filled. */}
+          <motion.div variants={CASCADE} initial="hidden" animate="shown">
+          <motion.div variants={RISE}>
           <SettingGroup title="Cohort" variant="hud">
             <div className="p-4">
               {cohorts.length === 0 ? (
@@ -237,7 +242,9 @@ export function SessionConfig() {
               )}
             </div>
           </SettingGroup>
+          </motion.div>
 
+          <motion.div variants={RISE}>
           <SettingGroup title="Session" variant="hud">
             <div className="flex items-start justify-between gap-8 px-4 py-3.5">
               <div className="min-w-0 pt-0.5">
@@ -249,16 +256,15 @@ export function SessionConfig() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <Select
+                <Dropdown
                   label="Session prefix"
+                  size="regular"
                   value={prefixId}
-                  options={
-                    prefixes.length > 0
-                      ? prefixes.map((p) => ({ value: p.id, label: p.name }))
-                      : [{ value: "", label: "— none yet —" }]
-                  }
+                  options={prefixes.map((p) => ({ value: p.id, label: p.name }))}
+                  placeholder="— none yet —"
+                  className="w-[200px]"
                   onChange={(v) => {
-                    setPrefixId(String(v));
+                    setPrefixId(v);
                     // Numbers are per-prefix, so the old one carries no meaning
                     // here — clearing lets the new prefix's suggestion land.
                     setSessionNumber("");
@@ -378,8 +384,9 @@ export function SessionConfig() {
               </div>
             )}
           </SettingGroup>
+          </motion.div>
 
-          <div className="mt-6 flex items-center gap-2">
+          <motion.div variants={RISE} className="mt-6 flex items-center gap-2">
             <Button
               variant="primary"
               onClick={() => void continueToMapping()}
@@ -391,7 +398,8 @@ export function SessionConfig() {
             <Button variant="ghost" onClick={() => navigate("/")}>
               Cancel
             </Button>
-          </div>
+          </motion.div>
+          </motion.div>
 
           <Modal
             open={confirmingDelete}

@@ -47,6 +47,18 @@ export const CMD = {
   PREFIXES_CREATE: "prefixes.create",
   PREFIXES_DELETE: "prefixes.delete",
   TASKS_GET_PROFILE: "tasks.getProfile",
+
+  // Task profiles (tasks.md §11)
+  TASKS_LIST: "tasks.list",
+  TASKS_GET: "tasks.get",
+  TASKS_PREVIEW: "tasks.preview",
+  TASKS_SAVE: "tasks.save",
+  TASKS_DELETE: "tasks.delete",
+  TASKS_PRESETS: "tasks.presets",
+  TASKS_FROM_PRESET: "tasks.fromPreset",
+
+  // Strobe vocabulary (tasks.md §3.3)
+  RIG_STROBES: "rig.strobes",
   SESSIONS_SUGGEST_NUMBER: "sessions.suggestNumber",
   SESSIONS_CREATE: "sessions.create",
   SESSIONS_ABANDON: "sessions.abandon",
@@ -71,28 +83,10 @@ export const CMD = {
 
   // Crash recovery (data.md §12, §11)
   SESSIONS_RECOVER: "sessions.recover",
-
-  // Task specs (specs.md)
-  SPECS_LIST: "specs.list",
-  SPECS_GET: "specs.get",
-  SPECS_SCHEMA: "specs.schema",
-  SPECS_COMPILE: "specs.compile",
-  SPECS_CAPABILITIES: "specs.capabilities",
   HARDWARE_GET: "hardware.get",
   HARDWARE_PREVIEW: "hardware.preview",
   HARDWARE_SAVE: "hardware.save",
   HARDWARE_RESET: "hardware.reset",
-  SPECS_PARADIGMS: "specs.paradigms",
-  SPECS_SKELETON: "specs.skeleton",
-  SPECS_SAVE: "specs.save",
-  SPECS_DELETE: "specs.delete",
-  SPECS_DIFF: "specs.diff",
-  SPECS_EXPORT: "specs.export",
-
-  // Bench boxes (specs.md)
-  BOARD_CAPABILITIES: "board.capabilities",
-  BOARD_UPLOAD_TABLE: "board.uploadTable",
-  UTILITY_BENCH_HOLD: "utility.benchHold",
 } as const;
 
 export type CommandName = (typeof CMD)[keyof typeof CMD];
@@ -116,8 +110,7 @@ export const EVT = {
   BACKUP_STATUS: "backup.status",
   ANALYTICS_PROGRESS: "analytics.progress",
   SIDECAR_ERROR: "sidecar.error",
-  SPECS_UPDATED: "specs.updated",
-  UPLOAD_PROGRESS: "upload.progress",
+  TASKS_UPDATED: "tasks.updated",
 } as const;
 
 export type EventName = (typeof EVT)[keyof typeof EVT];
@@ -148,11 +141,8 @@ export const ERR = {
   UTILITY_UNAVAILABLE: "UTILITY_UNAVAILABLE",
   RIG_INVALID: "RIG_INVALID",
   RIG_WOULD_BREAK_TASKS: "RIG_WOULD_BREAK_TASKS",
-  SPEC_NOT_FOUND: "SPEC_NOT_FOUND",
-  SPEC_INVALID: "SPEC_INVALID",
-  SPEC_COMPILER_UNAVAILABLE: "SPEC_COMPILER_UNAVAILABLE",
-  UPLOAD_REFUSED: "UPLOAD_REFUSED",
-  UPLOAD_FAILED: "UPLOAD_FAILED",
+  TASK_NOT_FOUND: "TASK_NOT_FOUND",
+  TASK_INVALID: "TASK_INVALID",
   INTERNAL: "INTERNAL",
 } as const;
 
@@ -161,10 +151,11 @@ export type ErrorCode = (typeof ERR)[keyof typeof ERR];
 // --- Payload shapes --------------------------------------------------------
 
 /**
- * Per-port state machine names (`dashboard.md` §5.1). UPLOADING is a task-spec table transfer
- * (`specs.md`) — exclusive like FLASHING, with the same passthrough auto-resume.
+ * Per-port state machine names (`dashboard.md` §5.1). One owner at a time: FLASHING, RESETTING
+ * and IN_SESSION are each exclusive, and the first two force-release PASSTHROUGH and auto-resume
+ * it afterward.
  */
-export type PortStateName = "IDLE" | "PASSTHROUGH" | "FLASHING" | "UPLOADING" | "RESETTING" | "IN_SESSION" | "ERROR";
+export type PortStateName = "IDLE" | "PASSTHROUGH" | "FLASHING" | "RESETTING" | "IN_SESSION" | "ERROR";
 
 /** One passthrough console line. Debug output, never persisted (§5.4). */
 export interface OutputLine {
@@ -838,10 +829,12 @@ export interface ConditionOutcomes {
 export type RunStatus = "ok" | "no-metrics" | "missing" | "unreadable";
 
 /**
- * How much the decoding can be trusted (§8.2). Three states, not two — `sketch-current` means the
- * profile may have changed since the run.
+ * How much the decoding can be trusted (§8.2). Four states — `sketch-current` means the profile
+ * may have changed since the run; `inferred` means no profile resolved at all and the conditions
+ * were read out of the recorded stream itself, sound because the strobe registry is append-only
+ * but blind to conditions the animal never met.
  */
-export type ProfileSource = "snapshot" | "sketch-current" | "unavailable";
+export type ProfileSource = "snapshot" | "sketch-current" | "inferred" | "unavailable";
 
 export interface RunSummary {
   runId: string;
@@ -1173,88 +1166,6 @@ export interface SidecarErrorData {
   detail: unknown;
 }
 
-/** One question the New Task wizard asks for this paradigm. */
-export interface ParadigmQuestion {
-  id: string;
-  label: string;
-  /**
-   * A document path the spec schema already knows, so an answer is a set on a validated location
-   * and never new structure the paradigm invented.
-   */
-  path: string;
-  help: string | null;
-  /**
-   * Where the offered options come from. `value` is free entry; the rest are drawn from the
-   * registries the compiler validates against, so a picker cannot offer something it would
-   * reject.
-   */
-  source: "value" | "channel" | "stimulus" | "trial_type" | "strobe";
-  /** For source=channel: which channel kind. */
-  kind: string | null;
-  required: boolean;
-}
-
-/** A gallery card, and everything the wizard needs to drive its steps. */
-export interface ParadigmSummary {
-  id: string;
-  name: string;
-  /** What this paradigm lets you measure. Gallery copy. */
-  affords: string;
-  /** Gallery order — explicit, not alphabetical. */
-  order: number;
-  /**
-   * Kept out of the gallery. True for exactly one paradigm — `blank`, which is what a task starts
-   * from when no template is picked. Declared rather than special-cased by id, so the frontend
-   * holds no magic string.
-   */
-  hidden: boolean;
-  template: string;
-  templateVersion: number;
-  /**
-   * The knobs this paradigm pins, as a topology fragment. What is absent is what the operator may
-   * still move in the Designer.
-   */
-  fixes: unknown;
-  /**
-   * Timing ids this shape expects a shaping ramp to move — NAMES only. The skeleton generator
-   * deliberately does not consume them: a stage schedule needs trial boundaries and per-stage
-   * values, and a paradigm declares neither, so emitting one would invent exactly the numbers the
-   * generator is forbidden to invent. The wizard's session step offers them as a suggestion
-   * instead.
-   */
-  ramped: string[];
-  questions: ParadigmQuestion[];
-}
-
-/**
- * Where a spec's bytes come from. One value: nothing ships as a spec, so every task belongs to
- * the rig that generated it from a paradigm. Kept as a union so the field has somewhere to grow
- * if that changes.
- */
-export type SpecOrigin = "user";
-
-/**
- * A row in the spec list. Built from a cheap parse — never a compile — so `specs.list` stays
- * instant however many specs exist.
- */
-export interface SpecEntry {
-  specId: string;
-  /** meta.label, when the document parses. */
-  label: string | null;
-  description: string | null;
-  origin: SpecOrigin;
-  template: string | null;
-  templateVersion: number | null;
-  /**
-   * Which paradigm's SHAPE this document has, computed from the document itself rather than
-   * recorded in it — so a task reshaped in the Designer stops claiming to be what it started as.
-   * Null reads honestly as Custom.
-   */
-  paradigmId: string | null;
-  /** ISO-8601. */
-  editedAt: string | null;
-}
-
 /**
  * One thing wrong with a wiring document, located. Every problem is reported rather than the
  * first, because fixing new wiring should be one pass rather than a game of whack-a-mole.
@@ -1264,8 +1175,8 @@ export interface RigProblem {
   location: string;
   message: string;
   /**
-   * The lint rule, when one produced it — TG226 through TG229. Null for a schema violation, which
-   * has no rule number because it is caught before binding runs.
+   * The wiring rule, when one produced it — RIG101 through RIG104. Null for a schema violation,
+   * which has no rule number because it is caught before the halves are composed.
    */
   code: string | null;
 }
@@ -1277,7 +1188,11 @@ export interface RigStatus {
   derivedFrom: string;
   board: string;
   editedAt: string | null;
-  /** The composed wiring's hash — the same value a compiled table carries (D22). */
+  /**
+   * The composed wiring's hash, over the fields that can change a compiled byte. Prose and pin
+   * notes are excluded: it answers 'could these two produce different firmware?', so a reworded
+   * rationale must not move it.
+   */
   pinoutHash: string;
 }
 
@@ -1289,7 +1204,7 @@ export interface RigStatus {
 export interface RigDocument {
   /**
    * The rig document itself — `{rig_version, channels, pins}`, validated against
-   * schema/rig_hardware.v1.json.
+   * rig/schema/rig_hardware.v1.json.
    */
   document: unknown;
   status: RigStatus;
@@ -1301,7 +1216,7 @@ export interface RigImpact {
   specId: string;
   label: string | null;
   /**
-   * The rules this wiring would newly break this spec with. Empty when the spec was already
+   * What this wiring would newly break this task profile with. Empty when the profile was already
    * failing for its own reasons.
    */
   codes: string[];
@@ -1311,311 +1226,118 @@ export interface RigSaved {
   status: RigStatus;
   problems: RigProblem[];
   /**
-   * Tasks that compile today and would not after this change. Non-empty does NOT mean the save
-   * was refused — see the command.
+   * Task profiles that generate today and would not after this change. Non-empty does NOT mean
+   * the save was refused — see the command.
    */
   breaks: RigImpact[];
 }
 
-/**
- * One field's presentation, keyed in `SpecOverlay.fields` by its overlay key — the same string a
- * diagnostic's `anchor` carries, which is what makes placing an error next to its input a lookup.
- */
-export interface SpecOverlayField {
-  label: string;
-  /**
-   * Which input edits this field. Deliberately NOT a literal union: the renderer carries a
-   * documented default case, so an overlay that gains a widget in a vendor sync degrades to a
-   * plain input instead of failing to compile.
-   */
-  widget: string;
-  /** An id from `groups`. */
-  group?: string;
-  order?: number;
-  unit?: string;
-  step?: number;
-  help?: string;
-  advanced?: boolean;
-  readOnly?: boolean;
-  nullable?: boolean;
-  multiple?: boolean;
-  /**
-   * Narrows a channel picker to one kind of the channel registry (`emitter`, `response`,
-   * `reward`).
-   */
-  channelKind?: string;
-  /**
-   * Present only for `enum`. Every other picker draws its options from a registry in this same
-   * reply.
-   */
-  options?: Array<{ value: string; label: string; help?: string }>;
-}
-
-export interface SpecOverlayGroup {
-  id: string;
-  label: string;
-  order: number;
-  help?: string;
-}
-
-/**
- * task_spec.presentation.v1.json — the label/widget/group layer over the JSON Schema. Vendored
- * alongside the compiler, so the form and the validator can never describe different documents.
- */
-export interface SpecOverlay {
-  presentation_version: number;
-  groups: SpecOverlayGroup[];
-  /** Keyed by dotted document path (`contingency.outcome_map`). */
-  sections: Record<string, { group: string; rows: "indexed" | "by_id" | "by_key" | "object"; gatedBy?: string }>;
-  /** Keyed by overlay key. */
-  fields: Record<string, SpecOverlayField>;
-}
-
-export interface SpecDiagnostic {
-  /** TG###; append-only, never reused. */
-  code: string;
-  severity: "INFO" | "WARN" | "ERROR";
+export interface TaskDiagnostic {
+  /** `trials[1].rewardChannel`, `stages[2].trials`. */
+  location: string;
   message: string;
-  /**
-   * A dotted YAML path (`contingency.outcome_map.omission.strobe`), a node id (`S12`), a
-   * selector, or a registry filename. Clients should not parse it — `placement` already says
-   * where it lands.
-   */
-  location: string | null;
-  /**
-   * Where this diagnostic belongs on screen, computed by the one definition in the compiler
-   * (taskgraph/presentation.py). `field` anchors are overlay keys, so mapping onto an input is a
-   * dictionary lookup and never a parse.
-   */
-  placement: "field" | "row" | "section" | "node" | "document";
-  /** The overlay key, section path or node id. */
-  anchor: string | null;
-  detail: string | null;
-  /** Rule-level: what to do about it. */
-  help: string | null;
-  /** e.g. `D4` — a docs/taskgraph-decisions.md pointer. */
-  decision: string | null;
+  /** TSK101–TSK109. Each names a failure that is silent without it. */
+  code: string;
 }
 
-export interface SpecGraphNode {
-  index: number;
-  /** The template's node id (`engage_win`); `index` formats to the listing's `S07`. */
-  symbol: string;
+/** A row in the profile list. */
+export interface TaskEntry {
+  id: string;
+  /** Also the generated sketch's folder name. */
+  name: string;
+  category: string;
+  /** The generated sketch folder — what `port.flash` takes. */
+  path: string;
   label: string;
-  /** 1 engagement · 2 sampling · 3 response · 4 outcome. */
-  band: number;
-  type: "DELAY" | "WAIT_ENTRY" | "HOLD" | "WAIT_EXIT" | "PULSE" | "TERMINAL";
-  /** Timing id, when duration comes from the vector. */
-  durationId: string | null;
-  durationMs: number | null;
-  strobeName: string | null;
-  strobe: number | null;
-  /** An explicit `strobe: null` (D4), not an omission. */
-  silentByDesign: boolean;
-  /** Channel names this state watches. */
-  watch: string[];
-}
-
-export interface SpecGraphEdge {
-  index: number;
-  src: number;
-  dst: number;
-  trigger: "TIMEOUT" | "ENTER" | "HELD" | "BROKEN" | "EXIT" | "DONE" | "ADVANCE" | "REPEAT";
-  /** Human-readable guard, or null for the default edge. */
-  guard: string | null;
-  channel: string | null;
-  /** `score:wrong`, `reward:@target` — the edge's side effect. */
-  effect: string | null;
+  /** ISO-8601. */
+  editedAt: string | null;
+  /**
+   * How many diagnostics it currently trips. A COUNT, not the list: this reply is drawn on every
+   * route mount and would otherwise grow with the library.
+   */
+  problems: number;
 }
 
 /**
- * The compiled machine graph — six node primitives, trigger-keyed edges. Deliberately NOT the
- * derived TaskGraphModel: that describes what an animal does; this describes what the interpreter
- * executes.
+ * A starting point, never a task. Instantiating one produces a definition the operator owns — so
+ * editing a preset in a later build cannot reach back into a study already running on it.
  */
-export interface SpecGraph {
-  nodes: SpecGraphNode[];
-  edges: SpecGraphEdge[];
-  entry: number;
+export interface TaskPreset {
+  id: string;
+  name: string;
+  summary: string;
 }
 
-export interface SpecTableSummary {
-  specId: string;
-  specHash: string;
-  specVersion: number;
-  vocabVersion: number;
-  template: string;
-  templateVersion: number;
-  templateHash: string;
-  /** Which wiring resolved this table's channel names into pin bytes. */
-  pinoutId: string;
+export interface TaskSaved {
+  entry: TaskEntry;
+  diagnostics: TaskDiagnostic[];
   /**
-   * The wiring's own hash, over the fields that can change a compiled byte — pin, kind, watch
-   * bit, well, port slot — and not over prose. Recorded BESIDE `specHash`, never folded into it
-   * (D22): a spec is identified by what it says and it says channel names, so a re-pin changes
-   * every table and moves no `specHash`. Without this pair the listing diff is blind to a rewired
-   * box, because the listing prints names.
+   * The generated folder, or null when the bundled root sketch could not be read — the profile is
+   * stored either way and simply has nothing to flash yet.
    */
-  pinoutHash: string;
-  nNodes: number;
-  nEdges: number;
-  nTiming: number;
-  nTrialTypes: number;
-  /** Bytes on the wire to a board — the capacity that matters. */
-  sizeBytes: number;
-  /** Hex, `0x`-prefixed — matches the CLI's own rendering. */
-  crc32: string;
+  sketchPath: string | null;
+}
+
+/** A pure compile of an unsaved definition. Writes nothing. */
+export interface TaskPreview {
+  diagnostics: TaskDiagnostic[];
+  /** Bytes the built START line would occupy, seed included. */
+  startLineLength: number;
+  /**
+   * The firmware's cap, so the editor can show headroom without hardcoding it. Over it is TSK107
+   * and a refused generation — `readLineInto()` truncates in silence, so this is checked rather
+   * than trusted.
+   */
+  startLineMax: number;
+  /** What this definition compiles to. */
+  profile: TaskProfile;
+  /**
+   * `metadataKey` → the value this field has with NO override, keyed the same way
+   * `profile.config[].default` is. The editor needs both to know which values this profile
+   * actually pins: a definition stores only divergences, so a value merely EQUAL to the
+   * catalogue's must not be written into it — that would freeze it against a later correction to
+   * the range or the default.
+   */
+  catalogueDefaults: Record<string, unknown>;
+}
+
+export interface TasksUpdatedData {
+  tasks: TaskEntry[];
+}
+
+export interface StrobeCode {
+  name: string;
+  code: number;
+  /** `firmware` (transcribed from BehaviorBox.h) or `ephymeris`. */
+  origin: string;
+  emittedOn?: string;
+  rationale?: string;
 }
 
 /**
- * A spec that doesn't compile is a SUCCESSFUL reply carrying diagnostics, never a command error —
- * same discipline as Analytics' corrupt-file rule. SPEC_INVALID is reserved for a document that
- * isn't a document.
+ * Emitted by firmware this repository no longer contains. Reserved forever: reissuing one would
+ * merge two unrelated event types in any analysis spanning the change.
  */
-export interface SpecCompileResult {
-  ok: boolean;
-  diagnostics: SpecDiagnostic[];
-  /**
-   * Null whenever any diagnostic is an ERROR — the compiler's structural gate, mirrored onto the
-   * wire. There is no code path from a failing spec to a table summary.
-   */
-  table: SpecTableSummary | null;
-  graph: SpecGraph | null;
-  /**
-   * emit.listing.render verbatim — the review artifact, byte-equal to the checked-in
-   * specs/<id>.table.txt when the spec is unedited.
-   */
-  listing: string | null;
-  elapsedMs: number;
+export interface RetiredStrobe {
+  name: string;
+  code: number;
 }
 
 /**
- * What a topology produces (roadmap Phase 6): the palette's validity model. A pure function of
- * the knobs, so the form re-gates its rows the instant one moves, before any compile returns.
- * `timingHelp`/`outcomeHelp` are the template's own `timing_defaults` and `outcome_defaults`,
- * which the skeleton generator already reads. They ride here rather than on `specs.schema`
- * because they are a function of the TOPOLOGY — go/no-go's `correct` is a different fact from
- * n-alternative's — and a copy in the frontend would be a second definition of what a duration is
- * for.
+ * The append-only strobe registry. Codes are never renumbered, never repurposed and never deleted
+ * — four years of recorded sessions carry them.
  */
-export interface SpecCapabilities {
-  outcomeClasses: string[];
-  /** Ordered — the form renders timing rows in exactly this order. */
-  requiredTiming: string[];
-  knobs: string[];
-  template: string;
-  templateVersion: number;
-  /**
-   * Keyed by timing id. The template's `timing_defaults` prose — each duration's firmware
-   * provenance, which is the only place a duration's MEANING is written down. Carried so a form
-   * can explain a row rather than only label it.
-   */
-  timingHelp: Record<string, { note: string; wireKey: string | null; ms: number }>;
-  /**
-   * Keyed by outcome class. The template's `outcome_defaults` — what each class MEANS, not merely
-   * that it exists. `outcomeClasses` says which are produced; this says why one is a
-   * discrimination error and another carries no evidence at all.
-   */
-  outcomeHelp: Record<string, { note: string; trigger: string; terminal: string; delay: string; strobe: string | null }>;
-}
-
-export interface SpecsUpdatedData {
-  specs: SpecEntry[];
-}
-
-export interface DiffLine {
-  op: " " | "+" | "-";
-  text: string;
-}
-
-export interface DiffHunk {
-  /**
-   * The listing section the hunk falls in — STATES, TIMING VECTOR, TRIAL TYPES, STAGE SCHEDULE,
-   * DWELL BUDGET — so a change reads as "3 states added in the sampling band" rather than "line
-   * 71 moved".
-   */
-  section: string;
-  lines: DiffLine[];
-}
-
-/**
- * A diff of the LISTING — the checked-in review artifact — never of the YAML. The listing is what
- * a reviewer reads upstream, so it is what a topology change is reviewed against here (roadmap
- * Phase 6).
- */
-export interface SpecListingDiff {
-  specId: string;
-  /** Which BEFORE side was used. */
-  baseline: "saved" | "spec";
-  changed: boolean;
-  /**
-   * Null when that side does not compile. The summaries carry the headline (26 → 29 states) and
-   * the provenance strip — spec_hash and template_hash move on EVERY edit, so they are excluded
-   * from the hunks and shown once here instead of topping every diff.
-   */
-  before: SpecTableSummary | null;
-  after: SpecTableSummary | null;
-  hunks: DiffHunk[];
-  added: number;
-  removed: number;
-}
-
-export interface SpecArtifact {
-  kind: "spec" | "listing" | "lint" | "table_json" | "table_bin" | "bench";
-  filename: string;
-  text: string | null;
-  /** Only table_bin — the packed wire bytes. */
-  base64: string | null;
-}
-
-export interface BoardCapabilities {
-  box: number;
-  /**
-   * False when the board announced no CAP line — un-migrated firmware, the legacy bare-START
-   * path. Not an error; it means 'flash the interpreter sketch first' and the UI offers exactly
-   * that.
-   */
-  present: boolean;
-  /** The rate that actually answered (transport detect). */
-  baud: number;
-  /** Numeric CAP keys — PROTO, WIRE, MAX_NODES… */
-  values: Record<string, number>;
-  /** Text CAP keys — SKETCH, SPEC… */
-  text: Record<string, string>;
-  /** Everything the board said up to READY, verbatim. */
-  banner: string[];
-}
-
-export interface UploadProgressData {
-  box: number;
-  /**
-   * detect = finding the baud · probe = reading CAP · transfer = chunks moving · verify =
-   * awaiting TABLE OK.
-   */
-  phase: "detect" | "probe" | "transfer" | "verify";
-  /** Confirmed BY THE BOARD — counted at its ACK. */
-  chunk: number | null;
-  chunks: number | null;
-  text: string | null;
-}
-
-export interface UploadResult {
-  box: number;
-  specId: string;
-  specHash: string;
-  nBytes: number;
-  chunks: number;
-  crc32: string;
-  /**
-   * The body digest the board echoed. CRC says the bytes arrived; the digest says they decoded
-   * into the right fields — a transfer can be perfect and a decode wrong, and only this catches
-   * it.
-   */
-  digest: string;
-  seconds: number;
-  /** Advisory CAP notes — a dimension the board didn't announce. */
-  notes: string[];
-  caps: BoardCapabilities;
+export interface StrobeVocabulary {
+  version: number;
+  codeMin: number;
+  /** 999 — a wire-format limit. The host parser is ^\d{1,3}\t\d+$. */
+  codeMax: number;
+  /** Inclusive [lo, hi] pairs a new code may come from. */
+  freeRanges: number[][];
+  codes: StrobeCode[];
+  retired: RetiredStrobe[];
+  /** Slot number → its six per-port code names. */
+  portSlots: Record<string, Record<string, string>>;
 }
 
 // --- Per-command and per-event payload maps --------------------------------
@@ -1648,6 +1370,14 @@ export interface CommandArgsMap {
   "prefixes.create": { name: string };
   "prefixes.delete": { id: string };
   "tasks.getProfile": { sketchPath: string };
+  "tasks.list": Record<string, never>;
+  "tasks.get": { taskId: string };
+  "tasks.preview": { definition: unknown };
+  "tasks.save": { definition: unknown };
+  "tasks.delete": { taskId: string };
+  "tasks.presets": Record<string, never>;
+  "tasks.fromPreset": { presetId: string; taskId: string; name?: string };
+  "rig.strobes": Record<string, never>;
   "sessions.suggestNumber": { prefixId: string };
   "sessions.create": { cohortId: string; prefixId: string; sessionNumber: string; durationMinutes?: number };
   "sessions.abandon": { sessionId: string };
@@ -1666,24 +1396,10 @@ export interface CommandArgsMap {
   "analytics.rescan": { cohortId: string; adoptOrphans?: boolean };
   "analytics.recentSessions": { limit?: number };
   "sessions.recover": { cohortId: string };
-  "specs.list": Record<string, never>;
-  "specs.get": { specId: string };
-  "specs.schema": Record<string, never>;
-  "specs.compile": { text: string; specId?: string };
-  "specs.capabilities": { topology: unknown };
   "hardware.get": Record<string, never>;
   "hardware.preview": { document: unknown };
   "hardware.save": { document: unknown; confirm: boolean };
   "hardware.reset": Record<string, never>;
-  "specs.paradigms": Record<string, never>;
-  "specs.skeleton": { paradigmId: string; specId: string; answers: unknown; label?: string | null; description?: string | null };
-  "specs.save": { specId: string; text: string };
-  "specs.delete": { specId: string };
-  "specs.diff": { specId: string; text?: string; againstSpecId?: string };
-  "specs.export": { specId: string; text?: string; artifacts: string[] };
-  "board.capabilities": { box: number; baud?: number };
-  "board.uploadTable": { box: number; specId: string; text?: string };
-  "utility.benchHold": { held: boolean };
 }
 
 /** The `result` field of each command's ok-reply. */
@@ -1714,6 +1430,14 @@ export interface CommandResultMap {
   "prefixes.create": { prefix: Prefix };
   "prefixes.delete": { deleted: boolean };
   "tasks.getProfile": TaskProfile | { profile: null };
+  "tasks.list": { tasks: TaskEntry[] };
+  "tasks.get": { definition: unknown; diagnostics: TaskDiagnostic[] };
+  "tasks.preview": TaskPreview;
+  "tasks.save": TaskSaved;
+  "tasks.delete": { deleted: boolean };
+  "tasks.presets": { presets: TaskPreset[] };
+  "tasks.fromPreset": { definition: unknown; diagnostics: TaskDiagnostic[] };
+  "rig.strobes": StrobeVocabulary;
   "sessions.suggestNumber": { suggestion: string | null; sameDayNumbers: string[] };
   "sessions.create": { session: Session };
   "sessions.abandon": { session: Session };
@@ -1732,24 +1456,10 @@ export interface CommandResultMap {
   "analytics.rescan": RescanResult;
   "analytics.recentSessions": { sessions: DiskSession[] };
   "sessions.recover": RecoverResult;
-  "specs.list": { specs: SpecEntry[] };
-  "specs.get": { specId: string; origin: SpecOrigin; text: string; raw: unknown };
-  "specs.schema": { schema: unknown; overlay: SpecOverlay; strobes: unknown; channels: unknown; limits: unknown; templates: Array<{ name: string; version: number; sourceHash: string }> };
-  "specs.compile": SpecCompileResult;
-  "specs.capabilities": SpecCapabilities;
   "hardware.get": RigDocument;
   "hardware.preview": RigSaved;
   "hardware.save": RigSaved;
   "hardware.reset": RigDocument;
-  "specs.paradigms": { paradigms: ParadigmSummary[] };
-  "specs.skeleton": { text: string; result: SpecCompileResult };
-  "specs.save": { entry: SpecEntry; result: SpecCompileResult };
-  "specs.delete": { entry: SpecEntry | null };
-  "specs.diff": SpecListingDiff;
-  "specs.export": { artifacts: SpecArtifact[] };
-  "board.capabilities": BoardCapabilities;
-  "board.uploadTable": UploadResult;
-  "utility.benchHold": UtilityStatus;
 }
 
 /** The `data` field of each event. */
@@ -1770,8 +1480,7 @@ export interface EventDataMap {
   "backup.status": BackupStatus;
   "analytics.progress": AnalyticsProgress;
   "sidecar.error": SidecarErrorData;
-  "specs.updated": SpecsUpdatedData;
-  "upload.progress": UploadProgressData;
+  "tasks.updated": TasksUpdatedData;
 }
 
 // --- Envelopes -------------------------------------------------------------

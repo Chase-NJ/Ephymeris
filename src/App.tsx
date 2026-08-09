@@ -8,11 +8,12 @@ import { Cohorts } from "./routes/Cohorts";
 import { Dashboard } from "./routes/Dashboard";
 import { DebugMode } from "./routes/DebugMode";
 import { MissionControl } from "./routes/MissionControl";
+import { RigStrobes } from "./routes/RigStrobes";
 import { RigWiring } from "./routes/RigWiring";
 import { SessionConfig } from "./routes/SessionConfig";
 import { SessionMapping } from "./routes/SessionMapping";
 import { Settings } from "./routes/Settings";
-import { TaskSketches } from "./routes/TaskSketches";
+import { Task } from "./routes/Task";
 
 export default function App() {
   return (
@@ -25,14 +26,10 @@ export default function App() {
         <Route path="/cohorts/new" element={<CohortEditor />} />
         <Route path="/cohorts/:id" element={<CohortEditor />} />
         <Route path="/debug" element={<DebugMode />} />
-        {/* Task opens straight into the sketch viewer. The spec-creator UI
-            (landing, wizard, Designer, bench) is removed pending a fresh
-            build — the sidecar compiler and every `specs.*` command are
-            untouched (`specs.md`). **This page must stay reachable**: it is
-            the only editor for `settings.taskDefaults` (`tasks.md` §10),
-            which the mapping step merges into every `START` line whether or
-            not anything can show it. */}
-        <Route path="/task" element={<TaskSketches />} />
+        {/* Task is the task-profile editor (`tasks.md` §11): the trial table,
+            the ramp, the parameters. Saving one generates a sketch that
+            discovery finds, so `port.flash` takes it like any other. */}
+        <Route path="/task" element={<Task />} />
         {/* Rig wiring is a subpage of the Rig screen — box↔board and
             channel↔pin are different wirings but one subject, so the editor
             lives at `/config/wiring` behind the landing's Wiring door. Old
@@ -49,6 +46,10 @@ export default function App() {
             desktop app never shows its URL. `routes/Config.tsx` likewise. */}
         <Route path="/config" element={<Config />} />
         <Route path="/config/wiring" element={<RigWiring />} />
+        {/* Strobes sit beside wiring, not under Task: a code is a fact about
+            what this hardware can report, true of every task on it. Which
+            codes a task DECLARES is decided by its trial table. */}
+        <Route path="/config/strobes" element={<RigStrobes />} />
         <Route path="/settings" element={<Settings />} />
         {/* Two-step session setup (`dashboard.md` §7.2–§4); the runner
             takes over at /session/:id/control. */}

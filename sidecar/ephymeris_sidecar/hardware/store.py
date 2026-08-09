@@ -1,7 +1,7 @@
 """The rig wiring document: one file, the operator's, validated on the way in.
 
-Layout, under the sidecar's own data dir (beside `ephymeris.db` and `specs/` —
-these are sidecar-side writes, no Tauri fs capability involved):
+Layout, under the sidecar's own data dir (beside `ephymeris.db` — these are
+sidecar-side writes, no Tauri fs capability involved):
 
     <data_dir>/hardware/rig.json
 
@@ -13,8 +13,8 @@ ONE FILE, TWO SECTIONS, mirroring the shipped pair it overrides:
 
 Keeping the halves apart inside one document is deliberate. The split is what
 lets a box generation be swapped without touching what a channel MEANS, and it
-is what TG226 checks; collapsing them into one map would make that rule
-unwritable. Writing them together is what makes the rule easy to satisfy.
+is what `ChannelMap.disagreements()` checks; collapsing them into one map would
+make that rule unwritable. Writing them together is what makes it easy to satisfy.
 
 A RIG DOCUMENT REPLACES THE SHIPPED PAIR, it does not merge with it. A merge
 would mean an operator who deleted a channel got it back, and there would be no
@@ -27,9 +27,9 @@ resolves them package-relative) and are read-only in a PyInstaller build, which
 is exactly why the user document lives here instead.
 
 NOTE `jsonschema` is imported inside the function that needs it, never at module
-scope, for the reason `specs/store.py` gives: it is one of the two dependencies
-the README §6.4 fence allows to be missing, and a failed wheel must disable the
-rig editor rather than take down the process that owns six serial ports.
+scope: it is the one sidecar dependency the README §6.4 fence allows to be
+missing, and a failed wheel must disable the rig editor rather than take down the
+process that owns six serial ports.
 """
 
 from __future__ import annotations
@@ -77,9 +77,9 @@ class HardwareStore:
     """Reads and writes `<data_dir>/hardware/rig.json`.
 
     Owns the file and nothing else. Composing it into a `ChannelMap`, and
-    invalidating the compiler's caches when it changes, is `registries`' job —
-    this class must not import the compiler, so that a broken rig document is a
-    diagnostic rather than an import error.
+    invalidating the cached registries when it changes, is `rig/registry.py`'s
+    job — this class must not reach for a composed map at import time, so that a
+    broken rig document is a diagnostic rather than an import error.
     """
 
     def __init__(self, data_dir: Path) -> None:
@@ -165,10 +165,11 @@ def validate(doc: Any) -> list[tuple[str, str]]:
     """(location, message) for every way this is not a rig document.
 
     SCHEMA ONLY. Whether the wiring makes sense — pins in range, no duplicates,
-    every response port on a distinct slot — is TG226-229's job, and it runs
-    against the COMPOSED `ChannelMap` rather than against this file, so a
-    problem is reported once no matter which half caused it. This function
-    answers the narrower question the schema can: is this the right shape.
+    every response port on a distinct slot — belongs to the rules in
+    `rig/registry.py`, and they run against the COMPOSED `ChannelMap` rather
+    than against this file, so a problem is reported once no matter which half
+    caused it. This function answers the narrower question the schema can: is
+    this the right shape.
     """
     if not isinstance(doc, dict):
         return [("rig.json", "the rig document must be a JSON object")]
@@ -182,9 +183,9 @@ def validate(doc: Any) -> list[tuple[str, str]]:
             "The shipped pinout is still available.",
         )]
 
-    from ephymeris_sidecar.taskgraph.paths import SCHEMA_DIR
+    from ephymeris_sidecar.rig.paths import RIG_SCHEMA
 
-    schema = json.loads((SCHEMA_DIR / "rig_hardware.v1.json").read_text(encoding="utf-8"))
+    schema = json.loads(RIG_SCHEMA.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
     out: list[tuple[str, str]] = []
     for error in sorted(validator.iter_errors(doc), key=lambda e: list(e.path)):
@@ -195,9 +196,8 @@ def validate(doc: Any) -> list[tuple[str, str]]:
 def _json_path(path) -> str:
     """`channels.left_well.kind`, not `channels/left_well/kind`.
 
-    The same rendering `rules_load.py::_json_path` does, and for the same
-    reason: a violation should land on the field the operator is looking at
-    rather than becoming a document-level banner.
+    A violation should land on the field the operator is looking at rather than
+    becoming a document-level banner.
     """
     parts = list(path)
     if not parts:
@@ -221,17 +221,22 @@ def default_document() -> dict:
     with an unedited rig is show this; the first save writes it back with
     whatever the operator changed.
 
-    READS THE SHIPPED PAIR DIRECTLY, never `registries.channels()`. That call
+    READS THE SHIPPED PAIR DIRECTLY, never `registry.channels()`. That call
     returns the wiring currently IN FORCE, which is the rig's own once one
     exists — so "default" would have meant "whatever you last saved", and Reset
     would have reset to itself. It is also a recursion: `channels()` consults
     the rig source, and the rig source is what asks for a default.
     """
-    from ephymeris_sidecar.taskgraph import registries
+    from ephymeris_sidecar.rig import registry
 
-    chans = registries.ChannelMap(
-        registries._load("channels.v1.json"), registries._pinout()
-    )
+    chans = registry.shipped_channels()
+    # DECLARATION ORDER, not sorted. The order of `channels` is load-bearing:
+    # `declared_of_kind()` reads it, and the firmware's `Odors[i]` is odor line
+    # i+1. Sorting by pin here — which this did — quietly re-ordered the odor
+    # table the moment a rig saved its first document, because the pins are not
+    # monotonic past line 6 (22,24,26,28,30,32 then 23,25,27,29,31,33). The
+    # generated sketch then drove the wrong valve and announced it with the
+    # wrong onset code, and every trial still looked correct in the record.
     return {
         "rig_version": 1,
         "derived_from": chans.pinout_id,
@@ -245,7 +250,7 @@ def default_document() -> dict:
                 **({"port_slot": c.port_slot} if c.port_slot else {}),
                 **({"rationale": c.rationale} if c.rationale else {}),
             }
-            for c in sorted(chans, key=lambda c: (c.kind, c.index))
+            for c in chans
         },
         "pins": {
             c.name: {
@@ -253,6 +258,6 @@ def default_document() -> dict:
                 **({"watch_bit": c.watch_bit} if c.watchable else {}),
                 **({"note": c.pin_note} if c.pin_note else {}),
             }
-            for c in sorted(chans, key=lambda c: (c.kind, c.index))
+            for c in chans
         },
     }

@@ -1,5 +1,0 @@
-# TG220 — a trial type targeting a port that is not declared.
-_expect: TG220
-_why: The target resolves to @target in guards; an undeclared port has no channel index.
-_patch:
-  contingency.trial_types[0].target: centre_well

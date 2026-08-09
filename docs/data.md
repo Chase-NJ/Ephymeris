@@ -401,9 +401,28 @@ This is the **only** path by which a pre-Ephymeris archive reaches Analytics, so
 |---|---|---|
 | 🟢 `snapshot` | Decoded with the profile the run actually used | Trustworthy, unmarked |
 | 🟡 `sketch-current` | Decoded with today's `task.json` at the recorded sketch path | **Flag: profile may have changed since** |
-| 🔴 `unavailable` | The recorded name no longer resolves against the bundled library — a sketch dropped from the bundle, or a `legacyNames` entry edited away | **Flag: cannot decode** |
+| 🟡 `inferred` | No declaration resolved at all; the conditions were read out of the recorded stream itself (`analytics/infer.py`) | **Flag: scored from the strobes alone** |
+| 🔴 `unavailable` | The recorded name resolves nothing **and** the stream presents no recognisable condition — a utility sketch's log, an empty file | **Flag: cannot decode** |
 
-A malformed `task.json` on the fallback path degrades to `no-metrics` rather than raising.
+A malformed `task.json` on the fallback path degrades to inference rather than raising.
+
+**Why inference is sound, and what it cannot know.** Every behaviour task this
+lab has ever run shares one firmware lineage and the **append-only strobe
+registry** — a code has meant the same thing in every file since the day it was
+issued. So the stream itself says which conditions ran (the `ODOR_n_ON`-shaped
+onsets that actually appear) and which answer was correct (`checkResponse()`
+reaches `FLUID_x`/`WATER_UNPOKE_EARLY_x` only at the *correct* well and
+`WATER_POKE_ERROR_x` only at the wrong one, so any settled trial names the
+side; majority wins across the session). The inferred profile then flows
+through the **same scorer** as a declared one — the equality is pinned by
+`test_analytics_infer.py`, which requires identical counted/hits/pooled figures
+against the declared GRGL profile over the same stream. What inference cannot
+know: conditions the session never presented, the operator's labels, and the
+authored rolling window (it uses the generator's default of 20). The declared
+path therefore always wins; inference is only ever the rung beneath it. A
+condition whose trials were never answered all session has no evidence to name
+its side — it keeps its trial boundary (or *other* conditions would be
+mis-scored) with a deterministic, provably-inert orientation.
 
 **A sketch name is resolved when a run is read, not when it is adopted.** The path stored at adoption is a cache of that lookup, never a fact about the run. Freezing it would mean a cohort adopted against one install's library paths stays wrong after every update. Verified against the real archive back when the library was a configurable directory: with it removed, 0 of 296 read as scored; restored, 295 of 296, with no re-adoption. Now that the library ships with the app, the failure mode moved from "directory re-pointed" to "sketch dropped from the bundle" — which is why `tests/test_bundled_library_covers_archives.py` exists.
 

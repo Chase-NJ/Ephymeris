@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useBoxHealth } from "@/components/chrome/ConstellationStatus";
 import { Button, Select } from "@/components/common/controls";
+import { HudPanel, HudSection } from "@/components/common/HudPanel";
 import { FlashDialog } from "./FlashDialog";
 import { DEFAULT_STATUS_MATCH, Scrollback, isStatusLine } from "./Scrollback";
 import { StateBadge } from "./StateBadge";
@@ -29,7 +30,7 @@ import {
   usePortStatus,
   useUtilityStatus,
 } from "@/lib/hardware/context";
-import { PANEL_TRAVEL, springPanel, springSnappy } from "@/lib/motion";
+import { springSnappy } from "@/lib/motion";
 import { getTaskProfile } from "@/lib/sessions/commands";
 import { useSettings } from "@/lib/settings/context";
 import { BAUD_RATES } from "@/lib/settings/schema";
@@ -63,15 +64,37 @@ import type { TaskProfile } from "@/lib/sessions/types";
  * sidecar enforces the rules, and any rejection it returns is surfaced in the
  * Connection group rather than swallowed (§6.3).
  *
- * **The panel widens on request.** A utility sketch declares its own controls
- * (`tasks.md` §3.5), and a box with eighteen controllable outputs has
- * eighteen named channels — at the docked width those names are the first
- * thing to be truncated, which turns a fluid rig's control surface into a
- * column of ellipses. Widening is a deliberate toggle rather than something
- * that happens on its own: the panel covers the constellation it is docked
- * over, so how much of the scene to trade for control real estate is the
- * operator's call, not a heuristic on a sketch's control count.
+ * **Two columns, sized so nothing needs scrolling.** Identity, Connection and
+ * the console stack in a fixed-width left column — the console takes whatever
+ * height those two leave, which keeps it a working scrollback without letting
+ * it dominate the panel. The Sketch tile owns the flexible right column,
+ * because it is the one section whose size is the sketch's to declare: a
+ * profile with eighteen channel controls needs the room, and the wide toggle
+ * gives that column (and its grids a third column) more of it.
+ *
+ * The body grid pins its single row to the panel's free space
+ * (`grid-rows-[minmax(0,1fr)]`) — an `auto` row sizes to its tallest item's
+ * *content*, so a tall utility grid silently grew the row past the panel's
+ * bottom edge and the viewport (which never scrolls) clipped it. With the row
+ * pinned, each column is genuinely height-constrained and handles its own
+ * overflow: the console scrolls because a scrollback is a scrolling thing, and
+ * the Sketch tile scrolls only as a last resort on a window too short for its
+ * grid — the wide toggle is the intended answer there.
+ *
+ * **The panel widens on request.** Widening is a deliberate toggle rather than
+ * something that happens on its own: the panel covers the constellation it is
+ * docked over, so how much of the scene to trade for control real estate is
+ * the operator's call, not a heuristic on a sketch's control count.
  */
+
+/**
+ * Panel outer widths, mirrored in the literal `w-[min(...)]` classes on the
+ * shell below — Tailwind's scanner needs static class strings, so these can't
+ * be interpolated. `DebugMode` derives the camera's `frameShift` from them;
+ * change one, change both.
+ */
+export const PANEL_WIDTH = 880;
+export const PANEL_WIDTH_WIDE = 1180;
 
 const LINE_ENDING_OPTIONS = [
   { value: "none", label: "None" },
@@ -294,39 +317,36 @@ export function NodeDetail({
     connected && board !== null && (port.state === "IDLE" || port.state === "PASSTHROUGH");
 
   return (
-    <motion.aside
-      // `PANEL_TRAVEL`, shared with the Dashboard's overview column so the
-      // column this panel replaces leaves by exactly the distance this one
-      // arrives from — the two read as one surface being swapped.
-      initial={{ opacity: 0, x: PANEL_TRAVEL }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: PANEL_TRAVEL }}
-      transition={springPanel}
-      // `.hud`, the one docked-over-sky material — the same glass Mission
-      // Control's rails and the session StarPanel are made of. This panel used
-      // to mix its own (an opaque-ish `bg-nebula/80` with `backdrop-blur-xl`),
-      // which read as a heavier, different surface in the one view where the
-      // user is most likely to compare it against the others. Both widths share
-      // it, so expanding the panel changes its size and nothing else.
-      //
-      // Above the nameplates, which drei renders as DOM at z-index <= 10. A
-      // crisp plate drifting over a control would be worse than the star it
-      // labels being hidden.
-      //
-      // The wide width is capped against the scene rather than fixed, so on a
-      // laptop it becomes "nearly the whole frame" instead of overflowing it.
-      className={`hud pointer-events-auto absolute top-4 right-4 bottom-4 z-20 overflow-y-auto rounded-lg p-4 ${
-        wide ? "w-[min(820px,calc(100%-2rem))]" : "w-[420px]"
+    <HudPanel
+      // Docked over the scene, above the nameplates (drei renders those as DOM
+      // at z-index <= 10) — a crisp plate drifting over a control would be
+      // worse than the star it labels being hidden. `flex flex-col` with fixed
+      // insets: the shell no longer scrolls; the columns inside manage their
+      // own overflow. Both widths are capped against the scene rather than
+      // fixed, so on a laptop the panel becomes "nearly the whole frame"
+      // instead of overflowing it. The literal widths mirror
+      // `PANEL_WIDTH`/`PANEL_WIDTH_WIDE` above.
+      className={`absolute top-4 right-4 bottom-4 z-20 flex flex-col ${
+        wide ? "w-[min(1180px,calc(100%-2rem))]" : "w-[min(880px,calc(100%-2rem))]"
       }`}
       // The width is a layout change, not a decorative one — animating it lets
       // the eye follow what moved instead of re-finding every control.
       layout
     >
-      <div className="flex items-center gap-3">
+      <header className="flex items-center gap-3">
         <Button variant="ghost" onClick={onBack} title="Back to the constellation (Esc)">
           <ArrowLeft size={13} strokeWidth={1.75} />
           Constellation
         </Button>
+        <h2 className="min-w-0 truncate font-display text-[18px] text-starlight">
+          {binding?.label ?? `Box ${box}`}
+        </h2>
+        {/* The health word is the legend for the star's colour behind the
+            panel; the Connection group reports the port state it derives
+            from. */}
+        <p className="shrink-0 font-mono text-[11px] text-static">
+          box {box} · {health}
+        </p>
         <div className="ml-auto">
           <Button
             variant="ghost"
@@ -345,19 +365,16 @@ export function NodeDetail({
             )}
           </Button>
         </div>
-      </div>
+      </header>
 
-      <h2 className="mt-3 font-display text-[18px] text-starlight">
-        {binding?.label ?? `Box ${box}`}
-      </h2>
-      {/* The health word is the legend for the star's colour behind the panel;
-          the Connection group below reports the port state it derives from. */}
-      <p className="font-mono text-[11px] text-static">
-        box {box} · {health}
-      </p>
-
-      <div className="mt-3 flex flex-col gap-3">
-        <section className="surface-inset rounded-md">
+      {/* Identity, Connection and the console left; the Sketch tile right.
+          The row is pinned to the panel's free space — see the header note —
+          so nothing can outgrow the window, and widening the panel gives all
+          the extra room to the sketch column, which is what the toggle
+          exists for. */}
+      <div className="mt-3 grid min-h-0 flex-1 grid-cols-[380px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-4">
+        <div className="flex min-h-0 flex-col gap-3">
+        <section className="surface-inset shrink-0 rounded-md">
           <IdentityRow
             label="Board"
             value={binding?.hardwareId ?? "not bound"}
@@ -385,7 +402,7 @@ export function NodeDetail({
           />
         </section>
 
-        <Group title="Connection">
+        <HudSection title="Connection" className="shrink-0">
             <div className="flex flex-wrap items-center gap-1.5 px-3 py-2.5">
               <StateBadge state={port.state} detected={board !== null} />
 
@@ -458,43 +475,15 @@ export function NodeDetail({
                 {actionError}
               </p>
             )}
-          </Group>
+          </HudSection>
 
-          <Group title="Sketch">
-            <div className="flex flex-wrap items-center gap-1.5 px-3 py-2.5">
-              <span className="min-w-0 truncate font-mono text-[11px] text-static">
-                {effectiveSketch
-                  ? atBaseline && !flashed
-                    ? `${effectiveSketch.name} · baseline`
-                    : effectiveSketch.name
-                  : baselineWord(utilityBox?.state)}
-              </span>
-              <div className="ml-auto">
-                <Button
-                  onClick={() => setFlashOpen(true)}
-                  disabled={!canOperate}
-                  title={
-                    canOperate ? "Flash a sketch" : "Needs a detected board, idle or in passthrough"
-                  }
-                >
-                  <Zap size={13} strokeWidth={1.75} />
-                  Flash…
-                </Button>
-              </div>
-            </div>
-            {profile?.kind === "utility" && (
-              <UtilityControls
-                box={box}
-                profile={profile}
-                canSend={canSend}
-                wide={wide}
-                onRequestWidth={wide ? null : onToggleWide}
-              />
-            )}
-          </Group>
-
-          <section className="surface-inset overflow-hidden rounded-md">
-            <div className="flex items-center gap-1 border-b border-halo px-2 py-1.5">
+          {/* The console, in the height Identity and Connection leave: the
+              scrollback flexes to it (with a floor so a tiny window still
+              shows a readable strip) and the send row stays pinned at the
+              bottom. The tab bar replaces the section header, so the console
+              still reads as one of the intent groups. */}
+          <section className="surface-inset flex min-h-0 flex-1 flex-col overflow-hidden rounded-md">
+            <div className="flex shrink-0 items-center gap-1 border-b border-halo px-2 py-1.5">
               <ConsoleTab
                 label="Console"
                 count={consoleLines.length}
@@ -537,7 +526,7 @@ export function NodeDetail({
 
             {logError && (
               <p
-                className="border-b border-halo px-3 py-1.5 text-[11px]"
+                className="shrink-0 border-b border-halo px-3 py-1.5 text-[11px]"
                 style={{ color: "var(--color-status-error)" }}
               >
                 Couldn't save the log — {logError}
@@ -546,7 +535,7 @@ export function NodeDetail({
 
             <Scrollback
               lines={shown}
-              className="h-56"
+              className="min-h-[120px] flex-1"
               emptyLabel={
                 tab === "status"
                   ? `— no ${statusMatch} lines yet —`
@@ -554,7 +543,7 @@ export function NodeDetail({
               }
             />
 
-            <div className="flex items-center gap-1.5 border-t border-halo px-2.5 py-1.5">
+            <div className="flex shrink-0 items-center gap-1.5 border-t border-halo px-2.5 py-1.5">
               <input
                 type="text"
                 aria-label={`Send to box ${box}`}
@@ -577,11 +566,54 @@ export function NodeDetail({
                 <Send size={13} strokeWidth={1.75} />
               </Button>
             </div>
-        </section>
+          </section>
+        </div>
+
+        {/* The Sketch tile, in the flexible column: sized by its content, not
+            stretched to the panel — a sketch with no controls is a small card,
+            a utility profile's channel grids get the room. The inner scroll is
+            a last resort for a window too short for the grid; the wide toggle
+            (a third grid column) is the intended answer. */}
+        <div className="flex min-h-0 flex-col">
+          <HudSection title="Sketch" className="flex min-h-0 flex-col">
+            <div className="scrollbar-slim min-h-0 overflow-y-auto">
+              <div className="flex flex-wrap items-center gap-1.5 px-3 py-2.5">
+                <span className="min-w-0 truncate font-mono text-[11px] text-static">
+                  {effectiveSketch
+                    ? atBaseline && !flashed
+                      ? `${effectiveSketch.name} · baseline`
+                      : effectiveSketch.name
+                    : baselineWord(utilityBox?.state)}
+                </span>
+                <div className="ml-auto">
+                  <Button
+                    onClick={() => setFlashOpen(true)}
+                    disabled={!canOperate}
+                    title={
+                      canOperate ? "Flash a sketch" : "Needs a detected board, idle or in passthrough"
+                    }
+                  >
+                    <Zap size={13} strokeWidth={1.75} />
+                    Flash…
+                  </Button>
+                </div>
+              </div>
+              {profile?.kind === "utility" && (
+                <UtilityControls
+                  box={box}
+                  profile={profile}
+                  canSend={canSend}
+                  wide={wide}
+                  onRequestWidth={wide ? null : onToggleWide}
+                />
+              )}
+            </div>
+          </HudSection>
+        </div>
       </div>
 
       <FlashDialog box={box} open={flashOpen} onClose={() => setFlashOpen(false)} />
-    </motion.aside>
+    </HudPanel>
   );
 }
 
@@ -644,17 +676,6 @@ function baselineWord(state: UtilityBaselineState | undefined): string {
     default:
       return "none flashed this session";
   }
-}
-
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="surface-inset overflow-hidden rounded-md">
-      <h3 className="border-b border-halo px-3 py-2 text-[11px] font-medium tracking-[0.08em] text-static uppercase">
-        {title}
-      </h3>
-      {children}
-    </section>
-  );
 }
 
 function IdentityRow({

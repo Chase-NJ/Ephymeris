@@ -1,7 +1,0 @@
-# TG201 — a duration naming a timing entry that does not exist.
-_expect: TG201
-_why: >-
-  Durations are indices into the timing vector, never literals. An unresolved id
-  would compile to a garbage index into a live array.
-_patch:
-  contingency.outcome_map.correct.delay: t_does_not_exist

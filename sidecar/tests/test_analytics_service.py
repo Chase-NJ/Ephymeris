@@ -263,10 +263,27 @@ async def test_a_legacy_run_falls_back_to_the_current_sketch_and_says_so(rig: Ri
     assert payload["runs"][0]["status"] == "ok"
 
 
-async def test_a_legacy_run_with_no_sketch_left_is_undecodable(rig: Rig) -> None:
-    """Three states, not two — the fallback itself can fail (§8.2)."""
+async def test_a_run_with_no_declaration_left_is_scored_from_its_strobes(rig: Rig) -> None:
+    """The ladder's last rung (§8.3): a deleted `task.json` used to strand a
+    run at "no-metrics"; the stream itself now scores it, flagged `inferred`
+    so the reader knows no declaration survives."""
     session = rig.add_session("1", "2026-07-22")
-    rig.add_run(session, "a1", HIT_1 * 5, snapshot=False)
+    rig.add_run(session, "a1", HIT_1 * 15 + MISS_1 * 5, snapshot=False)
+    (rig.sketch / "task.json").unlink()
+
+    payload = await rig.service.summary(rig.cohort.id)
+    run = payload["runs"][0]
+    assert run["profileSource"] == "inferred"
+    assert run["status"] == "ok"
+    assert run["metrics"][0]["pSession"] == 0.75
+
+
+async def test_a_stream_with_no_conditions_is_honestly_unavailable(rig: Rig) -> None:
+    """Inference is a rung, not a promise — a stream presenting no recognisable
+    condition (a utility sketch's log) still ends at `unavailable`, because
+    inventing a condition would be worse than saying nothing (§8.3)."""
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "a1", [222, 224, 226, 233], snapshot=False)
     (rig.sketch / "task.json").unlink()
 
     payload = await rig.service.summary(rig.cohort.id)
@@ -275,12 +292,15 @@ async def test_a_legacy_run_with_no_sketch_left_is_undecodable(rig: Rig) -> None
 
 
 async def test_a_malformed_task_json_degrades_rather_than_raising(rig: Rig) -> None:
+    """Degrades to inference now, not to nothing — the stream is GRGL-shaped,
+    so the run keeps scoring while the operator fixes the file."""
     session = rig.add_session("1", "2026-07-22")
     rig.add_run(session, "a1", HIT_1 * 5, snapshot=False)
     (rig.sketch / "task.json").write_text("{not json", encoding="utf-8")
 
     payload = await rig.service.summary(rig.cohort.id)
-    assert payload["runs"][0]["status"] == "no-metrics"
+    assert payload["runs"][0]["status"] == "ok"
+    assert payload["runs"][0]["profileSource"] == "inferred"
 
 
 def test_identical_profiles_snapshot_once(rig: Rig) -> None:

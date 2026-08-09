@@ -507,7 +507,15 @@ export function Analytics() {
           )}
 
           {connected && summary && (
-            <div className="mt-5 flex flex-col gap-3">
+            // The whole dashboard body arrives on one summary reply, so it is
+            // the largest single mount in the app — animated, or a cohort
+            // selection slams every panel in on the same frame.
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={springPanel}
+              className="mt-5 flex flex-col gap-3"
+            >
               <SessionRail
                 sessions={sessions}
                 summary={summary}
@@ -638,7 +646,7 @@ export function Analytics() {
                 cohortName={active?.name ?? ""}
                 scope={sessionScope}
               />
-            </div>
+            </motion.div>
           )}
         </section>
       </motion.div>

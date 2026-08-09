@@ -460,6 +460,9 @@ function describe(cell: Cell): string {
   if (cell.run?.profileSource === "sketch-current") {
     parts.push("decoded with the current task.json, which may have changed");
   }
+  if (cell.run?.profileSource === "inferred") {
+    parts.push("scored from the recorded strobes alone — no task declaration survives");
+  }
   if (cell.run?.stale) parts.push("file missing — showing the last known value");
   if (cell.hasSiblings) parts.push("another run exists for this animal and session");
   return parts.join("\n");

@@ -1,28 +1,24 @@
 /**
  * Stage the bundled sketch library into `<repo>/sketches/`.
  *
- * Sketches ship WITH the app now — there is no user-configured Arduino
- * Directory (`docs/tasks.md` §2). This script is what makes "ship with the app"
- * true, and it runs in two places: `npm run predev`, so a dev build has a
- * library without staging installer resources, and `scripts/package-resources.mjs`,
- * which copies the result into `src-tauri/resources/sketches`.
+ * Sketches ship WITH the app — there is no user-configured Arduino Directory
+ * (`docs/tasks.md` §2). This script is what makes "ship with the app" true, and
+ * it runs in two places: `npm run predev`, so a dev build has a library without
+ * staging installer resources, and `scripts/package-resources.mjs`, which copies
+ * the result into `src-tauri/resources/sketches`.
  *
- * Two sources, one destination, because the app needs both and
- * `arduino-cli compile` takes exactly one `--libraries` root:
+ * One source:
  *
  *   ../Arduino        the lab's behaviour sketches + libraries/BehaviorBox
- *   <repo>/firmware   TaskRunner_* + libraries/TaskInterpreter
  *
- * The second used to be a sibling repo (`../Task-Graph/Arduino`). Task-Graph is
- * part of Ephymeris now, so the interpreter firmware lives in this repo and only
- * the lab's behaviour sketches are still elsewhere — which is why one of these
- * two is a configurable path and the other is not.
- *
- * The two `libraries/` collections are MERGED into the single staged root. That
- * is the whole reason this script exists rather than a `cpSync` call: `firmware/
- * build.sh` passes two library roots, Ephymeris passes one, and merging is what
- * lets an interpreter sketch compile through the existing `port.flash` path with
- * no special case anywhere.
+ * It used to be two. `<repo>/firmware` held the task-spec interpreter library
+ * and its bench sketch, and this script existed largely to MERGE the two
+ * `libraries/` collections into one root, because `arduino-cli compile` takes
+ * exactly one `--libraries` path. That system was removed; the merge went with
+ * it, and what remains is a filtered copy that still has to be a script rather
+ * than a `cpSync` call for two reasons: `.git` inside a source repo would put
+ * tens of megabytes into the installer, and symlinks have to be resolved rather
+ * than copied because the lab machines are Windows.
  *
  * `sketches/` is gitignored and regenerated. It is a build output, not a mirror —
  * nobody edits it, and committing it would create a copy of the firmware repo
@@ -44,18 +40,6 @@ const stagedDir = join(repoRoot, "sketches");
 const behaviorRepo = resolve(
   process.env.EPHYMERIS_FIRMWARE_REPO ?? join(repoRoot, "..", "Arduino"),
 );
-const interpreterDir = join(repoRoot, "firmware");
-
-/**
- * Where the interpreter sketches are filed.
- *
- * They need a category folder like any other sketch — discovery reports a sketch
- * sitting at the root as skipped, because it has nothing to be filed under. The
- * name is doing real work: `firmware/README.md` says "nothing in this folder is
- * for animal use", and a box carrying one of these accepts a table and reports
- * whether it fits. It runs no trial and delivers no reward.
- */
-const BENCH_CATEGORY = "Bench";
 
 const IGNORE_PREFIXES = [".", "_"];
 
@@ -102,13 +86,6 @@ if (!existsSync(behaviorRepo)) {
   process.exit(1);
 }
 
-// Not configurable and not optional: it is part of this repo, so its absence is
-// a broken checkout rather than a machine that is laid out differently.
-if (!existsSync(interpreterDir)) {
-  console.error(`firmware/ missing from this repo (looked in ${interpreterDir})`);
-  process.exit(1);
-}
-
 console.log(`staging sketch library into ${stagedDir}`);
 rmSync(stagedDir, { recursive: true, force: true });
 mkdirSync(stagedDir, { recursive: true });
@@ -122,41 +99,17 @@ for (const entry of readdirSync(behaviorRepo, { withFileTypes: true })) {
   copyTree(join(behaviorRepo, entry.name), join(stagedDir, entry.name), entry.name);
 }
 
-// --- 2. this repo's interpreter sketches -----------------------------------
-for (const entry of readdirSync(interpreterDir, { withFileTypes: true })) {
-  if (!entry.isDirectory() || !isCategoryCandidate(entry.name)) continue;
-  if (!existsSync(join(interpreterDir, entry.name, `${entry.name}.ino`))) continue;
-  copyTree(
-    join(interpreterDir, entry.name),
-    join(stagedDir, BENCH_CATEGORY, entry.name),
-    `${BENCH_CATEGORY}/${entry.name}`,
-  );
-}
-
-// --- 3. merge both library collections into one root -----------------------
-// Only the root `libraries/` reaches `arduino-cli --libraries`, so every sketch
-// compiles against one predictable collection regardless of which repo it came
-// from.
+// --- 2. the library collection ---------------------------------------------
+// Only the ROOT `libraries/` reaches `arduino-cli --libraries`, so every sketch
+// compiles against one predictable collection.
 const librariesDir = join(stagedDir, "libraries");
 mkdirSync(librariesDir, { recursive: true });
 
-for (const [source, label] of [
-  [join(behaviorRepo, "libraries"), "libraries (behaviour)"],
-  [join(interpreterDir, "libraries"), "libraries (interpreter)"],
-]) {
-  if (!existsSync(source)) continue;
+const source = join(behaviorRepo, "libraries");
+if (existsSync(source)) {
   for (const entry of readdirSync(source, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-    const target = join(librariesDir, entry.name);
-    if (existsSync(target)) {
-      console.error(
-        `library name collision: ${entry.name} exists in both collections.\n` +
-          "Both would be handed to one --libraries root, so one would silently " +
-          "shadow the other. Rename one before continuing.",
-      );
-      process.exit(1);
-    }
-    copyTree(join(source, entry.name), target, `${label}/${entry.name}`);
+    copyTree(join(source, entry.name), join(librariesDir, entry.name), `libraries/${entry.name}`);
   }
 }
 
@@ -168,6 +121,6 @@ const bytes = readdirSync(stagedDir, { withFileTypes: true, recursive: true })
 console.log(`\n${total} sketches, ${Math.round(bytes / 1024)} KB`);
 
 if (total === 0) {
-  console.error("no valid sketches staged — check the source repos");
+  console.error("no valid sketches staged — check the source repo");
   process.exit(1);
 }

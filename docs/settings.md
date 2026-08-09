@@ -19,15 +19,15 @@ Three screens edit settings. **The split is by subject, not by shape.**
 | Screen | Answers | Owns |
 |---|---|---|
 | ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
-| 📡 **Rig** (`/config`) | *Which board is box 3, and what does every pin do?* | Box→board bindings (add/remove/name, with per-row health), the handshake test, the utility baseline, **the channel→pin wiring editor** (its own page at `/config/wiring`, behind the landing's Wiring door; formerly `/task/hardware`), default baud, `arduino-cli` path. **The tab is labelled Rig; the route and `routes/Config.tsx` keep the old spelling** — the label is the operator's word for the subject, the path is an internal address nothing displays |
-| 🔀 **Task** (`/task`) | *What is the animal doing?* | The sketch viewer: the bundled library, each sketch's derived state machine with its parameters mapped onto it, and per-sketch task parameters (`settings.taskDefaults`). The spec-creator UI is removed pending a rebuild ([specs.md](specs.md)); the channel→pin map is on Rig |
+| 📡 **Rig** (`/config`) | *Which board is box 3, and what does every pin do?* | Box→board bindings (add/remove/name, with per-row health), the handshake test, the utility baseline, **the channel→pin wiring editor** (`/config/wiring`) and **the strobe vocabulary** (`/config/strobes`), both behind doors on the landing, default baud, `arduino-cli` path. **The tab is labelled Rig; the route and `routes/Config.tsx` keep the old spelling** — the label is the operator's word for the subject, the path is an internal address nothing displays |
+| 🔀 **Task** (`/task`) | *What is the animal doing?* | The **task-profile editor** (`tasks.md` §10–§11): the trial table, the shaping ramp, the parameters, and the state machine they derive. Saving one generates a flashable sketch. The channel→pin map and the strobe vocabulary are on Rig |
 
 > [!NOTE]
 > **Both of the first two rows are about wiring, and they are different wirings.**
 > The Rig tab binds a **box number to a board** — runtime indirection, per rig,
 > changing whenever a board is swapped or Windows renumbers a COM port. Task → Rig
 > wiring binds a **channel to a pin** — compile-time input, per box generation,
-> baked into every table the compiler emits ([specs.md §9](specs.md)). The screens
+> baked into the firmware every task profile generates. The screens
 > are named **Bind boxes** and **Rig wiring** so the distinction survives being
 > spoken aloud; the box-setup step used to be called "Map hardware", which
 > collided. The tab taking the name **Rig** is the same move one level up: the
@@ -137,6 +137,35 @@ One screen, in the order a rig comes up in — a column of HUD tiles in the Dash
 | **Utility baseline** | The utility sketch panel: which sketch idle boxes rest on, the per-box baseline state, and **Reflash boxes**. Header fact: the sketch name, or `off` |
 | **Wiring** | A **door**, not a section: a full-width entrance tile in `EntranceTile`'s hover vocabulary (the tile lifts, a trace draws itself across a pin-header motif) opening the editor's own page at `/config/wiring` ([§5.1](#51-the-wiring-page-configwiring)). Fact line: channel count, and whether the wiring is this rig's own or as shipped |
 | **Hardware** | The default baud select and the `arduino-cli` path override. Header fact: the baud |
+
+### 5.0 Why the strobe vocabulary is a Rig page
+
+A strobe code is a fact about what this hardware can **report**, in the same way
+a pin is a fact about what it can drive — true of every task that runs on the
+box. Which codes a particular task *declares* is decided by its trial table, one
+tab over.
+
+`/config/strobes` is **read-only**, deliberately. The registry is append-only:
+four years of recorded sessions carry these numbers, so a code is never
+renumbered or repurposed. Renaming one would silently reinterpret every
+historical file that carries it — confident wrong numbers rather than an error.
+What a later version can safely offer is *adding* a code from `freeRanges`;
+nothing else, and offering an edit that must then be refused is worse than not
+offering it.
+
+> [!CAUTION]
+> **Deleting a code is possible exactly once, and the bar is not "unused".** It
+> is *no recorded session has ever contained it* — which has to be checked
+> against the archive rather than assumed. Thirty-four numbers were reclaimed on
+> that basis in August 2026 (response ports 3-7, plus three interpreter-only
+> codes); every one had been declared for firmware that never ran an animal. A
+> code emitted even once, to a file that still exists, goes to `retired`
+> instead.
+
+The retired section is the part worth having on screen. Those codes are neither
+live nor free — a third state — and a reader looking at a legacy session needs
+to be told "retired", which is an explanation, rather than "unknown", which is a
+question.
 
 ### 5.1 The wiring page (`/config/wiring`)
 

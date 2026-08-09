@@ -287,19 +287,14 @@ stateDiagram-v2
     PASSTHROUGH --> IDLE
     PASSTHROUGH --> FLASHING
     PASSTHROUGH --> RESETTING
-    IDLE --> UPLOADING
-    PASSTHROUGH --> UPLOADING
     FLASHING --> IDLE
     FLASHING --> PASSTHROUGH
-    UPLOADING --> IDLE
-    UPLOADING --> PASSTHROUGH
     RESETTING --> IDLE
     RESETTING --> PASSTHROUGH
     IN_SESSION --> IDLE
     IDLE --> ERROR
     PASSTHROUGH --> ERROR
     FLASHING --> ERROR
-    UPLOADING --> ERROR
     RESETTING --> ERROR
     IN_SESSION --> ERROR
     ERROR --> IDLE : manual ack only
@@ -307,10 +302,9 @@ stateDiagram-v2
 
 | From | May go to |
 |---|---|
-| `IDLE` | `PASSTHROUGH` · `FLASHING` · `UPLOADING` · `RESETTING` · `IN_SESSION` · `ERROR` |
-| `PASSTHROUGH` | `IDLE` · `FLASHING` · `UPLOADING` · `RESETTING` · `ERROR` |
+| `IDLE` | `PASSTHROUGH` · `FLASHING` · `RESETTING` · `IN_SESSION` · `ERROR` |
+| `PASSTHROUGH` | `IDLE` · `FLASHING` · `RESETTING` · `ERROR` |
 | `FLASHING` | `IDLE` · `PASSTHROUGH` · `ERROR` |
-| `UPLOADING` | `IDLE` · `PASSTHROUGH` · `ERROR` — `FLASHING`'s twin ([specs.md §7](specs.md#7-the-bench)): a task-spec table transfer, where the uploader opens its **own** serial handle rather than the port belonging to an external process |
 | `RESETTING` | `IDLE` · `PASSTHROUGH` · `ERROR` |
 | `IN_SESSION` | `IDLE` · `ERROR` |
 | `ERROR` | `IDLE` — **and nothing else** |
@@ -319,7 +313,7 @@ stateDiagram-v2
 > **Read the absences — they carry most of the meaning.**
 >
 > - **Nothing reaches `IN_SESSION` except `IDLE`.** In particular `PASSTHROUGH → IN_SESSION` is illegal, which is exactly why the session flash sequence passes `suppressPassthroughResume: true` — a box that auto-resumed into passthrough after its flash could not then be claimed by the runner.
-> - **`IN_SESSION` leads only to `IDLE` or `ERROR`.** A running animal cannot be flashed, reset, uploaded to, or monitored out from under itself — `UPLOADING ↔ IN_SESSION` is illegal in both directions, which is half of the no-spec-touches-a-session invariant ([specs.md §7](specs.md#7-the-bench)).
+> - **`IN_SESSION` leads only to `IDLE` or `ERROR`.** A running animal cannot be flashed, reset, or monitored out from under itself.
 > - **`ERROR` is a dead end until acknowledged.** Only a manual `port.error.ack` clears it. There is no timeout and no retry. This is why a failed flash cannot simply be retried — acknowledge first.
 
 A transition to the state a port is already in is a **silent no-op**, not an error.
@@ -327,8 +321,8 @@ A transition to the state a port is already in is a **silent no-op**, not an err
 ### 5.3 Exclusivity rules
 
 - Only one state may be active per port at any time.
-- Entering `FLASHING`, `UPLOADING` or `RESETTING` **forces a clean release** of `PASSTHROUGH` first — close the port cleanly before handing it to `arduino-cli`, the table uploader, or the DTR toggle.
-- **Auto-resume:** if the port was in `PASSTHROUGH` immediately before a flash, upload or reset, the sidecar auto-resumes `PASSTHROUGH` afterward, so the user sees the new sketch's output without an extra click.
+- Entering `FLASHING` or `RESETTING` **forces a clean release** of `PASSTHROUGH` first — close the port cleanly before handing it to `arduino-cli` or the DTR toggle.
+- **Auto-resume:** if the port was in `PASSTHROUGH` immediately before a flash or reset, the sidecar auto-resumes `PASSTHROUGH` afterward, so the user sees the new sketch's output without an extra click.
 - **One deliberate exception**: `port.flash` accepts `suppressPassthroughResume` (default `false`). The session flash sequence sets it `true`, forcing every box to land in `IDLE`. Debug Mode leaves it `false`.
 - `IN_SESSION` is exclusive with everything.
 
@@ -379,7 +373,7 @@ The same per-port handler object that owns the read loop exposes `write(bytes)` 
 **Baud** is per-box and user-configurable, defaulting to `defaultBaud`.
 
 > [!WARNING]
-> **`defaultBaud` ships as 115200**, which is what every bundled sketch declares and what the interpreter firmware's `TG_BAUD_RATE` opens at. A mismatch is wrong **silently** — a mismatched console prints nothing legible rather than reporting an error, so it reads as a dead board. That is why the value and the firmware must only ever move together, and why it read 9600 for the part of v1 when the sketches did.
+> **`defaultBaud` ships as 115200**, which is what every bundled sketch declares. A mismatch is wrong **silently** — a mismatched console prints nothing legible rather than reporting an error, so it reads as a dead board. That is why the value and the firmware must only ever move together, and why it read 9600 for the part of v1 when the sketches did.
 >
 > **The default binds a fresh install only.** `defaultBaud` is persisted, so a machine with an existing settings file keeps its stored value across an update. A box flashed at 115200 whose host still says 9600 is mute — set it in **Config → Hardware**, per machine, *before* flashing.
 

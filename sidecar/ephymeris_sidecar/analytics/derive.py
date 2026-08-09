@@ -37,7 +37,11 @@ from ..tasks.profile import LiveMetric, TaskProfile
 #: v6 added the engagement ladder (§3.10), delimited on the trial light rather
 #: than on odor onset — the layer above every other count here, and the one
 #: that says how many trials the box offered at all.
-CODEC_VERSION = 6
+#: v7 added the inference rung (§8.3, `infer.py`): a run that resolves no
+#: profile is scored from the stream itself. The maths here didn't move, but
+#: every cached "no-metrics" row predates the rung and must be re-read — which
+#: is exactly what this constant exists to force.
+CODEC_VERSION = 7
 
 #: z for a 95% interval. Wilson rather than the normal approximation because
 #: this data lives at small n *and* at p near 1 — a trained animal sits around

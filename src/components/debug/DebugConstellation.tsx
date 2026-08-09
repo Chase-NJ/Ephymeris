@@ -58,6 +58,7 @@ export function DebugConstellation({
   selected,
   onSelect,
   docksPanel = true,
+  frameShift = 0,
   interactive = true,
 }: {
   selected: number | null;
@@ -69,6 +70,11 @@ export function DebugConstellation({
    * exist to protect a frame composed around a panel.
    */
   docksPanel?: boolean;
+  /**
+   * Where the focused star should sit, in px left of centre — the detail
+   * panel's own geometry, published through to the camera (`SceneIntent`).
+   */
+  frameShift?: number;
   /**
    * False where the sky is **backdrop only** — the guided session steps, which
    * show the rig behind their frosted panels so the flow reads as one continuous
@@ -187,6 +193,7 @@ export function DebugConstellation({
       focusedId={selected === null ? null : String(selected)}
       onFocus={(id) => onSelect(id === null ? null : Number(id))}
       docksPanel={docksPanel}
+      frameShift={frameShift}
       interactive={interactive}
     />
   );

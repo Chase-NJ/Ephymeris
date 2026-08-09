@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 
-import { Select } from "@/components/common/controls";
+import { Dropdown } from "@/components/common/Dropdown";
 import { ConfigFields } from "@/components/sessions/ConfigFields";
 import { springSnappy } from "@/lib/motion";
 import type { TaskProfile } from "@/lib/sessions/types";
@@ -164,7 +164,12 @@ export function TaskConfigForm({
   );
 }
 
-/** Sketch picker scoped to one box, grouped by category (§3). */
+/**
+ * Sketch picker scoped to one box (§3) — the themed `Dropdown`, so the list
+ * renders on the app's own glass rather than as an OS-white popup. The name
+ * carries the row and the category rides the `detail` slot, which reads
+ * better than the old `category / name` prefix repeated down the list.
+ */
 export function SketchPicker({
   sketches,
   value,
@@ -178,19 +183,24 @@ export function SketchPicker({
   onChange: (path: string | null) => void;
   label: string;
   disabled?: boolean;
-  /** Layout-only — forwarded to the underlying Select. */
+  /** Layout-only — forwarded to the underlying control. */
   className?: string;
 }) {
   const options = [
-    { value: "", label: "— select a sketch —" },
-    ...sketches.map((s) => ({ value: s.path, label: `${s.category} / ${s.name}` })),
+    // The explicit clear row: the utility baseline is turned OFF by picking it,
+    // and a picker that can only ever tighten its choice would leave "none" a
+    // settings-file edit.
+    { value: "", label: "— none —" },
+    ...sketches.map((s) => ({ value: s.path, label: s.name, detail: s.category })),
   ];
   return (
-    <Select
+    <Dropdown
       label={label}
+      size="regular"
       value={value ?? ""}
       options={options}
-      onChange={(v) => onChange(v === "" ? null : String(v))}
+      placeholder="select a sketch"
+      onChange={(v) => onChange(v === "" ? null : v)}
       disabled={disabled}
       // The flow is waiting on exactly this control until a sketch is picked —
       // but not while it's locked, when waiting on it would be a lie.

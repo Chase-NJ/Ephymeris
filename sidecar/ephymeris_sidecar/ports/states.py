@@ -21,14 +21,6 @@ class PortState(str, Enum):
     PASSTHROUGH = "PASSTHROUGH"
     #: compile + upload in progress; the port belongs to the upload process.
     FLASHING = "FLASHING"
-    #: A task-spec table transfer owns the port (`specs.md`). Not FLASHING —
-    #: that means the port belongs to an EXTERNAL process (avrdude) and the
-    #: handler never opens it; here the uploader opens its own serial handle
-    #: and holds a line-oriented request/response conversation with deadlines.
-    #: And not PASSTHROUGH — its ring buffer is drained, not consumed; a
-    #: Link.read_line built on it would race the flusher for lines already
-    #: gone, and the user could type into the transfer via port.send.
-    UPLOADING = "UPLOADING"
     #: Brief transitional state while the DTR toggle runs.
     RESETTING = "RESETTING"
     #: Owned by the behaviour session runner. Strict strobe-protocol parsing.
@@ -48,7 +40,6 @@ TRANSITIONS: dict[PortState, frozenset[PortState]] = {
         {
             PortState.PASSTHROUGH,
             PortState.FLASHING,
-            PortState.UPLOADING,
             PortState.RESETTING,
             PortState.IN_SESSION,
             PortState.ERROR,
@@ -57,19 +48,13 @@ TRANSITIONS: dict[PortState, frozenset[PortState]] = {
     PortState.PASSTHROUGH: frozenset(
         {
             PortState.IDLE,
-            # All three auto-release the port before taking ownership (§3.3).
+            # Both auto-release the port before taking ownership (§3.3).
             PortState.FLASHING,
-            PortState.UPLOADING,
             PortState.RESETTING,
             PortState.ERROR,
         }
     ),
     PortState.FLASHING: frozenset(
-        {PortState.IDLE, PortState.PASSTHROUGH, PortState.ERROR}
-    ),
-    # Mirrors FLASHING exactly, auto-resume included. Deliberately unreachable
-    # from and to IN_SESSION — a table transfer during a run is nonsense.
-    PortState.UPLOADING: frozenset(
         {PortState.IDLE, PortState.PASSTHROUGH, PortState.ERROR}
     ),
     PortState.RESETTING: frozenset(

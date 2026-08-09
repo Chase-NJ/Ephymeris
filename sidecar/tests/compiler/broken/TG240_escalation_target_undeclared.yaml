@@ -1,5 +1,0 @@
-# TG240 — escalation pointed at an outcome class the spec does not declare.
-_expect: TG240
-_why: The escalator would never fire, and nothing would say so.
-_patch:
-  policy.penalty_escalation.applies_to: hold_fail_typo

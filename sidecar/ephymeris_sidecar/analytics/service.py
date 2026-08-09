@@ -22,7 +22,7 @@ from ..sessions.models import Session, SessionAnimalRun
 from ..sessions.paths import parse_name_date, parse_name_time, parse_session_folder
 from ..tasks import profile as task_profile
 from ..tasks.profile import TaskProfile
-from . import derive, reader
+from . import derive, infer, reader
 from .repository import AdoptedRun, AnalyticsRepository, CachedRun, CacheKey
 
 log = logging.getLogger(__name__)
@@ -248,19 +248,23 @@ class AnalyticsService:
                 )
                 continue
             resolved = await asyncio.to_thread(self._resolve_profile, run)
+            # The same ladder `_index_one` scores with, ending on the same
+            # inference rung — a run charted from an inferred profile must draw
+            # the same trials the summary counted, or the two panels disagree.
+            profile, _, _ = self._scoring_profile(resolved, result.document, persist=False)
             metrics = derive.series(
-                result.document, resolved.profile, mode=mode, metric_ids=metric_ids
+                result.document, profile, mode=mode, metric_ids=metric_ids
             )
             # The joint walk rides along with the per-metric series rather than
             # taking a command of its own: the file is already open and already
             # decoded here, and the one panel that wants it is on the same
             # screen as the ones that want the series. It is empty for any
             # profile that doesn't declare exactly two conditions.
-            trail = derive.strategy_trail(result.document, resolved.profile)
+            trail = derive.strategy_trail(result.document, profile)
             # The per-trial tape rides along for the same reason the trail
             # does: the file is already open and decoded, and the panel that
             # wants it is on the same screen as the ones that want the series.
-            trials = derive.trials_of(result.document, resolved.profile)
+            trials = derive.trials_of(result.document, profile)
             out.append(
                 {
                     "runId": run_id,
@@ -814,7 +818,8 @@ class AnalyticsService:
                 key=key,
             )
 
-        summary = derive.summarize(result.document, resolved.profile, min_counted=threshold)
+        profile, source, digest = self._scoring_profile(resolved, result.document)
+        summary = derive.summarize(result.document, profile, min_counted=threshold)
         payload = summary.to_json()
         detail = summary.detail
         if summary.status == "no-metrics" and not detail and resolved.reason:
@@ -827,11 +832,51 @@ class AnalyticsService:
             run_id=run.id,
             status=summary.status,
             detail=detail,
-            profile_hash=resolved.digest,
-            profile_source=resolved.source,
+            profile_hash=digest,
+            profile_source=source,
             summary=payload,
             key=key,
         )
+
+    def _scoring_profile(
+        self,
+        resolved: _Resolved,
+        document: dict[str, Any],
+        *,
+        persist: bool = True,
+    ) -> tuple[TaskProfile | None, str, str | None]:
+        """The profile a run is actually scored with — the ladder's last rung.
+
+        The declared path always wins: a snapshot or a live `task.json` carries
+        the task's own TrialTypes, including conditions the animal never met
+        and the operator's labels. Only when neither resolves — a pre-Ephymeris
+        archive, a deleted sketch folder — is the profile **inferred from the
+        stream itself** (`infer.py`), which every run of this firmware lineage
+        supports because the strobe registry is append-only.
+
+        The inferred profile is remembered content-addressed like any other, so
+        profile *groups* work unchanged: every run of the same legacy task
+        infers the same conditions and lands on the same hash, labelled by the
+        sketch name the document recorded. `persist=False` for the read-only
+        `series` path, which must not leave an uncommitted insert behind the
+        summary pass's batching.
+
+        The cache key deliberately keeps the *resolution* digest (None when
+        nothing resolved), not the inferred one: inference is a function of the
+        file's content, which the key already covers via mtime/size, and of
+        `CODEC_VERSION`, which gates the definition of scoring itself.
+        """
+        if resolved.profile is not None and resolved.profile.live_metrics:
+            return resolved.profile, resolved.source, resolved.digest
+        sketch = document.get("sketch")
+        inferred = infer.infer_profile(
+            derive.codes_of(document),
+            sketch_name=sketch if isinstance(sketch, str) and sketch else None,
+        )
+        if inferred is None:
+            return resolved.profile, resolved.source, resolved.digest
+        digest = self._repo.remember_profile(inferred) if persist else None
+        return inferred, "inferred", digest
 
     def adopted_session_entries(
         self, cohort_id: str
@@ -883,6 +928,9 @@ class AnalyticsService:
             memo[key] = (resolved, run.sketch_path)
         return resolved
 
+    # NOTE: this resolves the *declared* rungs only. The inference rung lives
+    # in `_scoring_profile`, after the file is read — it needs the codes, and
+    # resolution deliberately runs before any file is opened.
     def _resolve_profile_uncached(self, run: SessionAnimalRun) -> _Resolved:
         if run.profile_hash:
             stored = self._repo.load_profile(run.profile_hash)
@@ -903,12 +951,16 @@ class AnalyticsService:
             # current Arduino Directory has no task.json to fall back to. Name
             # the sketch it wanted: that is the one thing the operator can act
             # on, by renaming a folder or re-pointing the directory.
+            # Only surfaced when inference ALSO found nothing in the stream —
+            # a run this reason reaches carries no recognisable condition at
+            # all, so the sketch name is still the one actionable fact.
             reason = (
                 f"this run names the sketch “{named}”, which doesn't match any "
-                "sketch in the Arduino Directory, so there's no task.json to "
-                "score it with"
+                "sketch in the bundled library, and its stream presents no "
+                "recognisable condition to infer from"
                 if named
-                else "no sketch was recorded for this run"
+                else "no sketch was recorded for this run, and its stream "
+                "presents no recognisable condition to infer from"
             )
             return _Resolved(None, "unavailable", None, reason)
 

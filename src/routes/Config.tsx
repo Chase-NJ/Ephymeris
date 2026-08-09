@@ -13,8 +13,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 
 import { useBoxHealth } from "@/components/chrome/ConstellationStatus";
-import { Select, TextInput } from "@/components/common/controls";
-import { HandshakeList } from "@/components/config/HandshakeList";
+import { TextInput } from "@/components/common/controls";
+import { Dropdown } from "@/components/common/Dropdown";
 import { UtilitySketchPanel } from "@/components/config/UtilitySketchPanel";
 import { SettingRow } from "@/components/settings/SettingRow";
 import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
@@ -24,7 +24,7 @@ import { getRig } from "@/lib/hardware/commands";
 import type { RigDocument } from "@/lib/hardware/types";
 import { useUtilityStatus } from "@/lib/hardware/context";
 import { useHandshakeTest } from "@/lib/hardware/useHandshakeTest";
-import { springPanel, springSnappy } from "@/lib/motion";
+import { CASCADE, RISE, springPanel, springSnappy } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
 import { BAUD_RATES, type BoxBinding } from "@/lib/settings/schema";
 import { CMD, EVT } from "@/lib/ws/protocol";
@@ -171,101 +171,123 @@ export function Config() {
           )}
 
           <fieldset disabled={!loaded} className="contents">
-            <div className="mt-7 flex flex-col gap-5">
-              <RigTile
-                icon={Radio}
-                label="Boxes"
-                status={
-                  bound.length === 0
-                    ? "nothing bound"
-                    : `${connectedCount}/${bound.length} connected`
-                }
-              >
-                <BoxBindingsTable
-                  boxes={settings.boxes}
-                  health={health}
-                  onChange={onBoxesChange}
-                />
-                <div className="border-t border-halo px-4 py-3.5">
-                  <div className="pb-0.5 text-[13px] font-medium text-starlight">
-                    Handshake test
-                  </div>
-                  <p className="pb-2 text-[12px] leading-relaxed text-static">
-                    Proof a binding took: opens the box&rsquo;s console and waits
-                    for its firmware to announce itself.
-                  </p>
-                  <HandshakeList
-                    bound={bound}
+            {/* The tiles arrive as a cascade, top-down in setup order — the
+                Task tab's entrance, for the same reason: a page assembling
+                beats a page slamming in as one frame. */}
+            <motion.div
+              variants={CASCADE}
+              initial="hidden"
+              animate="shown"
+              className="mt-7 flex flex-col gap-5"
+            >
+              <motion.div variants={RISE}>
+                <RigTile
+                  icon={Radio}
+                  label="Boxes"
+                  status={
+                    bound.length === 0
+                      ? "nothing bound"
+                      : `${connectedCount}/${bound.length} connected`
+                  }
+                >
+                  {/* Bind, see it come alive, prove it took — one row per box.
+                      The handshake used to be a second list of the same boxes
+                      under this table; it is the row's last column now. */}
+                  <BoxBindingsTable
+                    boxes={settings.boxes}
+                    health={health}
                     handshake={handshake}
                     connected={connected}
+                    onChange={onBoxesChange}
                   />
-                </div>
-              </RigTile>
+                </RigTile>
+              </motion.div>
 
-              <RigTile
-                icon={Anchor}
-                label="Utility baseline"
-                status={settings.utilitySketchName ?? "off"}
-              >
-                <UtilitySketchPanel
-                  sketches={discovery.sketches}
-                  boxes={settings.boxes}
-                  value={settings.utilitySketchName}
-                  status={utility}
-                  busy={reflashing}
-                  connected={connected}
-                  onChange={(utilitySketchName) =>
-                    void update({ utilitySketchName })
-                  }
-                  onReflash={() => void reflashBaseline()}
-                />
-              </RigTile>
-
-              {/* The channel→pin map, as a door. The editor kept its own save
-                  discipline through every move — preview, list what would
-                  break, ask — and now keeps its own page too. */}
-              <WiringDoor
-                status={wiring}
-                onOpen={() => navigate("/config/wiring")}
-              />
-
-              <RigTile
-                icon={SlidersHorizontal}
-                label="Hardware"
-                status={`${settings.defaultBaud} baud`}
-              >
-                <SettingRow
-                  label="Default baud rate"
-                  description="Starting value for each console. Debug Mode allows a per-box override."
+              <motion.div variants={RISE}>
+                <RigTile
+                  icon={Anchor}
+                  label="Utility baseline"
+                  status={settings.utilitySketchName ?? "off"}
                 >
-                  <Select
-                    label="Default baud rate"
-                    value={settings.defaultBaud}
-                    options={BAUD_RATES.map((b) => ({
-                      value: b,
-                      label: String(b),
-                    }))}
-                    onChange={(defaultBaud) => void update({ defaultBaud })}
-                  />
-                </SettingRow>
-
-                <SettingRow
-                  label="arduino-cli path"
-                  description="Leave empty to use the bundled binary. Override only if you need a specific install."
-                >
-                  <TextInput
-                    label="arduino-cli path override"
-                    mono
-                    value={settings.arduinoCliPath ?? ""}
-                    placeholder="bundled"
-                    onChange={(v) =>
-                      void update({ arduinoCliPath: v.trim() === "" ? null : v })
+                  <UtilitySketchPanel
+                    sketches={discovery.sketches}
+                    boxes={settings.boxes}
+                    value={settings.utilitySketchName}
+                    status={utility}
+                    busy={reflashing}
+                    connected={connected}
+                    onChange={(utilitySketchName) =>
+                      void update({ utilitySketchName })
                     }
-                    className="w-[280px]"
+                    onReflash={() => void reflashBaseline()}
                   />
-                </SettingRow>
-              </RigTile>
-            </div>
+                </RigTile>
+              </motion.div>
+
+              {/* The two reference doors, side by side: both answer "what does
+                  this hardware mean", one for pins and one for codes, and a
+                  pair of half-width doors reads as a pair — stacked full-width
+                  they read as two more forms. */}
+              <motion.div variants={RISE} className="grid grid-cols-2 items-stretch gap-5">
+                {/* The channel→pin map. The editor kept its own save
+                    discipline through every move — preview, list what would
+                    break, ask — and keeps its own page too. */}
+                <WiringDoor
+                  status={wiring}
+                  onOpen={() => navigate("/config/wiring")}
+                />
+                {/* The strobe vocabulary, beside the wiring rather than under
+                    Task. A code is a fact about what this hardware can REPORT
+                    — true of every task that runs on it — in the same way a
+                    pin is a fact about what it can drive. Which codes a task
+                    declares is decided by its trial table, one tab over. */}
+                <StrobeDoor onOpen={() => navigate("/config/strobes")} />
+              </motion.div>
+
+              <motion.div variants={RISE}>
+                <RigTile
+                  icon={SlidersHorizontal}
+                  label="Hardware"
+                  status={`${settings.defaultBaud} baud`}
+                >
+                  <SettingRow
+                    label="Default baud rate"
+                    description="Starting value for each console. Debug Mode allows a per-box override."
+                  >
+                    <Dropdown
+                      label="Default baud rate"
+                      size="regular"
+                      value={String(settings.defaultBaud)}
+                      options={BAUD_RATES.map((b) => ({
+                        value: String(b),
+                        label: String(b),
+                      }))}
+                      placeholder="baud"
+                      className="w-[140px] font-mono"
+                      onChange={(v) =>
+                        void update({ defaultBaud: Number(v) as (typeof BAUD_RATES)[number] })
+                      }
+                    />
+                  </SettingRow>
+
+                  <SettingRow
+                    label="arduino-cli path"
+                    description="Leave empty to use the bundled binary. Override only if you need a specific install."
+                  >
+                    <TextInput
+                      label="arduino-cli path override"
+                      mono
+                      value={settings.arduinoCliPath ?? ""}
+                      placeholder="bundled"
+                      onChange={(v) =>
+                        void update({ arduinoCliPath: v.trim() === "" ? null : v })
+                      }
+                      className="w-[280px]"
+                    />
+                  </SettingRow>
+                </RigTile>
+              </motion.div>
+            </motion.div>
           </fieldset>
 
           <p className="mt-6 px-1 text-[11px] leading-relaxed text-static/70">
@@ -319,6 +341,96 @@ function RigTile({
 }
 
 /**
+ * The Strobes door.
+ *
+ * The destination is a reference table rather than a workbench, so the fact
+ * line stays off — but in the doors row it carries a motif for parity with
+ * Wiring's: a strobe train, one pulse picking up the accent on hover. Matte,
+ * single accent, movement only (§1.2), same as everything else on the glass.
+ */
+function StrobeDoor({ onOpen }: { onOpen: () => void }) {
+  return (
+    <motion.button
+      type="button"
+      onClick={onOpen}
+      initial="idle"
+      animate="idle"
+      whileHover="hover"
+      whileTap={{ scale: 0.995 }}
+      variants={{ idle: { y: 0 }, hover: { y: -2 } }}
+      transition={springSnappy}
+      className="hud group relative flex h-full w-full items-center gap-4 overflow-hidden rounded-md py-3.5 pl-4 pr-0 text-left transition-colors hover:border-static/40"
+    >
+      <Radio size={18} strokeWidth={1.75} className="shrink-0 self-start text-pulsar" />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1 text-[13px] font-medium text-starlight">
+          Strobes
+          <ArrowRight
+            size={11}
+            strokeWidth={2}
+            className="text-static transition-transform group-hover:translate-x-0.5"
+          />
+        </span>
+        <span className="mt-0.5 block text-[11px] leading-snug text-static">
+          Every event a box can report, and the number it reports it with.
+          Append-only — the recorded archive carries these.
+        </span>
+      </span>
+      <span
+        aria-hidden
+        className="pointer-events-none -my-3.5 shrink-0 self-center opacity-70 transition-opacity group-hover:opacity-100"
+      >
+        <StrobeMotif />
+      </span>
+    </motion.button>
+  );
+}
+
+/**
+ * The Strobes door's motif: a strobe train — event ticks on a timeline, one of
+ * them picking up the accent and announcing its number on hover. The same
+ * grammar as the wiring trace: the gesture the room behind the door exists
+ * for, at the corner of the eye.
+ */
+function StrobeMotif() {
+  const ticks = [10, 22, 30, 44, 58, 66, 78];
+  return (
+    <svg width="104" height="62" viewBox="0 0 104 62" fill="none" aria-hidden>
+      {/* The recording's baseline. */}
+      <path d="M6 40 H98" stroke="var(--color-halo)" strokeWidth="1" />
+      {ticks.map((x) => (
+        <rect key={x} x={x} y={28} width="2" height="12" rx="1" fill="var(--color-halo)" />
+      ))}
+      {/* The one event being looked up. */}
+      <motion.rect
+        x={44}
+        y={24}
+        width="2.5"
+        height="16"
+        rx="1"
+        variants={{
+          idle: { fill: "var(--color-static)", opacity: 0.5 },
+          hover: { fill: "var(--color-pulsar)", opacity: 1 },
+        }}
+        transition={springSnappy}
+      />
+      <motion.text
+        x={45}
+        y={16}
+        textAnchor="middle"
+        fontSize="8"
+        fontFamily="JetBrains Mono, monospace"
+        fill="var(--color-pulsar)"
+        variants={{ idle: { opacity: 0, y: 3 }, hover: { opacity: 1, y: 0 } }}
+        transition={springSnappy}
+      >
+        233
+      </motion.text>
+    </svg>
+  );
+}
+
+/**
  * The Wiring door — `EntranceTile`'s vocabulary at the landing's full width.
  *
  * A door and not a summary, exactly like the Dashboard's entrance tiles: the
@@ -346,7 +458,7 @@ function WiringDoor({
       whileTap={{ scale: 0.995 }}
       variants={{ idle: { y: 0 }, hover: { y: -2 } }}
       transition={springSnappy}
-      className="hud group relative flex w-full items-center gap-4 overflow-hidden rounded-md py-3.5 pl-4 pr-0 text-left transition-colors hover:border-static/40"
+      className="hud group relative flex h-full w-full items-center gap-4 overflow-hidden rounded-md py-3.5 pl-4 pr-0 text-left transition-colors hover:border-static/40"
     >
       <CircuitBoard
         size={18}

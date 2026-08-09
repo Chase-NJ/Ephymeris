@@ -1,17 +1,15 @@
 """Rig wiring → wire shapes.
 
-The counterpart to `specs/service.py`, and it borrows that module's central
-rule: a document that is WELL-FORMED and describes an impossible box is not a
-command error. It is a successful reply carrying located problems, exactly as a
-spec that will not compile is a successful `specs.compile`. `RIG_INVALID` is
-reserved for a document that is not a document.
+The central rule: a document that is WELL-FORMED and describes an impossible box
+is not a command error. It is a successful reply carrying located problems.
+`RIG_INVALID` is reserved for a document that is not a document.
 
 `problems` comes from two places and reads as one list:
 
   * the JSON Schema, for shape -- a `kind` that is not a kind, a missing pin;
-  * TG226-229, for sense -- a pin the board does not have, two channels on one
-    pin, a response port with no strobe slot, halves that describe different
-    boxes.
+  * the wiring rules (`RIG101`-`RIG104`), for sense -- a pin the board does not
+    have, two channels on one pin, a response port with no strobe slot, halves
+    that describe different boxes.
 
 They are merged rather than reported separately because an operator fixing new
 wiring does not care which layer objected, and running one and then the other
@@ -20,7 +18,6 @@ would make it a two-pass job.
 
 from __future__ import annotations
 
-import copy
 from typing import Any
 
 from . import store
@@ -41,7 +38,7 @@ def document_payload(rig: store.HardwareStore) -> dict[str, Any]:
     }
 
 
-def preview_payload(rig: store.HardwareStore, document: Any, specs: Any) -> dict[str, Any]:
+def preview_payload(rig: store.HardwareStore, document: Any, tasks: Any = None) -> dict[str, Any]:
     """`RigSaved` without the save: what is wrong, and what it would cost.
 
     `status` describes the wiring currently IN FORCE, not the one being
@@ -52,7 +49,7 @@ def preview_payload(rig: store.HardwareStore, document: Any, specs: Any) -> dict
     return {
         "status": _status(rig, rig.load() or store.default_document()),
         "problems": problems_for(document),
-        "breaks": impact_of(document, specs),
+        "breaks": impact_of(document, tasks),
     }
 
 
@@ -71,98 +68,84 @@ def problems_for(document: Any) -> list[dict[str, Any]]:
 
 
 def _rule_problems(document: Any) -> list[dict[str, Any]]:
-    from ephymeris_sidecar.taskgraph import registries
+    from ephymeris_sidecar.rig import registry
 
     try:
-        chans = registries.ChannelMap(*registries._split_rig(document))
+        chans = registry.ChannelMap(*registry.split_rig(document))
     except (KeyError, TypeError) as exc:  # pragma: no cover - schema catches these
         return [{"location": "rig.json", "message": str(exc), "code": None}]
 
-    vocab = registries.vocabulary()
+    vocab = registry.vocabulary()
     return [
         {"location": loc, "message": msg, "code": code}
         for code, pairs in (
-            ("TG226", chans.disagreements()),
-            ("TG227", chans.pin_problems()),
-            ("TG228", chans.duplicate_pins()),
-            ("TG229", chans.slot_problems(vocab)),
+            ("RIG101", chans.disagreements()),
+            ("RIG102", chans.pin_problems()),
+            ("RIG103", chans.duplicate_pins()),
+            ("RIG104", chans.slot_problems(vocab)),
         )
         for loc, msg in pairs
     ]
 
 
-def impact_of(document: Any, specs: Any) -> list[dict[str, Any]]:
-    """Which stored tasks this wiring would newly stop compiling.
+def impact_of(document: Any, tasks: Any) -> list[dict[str, Any]]:
+    """Which stored task profiles this wiring would newly break.
 
     COMPUTED BEFORE THE WRITE, which is the whole point. Full channel authoring
-    means an operator can delete a channel a saved task binds; TG223 catches
-    that at compile, by which time the wiring is written and the task is broken.
+    means an operator can delete a channel a saved task binds; catching that at
+    generation time would be too late — the wiring is written by then and the
+    task is already broken.
 
-    NEWLY is load-bearing. A task already failing for its own reasons is not
-    this change's fault, and listing it would bury the ones that are — so each
-    spec is compiled under BOTH wirings and only the difference is reported.
+    NEWLY is load-bearing. A task already failing for its own reasons is not this
+    change's fault, and listing it would bury the ones that are — so each profile
+    is validated under BOTH wirings and only the difference is reported.
 
     The rig source is restored in a `finally`: this function installs a
-    hypothetical wiring to answer a question, and leaving it installed would
-    mean a preview silently changed what the app compiles.
-    """
-    from ephymeris_sidecar.taskgraph import registries
+    hypothetical wiring to answer a question, and leaving it installed would mean
+    a preview silently changed what the app generates.
 
-    entries = list(specs.list_entries())
+    `tasks` is the task-profile store. It is None until one exists, and an empty
+    `breaks` on a rig with no profiles is the honest answer either way.
+    """
+    if tasks is None:
+        return []
+
+    import copy
+
+    from ephymeris_sidecar.rig import registry
+
+    entries = list(tasks.list_entries())
     if not entries:
         return []
 
-    before = {e["specId"]: _failures(specs, e["specId"]) for e in entries}
+    before = {e["id"]: tasks.failures(e["id"]) for e in entries}
 
-    saved = registries.current_rig_source()
+    saved = registry.current_rig_source()
     try:
-        registries.set_rig_source(lambda: copy.deepcopy(document))
-        after = {e["specId"]: _failures(specs, e["specId"]) for e in entries}
+        registry.set_rig_source(lambda: copy.deepcopy(document))
+        after = {e["id"]: tasks.failures(e["id"]) for e in entries}
     finally:
-        registries.set_rig_source(saved)
+        registry.set_rig_source(saved)
 
     out: list[dict[str, Any]] = []
     for entry in entries:
-        spec_id = entry["specId"]
-        gained = sorted(after[spec_id] - before[spec_id])
+        task_id = entry["id"]
+        gained = sorted(after[task_id] - before[task_id])
         if gained:
-            out.append({"specId": spec_id, "label": entry.get("label"), "codes": gained})
+            out.append({"specId": task_id, "label": entry.get("label"), "codes": gained})
     return out
 
 
-def _failures(specs: Any, spec_id: str) -> set[str]:
-    """The error codes this spec compiles with right now, or an empty set.
-
-    A spec that will not even load is not this wiring's problem, and reporting
-    it as one would make every rig edit look destructive on a rig with one
-    broken task.
-    """
-    from ephymeris_sidecar.specs import compiler
-
-    record = specs.get(spec_id)
-    if record is None:
-        return set()
-    try:
-        text = record.read_text()
-    except OSError:
-        return set()
-    try:
-        result = compiler.compile(text, spec_id=spec_id)
-    except Exception:  # pragma: no cover - a compiler crash is not a rig fault
-        return set()
-    return {d.code for d in result.bag if d.severity.name == "ERROR"}
-
-
 def _status(rig: store.HardwareStore, doc: dict) -> dict[str, Any]:
-    from ephymeris_sidecar.taskgraph import registries
+    from ephymeris_sidecar.rig import registry
 
     status = rig.status()
     return {
         "custom": status.custom,
-        "derivedFrom": status.derived_from or registries.active_pinout_id(),
+        "derivedFrom": status.derived_from or registry.active_pinout_id(),
         "board": str(doc.get("board", "")),
         "editedAt": status.edited_at,
-        "pinoutHash": registries.channels().content_hash(),
+        "pinoutHash": registry.channels().content_hash(),
     }
 
 

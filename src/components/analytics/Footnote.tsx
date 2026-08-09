@@ -20,6 +20,7 @@ export function Footnote({
   scope: string;
 }) {
   const fallback = summary.runs.filter((run) => run.profileSource === "sketch-current").length;
+  const inferred = summary.runs.filter((run) => run.profileSource === "inferred").length;
   return (
     <p className="px-1 font-mono text-[10px] leading-relaxed text-static/70">
       {cohortName} · {summary.counts.decoded} of {summary.counts.runs} runs scored ·{" "}
@@ -31,6 +32,15 @@ export function Footnote({
           <span style={{ color: "var(--color-status-warning)" }}>
             {fallback} run{fallback === 1 ? "" : "s"} decoded with the current
             task.json, which may have changed since
+          </span>
+        </>
+      )}
+      {inferred > 0 && (
+        <>
+          {" · "}
+          <span style={{ color: "var(--color-status-warning)" }}>
+            {inferred} run{inferred === 1 ? "" : "s"} scored from the recorded
+            strobes alone — no task declaration survives for them
           </span>
         </>
       )}

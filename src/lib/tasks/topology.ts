@@ -28,13 +28,9 @@
  * closes and odor reaches the nose (`BehaviorBox.h`'s `runTrial()`). The odor is
  * primed well before that and silently, so there is nothing earlier to draw.
  *
- * Pure: no React, no store, no fetch. `TaskGraph` draws what this returns, and
- * `TaskRail` draws the same nodes as a strip.
- *
- * NOT to be confused with `lib/specs/` and its `SpecGraph`: that is the
- * compiled MACHINE graph a task spec produces — what the interpreter executes.
- * This one describes what an animal does. Two models, no shared code, on
- * purpose (`docs/specs.md` §5).
+ * Pure: no React, no store, no fetch. `SketchStateMachine` draws what this
+ * returns on the Task tab, and `LiveStateMachine` (same file) draws it in
+ * Mission Control's panel with a token on the running box's state.
  */
 
 import type { TaskProfile } from "@/lib/ws/protocol";

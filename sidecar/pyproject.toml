@@ -33,8 +33,13 @@ dev = [
     # Codegen for the vendored arduino-cli protos (scripts/gen_grpc.py).
     # Build-time only: the generated stubs are committed, like the wire mirrors.
     "grpcio-tools>=1.60",
+    # `package` rides along with dev rather than standing apart: a dev venv that
+    # can't run `npm run package` looks identical to one that can until the build
+    # fails, and rebuilding a venv from the documented `.[dev]` line was silently
+    # dropping PyInstaller. Declared once, below, so the pin can't drift.
+    "ephymeris-sidecar[package]",
 ]
-# Only needed to build a shipped installer, so it doesn't ride along with dev.
+# Only needed to build a shipped installer.
 package = [
     "pyinstaller>=6",
 ]

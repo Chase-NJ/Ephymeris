@@ -266,7 +266,20 @@ class SessionRunner:
                 run.config.sketch_name,
             )
 
-        writer = AnimalWriter(files.tsv, files.json, files.mat, core, config_meta)
+        writer = AnimalWriter(
+            files.tsv,
+            files.json,
+            files.mat,
+            core,
+            config_meta,
+            # The declaration this run was configured from, travelling with the
+            # data (`data.md` §4.4). The database snapshot records the same
+            # thing, but it stays on this machine — and cross-machine analysis
+            # is the normal case here, not the exception.
+            profile_snapshot=(
+                run.config.profile.to_json() if run.config.profile is not None else None
+            ),
+        )
         try:
             writer.open_files()
         except Exception as exc:  # noqa: BLE001 - surface, don't crash the thread

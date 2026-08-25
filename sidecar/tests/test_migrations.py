@@ -652,6 +652,141 @@ def test_an_adoption_from_before_v7_is_never_treated_as_fresh(tmp_path: Path) ->
     assert row["file_size"] is None
 
 
+# --- the real v7 -> v8 migration ------------------------------------------
+
+
+def write_v7_database(path: Path) -> None:
+    """A v7 file, carrying a `run_metrics_cache` in its **pre-v8** shape.
+
+    The cache table has to be spelled out here rather than left to `SCHEMA`:
+    `CREATE TABLE IF NOT EXISTS` would build it with `params_hash` already on
+    it, and the migration this exercises would then be a no-op against a table
+    that never lacked the column — which is precisely the class of database it
+    exists for.
+    """
+    write_v6_database(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("ALTER TABLE adopted_runs ADD COLUMN file_mtime_ns INTEGER")
+        conn.execute("ALTER TABLE adopted_runs ADD COLUMN file_size INTEGER")
+        conn.execute(
+            """
+            CREATE TABLE run_metrics_cache (
+                run_id         TEXT PRIMARY KEY,
+                file_path      TEXT NOT NULL,
+                file_mtime_ns  INTEGER,
+                file_size      INTEGER,
+                profile_hash   TEXT,
+                profile_source TEXT NOT NULL,
+                codec_version  INTEGER NOT NULL,
+                computed_at    TEXT NOT NULL,
+                status         TEXT NOT NULL,
+                detail         TEXT,
+                summary_json   TEXT NOT NULL
+            )
+            """
+        )
+        # Two rows, because v8 treats them differently: one scored from a
+        # profile that resolved (its digest is in `profile_hash` and survives),
+        # one scored from an inferred profile (whose digest was recorded
+        # nowhere, which is what the migration repairs).
+        conn.execute(
+            "INSERT INTO run_metrics_cache (run_id, file_path, profile_hash,"
+            " profile_source, codec_version, computed_at, status, summary_json)"
+            " VALUES ('r1', '/data/r1.json', 'aaaabbbbccccdddd', 'snapshot', 6,"
+            "  '2026-06-16T13:00:00', 'ok', '{}')"
+        )
+        conn.execute(
+            "INSERT INTO run_metrics_cache (run_id, file_path, profile_source,"
+            " codec_version, computed_at, status, summary_json) VALUES"
+            " ('adopted:abc', '/data/x.json', 'inferred', 6,"
+            "  '2026-06-16T13:00:00', 'ok', '{}')"
+        )
+        conn.execute("PRAGMA user_version = 7")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_v7_gains_the_recorded_run_columns(tmp_path: Path) -> None:
+    """What a run's own file records (`data.md` §4.4, §8.3). Two columns in one
+    migration, so both are checked — a half-applied one would leave the second
+    raising `OperationalError` on the next indexing pass."""
+    path = tmp_path / "ephymeris.db"
+    write_v7_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        columns = table_columns(db.conn, "run_metrics_cache")
+        assert "params_hash" in columns
+        assert "scored_profile_hash" in columns
+        # Writable, not merely present in the metadata.
+        db.conn.execute(
+            "UPDATE run_metrics_cache SET params_hash = ?, scored_profile_hash = ?"
+            " WHERE run_id = 'r1'",
+            ("deadbeefdeadbeef", "1111222233334444"),
+        )
+        row = db.conn.execute(
+            "SELECT params_hash, scored_profile_hash FROM run_metrics_cache"
+            " WHERE run_id = 'r1'"
+        ).fetchone()
+        assert row["params_hash"] == "deadbeefdeadbeef"
+        assert row["scored_profile_hash"] == "1111222233334444"
+    finally:
+        db.close()
+
+    assert user_version(path) == SCHEMA_VERSION
+
+
+def test_a_resolved_cache_row_survives_the_migration(tmp_path: Path) -> None:
+    """It is a pure cache, so a NULL new column costs only a recomputation —
+    but a row that still answers correctly must not be dropped: clearing the
+    cache wholesale would re-read every file in the archive on the first
+    dashboard open after an update."""
+    path = tmp_path / "ephymeris.db"
+    write_v7_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        row = db.conn.execute(
+            "SELECT profile_hash, scored_profile_hash, params_hash"
+            " FROM run_metrics_cache WHERE run_id = 'r1'"
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert row is not None, "a row whose digest resolved still answers correctly"
+    assert row["profile_hash"] == "aaaabbbbccccdddd"
+    assert row["scored_profile_hash"] is None
+    assert row["params_hash"] is None
+
+
+def test_an_inferred_cache_row_is_dropped_so_it_recomputes(tmp_path: Path) -> None:
+    """The one thing this migration deletes, and why.
+
+    An inferred row recorded its scoring digest nowhere — `profile_hash` holds
+    what *resolution* reached, which for those rows is NULL by definition. So
+    it served a hash on the pass that computed it and NULL forever after,
+    dropping the run out of its own profile group. The new column fixes that
+    only for rows that recompute, and this row never would: its freshness key
+    still matches. Deleting exactly these un-sticks it, at the cost of
+    re-reading those files once.
+    """
+    path = tmp_path / "ephymeris.db"
+    write_v7_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        rows = db.conn.execute("SELECT run_id FROM run_metrics_cache").fetchall()
+    finally:
+        db.close()
+
+    assert [row["run_id"] for row in rows] == ["r1"]
+
+
 # --- the downgrade case ---------------------------------------------------
 
 

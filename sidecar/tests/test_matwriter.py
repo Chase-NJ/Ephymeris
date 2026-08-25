@@ -88,6 +88,44 @@ def test_a_bool_is_flagged_logical() -> None:
     assert flags & 0x02  # logical bit set
 
 
+def _char_payload(body: bytes) -> str:
+    """The text of a char matrix, read back out of its element body."""
+    # array flags (16B), dims, name, then the miUINT16 payload.
+    offset = 16
+    for _ in range(2):  # dims, name
+        _, nbytes = struct.unpack("<ii", body[offset : offset + 8])
+        offset += 8 + nbytes + (-nbytes % 8)
+    _, nbytes = struct.unpack("<ii", body[offset : offset + 8])
+    return body[offset + 8 : offset + 8 + nbytes].decode("utf-16-le")
+
+
+def test_a_nested_field_is_written_as_json_text() -> None:
+    """The task profile snapshot (`data.md` §4.4) is the one nested value a
+    session document carries. It used to fall through to `str(dict)`, a Python
+    repr with single quotes and bare `True` — not JSON, so nothing on the other
+    end could decode it. `jsondecode` in MATLAB has to work."""
+    import json
+
+    profile = {"taskName": "GRGL 4-Odor", "liveMetrics": [{"id": "p_correct_1"}]}
+    blob = matwriter.dumps({"task_profile": profile})
+    (_, body) = _elements(blob)[0]
+
+    assert json.loads(_char_payload(body)) == profile
+
+
+def test_a_char_field_is_sized_in_code_units_not_characters() -> None:
+    """MATLAB char arrays are counted in UTF-16 code units. Outside the BMP the
+    two differ, and a dimension that disagrees with the data it labels yields a
+    file MATLAB reads as truncated. Reachable now that a snapshot carries
+    operator-written labels."""
+    blob = matwriter.dumps({"label": "a\U0001F42Db"})  # 3 characters, 4 code units
+    (_, body) = _elements(blob)[0]
+    dims_type, dims_len = struct.unpack("<ii", body[16:24])
+    assert dims_type == 5
+    assert struct.unpack("<2i", body[24 : 24 + dims_len]) == (1, 4)
+    assert _char_payload(body) == "a\U0001F42Db"
+
+
 def test_empty_ts_data_is_zero_by_two() -> None:
     blob = matwriter.dumps({"ts_data": []})
     (_, body) = _elements(blob)[0]

@@ -804,6 +804,17 @@ SHAPES = (
             f("startedAt", STR),
             f("endedAt", nullable(STR)),
             f("sketchPath", STR),
+            f(
+                "sketchName",
+                STR,
+                doc="The program this run RECORDS having been run on — the "
+                "`sketch` field of its own file, falling back to the last "
+                "segment of `sketchPath`. Not the same question as "
+                "`sketchPath`, which is where THIS machine found a `task.json` "
+                "to decode with and is empty for a file copied from another "
+                "rig (`data.md` §8.2). Empty only when the file named no "
+                "sketch at all.",
+            ),
             f("profileHash", nullable(STR)),
             f(
                 "paramsHash",

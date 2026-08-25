@@ -10,8 +10,6 @@
  * helpers exist to prevent.
  */
 
-import { sketchName } from "@/lib/sessions/types";
-
 import type {
   AnalyticsSummary,
   ConditionOutcomes,
@@ -105,6 +103,30 @@ export function conditionColumns(
     }
   }
   return [...seen.values()];
+}
+
+/**
+ * The condition's own name, out of the metric label that carries it.
+ *
+ * A metric label is a sentence about a probability — `P(right well | Go
+ * right)` — because that is what it titles on a chart axis. A *column group*
+ * is not a probability; it is the condition, and the two numbers under it are
+ * its count and its rate. So the header wants the operator's own name for the
+ * trial type, which is the conditioning half of that sentence.
+ *
+ * **Display only, never identity.** `metricId` remains what a column is keyed
+ * and matched on; this only decides what is printed above it, and the full
+ * label stays on hover. Every label the app builds — generated (`generate.py`)
+ * and inferred (`infer.py`) alike — has this shape; an authored `task.json`
+ * carrying something else keeps its label whole rather than being cut wrongly.
+ */
+export function conditionName(label: string): string {
+  const trimmed = label.trim();
+  const bar = trimmed.indexOf("|");
+  if (bar < 0 || !trimmed.endsWith(")")) return trimmed;
+  // To the LAST paren, not the first: a condition may well be called
+  // "Go left (odor 4)", and cutting at the first would drop half its name.
+  return trimmed.slice(bar + 1, -1).trim() || trimmed;
 }
 
 /**
@@ -207,7 +229,8 @@ export function conditionFor(
   return run.conditions.find((c) => c.metricId === column.metricId) ?? null;
 }
 
-/** The Program column and the card chip — the sketch's folder name. */
-export function programOf(run: RunSummary): string {
-  return sketchName(run.sketchPath) || "unknown sketch";
-}
+/* `programOf` moved to `view.ts`: the across-session panels label their tasks
+ * with the same name this panel prints, and one definition is what keeps the
+ * two from drifting. Re-exported so the session components' imports still read
+ * from the module that owns the rest of their helpers. */
+export { programOf } from "./view";

@@ -45,8 +45,17 @@ class CachedRun:
     run_id: str
     status: str
     detail: str | None
+    #: The profile this run was SCORED with — not necessarily the one
+    #: resolution reached (`key.profile_hash`), which is NULL whenever the
+    #: scoring profile came out of the file itself or its strobes (§8.3).
     profile_hash: str | None
     profile_source: str
+    #: The parameters the run's own FILE records (`data.md` §4.4), hashed.
+    #: Read only for a run with no `session_animal_runs` row of its own, whose
+    #: parameters this database therefore never recorded — which is what a
+    #: session copied from another rig arrives as. `None` when the file carries
+    #: no snapshot to say which of its fields are parameters.
+    params_hash: str | None
     summary: dict[str, Any]
     key: CacheKey
     #: A file that has gone missing keeps its last good summary rather than
@@ -148,8 +157,13 @@ class AnalyticsRepository:
                     run_id=row["run_id"],
                     status=row["status"],
                     detail=row["detail"],
-                    profile_hash=row["profile_hash"],
+                    # Pre-v8 rows have no scored digest; for those the two
+                    # questions had the same answer whenever resolution
+                    # succeeded, and the migration dropped the rows where they
+                    # differed rather than leaving them to serve a NULL.
+                    profile_hash=row["scored_profile_hash"] or row["profile_hash"],
                     profile_source=row["profile_source"],
+                    params_hash=row["params_hash"],
                     summary=summary,
                     key=CacheKey(
                         file_path=row["file_path"],
@@ -267,9 +281,9 @@ class AnalyticsRepository:
             self._db.conn.executemany(
                 "INSERT OR REPLACE INTO run_metrics_cache"
                 " (run_id, file_path, file_mtime_ns, file_size, profile_hash,"
-                "  profile_source, codec_version, computed_at, status, detail,"
-                "  summary_json)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  scored_profile_hash, profile_source, params_hash,"
+                "  codec_version, computed_at, status, detail, summary_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         entry.run_id,
@@ -277,7 +291,9 @@ class AnalyticsRepository:
                         entry.key.mtime_ns,
                         entry.key.size,
                         entry.key.profile_hash,
+                        entry.profile_hash,
                         entry.profile_source,
+                        entry.params_hash,
                         entry.key.codec_version,
                         _now(),
                         entry.status,

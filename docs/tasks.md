@@ -252,11 +252,11 @@ class ConfigField:
 
 | Key | Required | Notes |
 |---|:---:|---|
-| `id` | ✅ | Stable identifier |
+| `id` | ✅ | Stable identifier, and **only** that — a generated profile numbers them `p_correct_1`, `p_correct_2`, which names no condition |
 | `triggerCode` | ✅ | int — opens a trial for this metric |
 | `successCode` | ✅ | int — scores a hit |
 | `alternateCode` | ✅ | int — scores a miss (still in the denominator) |
-| `label` | | Falls back to `id` |
+| `label` | | What every readout titles this metric with. Falls back to `id`, which is a slot number — so a profile generated from a task definition builds it from the trial type's own name (`P(right well | Go right)`), and naming that type is [required](#113-the-eleven-diagnostics) |
 | `windowSize` | | Default **20**, deliberately matching the sketch's own anti-bias `biasWindow` default |
 
 > [!IMPORTANT]
@@ -657,6 +657,9 @@ def offer(self, code: int) -> None:
 **Runtime wiring.** `sessions/runner.py` creates `MetricSet(profile)` at box start and calls `offer(code)` per strobe, pushing **all** metric values in every telemetry event (the frontend replaces its whole per-box set). `hits_total` / `counted_total` give `analytics.derive` an exact integer ratio for Wilson intervals.
 
 > [!NOTE]
+> **A telemetry metric carries `id`, `value` and `n` — never its label.** The label is a property of the profile, not of the tick, so anything rendering live values resolves it: Mission Control fetches the box's profile once per distinct sketch (`useTaskProfiles`) and passes `metricLabels(profile)` into `MetricStrip`. Without it a row reads `p_correct_2`, which is a slot number and names no condition.
+
+> [!NOTE]
 > Metrics reference **raw codes**, so they work without `strobes` at all. But the `strobes` map is what lets `topology.ts` translate those codes back into names — which is how `liveMetrics` ends up gating the graph's odor arms and withhold arm.
 
 ---
@@ -1008,6 +1011,18 @@ task that compiles and drives nothing.
 > lives *on* the row rather than in the parameter rail, where it would outlive
 > the row it describes.
 
+Each row is **named by the operator, and the name is required** (`TSK110`,
+`TSK111`). Two kinds of name meet on this screen and keeping them apart is the
+point: the **rig's channel label** is what this bench calls a line
+("sandalwood"), follows the wiring, is free to rename and never enters the
+recorded profile; the **row's own name** is what the operator calls the
+*condition*, and it does enter the profile — it becomes the metric label that
+titles Mission Control's live sparkline, the learning curve, and a strategy
+axis. Nothing can derive it, and left empty the generator falls back to the odor
+channel, so the chart ends up titled after whichever line happened to carry the
+condition. The presets seed a name for the contingency ("Go right") and never
+for the substance.
+
 Each row carries a **contingency sentence** in plain language — *"odor line 3 →
 left well, paid from fluid 2 (plumbed to right well)"*. It is the one rendering
 that catches `TSK103` by eye before the diagnostic does.
@@ -1119,7 +1134,7 @@ Three families are *not* in the catalogue, because only the definition knows how
 many of each exist: the ramp rows, the pool weights (one per trial type), and
 the reward volumes (one per fluid line the rig declares).
 
-### 11.3 The nine diagnostics
+### 11.3 The eleven diagnostics
 
 Each names a failure that is silent without it. `TSK103`, `TSK105` and `TSK109`
 are the three that produce plausible-looking wrong **data** rather than an
@@ -1136,6 +1151,16 @@ obvious failure.
 | `TSK107` | a `START` line over the cap — the firmware truncates in silence ([§6.3](#63-the-line-length-cap)) |
 | `TSK108` | a table with no presentable trial — a session that runs nothing |
 | `TSK109` | **a pool whose weights are all zero** — `generateTrials()` would divide by the total, so it falls back to equal weights; the box runs a uniform pool while the table on screen says otherwise. Pool mode only: anti-bias draws a side and weights nothing |
+| `TSK110` | a condition with no name — the generator falls back to the odor channel, so every readout titles the condition after whichever line happened to carry it |
+| `TSK111` | two conditions sharing a name — two curves under one title, compared case- and whitespace-insensitively because that is how a reader compares them |
+
+**Naming every condition is required**, which is what `TSK110` and `TSK111` say
+between them. A trial type's name is the one thing the table cannot derive, and
+it is the only handle everything downstream has on the condition: the metric
+label built from it ([§3.4](#34-livemetrics)) titles Mission Control's live
+sparkline, the learning curve, and a strategy axis. The shipped presets
+therefore seed a name — but a name for the *contingency* ("Go right"), never for
+the substance, which belongs to the rig's wiring.
 
 A definition with diagnostics **still saves**. A half-finished task must be
 savable; the gate is flashing, not saving.

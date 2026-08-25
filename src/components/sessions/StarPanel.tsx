@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { ArrowLeft, Play, RotateCcw, Square } from "lucide-react";
-import { useEffect, useMemo, useState, type Ref } from "react";
+import { useEffect, useMemo, type Ref } from "react";
 
 import { Button } from "@/components/common/controls";
 import { HudPanel, HudSection } from "@/components/common/HudPanel";
@@ -10,14 +10,13 @@ import { LivePanels } from "./LivePanels";
 import { MetricStrip } from "./MetricStrip";
 import { useBoxOutput, usePortStatus } from "@/lib/hardware/context";
 import { springSnappy } from "@/lib/motion";
-import { getTaskProfile } from "@/lib/sessions/commands";
 import { useBoxEnded, useBoxTelemetry } from "@/lib/sessions/context";
 import { rollingAccuracy } from "@/lib/sessions/liveTrials";
 import { useLiveTrials } from "@/lib/sessions/useLiveTrials";
-import type { SessionBox, TaskProfile } from "@/lib/sessions/types";
+import { metricLabels, useTaskProfile } from "@/lib/sessions/useTaskProfiles";
+import type { SessionBox } from "@/lib/sessions/types";
 import { taskGraph } from "@/lib/tasks/topology";
 import { useLiveNode } from "@/lib/tasks/useLiveNode";
-import { useSidecar } from "@/lib/ws/context";
 
 /**
  * The zoomed-in star view (`dashboard.md` §9.4).
@@ -89,11 +88,11 @@ export function StarPanel({
    */
   ref?: Ref<HTMLElement>;
 }) {
-  const { client } = useSidecar();
   const port = usePortStatus(box.box);
   const ended = useBoxEnded(box.box);
   const metrics = useBoxTelemetry(box.box);
-  const [profile, setProfile] = useState<TaskProfile | null>(null);
+  const profile = useTaskProfile(box.sketchPath);
+  const labels = useMemo(() => metricLabels(profile), [profile]);
 
   const live = port.state === "IN_SESSION";
   const { state: trials, usable } = useLiveTrials(box.box, profile?.strobes);
@@ -103,16 +102,6 @@ export function StarPanel({
     () => rollingAccuracy(trials.trials, ACCURACY_WINDOW),
     [trials.trials],
   );
-
-  useEffect(() => {
-    let active = true;
-    void getTaskProfile(client, box.sketchPath)
-      .then((p) => active && setProfile(p))
-      .catch(() => active && setProfile(null));
-    return () => {
-      active = false;
-    };
-  }, [client, box.sketchPath]);
 
   // Escape returns to the overview — the gesture people try first, and the
   // same rule Debug's panel follows.
@@ -229,7 +218,7 @@ export function StarPanel({
               the readout it was showing. */}
           <HudSection title="Live metrics">
             <div className="px-3 py-2.5">
-              <MetricStrip box={box.box} metrics={metrics} bare />
+              <MetricStrip box={box.box} metrics={metrics} labels={labels} bare />
             </div>
           </HudSection>
 

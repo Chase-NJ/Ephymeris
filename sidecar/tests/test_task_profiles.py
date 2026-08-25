@@ -69,6 +69,62 @@ def test_the_supplied_grgl_profile_round_trips_to_json() -> None:
     assert out["strobes"]["101"] == "ODOR_1_ON"
 
 
+def test_every_shipped_profile_keeps_its_hash_through_a_round_trip() -> None:
+    """THE IDENTITY A COPIED SESSION FILE DEPENDS ON (`data.md` §4.4).
+
+    A run's file carries its profile as JSON; the machine that reads it parses
+    that back and re-serializes to hash it. If the pair is not exactly
+    reversible, a copied run lands under a different `profile_hash` than the
+    run it came from — a separate profile group, a separate comparability set,
+    and no error anywhere. Anything added to `TaskProfile` has to keep this
+    true.
+    """
+    from ephymeris_sidecar.taskdef import generate, presets
+    from ephymeris_sidecar.tasks.profile import profile_hash
+
+    for preset in presets.PRESETS:
+        definition = presets.instantiate(preset["id"], preset["id"])
+        original = generate.build_profile(definition)
+        # Through the wire form and back, exactly as a session file does it.
+        copied = parse_profile(json.loads(json.dumps(original.to_json())))
+        assert profile_hash(copied) == profile_hash(original), preset["id"]
+        assert copied.to_json() == original.to_json(), preset["id"]
+
+
+def test_a_document_that_carries_no_snapshot_yields_none() -> None:
+    """`embedded_profile` is a reader of untrusted files: a profile-less
+    sketch, an archive predating the field, and a damaged snapshot all mean
+    "no declaration here" rather than an exception — the strobes below it are
+    still real data."""
+    from ephymeris_sidecar.tasks.profile import SNAPSHOT_KEY, embedded_profile
+
+    assert embedded_profile({}) is None
+    assert embedded_profile({SNAPSHOT_KEY: "GRGL"}) is None
+    assert embedded_profile({SNAPSHOT_KEY: {"config": []}}) is None  # no taskName
+    assert embedded_profile({SNAPSHOT_KEY: GRGL}) is not None
+
+
+def test_recorded_config_is_the_declared_fields_and_nothing_else() -> None:
+    """Which of a document's flat fields are PARAMETERS is a question only the
+    profile answers. `trial_seed` and `host_seed` sit right beside them and are
+    deliberately not declared fields — they describe the run, not its tuning,
+    and the recording side never hashed them either."""
+    from ephymeris_sidecar.tasks.profile import recorded_config
+
+    profile = parse_profile(GRGL)
+    keys = {field.metadata_key for field in profile.config}
+    assert keys, "the fixture needs at least one declared field to test with"
+    document = {
+        "rat": "remy1",
+        "trial_seed": 288577176,
+        "host_seed": 288577176,
+        **{key: 7 for key in keys},
+    }
+    assert recorded_config(document, profile) == {key: 7 for key in keys}
+    # No profile means no way to tell a parameter from a core field.
+    assert recorded_config(document, None) is None
+
+
 def test_missing_task_name_is_rejected() -> None:
     with pytest.raises(TaskProfileError):
         parse_profile({"config": []})

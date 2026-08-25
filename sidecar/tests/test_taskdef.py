@@ -237,8 +237,9 @@ def test_the_selection_mode_reaches_the_firmware():
 
 def test_a_no_go_type_carries_the_sentinel_and_no_reward():
     definition = a_task(trials=[
-        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2"),
-        TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False),
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
+                     label="Go right"),
+        TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False, label="Withhold"),
     ])
     assert validate(definition) == []
     trials = generate.task_trials_h(definition)
@@ -321,6 +322,46 @@ def test_two_types_sharing_an_onset_code_are_reported():
         TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2"),
         TrialTypeDef("odor_line_3", "ODOR_1_ON", True, "left_well", "fluid_0"),
     ]))
+
+
+def test_an_unnamed_condition_is_reported():
+    """The name is the only handle every readout has on a condition: it titles
+    the live sparkline, the learning curve and a strategy axis. Unnamed, the
+    generator falls back to the channel — so the chart is titled after whatever
+    line happened to carry it, which is a fact about the bench and not the
+    task."""
+    assert "TSK110" in codes(a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2"),
+    ]))
+    # Whitespace is not a name.
+    assert "TSK110" in codes(a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
+                     label="   "),
+    ]))
+
+
+def test_two_conditions_under_one_name_are_reported():
+    """The same argument TSK105 makes about onset codes, one layer up: two
+    curves under one title, and nothing downstream can tell which is which.
+    Compared the way a reader compares them — case and spacing are not what
+    distinguishes two conditions."""
+    assert "TSK111" in codes(a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
+                     label="Go right"),
+        TrialTypeDef("odor_line_3", "ODOR_3_ON", True, "left_well", "fluid_0",
+                     label="go  RIGHT"),
+    ]))
+    assert "TSK111" not in codes(a_task())
+
+
+def test_a_condition_s_name_titles_its_live_metric():
+    """What the operator typed is what Mission Control's strip, the learning
+    curve and the strategy axis read back."""
+    profile = generate.build_profile(a_task(trials=[
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2",
+                     label="orange → right"),
+    ]))
+    assert [m.label for m in profile.live_metrics] == ["P(right well | orange → right)"]
 
 
 def test_an_unordered_ramp_is_reported():

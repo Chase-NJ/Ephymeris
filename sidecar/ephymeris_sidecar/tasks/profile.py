@@ -20,9 +20,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+log = logging.getLogger(__name__)
 
 TASK_FILENAME = "task.json"
 
@@ -318,6 +321,72 @@ def params_hash(config: dict[str, Any] | None) -> str | None:
         return None
     canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+# --------------------------------------------------------------------------- #
+# The snapshot a session file carries (`data.md` §4.4)
+# --------------------------------------------------------------------------- #
+
+#: The key a per-animal session document carries its profile snapshot under.
+#:
+#: Written by `sessions/writer.py`, read here — one constant so the two halves
+#: of the contract cannot drift. It is the ONLY nested value in an otherwise
+#: flat document, which is deliberate and is why `matwriter` has a rule for it.
+SNAPSHOT_KEY = "task_profile"
+
+
+def embedded_profile(document: dict[str, Any]) -> TaskProfile | None:
+    """The profile a session file carries with it, or None.
+
+    **This is what makes a session file self-describing.** A `task.json` lives
+    beside its sketch on one machine; the database snapshot that used to be the
+    only record of what decoded a run lives on that machine too. Neither
+    travels with the data, so a session copied to another rig — the normal case
+    in this lab — could previously only be scored against whatever sketch of
+    the same name happened to exist there, or inferred from its own strobes.
+    Carrying the declaration inside the file makes the copy decode exactly as
+    the original does.
+
+    Returns None rather than raising for anything malformed: a file with a
+    damaged snapshot is still a file full of real strobes, and the ladder below
+    it (`data.md` §8.3) still scores it.
+    """
+    raw = document.get(SNAPSHOT_KEY)
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return parse_profile(raw)
+    except (TaskProfileError, ValueError) as exc:
+        log.warning("a session file's embedded task profile is unusable: %s", exc)
+        return None
+
+
+def recorded_config(
+    document: dict[str, Any], profile: TaskProfile | None
+) -> dict[str, Any] | None:
+    """The parameter values this run actually ran on, out of its own file.
+
+    The document already carries every one of them — `finalize` writes the
+    config flat at the top level (§5) — but *which* of its keys are parameters
+    is a question only the profile answers. With the snapshot beside them, a
+    copied run can be given the same `params_hash` its own rig computed, which
+    is what completes the comparability pair (§8.3) for data this machine never
+    recorded. Without it those runs carry a profile hash and no parameters, and
+    two differently-tuned runs of one task pool silently.
+
+    Keyed exactly as `config_metadata` was, so the hash matches: the declared
+    fields and nothing else. `trial_seed` and `host_seed` sit beside them in
+    the document and are deliberately not declared fields — they describe the
+    run, not its tuning, and the recording side never hashed them either.
+    """
+    if profile is None:
+        return None
+    values = {
+        field.metadata_key: document[field.metadata_key]
+        for field in profile.config
+        if field.metadata_key in document
+    }
+    return values or None
 
 
 def profile_path(sketch_dir: str | Path) -> Path:

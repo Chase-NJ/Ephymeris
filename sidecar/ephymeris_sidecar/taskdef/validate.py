@@ -16,9 +16,18 @@ rather than a warning:
   TSK107  a START line over the cap            -> the firmware truncates in silence
   TSK108  a table with no presentable trial    -> a session that runs nothing
   TSK109  a pool whose weights are all zero    -> a uniform pool, silently
+  TSK110  a condition with no name             -> a chart titled after a channel
+  TSK111  two conditions sharing a name        -> two curves, one title
 
 TSK103, TSK105 and TSK109 are the three that produce plausible-looking wrong
 DATA rather than an obvious failure, and are the reason this file exists at all.
+
+TSK110 and TSK111 are the naming pair, and they are errors for the same reason
+TSK105 is: a condition is only ever read back by its NAME. It titles the live
+sparkline, the learning curve and a strategy axis, and it is recorded into the
+profile — so an unnamed one is read back as whichever channel happened to carry
+it, and two identically named ones are two curves the operator cannot tell
+apart. Naming every condition is the one thing the trial table cannot derive.
 """
 
 from __future__ import annotations
@@ -62,10 +71,34 @@ def validate(definition: TaskDefinition) -> list[Diagnostic]:
 def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
     out: list[Diagnostic] = []
     seen_onsets: dict[str, int] = {}
+    #: Compared case- and space-insensitively: "Go left" and "go  left" are the
+    #: same name to everyone reading a chart, and only the picker would disagree.
+    seen_names: dict[str, int] = {}
     presentable = 0
 
     for i, trial in enumerate(definition.trials):
         at = f"trials[{i}]"
+
+        name = trial.label.strip()
+        if not name:
+            out.append(Diagnostic(
+                f"{at}.label",
+                "this condition has no name. Its name is what titles the live "
+                "sparkline, the learning curve and the strategy axis, and it is "
+                "recorded into the profile — unnamed, it is read back as "
+                "whichever channel happened to carry it.",
+                "TSK110",
+            ))
+        else:
+            first = seen_names.setdefault(_name_key(name), i)
+            if first != i:
+                out.append(Diagnostic(
+                    f"{at}.label",
+                    f"trial type {first + 1} is already called {name!r}. Two "
+                    "conditions under one name are two curves with one title, "
+                    "and nothing downstream can tell which is which.",
+                    "TSK111",
+                ))
 
         emitter = channels.get(trial.odor_channel)
         if emitter is None:
@@ -185,6 +218,11 @@ def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
             "trials", "a task needs at least one trial type.", "TSK108"
         ))
     return out
+
+
+def _name_key(name: str) -> str:
+    """What counts as the same name on a chart, rather than to a picker."""
+    return " ".join(name.lower().split())
 
 
 def _pool_problems(definition: TaskDefinition) -> list[Diagnostic]:

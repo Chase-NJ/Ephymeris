@@ -4,6 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { DrawOn } from "@/components/charts/DrawOn";
 import { useIsHighlighted, useAnalyticsStore } from "@/lib/analytics/context";
 import {
+  conditionName,
   formatClock,
   outcomeParts,
   programOf,
@@ -182,7 +183,12 @@ export function AnimalCard({
             {run.metrics.map((metric) => (
               <ConditionRow
                 key={metric.id}
-                label={metric.label}
+                // The condition's own name, not the metric's sentence: this
+                // column is 1fr of a half-width card, and `P(right well | Mint
+                // → left)` truncates to the half that says nothing about which
+                // condition it is. The sentence stays on hover.
+                label={conditionName(metric.label)}
+                detail={metric.label}
                 condition={byMetric.get(metric.id) ?? null}
                 fallback={metric}
                 widest={widest}
@@ -310,6 +316,7 @@ const CONDITION_GRID =
  */
 function ConditionRow({
   label,
+  detail,
   condition,
   fallback,
   widest,
@@ -318,6 +325,8 @@ function ConditionRow({
   revealKey,
 }: {
   label: string;
+  /** The full metric label, for the hover. */
+  detail: string;
   condition: ConditionOutcomes | null;
   fallback: MetricSummary | null;
   widest: number;
@@ -331,7 +340,7 @@ function ConditionRow({
 
   return (
     <div className={`grid ${CONDITION_GRID} items-center gap-x-2 py-1`}>
-      <span className="truncate text-[11px] text-static" title={label}>
+      <span className="truncate text-[11px] text-static" title={detail}>
         {label}
       </span>
       <span className="text-right font-mono text-[11px] tabular-nums text-starlight">

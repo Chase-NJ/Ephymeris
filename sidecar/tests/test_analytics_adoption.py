@@ -115,6 +115,8 @@ class LegacyRig:
         group: str | None = None,
         nest: bool = True,
         rat: str | None = None,
+        profile: dict | None = None,
+        params: dict | None = None,
     ) -> Path:
         """One per-animal file in the lab's real on-disk shape.
 
@@ -151,6 +153,12 @@ class LegacyRig:
         }
         if sketch is not None:
             document["sketch"] = sketch
+        if params is not None:
+            # Flat at the top level, exactly as `finalize` writes them (§5).
+            document.update(params)
+        if profile is not None:
+            # The snapshot a modern file carries with it (§4.4).
+            document["task_profile"] = profile
         path.write_text(json.dumps(document), encoding="utf-8")
         if with_tsv:
             tsv = session / "recovery_tsv" / f"{stem}.tsv"
@@ -348,6 +356,178 @@ async def test_adopted_runs_reach_the_summary_and_are_scored(rig: LegacyRig) -> 
     assert run["profileSource"] == "sketch-current"
     assert run["boxNumber"] is None, "a filename carries no box number"
     assert validate_command_result("analytics.summary", payload) == []
+
+
+async def test_a_run_from_another_rig_still_names_its_program(
+    rig: LegacyRig,
+) -> None:
+    """THE CROSS-MACHINE CASE. A session recorded on the Windows rig and copied
+    into this cohort's data folder names a task profile this install has never
+    seen, so nothing resolves a `task.json` and `sketchPath` is empty — the run
+    scores by inference. It still recorded what it ran, and that is what the
+    Program column has to be able to say: read off the path alone every such
+    run displays as "unknown", which claims the record is silent when it is
+    not."""
+    rig.service._sketch_lookup = lambda name: None  # this rig has no such task
+    rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5, sketch="GRGL 4-Odor")
+    await rig.service.rescan(rig.cohort.id)
+
+    run = (await rig.service.summary(rig.cohort.id))["runs"][0]
+    assert run["sketchPath"] == ""
+    assert run["sketchName"] == "GRGL 4-Odor"
+    assert run["profileSource"] == "inferred"
+    assert run["status"] == "ok"
+    # And it can still say when it finished: nothing records an end time for a
+    # file that arrived as an orphan, but the stream's own span is one, which
+    # is what the session table's `~` end reads.
+    assert run["endedAt"] is None
+    assert run["durationMs"] == 39000
+
+
+async def test_a_file_that_carries_its_profile_decodes_as_a_snapshot(
+    rig: LegacyRig,
+) -> None:
+    """THE POINT OF §4.4, end to end.
+
+    A session recorded on the Windows rig and copied here: this install has no
+    run record for it and no sketch by that name, so every rung of the ladder
+    above inference is out — except the one the file brought with it. It scores
+    as a `snapshot`, on the profile it actually ran, and lands on the same
+    profile hash the recording rig computed.
+    """
+    from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
+
+    rig.service._sketch_lookup = lambda name: None
+    rig.add_legacy_run(
+        "remy1", HIT_1 * 15 + MISS_1 * 5, sketch="GRGL 4-Odor", profile=GRGL
+    )
+    await rig.service.rescan(rig.cohort.id)
+
+    run = (await rig.service.summary(rig.cohort.id))["runs"][0]
+    assert run["profileSource"] == "snapshot"
+    assert run["profileHash"] == profile_hash(parse_profile(GRGL))
+    assert run["metrics"][0]["pSession"] == 0.75
+    # And the group it lands in is labelled by the profile, not by a guess.
+    assert run["profileHash"] in {g["hash"] for g in
+                                  (await rig.service.summary(rig.cohort.id))["profileGroups"]}
+
+
+async def test_the_files_own_profile_outranks_a_same_named_sketch_here(
+    rig: LegacyRig,
+) -> None:
+    """Both are "a declaration for this sketch"; only one of them is the
+    declaration this run used. Ranked the other way, a rig that happens to hold
+    a same-named task scores a visiting file against its own edit of it —
+    silently, and under a hash claiming the two are comparable."""
+    from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
+
+    # This rig's `GRGL_2-Odor` has been retuned since: one odor renamed, which
+    # is enough to change the hash and every chart title.
+    edited = json.loads(json.dumps(GRGL))
+    edited["liveMetrics"][0]["label"] = "P(R | Something Else)"
+    (rig.sketch / "task.json").write_text(json.dumps(edited), encoding="utf-8")
+
+    rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5, profile=GRGL)
+    await rig.service.rescan(rig.cohort.id)
+
+    run = (await rig.service.summary(rig.cohort.id))["runs"][0]
+    assert run["profileSource"] == "snapshot"
+    assert run["profileHash"] == profile_hash(parse_profile(GRGL))
+    assert run["metrics"][0]["label"] == "P(R | Odor 1)"
+
+
+async def test_a_copied_run_reports_the_parameters_its_file_records(
+    rig: LegacyRig,
+) -> None:
+    """Comparability is the PAIR (§8.3). An adopted run has no row here to
+    carry `paramsHash`, so without the snapshot naming which of the document's
+    fields are parameters, two differently-tuned runs of one task pool
+    silently."""
+    from ephymeris_sidecar.tasks.profile import params_hash
+
+    # Which of the document's flat fields are PARAMETERS is a question only the
+    # profile answers, so the snapshot has to declare one for there to be
+    # anything to hash.
+    tuned = {**GRGL, "config": [
+        {"metadataKey": "odor_poke_hold", "wireKey": "OPH", "label": "Odor poke hold",
+         "type": "int", "default": 500},
+    ]}
+    rig.add_legacy_run(
+        "remy1", HIT_1 * 10, profile=tuned, params={"odor_poke_hold": 500}
+    )
+    rig.add_legacy_run(
+        "remy2", HIT_1 * 10, profile=tuned, params={"odor_poke_hold": 10}
+    )
+    await rig.service.rescan(rig.cohort.id)
+
+    runs = (await rig.service.summary(rig.cohort.id))["runs"]
+    hashes = {r["animalId"]: r["paramsHash"] for r in runs}
+    assert hashes["a1"] == params_hash({"odor_poke_hold": 500})
+    assert hashes["a2"] == params_hash({"odor_poke_hold": 10})
+    assert hashes["a1"] != hashes["a2"], "one task, two tunings, one hash"
+
+
+async def test_a_scored_profile_hash_survives_the_cache(rig: LegacyRig) -> None:
+    """The digest a run is SCORED with is not the one resolution reached.
+
+    For a profile read out of the file or inferred from its strobes, resolution
+    reaches nothing — so the cache used to persist NULL and the run served its
+    hash on the pass that computed it and none afterward, leaving its own
+    profile group the moment the cache warmed. Both rungs are checked: they
+    reach a scoring profile by the same road and would break together.
+    """
+    rig.service._sketch_lookup = lambda name: None
+    rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)                  # inferred
+    rig.add_legacy_run("remy2", HIT_1 * 15 + MISS_1 * 5, profile=GRGL)    # embedded
+    await rig.service.rescan(rig.cohort.id)
+
+    def hashes(payload):
+        return {r["animalId"]: r["profileHash"] for r in payload["runs"]}
+
+    first = hashes(await rig.service.summary(rig.cohort.id))
+    second = hashes(await rig.service.summary(rig.cohort.id))
+    assert first == second
+    assert all(value is not None for value in first.values())
+    # And the groups those hashes name are still there on the cached pass.
+    groups = {g["hash"] for g in (await rig.service.summary(rig.cohort.id))["profileGroups"]}
+    assert set(first.values()) <= groups
+
+
+async def test_a_damaged_snapshot_falls_through_rather_than_failing(
+    rig: LegacyRig,
+) -> None:
+    """A file with a broken snapshot is still a file full of real strobes."""
+    rig.service._sketch_lookup = lambda name: None
+    path = rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["task_profile"] = {"taskName": "GRGL", "liveMetrics": "not a list"}
+    path.write_text(json.dumps(document), encoding="utf-8")
+    await rig.service.rescan(rig.cohort.id)
+
+    run = (await rig.service.summary(rig.cohort.id))["runs"][0]
+    assert run["status"] == "ok"
+    assert run["profileSource"] == "inferred"
+
+
+async def test_a_program_name_falls_back_to_the_path_it_resolved(
+    rig: LegacyRig,
+) -> None:
+    """A recorded run carries no name of its own — the row stores a path — so
+    the last segment is the name, split on both separators because a path
+    written on one platform is read on the other."""
+    from ephymeris_sidecar.analytics.service import _program_name
+    from ephymeris_sidecar.sessions.models import SessionAnimalRun
+
+    run = SessionAnimalRun(
+        id="r1",
+        session_id="s1",
+        animal_id="a1",
+        box_number=1,
+        sketch_path=r"C:\Users\Khase\Documents\Ephymeris\tasks\GRGL 4-Odor",
+        file_path="",
+        started_at="2026-08-24T12:00:22",
+    )
+    assert _program_name(run) == "GRGL 4-Odor"
 
 
 async def test_adoption_synthesizes_sessions_without_writing_rows(

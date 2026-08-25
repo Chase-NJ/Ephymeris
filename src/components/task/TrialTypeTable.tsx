@@ -50,7 +50,12 @@ import type { StrobeVocabulary } from "@/lib/ws/protocol";
  *
  * The presets seed the row label empty for that reason: "odor 1 (sandalwood)"
  * was a claim about one bench's bottles baked into a shipped constant, which is
- * exactly what this table exists to stop.
+ * exactly what this table exists to stop. Empty is a starting point, not a
+ * finished row — REQUIRED (TSK110), because the name is the only handle every
+ * readout downstream has on the condition: the live sparkline, the learning
+ * curve and a strategy axis are all titled from it, and a nameless one is read
+ * back as whichever channel happened to carry it. TSK111 refuses two rows
+ * under one name for the same reason TSK105 refuses two under one onset code.
  */
 export function TrialTypeTable({
   trials,
@@ -205,15 +210,22 @@ export function TrialTypeTable({
                   <input
                     value={trial.label}
                     onChange={(e) => update(index, { label: e.target.value })}
-                    placeholder="name this condition (optional)"
+                    placeholder="name this condition"
+                    aria-label={`Name for trial type ${index + 1}`}
+                    aria-invalid={problemAt("label")}
                     title={
-                      "Your name for this condition — it reaches the recorded " +
-                      "profile and the live chart titles. Left empty, they fall " +
-                      "back to the channel name. This is deliberately NOT the " +
-                      "rig's channel label: that follows the wiring and is free " +
-                      "to rename, while this is part of the task's record."
+                      "Your name for this condition — required. It reaches the " +
+                      "recorded profile and titles the live sparkline, the " +
+                      "learning curve and the strategy axis, so it is how every " +
+                      "readout refers to this trial type. This is deliberately " +
+                      "NOT the rig's channel label: that follows the wiring and " +
+                      "is free to rename, while this is part of the task's record."
                     }
-                    className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1.5 py-0.5 text-[11px] text-starlight transition-colors placeholder:text-static/40 hover:border-halo focus:border-pulsar focus:outline-none"
+                    className={`min-w-0 flex-1 rounded-sm border bg-transparent px-1.5 py-0.5 text-[11px] text-starlight transition-colors placeholder:text-static/40 focus:outline-none ${
+                      problemAt("label")
+                        ? "border-status-error/60 focus:border-status-error"
+                        : "border-transparent hover:border-halo focus:border-pulsar"
+                    }`}
                   />
                   <GoToggle
                     on={trial.isGo}

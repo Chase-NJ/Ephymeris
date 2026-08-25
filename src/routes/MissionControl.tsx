@@ -38,6 +38,7 @@ import {
   type SessionSnapshot,
 } from "@/lib/sessions/types";
 import { useBoxAccuracies } from "@/lib/sessions/useBoxAccuracies";
+import { metricLabels, useTaskProfiles } from "@/lib/sessions/useTaskProfiles";
 import { useLastRuns } from "@/lib/analytics/useLastRuns";
 import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
@@ -148,7 +149,16 @@ export function MissionControl() {
   // A lit star's colour is its temperature, and its temperature is this
   // animal's pooled rolling accuracy (§6.2) — so the overview answers "who is
   // doing well" without opening a panel.
-  const accuracies = useBoxAccuracies(boxes, ACCURACY_WINDOW);
+  // One fetch per distinct sketch, read by two things that must agree: the
+  // star temperatures below, and the titles on every box's metric strip.
+  const sketchPaths = useMemo(() => boxes.map((b) => b.sketchPath), [boxes]);
+  const profiles = useTaskProfiles(sketchPaths);
+  const accuracies = useBoxAccuracies(boxes, ACCURACY_WINDOW, profiles);
+  const labelsFor = useMemo(() => {
+    const out: Record<string, Record<string, string>> = {};
+    for (const path of new Set(sketchPaths)) out[path] = metricLabels(profiles[path]);
+    return out;
+  }, [sketchPaths, profiles]);
   // Recorded history, for the cage-ships' "most recently ran" anchor — reads
   // through the shared analytics cache, so it costs nothing once Analytics or
   // the rig view has looked at this cohort.
@@ -543,6 +553,7 @@ export function MissionControl() {
                     key={box.box}
                     box={box}
                     busy={busy || !connected}
+                    metricLabels={labelsFor[box.sketchPath] ?? {}}
                     durationMinutes={session?.durationMinutes ?? null}
                     onOpen={() => setFocusedId(box.animalId)}
                     onStart={() => void run(() => startOne(box.box))}
@@ -734,6 +745,7 @@ function clock24(when: Date): string {
 function BoxCard({
   box,
   busy,
+  metricLabels,
   durationMinutes,
   onOpen,
   onStart,
@@ -742,6 +754,10 @@ function BoxCard({
 }: {
   box: SessionBox;
   busy: boolean;
+  /** `liveMetrics` id → the profile's title for it — the tile's metric strip
+   *  shows the condition's name rather than the slot number telemetry sends.
+   *  Empty until the profile arrives, or when the sketch has none. */
+  metricLabels: Record<string, string>;
   durationMinutes: number | null;
   onOpen: () => void;
   onStart: () => void;
@@ -799,7 +815,7 @@ function BoxCard({
           Finished — <span className="text-starlight">{ended.stopReason}</span>
         </p>
       ) : (
-        <MetricStrip box={box.box} metrics={metrics} />
+        <MetricStrip box={box.box} metrics={metrics} labels={metricLabels} />
       )}
     </section>
   );

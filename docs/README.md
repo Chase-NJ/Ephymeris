@@ -384,7 +384,7 @@ Payload shapes are guarded from both sides: the generated `CommandArgsMap`/`Comm
 - **`port.output` is batched at ~20 Hz**, not one message per line, and is never persisted beyond a capped in-memory ring buffer (~2000 lines/port).
 - **Client-side timeouts don't cancel sidecar work.** Default 15 s; `port.flash` gets 300 s and `sketches.refresh` 60 s. The sidecar remains the authority on what actually happened.
 
-### 6.3 The seven that silently corrupt
+### 6.3 The eight that silently corrupt
 
 Each is documented in place with a `[!CAUTION]` in the owning document. They share a property: getting them wrong produces plausible output rather than an error.
 
@@ -397,6 +397,7 @@ Each is documented in place with a `[!CAUTION]` in the owning document. They sha
 | The PNG export's five rules — off-screen not hidden, forced `seen`, `skipAnimations`, cleared pin, 1× scale | [data.md §10.6](data.md) | A figure that looks deliberate but is blank, dimmed, half-drawn or cropped |
 | The rescan's prune acts on **reachable and absent**, never on `exists() == False` alone | [data.md §8.6](data.md#86-pruning--records-the-disk-no-longer-has) | One rescan with the archive drive unplugged erases a cohort's history |
 | Carrying an adoption forward keys on identity **and path**, never identity alone | [data.md §8.7](data.md#87-carrying-adoptions-forward) | Whichever copy of a duplicated run was adopted first keeps the row — 30 runs in the real archive decode only from the other copy |
+| A file's own profile snapshot outranks the live `task.json` | [data.md §8.3](data.md#83-which-profile-decodes-a-run) | A visiting session scored against this rig's edit of a same-named task, under a hash claiming the two runs are comparable |
 
 ### 6.4 Dependency policy
 

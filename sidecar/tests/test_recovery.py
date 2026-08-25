@@ -28,6 +28,19 @@ CORE = {
 CONFIG = {"correction_left": 0, "lazy_escalation": True, "trial_seed": 288577176}
 STROBES = [(101, 0), (249, 500), (103, 900), (248, 1400)]
 
+#: The snapshot a live run carries (`data.md` §4.4) — real enough to parse,
+#: since the point of recovering it is that the other end can.
+PROFILE = {
+    "taskName": "GRGL 2-Odor",
+    "kind": "behavior",
+    "config": [],
+    "strobes": {"101": "ODOR_1_ON"},
+    "liveMetrics": [
+        {"id": "p_correct_1", "label": "P(right well | Go right)", "triggerCode": 101,
+         "successCode": 249, "alternateCode": 248, "windowSize": 20},
+    ],
+}
+
 
 def crash_a_run(session_folder: Path, animal: str = "remy1") -> Path:
     """Write a real header + strobes through the real writer, then 'lose power'
@@ -35,7 +48,10 @@ def crash_a_run(session_folder: Path, animal: str = "remy1") -> Path:
     files = resolve_animal_files(
         session_folder, animal, "2O-Bdisc", "25", datetime(2026, 7, 22, 11, 31, 23)
     )
-    writer = AnimalWriter(files.tsv, files.json, files.mat, dict(CORE), dict(CONFIG))
+    writer = AnimalWriter(
+        files.tsv, files.json, files.mat, dict(CORE), dict(CONFIG),
+        profile_snapshot=PROFILE,
+    )
     writer.open_files()
     for code, ts in STROBES:
         writer.record(code, ts)
@@ -46,6 +62,7 @@ def crash_a_run(session_folder: Path, animal: str = "remy1") -> Path:
 def finalized_document() -> dict:
     """What `finalize` would have produced from the same strobes — the target."""
     doc = {**CORE, **CONFIG}
+    doc["task_profile"] = PROFILE
     doc["stop_reason"] = recovery.RECOVERED_STOP_REASON
     doc["n_events"] = len(STROBES)
     doc["ts_data"] = [[code, ts] for code, ts in STROBES]
@@ -208,3 +225,40 @@ def test_a_recovered_orphan_is_adoptable_by_the_rescan_walk(tmp_path: Path) -> N
 
     entry = recovery.recover_file(tsv)
     assert reader.walk_session_files(tmp_path) == [Path(entry["jsonPath"])]
+
+
+def test_a_recovered_file_is_still_self_describing(tmp_path: Path) -> None:
+    """§4.4 — the recovered `.json` is exactly the file somebody carries to
+    another machine to find out what happened, so it has to keep the
+    declaration that decodes it."""
+    from ephymeris_sidecar.tasks.profile import embedded_profile
+
+    tsv = crash_a_run(tmp_path)
+    recovery.recover_file(tsv)
+
+    document = json.loads(reader.sibling_json(tsv).read_text(encoding="utf-8"))
+    profile = embedded_profile(document)
+    assert profile is not None
+    assert profile.live_metrics[0].id == "p_correct_1"
+
+
+def test_a_snapshot_torn_by_the_crash_is_dropped_not_kept_as_text(
+    tmp_path: Path,
+) -> None:
+    """Half a snapshot is worse than none: every reader downstream would have
+    to defend against a `task_profile` that is a string. The ladder below it
+    (§8.3) still scores the run, so dropping loses nothing but the shortcut."""
+    tsv = crash_a_run(tmp_path)
+    lines = tsv.read_text(encoding="utf-8").splitlines()
+    torn = [
+        line[: len(line) // 2] if line.startswith("# task_profile: ") else line
+        for line in lines
+    ]
+    tsv.write_text("\n".join(torn) + "\n", encoding="utf-8")
+
+    entry = recovery.recover_file(tsv)
+    assert entry["status"] == "recovered"
+    document = json.loads(reader.sibling_json(tsv).read_text(encoding="utf-8"))
+    assert "task_profile" not in document
+    # The data itself is untouched by any of this.
+    assert document["n_events"] == len(STROBES)

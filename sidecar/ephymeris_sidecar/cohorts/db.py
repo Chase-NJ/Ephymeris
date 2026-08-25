@@ -46,7 +46,11 @@ DB_FILENAME = "ephymeris.db"
 #: — the task parameters a run actually used, now that they are operator-set.
 #: v7 added adopted_runs.file_mtime_ns / file_size (`data.md` §8.7) — the stat
 #: an adoption was taken from, so a rescan can skip a file it has already read.
-SCHEMA_VERSION = 7
+#: v8 added run_metrics_cache.params_hash and .scored_profile_hash
+#: (`data.md` §4.4, §8.3) — the parameters a run recorded in its own file, and
+#: the profile it was actually scored with when that came from the file rather
+#: than from resolution.
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -155,8 +159,22 @@ CREATE TABLE IF NOT EXISTS run_metrics_cache (
     file_path      TEXT NOT NULL,
     file_mtime_ns  INTEGER,
     file_size      INTEGER,
+    -- The digest RESOLUTION reached, and half of the freshness key. NULL is
+    -- normal and means nothing resolved before the file was opened.
     profile_hash   TEXT,
     profile_source TEXT NOT NULL,   -- 'snapshot' | 'sketch-current' | 'unavailable'
+    -- The digest the run was actually SCORED with, which is a different
+    -- question: a profile read out of the file itself or inferred from its
+    -- strobes is reached after resolution and never appears above. Keeping only
+    -- the column above meant such a run reported its hash on the pass that
+    -- computed it and NULL on every cached pass after -- so it silently left
+    -- its own profile group the moment the cache warmed.
+    scored_profile_hash TEXT,
+    -- The parameters the FILE recorded, hashed (data.md §4.4). Only ever read
+    -- for a run with no session_animal_runs row of its own -- an adopted
+    -- orphan, which is what a session copied from another rig arrives as.
+    -- NULL for a run whose file carries no profile snapshot to name them.
+    params_hash    TEXT,
     codec_version  INTEGER NOT NULL,
     computed_at    TEXT NOT NULL,
     status         TEXT NOT NULL,   -- 'ok' | 'no-metrics' | 'missing' | 'unreadable'
@@ -289,6 +307,28 @@ def _to_v7(conn: sqlite3.Connection) -> None:
     add_column(conn, "adopted_runs", "file_size", "INTEGER")
 
 
+def _to_v8(conn: sqlite3.Connection) -> None:
+    """v7 → v8: what a run's own file records (`data.md` §4.4, §8.3).
+
+    Two columns on the derived cache. `params_hash` is pure gain and NULL costs
+    nothing — it fills in on the next pass that recomputes a row.
+
+    `scored_profile_hash` needs one repair on top of the column, and it is the
+    reason this migration deletes anything. A row scored from an *inferred*
+    profile recorded its digest nowhere: the existing `profile_hash` column
+    holds what resolution reached, which for those rows is NULL by definition.
+    So they served a hash on the pass that computed them and NULL forever
+    after, dropping out of their own profile group once the cache warmed. The
+    new column fixes that going forward, but only for rows that recompute — and
+    those rows never will, because their freshness key still matches. Deleting
+    exactly them is what un-sticks it. It is a pure cache: the cost is re-reading
+    those files once.
+    """
+    add_column(conn, "run_metrics_cache", "params_hash", "TEXT")
+    if add_column(conn, "run_metrics_cache", "scored_profile_hash", "TEXT"):
+        conn.execute("DELETE FROM run_metrics_cache WHERE profile_source = 'inferred'")
+
+
 def _to_v5(conn: sqlite3.Connection) -> None:
     """v4 → v5: the home-cage grouping label (`cohorts.md` §1).
 
@@ -313,6 +353,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     5: _to_v5,
     6: _to_v6,
     7: _to_v7,
+    8: _to_v8,
 }
 
 

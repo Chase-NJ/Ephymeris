@@ -288,7 +288,11 @@ def _live_metrics(definition, channels, vocab) -> list[dict[str, Any]]:
         onset = vocab.get(trial.onset_strobe)
         if onset is None:
             continue
-        stimulus = trial.label or trial.odor_channel.replace("_", " ")
+        # The operator's name for the condition, which TSK110 requires them to
+        # give: it is what titles the sparkline, the learning curve and the
+        # strategy axis. The channel fallback survives only so a half-finished
+        # definition still compiles for the preview — a saved one carries a name.
+        stimulus = trial.label.strip() or trial.odor_channel.replace("_", " ")
 
         if not trial.is_go:
             withheld = vocab.get("WATER_POKE_NONE")

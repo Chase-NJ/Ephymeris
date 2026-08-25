@@ -147,6 +147,7 @@ SessionAnimalRun {
   "trial_seed": 288577176,
   "host_seed": 288577176,
   "n_events": 2392,
+  "task_profile": { /* the serialized Task Profile — §4.4 */ },
   "ts_data": [[221, 0], [222, 1000], [223, 5001], /* … */ [246, 3523555]]
 }
 ```
@@ -162,10 +163,11 @@ SessionAnimalRun {
 | `trial_seed` | A wire convention, not a profile field | What the **board** reported. Absent if the sketch never emits `SEED\t<value>` |
 | `host_seed` | The CSPRNG draw the app put on the `START` line | What the **app sent**. Differs from `trial_seed` only when the firmware ignored it |
 | `n_events` | `len(ts_data)` | Written once, at finalization |
+| `task_profile` | The Task Profile this run was configured from | **The one nested value in the document** — see §4.4. Absent for a profile-less sketch |
 | `ts_data` | The raw strobe stream | `[code, timestamp_ms]` pairs, elapsed since **that animal's own** session start — the firmware's own convention, untouched, not re-based to wall clock |
 
 > [!CAUTION]
-> **Task-specific fields are merged in flat at the top level**, not nested under a `config` key. That is why a profile's `metadataKey` may not collide with one of the core fields (`rat`, `serial_port`, `session_id`, `sketch`, `stop_reason`, `n_events`, `ts_data`, `trial_seed`, `host_seed`) — a collision would quietly overwrite the core field rather than being rejected. The guard is enforced when the profile is parsed ([tasks.md §3.2](tasks.md#32-config--a-field)).
+> **Task-specific fields are merged in flat at the top level**, not nested under a `config` key. That is why a profile's `metadataKey` may not collide with one of the core fields (`rat`, `serial_port`, `session_id`, `sketch`, `stop_reason`, `n_events`, `ts_data`, `trial_seed`, `host_seed`, `task_profile`) — a collision would quietly overwrite the core field rather than being rejected. The guard is enforced when the profile is parsed ([tasks.md §3.2](tasks.md#32-config--a-field)).
 
 ### 4.2 The `.tsv` write-ahead log
 
@@ -177,6 +179,7 @@ Not a serialization of the document above — a live append-only log with a diff
 # session_id: 2O-Bdisc_25
 # sketch: GRGL_2-Odor
 # correction_left: 0
+# task_profile: {"config":[…],"liveMetrics":[…],"strobes":{…},"taskName":"GRGL 2-Odor"}
 221	0
 222	1000
 223	5001
@@ -187,12 +190,28 @@ Not a serialization of the document above — a live append-only log with a diff
 
 The header is written once, immediately after `START`/`SEED` resolve — before the first strobe arrives, since everything needed is known by then. `stop_reason` and `n_events` aren't knowable yet, so they are appended as a **footer** at clean finalization. **A `.tsv` recovered mid-session is missing only that footer, nothing else.**
 
+The profile snapshot rides in the header too, as one compact JSON line and always last, so a `.tsv` rebuilt by crash recovery (§12) produces a `.json` that is as self-describing as a finalized one — and the recovered file is precisely the one somebody carries to another machine to find out what happened. Recovery reads that one field back as the object it is rather than coercing it like every other header value; a line torn by the crash is **dropped**, not kept as text, because half a snapshot that every reader has to defend against is worse than none.
+
 ### 4.3 The `.mat` mirror
 
-Same field names, written from the identical in-memory dict used to write the JSON — one source of truth serialized twice, not two independent writers that could drift. `ts_data` becomes an `N×2` double array.
+Same field names, written from the identical in-memory dict used to write the JSON — one source of truth serialized twice, not two independent writers that could drift. `ts_data` becomes an `N×2` double array, and `task_profile` becomes a **char array holding JSON** — `jsondecode(task_profile)` in MATLAB gives the structure back. MAT-5 has a struct class, but a profile is a deep, ragged tree of optional keys and nothing downstream reads it as a struct.
 
 > [!NOTE]
 > **A hand-written MAT v5 serializer, not `scipy.io.savemat`.** `scipy` is a large binary wheel and by far the most likely thing to fail at install time on a lab machine maintained by non-technical users. [`sessions/matwriter.py`](../sidecar/ephymeris_sidecar/sessions/matwriter.py) writes Level-5 MAT directly (column-major `N×2` doubles, strings as `miUINT16` char arrays, bools as `miUINT8` with the logical flag `0x02`). It was validated by round-tripping a file through `scipy.io.loadmat` in a throwaway virtualenv that was then deleted, so MATLAB/scipy compatibility is proven while the runtime dependency list stays minimal.
+
+### 4.4 `task_profile` — the file describes itself
+
+The serialized Task Profile the run was configured from, written verbatim into the run's own file. It is the **only nested value** in an otherwise flat document, and the reason it earns that exception is the whole point of this section.
+
+**A run is only as readable as the declaration that decodes it, and until now that declaration never travelled with the data.** A `task.json` lives beside its sketch on one machine. The database snapshot ([§8.3](#83-which-profile-decodes-a-run)) records the same thing and lives on that machine too. So a session copied to a second rig — which in this lab is the *normal* case, not the exception: sessions run on the Windows machines and are analysed elsewhere — could be scored only against whatever sketch of the same name happened to exist there, or inferred from its own strobes. Carrying the declaration inside the file makes the copy decode exactly as the original does, on any machine, forever, with **the same `profile_hash`** — so the copy lands in the same profile group and the same comparability set as the run it came from.
+
+Three consequences worth stating:
+
+- **The hash identity depends on `to_json` round-tripping through `parse_profile`.** It does, and a test pins it across every shipped profile — but anything added to `TaskProfile` must keep it true, or a copied run stops matching the group its origin is in.
+- **The parameters were already in the file; the snapshot is what names them.** They are written flat at the top level (§4.1), so which of a document's fields are *parameters* is a question only the profile answers. With the snapshot beside them a copied run recomputes the same `params_hash` its own rig did — which completes the comparability pair ([§8.3](#83-which-profile-decodes-a-run)) for data this machine never recorded. Without it those runs carried a profile hash and no parameters, and two differently-tuned runs of one task pooled silently.
+- **It costs roughly 10–15 KB per animal file.** A real profile is forty-odd declared fields plus the strobe map and the metrics. Against a session's own `ts_data` that is a fraction of the file, and it buys the file's independence from the machine that wrote it.
+
+A profile-less sketch writes no `task_profile` at all — running a bare `START` is supported ([tasks.md §3](tasks.md)), and an empty snapshot would claim a declaration that never existed.
 
 ---
 
@@ -237,7 +256,7 @@ Finalization is **idempotent** (the first `stop_reason` wins, so a double-stop c
 
 ## 6. The SQLite database
 
-`ephymeris.db`, in the **app data directory** — *not* in the user's `dataDirectory`, which is for browsable session output. Owned by [`cohorts/db.py`](../sidecar/ephymeris_sidecar/cohorts/db.py). **`SCHEMA_VERSION = 6`.**
+`ephymeris.db`, in the **app data directory** — *not* in the user's `dataDirectory`, which is for browsable session output. Owned by [`cohorts/db.py`](../sidecar/ephymeris_sidecar/cohorts/db.py). **`SCHEMA_VERSION = 8`.**
 
 ### 6.1 Tables
 
@@ -250,7 +269,7 @@ Finalization is **idempotent** (the first `stop_reason` wins, so a double-stop c
 | `sessions` | One row per session-flow invocation |
 | `session_animal_runs` | One row per animal per session — the unit Analytics scores |
 | `task_profiles` | **Content-addressed** profile snapshots, keyed by `hash`. Identical profiles store once, so comparability is an indexed equality test rather than a blob comparison |
-| `run_metrics_cache` | Persisted derived summaries. **No foreign key on the run id** — adopted orphans have no run record |
+| `run_metrics_cache` | Persisted derived summaries. **No foreign key on the run id** — adopted orphans have no run record. Carries two profile digests, and they answer different questions: `profile_hash` is what *resolution* reached and is half the freshness key, `scored_profile_hash` is what the run was actually **scored** with ([§8.3](#83-which-profile-decodes-a-run)) |
 | `adopted_runs` | Files the archive walk matched to an animal. Deliberately separate from `sessions`/`session_animal_runs` |
 
 ### 6.2 Indexes
@@ -399,12 +418,25 @@ This is the **only** path by which a pre-Ephymeris archive reaches Analytics, so
 
 | State | Meaning | UI |
 |---|---|---|
-| 🟢 `snapshot` | Decoded with the profile the run actually used | Trustworthy, unmarked |
+| 🟢 `snapshot` | Decoded with the profile the run actually used — this database's copy of it, or **the file's own** ([§4.4](#44-task_profile--the-file-describes-itself)) | Trustworthy, unmarked |
 | 🟡 `sketch-current` | Decoded with today's `task.json` at the recorded sketch path | **Flag: profile may have changed since** |
 | 🟡 `inferred` | No declaration resolved at all; the conditions were read out of the recorded stream itself (`analytics/infer.py`) | **Flag: scored from the strobes alone** |
 | 🔴 `unavailable` | The recorded name resolves nothing **and** the stream presents no recognisable condition — a utility sketch's log, an empty file | **Flag: cannot decode** |
 
-A malformed `task.json` on the fallback path degrades to inference rather than raising.
+So the ladder has four rungs, and two of them need the file open — which is why they live in `_scoring_profile`, after the read, while resolution deliberately runs before any file is touched:
+
+1. **the database snapshot**, resolved already — this rig's record of what decoded the run;
+2. **the file's own snapshot** (§4.4) — the same claim, made by the file instead of by this machine's database. Reported as `snapshot` because that is what it is;
+3. **today's `task.json`** at the recorded sketch path, resolved already;
+4. **inference** from the stream.
+
+> [!CAUTION]
+> **The file's snapshot outranks the live `task.json`, and that ordering is the point.** Both are "a declaration for this sketch"; only one of them is the declaration this run actually used. Ranked the other way, a rig that happens to hold a same-named task scores a visiting file against its own edit of it — silently, and under a `profileHash` asserting the two runs are comparable.
+
+A malformed `task.json` on the fallback path degrades to inference rather than raising, and so does a damaged embedded snapshot: a file with a broken declaration is still a file full of real strobes.
+
+> [!IMPORTANT]
+> **The digest a run is *scored* with is not the digest *resolution* reached, and the cache has to keep both.** Rungs 2 and 4 are reached after resolution returned nothing, so the freshness key's `profile_hash` is NULL for them by definition. The cache stored only that one, so such a run served its hash on the pass that computed it and NULL on every cached pass after — silently leaving its own profile group the moment the cache warmed, taking it out of the strategy space, the learning curves and the parameter-mismatch check. `scored_profile_hash` (schema v8) is the second column; the v8 migration deletes the `inferred` rows written before it, because they would otherwise never recompute — their freshness key still matches.
 
 **Why inference is sound, and what it cannot know.** Every behaviour task this
 lab has ever run shares one firmware lineage and the **append-only strobe
@@ -423,6 +455,21 @@ path therefore always wins; inference is only ever the rung beneath it. A
 condition whose trials were never answered all session has no evidence to name
 its side — it keeps its trial boundary (or *other* conditions would be
 mis-scored) with a deterministic, provably-inert orientation.
+
+**What a run RAN and what decoded it are two questions, and the payload answers
+both.** `sketchName` is what the file itself recorded — the `sketch` field of
+its own document, falling back to the last segment of the resolved path — and
+it is what the Program column, the card chip and every task label print.
+`sketchPath` is where *this install* found a `task.json`, and it is legitimately
+empty for a session recorded on another rig: copy a Windows machine's session
+folders into the cohort's data folder on a Mac, and the archive walk adopts them,
+the name they record matches no sketch in this install's library, and they score
+by **inference** — correctly, since the strobe registry is append-only. Read off
+the path alone every one of those runs displayed as *"unknown sketch"*, which
+claims the record is silent when the file says exactly what it ran. The cost of
+the missing profile is fidelity of decoding, not of identity, so it is carried
+by `profileSource` (the `≈` mark in the session table) and not by anonymising
+the run.
 
 **A sketch name is resolved when a run is read, not when it is adopted.** The path stored at adoption is a cache of that lookup, never a fact about the run. Freezing it would mean a cohort adopted against one install's library paths stays wrong after every update. Verified against the real archive back when the library was a configurable directory: with it removed, 0 of 296 read as scored; restored, 295 of 296, with no re-adoption. Now that the library ships with the app, the failure mode moved from "directory re-pointed" to "sketch dropped from the bundle" — which is why `tests/test_bundled_library_covers_archives.py` exists.
 
@@ -919,7 +966,15 @@ Selecting a session opens it up **directly beneath the session rail** — the su
 - The name order is numeric-aware (`remy2` before `remy10`) and stable across sessions, so the grid stops reshuffling by whichever box happened to start first.
 - The headline's pooled percentages appear **only when every scored run shares one profile** — pooling across tasks mixes denominators that mean different things, so a mixed-task session states the mix and points at the table.
 
-**The table**: `animal · start · end · sampled · per condition {sampled, P(correct)} · program`. Start/end are the run's own local wall-clock times. The condition columns are the union of what the session's runs declare, in authored order — derived from the task profiles, never written down. `P(correct)` **is `pRewarded` — reward delivered, the animal held** — deliberately stricter than §9.8's response accuracy, and the header and legend both say so because the two look interchangeable and are not. Under `minCountedTrials` administered trials a cell dims and carries its n — flagged, never suppressed (§9.5).
+**The table**: `animal · start · end · {sampled, rewarded} for all trials · the same pair per condition · program`.
+
+Every tally on the row is one of a **pair** — how many trials the animal sampled to completion, and what share of those paid out — so the header is two tiers: a group title naming what the pair is about, and under it the two columns themselves. That is what makes a four-odor task readable where eight bare columns were not: the condition's name sits over its pair with room to wrap instead of being truncated into a 72px cell. The pooled pair leads and the conditions follow, so the row reads as *how much did this animal do*, then *how does that split*. The condition groups are the union of what the session's runs declare, in authored order — derived from the task profiles, never written down — and the wrapper scrolls when a rig runs more conditions than the window is wide.
+
+Group titles print the **condition's own name**, taken from the conditioning half of its metric label (`P(right well | Go right)` → `Go right`) — display only, never identity, with the full label on hover. This is the operator's name for the trial type, which the task editor requires (`tasks.md` §11.3).
+
+`rewarded` **is `pRewarded` — reward delivered, the animal held** — deliberately stricter than §9.8's response accuracy, and the legend says so because the two look interchangeable and are not. It draws as a chip on **the heatmap's own diverging ramp** (§11.8): the same bins, centred on chance, so a rate means the same colour here as it does in the cohort heatmap and a four-condition row reads as a pattern before it reads as numbers. Everything structural stays in the neutral stack — the only other colour on the row is the animal's identity dot. Under `minCountedTrials` sampled trials the chip drops to an **outline** rather than a fill: flagged, never suppressed (§9.5), and it no longer prints its n in parentheses because in a paired layout the `sampled` cell beside it *is* that n.
+
+The Program column names what the run **recorded** running (§8.3), with a one-character provenance mark for how it was decoded: none for a snapshot, `†` for today's `task.json`, `≈` for a run scored from its own strobes.
 
 Each card answers, in this order:
 

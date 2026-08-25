@@ -15,6 +15,7 @@ indicator. Validated against `scipy.io.loadmat` during development.
 
 from __future__ import annotations
 
+import json
 import struct
 from datetime import datetime, timezone
 from typing import Any
@@ -84,9 +85,15 @@ def _logical_scalar(name: str, value: bool) -> bytes:
 
 def _char_row(name: str, value: str) -> bytes:
     # MATLAB char arrays are 1×N of UTF-16 code units. Empty string → 1×0.
+    #
+    # N is the CODE UNIT count, not `len(value)`: outside the BMP the two
+    # differ, and a dimension that disagrees with the data it labels produces a
+    # file MATLAB reads as truncated or refuses outright. They agreed for every
+    # value this file used to carry; a task profile carries operator-written
+    # labels, which is exactly where an astral character arrives.
     units = value.encode("utf-16-le")
     pr = _element(_MI_UINT16, units)
-    return _matrix(name, _MX_CHAR, (1, len(value)), pr)
+    return _matrix(name, _MX_CHAR, (1, len(units) // 2), pr)
 
 
 def _double_matrix_2col(name: str, rows: list[tuple[float, float]]) -> bytes:
@@ -114,7 +121,19 @@ def _field(name: str, value: Any) -> bytes:
         # The only array in the schema is ts_data: a list of [code, ts] pairs.
         pairs = [(float(p[0]), float(p[1])) for p in value]
         return _double_matrix_2col(name, pairs)
-    # Fall back to a JSON-ish string rather than failing the whole write.
+    if isinstance(value, dict):
+        # The one nested value a session document carries is the task profile
+        # snapshot (`data.md` §4.4). MAT-5 has a struct class, but a profile is
+        # a deep, ragged tree — arrays of objects with optional keys — and
+        # nothing in the lab's MATLAB reads it as a struct anyway. Written as
+        # JSON text, which `jsondecode(...)` gives straight back.
+        #
+        # NOT `str(dict)`, which is what the old fallback did to it: a Python
+        # repr uses single quotes and bare `True`, so it is not JSON and no
+        # decoder accepts it — the snapshot would have shipped in a form
+        # nothing could read.
+        return _char_row(name, json.dumps(value, sort_keys=True, separators=(",", ":")))
+    # Fall back to a string rather than failing the whole write.
     return _char_row(name, str(value))
 
 

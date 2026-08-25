@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from ..analytics import reader
+from ..tasks.profile import SNAPSHOT_KEY
 from . import matwriter
 
 log = logging.getLogger(__name__)
@@ -55,6 +56,13 @@ _STRING_FIELDS = frozenset({"rat", "serial_port", "session_id", "sketch"})
 
 #: Footer keys `finalize` appends after the data (§7.1) — never header fields.
 _FOOTER_KEYS = frozenset({"stop_reason", "n_events"})
+
+#: Header fields whose value is a JSON document rather than a rendered scalar
+#: (§4.4). Read back as the object they are, so a recovered `.json` is as
+#: self-describing as a finalized one — which is the whole point of the
+#: snapshot: the recovered file is exactly the one likely to be carried to
+#: another machine to find out what happened.
+_JSON_FIELDS = frozenset({SNAPSHOT_KEY})
 
 
 @dataclass(frozen=True)
@@ -90,6 +98,15 @@ def parse_tsv(path: Path) -> ParsedTsv:
                     continue
                 if key == "stop_reason":
                     stop_reason = value
+                elif key in _JSON_FIELDS:
+                    # Dropped rather than kept as text when it doesn't parse.
+                    # A header line torn by the crash that stopped the session
+                    # is the realistic way to get here, and half a snapshot
+                    # that every reader has to defend against is worse than
+                    # none: the ladder below it (§8.3) still scores the run.
+                    decoded = _decode_json(value)
+                    if decoded is not None:
+                        metadata[key] = decoded
                 elif key not in _FOOTER_KEYS:
                     metadata[key] = _coerce(key, value)
                 continue
@@ -180,6 +197,15 @@ def recover_cohort(data_folder: str) -> dict[str, Any]:
         "dataFolder": data_folder,
         "folderMissing": not folder_exists,
     }
+
+
+def _decode_json(value: str) -> Any | None:
+    try:
+        decoded = json.loads(value)
+    except ValueError:
+        log.warning("a .tsv header carries an unparseable JSON field; dropping it")
+        return None
+    return decoded if isinstance(decoded, dict) else None
 
 
 def _coerce(key: str, value: str) -> Any:

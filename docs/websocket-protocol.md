@@ -479,9 +479,14 @@ ISO-8601 strings.
 }                                   // this long after that box's own start
 
 // SessionAnimalRun (data.md §3.2) — written at finalization
+//
+// A run summary carries BOTH names, and they answer different questions:
+// `sketchName` is what the run's own file recorded running, `sketchPath` is
+// where THIS install found a task.json to decode it with. The second is
+// legitimately empty for a session copied from another rig (data.md §8.3).
 {
   "id": "…", "sessionId": "…", "animalId": "…",
-  "boxNumber": 3, "sketchPath": "/…/GRGL_2-Odor",
+  "boxNumber": 3, "sketchPath": "/…/GRGL_2-Odor", "sketchName": "GRGL_2-Odor",
   "filePath": "/…/behavior.json/remy1_….json",
   "startedAt": "…", "endedAt": "…",
   "stopReason": "BF_END_SESSION received"   // dashboard.md §10.4

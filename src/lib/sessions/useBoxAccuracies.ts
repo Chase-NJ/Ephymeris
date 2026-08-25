@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { useSessionStore } from "./context";
-import { getTaskProfile } from "./commands";
 import {
   EMPTY_LIVE_TRIALS,
   advance,
@@ -11,7 +10,6 @@ import {
 } from "./liveTrials";
 import { useStrobeVersion } from "./useLiveTrials";
 import type { SessionBox, TaskProfile } from "./types";
-import { useSidecar } from "@/lib/ws/context";
 
 /**
  * Pooled rolling accuracy per animal, for the constellation's star
@@ -27,34 +25,15 @@ import { useSidecar } from "@/lib/ws/context";
 export function useBoxAccuracies(
   boxes: SessionBox[],
   window: number,
+  /**
+   * Sketch path → its profile, from `useTaskProfiles`. Passed in rather than
+   * fetched here so the route asks the sidecar for each sketch once and both
+   * the star temperatures and the metric titles read the same answer.
+   */
+  profiles: Record<string, TaskProfile | null | undefined>,
 ): Record<string, number | null> {
-  const { client } = useSidecar();
   const store = useSessionStore();
   const version = useStrobeVersion();
-
-  // One profile per distinct sketch, not per box: a group usually runs the
-  // same sketch everywhere, and this keeps it to a single fetch when it does.
-  const sketchPaths = useMemo(
-    () => [...new Set(boxes.map((b) => b.sketchPath))].sort(),
-    [boxes],
-  );
-  const [profiles, setProfiles] = useState<Record<string, TaskProfile | null>>({});
-
-  useEffect(() => {
-    let active = true;
-    void Promise.all(
-      sketchPaths.map((path) =>
-        getTaskProfile(client, path)
-          .then((profile) => [path, profile] as const)
-          .catch(() => [path, null] as const),
-      ),
-    ).then((entries) => {
-      if (active) setProfiles(Object.fromEntries(entries));
-    });
-    return () => {
-      active = false;
-    };
-  }, [client, sketchPaths]);
 
   return useMemo(() => {
     const out: Record<string, number | null> = {};

@@ -156,8 +156,13 @@ class AnalyticsService:
                     "startedAt": run.started_at,
                     "endedAt": run.ended_at,
                     "sketchPath": run.sketch_path,
+                    "sketchName": _program_name(run),
                     "profileHash": entry.profile_hash,
-                    "paramsHash": run.params_hash,
+                    # The row's own record wins; the file's copy answers for a
+                    # run this machine never recorded (§4.4). Comparability is
+                    # the pair, and an adopted run used to be able to offer only
+                    # half of it.
+                    "paramsHash": run.params_hash or entry.params_hash,
                     "profileSource": entry.profile_source,
                     "stale": entry.stale,
                     **entry.summary,
@@ -760,6 +765,7 @@ class AnalyticsService:
                 detail="no file was recorded for this run",
                 profile_hash=resolved.digest,
                 profile_source=resolved.source,
+                params_hash=None,
                 summary=derive.RunSummary(status="missing").to_json(),
                 key=CacheKey("", None, None, resolved.digest, derive.CODEC_VERSION),
             )
@@ -783,6 +789,7 @@ class AnalyticsService:
                 detail=stat.detail,
                 profile_hash=resolved.digest,
                 profile_source=resolved.source,
+                params_hash=None,
                 summary=derive.RunSummary(status="missing", detail=stat.detail).to_json(),
                 key=CacheKey(run.file_path, None, None, resolved.digest, derive.CODEC_VERSION),
             )
@@ -812,6 +819,7 @@ class AnalyticsService:
                 detail=result.detail,
                 profile_hash=resolved.digest,
                 profile_source=resolved.source,
+                params_hash=None,
                 summary=derive.RunSummary(
                     status="unreadable", detail=result.detail
                 ).to_json(),
@@ -834,6 +842,13 @@ class AnalyticsService:
             detail=detail,
             profile_hash=digest,
             profile_source=source,
+            # What the FILE says it ran on. Only ever read for a run this
+            # database has no row for (§4.4) — the row's own `params_hash` wins
+            # where there is one — so this costs a dictionary comprehension on
+            # the runs that would otherwise report no parameters at all.
+            params_hash=task_profile.params_hash(
+                task_profile.recorded_config(result.document, profile)
+            ),
             summary=payload,
             key=key,
         )
@@ -845,27 +860,57 @@ class AnalyticsService:
         *,
         persist: bool = True,
     ) -> tuple[TaskProfile | None, str, str | None]:
-        """The profile a run is actually scored with — the ladder's last rung.
+        """The profile a run is actually scored with — the ladder's last rungs.
 
-        The declared path always wins: a snapshot or a live `task.json` carries
-        the task's own TrialTypes, including conditions the animal never met
-        and the operator's labels. Only when neither resolves — a pre-Ephymeris
-        archive, a deleted sketch folder — is the profile **inferred from the
-        stream itself** (`infer.py`), which every run of this firmware lineage
-        supports because the strobe registry is append-only.
+        Two of the four rungs need the document and therefore live here rather
+        than in `_resolve_profile`, which deliberately runs before any file is
+        opened:
 
-        The inferred profile is remembered content-addressed like any other, so
-        profile *groups* work unchanged: every run of the same legacy task
-        infers the same conditions and lands on the same hash, labelled by the
-        sketch name the document recorded. `persist=False` for the read-only
-        `series` path, which must not leave an uncommitted insert behind the
-        summary pass's batching.
+        1. the database snapshot, resolved already — the profile this rig
+           recorded the run with;
+        2. **the file's own snapshot** (§4.4), which is the same claim made by
+           the file instead of by this machine's database, and is what lets a
+           session recorded on another rig decode exactly as it does at home;
+        3. today's `task.json` at the recorded sketch path — resolved already,
+           and only as trustworthy as that sounds;
+        4. the profile **inferred from the stream itself** (`infer.py`), which
+           every run of this firmware lineage supports because the strobe
+           registry is append-only.
+
+        **The file's snapshot outranks the live `task.json`, and that ordering
+        is the point.** Both are "a declaration for this sketch"; only one of
+        them is the declaration this run actually used. Ranking them the other
+        way would mean a rig that happens to have a same-named task scores a
+        visiting file against its own edit of it — silently, and with a
+        `profileHash` that says the two runs are comparable.
+
+        Both the embedded and the inferred profile are remembered
+        content-addressed like any other, so profile *groups* work unchanged.
+        `persist=False` for the read-only `series` path, which must not leave
+        an uncommitted insert behind the summary pass's batching.
 
         The cache key deliberately keeps the *resolution* digest (None when
-        nothing resolved), not the inferred one: inference is a function of the
-        file's content, which the key already covers via mtime/size, and of
-        `CODEC_VERSION`, which gates the definition of scoring itself.
+        nothing resolved), not the digest reached here: both of these rungs are
+        functions of the file's content, which the key already covers via
+        mtime/size, and of `CODEC_VERSION`, which gates the definition of
+        scoring itself.
         """
+        if (
+            resolved.source == "snapshot"
+            and resolved.profile is not None
+            and resolved.profile.live_metrics
+        ):
+            return resolved.profile, resolved.source, resolved.digest
+
+        embedded = task_profile.embedded_profile(document)
+        if embedded is not None and embedded.live_metrics:
+            # Reported as a snapshot because that is what it is — the profile
+            # the run was configured from, recorded at the time of the run. It
+            # arrived by a different road than the database's copy; when both
+            # exist they are the same bytes and the cheaper road is taken above.
+            digest = self._repo.remember_profile(embedded) if persist else None
+            return embedded, "snapshot", digest
+
         if resolved.profile is not None and resolved.profile.live_metrics:
             return resolved.profile, resolved.source, resolved.digest
         sketch = document.get("sketch")
@@ -1167,6 +1212,28 @@ def _normalize(path: str) -> str:
         return str(Path(path).expanduser().resolve()).casefold()
     except OSError:  # pragma: no cover
         return path.casefold()
+
+
+def _program_name(run: SessionAnimalRun) -> str:
+    """What this run says it ran, as opposed to what this machine can find.
+
+    `sketch_path` answers a different question — *where a `task.json` was
+    resolved* — and it is legitimately empty for a file recorded on another
+    rig: the archive walk adopts the file, the name lookup finds no sketch by
+    that name in this install's library, and the run scores by inference (§8.2)
+    with nothing left to name it. Read off the path alone, every such run
+    displays as "unknown", which reads as *the record is silent* when in fact
+    the file says exactly what it ran.
+
+    The name the document recorded therefore wins, and the path is only the
+    fallback for a run whose record predates carrying one. Split on both
+    separators deliberately: a path written on Windows is read on macOS and
+    vice versa, and `PurePath` on one platform does not split the other's.
+    """
+    recorded = getattr(run, "sketch_name", None)
+    if recorded:
+        return recorded
+    return (run.sketch_path or "").replace("\\", "/").rstrip("/").rpartition("/")[2]
 
 
 def _iso_or_none(value: Any) -> str | None:

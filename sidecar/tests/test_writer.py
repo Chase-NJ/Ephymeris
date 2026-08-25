@@ -23,14 +23,31 @@ CORE = {
 }
 CONFIG = {"correction_left": 0, "correction_right": 0, "lazy_escalation": True}
 
+#: A minimal but real Task Profile — enough of one that `parse_profile` accepts
+#: it, since the point of the snapshot is that the other end parses it.
+PROFILE = {
+    "taskName": "GRGL 2-Odor",
+    "kind": "behavior",
+    "config": [
+        {"metadataKey": "correction_left", "wireKey": "CL", "label": "Correction L",
+         "type": "int", "default": 0},
+    ],
+    "strobes": {"101": "ODOR_1_ON", "249": "WATER_POKE_R"},
+    "liveMetrics": [
+        {"id": "p_correct_1", "label": "P(right well | Go right)", "triggerCode": 101,
+         "successCode": 249, "alternateCode": 248, "windowSize": 20},
+    ],
+}
 
-def make_writer(tmp_path: Path) -> AnimalWriter:
+
+def make_writer(tmp_path: Path, *, profile: dict | None = PROFILE) -> AnimalWriter:
     return AnimalWriter(
         tmp_path / "behavior.tsv" / "remy1.tsv",
         tmp_path / "behavior.json" / "remy1.json",
         tmp_path / "behavior.mat" / "remy1.mat",
         core_metadata=CORE,
         config_metadata=CONFIG,
+        profile_snapshot=profile,
     )
 
 
@@ -100,6 +117,60 @@ def test_config_fields_are_flat_at_the_top_level_not_nested(tmp_path: Path) -> N
     document = writer.finalize("operator stop")
     assert "config" not in document
     assert document["correction_right"] == 0
+
+
+def test_the_document_carries_its_task_profile(tmp_path: Path) -> None:
+    """§4.4 — the file is self-describing, which is what lets a copy of it
+    decode on a machine that has never seen the sketch."""
+    import json
+
+    from ephymeris_sidecar.tasks.profile import SNAPSHOT_KEY, embedded_profile
+
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    writer.record(101, 5)
+    document = writer.finalize("BF_END_SESSION received")
+
+    assert document[SNAPSHOT_KEY] == PROFILE
+    on_disk = json.loads(
+        (tmp_path / "behavior.json" / "remy1.json").read_text(encoding="utf-8")
+    )
+    assert embedded_profile(on_disk) is not None
+    assert embedded_profile(on_disk).live_metrics[0].id == "p_correct_1"
+
+
+def test_the_tsv_header_carries_the_snapshot_on_one_line(tmp_path: Path) -> None:
+    """The write-ahead log is the file a crash leaves behind, and recovery
+    rebuilds a `.json` from it — so the snapshot has to be in the header, and
+    compact enough not to turn the log into a document."""
+    from ephymeris_sidecar.tasks.profile import SNAPSHOT_KEY
+
+    writer = make_writer(tmp_path)
+    writer.open_files()
+    lines = (
+        (tmp_path / "behavior.tsv" / "remy1.tsv")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    snapshot = [line for line in lines if line.startswith(f"# {SNAPSHOT_KEY}: ")]
+    assert len(snapshot) == 1
+    # Last of the header, after the fields a person actually reads.
+    assert lines[-1] == snapshot[0]
+
+
+def test_a_profile_less_sketch_writes_no_snapshot(tmp_path: Path) -> None:
+    """Running a bare `START` is supported (`tasks.md` §3), and a document that
+    carried an empty snapshot would claim a declaration that never existed."""
+    from ephymeris_sidecar.tasks.profile import SNAPSHOT_KEY
+
+    writer = make_writer(tmp_path, profile=None)
+    writer.open_files()
+    document = writer.finalize("BF_END_SESSION received")
+
+    assert SNAPSHOT_KEY not in document
+    assert SNAPSHOT_KEY not in (
+        tmp_path / "behavior.tsv" / "remy1.tsv"
+    ).read_text(encoding="utf-8")
 
 
 def test_finalize_is_idempotent(tmp_path: Path) -> None:

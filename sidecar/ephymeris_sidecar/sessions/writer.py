@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ..tasks.profile import SNAPSHOT_KEY
 from . import matwriter
 
 log = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class AnimalWriter:
         mat_path: Path,
         core_metadata: dict[str, Any],
         config_metadata: dict[str, Any],
+        profile_snapshot: dict[str, Any] | None = None,
     ) -> None:
         self._tsv_path = tsv_path
         self._json_path = json_path
@@ -52,6 +54,11 @@ class AnimalWriter:
         # config fields, merged flat at the top level to match the sample (§5).
         self._core = dict(core_metadata)
         self._config = dict(config_metadata)
+        # The serialized Task Profile this run was configured from (§4.4) — the
+        # one nested value in the document, and the reason a copy of this file
+        # decodes on a machine that has never seen the sketch. None for a
+        # profile-less sketch, which is a supported way to run a bare START.
+        self._profile = dict(profile_snapshot) if profile_snapshot else None
         self._events: list[list[int]] = []
         self._tsv = None  # type: Any
         self._finalized = False
@@ -86,6 +93,14 @@ class AnimalWriter:
         # `# key: value` header comment lines — core fields then config fields.
         for key, value in {**self._core, **self._config}.items():
             self._tsv.write(f"# {key}: {_render(value)}\n")
+        # The snapshot rides in the header too, as one compact JSON line, so a
+        # `.tsv` recovered after a crash (§12) rebuilds a `.json` that is still
+        # self-describing. Written here rather than in the footer for the
+        # reason the rest of the header is: it is known before the first strobe
+        # and the durable file should carry it from the first fsync.
+        if self._profile is not None:
+            line = json.dumps(self._profile, sort_keys=True, separators=(",", ":"))
+            self._tsv.write(f"# {SNAPSHOT_KEY}: {line}\n")
         self._flush()
 
     # --- per-strobe -------------------------------------------------------
@@ -147,9 +162,12 @@ class AnimalWriter:
     # --- internals --------------------------------------------------------
 
     def _document(self, stop_reason: str) -> dict[str, Any]:
-        """The full per-animal document (§5). Core, then flat config, then data."""
+        """The full per-animal document (§5). Core, then flat config, then the
+        profile snapshot, then data."""
         doc: dict[str, Any] = dict(self._core)
         doc.update(self._config)
+        if self._profile is not None:
+            doc[SNAPSHOT_KEY] = self._profile
         doc["stop_reason"] = stop_reason
         doc["n_events"] = len(self._events)
         doc["ts_data"] = [list(pair) for pair in self._events]

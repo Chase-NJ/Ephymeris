@@ -40,30 +40,40 @@ from .model import StageRow, TaskDefinition, TrialTypeDef
 #: and every screen reads it back; a preset that asserted it would be wrong for
 #: everyone but the person who wrote it, and wrong silently.
 #:
-#: `label` is therefore left empty: it is the operator's own words for the
-#: condition, and seeding it would put words in their mouth.
+#: `label` NAMES THE CONTINGENCY, never the substance, and that line is the whole
+#: distinction. "Go right" is a restatement of the row directly below it -- this
+#: odor is answered at the right well -- and is true on every bench; "sandalwood"
+#: is true on one. A name is required (TSK110), so leaving it empty would ship a
+#: preset that arrives with an error against every row; these are a starting
+#: point the operator is free to rename, and renaming one is a task edit.
 _GO_RIGHT = TrialTypeDef(
     odor_channel="odor_line_1",
     onset_strobe="ODOR_1_ON",
     response_channel="right_well",
     reward_channel="fluid_2",
+    label="Go right",
 )
 _GO_LEFT = TrialTypeDef(
     odor_channel="odor_line_3",
     onset_strobe="ODOR_3_ON",
     response_channel="left_well",
     reward_channel="fluid_0",
+    label="Go left",
 )
 
 #: The two extra odors the shaping pool could draw from. Present because the
 #: shaping sketches declared four slots; both shipped with weight 0, so a
 #: preset that instantiates them presents neither until someone raises one.
+#:
+#: Their names carry the odor line because two conditions cannot share one name
+#: (TSK111) -- and the line, unlike the bottle on it, is what this row binds.
 _GO_RIGHT_2 = TrialTypeDef(
     odor_channel="odor_line_2",
     onset_strobe="ODOR_2_ON",
     response_channel="right_well",
     reward_channel="fluid_2",
     weight=0,
+    label="Go right (odor 2)",
 )
 _GO_LEFT_2 = TrialTypeDef(
     odor_channel="odor_line_4",
@@ -71,6 +81,7 @@ _GO_LEFT_2 = TrialTypeDef(
     response_channel="left_well",
     reward_channel="fluid_0",
     weight=0,
+    label="Go left (odor 4)",
 )
 
 #: `applyShapingDefaults()`, transcribed. The values a shaping sketch applied on

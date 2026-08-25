@@ -845,6 +845,13 @@ export interface RunSummary {
   startedAt: string;
   endedAt: string | null;
   sketchPath: string;
+  /**
+   * The program this run RECORDS having been run on — the `sketch` field of its own file, falling
+   * back to the last segment of `sketchPath`. Not the same question as `sketchPath`, which is
+   * where THIS machine found a `task.json` to decode with and is empty for a file copied from
+   * another rig (`data.md` §8.2). Empty only when the file named no sketch at all.
+   */
+  sketchName: string;
   profileHash: string | null;
   /**
    * Hash of the task parameters this run used (`data.md` §6.9). Comparability is the PAIR with

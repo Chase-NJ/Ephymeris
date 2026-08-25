@@ -12,10 +12,20 @@ import type { TelemetryMetric } from "@/lib/sessions/types";
 export function MetricStrip({
   box,
   metrics,
+  labels,
   bare = false,
 }: {
   box: number;
   metrics: TelemetryMetric[];
+  /**
+   * `liveMetrics` id → the profile's title for it (`metricLabels`).
+   *
+   * Telemetry carries the id and nothing else, so without this a row reads
+   * `p_correct_2` — a slot number, which names no condition. Absent (a sketch
+   * with no profile, or one still being fetched) the id is shown, because a row
+   * with a value and no title still says the box is scoring something.
+   */
+  labels?: Record<string, string>;
   /**
    * True inside a section that already provides its own chrome (`StarPanel`'s
    * Live metrics card) — drops the tile-flow margin and divider the strip
@@ -35,17 +45,35 @@ export function MetricStrip({
       className={`flex flex-col gap-2 ${bare ? "" : "mt-3 border-t border-halo pt-3"}`}
     >
       {metrics.map((metric) => (
-        <MetricRow key={metric.id} box={box} metric={metric} />
+        <MetricRow
+          key={metric.id}
+          box={box}
+          metric={metric}
+          label={labels?.[metric.id] ?? metric.id}
+        />
       ))}
     </div>
   );
 }
 
-function MetricRow({ box, metric }: { box: number; metric: TelemetryMetric }) {
+function MetricRow({
+  box,
+  metric,
+  label,
+}: {
+  box: number;
+  metric: TelemetryMetric;
+  label: string;
+}) {
   const history = useMetricHistory(box, metric.id);
   return (
     <div className="flex items-center gap-3">
-      <span className="min-w-0 flex-1 truncate text-[11px] text-static">{metric.id}</span>
+      {/* Titled as well as truncated: the label is a full sentence
+          ("P(right well | orange → right)") and the strip is narrow, so the
+          hover is where the tail of it lives. */}
+      <span className="min-w-0 flex-1 truncate text-[11px] text-static" title={label}>
+        {label}
+      </span>
       <Sparkline history={history} />
       <span className="w-[52px] text-right font-mono text-[12px] tabular-nums text-starlight">
         {metric.value === null ? "—" : metric.value.toFixed(2)}

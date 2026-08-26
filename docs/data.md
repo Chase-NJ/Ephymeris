@@ -405,7 +405,7 @@ This is the **only** path by which a pre-Ephymeris archive reaches Analytics, so
 
 **Two recordings of the animal, not a guess.** A run's animal is written twice at finalization: into the document's `rat` field and into the filename. One real archive has a file where the first is `HmM103` and the second is `HM103` — and with only the document consulted, that run vanishes from HM103's history, which reads as *the animal didn't run that day*. A hole that looks like data is worse than the typo. So when the document's name matches no animal, the file stem is tried — but the stem must be exactly what [§2](#2-naming-conventions) prescribes, checked against the folder on disk rather than assumed, and the token that survives must still match a roster name exactly and case-folded. The document always wins where it matches; no match still means unattributed; and the result reports which recording was used.
 
-**Duplicate copies are one run, not two.** A hand-managed archive commonly keeps a rolled-up copy alongside the per-prefix folders; in one real archive **290 of 296 runs exist twice**. Adopting both would silently double every animal in the heatmap. Identity is the **file stem** — `<animal>_<prefix>_<number>_<date>_<HHMMSS>` is exactly animal-plus-session-plus-start-time — so two files with that stem *are* the same run wherever they sit. Which copy survives is decided by **content, not walk order**: a copy whose document names its `sketch` can be decoded and one that doesn't cannot, so the richer one wins, with the path breaking ties for determinism. In the real archive 30 runs carry `sketch` only in the consolidated copy, so "keep the first found" would have discarded the only usable version of each.
+**Duplicate copies are one run, not two.** A hand-managed archive commonly keeps a rolled-up copy alongside the per-prefix folders; in one real archive **290 of 296 runs exist twice**. Adopting both would silently double every animal in every panel. Identity is the **file stem** — `<animal>_<prefix>_<number>_<date>_<HHMMSS>` is exactly animal-plus-session-plus-start-time — so two files with that stem *are* the same run wherever they sit. Which copy survives is decided by **content, not walk order**: a copy whose document names its `sketch` can be decoded and one that doesn't cannot, so the richer one wins, with the path breaking ties for determinism. In the real archive 30 runs carry `sketch` only in the consolidated copy, so "keep the first found" would have discarded the only usable version of each.
 
 > [!WARNING]
 > **The synthetic run id is keyed on that identity, not on the path.** Which copy wins can legitimately change between scans, so a path-keyed id would mint a *second* row for a run that already had one and leave both — exactly the double-counting the deduplication exists to prevent, reintroduced by the mechanism meant to make rescanning idempotent. Caught by re-running the walk twice against the real archive, where the row count went 296 → 297.
@@ -485,13 +485,17 @@ the run.
 **Cache key:** file path, mtime, size, profile hash, and a **codec version**.
 
 > [!CAUTION]
-> **Bump `CODEC_VERSION` in `derive.py` whenever the maths changes.** Without it, a fixed bug in the derivation keeps serving numbers computed by the old definition, **forever, with no symptom**. It also covers fallback-decoded rows whose meaning changes when a `task.json` on disk changes. It currently sits at **6**.
+> **Bump `CODEC_VERSION` in `derive.py` whenever anything about the payload changes — the maths *or its shape*.** Without it, a cached row keeps serving the old definition **forever, with no symptom**. It also covers fallback-decoded rows whose meaning changes when a `task.json` on disk changes. It currently sits at **8**.
+>
+> **"The maths didn't move" is not an exemption, and that reading has cost once already.** Adding `hits` and `answerSide` to every metric summary (§11.1) changed no number, so the version was left alone — and every run already in a warm cache went on returning a payload with no `answerSide` in it at all. The strategy plane read that as *"no condition says which well it rewards"* and refused to draw, on an archive whose profiles say exactly that. A cache hit is served **verbatim**; the payload's shape is therefore part of the codec.
+>
+> `tests/test_analytics_derive.py` pins the payload's field names against the version as a literal list, so adding or removing one fails the suite with a note to bump both together.
 
 **Every field of that key is answerable from a `stat`, so a cache hit opens nothing.** Worth stating because it was not always true: the indexing pass used to read and parse each file and only *then* build the key, so the persisted cache saved the arithmetic and none of the I/O. On a 444-run archive that was 30 MB pulled across the wire on every dashboard open, on the machine whose archive lives on a network share. Reading is now strictly behind the miss — `stat_run` settles the key, `parse_run` runs only if it doesn't match. Measured on that archive: a warm summary went from ~440 ms to ~10 ms, and from 30 MB to zero bytes.
 
 **Profile resolution is memoized per pass, and deliberately not across passes.** Making that memo outlive the pass would freeze exactly what §8.3's read-time resolution keeps thawed.
 
-**Never delete a cache entry because a file vanished** — mark it stale and keep serving it. A briefly unreachable network share must not erase history from the heatmap. Same principle the backup mirror holds to. That is a rule about the **read** path, which cannot tell a deletion from an unplugged drive; the one operation that can is [§8.6](#86-pruning--records-the-disk-no-longer-has).
+**Never delete a cache entry because a file vanished** — mark it stale and keep serving it. A briefly unreachable network share must not erase history from the curves. Same principle the backup mirror holds to. That is a rule about the **read** path, which cannot tell a deletion from an unplugged drive; the one operation that can is [§8.6](#86-pruning--records-the-disk-no-longer-has).
 
 **A corrupt file caches its negative result** under the same key, so it is not re-parsed on every open, and surfaces as a warning. **A bad file is data, not an error** — one unreadable `.json` must never blank a year of history.
 
@@ -507,7 +511,7 @@ the run.
 
 ### 8.6 Pruning — records the disk no longer has
 
-Adoption ([§8.1](#81-database-first-walk-on-demand)) reconciles one direction: files with no record. The other direction has its own failure, and it is the more misleading of the two — a **record with no file**. Delete a session's folder and nothing in the app ever removes its rows, so [§8.4](#84-caching-and-codec_version)'s keep-the-last-good-summary rule goes on serving that session's numbers into the heatmap and the curves indefinitely. The data is gone and the analysis of it isn't.
+Adoption ([§8.1](#81-database-first-walk-on-demand)) reconciles one direction: files with no record. The other direction has its own failure, and it is the more misleading of the two — a **record with no file**. Delete a session's folder and nothing in the app ever removes its rows, so [§8.4](#84-caching-and-codec_version)'s keep-the-last-good-summary rule goes on serving that session's numbers into the curves indefinitely. The data is gone and the analysis of it isn't.
 
 So the rescan prunes as well as adopts. It is the right and only place for it: the walk is already an explicit user action, and it is the one moment the operator has said *reconcile against what is actually there*. The passive summary path is untouched and still refuses to delete anything — it cannot tell the two cases below apart, and the rescan can.
 
@@ -578,7 +582,7 @@ Everything here is computed from `ts_data` — a flat `[[code, timestamp_ms], �
 | | Definition | Window | Used by |
 |---|---|---|---|
 | **`pWindow`** | last value of the rolling series | `windowSize` as authored | Continuity with Mission Control — the last number the operator actually saw |
-| **`pSession`** | same computation, window widened to the whole session | all counted trials | **Every summary**: heatmap cells, both strategy-space axes, cross-session curves |
+| **`pSession`** | same computation, window widened to the whole session | all counted trials | **Every summary**: both strategy-space axes, the cross-session curves, the session summary |
 
 Widening is done by `dataclasses.replace` on the frozen `LiveMetric`, which reuses the same accumulator, the same forward scan, and the same exclusion rules — so the two differ *only* in window length and cannot drift apart in behaviour.
 
@@ -628,13 +632,13 @@ Wilson rather than the normal approximation because this data lives at small *n*
 | Heatmap | Cell suppressed to a distinct hatch — no band is possible in a cell |
 
 > [!IMPORTANT]
-> The division matters. Keeping the value server-side and suppressing only at the point of display preserves the distinction between *"this session was cut short after three trials"* and *"this session never happened"* — which is most of the point of a cohort heatmap.
+> The division matters. Keeping the value server-side and suppressing only at the point of display preserves the distinction between *"this session was cut short after three trials"* and *"this session never happened"* — which is most of the point of every per-run readout.
 
 ### 9.6 Edge cases — the exact rules
 
 | Case | Rule |
 |---|---|
-| **Zero counted trials** | Emit `null`, **never `0.0`**. Zero percent and "no trials" are opposite claims about an animal. The heatmap renders the no-data treatment; the strategy trail **skips** the session and draws a dashed gap rather than interpolating through a session that produced nothing |
+| **Zero counted trials** | Emit `null`, **never `0.0`**. Zero percent and "no trials" are opposite claims about an animal. The session summary dashes the cell; the strategy trail **skips** the session and draws a dashed gap rather than interpolating through a session that produced nothing |
 | **Profile-less sketch** | Fully supported. Emit `no-metrics` and no metrics. **The run is still listed** — it has a real duration, event count, and stop reason. Do not invent a default metric |
 | **Utility-kind profile** | `kind` is a convention, not a gate. Compute and return the metrics, but mark the run excluded from cohort aggregates by default |
 | **Board disconnected mid-run** | A drop **does** finalize, with `stop_reason: "board disconnected"`. A complete-up-to-the-drop file exists. **Include it**, surface the reason, mark it truncated. A drop at trial 180 of 200 is good data. Distinct from a session with `status: "aborted"`, which never wrote anything |
@@ -644,10 +648,10 @@ Wilson rather than the normal approximation because this data lives at small *n*
 
 ### 9.7 Pooled accuracy — the honest single number
 
-Alongside each declared metric, a run carries **`overall`**: correct trials over scored trials, pooled across every condition. It is what the heatmap, the animal rail, the session rail and the across-session learning curves read — the one metric-derived number defined the same way on every profile (§10).
+Alongside each declared metric, a run carries **`overall`**: correct trials over scored trials, pooled across every condition. It is what the animal rail, the session rail and the across-session learning curves read — the one metric-derived number defined the same way on every profile (§10).
 
 > [!IMPORTANT]
-> **Why this exists, discovered by looking at real output.** A single metric cannot show a side bias. An animal that pokes right on every trial scores ~1.0 on "P(R | Odor 1)" and ~0.0 on "P(L | Odor 3)". A heatmap keyed on the first declared metric therefore paints a **completely bias-locked animal as one of the best in the cohort** — the exact opposite of what the heatmap exists to show. Pooled, that animal sits at chance, which is the truth.
+> **Why this exists, discovered by looking at real output.** A single metric cannot show a side bias. An animal that pokes right on every trial scores ~1.0 on "P(R | Odor 1)" and ~0.0 on "P(L | Odor 3)". Any panel keyed on the first declared metric therefore paints a **completely bias-locked animal as one of the best in the cohort** — the exact opposite of the truth. Pooled, that animal sits at chance, which is it. (This was found in the cohort heatmap, since removed — §11.3 — but the trap belongs to the pooling rule, not to that panel, and every surface that stands one number for a run still depends on it.)
 >
 > This was not in the original design. It surfaced when the first populated dashboard showed a deliberately non-learning animal reading 0.72–0.84 and looking healthy.
 
@@ -740,15 +744,15 @@ The tallies above answer *how often*; the session summary's expanded tile answer
 
 **There is no task filter.** There used to be one, and it existed for a real reason — a real cohort runs shaping before discrimination, and the declared metrics are not comparable across profiles — but it solved the incomparability by hiding part of the archive, and a dashboard where "9 sessions on another task" are invisible looks complete when it isn't. The rule is now split by what actually varies across tasks:
 
-- **The outcome tallies and the engagement ladder are vocabulary-defined** (§9.8, §9.10), identical measurements on every task — so the panels built on them (the combined accuracy figure, effort, outcome mix, the heatmap, the rails) show **every run** and disclose the task instead: the task strip (§11.9), a dashed rule in each trend where the dominant task changes, a task header row on the heatmap, and the task mix in every hover title. What changes across tasks is *difficulty*, and the disclosure is what keeps an accuracy cliff at a boundary reading as a task change rather than a cohort forgetting.
+- **The outcome tallies and the engagement ladder are vocabulary-defined** (§9.8, §9.10), identical measurements on every task — so the panels built on them (the combined accuracy figure, effort, outcome mix, the rails) show **every run** and disclose the task instead: the task strip (§11.9), a dashed rule in each trend where the dominant task changes, and the task mix in every hover title. What changes across tasks is *difficulty*, and the disclosure is what keeps an accuracy cliff at a boundary reading as a task change rather than a cohort forgetting.
 - **The declared metrics remain incomparable**, so the panels that plot them — the two strategy planes — scope *themselves* to one two-condition profile (most-run first) and say what they left out; when the archive holds more than one two-condition task, the plane carries a panel-local switch. The learning-curves panel plots each run's pooled overall accuracy (§9.7) for the same reason: it is the one metric-derived number defined the same way on every profile.
-- The old metric selector is gone with it: the heatmap and rail read pooled overall accuracy (the honest default, §9.7), and the per-condition numbers live where conditions are already side by side — the strategy planes, the session summary, and the per-session curves.
+- The old metric selector is gone with it: the rails read pooled overall accuracy (the honest default, §9.7), and the per-condition numbers live where conditions are already side by side — the strategy planes, the session summary, and the per-session curve's own condition picker.
 
 ### 10.1 Selection is a filter, not a navigation event
 
 This is the design thesis, and everything else follows from it.
 
-Selecting a session **narrows** every panel rather than swapping the view. Hovering an animal highlights its curve, its heatmap row, and its strategy trail *simultaneously*. Clicking a heatmap cell selects both that animal and that session, and every other panel follows.
+Selecting a session **narrows** every panel rather than swapping the view. Hovering an animal highlights its curve, its rail row, and its strategy trail *simultaneously*.
 
 That is what lets one route serve within-session, across-session, and per-cohort questions without tabs — and it is why per-animal identity colour is load-bearing rather than decorative.
 
@@ -781,7 +785,7 @@ A session that recorded nothing is drawn **hollow**, not grey: "nothing to score
 
 One row per animal, grouped by the cohort's groups — since groups are usually the experimental conditions and the comparison is usually between them (names numeric-aware within a group, §11.4's rule). Each row carries the animal's identity colour, a sparkline of its across-session trend — every run, at pooled overall accuracy (§9.7), so the history is the animal's and not one task's — and its latest value in JetBrains Mono. Hover previews, click pins.
 
-**The rail shares its row with the strategy tile and nothing else, and it caps at that tile's height.** It used to be a single grid item beside the *whole* panel stack, and grid items stretch, so a twelve-animal list ending around 450px was drawn on a card that kept going for another 1200px of empty surface. Everything below now spans the full content width instead of being indented behind it — which is what freed the space §11.3's heatmap moved up into.
+**The rail shares its row with the strategy tile and nothing else, and it caps at that tile's height.** It used to be a single grid item beside the *whole* panel stack, and grid items stretch, so a twelve-animal list ending around 450px was drawn on a card that kept going for another 1200px of empty surface. Everything below now spans the full content width instead of being indented behind it.
 
 The cap is CSS, not measurement. The strategy tile has no pixel height — its plane is a square viewBox at `w-full`, so its height is its column width plus chrome and changes with the window and with whether a session is selected. Rather than observe it, the rail is lifted out of flow inside a wrapper that stretches to the row: `max-height: 100%` then resolves against a height the tile has already set, and a rail contributing **zero** height cannot stretch the row it is trying to match. Under the cap the height stays `auto`, so a two-animal cohort gets a compact card and a ragged bottom edge rather than a tall empty one. Past the cap the list scrolls, with the "Animals" heading staying put.
 
@@ -805,13 +809,13 @@ It deliberately does **not** rescan: for a session this app ran, the record and 
 
 ### 10.5 The reveal
 
-Data appears rather than blinking into place: the heatmap fills **column by column in session order**, per-animal sparklines draw left to right, and the rewarded-accuracy line draws with them. It replays on the two events that mean the data underneath is genuinely different — a cohort swap and a rescan — and never on a hover or a session selection.
+Data appears rather than blinking into place: per-animal sparklines draw left to right and the rewarded-accuracy line draws with them, both in session order. It replays on the two events that mean the data underneath is genuinely different — a cohort swap and a rescan — and never on a hover or a session selection.
 
-This is not decoration. **The heatmap's x-axis *is* time, so filling it in time order says what the axis means before a single label is read.**
+This is not decoration. **These x-axes *are* time, so filling them in time order says what the axis means before a single label is read.**
 
 The reveal is **armed by visibility**: a panel below the fold holds its initial state until it is on screen, then plays once. A line that draws itself where nobody is looking plays to an empty room.
 
-Since the heatmap was promoted to just under the rail row (§11.3) it is usually on screen at arrival, so its column-by-column fill now plays alongside the strategy tile and learning curves rather than waiting to be scrolled to. Nothing had to change for that — the gate is "is it visible", and now it is — but it does mean the panel most worth watching fill is the one the reader is most likely to catch.
+The reveal's gate is "is it visible", so what plays on arrival is whatever the first screen holds — today the rail's sparklines and the trends, since the heatmap that used to own that row is gone (§11.3).
 
 > [!WARNING]
 > **A line draws on by being wiped, never with `pathLength`** (`components/charts/DrawOn.tsx`). Framer Motion implements `pathLength` by normalising the path to length 1 and animating `stroke-dasharray`, which the browser resolves in *user* space — while `vector-effect="non-scaling-stroke"`, which every chart here needs, paints that dash in *screen* space. An upscaled chart therefore **finishes** its animation holding a dash far shorter than the line it should cover, settling as disconnected chunks whose gaps fall in arbitrary places.
@@ -828,8 +832,8 @@ One **Export PNG** button in the header action row saves the panels on screen as
 
 The sheets live in `components/analytics/report/` and **mount the existing panel components with the existing props**. They choose arrangement and nothing else; there is no second implementation of any chart, so an exported figure cannot drift away from the screen it claims to depict.
 
-- **Cohort sheet** — the animal rail beside the strategy space and learning curves, then the heatmap on its own full-width row, then rewarded and response accuracy stacked full width (§11.5's vertical comparison only survives if a session sits above itself), then effort and outcome mix. Same order as the screen, which is the point.
-- **Session sheet** — the animal rail beside the within-session strategy walk and the trial-axis learning curves, then the per-animal session summary two-up. No across-session trends and no heatmap: "just this session" is what it is for. The rail stays because it is the colour→animal legend the other panels depend on, and its sparklines place the session in each animal's history.
+- **Cohort sheet** — the animal rail beside the strategy space and learning curves, then rewarded and response accuracy stacked full width (§11.5's vertical comparison only survives if a session sits above itself), then effort and outcome mix. Same order as the screen, which is the point.
+- **Session sheet** — the animal rail beside the within-session strategy walk and the trial-axis learning curves, then the per-animal session summary two-up. No across-session trends: "just this session" is what it is for. The rail stays because it is the colour→animal legend the other panels depend on, and its sparklines place the session in each animal's history.
 
 Both carry a masthead (cohort, task, metric, date range, export timestamp), `summary.warnings`, and the §10.4 footnote. A figure that outlives the app needs its provenance more than the screen does — a sheet generated while the cohort's data folder was unreachable is showing the last good read, and one that doesn't say so is a lie on paper.
 
@@ -842,7 +846,7 @@ Five things are load-bearing, and getting any of them wrong yields a **plausible
 >
 > **`useRevealOnView` is forced true inside a sheet** (via `report/context.ts`). Panels gate their *data* on `seen`, not just their motion, so an honest `useInView` off-screen answers "no" forever and exports a page of empty panels.
 >
-> **`MotionConfig skipAnimations`, never `MotionConfig transition`.** Every reveal here sets its transition *inline* — the heatmap staggers per column, `ChartDots` delays each dot by its x, `DrawOn` runs a 0.9s wipe — and an inline transition wins the merge against a `transition` default, so that lever cannot make the sheet settle. `skipAnimations` is checked at the animation driver after transitions resolve and zeroes `delay` as well as duration. It is the other half of forcing `seen`, not a substitute: `seen` picks what to animate *towards*, this collapses how long getting there takes.
+> **`MotionConfig skipAnimations`, never `MotionConfig transition`.** Every reveal here sets its transition *inline* — `ChartDots` delays each dot by its x, `DrawOn` runs a 0.9s wipe — and an inline transition wins the merge against a `transition` default, so that lever cannot make the sheet settle. `skipAnimations` is checked at the animation driver after transitions resolve and zeroes `delay` as well as duration. It is the other half of forcing `seen`, not a substitute: `seen` picks what to animate *towards*, this collapses how long getting there takes.
 >
 > **A pinned animal is cleared for the duration and restored after.** `getHighlightedAnimal()` falls back to the pin, which — unlike a hover — survives. With one live, the strategy planes and learning curves drop every other animal to `opacity 0.18` and the accuracy trends fade the pooled figure: the export would come out mostly blank while looking deliberate.
 >
@@ -862,9 +866,15 @@ One robustness note: `requestAnimationFrame` does not fire while the window is h
 
 The panel that separates *learning* from *being lucky*. An animal at 70% correct looks identical whether it is discriminating imperfectly or responding to one side on most trials and getting the easy half right. A learning curve cannot separate those two; this plot separates them by construction.
 
-For a profile declaring exactly two metrics, each session-animal pair becomes one point: **x** = `pSession` of `liveMetrics[0]`, **y** = `pSession` of `liveMetrics[1]`.
+Each session-animal pair becomes one point: **x** = fraction correct pooled over every condition answered at one well, **y** the same at the other.
 
-**The plane scopes itself** (§10): of the archive's two-condition profiles it shows the most-run, named in the title; when more than one exists, a panel-local segmented switch swaps the plane — a GRGL point and an EZ-variant point on shared axes remain a category error even though both declare two metrics. Runs it cannot plot are counted below the frame, never silently absent. The within-session panel (§11.1's twin at trial resolution) scopes the same way from the selected session's own runs.
+**The plane scopes itself, and says what it is scoped to** (§10). A panel-local **profile picker** lists every task profile the cohort's data actually contains — most-run first, each with its run count and how many conditions fold onto the two axes — and the most-run plottable one is selected by default. A GRGL point and an EZ-variant point on shared axes remain a category error even when both fold to the same two sides, which is why the scope is one profile and not one *shape*.
+
+**The list is drawn from the runs, not from a list of tasks the app knows.** A cohort holds whatever it holds: sessions recorded on this rig, sessions copied from another and decoded from their own embedded snapshot ([§4.4](#44-task_profile--the-file-describes-itself)), and runs whose conditions were inferred from the strobes because no profile resolved ([§8.3](#83-which-profile-decodes-a-run)). All three are real profiles with real runs and all three are in the picker.
+
+**A profile that cannot be plotted is listed and disabled, with its reason** — never omitted. Hiding it answers *"where is my shaping task"* with an absence, which reads as a hole in the archive rather than as a property of the task. Runs on other profiles are counted below the frame for the same reason.
+
+The within-session panel (§11.4, this plane's twin at trial resolution) picks the same way, over the profiles that session actually ran, ordered by how many of its runs each holds — the cohort's most-run task may not be in the session at all.
 
 **The reading key is folded.** The region/axis prose (`StrategyNote`) sits behind a `how to read this` disclosure — the graph-tile motif shared with the learning curves — because a chart's key is useful once per reader and was standing taller than the plane. The fold is education only: data disclosures ("N runs on other tasks") stay outside it, and report sheets render the key open with the toggle hidden, since paper cannot be clicked.
 
@@ -878,7 +888,13 @@ For a profile declaring exactly two metrics, each session-animal pair becomes on
 Distance from the anti-diagonal is discrimination strength; position along it is which side the animal favours. A **chronological trail** connects an animal's sessions, opacity ramping from dim (oldest) to full, latest drawn larger.
 
 > [!IMPORTANT]
-> **Axis assignment comes from the profile's authored metric order.** `liveMetrics[0]` is x, `liveMetrics[1]` is y. Reordering a `task.json`'s metrics **silently transposes every historical plot**, so authored order is load-bearing and must be treated as part of the profile's identity.
+> **The axes are SIDES, not conditions** (`derive.strategy_axes`, `view.strategyAxes`). x is every condition answered at one well, y every condition answered at the other, pooled over integers — sum hits, sum counted — so a four-odor task reads on the same two axes a two-odor task does.
+>
+> This used to be `liveMetrics[0]` against `liveMetrics[1]`, which was fine while every task declared exactly two conditions and **silently blanked both strategy panels for every task that declared more**. A four-odor session got no plane at all, on precisely the plot that answers whether the animal is discriminating or picking a side.
+>
+> Which side is x is still decided by **authored metric order** — x takes the side of the first declared metric — so a two-condition profile keeps exactly the orientation it always had and no familiar plot transposes. Reordering a `task.json`'s metrics can still swap the axes, so authored order remains part of the profile's identity.
+>
+> A condition whose answer the profile cannot prove has no axis and is left out; a **withhold** condition is never an axis, because it is the absence of an answer and has no opposing side. A profile that cannot be split into two opposing answers has no plane, and the panel says which of those cases it is.
 
 <details>
 <summary><strong>Why not a signal-detection ROC</strong></summary>
@@ -887,7 +903,9 @@ The textbook framing plots hit rate against false-alarm rate, putting chance on 
 
 That transform requires knowing that one metric's `successCode` and the other metric's `alternateCode` are **the same physical response**. `LiveMetric` carries `trigger_code`, `success_code`, and `alternate_code` and declares no relationship whatsoever between the response codes of different metrics. Nothing in a task profile says that `WATER_POKE_R` in one metric is the same port as `WATER_POKE_R` in another — that is a fact about the rig, inferred from a shared integer.
 
-Plotting the values as authored requires no such inference, works for any two-metric profile, and is wrong in no case. The ROC form would be more familiar to a reviewer and occasionally wrong, which is the worse trade.
+Plotting the values as authored requires no such inference, works for any profile that can be split into two opposing answers, and is wrong in no case. The ROC form would be more familiar to a reviewer and occasionally wrong, which is the worse trade.
+
+Note that folding N conditions onto two sides does **not** reintroduce that inference. The side comes from each metric's own `successCode` resolved through the profile's own `strobes` map — a fact the profile states about itself — never from comparing one metric's codes against another's.
 
 </details>
 
@@ -919,41 +937,32 @@ P(correct) over time, at whichever resolution the session selector implies.
 
 | Scope | x axis | y | Source |
 |---|---|---|---|
-| One session | counted trial index | rolling P(hit) at the authored `windowSize`, one chart per condition any of the session's runs declares | the rolling series |
+| One session | counted trial index | rolling P(hit) at the authored `windowSize`, **one chosen condition** | the rolling series |
 | All sessions | each animal's own run ordinal | pooled overall accuracy per run (§9.7), one chart | one point per run |
 
-Across sessions the panel is **one chart of overall accuracy over every run, whatever task** — "how is this animal doing" is a question about the animal, and per-condition histories per task would be a wall of sparse charts (the strategy space carries the per-condition story). Within a session the charts are the union of the session's declared conditions, so a mixed-task session grows charts rather than hiding runs.
+Across sessions the panel is **one chart of overall accuracy over every run, whatever task** — "how is this animal doing" is a question about the animal, and per-condition histories per task would be a wall of sparse charts (the strategy space carries the per-condition story).
+
+Within a session it is **one condition at a time, chosen from a picker** over the union of what the session's runs declare — so a mixed-task session offers every condition rather than hiding the runs it cannot merge. The picker names conditions by the operator's own words (the conditioning half of the metric label, which the task editor now requires them to fill in — `tasks.md` §11.3); the full metric sentence stays in the frame's footer.
+
+> This drew **one chart per condition, stacked**. That was fine for the two-odor task it was written against and became a column of four 168px plots the moment the lab ran four odors — each a sixth of the tile, none of them readable, and the tile taller than the panel beside it. The conditions are mutually exclusive readings of one axis, so they are a *selection*, not a series: one at a time, at a size worth looking at.
 
 One line per animal in its identity colour; the highlighted animal gains weight, the rest drop to a dim opacity. Chance at 0.5, dashed. A Wilson band behind each line, drawn at low opacity so six overlapping bands stay readable.
 
 > [!IMPORTANT]
 > **The x axis is trial index, not time.** `timestamp_ms` is elapsed since that animal's own start, animals within a session start minutes apart, and stream `t=0` trails `started_at` by the handshake. **Any plot aligning several animals on a shared time axis would be quietly wrong.**
 
-### 11.3 The cohort heatmap
+### 11.3 The cohort heatmap — removed
 
-Rows are animals grouped by group (name order numeric-aware within a group, §11.4's rule); columns are **every session in chronological order**; each cell is that run's pooled overall accuracy (§9.7) — fraction correct at whatever that animal was doing that day. It answers "who is learning and who is stuck" across a whole cohort in about two seconds, which no line chart does.
+A grid of animals × sessions, each cell a run's pooled overall accuracy on the diverging ramp. **Removed from both scopes and from the export sheets.**
 
-**A task header row above the grid marks where the dominant task changes**, with a dashed rule dropped through the columns at each boundary, and every cell's hover names its run's task. This is what lets all sessions share one colour scale honestly: the scale means "fraction correct", the header says at what, and a column of suddenly-worse cells under a new label reads as the task change it is rather than a performance collapse. (The panel used to solve this by scoping its columns to the selected task and dropping the rest — which traded one misreading for a surface that looked complete while hiding sessions.) A session that mixed tasks is marked `+` on its header segment.
+It was the fastest way to read "who is learning and who is stuck" across a whole cohort, and it is worth recording what its removal costs so nobody rebuilds it by accident: no panel now answers that question in one glance, and the cross-selection it offered — click a cell to select that animal *and* that session — is gone with it. The animal rail's sparklines and the session rail carry the per-animal and per-session views separately.
 
-The heatmap is also a selector: clicking a cell selects that animal and that session, a row header selects the animal across all sessions, a column header selects the whole session.
+What survives is the part other panels had come to depend on:
 
-**It sits directly under the rail row, spanning the full content width.** It is the one panel whose width is set by how much archive there is rather than by its container — fixed pixels per session — so it is the one with something to do with the room, and the ~236px the capped rail freed (§10.3) is real. That is a delay, not a reprieve: the width still grows with session count, so a fifty-session cohort scrolls sideways regardless.
+- **The diverging ramp** (§11.8) is still the app's scale for a proportion centred on chance. `SessionRail` colours a session mark with it and the session summary's rate cells are chips on it, so a rate means the same colour wherever it appears.
+- **`overall`** (§9.7) is still computed and is still what the animal rail and the across-session curves read. It was introduced *because* of the heatmap's bias trap, and that reasoning holds wherever a single number stands for a run.
 
-**Four cell states that must never be confused:**
-
-| State | Treatment |
-|---|---|
-| **Scored** | Filled from the diverging ramp, value in JetBrains Mono |
-| **Below chance** | A *different hue*, not merely a lighter fill |
-| **Too few trials** | Distinct hatch, no fill, `n` shown |
-| **Absent** — the animal did not run | **Outline only, no fill** |
-
-> [!CAUTION]
-> **Absent must never render as a low fill.** "Didn't run" rendered as a pale cell reads as "got everything wrong," which inverts the meaning of the single most scannable panel in the app. The chance-level fill sits ΔE 15.9 from the empty-cell surface, so a chance cell and an absent cell are unambiguous side by side.
-
-Below-chance getting its own hue rather than a fainter one is why the ramp is **diverging** rather than sequential: below chance is a qualitatively different finding, not a smaller quantity, and frequently means the animal learned the reverse contingency.
-
-Values are shown **in the cell**, in mono, with the label colour flipping between Starlight and Void at the ramp's lightness threshold so every bin clears WCAG AA.
+The pivot that fed it (`(animalId, sessionId) → Cell`, with its scored / too-few / absent trichotomy and the most-counted duplicate rule) went with it. What it decided is still decided where it is still asked: the session summary flags a thin cell against `minCountedTrials`, and a session that produced nothing still renders as a gap rather than a zero (§9.5, §9.6).
 
 ### 11.4 The session summary
 

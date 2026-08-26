@@ -273,7 +273,7 @@ Talks to the sidecar over the WebSocket only.
 | `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view |
 | `components/debug/` | Constellation landing, per-box detail, scrollback, flash dialog, state badges, utility controls |
 | `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, journey rail, placement banner, and `ConfigFields` (the one grouped renderer for a profile's `config`) |
-| `components/analytics/` | The Observatory's panels: rails, heatmap, learning curves, strategy space, trends, summaries |
+| `components/analytics/` | The Observatory's panels: rails, learning curves, strategy space and its profile picker, trends, summaries |
 | `components/analytics/report/` | The PNG export: composed cohort/session sheets built from the panels above, and the capture and save path ([data.md §10.6](data.md)) |
 | `components/charts/` | Shared chart primitives (`UnitChart`, `ChartFrame`, `ChartDots`, `DrawOn`) |
 
@@ -320,7 +320,19 @@ The interpreter resolves to `sidecar/.venv` unless `EPHYMERIS_SIDECAR_PYTHON` ov
 
 ## 5. Test map
 
-**765 sidecar tests · 2 Rust tests · no frontend test runner.**
+**853 sidecar tests · 2 Rust tests · 53 frontend unit tests.**
+
+**Frontend** — `npm run test`, or as the third leg of `npm run check`.
+
+| Test file | Tests | Covers |
+|---|---:|---|
+| `src/lib/tasks/topology.test.ts` | 23 | The condition collapse and its guard, `correctWellOf`'s refusal to guess, `liveConditionId`'s trial boundary and its four states |
+| `src/lib/tasks/graphLayout.test.ts` | 20 | Node measurement, the derived abort band's clearance in both hosts at 1–6 conditions, the fan fallback's spacing, height constant in N |
+| `src/lib/analytics/view.test.ts` | 10 | The strategy plane's axes: N conditions folding onto two sides, pooling over integers rather than rates, the withhold that is never an axis, and the three kinds of no-plane |
+
+Every assertion in these was **mutation-checked**: the original defect was reintroduced and the suite confirmed to fail (12 failures for the constant abort band, 4 for the decoding shortcuts). One hole surfaced that way and was closed — a `successCode ?? alternateCode` fallback is inert against a no-go fixture and only lies when the success code is *unreadable*, which now has its own case.
+
+**Sidecar**
 
 | Test file | Tests | Covers |
 |---|---:|---|
@@ -437,7 +449,7 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 <tr><th>#</th><th>Item</th></tr>
 <tr><td><b>26</b></td><td>
 
-**The Observatory at real-archive scale — rendered, not yet judged.** It *does* render the lab's real archive (50 sessions × 6 animals, 295 of 296 runs scored) and nothing errored. What hasn't happened is anyone looking at it with a scientist's eye. Three things are known-marginal at that scale and were only ever designed against an 18-session synthetic set: heatmap cell density at 50 columns, session-selector length, and the six-colour ramp repeating past six animals. A **second** cohort sharpens all three — 30 sessions × **12 animals**, so the ramp repeat is guaranteed, and its profile declares exactly **one** live metric, making the single-condition strategy space the normal case rather than an edge.
+**The Observatory at real-archive scale — rendered, not yet judged.** It *does* render the lab's real archive (50 sessions × 6 animals, 295 of 296 runs scored) and nothing errored. What hasn't happened is anyone looking at it with a scientist's eye. Two things are known-marginal at that scale and were only ever designed against an 18-session synthetic set: session-selector length, and the six-colour ramp repeating past six animals. A **second** cohort sharpens both — 30 sessions × **12 animals**, so the ramp repeat is guaranteed, and its profile declares exactly **one** live metric, which is now a *named* state in the strategy picker ("one condition — a plane needs two opposing answers") rather than a blank panel. (The third, heatmap cell density at 50 columns, went with the heatmap — `data.md` §11.3.)
 
 </td></tr>
 <tr><td><b>29</b></td><td>
@@ -452,7 +464,7 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 </td></tr>
 <tr><td><b>6</b></td><td>
 
-**No frontend test runner or linter.** `tsc --noEmit` is the entire automated frontend check — no vitest, jest, eslint, prettier, or biome, and no test file anywhere under `src/`. The wire mirrors are guarded by the contract test, so the highest-risk surface is covered; but store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`), the session flow's step transitions, and `lib/tasks/topology.ts` are untested code paths.
+**The frontend's test coverage is the pure layer and nothing else.** Vitest runs `src/lib/**` — `tasks/topology.ts` and `tasks/graphLayout.ts` are pinned (43 tests, and each assertion was mutation-checked by reintroducing the bug it exists for). Everything stateful is still unverified: store logic (`lib/sessions/store.ts`, `lib/hardware/store.ts`), the session flow's step transitions, and every component. No linter — no eslint, prettier or biome. `tsc --noEmit` remains the only check over the other ~90% of `src/`.
 
 </td></tr>
 </table>

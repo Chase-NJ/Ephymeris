@@ -373,6 +373,9 @@ export type CountKey =
 export interface TaskNode {
   id: string; label: string; kind: NodeKind;
   column: number; row: number;          // a 100-wide authored frame
+  lane?: "fan" | "floor";               // the renderer places these (§4.11)
+  variants?: readonly Condition[];      // a collapsed node's identities (§4.10)
+  multiplicity?: number;
   detail?: string;
   labelAnchor?: "below" | "right" | "above";
   governedBy: readonly string[];        // config `group` names
@@ -466,21 +469,23 @@ usable = has("LIGHTS_ON") &&
 
 </td></tr>
 
-<tr><td><b>3</b></td><td><b>Odor fan-out</b></td><td><code>conditions.length > 0</code></td><td>
+<tr><td><b>3</b></td><td><b>The odor node</b></td><td><code>conditions.length > 0</code></td><td>
 
-One node per condition at `COL.odor`, rows `centredRows(n, 1.6)`, `entryNames: [strobeName]`, governed by *Trial pool · Anti-bias selection · Correction trials* + `STAGES`. Otherwise a single generic `odor` node on the spine with no entry names.
+**One** node at `COL.odor` on the spine carrying every condition as `variants` and **all** their strobe names as `entryNames`, governed by *Trial pool · Anti-bias selection · Correction trials* + `STAGES` (§4.10). It is labelled after the single condition when there is one and generically ("Odor") when it stands for several — naming it after the first would read as *this node IS Odor 1* on a task presenting four.
+
+Falls back to one node per condition, `lane: "fan"`, when [`armsCongruent`](#410-one-odor-node-n-identities) is false. With no conditions at all, a single generic `odor` node with no entry names.
 
 </td></tr>
 
 <tr><td><b>4</b></td><td><b>The two early aborts</b></td><td><code>has("ODOR_UNPOKE_EARLY")</code></td><td>
 
-One firmware code, **two** edges: `abort-pre-odor` ("Let go", from `await-poke`, `countKey: "pokeAborted"`) and `abort-sampling` ("Left early", one edge per arm, `countKey: "aborted"`). Distinguished downstream by whether an odor-on code preceded. Both have empty `entryNames` — nothing puts the live token there.
+One firmware code, **two** edges: `abort-pre-odor` ("Let go", from `await-poke`, `countKey: "pokeAborted"`) and `abort-sampling` ("Left early", from the odor node, `countKey: "aborted"`). Distinguished downstream by whether an odor-on code preceded. Both have empty `entryNames` — nothing puts the live token there.
 
 </td></tr>
 
 <tr><td><b>5</b></td><td><b>Sample</b></td><td>always</td><td>
 
-`sample` ("Unpoke", entry `ODOR_UNPOKE`, governed by `STAGES`); one edge per arm, `countKey: "administered"`.
+`sample` ("Unpoke", entry `ODOR_UNPOKE`, governed by `STAGES`); `countKey: "administered"`.
 
 </td></tr>
 
@@ -533,14 +538,13 @@ Declared as an ordered `OutcomeSpec[]` (best → worst) and filtered by `needs()
 
 ### 4.6 The canonical graph
 
-What a two-odor discrimination profile with the full vocabulary produces:
+What a discrimination profile with the full vocabulary produces — **at any number of conditions**, because the conditions are one node (§4.10):
 
 ```mermaid
 flowchart LR
     start(["💡 Light<br/><i>LIGHTS_ON</i>"])
     poke(["👃 Poke<br/><i>ODOR_POKE</i>"])
-    o1(["Odor 1<br/><i>ODOR_1_ON</i>"])
-    o3(["Odor 3<br/><i>ODOR_3_ON</i>"])
+    odor(["Odor ▮▯<br/><i>ODOR_n_ON — one node, N identities</i>"])
     samp(["Unpoke<br/><i>ODOR_UNPOKE</i>"])
     off(["Light off<br/><i>LIGHTS_OFF</i>"])
     ans{{"Answer<br/><i>WATER_POKE_L/R</i>"}}
@@ -556,8 +560,8 @@ flowchart LR
     rep(["Repeat<br/><i>INVALID_TRIAL</i>"])
 
     start -- "pokes" --> poke
-    poke --> o1 & o3
-    o1 & o3 --> samp
+    poke -- "holds" --> odor
+    odor -- "samples" --> samp
     samp --> off --> ans
     ans --> rew & hold & wrong
     off --> none
@@ -566,12 +570,12 @@ flowchart LR
 
     start -- "window elapses" --> lazy
     poke -- "releases early" --> ab1
-    o1 & o3 -- "leaves early" --> ab2
+    odor -- "leaves early" --> ab2
     lazy & ab1 & ab2 --> rep
     rep -. "re-present" .-> start
 ```
 
-The aborts hang below the states they leave from and converge on `Repeat`; the outcomes fan right from `Answer` and converge on `ITI`.
+The aborts hang below the states they leave from and converge on `Repeat`; the outcomes fan right from `Answer` and converge on `ITI`. The three edges into and out of the odor node carry their labels — *holds*, *samples*, *leaves early* — which they could not while N copies of each collided around a fan-out.
 
 ### 4.7 Worked example — what a partial vocabulary costs
 
@@ -612,8 +616,60 @@ Walks `codes` **newest → oldest**, resolves each raw code through `strobes`, u
 |---|---|
 | `nodesGovernedBy(model, group)` | `model.nodes.filter(n => n.governedBy.includes(group))`; `[]` for `null`. Drives the hover highlight from a parameter group |
 | `nodeIndexByName(model)` | `Map<entryName, nodeId>` |
+| `liveConditionId(model, strobes, codes)` | Which condition the **current trial** is presenting (§4.10) |
+| `correctWellOf(successName)` | The answer a condition rewards, or `null` (§4.10) |
+| `armsCongruent(conditions)` | Whether the conditions can honestly be one node (§4.10) |
 | `GROUP_ORDER` | The canonical parameter-group order: *Session · Trial pool · Trial timing · Holds & windows · Stage 0…4 · Correction trials · Abstention penalty · Reward volume · Anti-bias selection* |
 | `orderGroups(groups)` | Known groups first by rank, unknown last, ties by `localeCompare` |
+
+### 4.10 One odor node, N identities
+
+The conditions used to fan out as N nodes stacked around the spine. They no longer do, and the reason is not that the fan collided (it did — at four conditions the bottom arm landed on the abort band, at six it swept past it) but *why* it collided.
+
+**The arms were congruent.** Same in-edge, same two out-edges, same `governedBy`, same downstream. They differed only in which odor was delivered, and they are mutually exclusive — a trial passes through exactly one. So the fan spent O(N) rows of the drawing's scarcest axis, 2N edges, and the suppression of three edge labels, to encode a **label**. Six arms is a picture of a trial with six branches; the trial has one branch drawn from six labels. Everywhere else conditions meet data in this app — the tape view's lanes, the by-odor rows, the session table's column groups — they are already a categorical row dimension and never a branch.
+
+So: one node, carrying the conditions as `variants`. The renderer draws them as a **tick strip** beneath the glyph, one tick per condition, the active one taller *and* lit — taller because the theme bans gradients and glow, and shape survives distance and colour-vision deficits where brightness alone does not. Height stops being a function of N: **constant in the condition count, linear in the outcome count**. Measured, over the whole matrix:
+
+| | 1 | 2 | 4 | 6 |
+|---|---|---|---|---|
+| creator, 4 outcomes | 401 | 401 | 401 | 401 |
+| live, 4 outcomes | 279 | 279 | 279 | 279 |
+| creator, 5 outcomes (a no-go profile) | 471 | 471 | 471 | 471 |
+
+Before the collapse the creator drew 410px at four conditions and 524px at six — **with the bottom arm's label overlapping `Let go`** at four and the fan crossing the whole abort band at six. The fallback fan is the one path that still grows (637px at six conditions with five outcomes) and it grows *correctly*: §4.11's derived band keeps the aborts below it at every N.
+
+**`armsCongruent` is the guard.** Differing correct wells are still congruent — the topology is identical and the rail carries the difference — but a **go/no-go mix is not**: a withhold arm resolves at the response window and never reaches the wells, so one node standing for both would assert a path that does not exist. Such a profile fans, `lane: "fan"`, and the fan's geometry is *measured* rather than constant (§4.11), because shipping the original spacing bug in the path that draws the unusual task is exactly backwards.
+
+**Where the identity is read.** The creator gets a `ConditionRail` — real HTML `<button>`s below the drawing, because both SVGs are `role="img"` and everything inside them is invisible to assistive tech and unreachable by keyboard. The rail is the only readable form the condition set has and the only pointer-free way into the drawing. It does **not** print the contingency: the trial table below already says *"sandalwood → right well · paid from fluid_2"* in the rig's own words, and the metric label the rail prints contains the well besides.
+
+Mission Control gets no rail — the sparklines below it already enumerate the conditions — but its caption strip gains the contingency, which is the one thing that screen has **no other source for**: there is no trial table in a live panel.
+
+> [!CAUTION]
+> **`correctWellOf` reads `successCode` and nothing else, and returns `null` whenever it cannot prove an answer.** The obvious convenience — falling back to `alternateCode` when the success code is not a well — prints a confident lie: the generator sets a no-go type's alternate to *"any port will do"* (`_first_enter_code`), and `infer.py` does the same with `slots[0]`, so that fallback renders **"Odor 4 → left well" for a condition whose correct answer is to poke nothing**. This is the only figure the diagram *adds* rather than rearranges, so it is the only one that can be false — and it would be false silently, in a screenshot that outlives the session that made it.
+
+**The live condition has four states, kept apart on purpose.** `liveConditionId` walks the strobe tail newest-first and stops at a trial boundary (`LIGHTS_ON`, guaranteed present because step 0 requires it, plus `INVALID_TRIAL` and the ITI/session codes), so a previous trial's odor can never leak into the current trial's pre-odor phase. It scans a **wider window than the token does** (`CONDITION_TAIL` 160 vs `TAIL` 24): a correction trial with repeated pokes can push the odor-on code past 24 while the trial is still running, and the ticks would go dark mid-trial. It returns:
+
+| | |
+|---|---|
+| a condition | this trial is presenting a declared one |
+| **unlisted** | the box announced an odor the profile does not declare — almost always the `liveMetrics` gate having silently dropped a trial type. Drawn as its own warning line in the caption |
+| `null` | no odor yet this trial: before the first, after a reconnect with an empty log, or on an abort that never reached delivery |
+
+It **never** falls back to `conditions[0]`. A wrong condition looks exactly like a right one.
+
+> [!IMPORTANT]
+> **Collapsing turned a structural absence into a nameless presence, which is why `unlisted` exists.** A missing arm used to be a missing *node* — visible. Now a condition the gate dropped is simply a name with no tick, which renders identically to "nothing yet". The same finding is also made where it can be acted on: the Task tab derives a per-row diagnostic (`TSK112`) against the trial table for any trial type whose onset code no live metric scores. That is what the fan was doing by accident, done deliberately.
+
+### 4.11 Rows are measured, not multiplied
+
+The abort band used to sit at constant rows 2.4 / 2.9 / 3.4 while the fan grew from a constant 1.6 — two numbers hand-fitted to a two-odor task, which measured at **two pixels of clearance** even there. `frameFor` now resolves rows in three passes (`rowsFor`):
+
+1. the **fan** (fallback only) is spaced by the tallest arm's measured box rather than by 1.6;
+2. the **deepest content** over everything that is not the band is measured;
+3. the **band** is placed at `max(authored depth, deepest + gap)`.
+
+> [!CAUTION]
+> **The floor is a lower bound, never a replacement.** Deriving it in both directions would make the drawing's proportions a function of how many parameter groups a profile happens to declare — silently altering every screenshot ever taken of it. And `measureNode` **must** stay in the renderer: the chip count comes from `profile.config`'s declared groups, which the model cannot see, and the live panel draws no chips at all. A model-side measurement would be right for one host and ~48px optimistic for the other, and the symptom would be a band sitting inside a chip stack rather than an error.
 
 ---
 

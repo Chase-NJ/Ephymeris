@@ -97,7 +97,27 @@ export function StarPanel({
   const live = port.state === "IN_SESSION";
   const { state: trials, usable } = useLiveTrials(box.box, profile?.strobes);
   const model = useMemo(() => taskGraph(profile), [profile]);
-  const liveNode = useLiveNode(box.box, model, profile?.strobes);
+  const { node: liveNode, condition: liveCondition } = useLiveNode(
+    box.box,
+    model,
+    profile?.strobes,
+  );
+  /**
+   * Conditions this box has actually presented so far, for the tick strip.
+   *
+   * `trials.odorCodes` accumulates only from trials the session has *seen*, so
+   * this is the one readout on the screen that can say a declared condition has
+   * not come up yet — the sparklines below enumerate observed odors and cannot.
+   * That is the first-ten-minutes question.
+   */
+  const observedConditions = useMemo(() => {
+    const names = new Set(
+      trials.odorCodes.map((code) => (profile?.strobes?.[code] ?? "").toUpperCase()),
+    );
+    return new Set(
+      model.conditions.filter((c) => names.has(c.strobeName)).map((c) => c.id),
+    );
+  }, [trials.odorCodes, profile, model]);
   const accuracy = useMemo(
     () => rollingAccuracy(trials.trials, ACCURACY_WINDOW),
     [trials.trials],
@@ -186,7 +206,12 @@ export function StarPanel({
           {/* The sketch viewer's state machine, live: same glyphs, same
               CSS-pixel type at every panel width, with the box's current
               state wearing the token and the caption strip narrating it. */}
-          <LiveStateMachine model={model} liveNode={liveNode} />
+          <LiveStateMachine
+            model={model}
+            liveNode={liveNode}
+            liveCondition={liveCondition}
+            observedConditions={observedConditions}
+          />
         </div>
       )}
 

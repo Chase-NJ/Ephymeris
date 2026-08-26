@@ -492,6 +492,22 @@ ISO-8601 strings.
   "stopReason": "BF_END_SESSION received"   // dashboard.md §10.4
 }
 
+// MetricSummary — one condition's whole-session result (data.md §9.2).
+// Two fields exist for the STRATEGY PLANE, which folds N conditions onto two
+// axes (data.md §11.1): `hits` so two conditions can be pooled over integers
+// rather than by averaging their rates, and `answerSide` so a reader knows
+// which axis a condition belongs to. `answerSide` is read off the metric's own
+// `successCode` and is null whenever the profile cannot prove one — never
+// guessed, and never taken from `alternateCode`, which on a no-go metric means
+// "any port will do". `ProfileMetricInfo` carries the same field so a panel can
+// work out its axes before opening a run.
+{ "id": "p_r_odor1", "label": "P(R | Odor 1)",
+  "pSession": 0.82, "pWindow": 0.9,
+  "hits": 41, "counted": 50,          // pool over these, never over pSession
+  "triggered": 56, "excluded": 6, "windowSize": 20,
+  "wilsonLow": 0.69, "wilsonHigh": 0.9, "lowConfidence": false,
+  "answerSide": "left" | "right" | "withhold" | "port" | null }
+
 // ConditionOutcomes — TrialOutcomes restricted to one declared condition
 // (data.md §9.9). One per liveMetrics entry, in authored order; the
 // entries partition `outcomes` field-for-field. Empty (never null) when the

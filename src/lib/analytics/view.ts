@@ -12,6 +12,7 @@ import { sketchName } from "@/lib/sessions/types";
 import type {
   AnalyticsSummary,
   ProfileGroup,
+  ProfileMetricInfo,
   RunSummary,
   SessionListItem,
 } from "./types";
@@ -78,86 +79,14 @@ export function labelColor(bin: HeatBin): string {
   return bin.label === "void" ? "var(--color-void)" : "var(--color-starlight)";
 }
 
-// --- the pivot (§3.6) ------------------------------------------------------
-
-export type CellKind = "scored" | "tooFew" | "absent";
-
-export interface Cell {
-  kind: CellKind;
-  run: RunSummary | null;
-  value: number | null;
-  counted: number;
-  /** Two runs really can exist for one (animal, session) — a restart after a
-   *  board drop, or a same-day prefix reuse. Most-counted wins the cell. */
-  hasSiblings: boolean;
-}
-
-const ABSENT: Cell = {
-  kind: "absent",
-  run: null,
-  value: null,
-  counted: 0,
-  hasSiblings: false,
-};
-
-/**
- * The separator inside a composite `(animalId, sessionId)` map key.
- *
- * NUL, because it is the one character an id cannot contain: a separator that
- * *could* appear in an id would merge two different pairs into one cell without
- * a word. Spelled as an escape rather than typed as a literal control
- * character — an actual NUL byte in the source makes git treat the whole file
- * as binary, so it stops producing diffs and grep skips it entirely.
+/*
+ * The PIVOT lived here — `(animalId, sessionId) → Cell`, with its `scored` /
+ * `tooFew` / `absent` trichotomy and the most-counted duplicate rule. It served
+ * exactly one panel, the cohort heatmap, and went with it. What it decided is
+ * still decided, in the places that still ask: `SessionTable` flags a thin cell
+ * against `minCountedTrials`, and `SessionRail` colours a session mark through
+ * the same `binFor` ramp.
  */
-const KEY_SEP = "\u0000";
-
-/**
- * `(animalId, sessionId) → Cell`, resolving duplicates by most counted trials.
- *
- * Stated explicitly rather than letting the frontend take whichever run
- * happened to come last in the array.
- */
-export function pivotRuns(
-  runs: RunSummary[],
-  metricId: string | null,
-  minCounted: number,
-): Map<string, Map<string, Cell>> {
-  const chosen = new Map<string, RunSummary[]>();
-  for (const run of runs) {
-    const key = `${run.animalId}${KEY_SEP}${run.sessionId}`;
-    const bucket = chosen.get(key);
-    if (bucket) bucket.push(run);
-    else chosen.set(key, [run]);
-  }
-
-  const out = new Map<string, Map<string, Cell>>();
-  for (const [key, bucket] of chosen) {
-    const [animalId, sessionId] = key.split(KEY_SEP) as [string, string];
-    const winner = bucket.reduce((best, run) =>
-      countedOf(run, metricId) > countedOf(best, metricId) ? run : best,
-    );
-    let row = out.get(animalId);
-    if (!row) {
-      row = new Map<string, Cell>();
-      out.set(animalId, row);
-    }
-    row.set(sessionId, cellFor(winner, metricId, minCounted, bucket.length > 1));
-  }
-  return out;
-}
-
-export function cellAt(
-  pivot: Map<string, Map<string, Cell>>,
-  animalId: string,
-  sessionId: string,
-): Cell {
-  return pivot.get(animalId)?.get(sessionId) ?? ABSENT;
-}
-
-function countedOf(run: RunSummary, metricId: string | null): number {
-  const metric = pickMetric(run, metricId);
-  return metric?.counted ?? 0;
-}
 
 /** The pooled figure the sidecar computes alongside the declared metrics. */
 export const OVERALL_ID = "__overall__";
@@ -170,39 +99,6 @@ export function pickMetric(run: RunSummary, metricId: string | null) {
   // answering the same port every trial.
   if (metricId === null) return run.overall ?? run.metrics[0]!;
   return run.metrics.find((m) => m.id === metricId) ?? null;
-}
-
-function cellFor(
-  run: RunSummary,
-  metricId: string | null,
-  minCounted: number,
-  hasSiblings: boolean,
-): Cell {
-  const metric = pickMetric(run, metricId);
-  // A run that produced no metrics at all contributes no cell — visually the
-  // same as never having run, but the reason differs and is shown on hover.
-  if (!metric || run.status !== "ok") {
-    return { ...ABSENT, run, hasSiblings };
-  }
-  // Zero counted trials is "ran but scored nothing", NOT "didn't run". That
-  // distinction is most of the point of the heatmap, so it lands in `tooFew`
-  // with n=0 rather than in `absent` (§3.6).
-  if (metric.pSession === null || metric.counted < minCounted) {
-    return {
-      kind: "tooFew",
-      run,
-      value: metric.pSession,
-      counted: metric.counted,
-      hasSiblings,
-    };
-  }
-  return {
-    kind: "scored",
-    run,
-    value: metric.pSession,
-    counted: metric.counted,
-    hasSiblings,
-  };
 }
 
 // --- the date scale (§2.2) -------------------------------------------------
@@ -300,17 +196,132 @@ export function programOf(run: RunSummary): string {
 }
 
 /**
- * The profile groups that can put a point on the strategy plane — exactly two
- * declared conditions — most-run first. The plane scopes itself to one of
- * these (§4.3: a GRGL point and an EZ-variant point on shared axes is a
- * category error even though both declare two metrics), and offers the rest
- * as a panel-local switch rather than a dashboard-wide filter.
+ * How one profile's conditions fold onto the strategy plane's two axes.
+ *
+ * **Sides, not conditions.** The plane's whole meaning is that an animal
+ * answering the same way regardless of stimulus sits on `x + y = 1`, so its
+ * axes have to be opposing answers. With two conditions that was automatic —
+ * one per well — and the panels simply took `liveMetrics[0]` and `[1]`. A
+ * four-odor task has four metrics and no pair to take, so both panels went
+ * blank on exactly the task that most needs reading. Folding by side
+ * generalizes without changing what a position means.
+ *
+ * x takes the side of the FIRST declared metric, matching
+ * `derive.strategy_axes` so the session walk and the cross-session trail agree
+ * — and so a two-condition task keeps precisely the orientation it always had.
  */
-export function twoMetricGroups(summary: AnalyticsSummary | null): ProfileGroup[] {
+export interface StrategyAxis {
+  side: string;
+  /** What to print on the axis — the side, and how many conditions folded. */
+  label: string;
+  /** The metric ids pooled onto it. */
+  ids: string[];
+  /** Those conditions' own labels, for the hover and the note. */
+  conditions: string[];
+}
+
+export interface StrategyAxes {
+  x: StrategyAxis;
+  y: StrategyAxis;
+}
+
+const SIDE_LABEL: Record<string, string> = {
+  left: "left well",
+  right: "right well",
+  port: "response port",
+};
+
+export function strategyAxes(group: ProfileGroup | null): StrategyAxes | null {
+  const metrics = declaredMetrics(group);
+  const order: string[] = [];
+  const bySide = new Map<string, ProfileMetricInfo[]>();
+  for (const metric of metrics) {
+    const side = metric.answerSide;
+    // A withhold is the ABSENCE of an answer: no opposing side, so no axis.
+    if (!side || side === "withhold") continue;
+    if (!bySide.has(side)) {
+      bySide.set(side, []);
+      order.push(side);
+    }
+    bySide.get(side)!.push(metric);
+  }
+  if (order.length !== 2) return null;
+  const axis = (side: string): StrategyAxis => {
+    const own = bySide.get(side) ?? [];
+    const name = SIDE_LABEL[side] ?? side;
+    return {
+      side,
+      // `×2` rather than "· 2 conditions": this prints in a chart footer beside
+      // its twin, where the count is a qualifier and the SIDE is the label.
+      label: own.length > 1 ? `${name} ×${own.length}` : name,
+      ids: own.map((metric) => metric.id),
+      conditions: own.map((metric) => metric.label),
+    };
+  };
+  return { x: axis(order[0]!), y: axis(order[1]!) };
+}
+
+/**
+ * One run's position on one axis — pooled over integers, never over rates.
+ *
+ * Summing hits and counted answers "how often was this animal right on either
+ * of these conditions". Averaging the two proportions instead would let a
+ * condition the animal barely met pull the axis as hard as one it met
+ * constantly — the same mistake `_overall` exists to avoid (§3.7).
+ */
+export function pooledAxis(
+  run: RunSummary,
+  ids: readonly string[],
+): { p: number | null; counted: number } {
+  let hits = 0;
+  let counted = 0;
+  for (const metric of run.metrics) {
+    if (!ids.includes(metric.id)) continue;
+    hits += metric.hits;
+    counted += metric.counted;
+  }
+  return { p: counted > 0 ? hits / counted : null, counted };
+}
+
+/**
+ * Every task profile the cohort's data actually contains, most-run first, each
+ * carrying whether it can put a point on the plane and why not when it cannot.
+ *
+ * **Drawn from the runs, not from a list of known tasks.** A cohort holds
+ * whatever it holds: sessions recorded on this rig, sessions copied from
+ * another and decoded from their own embedded snapshot (`data.md` §4.4), and
+ * runs whose conditions were inferred from the strobes because no profile
+ * resolved at all. All three are real profiles with real runs and all three
+ * belong in the picker — what separates them is provenance, which the runs
+ * carry, not membership.
+ */
+export interface StrategyProfile {
+  group: ProfileGroup;
+  axes: StrategyAxes | null;
+  /** Why there is no plane, in words an operator can act on. */
+  reason: string | null;
+}
+
+export function strategyProfiles(summary: AnalyticsSummary | null): StrategyProfile[] {
   if (!summary) return [];
   return summary.profileGroups
-    .filter((group) => declaredMetrics(group).length === 2)
-    .sort((a, b) => b.runCount - a.runCount);
+    .filter((group) => group.runCount > 0)
+    .sort((a, b) => b.runCount - a.runCount)
+    .map((group) => {
+      const axes = strategyAxes(group);
+      const conditions = declaredMetrics(group);
+      return {
+        group,
+        axes,
+        reason: axes
+          ? null
+          : conditions.length < 2
+            ? "one condition — a plane needs two opposing answers"
+            : conditions.every((metric) => !metric.answerSide)
+              ? "this profile doesn't record which well each condition rewards"
+              : "every condition is answered at the same place",
+      };
+    });
 }
 
 /** One session's task composition, dominant first. */

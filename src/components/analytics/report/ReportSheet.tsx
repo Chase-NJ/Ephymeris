@@ -129,7 +129,7 @@ export function ReportSheet({
         whole reason the export isn't a race.
 
         Every reveal in `components/charts` and `components/analytics` sets its
-        transition *inline* — the heatmap staggers each column, `ChartDots`
+        transition *inline* — `ChartDots` staggers each mark and
         delays each dot by its x position, `DrawOn` runs a 0.9s wipe — and an
         inline transition wins the merge against `MotionConfig transition`. So
         that lever cannot make the sheet settle. `skipAnimations` is checked at
@@ -178,9 +178,10 @@ export function ReportSheet({
  * Who, what tasks, and when — the provenance a screenshot loses.
  *
  * The date range is here rather than implied by the panels because the sheet
- * has no `SessionRail`: the heatmap's x axis is evenly spaced by session index,
- * so nothing else on the page carries calendar time, and "twelve sessions" over
- * a fortnight is a different experiment from twelve over three months.
+ * has no `SessionRail`, and every trend on it is spaced by session index rather
+ * than by date — so nothing else on the page carries calendar time, and "twelve
+ * sessions" over a fortnight is a different experiment from twelve over three
+ * months.
  */
 function Masthead({ input }: { input: ReportInput }) {
   const { summary, session, cohortName } = input;

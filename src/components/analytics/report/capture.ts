@@ -41,13 +41,15 @@ export async function captureSheet(node: HTMLElement): Promise<Blob> {
   await nextFrame();
   await nextFrame();
 
-  // The heatmap sizes itself in fixed pixels per session (see its
-  // `MIN_PX_PER_COLUMN`), so a long-running cohort makes one row wider than
-  // the sheet. Rasterizing measures the node's own box, which would cut the
-  // most recent sessions off the right edge — the ones being looked for. The
-  // sheet is ours alone and not yet visible to anyone, so widening it here is
-  // cheaper and less brittle than teaching the layout to predict the heatmap's
+  // A panel can be wider than the sheet: the session summary table adds two
+  // fixed-width columns per condition, so a four-odor session overflows and
+  // scrolls on screen. Rasterizing measures the node's own box, which would cut
+  // those columns off the right edge — and they are the ones being looked for.
+  // The sheet is ours alone and not yet visible to anyone, so widening it here
+  // is cheaper and less brittle than teaching the layout to predict a panel's
   // arithmetic. `scrollWidth` omits the trailing padding, hence the gutter.
+  // (This was written for the cohort heatmap, which is gone; the mechanism is
+  // not heatmap-specific and the case it covers is still live.)
   if (node.scrollWidth > node.clientWidth) {
     node.style.width = `${node.scrollWidth + GUTTER}px`;
     await nextFrame();

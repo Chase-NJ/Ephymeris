@@ -1073,7 +1073,14 @@ def _profile_groups(
         counts[digest] = counts.get(digest, 0) + 1
         if digest not in metrics:
             declared = [
-                {"id": m["id"], "label": m["label"], "windowSize": m["windowSize"]}
+                {
+                    "id": m["id"],
+                    "label": m["label"],
+                    "windowSize": m["windowSize"],
+                    # Carried up from the run so a panel can work out its axes
+                    # from the GROUP, before opening any of its runs.
+                    "answerSide": m.get("answerSide"),
+                }
                 for m in run.get("metrics", [])
             ]
             # Offer the pooled figure alongside the declared ones, first, when
@@ -1083,7 +1090,14 @@ def _profile_groups(
             if overall and len(declared) > 1:
                 declared.insert(
                     0,
-                    {"id": overall["id"], "label": overall["label"], "windowSize": 0},
+                    {
+                        "id": overall["id"],
+                        "label": overall["label"],
+                        "windowSize": 0,
+                        # Pooled across every condition, so answered at no one
+                        # side and never an axis.
+                        "answerSide": None,
+                    },
                 )
             metrics[digest] = declared
     return [

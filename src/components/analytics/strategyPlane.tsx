@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { ProfileMetricInfo } from "@/lib/analytics/types";
+import type { StrategyAxes } from "@/lib/analytics/view";
 
 /**
  * The plane both strategy panels draw in (`data.md` §11.1).
@@ -135,20 +135,18 @@ function Caption({
  * knowledge of the task, so for GRGL it names odor 1 and odor 3 by the names
  * the sketch itself declared, and for anything else it is still correct.
  */
-export function StrategyNote({
-  xMetric,
-  yMetric,
-}: {
-  xMetric: ProfileMetricInfo;
-  yMetric: ProfileMetricInfo;
-}) {
+export function StrategyNote({ axes }: { axes: StrategyAxes }) {
   // No border or text sizing of its own: it renders inside `HowToRead`,
   // which owns the disclosure chrome and the prose style.
   return (
     <div>
       {/* The axis→metric mapping is already in the frame's footer directly
           above, so this opens with what a position *means* instead. */}
-      <p>Each axis is that condition&rsquo;s fraction correct.</p>
+      <p>
+        Each axis is the fraction correct at one answer, pooled over every
+        condition answered there — so a task presenting four odors reads on the
+        same two axes a two-odor task does.
+      </p>
       <ul className="mt-1 flex flex-col gap-0.5">
         <Region label="top-right">
           correct on both — discriminating the stimulus.
@@ -158,8 +156,8 @@ export function StrategyNote({
           high on one and low on the other:{" "}
           <em className="text-static not-italic">the same response whatever the stimulus</em> —
           a side bias, not a skill. Toward the top-left it is all{" "}
-          <span className="font-mono">{yMetric.label}</span>; toward the
-          bottom-right, all <span className="font-mono">{xMetric.label}</span>.
+          <span className="font-mono">{axes.y.side}</span>; toward the
+          bottom-right, all <span className="font-mono">{axes.x.side}</span>.
         </Region>
         <Region label="bottom-left">
           wrong on both — the reversed contingency. Still learning, inverted.
@@ -194,13 +192,29 @@ export function StrategyPanel({ children }: { children: ReactNode }) {
  * (§4.3): "this task declares three conditions" is actionable, an empty box is
  * not.
  */
-export function NoPlane({ hasRuns }: { hasRuns: boolean }) {
+export function NoPlane({
+  hasRuns,
+  reason = null,
+}: {
+  hasRuns: boolean;
+  /**
+   * Why this cohort's profiles cannot be plotted, when something ran.
+   *
+   * Named rather than left as a generic absence: "no plane" reads as a broken
+   * panel, and the operator can act on "every condition is answered at the same
+   * place" — it means the task is a shaping task, not that the archive is
+   * damaged.
+   */
+  reason?: string | null;
+}) {
   return (
     <StrategyPanel>
       <p className="text-[12px] leading-relaxed text-static">
-        {hasRuns
-          ? "No task here declares two conditions — the strategy plane needs one per axis, so a shaping-only archive has nothing to plot yet."
-          : "No scored runs yet, so there is no strategy to plot."}
+        {!hasRuns
+          ? "No scored runs yet, so there is no strategy to plot."
+          : reason
+            ? `Nothing here can go on the plane — ${reason}. The plane needs two opposing answers, one per axis.`
+            : "Nothing here can go on the plane: it needs two opposing answers, one per axis, and no task in this cohort has them."}
       </p>
     </StrategyPanel>
   );

@@ -49,7 +49,7 @@ export function useRevealOnView() {
   // `useInView` below must run on every render whatever the answer here is.
   const isReport = useIsReport();
   // Armed by a margin, not by a visible *fraction*: a fraction is measured
-  // against the panel's own height, so a tall one — a heatmap of twenty
+  // against the panel's own height, so a tall one — a stack of twenty
   // animals — could need more of itself on screen than the viewport can hold
   // and would never arm. Pulling the viewport's bottom edge up instead means
   // "a strip of this panel has genuinely cleared the fold", whatever its size.

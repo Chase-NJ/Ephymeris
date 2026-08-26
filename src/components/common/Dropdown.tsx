@@ -38,6 +38,16 @@ export interface DropdownOption {
   label: string;
   /** Right-aligned mono annotation — a code number, the channel behind a label. */
   detail?: string | undefined;
+  /**
+   * Present but unselectable.
+   *
+   * For the case where OMITTING the option would be the misleading choice: a
+   * task profile that cannot be plotted is still a task the cohort ran, and
+   * hiding it answers "where is my four-odor task" with an absence, which reads
+   * as a hole in the archive rather than as a property of the task. The
+   * `detail` carries the reason.
+   */
+  disabled?: boolean | undefined;
 }
 
 const MAX_LIST_HEIGHT = 244;
@@ -161,7 +171,10 @@ export function Dropdown({
     } else if (e.key === "Enter") {
       e.preventDefault();
       const row = rows[active];
-      if (row) commit(row.value);
+      // A disabled row is reachable by arrow — it is there to be READ, and
+      // skipping past it would hide the reason it carries — but it commits
+      // nothing.
+      if (row && !row.disabled) commit(row.value);
     } else if (e.key === "Escape" || e.key === "Tab") {
       close();
     }
@@ -251,14 +264,24 @@ export function Dropdown({
                     tabIndex={-1}
                     // Mousedown, not click: the trigger's blur fires between the
                     // two and would close the list before a click could land.
+                    aria-disabled={option.disabled || undefined}
                     onMouseDown={(e) => {
                       e.preventDefault();
+                      if (option.disabled) return;
                       commit(option.value);
                     }}
                     onMouseEnter={() => setActive(index)}
                     className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] transition-colors ${
-                      index === active ? "bg-halo/50" : ""
-                    } ${isMissing ? "text-status-error" : isSelected ? "text-starlight" : "text-static"}`}
+                      index === active && !option.disabled ? "bg-halo/50" : ""
+                    } ${
+                      option.disabled
+                        ? "cursor-default text-static/40"
+                        : isMissing
+                          ? "text-status-error"
+                          : isSelected
+                            ? "text-starlight"
+                            : "text-static"
+                    }`}
                   >
                     <span className="min-w-0 flex-1 truncate">{option.label}</span>
                     {option.detail && (

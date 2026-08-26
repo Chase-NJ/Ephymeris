@@ -2,7 +2,6 @@ import { useMemo } from "react";
 
 import { AccuracyTrend } from "@/components/analytics/AccuracyTrend";
 import { AnimalRail } from "@/components/analytics/AnimalRail";
-import { CohortHeatmap } from "@/components/analytics/CohortHeatmap";
 import { EffortTrend } from "@/components/analytics/EffortTrend";
 import { LearningCurves } from "@/components/analytics/LearningCurves";
 import { OutcomeMix } from "@/components/analytics/OutcomeMix";
@@ -19,7 +18,7 @@ import type { ReportInput } from "./ReportSheet";
  * Same panels as the dashboard's `ALL_SESSIONS` scope, in the same order: the
  * x-slot-sharing run first (task strip, the combined accuracy figure, effort
  * and outcome mix), then the rail beside the strategy tile and learning
- * curves, then the heatmap full width.
+ * curves.
  *
  * One deliberate difference throughout. Every grid here is a plain
  * `grid-cols-2` rather than the route's `xl:` variant, because Tailwind's
@@ -71,13 +70,6 @@ export function CohortReport({ input }: { input: ReportInput }) {
           />
         </div>
       </div>
-
-      <CohortHeatmap
-        summary={summary}
-        sessionScope={ALL_SESSIONS}
-        revealKey={revealKey}
-        scroll={false}
-      />
     </div>
   );
 }

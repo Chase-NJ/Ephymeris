@@ -1,3 +1,5 @@
+import { useMemo, useState } from "react";
+
 import { ChartFrame } from "@/components/charts/ChartFrame";
 import { HowToRead } from "@/components/charts/HowToRead";
 import { DrawOn } from "@/components/charts/DrawOn";
@@ -11,7 +13,9 @@ import {
   type BandPoint,
   type Segment,
 } from "@/components/charts/UnitChart";
+import { Segmented } from "@/components/common/controls";
 import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
+import { conditionName } from "@/lib/analytics/session";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
 import type { AnalyticsSummary, RunSeries, RunSummary } from "@/lib/analytics/types";
 import { chronological, pickMetric } from "@/lib/analytics/view";
@@ -45,11 +49,127 @@ import { chronological, pickMetric } from "@/lib/analytics/view";
  * stroke weight, the rest drop to a dim opacity, and only these small layers
  * re-render on hover.
  */
+/**
+ * One condition's rolling accuracy, in a tile the reader chooses.
+ *
+ * **A picker, not a stack.** This drew one chart per condition, which was fine
+ * for the two-odor task it was written against and became a column of four
+ * 168px plots the moment the lab ran four odors — each one a sixth of the tile,
+ * none of them readable, and the tile itself taller than the panel beside it.
+ * The conditions are mutually exclusive readings of the same axis, so they are
+ * a *selection*, not a series: one at a time, at a size worth looking at.
+ *
+ * The picker names conditions by the operator's own words (`conditionName` —
+ * the conditioning half of the metric label, which the task editor now requires
+ * them to fill in), and the full metric sentence stays in the frame's title.
+ */
+function WithinSessionCurves({
+  sessionRuns,
+  series,
+  colors,
+}: {
+  sessionRuns: RunSummary[];
+  series: RunSeries[];
+  colors: Map<string, string>;
+}) {
+  // The union of what any run in the session declares, in first-seen authored
+  // order — the session table's rule (`session.ts`), so a mixed-task session
+  // offers every condition rather than hiding the runs it can't merge.
+  const conditions = useMemo(() => {
+    const out: Array<{ id: string; label: string; short: string }> = [];
+    for (const run of sessionRuns) {
+      for (const metric of run.metrics) {
+        if (!out.some((entry) => entry.id === metric.id)) {
+          out.push({
+            id: metric.id,
+            label: metric.label,
+            short: conditionName(metric.label),
+          });
+        }
+      }
+    }
+    return out;
+  }, [sessionRuns]);
+
+  const [chosen, setChosen] = useState<string | null>(null);
+  const condition = conditions.find((c) => c.id === chosen) ?? conditions[0] ?? null;
+
+  if (!condition) {
+    return (
+      <div className="surface rounded-md p-4">
+        <p className="text-[12px] leading-relaxed text-static">
+          No scored runs in this session — curves appear once a run with a task
+          profile has been recorded.
+        </p>
+      </div>
+    );
+  }
+
+  const layers = withinSessionLayers(series, sessionRuns, condition.id, colors);
+
+  return (
+    <div className="surface flex flex-col gap-3 rounded-md p-4">
+      <ChartFrame
+        title={
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>
+              Rolling accuracy
+              <span className="ml-2 text-static/70">per trial</span>
+            </span>
+            {conditions.length > 1 && (
+              <Segmented
+                value={condition.id}
+                onChange={setChosen}
+                label="Condition on the curve"
+                options={conditions.map((entry) => ({
+                  value: entry.id,
+                  label: entry.short,
+                }))}
+              />
+            )}
+          </span>
+        }
+        yTop="1.0"
+        yBottom="0.0"
+        xLeft="trial 1"
+        xRight="last"
+        footer={<span className="truncate text-static/70">{condition.label}</span>}
+      >
+        <div style={{ height: SOLO_PLOT_PX }}>
+          <UnitChart height={46} className="h-full w-full" references={[{ y: 0.5 }]}>
+            {layers.map((layer) => (
+              <CurveLayer key={layer.key} layer={layer} height={46} />
+            ))}
+          </UnitChart>
+        </div>
+      </ChartFrame>
+      {layers.length === 0 && (
+        <p className="font-mono text-[9px] text-static/60">
+          No animal scored this condition in this session.
+        </p>
+      )}
+      <HowToRead>
+        <p>
+          Each line is one animal&rsquo;s rolling P(hit) for the selected
+          condition at the task&rsquo;s authored window, one point per counted
+          trial.
+        </p>
+        <p className="mt-1">
+          The x axis is trial index, never wall time: animals start minutes apart
+          and each stream&rsquo;s clock starts at its own handshake, so a shared
+          time axis would quietly misalign them.
+        </p>
+      </HowToRead>
+    </div>
+  );
+}
+
 /** Fixed plot heights (the trends' `PLOT_PX` pattern) — deliberate, not
  *  aspect- or row-driven, so a neighbouring tile's disclosure opening can
  *  never stretch a curve. Two session-scope charts roughly match the
  *  strategy plane's height; the single cohort chart gets the sum. */
-const SESSION_PLOT_PX = 168;
+/** One chart instead of N, so it gets the room the stack used to divide. */
+const SOLO_PLOT_PX = 300;
 const COHORT_PLOT_PX = 300;
 
 export function LearningCurves({
@@ -72,76 +192,12 @@ export function LearningCurves({
   const withinSession = sessionScope !== ALL_SESSIONS;
 
   if (withinSession) {
-    // One chart per condition any run in the session declares, in first-seen
-    // authored order — the session table's union rule (`session.ts`).
-    const conditions: Array<{ id: string; label: string }> = [];
-    for (const run of sessionRuns) {
-      for (const metric of run.metrics) {
-        if (!conditions.some((entry) => entry.id === metric.id)) {
-          conditions.push({ id: metric.id, label: metric.label });
-        }
-      }
-    }
-
-    if (conditions.length === 0) {
-      return (
-        <div className="surface rounded-md p-4">
-          <p className="text-[12px] leading-relaxed text-static">
-            No scored runs in this session — curves appear once a run with a
-            task profile has been recorded.
-          </p>
-        </div>
-      );
-    }
-
     return (
-      // Fixed plot heights, own tile height: the grid row is `items-start`,
-      // so this tile neither stretches to the strategy plane's height (the
-      // old dead surface) nor re-stretches its charts when the neighbour's
-      // "how to read this" opens.
-      <div className="surface flex flex-col gap-4 rounded-md p-4">
-        {conditions.map((condition) => (
-          <div key={condition.id}>
-            <ChartFrame
-              title={
-                <span>
-                  {condition.label}
-                  <span className="ml-2 text-static/70">rolling, per trial</span>
-                </span>
-              }
-              yTop="1.0"
-              yBottom="0.0"
-              xLeft="trial 1"
-              xRight="last"
-            >
-              <div style={{ height: SESSION_PLOT_PX }}>
-                <UnitChart
-                  height={46}
-                  className="h-full w-full"
-                  references={[{ y: 0.5 }]}
-                >
-                  {withinSessionLayers(series, sessionRuns, condition.id, colors).map(
-                    (layer) => (
-                      <CurveLayer key={layer.key} layer={layer} height={46} />
-                    ),
-                  )}
-                </UnitChart>
-              </div>
-            </ChartFrame>
-          </div>
-        ))}
-        <HowToRead>
-          <p>
-            Each line is one animal&rsquo;s rolling P(hit) for this condition at
-            the task&rsquo;s authored window, one point per counted trial.
-          </p>
-          <p className="mt-1">
-            The x axis is trial index, never wall time: animals start minutes
-            apart and each stream&rsquo;s clock starts at its own handshake, so
-            a shared time axis would quietly misalign them.
-          </p>
-        </HowToRead>
-      </div>
+      <WithinSessionCurves
+        sessionRuns={sessionRuns}
+        series={series}
+        colors={colors}
+      />
     );
   }
 

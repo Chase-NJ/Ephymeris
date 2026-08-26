@@ -11,7 +11,7 @@ import type { ReportInput } from "./ReportSheet";
  *
  * Deliberately narrow in scope: the within-session strategy walk, the learning
  * curves on their trial axis, and the per-animal condition tables. None of the
- * across-session trends and no heatmap, because "just this session" is what
+ * across-session trends, because "just this session" is what
  * this export is for.
  *
  * `AnimalRail` is the one thing here that spans the whole archive, and it earns

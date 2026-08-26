@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useSessionStore } from "@/lib/sessions/context";
 import { useStrobeVersion } from "@/lib/sessions/useLiveTrials";
-import { liveNodeId, type TaskGraphModel } from "./topology";
+import {
+  liveConditionId,
+  liveNodeId,
+  type LiveCondition,
+  type TaskGraphModel,
+} from "./topology";
 
 /**
  * Which state a running box is in right now, for the live task graph.
@@ -18,6 +23,18 @@ import { liveNodeId, type TaskGraphModel } from "./topology";
  * hours.
  */
 const TAIL = 24;
+
+/**
+ * A wider window for the *condition*, because it answers a different question.
+ *
+ * `TAIL` is tuned for "where is the token", which is always within a handful of
+ * codes. "Which condition is this trial" has to reach back to the odor-on code,
+ * and a correction trial with repeated pokes can push that well past 24 while
+ * the trial is still running — at which point the ticks would go dark mid-trial
+ * and the drawing would stop naming a condition the animal is still working on.
+ * The walk stops at the trial boundary either way, so this only bounds the cost.
+ */
+const CONDITION_TAIL = 160;
 
 /**
  * How long an outcome holds the token before it moves to the ITI.
@@ -36,11 +53,17 @@ const TAIL = 24;
  */
 const OUTCOME_SETTLE_MS = 1200;
 
+/** Where the box is, and which condition it is there for. */
+export interface LiveState {
+  node: string | null;
+  condition: LiveCondition;
+}
+
 export function useLiveNode(
   box: number,
   model: TaskGraphModel,
   strobes: Record<string, string> | undefined,
-): string | null {
+): LiveState {
   const store = useSessionStore();
   const version = useStrobeVersion();
 
@@ -51,6 +74,14 @@ export function useLiveNode(
     return liveNodeId(model, strobes, codes);
     // `version` is the render trigger: the log is mutable and its identity
     // never changes, so nothing else here would tell React it moved.
+  }, [store, box, version, model, strobes]);
+
+  const condition = useMemo(() => {
+    if (!model.usable || !strobes) return null;
+    const log = store.getStrobes(box);
+    const codes = log.slice(-CONDITION_TAIL).map((event) => event.code);
+    return liveConditionId(model, strobes, codes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, box, version, model, strobes]);
 
   /*
@@ -68,6 +99,6 @@ export function useLiveNode(
     return () => window.clearTimeout(timer);
   }, [arrived, model]);
 
-  if (settled && model.nodes.some((n) => n.id === "iti")) return "iti";
-  return arrived;
+  const node = settled && model.nodes.some((n) => n.id === "iti") ? "iti" : arrived;
+  return { node, condition };
 }

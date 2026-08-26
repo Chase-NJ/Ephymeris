@@ -19,7 +19,6 @@ import {
   ChangeCohort,
   CohortLanding,
 } from "@/components/analytics/CohortLanding";
-import { CohortHeatmap } from "@/components/analytics/CohortHeatmap";
 import type { ReportInput } from "@/components/analytics/report/ReportSheet";
 import {
   reportFilename,
@@ -631,15 +630,6 @@ export function Analytics() {
                   />
                 </div>
               </div>
-
-              {/* Full width, and directly under the rail: it is the one panel whose
-              width is set by how much archive there is rather than by its
-              container, so it is the one with something to do with the room. */}
-              <CohortHeatmap
-                summary={summary}
-                sessionScope={sessionScope}
-                revealKey={revealKey}
-              />
 
               <Footnote
                 summary={summary}

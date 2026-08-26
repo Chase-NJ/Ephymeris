@@ -120,7 +120,10 @@ export function Segmented<T extends string>({
     <span
       role="group"
       aria-label={label}
-      className="flex overflow-hidden rounded-sm border border-halo"
+      // Wraps rather than overflowing: the condition picker carries the
+      // operator's own names, and six of them do not fit a chart header. The
+      // divider is per-button so a wrapped row still reads as one control.
+      className="flex flex-wrap overflow-hidden rounded-sm border border-halo"
     >
       {options.map((option) => (
         <button

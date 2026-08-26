@@ -16,6 +16,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "check": "node scripts/check.mjs",
     "gen:protocol": "node scripts/gen-protocol.mjs",
     "stage:sketches": "node scripts/stage-sketches.mjs",
@@ -52,6 +54,7 @@
     "@vitejs/plugin-react": "^6.0.4",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.1.5"
+    "vite": "^8.1.5",
+    "vitest": "^4.1.11"
   }
 }

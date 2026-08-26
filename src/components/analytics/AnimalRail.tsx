@@ -11,7 +11,7 @@ import { chronological, pickMetric } from "@/lib/analytics/view";
  *
  * Doubles as the highlight selector — hover previews, click pins — and every
  * row carries that animal's identity colour, which is the same colour its
- * curve, trail and heatmap label use.
+ * curve and trail use.
  */
 export function AnimalRail({
   summary,

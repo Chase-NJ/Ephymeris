@@ -493,6 +493,96 @@ async def test_a_scored_profile_hash_survives_the_cache(rig: LegacyRig) -> None:
     assert set(first.values()) <= groups
 
 
+async def test_a_four_odor_run_from_another_rig_can_be_put_on_the_plane(
+    rig: LegacyRig,
+) -> None:
+    """THE USER-FACING PATH, end to end.
+
+    A four-odor task authored on the Windows rig, run there, copied here. This
+    install has no sketch by that name and no run record, so the conditions are
+    INFERRED from the strobes — and the strategy plane needs each one to say
+    which well it rewards. Inference resolves that from `checkResponse()`'s own
+    codes, so the answer is there; what has to hold is that it survives the
+    whole path — inference, summarize, the cache, the payload — and lands on
+    the two axes as two-and-two rather than as four blanks.
+    """
+    from ephymeris_sidecar.analytics import derive
+    from ephymeris_sidecar.tasks.profile import parse_profile
+
+    rig.service._sketch_lookup = lambda name: None
+    # Odors 1 and 2 answered right, 3 and 4 answered left — with the codes
+    # `checkResponse()` actually emits. The poke codes alone are NOT evidence:
+    # inference votes on FLUID_x / WATER_POKE_ERROR_x, because those are the
+    # ones the firmware only ever emits at the correct (or only at the wrong)
+    # well. A stream of bare pokes leaves every condition unevidenced.
+    right = [249, 253]   # WATER_POKE_R then FLUID_R
+    left = [248, 252]    # WATER_POKE_L then FLUID_L
+    stream = (
+        [101, *right] * 8
+        + [102, *right] * 8
+        + [103, *left] * 8
+        + [104, *left] * 8
+    )
+    rig.add_legacy_run("remy1", stream, sketch="GRGL 4-Odor")
+    await rig.service.rescan(rig.cohort.id)
+
+    payload = await rig.service.summary(rig.cohort.id)
+    run = payload["runs"][0]
+    assert run["profileSource"] == "inferred"
+    assert len(run["metrics"]) == 4
+
+    sides = {m["id"]: m["answerSide"] for m in run["metrics"]}
+    assert sorted(sides.values()) == ["left", "left", "right", "right"], sides
+    # Every metric must also carry the integer the plane pools over.
+    assert all(isinstance(m["hits"], int) for m in run["metrics"])
+
+    # And the group the picker reads carries the same, so a panel can work out
+    # its axes without opening a run.
+    group = next(g for g in payload["profileGroups"] if g["hash"] == run["profileHash"])
+    assert sorted(m["answerSide"] for m in group["metrics"] if m["answerSide"]) == [
+        "left", "left", "right", "right",
+    ]
+
+    # ...which is what the plane actually asks for.
+    stored = rig.repo.load_profile(run["profileHash"])
+    axes = derive.strategy_axes(stored)
+    assert axes is not None
+    assert len(axes.x_metrics) == 2 and len(axes.y_metrics) == 2
+    assert parse_profile is not None  # imported for the fixture's sake
+
+
+async def test_a_warm_cache_cannot_answer_with_an_older_payload_shape(
+    rig: LegacyRig,
+) -> None:
+    """The regression that produced "this profile doesn't record which well
+    each condition rewards" on an archive whose profiles say exactly that.
+
+    A cached row is served verbatim, so a payload written before a field existed
+    goes on being returned after it does — silently, because nothing about a
+    cache hit looks wrong. `CODEC_VERSION` is the only thing standing between
+    that and a panel drawing the wrong conclusion, which is why adding a FIELD
+    counts as a codec change even when the arithmetic never moved.
+    """
+    from ephymeris_sidecar.analytics import derive
+
+    rig.service._sketch_lookup = lambda name: None
+    rig.add_legacy_run("remy1", ([101, 249] + [103, 248]) * 12)
+    await rig.service.rescan(rig.cohort.id)
+    await rig.service.summary(rig.cohort.id)
+
+    # Forge exactly the stale row: the cache as an older codec left it.
+    with rig.db.lock:
+        rig.db.conn.execute(
+            "UPDATE run_metrics_cache SET codec_version = ?", (derive.CODEC_VERSION - 1,)
+        )
+        rig.db.conn.commit()
+
+    run = (await rig.service.summary(rig.cohort.id))["runs"][0]
+    assert all(m["answerSide"] for m in run["metrics"]), (
+        "a row from an older codec must be recomputed, not served"
+    )
+
+
 async def test_a_damaged_snapshot_falls_through_rather_than_failing(
     rig: LegacyRig,
 ) -> None:

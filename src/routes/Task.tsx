@@ -22,7 +22,12 @@ import {
   taskFromPreset,
 } from "@/lib/taskdef/commands";
 import { isRampGroup } from "@/lib/taskdef/types";
-import type { TaskDefinition, TaskEntry, TaskPreset } from "@/lib/taskdef/types";
+import type {
+  TaskDefinition,
+  TaskDiagnostic,
+  TaskEntry,
+  TaskPreset,
+} from "@/lib/taskdef/types";
 import { useTask } from "@/lib/taskdef/useTask";
 import { taskGraph, type TaskNode } from "@/lib/tasks/topology";
 import { useSettings } from "@/lib/settings/context";
@@ -192,6 +197,52 @@ export function Task() {
 
   const litGroups = useMemo(() => new Set(hoverNode?.governedBy ?? []), [hoverNode]);
 
+  /**
+   * Trial types the state machine cannot see, said on the row that causes it.
+   *
+   * `conditionsOf` filters a profile's odor codes through `liveMetrics`, and the
+   * generator's `_live_metrics` silently `continue`s past a trial type with a
+   * missing onset code or an unbound response channel. So a row can be typed,
+   * saved, flashed — and never appear as a condition anywhere: not on the
+   * diagram, not in the live metrics, not in Analytics.
+   *
+   * The fan used to catch this by accident (four rows typed, three arms drawn),
+   * and collapsing it would have taken that away. This is the same finding made
+   * deliberately: located on the row, in words, and impossible to read past.
+   * Derived here rather than in the sidecar because it is a statement about the
+   * definition on screen against the profile it just compiled to — both of
+   * which this page is holding.
+   */
+  const unscoredTrials = useMemo<TaskDiagnostic[]>(() => {
+    if (!definition || !session.profile) return [];
+    const scored = new Set<string>();
+    const nameOf = new Map(
+      Object.entries(session.profile.strobes).map(([code, name]) => [
+        Number(code),
+        String(name).toUpperCase(),
+      ]),
+    );
+    for (const metric of session.profile.liveMetrics) {
+      const name = nameOf.get(metric.triggerCode);
+      if (name) scored.add(name);
+    }
+    if (scored.size === 0) return [];
+    return definition.trials.flatMap((trial, index) =>
+      trial.onsetStrobe && !scored.has(trial.onsetStrobe.toUpperCase())
+        ? [
+            {
+              location: `trials[${index}].onsetStrobe`,
+              message:
+                "no live metric scores this onset code, so the state machine " +
+                "cannot see this trial type — it will not appear as a condition " +
+                "on the diagram, in the live metrics, or in Analytics.",
+              code: "TSK112",
+            },
+          ]
+        : [],
+    );
+  }, [definition, session.profile]);
+
   const remove = useCallback(async () => {
     if (!selected) return;
     await deleteTask(client, selected);
@@ -325,7 +376,7 @@ export function Task() {
                   mode={definition.selectionMode}
                   rig={rig}
                   vocabulary={vocabulary}
-                  diagnostics={session.diagnostics}
+                  diagnostics={[...session.diagnostics, ...unscoredTrials]}
                   onChange={(trials) => setDefinition({ ...definition, trials })}
                 />
               </motion.div>

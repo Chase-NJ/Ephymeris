@@ -13,7 +13,7 @@ from collections import Counter
 
 from ephymeris_sidecar.analytics import derive
 from ephymeris_sidecar.tasks.metrics import compute_series
-from ephymeris_sidecar.tasks.profile import parse_profile
+from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
 
 # The real GRGL profile: odor 1 should be answered right, odor 3 left.
 GRGL = {
@@ -41,10 +41,30 @@ GRGL = {
 
 PROFILE = parse_profile(GRGL)
 
+#: Two odors per well — the shape that broke both strategy panels, because the
+#: plane demanded exactly two metrics and this declares four.
+FOUR_ODOR = {
+    "taskName": "GRGL 4-Odor",
+    "strobes": {**GRGL["strobes"], "102": "ODOR_2_ON", "104": "ODOR_4_ON"},
+    "liveMetrics": [
+        {"id": "odor1_r", "label": "P(R | Odor 1)", "triggerCode": 101,
+         "successCode": 249, "alternateCode": 248, "windowSize": 20},
+        {"id": "odor2_r", "label": "P(R | Odor 2)", "triggerCode": 102,
+         "successCode": 249, "alternateCode": 248, "windowSize": 20},
+        {"id": "odor3_l", "label": "P(L | Odor 3)", "triggerCode": 103,
+         "successCode": 248, "alternateCode": 249, "windowSize": 20},
+        {"id": "odor4_l", "label": "P(L | Odor 4)", "triggerCode": 104,
+         "successCode": 248, "alternateCode": 249, "windowSize": 20},
+    ],
+}
+
 HIT_1 = [101, 249]        # odor 1 → right: correct
 MISS_1 = [101, 248]       # odor 1 → left: wrong, but a response
+HIT_2 = [102, 249]        # odor 2 → right: correct
+MISS_2 = [102, 248]
 HIT_3 = [103, 248]        # odor 3 → left: correct
 MISS_3 = [103, 249]
+HIT_4 = [104, 248]        # odor 4 → left: correct
 
 
 def document(codes: list[int], **extra) -> dict:
@@ -530,10 +550,102 @@ def test_the_trail_shows_a_bias_becoming_discrimination_within_one_session() -> 
     assert end.x == 1.0
 
 
-def test_the_trail_needs_exactly_two_conditions() -> None:
+def test_the_trail_needs_two_opposing_SIDES_not_two_conditions() -> None:
+    """The generalization, and why it was needed.
+
+    The plane's meaning is that an animal answering the same way regardless of
+    stimulus sits on `x + y = 1`, so its axes have to be OPPOSING answers. With
+    two conditions that was automatic and the code just took `liveMetrics[0]`
+    and `[1]` — which silently blanked both strategy panels for every task
+    presenting more than two, including the four-odor task that most needs
+    reading. Now any number of conditions folds onto the two sides.
+    """
     one_metric = parse_profile({**GRGL, "liveMetrics": [GRGL["liveMetrics"][0]]})
     assert derive.strategy_trail(document(HIT_1 * 4), one_metric) == []
     assert derive.strategy_trail(document(HIT_1), None) == []
+
+    # Two conditions that reward the SAME well are not a plane: nothing on
+    # these axes could distinguish discriminating from answering one side.
+    same_side = parse_profile({
+        **GRGL,
+        "liveMetrics": [
+            GRGL["liveMetrics"][0],
+            {**GRGL["liveMetrics"][1], "successCode": 249, "alternateCode": 248},
+        ],
+    })
+    assert derive.strategy_axes(same_side) is None
+    assert derive.strategy_trail(document((HIT_1 + HIT_3) * 15), same_side) == []
+
+
+def test_four_conditions_fold_onto_two_sides() -> None:
+    four = parse_profile(FOUR_ODOR)
+    axes = derive.strategy_axes(four)
+    assert axes is not None
+    # x takes the FIRST declared metric's side, so a two-condition task keeps
+    # exactly the orientation it has always had and no familiar plot silently
+    # transposes.
+    assert (axes.x_side, axes.y_side) == ("right", "left")
+    assert axes.x_metrics == ("odor1_r", "odor2_r")
+    assert axes.y_metrics == ("odor3_l", "odor4_l")
+
+    perfect = (HIT_1 + HIT_2 + HIT_3 + HIT_4) * 8
+    trail = derive.strategy_trail(document(perfect), four)
+    assert trail, "a four-odor task must produce a walk"
+    assert all(p.x == 1.0 and p.y == 1.0 for p in trail)
+
+
+def test_a_side_pools_over_integers_not_over_proportions() -> None:
+    """A condition the animal barely met must not drag its side as hard as one
+    it met constantly — which is exactly what averaging the two conditions'
+    proportions would do."""
+    four = parse_profile(FOUR_ODOR)
+    # Right side: 20 correct odor-1 trials, and 4 odor-2 trials all wrong.
+    # Pooled over integers that is 20/24 = 0.833; averaged proportions would
+    # read 0.5, which is a different animal.
+    codes = HIT_1 * 20 + MISS_2 * 4 + (HIT_3 + HIT_4) * 12
+    trail = derive.strategy_trail(document(codes), four)
+    assert trail
+    # Pooled over integers, the right side is 20 of 24. The mean of the two
+    # conditions' proportions would be 0.5 — a different animal entirely.
+    assert abs(trail[-1].x - 20 / 24) < 0.02
+    assert abs(trail[-1].x - 0.5) > 0.3
+
+
+def test_a_withhold_condition_is_not_an_axis() -> None:
+    """A withhold is the ABSENCE of an answer, so it has no opposing side to be
+    plotted against — and a no-go metric's `alternateCode` says "any port will
+    do", which is precisely the value a careless axis would pick up."""
+    with_nogo = parse_profile({
+        **GRGL,
+        "strobes": {**GRGL["strobes"], "244": "WATER_POKE_NONE"},
+        "liveMetrics": [
+            *GRGL["liveMetrics"],
+            {
+                "id": "p_withhold", "label": "P(withhold | Odor 5)",
+                "triggerCode": 105, "successCode": 244, "alternateCode": 248,
+                "windowSize": 20,
+            },
+        ],
+    })
+    axes = derive.strategy_axes(with_nogo)
+    assert axes is not None
+    assert "p_withhold" not in (*axes.x_metrics, *axes.y_metrics)
+
+
+def test_the_answer_side_is_never_taken_from_the_alternate() -> None:
+    """The one derivation here that can print a LIE rather than a blank."""
+    unreadable = parse_profile({
+        **GRGL,
+        "liveMetrics": [
+            # A success code that resolves to nothing an answer can be read
+            # from, beside a perfectly readable — and opposite — alternate.
+            {**GRGL["liveMetrics"][0], "successCode": 246},
+            GRGL["liveMetrics"][1],
+        ],
+    })
+    assert derive.answer_side_of(unreadable, unreadable.live_metrics[0]) is None
+    # ...and with only one readable side left, there is no plane at all.
+    assert derive.strategy_axes(unreadable) is None
 
 
 def test_the_trail_starts_only_once_both_conditions_have_scored() -> None:
@@ -896,3 +1008,94 @@ def test_values_are_rounded_on_the_wire() -> None:
     payload = derive.summarize(document(codes), PROFILE).to_json()
     value = payload["metrics"][0]["pSession"]
     assert value == round(2 / 3, 6)
+
+
+# --- the codec's own contract ----------------------------------------------
+
+
+def test_the_payload_shape_is_pinned_to_the_codec_version() -> None:
+    """A cached row is served VERBATIM, so the payload's shape is part of the
+    codec whether or not the arithmetic moved.
+
+    This is the check that would have caught the `answerSide` regression. Adding
+    two fields to every metric summary changed nothing about the numbers, so
+    `CODEC_VERSION` was left alone — and every run already in a warm cache went
+    on answering with a payload that had no `answerSide` in it at all. The
+    strategy plane read that as "no condition says which well it rewards" and
+    refused to draw, on an archive whose profiles say exactly that. Nothing
+    threw; the cache was simply older than the question being asked of it.
+
+    So: if this list changes, the payload changed, and `CODEC_VERSION` must
+    change with it. Spelled out as a literal rather than derived from today's
+    dataclasses, for `test_migrations.py`'s reason — a shape derived from the
+    code under test agrees with it by construction and proves nothing.
+    """
+    payload = derive.summarize(document((HIT_1 + HIT_3) * 12), FULL_PROFILE).to_json()
+
+    assert sorted(payload) == [
+        "clean", "conditions", "detail", "durationMs", "engagement",
+        "excludedByDefault", "metrics", "outcomes", "overall", "seed",
+        "status", "stopReason", "totalEvents",
+    ]
+    assert sorted(payload["metrics"][0]) == [
+        "answerSide", "counted", "excluded", "hits", "id", "label",
+        "lowConfidence", "pSession", "pWindow", "triggered", "wilsonHigh",
+        "wilsonLow", "windowSize",
+    ]
+    assert sorted(payload["outcomes"]) == [
+        "aborted", "administered", "holdFailed", "noResponse", "pRewarded",
+        "pSide", "rewarded", "rewardedHigh", "rewardedLow", "sideHigh",
+        "sideLow", "trials", "wrongWell",
+    ]
+    assert sorted(payload["conditions"][0]) == [
+        "label", "metricId", "outcomes", "triggerCode",
+    ]
+    assert sorted(payload["engagement"]) == [
+        "engagedHigh", "engagedLow", "noPoke", "odorDelivered", "pDelivered",
+        "pEngaged", "pokeAborted", "poked", "presented",
+    ]
+
+    # The version this shape belongs to. Bump BOTH together or a warm cache
+    # keeps answering the old shape to the new question.
+    assert derive.CODEC_VERSION == 8
+
+
+def test_an_unevidenced_condition_gets_a_stable_arbitrary_side() -> None:
+    """A known limit of the inferred path, pinned so it stays known.
+
+    `infer.py` votes on the codes `checkResponse()` only ever emits at the
+    correct well (`FLUID_x`, `WATER_UNPOKE_EARLY_x`) or only at the wrong one
+    (`WATER_POKE_ERROR_x`). A bare `WATER_POKE_x` is not evidence either way —
+    it says an answer happened, not whether it was right — so a condition whose
+    trials never settle is oriented by a deterministic fallback instead.
+
+    Two things follow, and the second is why this is tolerable:
+
+    * That orientation is **arbitrary**, so such a condition can land on either
+      axis of the strategy plane.
+    * It is arbitrary the **same way on every pass**, so a rescan never moves a
+      run between profile groups — which is the failure that would actually
+      hurt, since a group is a comparability set.
+
+    In real data the case is close to unreachable: every settled trial emits one
+    of the evidence codes, so a condition with trials has evidence. Fixing it
+    properly would mean recording "inferred without evidence" on the metric,
+    which changes `LiveMetric`, the wire, and therefore `profile_hash` —
+    splitting every historical run from its future ones to correct an edge that
+    real streams do not reach.
+    """
+    from ephymeris_sidecar.analytics import infer
+
+    # Odor 1 answered right and odor 3 answered left, both with real evidence;
+    # odor 4 only ever produced bare pokes.
+    codes = [101, 249, 253] * 6 + [103, 248, 252] * 6 + [104, 249] * 4
+    first = infer.infer_profile(codes, sketch_name="GRGL 3-Odor")
+    second = infer.infer_profile(codes, sketch_name="GRGL 3-Odor")
+    assert first is not None and second is not None
+
+    sides = [derive.answer_side_of(first, m) for m in first.live_metrics]
+    # Every condition gets *a* side — the axes are never silently short one.
+    assert all(side in ("left", "right") for side in sides), sides
+    # And the same one every time, so a rescan cannot move the run's group.
+    assert sides == [derive.answer_side_of(second, m) for m in second.live_metrics]
+    assert profile_hash(first) == profile_hash(second)

@@ -3,17 +3,18 @@ import { useMemo, useState } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
 import { HowToRead } from "@/components/charts/HowToRead";
-import { Segmented } from "@/components/common/controls";
+import { ProfilePicker } from "./ProfilePicker";
 import { HIGHLIGHT_DRAW } from "@/components/charts/reveal";
 import { edgesWithGaps, segmentsWithGaps, type Point } from "@/components/charts/UnitChart";
 import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
 import type { AnalyticsSummary, ProfileGroup, RunSummary } from "@/lib/analytics/types";
 import {
   chronological,
-  declaredMetrics,
+  pooledAxis,
   runsInProfile,
+  strategyProfiles,
   taskLabels,
-  twoMetricGroups,
+  type StrategyAxes,
 } from "@/lib/analytics/view";
 import {
   NoPlane,
@@ -52,24 +53,40 @@ export function StrategySpace({
   summary: AnalyticsSummary;
   colors: Map<string, string>;
 }) {
-  // The one panel that must scope to a single task: its axes are that task's
-  // two declared conditions, and a GRGL point beside an EZ-variant point on
-  // shared axes is a category error (§4.3). So it scopes *itself* — the
-  // most-run two-condition task by default, the rest one click away on a
-  // panel-local switch — instead of asking the dashboard for a filter.
-  const planes = useMemo(() => twoMetricGroups(summary), [summary]);
+  /*
+   * The one panel that must scope to a single task: a GRGL point beside an
+   * EZ-variant point on shared axes is a category error even when both fold to
+   * the same two sides (§4.3). So it scopes *itself* — the most-run plottable
+   * profile by default, every other profile the cohort holds one click away —
+   * rather than asking the dashboard for a filter.
+   *
+   * The list is now every profile in the data, not only the ones that declare
+   * exactly two conditions: a four-odor task folds four conditions onto two
+   * sides (`strategyAxes`) and belongs here, and one that genuinely cannot be
+   * plotted is shown disabled with its reason rather than silently missing.
+   */
+  const profiles = useMemo(() => strategyProfiles(summary), [summary]);
+  const plottable = profiles.filter((entry) => entry.axes !== null);
   const labels = useMemo(() => taskLabels(summary), [summary]);
   const [chosen, setChosen] = useState<string | null>(null);
-  const profile =
-    planes.find((group) => group.hash === chosen) ?? planes[0] ?? null;
-  const trails = useMemo(() => buildTrails(summary, profile), [summary, profile]);
-  const axes = declaredMetrics(profile);
+  const selected =
+    plottable.find((entry) => entry.group.hash === chosen) ?? plottable[0] ?? null;
+  const profile = selected?.group ?? null;
+  const axes = selected?.axes ?? null;
+  const trails = useMemo(
+    () => buildTrails(summary, profile, axes),
+    [summary, profile, axes],
+  );
 
-  if (!profile || axes.length !== 2) {
-    return <NoPlane hasRuns={summary.runs.length > 0} />;
+  if (!profile || !axes) {
+    return (
+      <NoPlane
+        hasRuns={summary.runs.length > 0}
+        reason={profiles[0]?.reason ?? null}
+      />
+    );
   }
 
-  const [xMetric, yMetric] = axes;
   const elsewhere = summary.runs.length - profile.runCount;
 
   return (
@@ -81,15 +98,12 @@ export function StrategySpace({
               Strategy space
               <span className="ml-2 text-static/70">one point per session</span>
             </span>
-            {planes.length > 1 ? (
-              <Segmented
+            {profiles.length > 1 ? (
+              <ProfilePicker
+                profiles={profiles}
                 value={profile.hash}
                 onChange={setChosen}
-                label="Task on the plane"
-                options={planes.map((group) => ({
-                  value: group.hash,
-                  label: labels.get(group.hash) ?? (group.taskName ?? "task"),
-                }))}
+                labels={labels}
               />
             ) : (
               <span className="font-mono text-[9px] text-static/70">
@@ -103,8 +117,11 @@ export function StrategySpace({
         xLeft="0.0"
         xRight="1.0"
         footer={
-          <span className="truncate text-static/70">
-            ↑ {yMetric!.label} · → {xMetric!.label}
+          <span
+            className="truncate text-static/70"
+            title={`↑ ${axes.y.conditions.join(" · ")}\n→ ${axes.x.conditions.join(" · ")}`}
+          >
+            ↑ {axes.y.label} · → {axes.x.label} · P(correct)
           </span>
         }
       >
@@ -132,14 +149,14 @@ export function StrategySpace({
       {elsewhere > 0 && (
         <p className="mt-1 font-mono text-[9px] leading-relaxed text-static/60">
           {elsewhere} run{elsewhere === 1 ? "" : "s"} on other tasks
-          {planes.length > 1
-            ? " — switch the plane above to see the two-condition ones"
-            : " have no two-condition plane"}
+          {plottable.length > 1
+            ? " — switch the profile above to plot them"
+            : " cannot be plotted on these axes"}
           .
         </p>
       )}
       <HowToRead>
-        <StrategyNote xMetric={xMetric!} yMetric={yMetric!} />
+        <StrategyNote axes={axes} />
       </HowToRead>
     </StrategyPanel>
   );
@@ -273,14 +290,13 @@ function describe(run: RunSummary, trail: Trail, label: string): string {
 function buildTrails(
   summary: AnalyticsSummary,
   profile: ProfileGroup | null,
+  axes: StrategyAxes | null,
 ): Trail[] {
-  const axes = declaredMetrics(profile);
-  if (!profile || axes.length !== 2) return [];
-  const [xId, yId] = axes.map((metric) => metric.id);
+  if (!profile || !axes) return [];
 
   // Only runs sharing this profile's hash — a GRGL point and an EZ-variant
-  // point on shared axes is a category error, even when both declare two
-  // metrics (§4.3).
+  // point on shared axes is a category error, even when both fold onto the
+  // same two sides (§4.3).
   const eligible = runsInProfile(summary.runs, profile);
   const byAnimal = new Map<string, RunSummary[]>();
   for (const run of eligible) {
@@ -297,14 +313,15 @@ function buildTrails(
       name: names.get(animalId) ?? animalId,
       runs: ordered,
       points: ordered.map((run) => {
-        const x = run.metrics.find((metric) => metric.id === xId)?.pSession;
-        const y = run.metrics.find((metric) => metric.id === yId)?.pSession;
+        // Pooled per side over integers, so a task presenting four conditions
+        // lands on the same two axes a two-condition task does, weighted the
+        // way the session actually ran (`pooledAxis`).
+        const x = pooledAxis(run, axes.x.ids).p;
+        const y = pooledAxis(run, axes.y.ids).p;
         // A session that scored nothing produces no point at all, and the
         // trail bridges the gap dashed rather than interpolating through
         // something that never happened (§3.6).
-        return x === null || x === undefined || y === null || y === undefined
-          ? null
-          : { x, y };
+        return x === null || y === null ? null : { x, y };
       }),
     };
   });

@@ -15,18 +15,31 @@
  * `metrics.py` and `derive.py` already follow. A code number means nothing
  * without the map that names it.
  *
- * The shape, for a two-odor discrimination task:
+ * The shape, whatever the task presents:
  *
- *   Light → Poke →┬ Odor 1 ┬→ Unpoke → Light off → Answer →┬ Reward
- *                 └ Odor 3 ┘                               ├ No hold
- *                                                          ├ Wrong well
- *                                                          └ No answer  → ITI
+ *   Light → Poke → Odor → Unpoke → Light off → Answer →┬ Reward
+ *                  ▮▯▯                                 ├ No hold
+ *                                                      ├ Wrong well
+ *                                                      └ No answer  → ITI
  *
- * **Left-to-right is real time, not narrative order.** The condition fan-out
- * sits at odor delivery because that is where the firmware strobes the odor-on
- * code — after `ODOR_POKE` and after the pre-odor hold verifies, when the vacuum
- * closes and odor reaches the nose (`BehaviorBox.h`'s `runTrial()`). The odor is
- * primed well before that and silently, so there is nothing earlier to draw.
+ * **Left-to-right is real time, not narrative order.** The condition sits at
+ * odor delivery because that is where the firmware strobes the odor-on code —
+ * after `ODOR_POKE` and after the pre-odor hold verifies, when the vacuum closes
+ * and odor reaches the nose (`BehaviorBox.h`'s `runTrial()`). The odor is primed
+ * well before that and silently, so there is nothing earlier to draw.
+ *
+ * **ONE ODOR NODE, N IDENTITIES.** The conditions used to fan out as N nodes,
+ * and that was a picture of a trial with N branches — which this task does not
+ * have. The arms were *congruent*: same in-edge, same two out-edges, same
+ * `governedBy`, same downstream, differing only in which odor was delivered, and
+ * mutually exclusive. So the fan spent O(N) rows of the drawing's scarcest axis,
+ * 2N edges and the suppression of three edge labels to encode a label — and at
+ * four conditions the bottom arm landed on the abort band, at six it swept past
+ * it. The identities are `variants` on the one node now (`▮▯▯` above is the tick
+ * strip the renderer draws from them), the three edges have their labels back,
+ * and the height of the drawing no longer depends on how many odors the operator
+ * declared. `armsCongruent` is the guard: a task mixing go and no-go types is
+ * not congruent and still fans.
  *
  * Pure: no React, no store, no fetch. `SketchStateMachine` draws what this
  * returns on the Task tab, and `LiveStateMachine` (same file) draws it in
@@ -63,14 +76,69 @@ export type EdgeKind = "advance" | "choice" | "abort" | "error" | "reward" | "re
  * overlay, not as an optional field every edge in this file has to think about.
  */
 
+/**
+ * Where a condition's correct answer is, when the profile can prove it.
+ *
+ * `null` is a first-class answer and the default. See `correctWellOf`.
+ */
+export type CorrectAnswer =
+  | { kind: "well"; side: "left" | "right" }
+  | { kind: "withhold" }
+  | { kind: "port"; slot: number };
+
+/** One odor condition the task presents. */
+export interface Condition {
+  id: string;
+  label: string;
+  /** The `liveMetrics` label, when one scores this condition. */
+  metricLabel: string | null;
+  strobeName: string;
+  /** 1-based authored order — the slot order the trial table calls the
+   *  contract, so a rail row and a table row can name the same number. */
+  index: number;
+  /**
+   * Which answer this condition rewards, derived from its metric — or `null`
+   * when the profile cannot prove one. Never guessed.
+   */
+  correctAnswer: CorrectAnswer | null;
+}
+
 export interface TaskNode {
   id: string;
   label: string;
   kind: NodeKind;
   /** Left-to-right progression through a trial. Authored — see the layout note. */
   column: number;
-  /** Vertical slot within the column. Authored for the spine, computed for fan-outs. */
+  /**
+   * Vertical slot within the column. Authored for the spine; a *starting point*
+   * for the two laned bands below, which the renderer re-places against
+   * measured content (see `lane`).
+   */
   row: number;
+  /**
+   * Which band this node belongs to, when its row is not simply authored.
+   *
+   * The renderer owns the final y of a laned node, because the thing that
+   * decides it — how tall a node's label-plus-chip stack actually is — is
+   * knowable only where the chips are known. `topology.ts` cannot see
+   * `profile.config`'s declared groups, and the live panel draws no chips at
+   * all, so a row computed here would be right for at most one of the two
+   * hosts. Absent means "the authored row is the answer".
+   *
+   *   `fan`   — one arm of the condition fan-out, which exists only on the
+   *             congruence fallback (see `armsCongruent`). Re-spaced by
+   *             measured stack height rather than by a constant fitted to N=2.
+   *   `floor` — the abort band. Its top is pushed below whatever the spine and
+   *             the fan actually occupy, so nothing can grow into it. THIS is
+   *             the defect that produced the overlap: a constant obstacle in a
+   *             field that grows.
+   *
+   * Order WITHIN a lane stays in `row`, which is why there is no second field
+   * for it — one of the floor's ties is load-bearing (`repeat` shares `lazy`'s
+   * depth so its collecting edges pass over the aborts they don't touch), and a
+   * duplicate ordering could disagree with it.
+   */
+  lane?: "fan" | "floor";
   /** One line of detail, shown on hover. */
   detail?: string;
   /**
@@ -84,6 +152,18 @@ export interface TaskNode {
   governedBy: readonly string[];
   /** Strobe names that put the live token here. */
   entryNames: readonly string[];
+  /**
+   * The conditions this node stands for, when it stands for more than itself.
+   *
+   * Set only on the collapsed odor node. The N arms it replaces were congruent
+   * — same in-edge, same two out-edges, same `governedBy`, same downstream —
+   * so drawing them as N rows spent the diagram's scarcest axis on a label.
+   * The identities live here instead, and the renderer draws them as ticks.
+   */
+  variants?: readonly Condition[];
+  /** `variants.length`, or absent. Present so a renderer can ask the cheap
+   *  question without reaching into the array. */
+  multiplicity?: number;
   /**
    * True when the firmware's own post-outcome delay starts at this node's
    * strobe and nothing else is emitted until that delay ends.
@@ -108,13 +188,13 @@ export interface TaskGraphModel {
   nodes: TaskNode[];
   edges: TaskEdge[];
   /** One per odor condition the profile declares. Empty on a profile with none. */
-  conditions: Array<{
-    id: string;
-    label: string;
-    /** The `liveMetrics` label, when one scores this condition. */
-    metricLabel: string | null;
-    strobeName: string;
-  }>;
+  conditions: Condition[];
+  /**
+   * False when the arms differ in a way the collapsed node cannot express, so
+   * the fan is drawn instead (`armsCongruent`). Always true for every profile
+   * the lab runs today — it is the guard, not the norm.
+   */
+  congruent: boolean;
   /** False when the profile declares too little to draw anything honest. */
   usable: boolean;
 }
@@ -152,6 +232,16 @@ const COL = {
  * they don't touch. On one shared row those edges ran straight through the
  * intervening nodes, drawing what looked like a chain (no poke → let go → left
  * early → repeat) out of three independent branches.
+ */
+/**
+ * The band's resting depth and the step between its nodes.
+ *
+ * A LOWER BOUND now, not a position: `frameFor` pushes the band below whatever
+ * the spine and the fan measurably occupy, and only falls back to this when
+ * that is shallower. Deriving it downward as well would shrink the drawing
+ * every time a task declared fewer chips, which is a change nobody asked for;
+ * the point of deriving is that nothing can grow INTO the band, not that the
+ * band chases content upward.
  */
 const ABORT_ROW = 2.4;
 const ABORT_STEP = 0.5;
@@ -241,10 +331,7 @@ function declaredNames(profile: TaskProfile | null): Set<string> {
  * conditions when present. A profile with strobes but no metrics still draws
  * its odor rows, just labelled by strobe name.
  */
-function conditionsOf(
-  profile: TaskProfile | null,
-  names: Set<string>,
-): TaskGraphModel["conditions"] {
+function conditionsOf(profile: TaskProfile | null, names: Set<string>): Condition[] {
   const odorNames = [...names]
     .filter((name) => /^ODOR_\d+_ON$/.test(name))
     .sort((a, b) => odorIndex(a) - odorIndex(b));
@@ -256,10 +343,20 @@ function conditionsOf(
       Number(code),
     ]),
   );
+  const nameOfCode = new Map(
+    Object.entries(profile?.strobes ?? {}).map(([code, name]) => [
+      Number(code),
+      String(name).toUpperCase(),
+    ]),
+  );
   const labelled = new Map<string, string>();
+  const answers = new Map<string, CorrectAnswer | null>();
   for (const metric of profile?.liveMetrics ?? []) {
     for (const [name, code] of byCode) {
-      if (code === metric.triggerCode) labelled.set(name, metric.label);
+      if (code === metric.triggerCode) {
+        labelled.set(name, metric.label);
+        answers.set(name, correctWellOf(nameOfCode.get(metric.successCode)));
+      }
     }
   }
 
@@ -267,7 +364,7 @@ function conditionsOf(
   // declares the whole six-odor vocabulary and presents two of them; drawing
   // all six would invent four branches the animal never sees.
   const declared = labelled.size > 0 ? odorNames.filter((n) => labelled.has(n)) : odorNames;
-  return declared.map((name) => ({
+  return declared.map((name, position) => ({
     id: `odor-${odorIndex(name)}`,
     // The odor, not the metric's formula. "P(R | Odor 1)" is what the metric is
     // called; on the graph it is a node the animal passes through, and the
@@ -275,7 +372,54 @@ function conditionsOf(
     label: `Odor ${odorIndex(name)}`,
     metricLabel: labelled.get(name) ?? null,
     strobeName: name,
+    index: position + 1,
+    correctAnswer: answers.get(name) ?? null,
   }));
+}
+
+/**
+ * The answer a condition rewards, from the name of its metric's SUCCESS code.
+ *
+ * > [!CAUTION]
+ * > **From `successCode` alone, and `null` whenever it cannot be proved.**
+ * > The obvious convenience — falling back to `alternateCode` when the success
+ * > code is not a well — is wrong in a way that prints a confident lie. A no-go
+ * > type's alternate is set by the generator to "any port will do"
+ * > (`_first_enter_code`), and `infer.py` does the same with `slots[0]`, so that
+ * > fallback renders *"Odor 4 → left well"* for a condition whose correct answer
+ * > is to poke nothing at all. This is the only figure the diagram ADDS rather
+ * > than rearranges, so it is the only one that can be false — and it would be
+ * > false silently, in a screenshot that outlives the session that made it.
+ *
+ * The side comes off the historical `_L`/`_R` suffix, read rather than assumed,
+ * mirroring `infer.py`'s `_side_label`: a rig whose response ports carry no side
+ * keeps its slot number instead of being called left or right.
+ */
+export function correctWellOf(successName: string | undefined): CorrectAnswer | null {
+  if (!successName) return null;
+  if (successName === "WATER_POKE_NONE") return { kind: "withhold" };
+  const match = /^WATER_POKE_(?:PORT_(\d+)|(L|R))$/.exec(successName);
+  if (!match) return null;
+  if (match[1]) return { kind: "port", slot: Number(match[1]) };
+  return { kind: "well", side: match[2] === "L" ? "left" : "right" };
+}
+
+/**
+ * Whether the arms can honestly be drawn as one node.
+ *
+ * They can when they differ only in identity, which is the case for every
+ * profile this lab runs: same in-edge, same two out-edges, same `governedBy`,
+ * same downstream. A **differing correct well is still congruent** — the
+ * topology is identical and the rail carries the difference — but a go/no-go
+ * mix is not: a withhold arm resolves at the response window and never reaches
+ * the wells, so one node standing for both would assert a path that does not
+ * exist. That profile fans, and the fan's geometry has to be right for it,
+ * which is why the fallback is measured rather than constant.
+ */
+export function armsCongruent(conditions: readonly Condition[]): boolean {
+  if (conditions.length <= 1) return true;
+  const withholds = (c: Condition) => c.correctAnswer?.kind === "withhold";
+  return conditions.every((c) => withholds(c) === withholds(conditions[0]!));
 }
 
 /**
@@ -336,7 +480,8 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
   // A profile needs at least a trial light and one well to describe a trial.
   const usable =
     has("LIGHTS_ON") && (has("WATER_POKE_L") || has("WATER_POKE_R") || has("WATER_POKE_NONE"));
-  if (!usable) return { nodes: [], edges: [], conditions, usable: false };
+  const congruent = armsCongruent(conditions);
+  if (!usable) return { nodes: [], edges: [], conditions, congruent, usable: false };
 
   // --- the spine -----------------------------------------------------------
   node({
@@ -376,6 +521,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       kind: "abort",
       column: COL.awaitPoke,
       row: ABORT_ROW,
+      lane: "floor",
       detail: "The odor-port window elapsed with no poke. The trial is re-presented.",
       governedBy: ["Abstention penalty", ...STAGES],
       entryNames: ["LAZY_RAT"],
@@ -403,8 +549,52 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
    * condition is a fan-out of one, which is why `singleArm` is `<= 1`.
    */
   const odorArms: string[] = [];
-  const singleArm = conditions.length <= 1;
-  if (conditions.length > 0) {
+  /*
+   * ONE NODE, N IDENTITIES — the collapse.
+   *
+   * The arms were congruent, so the fan spent O(N) rows of the diagram's
+   * scarcest axis, 2N edges and the suppression of three edge labels to encode
+   * a label. At four conditions the bottom arm landed on the abort band; at six
+   * it swept past it. The identities move onto the node as `variants` (the
+   * renderer draws them as ticks) and the height of the drawing stops being a
+   * function of how many odors the operator declared.
+   *
+   * `singleArm` is therefore now "is there one node here", which is true
+   * whenever the arms collapsed — so the three edges get their labels back at
+   * every N.
+   */
+  const collapsed = congruent && conditions.length > 0;
+  const singleArm = collapsed || conditions.length <= 1;
+  if (collapsed) {
+    odorArms.push(
+      node({
+        id: "odor",
+        // Generic while it stands for several: naming it after the first would
+        // read as "this node IS Odor 1" on a task presenting four. The live
+        // panel replaces this with the condition actually in play.
+        label: conditions.length === 1 ? conditions[0]!.label : "Odor",
+        kind: "state",
+        column: COL.odor,
+        row: SPINE_ROW,
+        detail:
+          conditions.length === 1
+            ? `Trials opened by ${conditions[0]!.strobeName}.`
+            : `One of ${conditions.length} conditions is presented, chosen per trial.`,
+        // Which odor is presented is the selection policies' doing; getting
+        // this far is the holds'.
+        governedBy: ["Trial pool", "Anti-bias selection", "Correction trials", ...STAGES],
+        // EVERY odor code, so `liveNodeId` still lands the token here whichever
+        // condition the firmware announces.
+        entryNames: conditions.map((condition) => condition.strobeName),
+        variants: conditions,
+        multiplicity: conditions.length,
+      }),
+    );
+  } else if (conditions.length > 0) {
+    // The fallback: arms that are not congruent really are different paths, so
+    // they fan. Rows are a starting point only — `frameFor` re-spaces the lane
+    // against the measured stack, because the constant this used to use was
+    // fitted to N=2 and had two pixels of clearance even there.
     const armRows = centredRows(conditions.length, 1.6);
     conditions.forEach((condition, index) => {
       odorArms.push(
@@ -414,11 +604,10 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
           kind: "state",
           column: COL.odor,
           row: armRows[index] ?? SPINE_ROW,
+          lane: "fan",
           detail: condition.metricLabel
             ? `${condition.metricLabel} — trials opened by ${condition.strobeName}.`
             : `Trials opened by ${condition.strobeName}.`,
-          // Which odor is presented is the selection policies' doing; getting
-          // this far is the holds'.
           governedBy: ["Trial pool", "Anti-bias selection", "Correction trials", ...STAGES],
           entryNames: [condition.strobeName],
         }),
@@ -442,6 +631,10 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
    * A fan-out edge is labelled only when there is one arm: N copies of "holds"
    * stacked around a fan-out is clutter, and it collided with the lower arm's
    * own name. What the transition means is on the node it arrives at.
+   *
+   * Since the collapse there is one arm on every profile the lab runs, so these
+   * labels — "holds", "samples", "leaves early" — are back. They were never
+   * dropped for being uninformative; they were dropped for colliding.
    */
   const fanEdge = (label: string) => (singleArm ? { label } : {});
   for (const arm of odorArms) {
@@ -468,6 +661,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       kind: "abort",
       column: COL.odor,
       row: ABORT_ROW + ABORT_STEP,
+      lane: "floor",
       detail: "Released before the pre-odor hold cleared — no odor was delivered.",
       governedBy: STAGES,
       entryNames: [],
@@ -486,6 +680,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       kind: "abort",
       column: COL.sample,
       row: ABORT_ROW + ABORT_STEP * 2,
+      lane: "floor",
       detail: "Odor was delivered, but the animal left before sampling completed.",
       governedBy: STAGES,
       entryNames: [],
@@ -752,6 +947,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
       kind: "abort",
       column: COL.respond,
       row: ABORT_ROW,
+      lane: "floor",
       detail: "The trial is aborted and the same one is presented again.",
       governedBy: ["Abstention penalty"],
       entryNames: ["INVALID_TRIAL"],
@@ -762,7 +958,7 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
     edge({ id: "e-repeat-start", from: "repeat", to: "start", kind: "return" });
   }
 
-  return { nodes, edges, conditions, usable: true };
+  return { nodes, edges, conditions, congruent, usable: true };
 }
 
 /**
@@ -796,6 +992,71 @@ export function nodeIndexByName(model: TaskGraphModel): Map<string, string> {
   }
   return index;
 }
+
+/**
+ * Codes that end a trial. A condition is a fact about ONE trial, so the walk
+ * that resolves it must stop at the boundary rather than reaching back into the
+ * trial before — otherwise the pre-odor phase of every trial inherits the
+ * previous trial's odor and the drawing states a condition the animal has not
+ * been given yet.
+ *
+ * `LIGHTS_ON` is guaranteed present: `taskGraph` refuses to build a usable model
+ * without it, so this is not a best-effort boundary. The others close the trial
+ * from their own paths — an abort emits `INVALID_TRIAL`, an administered trial
+ * ends on one of the ITI codes.
+ */
+const TRIAL_BOUNDARY = new Set([
+  "LIGHTS_ON",
+  "INVALID_TRIAL",
+  "END_CORRECT_ITI",
+  "END_INCORRECT_ITI",
+  "END_SESSION",
+  "START_SESSION",
+]);
+
+/**
+ * Which condition the CURRENT trial is presenting, if any.
+ *
+ * Four outcomes, and they are four different facts — which is the point.
+ * Collapsing the fan turned a structural absence (a missing arm) into a
+ * nameless presence, so the states a reader could otherwise not tell apart are
+ * spelled out here instead of being flattened to `null`:
+ *
+ *   `{kind: "condition"}` — this trial is presenting a declared condition.
+ *   `{kind: "unlisted"}`  — the firmware announced an odor this profile does
+ *                           not declare. Almost always the `liveMetrics` gate
+ *                           having silently dropped a trial type, which is the
+ *                           single most useful thing this readout can catch.
+ *   `null`                — no odor yet this trial: before the first one, after
+ *                           a reconnect with an empty log, or on an abort that
+ *                           never reached delivery. An honest nothing.
+ *
+ * NEVER falls back to `conditions[0]`. A wrong condition looks exactly like a
+ * right one.
+ */
+export function liveConditionId(
+  model: TaskGraphModel,
+  strobes: Record<string, string>,
+  codes: readonly string[],
+): LiveCondition {
+  const byStrobe = new Map(model.conditions.map((c) => [c.strobeName, c] as const));
+  for (let i = codes.length - 1; i >= 0; i -= 1) {
+    const name = strobes[codes[i]!]?.toUpperCase();
+    if (!name) continue;
+    if (TRIAL_BOUNDARY.has(name)) return null;
+    const condition = byStrobe.get(name);
+    if (condition) return { kind: "condition", id: condition.id };
+    // An odor this profile doesn't declare. Reported, not swallowed.
+    if (/^ODOR_\d+_ON$/.test(name)) return { kind: "unlisted", strobeName: name };
+  }
+  return null;
+}
+
+/** See `liveConditionId`. */
+export type LiveCondition =
+  | { kind: "condition"; id: string }
+  | { kind: "unlisted"; strobeName: string }
+  | null;
 
 /**
  * The node the last recognised strobe puts the token on, or `null` before the

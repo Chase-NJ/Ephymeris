@@ -672,6 +672,14 @@ SHAPES = (
                 doc="Rolling P at the authored window, for continuity with Mission "
                 "Control. Not interchangeable with pSession.",
             ),
+            f(
+                "hits",
+                INT,
+                doc="Counted trials this metric scored a hit on. Present so two "
+                "conditions can be POOLED exactly — sum hits, sum counted — "
+                "rather than by averaging their proportions, which would weight "
+                "a 20-trial condition like a 200-trial one.",
+            ),
             f("counted", INT),
             f("triggered", INT),
             f("excluded", INT),
@@ -679,6 +687,16 @@ SHAPES = (
             f("wilsonLow", nullable(FLOAT)),
             f("wilsonHigh", nullable(FLOAT)),
             f("lowConfidence", BOOL),
+            f(
+                "answerSide",
+                nullable(Ref("AnswerSide")),
+                doc="Which answer this condition rewards, read off its metric's "
+                "`successCode` (`tasks.md` §4.10). Null whenever the profile "
+                "cannot prove one — never guessed, and never taken from "
+                "`alternateCode`, which on a no-go metric means 'any port will "
+                "do'. This is what lets the strategy plane fold N conditions "
+                "onto two axes without knowing anything about odors.",
+            ),
         ),
         doc="One metric's whole-session result (`data.md` §9.2, §3.5).",
     ),
@@ -877,7 +895,27 @@ SHAPES = (
             f("cage", nullable(INT), doc="Home-cage number, same field as Animal.cage."),
         ),
     ),
-    Shape("ProfileMetricInfo", obj(f("id", STR), f("label", STR), f("windowSize", INT))),
+    Shape(
+        "AnswerSide",
+        lit("left", "right", "withhold", "port"),
+        doc="The kind of answer a condition rewards. `port` is a rig whose "
+        "response ports carry no side in their strobe names, so it keeps a slot "
+        "number instead of being called left or right.",
+    ),
+    Shape(
+        "ProfileMetricInfo",
+        obj(
+            f("id", STR),
+            f("label", STR),
+            f("windowSize", INT),
+            f(
+                "answerSide",
+                nullable(Ref("AnswerSide")),
+                doc="See `MetricSummary.answerSide`. Carried on the group as "
+                "well so a panel can work out its axes before opening a run.",
+            ),
+        ),
+    ),
     Shape(
         "ProfileGroup",
         obj(

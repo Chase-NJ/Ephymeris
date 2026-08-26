@@ -41,7 +41,14 @@ from ..tasks.profile import LiveMetric, TaskProfile
 #: profile is scored from the stream itself. The maths here didn't move, but
 #: every cached "no-metrics" row predates the rung and must be re-read — which
 #: is exactly what this constant exists to force.
-CODEC_VERSION = 7
+#: v8 added `hits` and `answerSide` to every metric summary, for the strategy
+#: plane's fold onto two sides (§11.1). **The maths did not move here either,
+#: and that is the trap**: a cached row is served verbatim, so every run indexed
+#: before this shipped kept answering with a payload that had no `answerSide` at
+#: all — and a panel reading "no condition says which well it rewards" concluded
+#: the profile was silent when the CACHE was. Adding a field to the payload is a
+#: codec change; only the numbers being unchanged is not a reason to skip it.
+CODEC_VERSION = 8
 
 #: z for a 95% interval. Wilson rather than the normal approximation because
 #: this data lives at small n *and* at p near 1 — a trained animal sits around
@@ -92,6 +99,12 @@ class MetricSummary:
     #: what the operator watched live. **Not** interchangeable with the above:
     #: they diverge sharply over the first `windowSize` trials.
     p_window: float | None
+    #: Counted trials this metric scored a hit on. Carried alongside `counted`
+    #: rather than left to be recovered from `p_session`, because POOLING two
+    #: conditions is exact only over integers: summing hits and counted answers
+    #: "how often was this animal right on either of these", where averaging the
+    #: two proportions weights a 20-trial condition like a 200-trial one.
+    hits: int
     counted: int
     triggered: int
     excluded: int
@@ -99,6 +112,10 @@ class MetricSummary:
     wilson_low: float | None
     wilson_high: float | None
     low_confidence: bool
+    #: Which answer this condition rewards (§4.10), or None when the profile
+    #: cannot prove one. What lets the strategy plane fold N conditions onto two
+    #: axes without knowing anything about odors.
+    answer_side: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -106,6 +123,7 @@ class MetricSummary:
             "label": self.label,
             "pSession": _round(self.p_session),
             "pWindow": _round(self.p_window),
+            "hits": self.hits,
             "counted": self.counted,
             "triggered": self.triggered,
             "excluded": self.excluded,
@@ -113,6 +131,7 @@ class MetricSummary:
             "wilsonLow": _round(self.wilson_low),
             "wilsonHigh": _round(self.wilson_high),
             "lowConfidence": self.low_confidence,
+            "answerSide": self.answer_side,
         }
 
 
@@ -850,7 +869,7 @@ def summarize(
 
     boundaries = boundaries_for(profile)
     scored = [
-        _summarize_metric(metric, codes, boundaries, min_counted)
+        _summarize_metric(metric, codes, boundaries, min_counted, profile)
         for metric in profile.live_metrics
     ]
     metrics = [entry.summary for entry in scored]
@@ -922,6 +941,7 @@ def _overall(scored: list[_Scored], min_counted: int) -> MetricSummary | None:
         label="Overall accuracy",
         p_session=hits / counted,
         p_window=None,
+        hits=hits,
         counted=counted,
         triggered=sum(entry.summary.triggered for entry in scored),
         excluded=sum(entry.summary.excluded for entry in scored),
@@ -929,6 +949,9 @@ def _overall(scored: list[_Scored], min_counted: int) -> MetricSummary | None:
         wilson_low=interval[0] if interval else None,
         wilson_high=interval[1] if interval else None,
         low_confidence=counted < min_counted,
+        # The pooled figure spans every condition, so it is not answered at any
+        # one side and has no axis. Its own kind of null, not a missing one.
+        answer_side=None,
     )
 
 
@@ -937,6 +960,7 @@ def _summarize_metric(
     codes: list[int],
     boundaries: frozenset[int],
     min_counted: int,
+    profile: TaskProfile | None = None,
 ) -> _Scored:
     """One replay of the stream through the live accumulator, read two ways.
 
@@ -968,6 +992,7 @@ def _summarize_metric(
             label=metric.label,
             p_session=p_session,
             p_window=p_window,
+            hits=hits,
             counted=counted,
             triggered=triggered,
             # Trials where neither response arrived before the next boundary —
@@ -979,6 +1004,7 @@ def _summarize_metric(
             wilson_low=interval[0] if interval else None,
             wilson_high=interval[1] if interval else None,
             low_confidence=counted < min_counted,
+            answer_side=answer_side_of(profile, metric),
         ),
         hits=hits,
     )
@@ -1029,6 +1055,108 @@ def series(
     return out
 
 
+#: `WATER_POKE_L` → left. Mirrors `infer.py`'s `_side_label` and the frontend's
+#: `correctWellOf`, all three reading the historical suffix rather than assuming
+#: it: a rig whose response ports carry no side keeps its slot number.
+_ANSWER_SIDE = re.compile(r"^WATER_POKE_(?:PORT_(?P<slot>\d+)|(?P<side>L|R))$")
+
+
+def answer_side_of(profile: TaskProfile | None, metric: LiveMetric) -> str | None:
+    """Which answer a condition rewards — `left`, `right`, `withhold`, `port`.
+
+    > [!CAUTION]
+    > **From `success_code` and nothing else.** The tempting fallback — try
+    > `alternate_code` when the success code is not a well — is wrong in a way
+    > that prints a confident lie: a no-go metric's alternate is set by the
+    > generator to *any port will do* (`_first_enter_code`), and `infer.py` does
+    > the same with `slots[0]`, so the fallback answers "left well" for a
+    > condition whose correct answer is to poke nothing. `None` is the honest
+    > result whenever the profile cannot prove one, and every consumer treats it
+    > as "this condition has no axis" rather than filling it in.
+    """
+    if profile is None:
+        return None
+    name = (profile.strobes.get(metric.success_code) or "").strip().upper()
+    if not name:
+        return None
+    if name == "WATER_POKE_NONE":
+        return "withhold"
+    match = _ANSWER_SIDE.match(name)
+    if match is None:
+        return None
+    if match.group("slot"):
+        return "port"
+    return "left" if match.group("side") == "L" else "right"
+
+
+@dataclass(frozen=True)
+class StrategyAxes:
+    """How this profile's conditions fold onto the plane's two axes (§4.4).
+
+    The plane's whole meaning is that **an animal answering the same way
+    regardless of stimulus sits on `x + y = 1`**, so its two axes have to be
+    opposing answers. With two conditions that was automatic — one per side —
+    and the code simply took `live_metrics[0]` and `[1]`. A four-odor task broke
+    that silently: it has four metrics, so there was no pair to take and both
+    strategy panels went blank on exactly the task that most needs reading.
+
+    So the axes are **sides**, not metrics, and any number of conditions folds
+    onto them: x is every condition answered at one well, y every condition
+    answered at the other. Pooled over integers (§`MetricSummary.hits`), so a
+    condition with 200 trials counts for ten of a condition with 20.
+
+    x takes the side of the FIRST declared metric, deliberately: on the
+    two-condition tasks this lab has always run that is exactly the orientation
+    the plane had before, so no familiar plot silently transposes.
+    """
+
+    x_side: str
+    y_side: str
+    x_metrics: tuple[str, ...]
+    y_metrics: tuple[str, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "xSide": self.x_side,
+            "ySide": self.y_side,
+            "xMetrics": list(self.x_metrics),
+            "yMetrics": list(self.y_metrics),
+        }
+
+
+def strategy_axes(profile: TaskProfile | None) -> StrategyAxes | None:
+    """Fold a profile's conditions onto two opposing axes, or `None`.
+
+    `None` — no plane — whenever the conditions cannot be split into two
+    opposing answers: a one-condition shaping task, a task whose success codes
+    resolve to nothing, or one whose conditions all reward the same well. Every
+    one of those is a real answer rather than a failure, and the panels say so.
+    """
+    if profile is None or not profile.live_metrics:
+        return None
+    sides: dict[str, list[str]] = {}
+    order: list[str] = []
+    for metric in profile.live_metrics:
+        side = answer_side_of(profile, metric)
+        # A withhold is not an axis: it is the ABSENCE of an answer, so it has
+        # no opposing side to be plotted against.
+        if side is None or side == "withhold":
+            continue
+        if side not in sides:
+            sides[side] = []
+            order.append(side)
+        sides[side].append(metric.id)
+    if len(order) != 2:
+        return None
+    x_side, y_side = order
+    return StrategyAxes(
+        x_side=x_side,
+        y_side=y_side,
+        x_metrics=tuple(sides[x_side]),
+        y_metrics=tuple(sides[y_side]),
+    )
+
+
 def strategy_trail(
     document: dict[str, Any],
     profile: TaskProfile | None,
@@ -1050,9 +1178,15 @@ def strategy_trail(
     which is what happens here, using the live `MetricAccumulator` so the walk
     agrees with what Mission Control displayed rather than approximating it.
 
-    Sampled after every counted trial in either condition, at each metric's own
+    Sampled after every counted trial in any condition, at each metric's own
     authored `windowSize`: the point is "what strategy is this animal running
     *right now*", which is the rolling figure, never the whole-session one.
+
+    **Any number of conditions, folded onto two axes by `strategy_axes`.** This
+    used to demand exactly two metrics, which silently blanked the panel for
+    every task presenting more — the four-odor task got no walk at all, on
+    precisely the plot that would have told its operator whether the animal was
+    discriminating or picking a side.
 
     **The walk starts once both windows hold `min_window` trials**, not at the
     first scored trial. A rolling proportion over one trial is exactly 0.0 or
@@ -1064,41 +1198,72 @@ def strategy_trail(
     authored shorter than that caps the requirement at its own size, so a
     small-window profile still gets a walk instead of silently getting none.
     """
-    if profile is None or len(profile.live_metrics) != 2:
+    axes = strategy_axes(profile)
+    if profile is None or axes is None:
         return []
     codes = codes_of(document)
     boundaries = boundaries_for(profile)
-    x_metric, y_metric = profile.live_metrics
-    x_acc = MetricAccumulator(x_metric, boundaries)
-    y_acc = MetricAccumulator(y_metric, boundaries)
-    x_floor = max(1, min(min_window, x_metric.window_size))
-    y_floor = max(1, min(min_window, y_metric.window_size))
+    by_id = {metric.id: metric for metric in profile.live_metrics}
+
+    def side(ids: tuple[str, ...]) -> list[MetricAccumulator]:
+        return [MetricAccumulator(by_id[i], boundaries) for i in ids if i in by_id]
+
+    x_accs, y_accs = side(axes.x_metrics), side(axes.y_metrics)
+    if not x_accs or not y_accs:
+        return []
+
+    def floor(ids: tuple[str, ...]) -> int:
+        # The requirement is per SIDE, not per condition: three conditions of
+        # five trials each is a readable side, and demanding the floor from each
+        # of them would blank a walk that is perfectly well supported.
+        windows = [by_id[i].window_size for i in ids if i in by_id]
+        return max(1, min(min_window, max(windows) if windows else min_window))
+
+    x_floor, y_floor = floor(axes.x_metrics), floor(axes.y_metrics)
+
+    def pooled(accs: list[MetricAccumulator]) -> tuple[float | None, int]:
+        """One side's rolling figure, over integers.
+
+        Summed hits over summed window lengths — never the mean of the
+        conditions' proportions, which would let a condition the animal barely
+        met drag the side as hard as one it met constantly.
+        """
+        hits = 0
+        n = 0
+        for acc in accs:
+            value = acc.value()
+            if value.value is None:
+                continue
+            hits += round(value.value * value.n)
+            n += value.n
+        return (hits / n if n else None), n
 
     out: list[StrategyPoint] = []
     counted = 0
     for code in codes:
-        x_acc.offer(code)
-        y_acc.offer(code)
-        total = x_acc.counted_total + y_acc.counted_total
+        for acc in (*x_accs, *y_accs):
+            acc.offer(code)
+        total = sum(acc.counted_total for acc in (*x_accs, *y_accs))
         if total == counted:
             continue
         counted = total
-        x_value, y_value = x_acc.value(), y_acc.value()
-        # Until both conditions carry enough trials to mean anything there is no
-        # position in the plane. A run that only ever triggered one odor has a
+        x_value, x_n = pooled(x_accs)
+        y_value, y_n = pooled(y_accs)
+        # Until both SIDES carry enough trials to mean anything there is no
+        # position in the plane. A run that only ever triggered one side has a
         # coordinate and a blank, which is not a point either.
-        if x_value.value is None or y_value.value is None:
+        if x_value is None or y_value is None:
             continue
-        if x_value.n < x_floor or y_value.n < y_floor:
+        if x_n < x_floor or y_n < y_floor:
             continue
         out.append(
             StrategyPoint(
                 trial=counted,
-                x=x_value.value,
-                y=y_value.value,
-                # The weaker of the two windows: a point is only as trustworthy
-                # as the condition supporting it least.
-                n=min(x_value.n, y_value.n),
+                x=x_value,
+                y=y_value,
+                # The weaker of the two sides: a point is only as trustworthy as
+                # the axis supporting it least.
+                n=min(x_n, y_n),
             )
         )
     return out

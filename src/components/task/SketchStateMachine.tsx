@@ -7,10 +7,34 @@ import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import type { TaskProfile } from "@/lib/sessions/types";
 import type {
+  Condition,
+  LiveCondition,
   TaskEdge,
   TaskGraphModel,
   TaskNode,
 } from "@/lib/tasks/topology";
+import {
+  CHIP_ABOVE_DY,
+  CHIP_GAP,
+  CHIP_RIGHT_DY,
+  FALLBACK_W,
+  LABEL_ABOVE_DY,
+  LABEL_BELOW_DY,
+  LABEL_RIGHT_DY,
+  LIVE_GEOMETRY,
+  MAX_W,
+  MIN_W,
+  R,
+  TICK_ACTIVE_H,
+  TICK_H,
+  TICK_BLOCK,
+  TICK_MAX,
+  TICK_PITCH,
+  TICK_W,
+  VIEWER_GEOMETRY,
+  frameFor,
+  type Frame,
+} from "@/lib/tasks/graphLayout";
 import { useElementWidth } from "@/lib/useElementWidth";
 
 /**
@@ -98,6 +122,16 @@ export function SketchStateMachine({
   maxHeight?: string;
 }) {
   const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
+  /**
+   * The rail row under the pointer (or keyboard focus).
+   *
+   * Deliberately NOT folded into `litNodes`. The drawing's grammar is *dim the
+   * world, ring the target*, and a second thing that dims would leave two
+   * highlights arguing over one picture. A condition hover lights its tick and
+   * takes the caption strip; it never touches the geometry. Precedence, when
+   * more than one is live: group > node > condition.
+   */
+  const [hoverCondition, setHoverCondition] = useState<string | null>(null);
 
   /** Groups this profile actually declares — a chip must never name a tile
    *  that doesn't exist below. */
@@ -129,8 +163,18 @@ export function SketchStateMachine({
   const [host, hostWidth] = useElementWidth<HTMLDivElement>();
   const layoutWidth = Math.min(Math.max(hostWidth ?? FALLBACK_W, MIN_W), MAX_W);
   const frame = useMemo(
-    () => frameFor(model, layoutWidth, VIEWER_GEOMETRY),
-    [model, layoutWidth],
+    // The chip count is the whole reason the band can be derived — see
+    // `measureNode`.
+    () =>
+      frameFor(model, layoutWidth, VIEWER_GEOMETRY, (node) =>
+        (chipsByNode.get(node.id) ?? []).length,
+      ),
+    [model, layoutWidth, chipsByNode],
+  );
+
+  const hoveredCondition = useMemo(
+    () => model.conditions.find((c) => c.id === hoverCondition) ?? null,
+    [model, hoverCondition],
   );
 
   function enterNode(node: TaskNode) {
@@ -158,7 +202,7 @@ export function SketchStateMachine({
         aria-label="The task's state machine, derived from its strobe vocabulary"
       >
         {/* Edges first, under the nodes. */}
-        {model.edges.map((edge) => (
+        {distinctEdges(model, frame).map((edge) => (
           <EdgePath
             key={edge.id}
             edge={edge}
@@ -175,6 +219,7 @@ export function SketchStateMachine({
             lit={litNodes === null ? null : litNodes.has(node.id)}
             hoverGroup={hoverGroup}
             frame={frame}
+            activeCondition={hoverCondition}
             onEnter={() => enterNode(node)}
             onLeave={leaveNode}
             onClick={() => onNodeClick(node)}
@@ -206,6 +251,15 @@ export function SketchStateMachine({
             {hoverNode.detail && <> — {hoverNode.detail}</>}
             {tunedByLine(hoverNode, declared)}
           </>
+        ) : hoveredCondition ? (
+          <>
+            <span className="text-starlight">{hoveredCondition.label}</span>
+            {hoveredCondition.metricLabel ? (
+              <> — {hoveredCondition.metricLabel}</>
+            ) : (
+              <> — trials opened by {hoveredCondition.strobeName}</>
+            )}
+          </>
         ) : (
           <span className="text-static/60">
             Hover a state or a parameter group — each lights the other. Click
@@ -213,7 +267,71 @@ export function SketchStateMachine({
           </span>
         )}
       </p>
+
+      {/* The conditions, as real HTML.
+          Not inside the SVG, and not optional: both drawings are `role="img"`,
+          so every glyph, tick and chip in them is invisible to assistive tech
+          and unreachable by keyboard. This list is the only readable form the
+          condition set has, and the only way into the drawing without a mouse.
+          It sits BELOW the caption strip — the strip is glued to the drawing
+          and is where a rail hover writes, so putting the rail between them
+          would separate the two halves of one gesture. */}
+      {model.conditions.length > 1 && (
+        <ConditionRail
+          conditions={model.conditions}
+          active={hoverCondition}
+          onHover={setHoverCondition}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * One row per condition — the identity the collapsed node no longer spends a
+ * row of the diagram on.
+ *
+ * It does NOT print the contingency. `TrialTypeTable`, a few hundred pixels
+ * below, already says *"sandalwood → right well · paid from fluid_2"* in the
+ * rig's own words with a mismatch flag, and the metric label printed here
+ * contains the well besides. Three statements of one fact inside one scroll
+ * column is not emphasis.
+ */
+function ConditionRail({
+  conditions,
+  active,
+  onHover,
+}: {
+  conditions: readonly Condition[];
+  active: string | null;
+  onHover: (id: string | null) => void;
+}) {
+  return (
+    <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5">
+      {conditions.map((condition) => (
+        <li key={condition.id}>
+          <button
+            type="button"
+            className="flex items-baseline gap-1.5 rounded-sm px-1 py-0.5 text-left font-mono text-[10px] transition-colors hover:text-starlight focus:outline-none focus-visible:ring-1 focus-visible:ring-pulsar"
+            style={{ color: active === condition.id ? "var(--color-starlight)" : undefined }}
+            onPointerEnter={() => onHover(condition.id)}
+            onPointerLeave={() => onHover(null)}
+            // Focus mirrors hover exactly, so the keyboard path is the same
+            // path — not a second, lesser one.
+            onFocus={() => onHover(condition.id)}
+            onBlur={() => onHover(null)}
+          >
+            <span className="tabular-nums text-static/50">{condition.index}</span>
+            <span className={active === condition.id ? "text-starlight" : "text-static"}>
+              {condition.label}
+            </span>
+            {condition.metricLabel && (
+              <span className="text-static/60">· {condition.metricLabel}</span>
+            )}
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -236,10 +354,19 @@ export function SketchStateMachine({
 export function LiveStateMachine({
   model,
   liveNode,
+  liveCondition = null,
+  observedConditions = null,
 }: {
   model: TaskGraphModel;
   /** Node the token sits on — null before the first strobe of a trial. */
   liveNode: string | null;
+  /**
+   * Which condition this trial is presenting (`liveConditionId`). Three states,
+   * kept apart on purpose — see that function.
+   */
+  liveCondition?: LiveCondition;
+  /** Conditions seen at least once this session; their ticks fill in. */
+  observedConditions?: ReadonlySet<string> | null;
 }) {
   const reduceMotion = useReduceMotion();
   const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
@@ -251,6 +378,8 @@ export function LiveStateMachine({
 
   const [host, hostWidth] = useElementWidth<HTMLDivElement>();
   const layoutWidth = Math.min(Math.max(hostWidth ?? FALLBACK_W, MIN_W), MAX_W);
+  // No chip argument: this panel draws none, and the band is derived against
+  // that fact rather than against the viewer's.
   const frame = useMemo(
     () => frameFor(model, layoutWidth, LIVE_GEOMETRY),
     [model, layoutWidth],
@@ -258,6 +387,11 @@ export function LiveStateMachine({
 
   const current =
     liveNode === null ? null : (model.nodes.find((n) => n.id === liveNode) ?? null);
+
+  const condition =
+    liveCondition?.kind === "condition"
+      ? (model.conditions.find((c) => c.id === liveCondition.id) ?? null)
+      : null;
 
   return (
     <div ref={host}>
@@ -269,7 +403,7 @@ export function LiveStateMachine({
         role="img"
         aria-label="The task's state machine, with the box's current state lit"
       >
-        {model.edges.map((edge) => (
+        {distinctEdges(model, frame).map((edge) => (
           <EdgePath
             key={edge.id}
             edge={edge}
@@ -286,6 +420,9 @@ export function LiveStateMachine({
             lit={litNodes === null ? null : litNodes.has(node.id)}
             hoverGroup={null}
             frame={frame}
+            activeCondition={condition?.id ?? null}
+            activeLabel={condition ? condition.label : null}
+            observedConditions={observedConditions}
             live={liveNode === node.id}
             reduceMotion={reduceMotion}
             onEnter={() => setHoverNode(node)}
@@ -307,9 +444,50 @@ export function LiveStateMachine({
             <span className="text-starlight">{hoverNode.label}</span>
             {hoverNode.detail && <> — {hoverNode.detail}</>}
           </>
+        ) : liveCondition?.kind === "unlisted" ? (
+          /* The fourth state, and the reason it is drawn apart from "nothing
+             yet": the box announced an odor this profile does not declare —
+             almost always the `liveMetrics` gate having silently dropped a
+             trial type. Collapsing the fan turned that from a missing NODE
+             into a nameless presence, so it has to be said in words or it is
+             said nowhere. */
+          <>
+            <span style={{ color: "var(--color-status-warning)" }}>
+              ⚠ {liveCondition.strobeName.replace(/_/g, " ").toLowerCase()}
+            </span>{" "}
+            — this box is presenting a condition the task profile doesn&apos;t
+            declare, so nothing here can score it.
+          </>
         ) : current ? (
           <>
-            <span className="text-starlight">● {current.label}</span>
+            {/* The contingency, which Mission Control has NO other source for:
+                there is no trial table on this screen. Derived from the
+                metric's success code and omitted whenever that cannot prove
+                one — a well printed on a guess would be the only false claim
+                in the drawing.
+
+                Which of the two forms depends on where the token is. On the
+                odor node the condition IS the state, so it replaces the
+                generic label; anywhere else in the trial it is context the
+                operator still wants — "this is the answer window, and it's an
+                Odor 3 trial" — so it trails the state instead. */}
+            {condition && current.multiplicity ? (
+              <span className="text-starlight">
+                ● {condition.label}
+                {answerPhrase(condition)}
+              </span>
+            ) : (
+              <>
+                <span className="text-starlight">● {current.label}</span>
+                {condition && (
+                  <span className="text-static">
+                    {" · "}
+                    {condition.label}
+                    {answerPhrase(condition)}
+                  </span>
+                )}
+              </>
+            )}
             {current.detail && <> — {current.detail}</>}
           </>
         ) : (
@@ -321,6 +499,23 @@ export function LiveStateMachine({
       </p>
     </div>
   );
+}
+
+/**
+ * " → right well" / " → withholds", or nothing at all.
+ *
+ * Absence is a real answer here and the default one. `correctWellOf` returns
+ * null whenever the profile cannot prove the answer, and this must not paper
+ * over that with a guess: it is the only figure the drawing ADDS, so it is the
+ * only one that can be false — silently, in a screenshot that outlives the
+ * session that made it.
+ */
+function answerPhrase(condition: Condition): string {
+  const answer = condition.correctAnswer;
+  if (!answer) return "";
+  if (answer.kind === "withhold") return " → withholds";
+  if (answer.kind === "port") return ` → port ${answer.slot}`;
+  return ` → ${answer.side} well`;
 }
 
 // --- the parameter chips ----------------------------------------------------
@@ -376,94 +571,93 @@ function tunedByLine(node: TaskNode, declared: Set<string>): ReactNode {
   );
 }
 
-// --- geometry ---------------------------------------------------------------
-
-/*
- * Everything below is CSS pixels. The model's columns (authored, ~6–140) map
- * onto whatever horizontal room the tile offers; its rows (unit-spaced) map
- * onto a FIXED vertical rhythm. So width is the fluid axis — the one a window
- * resize actually changes — and height is a property of the task's shape, not
- * of the window. Type and marks stay constant either way.
- */
-
-/** The width band the fluid layout serves. Below MIN_W the narrowest column
- *  gap (~18/134 of the span) no longer clears a centred chip, so the whole
- *  drawing scales down uniformly instead — the HUD's fixed columns leave the
- *  machine ~(window − 990px), so that regime is real on a 1280-wide window
- *  and the honest answer there is a smaller correct drawing, not colliding
- *  labels. Above MAX_W added width is only longer edges, so the drawing
- *  centres instead. Between them, rendering is 1:1. */
-const MIN_W = 460;
-const MAX_W = 1000;
-/** Pre-measurement layout width. One frame at most — the tile fades in over
- *  it, so a settle from here is never visible. */
-const FALLBACK_W = 720;
-
-/** Node radius. */
-const R = 9;
-
-/** Horizontal pads. The right one only shelters the ITI; the outcome column's
- *  right-anchored labels fit because the model keeps a whole column of room
- *  between it and the frame edge. */
-const PAD_L = 30;
-const PAD_R = 30;
-
 /**
- * The vertical geometry, parameterized because the drawing has two homes with
- * different tenants below the nodes:
+ * One tick per declared condition, the active one taller and lit.
  *
- *  - `rowPx` — px per model row unit. The sketch viewer's is sized so the
- *    deepest chip stack (an odor arm's four) clears the next fan-out row; the
- *    live view draws no chips, so its rows sit closer.
- *  - `padT` — above the top row: room for an `above`-anchored label when the
- *    top row is the spine.
- *  - `returnDepth` — how far the deepest return arc sweeps below the lowest
- *    node; `repeat`'s nests 16px shallower. The viewer's clears the abort
- *    chips (~36px below their nodes); the live view's clears only the labels.
+ * `aria-hidden`, and honestly so: both SVGs are `role="img"`, which removes
+ * every descendant from the accessibility tree. Pretending otherwise by hanging
+ * ARIA on shapes inside would be worse than admitting it — the readable path is
+ * the condition rail below the drawing, which is real HTML.
  */
-interface Geometry {
-  rowPx: number;
-  padT: number;
-  returnDepth: number;
-}
-
-/** The sketch viewer's geometry — chips under every node. */
-const VIEWER_GEOMETRY: Geometry = { rowPx: 52, padT: 30, returnDepth: 62 };
-/** The live panel's — no chips, and every vertical px competes with the
- *  charts below it in a view that must fit the window without scrolling. */
-const LIVE_GEOMETRY: Geometry = { rowPx: 34, padT: 24, returnDepth: 48 };
-
-interface Frame {
-  width: number;
-  height: number;
-  x: (n: TaskNode) => number;
-  y: (n: TaskNode) => number;
-  /** y of the lowest node — the return arcs hang from it. */
-  lowY: number;
-  /** The deepest return arc's sweep below `lowY` (see `Geometry`). */
-  returnDepth: number;
-}
-
-function frameFor(model: TaskGraphModel, width: number, geometry: Geometry): Frame {
-  const { rowPx, padT, returnDepth } = geometry;
-  const cols = model.nodes.map((n) => n.column);
-  const rows = model.nodes.map((n) => n.row);
-  const minCol = Math.min(...cols);
-  const colSpan = Math.max(Math.max(...cols) - minCol, 1);
-  const minRow = Math.min(...rows);
-  const lowY = padT + (Math.max(...rows) - minRow) * rowPx;
-  const innerW = width - PAD_L - PAD_R;
-  return {
-    width,
-    height: lowY + returnDepth + 16,
-    x: (n) => PAD_L + ((n.column - minCol) / colSpan) * innerW,
-    y: (n) => padT + (n.row - minRow) * rowPx,
-    lowY,
-    returnDepth,
-  };
+function ConditionTicks({
+  conditions,
+  x,
+  y,
+  activeId,
+  observed,
+  litAll,
+}: {
+  conditions: readonly Condition[];
+  x: number;
+  y: number;
+  activeId: string | null;
+  observed: ReadonlySet<string> | null;
+  /** The whole node is hovered — every tick lights, which is the disclosure the
+   *  fan-out popover would have given, in place and at no extra layer. */
+  litAll: boolean;
+}) {
+  const shown = conditions.slice(0, TICK_MAX);
+  const overflow = conditions.length - shown.length;
+  const span = shown.length * TICK_PITCH - (TICK_PITCH - TICK_W);
+  const x0 = x - span / 2;
+  return (
+    <g aria-hidden>
+      {shown.map((condition, index) => {
+        const active = condition.id === activeId;
+        const seen = observed === null || observed.has(condition.id);
+        const height = active ? TICK_ACTIVE_H : TICK_H;
+        return (
+          <rect
+            key={condition.id}
+            x={x0 + index * TICK_PITCH}
+            y={y + (TICK_ACTIVE_H - height) / 2}
+            width={TICK_W}
+            height={height}
+            rx={0.5}
+            fill={seen ? "var(--color-starlight)" : "none"}
+            stroke={seen ? "none" : "var(--color-static)"}
+            strokeWidth={seen ? 0 : 0.7}
+            opacity={active ? 1 : litAll ? 0.75 : seen ? 0.4 : 0.55}
+            style={{ transition: "opacity 160ms" }}
+          />
+        );
+      })}
+      {overflow > 0 && (
+        <text
+          x={x0 + shown.length * TICK_PITCH + 2}
+          y={y + TICK_ACTIVE_H}
+          fontSize={9}
+          className="fill-static"
+          opacity={0.6}
+        >
+          ⋯
+        </text>
+      )}
+    </g>
+  );
 }
 
 // --- edges ------------------------------------------------------------------
+
+/**
+ * Edges that will draw a distinct path.
+ *
+ * On the congruence fallback the N `poke → arm` edges are N distinct paths, but
+ * the moment anything collapses two nodes onto one point they become N copies
+ * of one path — and at `base = 0.55` a stack of them composites to the
+ * brightest stroke in the drawing, which reads as emphasis on the one edge that
+ * has none. Keyed on the geometry rather than on the ids, because identical
+ * geometry is exactly the condition that matters.
+ */
+function distinctEdges(model: TaskGraphModel, frame: Frame): TaskEdge[] {
+  const seen = new Set<string>();
+  return model.edges.filter((edge) => {
+    const key = `${edge.kind}|${edge.label ?? ""}|${pathFor(edge, model, frame)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 /** Return edges arc under everything; the rest are lateral beziers. */
 function pathFor(edge: TaskEdge, model: TaskGraphModel, frame: Frame): string {
@@ -575,6 +769,9 @@ function NodeGlyph({
   frame,
   live = false,
   reduceMotion = false,
+  activeCondition = null,
+  activeLabel = null,
+  observedConditions = null,
   onEnter,
   onLeave,
   onClick,
@@ -588,6 +785,17 @@ function NodeGlyph({
   lit: boolean | null;
   hoverGroup: string | null;
   frame: Frame;
+  /** Which of a collapsed node's conditions is in play — the lit tick. */
+  activeCondition?: string | null;
+  /** What to call the node while that condition is in play. */
+  activeLabel?: string | null;
+  /**
+   * Conditions seen at least once this session, or null in the viewer where
+   * "observed" means nothing. A tick outside this set draws hollow — the live
+   * panel's sparklines below enumerate only conditions that have ALREADY come
+   * up, so this is the one place that answers "has odor 5 appeared yet?".
+   */
+  observedConditions?: ReadonlySet<string> | null;
   /** The running box is in this state right now (`LiveStateMachine`). */
   live?: boolean;
   /** Gates the token's `repeat: Infinity` pulse, which `MotionConfig`'s
@@ -607,13 +815,27 @@ function NodeGlyph({
   const fill = fillFor(node);
 
   const anchor = node.labelAnchor ?? "below";
+  const ticks = node.variants && node.variants.length > 1 ? node.variants : null;
+  // The strip sits between the glyph and its label, so the label moves down by
+  // exactly what the strip claims — the same number `measureNode` budgets.
+  const tickBlock = ticks ? TICK_BLOCK : 0;
   const labelX = anchor === "right" ? x + R + 6 : x;
-  const labelY = anchor === "right" ? y + 4 : anchor === "above" ? y - R - 9 : y + R + 15;
+  const labelY =
+    anchor === "right"
+      ? y + LABEL_RIGHT_DY
+      : anchor === "above"
+        ? y + LABEL_ABOVE_DY
+        : y + R + tickBlock + LABEL_BELOW_DY;
   const textAnchor = anchor === "right" ? "start" : "middle";
 
   // Chips stack under the label (or trail it, for right-anchored nodes).
   const chipX = anchor === "right" ? x + R + 6 : x;
-  const chipY0 = anchor === "right" ? y + 17 : anchor === "above" ? y + R + 14 : labelY + 12;
+  const chipY0 =
+    anchor === "right"
+      ? y + CHIP_RIGHT_DY
+      : anchor === "above"
+        ? y + CHIP_ABOVE_DY
+        : labelY + CHIP_GAP;
 
   return (
     <g
@@ -699,6 +921,17 @@ function NodeGlyph({
         />
       )}
 
+      {ticks && (
+        <ConditionTicks
+          conditions={ticks}
+          x={x}
+          y={y + R + 4}
+          activeId={activeCondition}
+          observed={observedConditions}
+          litAll={lit === true}
+        />
+      )}
+
       <text
         x={labelX}
         y={labelY}
@@ -707,7 +940,12 @@ function NodeGlyph({
         className={lit || live ? "fill-starlight" : "fill-static"}
         style={{ transition: "fill 160ms" }}
       >
-        {node.label}
+        {/* ONLY a collapsed node takes the active label. Every other node on
+            the row would otherwise rename itself to the odor in play, which is
+            how the first version of this made the whole live machine read
+            "Odor 3". A node that stands for nothing but itself is always
+            called what it is. */}
+        {(ticks && activeLabel) || node.label}
       </text>
 
       {/* The parameter chips: the subtle labels the mapping asks for. During a

@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
 import { HowToRead } from "@/components/charts/HowToRead";
@@ -10,7 +10,8 @@ import type {
   RunSummary,
   StrategyPoint,
 } from "@/lib/analytics/types";
-import { declaredMetrics, taskLabels, twoMetricGroups } from "@/lib/analytics/view";
+import { strategyProfiles, taskLabels } from "@/lib/analytics/view";
+import { ProfilePicker } from "./ProfilePicker";
 import {
   NoPlane,
   PLANE_VIEWBOX,
@@ -61,28 +62,39 @@ export function SessionStrategy({
   const names = new Map(summary.animals.map((animal) => [animal.id, animal.name]));
   const labels = useMemo(() => taskLabels(summary), [summary]);
 
-  // Self-scoped, like the across-session plane: of the session's runs, the
-  // most-run task that declares exactly two conditions gets the plane, and
-  // the runs it leaves out are named below rather than silently absent. A
-  // session almost never mixes two two-condition tasks; when it does, the
-  // note says which one the plane is showing.
-  const profile = useMemo(() => {
-    const candidates = twoMetricGroups(summary);
-    let best = null;
-    let most = 0;
-    for (const group of candidates) {
-      const count = runs.filter((run) => run.profileHash === group.hash).length;
-      if (count > most) [best, most] = [group, count];
-    }
-    return best;
+  /*
+   * Self-scoped, like the across-session plane — but over the profiles THIS
+   * SESSION actually ran, ordered by how many of its runs each holds. A session
+   * rarely mixes tasks; when it does, the picker says which one the plane is
+   * showing and the note below counts the runs it leaves out.
+   *
+   * Ordered by presence in the session rather than by the cohort's totals: the
+   * question here is about this session, and the cohort's most-run task may not
+   * be in it at all.
+   */
+  const profiles = useMemo(() => {
+    const here = new Set(runs.map((run) => run.profileHash));
+    return strategyProfiles(summary)
+      .filter((entry) => here.has(entry.group.hash))
+      .sort(
+        (a, b) =>
+          runs.filter((run) => run.profileHash === b.group.hash).length -
+          runs.filter((run) => run.profileHash === a.group.hash).length,
+      );
   }, [summary, runs]);
-  const axes = declaredMetrics(profile);
+  const plottable = profiles.filter((entry) => entry.axes !== null);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const selected =
+    plottable.find((entry) => entry.group.hash === chosen) ?? plottable[0] ?? null;
+  const profile = selected?.group ?? null;
+  const axes = selected?.axes ?? null;
 
-  if (!profile || axes.length !== 2) {
-    return <NoPlane hasRuns={runs.length > 0} />;
+  if (!profile || !axes) {
+    return (
+      <NoPlane hasRuns={runs.length > 0} reason={profiles[0]?.reason ?? null} />
+    );
   }
 
-  const [xMetric, yMetric] = axes;
   const planeRuns = runs.filter((run) => run.profileHash === profile.hash);
   const elsewhere = runs.length - planeRuns.length;
   const walks = planeRuns
@@ -96,11 +108,23 @@ export function SessionStrategy({
     <StrategyPanel>
       <ChartFrame
         title={
-          <span>
-            Strategy within this session
-            <span className="ml-2 text-static/70">
-              one point per trial · {labels.get(profile.hash) ?? profile.taskName}
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>
+              Strategy within this session
+              <span className="ml-2 text-static/70">one point per trial</span>
             </span>
+            {profiles.length > 1 ? (
+              <ProfilePicker
+                profiles={profiles}
+                value={profile.hash}
+                onChange={setChosen}
+                labels={labels}
+              />
+            ) : (
+              <span className="font-mono text-[9px] text-static/70">
+                {labels.get(profile.hash) ?? profile.taskName}
+              </span>
+            )}
           </span>
         }
         yTop="1.0"
@@ -108,8 +132,11 @@ export function SessionStrategy({
         xLeft="0.0"
         xRight="1.0"
         footer={
-          <span className="truncate text-static/70">
-            ↑ {yMetric!.label} · → {xMetric!.label}
+          <span
+            className="truncate text-static/70"
+            title={`↑ ${axes.y.conditions.join(" · ")}\n→ ${axes.x.conditions.join(" · ")}`}
+          >
+            ↑ {axes.y.label} · → {axes.x.label} · P(correct)
           </span>
         }
       >
@@ -149,7 +176,7 @@ export function SessionStrategy({
       )}
 
       <HowToRead>
-        <StrategyNote xMetric={xMetric!} yMetric={yMetric!} />
+        <StrategyNote axes={axes} />
         <p className="mt-1">
           Hollow marker is where the animal started, filled is where it ended;
           the path fades in along the way. Position is the rolling window, so

@@ -353,6 +353,11 @@ The sketch comes from the categorized picker over the [bundled sketch library](t
 
 On failure (compile error or upload failure) the port transitions to `ERROR` with the parsed message surfaced; it does **not** silently fall back to `IDLE`.
 
+**Each phase opens with the invocation, echoed by the backend that performs it** — never composed by the port manager, which knows neither which backend will serve the call nor what it will send. The subprocess backend prints the real argv, `--libraries` and `--format json` included, as one pasteable `$ …` line; the daemon backend prints `arduino-cli daemon: Compile(fqbn=…, sketch=…, libraries=[…])`, deliberately not dressed as a shell command, because no such process runs on that path. A fallback from the daemon to the subprocess therefore shows both lines, which is the truth of what happened.
+
+> [!CAUTION]
+> **A debugging aid that can disagree with reality is worse than none.** The manager used to hand-write `$ arduino-cli compile --fqbn … <sketch>` for every flash. It omitted `--libraries`, named a process the daemon never spawns, and drifted freely from the real call — so when a packaged build stopped finding its bundled library, the console showed a compile with no libraries argument at all, and the investigation went looking for a missing path instead of the malformed one being sent (v1.1.0-rc.2). Echo from the arguments, or don't echo.
+
 ### 6.2 Reset
 
 Reset is a **serial-layer operation**, not an `arduino-cli` one — it does not go through the daemon. Toggle DTR, which the Mega2560 R3's auto-reset circuit interprets as a reset: close the port if open → `dtr = False` → ~100 ms → `dtr = True` → reopen. A short-lived `RESETTING` state that returns to its prior context afterward.

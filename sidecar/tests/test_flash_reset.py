@@ -193,15 +193,29 @@ async def test_upload_failure_lands_in_error() -> None:
     assert manager.handler(1).state is PortState.ERROR
 
 
-async def test_flash_progress_carries_phase_and_command_echo() -> None:
+async def test_flash_progress_is_tagged_with_its_phase() -> None:
     manager, _tool, _, progress = make_manager()
     await manager.flash(1, "/sk/clean", "clean", None, lambda *a: progress.append(a))
 
     phases = [p[0] for p in progress]
     assert phases[0] == "compile"
     assert "upload" in phases
-    # The invoked command line is echoed as the first line of each phase.
-    assert progress[0][2].startswith("$ arduino-cli compile")
+
+
+async def test_the_manager_echoes_no_command_of_its_own() -> None:
+    """The command echo belongs to the backend that runs the command.
+
+    This layer knows neither which backend will serve the call nor what it will
+    send, so a line composed here is a guess. It was one: the old echo omitted
+    `--libraries`, and when a packaged build stopped finding its bundled
+    library the console showed a compile with no libraries argument at all —
+    pointing at a missing path rather than the malformed one being sent
+    (v1.1.0-rc.2). `FakeTool` emits no `$` line, so nothing here may either.
+    """
+    manager, _tool, _, progress = make_manager()
+    await manager.flash(1, "/sk/clean", "clean", "/libs", lambda *a: progress.append(a))
+
+    assert not [line for _phase, _stream, line in progress if line.startswith("$ ")]
 
 
 async def test_flash_on_unbound_box_is_rejected_before_touching_state() -> None:

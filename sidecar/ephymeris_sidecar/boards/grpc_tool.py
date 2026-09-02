@@ -150,6 +150,19 @@ class GrpcBoardTool(BoardTool):
             # One shared libraries folder for every sketch (tasks.md §2.3).
             libraries=[libraries_path] if libraries_path else [],
         )
+        # Echoed from the request itself, and deliberately NOT dressed up as a
+        # shell command: no `arduino-cli compile` process runs on this path, and
+        # a console line implying one sent a real investigation down the wrong
+        # road once already (see `cli_tool._command_echo`).
+        on_line(
+            "stdout",
+            _daemon_echo(
+                "Compile",
+                fqbn=request.fqbn,
+                sketch=request.sketch_path,
+                libraries=list(request.libraries),
+            ),
+        )
         err_lines: list[str] = []
         splitter = _LineSplitter(_collecting(on_line, err_lines))
         try:
@@ -198,6 +211,15 @@ class GrpcBoardTool(BoardTool):
             fqbn=fqbn,
             sketch_path=sketch_dir,
             port=port_pb2.Port(address=address, protocol="serial"),
+        )
+        on_line(
+            "stdout",
+            _daemon_echo(
+                "Upload",
+                fqbn=request.fqbn,
+                sketch=request.sketch_path,
+                port=request.port.address,
+            ),
         )
         err_lines: list[str] = []
         splitter = _LineSplitter(_collecting(on_line, err_lines))
@@ -437,6 +459,28 @@ class _LineSplitter:
         text = raw.decode(errors="replace").rstrip("\r")
         if text.strip():
             self._on_line(stream, text)
+
+
+def _daemon_echo(call: str, **fields: object) -> str:
+    """One line naming the RPC and the fields actually sent.
+
+    Not a `$ arduino-cli …` line, on purpose: nothing is spawned here, and a
+    console that claims otherwise is a lie that costs someone an afternoon —
+    the manager's old hand-written echo did exactly that, printing a compile
+    with no `--libraries` while the daemon was being handed one
+    (`cli_tool._command_echo`). An empty list prints as `[]` rather than being
+    dropped, because "no libraries were sent" is the interesting case.
+    """
+    def render(value: object) -> str:
+        if isinstance(value, (list, tuple)):
+            return "[" + ", ".join(render(item) for item in value) + "]"
+        # Plainly, never `repr`: a Windows path through `repr` comes back with
+        # every separator doubled, which is unreadable and unpasteable — and
+        # this line exists to be pasted.
+        return str(value)
+
+    rendered = ", ".join(f"{key}={render(value)}" for key, value in fields.items())
+    return f"arduino-cli daemon: {call}({rendered})"
 
 
 def _collecting(on_line: ProgressLine, err_lines: list[str]) -> ProgressLine:

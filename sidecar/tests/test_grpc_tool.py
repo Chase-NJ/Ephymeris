@@ -24,12 +24,13 @@ import ephymeris_sidecar.boards.rpc  # noqa: F401 - stub tree onto sys.path
 from cc.arduino.cli.commands.v1 import board_pb2, port_pb2
 
 from ephymeris_sidecar.boards import create_board_tool
-from ephymeris_sidecar.boards.cli_tool import ArduinoCliTool
+from ephymeris_sidecar.boards.cli_tool import ArduinoCliTool, _command_echo
 from ephymeris_sidecar.boards.grpc_tool import (
     DaemonUnavailable,
     GrpcBoardTool,
     _LineSplitter,
     _boards_from_response,
+    _daemon_echo,
     parse_daemon_address,
 )
 from ephymeris_sidecar.boards.tool import DetectedBoard
@@ -303,3 +304,51 @@ async def test_a_real_compile_error_names_the_error_line(tmp_path: Path) -> None
 
     assert info.value.phase == "compile"
     assert "error" in info.value.message.lower()
+
+
+# --- the command echo -------------------------------------------------------
+
+
+def test_the_daemon_echo_names_the_rpc_and_never_impersonates_a_shell() -> None:
+    """Nothing is spawned on this path, so the line must not claim otherwise.
+
+    The port manager used to print `$ arduino-cli compile --fqbn … <sketch>`
+    for every flash, whichever backend served it. It was wrong twice over: no
+    such process runs under the daemon, and the line omitted `--libraries`.
+    """
+    line = _daemon_echo(
+        "Compile",
+        fqbn="arduino:avr:mega",
+        sketch=r"C:\rig\sketches\Utility\BOX_Utility",
+        libraries=[r"C:\app\sketches\libraries"],
+    )
+    assert line.startswith("arduino-cli daemon: Compile(")
+    assert not line.startswith("$ ")
+    assert "libraries" in line
+    assert r"C:\app\sketches\libraries" in line
+
+
+def test_the_daemon_echo_shows_an_empty_libraries_list() -> None:
+    """Nothing-was-sent is the case worth seeing — it must not be elided."""
+    line = _daemon_echo("Compile", fqbn="arduino:avr:mega", sketch="/sk", libraries=[])
+    assert "libraries=[]" in line
+
+
+def test_the_subprocess_echo_is_built_from_the_real_argv() -> None:
+    """Every argument that will be passed appears, `--libraries` included."""
+    args = [
+        "compile",
+        "--fqbn",
+        "arduino:avr:mega",
+        "--libraries",
+        r"C:\Program Files\app\sketches\libraries",
+        "--format",
+        "json",
+        r"C:\rig\BOX_Utility",
+    ]
+    line = _command_echo(r"C:\app\arduino\arduino-cli.exe", args)
+    assert line.startswith("$ ")
+    assert "--libraries" in line
+    assert "--format json" in line
+    # A path with a space stays one pasteable argument.
+    assert '"' + r"C:\Program Files\app\sketches\libraries" + '"' in line

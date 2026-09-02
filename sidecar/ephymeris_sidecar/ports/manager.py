@@ -184,16 +184,16 @@ class PortManager:
         resume = was_passthrough and not suppress_passthrough_resume
 
         try:
-            on_progress(
-                "compile", "stdout", f"$ arduino-cli compile --fqbn {FQBN} {sketch_dir}"
-            )
+            # No command echo here. This layer knows neither which backend will
+            # run (daemon or subprocess) nor the arguments it will send, so
+            # anything written here is a guess that drifts — and did: the old
+            # hand-written line omitted `--libraries`, which is exactly the
+            # argument that was malformed when a packaged build stopped finding
+            # its bundled library. Each backend echoes its own real invocation
+            # (`boards/cli_tool.py`, `boards/grpc_tool.py`).
             await self._tool.compile(
                 sketch_dir, FQBN, libraries_path,
                 lambda stream, text: on_progress("compile", stream, text),
-            )
-            on_progress(
-                "upload", "stdout",
-                f"$ arduino-cli upload -p {address} --fqbn {FQBN} {sketch_dir}",
             )
             await self._tool.upload(
                 sketch_dir, FQBN, address,

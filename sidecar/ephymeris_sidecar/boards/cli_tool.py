@@ -208,7 +208,11 @@ class ArduinoCliTool(BoardTool):
         stderr is whatever the tool says while working, forwarded as it
         arrives so the frontend shows progress, not a spinner-until-done
         (`dashboard.md` §6.1).
+
+        The command is echoed here, from the argv about to be spawned, because
+        this is the only place that knows it — see `_command_echo`.
         """
+        on_line("stdout", _command_echo(self._binary, args))
         try:
             proc = await asyncio.create_subprocess_exec(
                 self._binary,
@@ -245,6 +249,25 @@ class ArduinoCliTool(BoardTool):
             raise FlashFailed(phase, f"{phase} timed out after {timeout:.0f}s") from None
 
         return proc.returncode or 0, b"".join(stdout_chunks).decode(errors="replace")
+
+
+def _command_echo(binary: str, args: list[str]) -> str:
+    """The command about to run, as one copy-pasteable line.
+
+    **Built from the real argv, never hand-written.** The flash console used to
+    echo a line the port manager composed by hand, which omitted `--libraries`
+    and `--format json` and named `arduino-cli` even when the gRPC daemon was
+    doing the work. That is not a cosmetic problem: when a packaged build
+    stopped finding its bundled library (v1.1.0-rc.2), the console showed a
+    compile with no `--libraries` at all, which pointed the investigation at a
+    missing path rather than at the malformed one that was really being sent.
+    A debugging aid that can disagree with reality is worse than none.
+
+    Quoting is for reading and pasting, not for a shell parser: arguments are
+    passed to `create_subprocess_exec` as a list and are never re-parsed.
+    """
+    parts = [binary, *args]
+    return "$ " + " ".join(f'"{p}"' if " " in p else p for p in parts)
 
 
 def _try_json(text: str) -> dict[str, Any]:

@@ -22,6 +22,7 @@ import {
   TaskMotif,
 } from "@/components/dashboard/EntranceTile";
 import { NODE_FILL, useBoxHealth, type BoxHealth } from "@/components/chrome/ConstellationStatus";
+import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import { DebugConstellation } from "@/components/debug/DebugConstellation";
 import { SessionDock } from "@/components/sessions/SessionDock";
 import { recentSessions as fetchRecentSessions } from "@/lib/analytics/commands";
@@ -162,7 +163,20 @@ export function Dashboard() {
           transition={springPanel}
           className="scrollbar-none pointer-events-none absolute inset-y-0 left-0 w-[392px] overflow-y-auto p-4 pl-8"
         >
-          <h1 className="pb-4 pt-3 font-display text-[22px] text-starlight">Dashboard</h1>
+          {/* The title keeps its grid — Debug's lands on the same line, and
+              the two crossfade — so the fact line hangs under it rather than
+              a chip beside it. The line is the rig in one breath: boxes on
+              the bus, cohorts in the library, and whether a session is going. */}
+          <div className="pb-4 pt-3">
+            <h1 className="font-display text-[22px] text-starlight">Dashboard</h1>
+            <RigFact
+              bound={boundBindings.length}
+              connected={connectedCount}
+              anyFault={boundBindings.some((b) => health[b.box] === "fault")}
+              cohorts={cohortCount}
+              running={running !== null}
+            />
+          </div>
           <div className="pointer-events-auto flex flex-col gap-3">
             <LaunchButton
               running={running !== null}
@@ -229,7 +243,7 @@ export function Dashboard() {
               <EntranceTile
                 icon={Workflow}
                 label="Task"
-                caption="What the animal does — the sketch library"
+                caption="What the animal does — this rig's tasks"
                 motif={<TaskMotif />}
                 onOpen={() => navigate("/task")}
               />
@@ -248,6 +262,9 @@ export function Dashboard() {
             >
               {cohorts.slice(0, MAX_ROWS).map((cohort) => (
                 <CardRow key={cohort.id} onClick={() => navigate(`/cohorts/${cohort.id}`)}>
+                  {/* The cohort's world, as the browser draws it — a row is
+                      recognised by its planet before its name is read. */}
+                  <PlanetDisc cohortId={cohort.id} appearance={cohort.appearance} size={16} />
                   <span className="min-w-0 flex-1 truncate text-[13px] text-starlight">
                     {cohort.name}
                   </span>
@@ -281,9 +298,11 @@ export function Dashboard() {
               icon={Radio}
               label="Boxes"
               status={
-                boundBindings.length === 0
-                  ? "none bound"
-                  : `${connectedCount}/${boundBindings.length} connected`
+                <BoxesStatus
+                  bound={boundBindings.map((b) => b.box)}
+                  health={health}
+                  connected={connectedCount}
+                />
               }
               empty={
                 boundBindings.length === 0
@@ -432,6 +451,86 @@ export function Dashboard() {
 
 /** Rows before the cohort card defers to the full grid. */
 const MAX_ROWS = 5;
+
+/**
+ * The page's fact line — the Rig and Settings tabs' mono line under the
+ * title, answered with the rig's numbers. Coloured by state and nothing
+ * else: the error tone the moment any bound box is in fault, Ion when every
+ * bound box is on the bus, quiet static otherwise or with nothing bound.
+ */
+function RigFact({
+  bound,
+  connected,
+  anyFault,
+  cohorts,
+  running,
+}: {
+  bound: number;
+  connected: number;
+  anyFault: boolean;
+  cohorts: number;
+  running: boolean;
+}) {
+  const boxesColour = anyFault
+    ? "var(--color-status-error)"
+    : bound > 0 && connected === bound
+      ? "var(--color-status-ok)"
+      : undefined;
+  return (
+    <p className="mt-0.5 font-mono text-[10px] text-static/70">
+      <span style={boxesColour ? { color: boxesColour } : undefined}>
+        {bound === 0 ? "no boxes bound" : `${connected}/${bound} boxes on the bus`}
+      </span>
+      {" · "}
+      {cohorts} cohort{cohorts === 1 ? "" : "s"}
+      {running && (
+        <>
+          {" · "}
+          <span style={{ color: "var(--color-status-ok)" }}>session running</span>
+        </>
+      )}
+    </p>
+  );
+}
+
+/**
+ * The Boxes tile's fact: the bound boxes as health dots, then the count — the
+ * Rig tab's `BoxesFact`, so the two pages agree about every box before either
+ * is read. Same `NODE_FILL` the sidebar's stars use.
+ */
+function BoxesStatus({
+  bound,
+  health,
+  connected,
+}: {
+  bound: readonly number[];
+  health: Partial<Record<number, BoxHealth>>;
+  connected: number;
+}) {
+  if (bound.length === 0) return <span>none bound</span>;
+  const states = bound.map((box) => health[box] ?? "absent");
+  const colour = states.includes("fault")
+    ? "var(--color-status-error)"
+    : connected === bound.length
+      ? "var(--color-status-ok)"
+      : undefined;
+  return (
+    <>
+      <span className="mr-1 flex items-center gap-1" aria-hidden>
+        {states.map((state, i) => (
+          <span
+            key={bound[i]}
+            className="size-1.5 rounded-full"
+            style={{ background: NODE_FILL[state] }}
+          />
+        ))}
+      </span>
+      <span style={colour ? { color: colour } : undefined}>
+        {connected}/{bound.length} connected
+      </span>
+    </>
+  );
+}
 
 /** The sidebar constellation's health states, in words for the row readout. */
 const HEALTH_LABEL: Record<BoxHealth, string> = {

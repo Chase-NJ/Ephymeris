@@ -265,14 +265,15 @@ Talks to the sidecar over the WebSocket only.
 | `lib/motion.ts`, `lib/useReduceMotion.ts` | Shared spring definitions and the reduced-motion hook |
 | `styles/index.css` | **The theme.** Tailwind v4 `@theme` block — every colour, font, and radius token. There is no `tailwind.config.js` |
 | `components/chrome/` | Persistent shell: sidebar, titlebar, starfield, constellation status widget |
-| `components/cohorts/` | Cohort grid, editor panels, procedural icon, Auto-Balance |
+| `components/cohorts/` | The 3D cohort browser (`CohortSky`) and its appearance panel, the flat `PlanetDisc` that stands in at icon scale, the editor panels, Auto-Balance |
 | `components/config/` | Interactive constellation board, zodiac picker (rendered on Settings), handshake indicator/list, utility sketch panel |
-| `components/task/` | The task editor's parts: `SketchStateMachine` (the derived machine with the parameter mapping drawn on, plus `LiveStateMachine` for Mission Control's live panel), `TrialTypeTable` (odor → response → reward, with a contingency sentence per row), `StageRamp`, `TaskLibrary`, `ParameterInspector`, and the explain tile |
+| `components/task/` | The Task tab's parts. **Editor:** `SketchStateMachine` (the derived machine with the parameter mapping drawn on, plus `LiveStateMachine` for Mission Control's live panel), `TrialTypeTable` (odor → response → reward, with a contingency sentence per row and the selection-mode switch), `StageRamp`, `TaskDetails` (category, legacy names, notes), `ParameterInspector`, the explain tile, and `TaskGuide` (the spotlight walkthrough). **Landing:** `TaskCard`, `TaskGlyph` (a task's shape as a mark), `NewTaskTile`, `StrobeDoor` |
 | `components/common/SummaryCard.tsx` | The HUD tile — icon, label, status, divider, rows. Shared by the Dashboard and the Task tab so the two "tiles over the sky" pages are one motif |
+| `components/common/HudTile.tsx` | The same header grammar over a *form* body that manages its own edges — the Rig and Settings tabs' tiles. One live fact on the glass, carried as a node so it can take its state's colour |
 | `components/hardware/` | `BoardMap` — the Mega2560 pin diagram Rig wiring selects and drags on, ported from `ConstellationBoard` |
-| `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view |
-| `components/debug/` | Constellation landing, per-box detail, scrollback, flash dialog, state badges, utility controls |
-| `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, journey rail, placement banner, and `ConfigFields` (the one grouped renderer for a profile's `config`) |
+| `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view; the deep sky is `Backdrop.tsx` (star field, dust band, nebulae, the sky's drift) with `HomeGalaxy` (the galaxy we orbit), `DistantGalaxies`, `SkyEvents` (meteors, supernovae, comets on one seeded schedule) and `skyTextures.ts` (every painted canvas) beside it — [dashboard.md §9.2](dashboard.md) |
+| `components/debug/` | Constellation landing, per-box detail, scrollback, flash dialog, state badges, utility controls; `PrimeControls` — Prime: chosen fluid lines for a chosen time, sequenced over the utility sketch's own `PULSE` ([dashboard.md §4.3](dashboard.md)); the channel grids give every output a lamp, a family-coloured switch and a pulse |
+| `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, journey rail, placement banner, `ReturnChecklist` (animals ticked home, or all at once), `SessionWrapUp` (the last-group pop-up), and `ConfigFields` (the one grouped renderer for a profile's `config`) |
 | `components/analytics/` | The Observatory's panels: rails, learning curves, strategy space and its profile picker, trends, summaries |
 | `components/analytics/report/` | The PNG export: composed cohort/session sheets built from the panels above, and the capture and save path ([data.md §10.6](data.md)) |
 | `components/charts/` | Shared chart primitives (`UnitChart`, `ChartFrame`, `ChartDots`, `DrawOn`) |
@@ -287,15 +288,17 @@ Every route is a child of `<AppShell />`, wired in `src/App.tsx`.
 | Route | Component | Purpose |
 |---|---|---|
 | `/` | `routes/Dashboard.tsx` | Landing: full-bleed 3D rig sky with a hero launch CTA, the session dock, and Cohorts/Rig/Analytics summary cards |
-| `/cohorts` | `routes/Cohorts.tsx` | Cohort browser — card grid, search/sort/archived toggle |
+| `/cohorts` | `routes/Cohorts.tsx` | Cohort browser — a **3D sky of cohort planets** (`components/cohorts/CohortSky.tsx`), each with its home cages in orbit; search dims in place, sort reorders the field, focusing one docks the appearance editor. Archived stays a 2D list ([cohorts.md §4](cohorts.md)) |
 | `/cohorts/new`, `/cohorts/:id` | `routes/CohortEditor.tsx` | Create (progressive reveal) or manage (all at once) a cohort |
-| `/task` | `routes/Task.tsx` | The **task-profile editor**: the profile list and presets, the derived state machine, the trial table, the shaping ramp, the parameter rail |
+| `/task` | `routes/Task.tsx` | The **task landing** — this rig's saved tasks as a card grid (open, delete, create), the Strobes and Walkthrough doors, and the library's health |
+| `/task/new`, `/task/:taskId` | `routes/TaskEditor.tsx` | The **task-profile editor**: the section spine, the details card, the derived state machine, the trial table, the shaping ramp, the parameter rail. `/task/new` on a rig with no tasks opens the walkthrough (`components/task/TaskGuide.tsx`) |
+| `/task/strobes` | `routes/TaskStrobes.tsx` | The strobe vocabulary, read-only — every code, the retired ones, and the free ranges a new one may come from ([settings.md §5.0](settings.md)) |
 | `/task/sketches` | *(redirects to `/task`)* | Former address of the sketch viewer, as is `/sketches` — the viewer is the tab now. Still the **only** editor for `settings.taskDefaults` |
 | `/analytics` | `routes/Analytics.tsx` | The Observatory — one route, no tabs; cohort/session/animal are filters |
 | `/config` | `routes/Config.tsx` | The **Rig** tab (label renamed; route kept), as a column of HUD tiles: box→board bindings, handshake, utility baseline, the Wiring door, baud, `arduino-cli` |
-| `/config/strobes` | `routes/RigStrobes.tsx` | The strobe vocabulary, read-only — every code, the retired ones, and the free ranges a new one may come from |
+| `/config/strobes` | *(redirects to `/task/strobes`)* | Former address of the strobe viewer, from when it was a Rig page |
 | `/config/wiring` | `routes/RigWiring.tsx` | **Rig wiring** — the channel→pin editor (`components/hardware/RigWiringEditor.tsx`) plus the pin table (`components/hardware/PinTable.tsx`), behind the Rig landing's Wiring door ([settings.md §5.1](settings.md)) |
-| `/settings` | `routes/Settings.tsx` | Storage and interface only |
+| `/settings` | `routes/Settings.tsx` | Storage, interface and the constellation — three `HudTile`s, each with one state-coloured fact |
 | `/debug` | `routes/DebugMode.tsx` | Per-box instrument panel. **No nav entry** — reached by selecting a box |
 | `/session/new` | `routes/SessionConfig.tsx` | Session setup step 1 — cohort, prefix, number, time limit |
 | `/session/:id/mapping` | `routes/SessionMapping.tsx` | Step 2 — animal→box mapping, guided placement walk, flash sequence |
@@ -491,7 +494,7 @@ Recorded so they aren't rediscovered as oversights. Each was decided, not missed
 | **Light mode** | Out of scope for v1, not even a placeholder toggle. |
 | **Auto-respawn of a crashed sidecar** | No. A silent respawn would resurrect the process without the port ownership or session state it had — worse than an honest failure the user can see. |
 | **Auto-recovery from a mid-session board drop** | No. Always a hard stop into `ERROR`, cleared manually. Costs nothing in data because of the write-ahead log. |
-| **Custom/uploaded cohort icons** | Deferred; procedural generation from the cohort id is sufficient and stores nothing. |
+| **Custom/uploaded cohort art** | Deferred. A cohort's world is procedural: derived from the id, then tuned through four fields (type, hue, ring, seed). Uploading an image would put an asset store behind something that costs one nullable column today. |
 | **Arbitrary sketch browse outside the bundled library** | No. One source of truth makes the error and empty states unambiguous — and since v1.1 that source ships with the app; the user-configured `arduinoDirectory` is retired (`tasks.md` §2.1). |
 | **`scipy` for `.mat` writing** | Replaced by a hand-written MAT v5 serializer to keep sidecar runtime dependencies minimal. |
 | **A `states`/`graph` key in `task.json`** | No. It would change `profile_hash` and permanently split every sketch's historical runs from its future ones. See [tasks.md §4.1](tasks.md#41-why-derived-not-declared). |
@@ -563,7 +566,7 @@ The eleven-file set was consolidated on 2026-07-30. If you have a link or a code
 | **Session** | One invocation of the session flow, possibly spanning several consecutive group runs |
 | **Run** | One animal's participation in one session — the unit Analytics scores |
 | **Write-ahead log** | The per-animal `.tsv`, fsync'd per line. The mechanism behind the crash-durability guarantee |
-| **Constellation** | The astronomy motif, used in three places with three different link rules: the sidebar status widget (fixed adjacency), the procedural cohort icon (seeded nearest-neighbour), and Mission Control's 3D view (seeded nearest-neighbour, per animal) |
+| **Constellation** | The astronomy motif. Link rules differ by view: the sidebar status widget (fixed adjacency) and Mission Control's 3D view (seeded nearest-neighbour, per animal). The cohort browser is the motif without links — worlds in a field, not a figure |
 | **Observatory** | The Analytics dashboard's internal name |
 
 ---

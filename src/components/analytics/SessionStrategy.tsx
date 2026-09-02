@@ -1,3 +1,4 @@
+import { Route } from "lucide-react";
 import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
 
@@ -107,6 +108,7 @@ export function SessionStrategy({
   return (
     <StrategyPanel>
       <ChartFrame
+        icon={Route}
         title={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>

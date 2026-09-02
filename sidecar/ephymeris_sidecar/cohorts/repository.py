@@ -7,6 +7,7 @@ other.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import uuid
@@ -18,6 +19,7 @@ from .models import (
     MAX_BOX,
     MIN_BOX,
     Animal,
+    Appearance,
     Cohort,
     CohortNotFound,
     Group,
@@ -158,10 +160,24 @@ class CohortRepository:
             )
             _validate(animals, groups)
 
+            # Absent leaves it alone; an explicit null RESETS the world to the
+            # one derived from the cohort's id. The two are different requests
+            # and `"appearance" in patch` is the only thing that tells them
+            # apart, which is why this reads the key rather than the value.
+            appearance = existing.appearance
+            if "appearance" in patch:
+                appearance = Appearance.from_json(patch["appearance"])
+
             try:
                 conn.execute(
-                    "UPDATE cohorts SET name = ?, updated_at = ? WHERE id = ?",
-                    (name, _now(), cohort_id),
+                    "UPDATE cohorts SET name = ?, appearance_json = ?, updated_at = ?"
+                    " WHERE id = ?",
+                    (
+                        name,
+                        json.dumps(appearance.to_json()) if appearance else None,
+                        _now(),
+                        cohort_id,
+                    ),
                 )
                 if "groups" in patch or "animals" in patch:
                     # Animals reference groups, so clear animals first to avoid
@@ -325,7 +341,25 @@ class CohortRepository:
             archived_at=row["archived_at"],
             animals=animals,
             groups=groups,
+            appearance=_parse_appearance_column(row["appearance_json"]),
         )
+
+
+def _parse_appearance_column(raw: Any) -> Appearance | None:
+    """The stored JSON, or None when there is none or it will not parse.
+
+    A damaged appearance is treated as absent rather than raised on: the cohort
+    is a roster of real animals and a folder of real recordings, and refusing to
+    load it over a decorative field would be the wrong trade every time. The
+    cohort simply comes back looking like the world its id derives.
+    """
+    if not raw:
+        return None
+    try:
+        return Appearance.from_json(json.loads(raw))
+    except (TypeError, ValueError):
+        log.warning("a cohort's stored appearance will not parse; deriving instead")
+        return None
 
 
 def _parse_groups(raw: Any) -> list[Group]:

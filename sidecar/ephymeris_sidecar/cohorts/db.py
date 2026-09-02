@@ -50,16 +50,20 @@ DB_FILENAME = "ephymeris.db"
 #: (`data.md` §4.4, §8.3) — the parameters a run recorded in its own file, and
 #: the profile it was actually scored with when that came from the file rather
 #: than from resolution.
-SCHEMA_VERSION = 8
+#: (`cohorts.md` §5) — the operator's tuning of a cohort's world. NULL on every
+#: cohort that has never been tuned, which is the normal state: the whole record
+#: is derived from a hash of the cohort's `id` when absent.
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
-    id           TEXT PRIMARY KEY,
-    name         TEXT NOT NULL,
-    data_folder  TEXT NOT NULL,
-    created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL,
-    archived_at  TEXT
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    data_folder     TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    archived_at     TEXT,
+    appearance_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS groups (
@@ -329,6 +333,19 @@ def _to_v8(conn: sqlite3.Connection) -> None:
         conn.execute("DELETE FROM run_metrics_cache WHERE profile_source = 'inferred'")
 
 
+def _to_v9(conn: sqlite3.Connection) -> None:
+    """v8 → v9: the cohort's world (`cohorts.md` §5).
+
+    NULL on every existing cohort and correct that way. An absent appearance is
+    not a missing value to be backfilled — it means "derive it from the id",
+    which is what every cohort did before this column and what the client still
+    does when it reads NULL. Writing a derived record into the column here would
+    freeze each cohort against every later correction to the palette or the
+    default type, for no gain.
+    """
+    add_column(conn, "cohorts", "appearance_json", "TEXT")
+
+
 def _to_v5(conn: sqlite3.Connection) -> None:
     """v4 → v5: the home-cage grouping label (`cohorts.md` §1).
 
@@ -354,6 +371,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     6: _to_v6,
     7: _to_v7,
     8: _to_v8,
+    9: _to_v9,
 }
 
 

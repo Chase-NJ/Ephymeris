@@ -185,7 +185,7 @@ Route `/`. Two columns of translucent HUD tiles docked over the full-bleed sky. 
 
 *"What do I do now," in one stack.*
 
-- **Page title.**
+- **Page title**, with the rig's fact line under it in mono — `4/6 boxes on the bus · 3 cohorts · session running` — coloured by state only: the error tone the moment any bound box is in fault, Ion when every bound box is connected, quiet otherwise. The title keeps its grid (Debug's title crossfades onto the same line), which is why the line hangs under it rather than a chip sitting beside it.
 - **Hero CTA** — "Start a Session," primary `Pulsar`-filled, and the one deliberately **opaque** tile: the primary action doesn't dissolve into the sky. It navigates straight to its destination — `/session/new` normally, `/cohorts` when no cohort exists yet, Mission Control while a session runs ("Resume Session"). On hover the rocket lifts toward its heading and a looping booster trail streams behind it — fire drawn with **motion, not colour or glow**; the loop stands down under reduced motion.
 - **Session dock** — everything `sessions.active` reports: the running session's card (live per-box liveness, Open Mission Control, End Session), `configuring` set-ups (Resume setup / Discard), and crash-orphaned `stale` rows shown **read-only** (View in Analytics / Close out — **never** Resume). Renders nothing when there is nothing to act on, and nothing before `sessions.active` has answered — the no-spinner rule.
 
@@ -197,8 +197,8 @@ The column opens with a **paired row of entrance tiles** — Rig and Task, the t
 |---|---|
 | **Rig** (entrance) | Opens the Rig tab (`/config`). Caption is the tab's own question — *which board is box 3* — plus the bound-box count |
 | **Task** (entrance) | Opens `/task` — the sketch viewer |
-| **Cohorts** | Active cohorts with animal/group counts; rows open the editor, deferring to the grid past five rows. Header opens `/cohorts` |
-| **Boxes** | One row per bound box with a health dot, label, and state. Clicking a row sets the rig selection and lands in Debug with the camera already flying — exactly as clicking its star does |
+| **Cohorts** | Active cohorts with animal/group counts, each row led by its world (`PlanetDisc` at 16px — the same planet the browser draws); rows open the editor, deferring to the grid past five rows. Header opens `/cohorts` |
+| **Boxes** | Header fact is the bound boxes as the sidebar's own health dots beside the connected count, coloured as the Rig tab's Boxes tile colours it. One row per bound box with a health dot, label, and state. Clicking a row sets the rig selection and lands in Debug with the camera already flying — exactly as clicking its star does |
 | **Analytics** | A reward-accuracy sparkline per cohort, plus the three most recent sessions read from the archive itself |
 
 > [!NOTE]
@@ -239,7 +239,7 @@ Grouped by intent rather than compressed into one header row:
 |---|---|
 | *Identity* | Hardware id in mono, port, carried sketch |
 | **Connection** | State badge, baud select, open/close, reset, error acknowledge, rejection surface |
-| **Sketch** | Flash dialog; utility controls + telemetry strip for a `"kind": "utility"` profile |
+| **Sketch** | Flash dialog; for a `"kind": "utility"` profile, the **channel grids** (a lamp, a switch and a pulse per output, in the channel family's colour), **Prime** (§4.3), and the telemetry strip |
 | **Console** | Scrollback, send with line-ending selector, copy log, save to file |
 
 > [!IMPORTANT]
@@ -249,6 +249,18 @@ Grouped by intent rather than compressed into one header row:
 
 > [!WARNING]
 > **This splits what is displayed, not what is kept.** Both tabs read the one capped ring buffer (~2000 lines/box). A 1 Hz heartbeat therefore still consumes that budget — roughly half an hour of scrollback on a chatty utility sketch — so a long priming session can age out earlier console lines even though the Console tab looks quiet. The copy-log affordance is the escape hatch.
+
+**A channel is a switch, not a button.** Each grid row carries a lamp, a switch and a pulse. The switch shows where the valve *is* — its knob follows the sketch's `STATUS` telemetry, never the click, so the app cannot claim a valve state it does not know — and it fills with the channel family's colour (`KIND_COLOR`: reward for fluid lines, emitter for odor lines, and so on, the same six the board map and every trial table use). An open water line and an open odor line are therefore told apart across the room. Status colour stays state-only.
+
+### 4.3 Prime
+
+Open a chosen set of fluid lines, each for a chosen time, in turn — the thing done before every session and previously done with the `PRIME_Lines` sketch. Built entirely on the utility sketch's existing verbs (`SET PULSE=<ms>`, then one `PULSE <ch>` per line) over `port.send`: no new wire command, no firmware change.
+
+- **Sequential, paced from the app.** The sketch's `PULSE` is a blocking `delay()`, so each pulse is sent when the previous one's time is up plus a little slack, and the board's own `STATUS` lines light the row as the truth of what is open. Firing everything at once would work — the serial buffer holds it — but the app would not know which line was open.
+- **Chunked past 5 s.** The sketch caps a pulse at `PULSE_MAX_MS`; a 12 s prime is three 4 s pulses back to back on one line, which for pushing water down a tube is the same as staying open.
+- **The pulse width goes back afterward.** `SET PULSE` is the sketch's one global, shared with the grid's Pulse buttons; a prime that left it at 4000 ms would turn the next Pulse click into a four-second flood.
+- **Stop is `ALLOFF`.** The pulse in flight cannot be interrupted, but `ALLOFF` is always safe and honoured the moment the board is listening again; the queue is dropped.
+- **The status is the form.** While a prime runs, the form is replaced by the run: which line, which pass, how long is left, one segment per line filling in turn, and Stop — so nothing can be re-armed mid-run.
 
 Escape, Back, or clicking empty space flies back out — and, since that clears the selection, redirects to `/`.
 
@@ -431,7 +443,9 @@ Configured **per box, independently**, matching real practice. Each box seeds fr
 
 #### The guided placement walk
 
-Confirming the mapping doesn't flash anything yet. It starts a **walk of the rig**: one animal at a time, in **box-number order**, with the app pointing at exactly one card and — where the hardware allows — lighting that box until the operator says the enclosure is closed.
+**Place the animals** confirms the mapping and starts a **walk of the rig**: one animal at a time, in **box-number order**, with the app pointing at exactly one card and — where the hardware allows — lighting that box until the operator says the enclosure is closed. **Each box is flashed with its sketch the moment its enclosure is closed** ([§7.4](#74-step-2b--the-flash-sequence)), while the operator is already fetching the next animal.
+
+Two shortcuts sit beside the walk, for the operator who has already loaded the rig by hand: **They're already in — flash all** from the review (no walk; every box flashed in box order), and **All animals are in** from any step of the walk (the rest of the boxes queued at once). The walk is the default because a mis-placed animal is a silently mislabelled file; the shortcuts exist because the walk is a courtesy, not a gate.
 
 > [!CAUTION]
 > **Box order, not animal order.** The operator is walking down a bench. Sending them from box 5 to box 2 and back is how an animal ends up in the wrong chamber — the single failure this whole step exists to prevent. **A mis-placed animal produces a complete, plausible, silently mislabelled data file, and nothing downstream can detect it.**
@@ -439,13 +453,17 @@ Confirming the mapping doesn't flash anything yet. It starts a **walk of the rig
 - **The mapping locks while the walk runs.** Every card but the current one dims and stops accepting clicks. Changing a box number after animals are already in chambers would invalidate the placements behind it without saying so.
 - **The lights are a confirmation, not the instruction.** The box's own number is on the card and on the chamber; the light is the app corroborating it. A rig with no utility sketch configured, a box still being restored, or a board that didn't answer all get the same walk with a line explaining to go by the number. **Refusing to continue because a bulb didn't light would be worse than the problem.**
 
-The lighting is `utility.identify`, which is why this step sits **before** the flash sequence: the boxes are still carrying the utility sketch here, and that is the only firmware that can be asked to light one. Confirming the mapping is what puts the baseline on hold and extinguishes any remaining light.
+The lighting is `utility.identify`, which is why a box is lit **before** it is flashed: it is still carrying the utility sketch when the operator arrives at it, and that is the only firmware that can be asked to light one. Confirming the mapping — now the first thing the walk does — puts the baseline on hold; each box's light goes out through the same serial queue that lit it, and its flash waits behind that.
 
 **Leaving the step.** On first entry (session still `configuring`) Back returns to Step 1 and abandons the session record — marked `aborted` rather than left stranded. On re-entry via Switch Group the session already holds recorded group runs, so Back would be a lie; the step offers **End session** instead.
 
 ### 7.4 Step 2b — the flash sequence
 
-Each box's sketch is flashed **in sequence, not in parallel**, reusing `port.flash` exactly. A box mid-flash shows its star "flaring" rather than a generic spinner, so the visual language stays consistent.
+**The flash rides the walk.** Closing an enclosure queues that box; a queue worker flashes boxes **in the order they were closed, one at a time, never in parallel**, reusing `port.flash` exactly (`suppressPassthroughResume` so each lands in `IDLE` for the runner). A six-box group used to be placed and *then* flashed six times in a row with the operator watching; now the compile time hides inside the walk, and the last confirmation lands on a rig that is nearly ready. When the last flash lands with every animal placed, Mission Control opens itself.
+
+Why the mapping is confirmed *first*: a confirmed mapping is what puts the utility baseline on hold ([settings.md §8.2](settings.md#82-what-it-will-never-do)). Without it, a box falling idle after its task flash would be quietly restored to the utility sketch before the session started. The baseline nudge for a box still carrying last session's sketch goes out just before the confirm; the hold drops whatever of it hasn't started, and a restore already in flight simply makes that box's flash wait — a queued flash waits up to three minutes for its port to be `IDLE` (or `PASSTHROUGH`, which entering `FLASHING` force-releases anyway) before reporting a failure.
+
+A box mid-flash shows its star "flaring" rather than a generic spinner, so the visual language stays consistent; a queued box holds a steady half-light, and a mono line under the animal's name says *waiting to flash · flashing… · flashed · flash failed*. Going **back to the boxes** from the walk forgets every flash so far — the mapping can change under a flash that already landed — while **Walk the boxes again** from the end does not, so a re-walk re-flashes nothing.
 
 > [!TIP]
 > **Recovering from a failed flash, in place.** A failed flash leaves its box in `ERROR`, and `ERROR → FLASHING` is refused — so a retry is rejected until the fault is acknowledged. The acknowledgement therefore lives **on the card that is stuck**: a faulted box shows its reason and an **Acknowledge** button, and Confirm-and-flash stays disabled while any mapped box is faulted, since the sequence would only halt on it again.
@@ -498,6 +516,14 @@ When every box in the current group has finalized **and** another populated grou
 
 The prompt appears whether the group ended by time limit, operator stop, or every board's own end strobe — *"everyone is done and more animals are waiting"* is the trigger, not how it came to be true.
 
+Under the scene, a **return checklist** (`ReturnChecklist`): one row per box, ticked as each animal goes home, and **All animals are out** to answer the whole thing in one press. Switch Group waits on every row — the next group's animals go into these same chambers — and the shortcut is what makes that gate a courtesy rather than a chore. Removal is a checklist and not a walk because it has no silent failure: an animal carried to the wrong home cage is noticed at the cage, not in the data.
+
+### 8.7 The wrap-up
+
+When the **last** populated group has finished — every box finalized, nothing left to run — Mission Control raises a pop-up rather than another centre-stage card (`SessionWrapUp`). This is the one moment in the flow that is genuinely over, and a prompt sharing the screen with six Start buttons reads as one option among seven. It takes the screen: *That's a wrap*, the session in one mono line (animals, groups, elapsed), the placement scene played backwards with every box in the loop, the same return checklist, and **End session** — enabled once every animal is ticked home — which ends the session and lands on Analytics with this run already open.
+
+Still dismissable: **Not yet** puts the rails back for an operator who wants to restart a box or read a tile, and the left rail's End Session is the same action. The pop-up returns if a box restarts and finishes again. Its only flourish is three flat Ion rings breathing out from a check — the constellation's arrival rings on a surface, strokes and never blur, still under reduced motion.
+
 ### 8.6 Guided-flow chrome
 
 **The journey rail** — a four-step indicator, **Configure → Boxes → Run → Finish**, rendered as constellation stars joined by a thin `Pulsar` path: completed stars filled, the current one pulsing in `Starlight` behind a flat expanding ring, upcoming ones `Halo` outlines. **No blur anywhere**, so the no-glow rule holds even on the pulsing element.
@@ -526,7 +552,7 @@ Built with `three.js` / `react-three-fiber`. The camera, controls, hover reticle
 > **A star is the box, not the animal.** An animal's position therefore moves when it is mapped to a different box, and two animals that run in box 1 on different days share a star. That is the point: the arrangement mirrors the **rig** rather than the roster, so an operator who has learned their rig's shape reads the session view with the same glance they read the sidebar with.
 
 - **Unoccupied stars of the asterism are still drawn**, faint and inert, in `Halo`. Without them a two-box rig would render as two dots and a line, and the constellation the user deliberately picked would be invisible in the one view that is mostly constellation.
-- **Links are the catalogue's own edges**, not nearest-neighbour. The traditional stick figure is what makes Scorpius read as the fishhook. *(The 2D cohort icon still uses nearest-neighbour — it has no asterism to be faithful to.)*
+- **Links are the catalogue's own edges**, not nearest-neighbour. The traditional stick figure is what makes Scorpius read as the fishhook. *(The cohort browser draws no links at all: cohorts are not adjacent to one another in any sense worth drawing, and a line between two studies would read as if it meant something.)*
 - **Scaling is uniform.** A per-axis fit would stretch the tail and turn the Teapot into a bowl. Depth is a small seeded jitter per star — enough that orbiting reveals a sky rather than a poster, small enough that near stars don't occlude the shape.
 
 - **Size is seeded per star, never per occupant.** Size is texture, and texture belongs to the slot. Seeded per occupant, box 3 was one size with an animal standing on it and another size as itself in Debug, so the same star changed size under the camera on every navigation between the two. The same goes for a star's rotation (§9.2).
@@ -573,7 +599,9 @@ Panning also has on-screen controls: a four-arrow pad with a recentre button, pl
 - **Chance is the floor, not zero.** Below chance an animal isn't "colder," it's doing something other than the task; stretching the ramp to zero would spend half the visible range on a distinction nobody reads. An animal that has scored nothing shows at the cool end.
 
 > [!NOTE]
-> **This is a deliberate, bounded exception to the flat-matte rule.** It buys real information — the overview answers "who is working" without opening a panel — and it is confined to this 3D scene. **Nothing in the 2D chrome gains a gradient or a glow.**
+> **This is a deliberate, bounded exception to the flat-matte rule** — the FIRST of two. It buys real information — the overview answers "who is working" without opening a panel — and it is confined to this 3D scene. **Nothing in the 2D chrome gains a gradient or a glow.**
+>
+> The second is the **cohort planet** ([cohorts.md §5](cohorts.md)), fenced on the same terms and for the same kind of reason: a world's size is its roster, its spin and daylight are how recently anyone worked on it, and its orbiting ships are its home cages. Its 2D stand-in (`PlanetDisc`) stays flat, like every other icon. Anything reaching for a third exception should have to make this argument first — that the effect **is** a reading, not a decoration that happens to be informative.
 >
 > An **unlit** star gets the surface too, **burned down and frozen**, exactly as Debug draws a box that is bound but not on the bus (§4.1). It used to be a flat matte dot, on the reasoning that a surface would imply it were running — but stillness and dimness already say "not running" without discarding the temperature the box earned, and in practice a sky of dots was what the whole setup phase looked like before Start All. It also made this the *only* view where a given box was not a star, so navigating to or from it changed what the object was rather than just how it was lit (§9.1).
 
@@ -613,13 +641,24 @@ So `active` — a running crew — is a matter of **degree**, not on/off: a runn
 
 #### The deep sky
 
-Behind the asterism: a field of ~700 twinkling stars (one seeded `Points` draw, per-star phase and tint, the only per-frame cost a time uniform), a handful of nebula banks drifting slowly against each other, and every half-minute or so a supernova — a fast flash decaying over a few seconds while a thin shell ring expands through it.
+Behind the asterism, in depth order from far to near (`constellation3d/Backdrop.tsx` and its siblings):
+
+- **Other galaxies** (`DistantGalaxies`) — a dozen small painted sprites on the outermost shell, spirals and ellipticals at their own roll and inclination, each creeping about its axis. They are what makes ours a galaxy *among* galaxies.
+- **Nebula banks** — nine now, in five hue families (violet, green, dusk, ember, teal), with filaments laid across the blobs so a bank reads as a place stars are made rather than as fog.
+- **The home galaxy** (`HomeGalaxy`) — a spiral disc of ~4,000 points, inclined toward us and near enough to fill a third of the default frame, the bulge low and the arms sweeping up through it with star-forming knots in the Pulsar family. Points rather than a sprite because a disc this near has parallax as the camera orbits. **Not a band we are inside**: that was the first cut, and a disc through the origin sweeps its near arm through the camera's data volume. Its nearest point sits 65 units out, past `maxDistance`. It turns at about a degree every eight seconds — invisible in a glance, unmistakable across a session.
+- **The dust band** — ~2,600 of the faintest points squeezed toward the galaxy's plane on the near shell, unshimmering and low-gain, the haze between us and the disc that makes it read as a hundred billion stars.
+- **The star field** — ~1,400 twinkling stars, one `Points` draw, tinted by stellar class (mostly white; blue-white giants, warm K-stars, a few red dwarfs — the same ramp the box stars wear) with a scatter of the palette's violet and green.
+- **Events** (`SkyEvents`) — one seeded scheduler owns them all so nothing overlaps: **meteors** most often (a short streak, gone in under a second, lying along its own travel), a **supernova** now and then (the flash and expanding shell ring), and rarely a **comet** — a long violet-cast streak crossing over half a minute, the one event that lasts long enough to point at.
+
+And the whole sky **drifts** about the vertical at about a degree a minute — nothing you see happen, everything you notice has happened.
+
+Cost: five point-cloud draws and a few dozen sprites, every texture painted once on a 2D canvas (the app ships no image assets), and per frame a handful of rotations and time uniforms. No full-screen shader pass, nothing an integrated GPU notices.
 
 Three rules keep it scenery rather than spectacle:
 
-- **Deterministic.** Every position, hue, phase, and flare site is seeded through the same `mulberry32` the 2D starfield and the cohort icons use — the same sky on every mount and every machine.
+- **Deterministic.** Every position, hue, phase, and flare site is seeded through the same `mulberry32` the 2D starfield and the cohort worlds use — the same sky on every mount and every machine.
 - **Behind the data.** The whole field lives outside the camera's zoom range with depth-writing off, so scenery never occludes a star an operator is reading.
-- **Reduced motion stills it.** The twinkle freezes at its seeded phase, the banks stop drifting, supernovae never happen. **The field stays; the theatre goes.**
+- **Reduced motion stills it.** The twinkle freezes at its seeded phase, nothing drifts or turns — banks, galaxies, the sky itself — and no event fires. **The field stays; the theatre goes.**
 
 **No tile.** The canvas is transparent and fades out over its last few dozen pixels on every side (two intersected linear-gradient masks — a radial one would hollow the corners of a wide frame), and the routes draw no border or rounding around it, so the browser reads as a window onto the app's sky rather than a framed widget sitting on the page.
 

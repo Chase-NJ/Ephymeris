@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, Trash2, TriangleAlert } from "lucide-react";
+import { Plus, Trash2, TrendingUp, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { NumberInput } from "@/components/common/controls";
@@ -75,7 +75,8 @@ export function StageRamp({
   return (
     <div className="hud flex min-h-0 flex-col rounded-md">
       <header className="flex items-center justify-between gap-3 border-b border-halo px-3.5 py-2.5">
-        <div className="min-w-0">
+        <TrendingUp size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
+        <div className="min-w-0 flex-1">
           <div className="text-[12px] font-medium text-starlight">
             {ramped ? `Shaping ramp — ${stages.length} stages` : "Holds & windows"}
           </div>

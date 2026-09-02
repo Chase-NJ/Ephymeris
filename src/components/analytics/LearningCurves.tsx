@@ -1,3 +1,4 @@
+import { Activity, TrendingUp } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
@@ -110,6 +111,7 @@ function WithinSessionCurves({
   return (
     <div className="surface flex flex-col gap-3 rounded-md p-4">
       <ChartFrame
+        icon={Activity}
         title={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>
@@ -217,6 +219,7 @@ export function LearningCurves({
     <div className="surface flex flex-col gap-4 rounded-md p-4">
       <div>
         <ChartFrame
+          icon={TrendingUp}
           title={
             <span>
               Overall accuracy

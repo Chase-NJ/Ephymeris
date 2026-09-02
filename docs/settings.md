@@ -19,8 +19,8 @@ Three screens edit settings. **The split is by subject, not by shape.**
 | Screen | Answers | Owns |
 |---|---|---|
 | ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
-| 📡 **Rig** (`/config`) | *Which board is box 3, and what does every pin do?* | Box→board bindings (add/remove/name, with per-row health), the handshake test, the utility baseline, **the channel→pin wiring editor** (`/config/wiring`) and **the strobe vocabulary** (`/config/strobes`), both behind doors on the landing, default baud, `arduino-cli` path. **The tab is labelled Rig; the route and `routes/Config.tsx` keep the old spelling** — the label is the operator's word for the subject, the path is an internal address nothing displays |
-| 🔀 **Task** (`/task`) | *What is the animal doing?* | The **task-profile editor** (`tasks.md` §10–§11): the trial table, the shaping ramp, the parameters, and the state machine they derive. Saving one generates a flashable sketch. The channel→pin map and the strobe vocabulary are on Rig |
+| 📡 **Rig** (`/config`) | *Which board is box 3, and what does every pin do?* | Box→board bindings (add/remove/name, with per-row health), the handshake test, the utility baseline, **the channel→pin wiring editor** (`/config/wiring`) behind a door on the landing, default baud, `arduino-cli` path. **The tab is labelled Rig; the route and `routes/Config.tsx` keep the old spelling** — the label is the operator's word for the subject, the path is an internal address nothing displays |
+| 🔀 **Task** (`/task`) | *What is the animal doing?* | A **landing** listing this rig's saved tasks as cards (edit, delete, create), over the **task-profile editor** at `/task/new` and `/task/:taskId` (`tasks.md` §10–§11): the trial table, the shaping ramp, the parameters, and the state machine they derive. Saving one generates a flashable sketch. **The strobe vocabulary** (`/task/strobes`) sits behind a door here ([§5.0](#50-why-the-strobe-vocabulary-is-a-task-page)); the channel→pin map is on Rig |
 
 > [!NOTE]
 > **Both of the first two rows are about wiring, and they are different wirings.**
@@ -102,7 +102,7 @@ Save failures surface as a persistent note on both Rig and Settings: *"Couldn't 
 
 ## 4. The Settings screen
 
-Two groups. Nothing here is gated on the WebSocket; only the backup readout goes quiet when disconnected.
+Three HUD tiles in the Rig tab's idiom (`HudTile` — icon, label, one live fact on the glass), cascading in over the sky. The facts are the point: **Storage** says whether the data is safe before its rows are read — no data directory outranks everything and takes the error tone, a failing mirror is next, a live mirror earns Ion, no mirror at all is quiet static because it is a choice rather than a fault; **Interface** says whether motion is reduced; **Constellation** shows the bound boxes as the sidebar's own health dots beside the chosen zodiac's name. Nothing here is gated on the WebSocket; only the backup readout goes quiet when disconnected.
 
 ### Storage
 
@@ -135,17 +135,25 @@ One screen, in the order a rig comes up in — a column of HUD tiles in the Dash
 |---|---|
 | **Boxes** | The bindings table — add/remove a box, name it, bind it to a board — with a per-row health dot (the sidebar constellation's states and colours), plus the per-box handshake test. Header fact: connected/bound counts |
 | **Utility baseline** | The utility sketch panel: which sketch idle boxes rest on, the per-box baseline state, and **Reflash boxes**. Header fact: the sketch name, or `off` |
-| **Wiring** | A **door**, not a section: a full-width entrance tile in `EntranceTile`'s hover vocabulary (the tile lifts, a trace draws itself across a pin-header motif) opening the editor's own page at `/config/wiring` ([§5.1](#51-the-wiring-page-configwiring)). Fact line: channel count, and whether the wiring is this rig's own or as shipped |
+| **Wiring** | A **door**, not a section: a full-width entrance tile in `EntranceTile`'s hover vocabulary (the tile lifts, a trace draws itself across a pin-header motif) opening the editor's own page at `/config/wiring` ([§5.1](#51-the-wiring-page-configwiring)). Fact line: channel count, and whether the wiring is this rig's own or as shipped. It is **full width** because the Strobes door that used to sit beside it moved to the Task landing ([§5.0](#50-why-the-strobe-vocabulary-is-a-task-page)) |
 | **Hardware** | The default baud select and the `arduino-cli` path override. Header fact: the baud |
 
-### 5.0 Why the strobe vocabulary is a Rig page
+### 5.0 Why the strobe vocabulary is a Task page
 
-A strobe code is a fact about what this hardware can **report**, in the same way
-a pin is a fact about what it can drive — true of every task that runs on the
-box. Which codes a particular task *declares* is decided by its trial table, one
-tab over.
+It was a Rig page, on the argument that a strobe code is a fact about what this
+hardware can **report** in the same way a pin is a fact about what it can drive.
+That symmetry is real, and it is not the one that decides the question.
 
-`/config/strobes` is **read-only**, deliberately. The registry is append-only:
+A pin is compile-time *input* to the firmware every task generates: it goes into
+`TaskPins.h`, it is the same for every task on the box, and an operator touches
+it when the bench is rewired. A code is what a **condition is named by**. The
+onset picker in the trial table is the only surface in the app that consumes
+this table, an operator reaches for it mid-sentence while typing a trial row,
+and the codes a task declares are decided one panel away by that same table. So
+the vocabulary travels with the task; Rig keeps the pins.
+
+Nothing about the page changed in the move. `/task/strobes` is **read-only**,
+deliberately. The registry is append-only:
 four years of recorded sessions carry these numbers, so a code is never
 renumbered or repurposed. Renaming one would silently reinterpret every
 historical file that carries it — confident wrong numbers rather than an error.

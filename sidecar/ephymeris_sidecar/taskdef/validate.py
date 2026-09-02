@@ -104,8 +104,15 @@ def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
         if emitter is None:
             out.append(Diagnostic(
                 f"{at}.odorChannel",
-                f"this rig has no channel called {trial.odor_channel!r}. It was "
-                "either renamed or removed in the Rig tab's wiring editor.",
+                # An unfinished row and a renamed channel are both TSK101 — the
+                # code means "this row names no channel this rig has" — but they
+                # need different sentences: one is a thing to finish, the other
+                # is a thing that broke underneath you.
+                "this trial type has no stimulus channel yet — pick the line "
+                "that carries its odor."
+                if not trial.odor_channel
+                else f"this rig has no channel called {trial.odor_channel!r}. It "
+                "was either renamed or removed in the Rig tab's wiring editor.",
                 "TSK101",
             ))
         elif emitter.kind != "emitter":
@@ -120,9 +127,12 @@ def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
         if trial.onset_strobe not in vocab:
             out.append(Diagnostic(
                 f"{at}.onsetStrobe",
-                f"{trial.onset_strobe!r} is not a declared strobe code, so this "
-                "stimulus would announce itself with a number nothing can "
-                "decode. Add it on the Rig tab first.",
+                "this trial type has no onset code yet — pick the code it "
+                "announces itself with, so the recording can name it."
+                if not trial.onset_strobe
+                else f"{trial.onset_strobe!r} is not a declared strobe code, so "
+                "this stimulus would announce itself with a number nothing can "
+                "decode. Add it to the vocabulary first.",
                 "TSK104",
             ))
         else:

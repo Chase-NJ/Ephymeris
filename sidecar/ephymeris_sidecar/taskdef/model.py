@@ -77,8 +77,17 @@ class TrialTypeDef:
         if not isinstance(raw, dict):
             raise TaskDefinitionError("each trial type must be an object")
         return TrialTypeDef(
-            odor_channel=_req_str(raw, "odorChannel"),
-            onset_strobe=_req_str(raw, "onsetStrobe"),
+            # UNFILLED, not invalid. A row the operator has started and not
+            # finished is an incomplete task, not a non-definition — and the
+            # split above is exactly that: `from_json` refuses what isn't a
+            # definition at all, `validate.py` reports what is wrong with one.
+            # Refusing an empty channel here made `tasks.preview` fail outright
+            # the moment "Add trial type" was pressed, which took the state
+            # machine, the parameter rail and every OTHER diagnostic off the
+            # screen until both dropdowns were filled. TSK101/TSK104 name the
+            # empty row instead.
+            odor_channel=_opt_str(raw.get("odorChannel")) or "",
+            onset_strobe=_opt_str(raw.get("onsetStrobe")) or "",
             is_go=bool(raw.get("isGo", True)),
             response_channel=_opt_str(raw.get("responseChannel")),
             reward_channel=_opt_str(raw.get("rewardChannel")),

@@ -6,7 +6,7 @@ import { useNavigate } from "react-router";
 import { Button, TextInput } from "@/components/common/controls";
 import { Dropdown } from "@/components/common/Dropdown";
 import { Modal } from "@/components/common/Modal";
-import { CohortIcon } from "@/components/cohorts/CohortIcon";
+import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { SettingGroup } from "@/components/settings/SettingRow";
@@ -465,11 +465,7 @@ function CohortPick({
         selected ? "border-pulsar bg-pulsar/12" : "border-halo bg-nebula"
       }`}
     >
-      <CohortIcon
-        cohortId={cohort.id}
-        animalCount={cohort.animalCount}
-        size={40}
-      />
+      <PlanetDisc cohortId={cohort.id} appearance={cohort.appearance} size={40} />
       <span className="min-w-0 w-full">
         <span className="block truncate text-[12px] font-medium text-starlight">
           {cohort.name}

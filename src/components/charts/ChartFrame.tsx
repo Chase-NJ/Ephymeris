@@ -1,3 +1,4 @@
+import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 /**
@@ -12,8 +13,14 @@ import type { ReactNode } from "react";
  *
  * The footer row generalises the one the metric sparklines already use for their
  * `n=…` / `window …` line rather than inventing a second convention.
+ *
+ * `icon` heads the title the way every HUD tile in the app heads its subject —
+ * one pulsar glyph, so a page of eight panels scans by shape before it is
+ * read. The glyph names the *question* (a target for accuracy, a compass for
+ * strategy), never a state: status colour stays reserved for state.
  */
 export function ChartFrame({
+  icon: Icon,
   title,
   yTop,
   yBottom,
@@ -22,6 +29,7 @@ export function ChartFrame({
   footer,
   children,
 }: {
+  icon?: LucideIcon;
   title?: ReactNode;
   yTop?: string;
   yBottom?: string;
@@ -32,7 +40,14 @@ export function ChartFrame({
 }) {
   return (
     <div className="min-w-0">
-      {title && <div className="mb-1.5 text-[11px] text-static">{title}</div>}
+      {title && (
+        <div className="mb-1.5 flex items-start gap-1.5 text-[11px] text-static">
+          {Icon && (
+            <Icon size={13} strokeWidth={1.75} className="mt-px shrink-0 text-pulsar" />
+          )}
+          <div className="min-w-0 flex-1">{title}</div>
+        </div>
+      )}
       <div className="flex items-stretch gap-1.5">
         {(yTop || yBottom) && (
           <div className="flex w-[26px] shrink-0 flex-col justify-between py-px text-right font-mono text-[9px] tabular-nums text-static/80">

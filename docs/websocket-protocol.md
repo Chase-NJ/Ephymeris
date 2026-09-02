@@ -152,7 +152,7 @@ All cohort state lives in the sidecar's SQLite database (`cohorts.md` §3).
 | `cohorts.list` | — | `{cohorts: [CohortSummary]}` | Includes archived; the client filters (`cohorts.md` §4) |
 | `cohorts.get` | `{id}` | `{cohort: <Cohort>}` | Full detail, fetched when a card is opened |
 | `cohorts.create` | `{name, dataFolder?, animals?, groups?}` | `{cohort: <Cohort>}` | `dataFolder` resolved per `cohorts.md` §8 when omitted. **The roster may travel with the create**, which is what makes the editor's Create a single call: animals and groups are built client-side with their own ids before the cohort exists, and sending them afterwards meant a second command that could fail on its own and leave a named, empty cohort. Both are validated *before* any row is written, so a rejected roster leaves no cohort and no folder. Omitting `groups` still mints the implicit default group (§2) |
-| `cohorts.update` | `{id, patch}` | `{cohort: <Cohort>}` | `patch` may carry `name`, `animals`, `groups`. Also the commit path for an Auto-Balance preview (§7.4) — no separate apply command |
+| `cohorts.update` | `{id, patch}` | `{cohort: <Cohort>}` | `patch` may carry `name`, `animals`, `groups`, `appearance`. Also the commit path for an Auto-Balance preview (§7.4) — no separate apply command |
 | `cohorts.archive` | `{id}` | `{cohort: <Cohort>}` | Soft-delete; record and `dataFolder` stay intact (§9) |
 | `cohorts.restore` | `{id}` | `{cohort: <Cohort>}` | Rejected with `COHORT_NAME_TAKEN` if an active cohort has since claimed the name |
 | `cohorts.delete` | `{id, confirm: true}` | `{deleted: true}` | Rejected with `COHORT_NOT_ARCHIVED` unless already archived. **Never touches `dataFolder` on disk** (§9) |
@@ -279,13 +279,14 @@ The operator's task, and the sketch it compiles to ([tasks.md §11](tasks.md)). 
 
 | Command | Args | Result | Notes |
 |---|---|---|---|
-| `tasks.list` | — | `{tasks: [TaskEntry]}` | This rig's saved profiles. Reads and validates each definition, never generates, so the list stays cheap. `problems` is a **count** rather than the diagnostics — this reply is drawn on every route mount and would otherwise grow with the library |
+| `tasks.list` | — | `{tasks: [TaskEntry]}` | This rig's saved profiles. Reads and validates each definition, never generates, so the list stays cheap. A `TaskEntry` carries `trials`, `stages` and `selectionMode` alongside the identity, because the landing draws a card per task and reopening every definition to letter it would cost one round trip per tile. `problems` is a **count** rather than the diagnostics — this reply is drawn on every route mount and would otherwise grow with the library |
 | `tasks.get` | `{taskId}` | `{definition, diagnostics}` | Diagnostics are **recomputed, never stored**: most depend on the WIRING, so a task saved clean can be broken by a rewiring it never saw |
 | `tasks.preview` | `{definition}` | `<TaskPreview>` | Compile an unsaved definition, writing nothing. The editor calls it as the operator types. Carries `startLineLength` against `startLineMax` because that is the one budget an operator can exhaust without noticing — the firmware truncates an overlong line **in silence** and runs on whichever values fit |
 | `tasks.save` | `{definition}` | `<TaskSaved>` | Write, then regenerate the sketch. **Always saves, even with diagnostics** — a half-finished task must be savable, and the gate is flashing, not saving. Refused only on a name that collides with a **bundled** sketch, which would make the picker ambiguous and the flash a coin flip. Broadcasts `tasks.updated` *and* `sketches.updated`, because a saved profile is also a new sketch |
 | `tasks.delete` | `{taskId}` | `{deleted}` | Removes the definition and its generated folder. Idempotent: deleting what is already gone is a successful `{deleted: false}`, since two clients racing on one task is not an error |
-| `tasks.presets` | — | `{presets: [TaskPreset]}` | The tasks this lab ran before the firmware was unified, as starting points. **A preset is not a task** — instantiating one yields a definition the operator owns, so editing a preset in a later build cannot reach back into a study already running on it |
-| `tasks.fromPreset` | `{presetId, taskId, name?}` | `{definition, diagnostics}` | A fresh definition from a preset. **Pure — it writes nothing**, so creating a task stays `tasks.save` and there is one definition of what saving means. The id and name are the caller's: two tasks from one preset is the normal case |
+
+> [!CAUTION]
+**There is no `tasks.fromPreset`.** A task is built from scratch — the five shipped presets were retired along with the command that instantiated one, because a preset that seeded a condition's *name* was seeding the one thing the trial table cannot derive, and every rig's odor lines carry different substances. What a preset used to supply and the operator now types is `legacyNames`, the declared list of historical sketch names an archive may record for this task ([tasks.md §11.4](tasks.md)).
 
 > [!CAUTION]
 > **A wiring change regenerates every stored profile, and it must.** Pin numbers are compiled into each profile's `TaskPins.h`, so a folder generated under the old wiring would flash the old pins — silently, because it still compiles and the only symptom is a valve that never fires. `hardware.save` and `hardware.reset` therefore call `regenerate_all()` before replying, and broadcast `sketches.updated` when anything moved.
@@ -294,7 +295,7 @@ The operator's task, and the sketch it compiles to ([tasks.md §11](tasks.md)). 
 
 | Command | Args | Result | Notes |
 |---|---|---|---|
-| `rig.strobes` | — | `<StrobeVocabulary>` | The whole append-only registry: every code with its origin and prose, the retired codes, the free ranges a new one may come from, and the slot→codes table a response port reports with. Static unless a code is added |
+| `rig.strobes` | — | `<StrobeVocabulary>` | The whole append-only registry: every code with its origin and prose, the retired codes, the free ranges a new one may come from, and the slot→codes table a response port reports with. Static unless a code is added. Named `rig.` because the registry belongs to the hardware; it is read by the **Task** tab's viewer (`/task/strobes`) and by the trial table's onset-code picker |
 
 > [!CAUTION]
 > **Codes are never renumbered, repurposed or deleted.** Four years of recorded sessions carry them, and reissuing one silently merges two unrelated event types in any analysis spanning the change. A code whose emitter is gone moves to `retired` and stays reserved — that is a third state, neither declared nor free, and `freeRanges` excludes it.
@@ -371,24 +372,42 @@ The operator's task, and the sketch it compiles to ([tasks.md §11](tasks.md)). 
 
 Mirrors the `cohorts.md` §1 data model. Timestamps are ISO-8601 strings.
 
+**`appearance` is null for almost every cohort, and null is not a gap.** A cohort's world is
+derived from a hash of its `id` unless the operator has tuned it, so an untouched cohort already
+has a stable, distinct planet and the column backing this carries no data for it. `cageCount` is
+the second piece of animal detail the summary carries, on the same argument `assignedBoxes` won:
+the browser draws one ship per cage, and deriving that from the roster would cost a full
+`cohorts.get` per planet on every route mount.
+
 ```jsonc
-// CohortSummary — enough for the grid and the dashboard tile, no per-animal detail
+// CohortSummary — enough for the cohort browser and the dashboard tile, no per-animal detail
 {
   "id": "9f2c…", "name": "Batch A",
   "animalCount": 6, "groupCount": 2,
   "assignedBoxes": [1, 2, 3],   // distinct box numbers its animals hold, sorted
+  "cageCount": 3,               // distinct home cages — one orbiting ship each in the browser
   "archived": false,
-  "createdAt": "2026-07-23T…", "updatedAt": "2026-07-23T…"
+  "createdAt": "2026-07-23T…", "updatedAt": "2026-07-23T…",
+  "appearance": null            // null = derived from `id`; see below
 }
 
-// Cohort — the full record, fetched only when a card is opened
+// Cohort — the full record, fetched only when a cohort is opened
 {
   "id": "9f2c…", "name": "Batch A",
   "dataFolder": "/Users/…/Behavior/Batch A",   // resolved once at creation (§8)
   "animals": [ <Animal> ],
   "groups":  [ <Group> ],                       // always ≥ 1 (§2)
   "archivedAt": null,
-  "createdAt": "…", "updatedAt": "…"
+  "createdAt": "…", "updatedAt": "…",
+  "appearance": { "type": "gas", "hue": 41, "ring": true, "seed": 7734 } | null
+}
+
+// CohortAppearance — how a cohort's world looks (cohorts.md §5)
+{
+  "type": "rocky" | "gas" | "ice" | "ocean" | "lava",
+  "hue": 41,        // 0–360, rotates the palette and nothing else
+  "ring": true,
+  "seed": 7734      // shifts the noise field only — a re-roll changes weather, not identity
 }
 
 // Animal

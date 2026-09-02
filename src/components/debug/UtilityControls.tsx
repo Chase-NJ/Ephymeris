@@ -1,24 +1,38 @@
 import { motion } from "framer-motion";
+import { Power, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button, Select } from "@/components/common/controls";
 import { useBoxOutput } from "@/lib/hardware/context";
+import { KIND_COLOR } from "@/lib/hardware/types";
 import { springSnappy } from "@/lib/motion";
-import type { Control, TaskProfile, TelemetrySpec } from "@/lib/sessions/types";
+import type { Control, ControlChannel, TaskProfile, TelemetrySpec } from "@/lib/sessions/types";
 import type { ConsoleLine } from "@/lib/hardware/store";
 import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
+
+import { PrimeControls } from "./PrimeControls";
 
 /**
  * Debug-Mode controls + live status for a **utility** sketch (`data.md`
  * §6.6). Driven entirely by the sketch's Task Profile:
  *
- *  - `controls` render as buttons / selects; each sends its serial command over
- *    the existing `port.send` primitive (no new wire command). Enabled only in
- *    `PASSTHROUGH`, matching the console's own send gate.
+ *  - `controls` render as buttons / selects / channel grids; each sends its
+ *    serial command over the existing `port.send` primitive (no new wire
+ *    command). Enabled only in `PASSTHROUGH`, matching the console's send gate.
  *  - `telemetry` parses the sketch's non-persisted `STATUS` lines out of
  *    `port.output` into a labelled strip. Nothing here is stored — it's live
  *    display only (`websocket-protocol.md` §5.4).
+ *  - **Prime** (`PrimeControls`) is the one composed control: it is built from
+ *    the fluid grid's own `pulse` commands and the profile's pulse-width verb,
+ *    and is offered whenever a grid of fluid lines is declared.
+ *
+ * **Colour is the channel's family.** A fluid line is drawn in the reward
+ * colour, an odor line in the emitter colour, the vacuum and the light in
+ * theirs — `KIND_COLOR`, the same six the board map and every trial table use.
+ * The lamp lights in that colour, the switch fills with it, and the group
+ * header carries it, so "which of these is a water line" is answered by the
+ * colour before the label is read. Status colour stays state-only.
  *
  * **Nothing here truncates a name.** A control's label is the operator's only
  * description of what it will do to the rig, and a profile is free to declare
@@ -57,14 +71,27 @@ export function UtilityControls({
     void client.call(CMD.PORT_SEND, { box, text: command, lineEnding: "lf" });
   }
 
+  const isOpen = (key: string | undefined) => {
+    const raw = key ? status?.[key] : undefined;
+    return raw === "1" || raw === "open" || raw === "true";
+  };
+
   // Grids own their own block; buttons and selects share one inline row.
   const inline = controls.filter((c) => c.type !== "grid");
   const grids = controls.filter((c) => c.type === "grid");
+
+  // The fluid grid, for Prime: by id first, then by the shape of its state
+  // keys. A profile that declares neither simply has nothing to prime.
+  const fluids =
+    grids.find((g) => g.id === "fluids") ??
+    grids.find((g) => (g.channels ?? []).some((ch) => familyOf(ch) === "reward"));
 
   // How many channels the widest grid carries. A box with eighteen outputs is
   // the case that made the docked width untenable, so the offer to widen is
   // driven by that count rather than shown unconditionally.
   const busiest = Math.max(0, ...grids.map((c) => c.channels?.length ?? 0));
+
+  const pulseMs = status?.["pulse"] !== undefined ? Number(status["pulse"]) : null;
 
   return (
     <div className="border-t border-halo px-2.5 py-2">
@@ -76,6 +103,9 @@ export function UtilityControls({
             ) : (
               <Button
                 key={c.id}
+                // "All off" is the one control that must read as the safe way
+                // out, so it is the one that carries a border and an icon.
+                variant={isAllOff(c) ? "outline" : "secondary"}
                 onClick={() => c.command && send(c.command)}
                 disabled={!canSend || !c.command}
                 title={canSend ? (c.command ?? c.label) : "Open passthrough to control"}
@@ -83,6 +113,7 @@ export function UtilityControls({
                 // past the panel edge — the name is the point of the control.
                 className="max-w-full text-left whitespace-normal"
               >
+                {isAllOff(c) && <Power size={12} strokeWidth={2} />}
                 {c.label}
               </Button>
             ),
@@ -90,11 +121,22 @@ export function UtilityControls({
         </div>
       )}
 
+      {fluids && (
+        <PrimeControls
+          channels={fluids.channels ?? []}
+          canSend={canSend}
+          currentPulseMs={pulseMs !== null && Number.isFinite(pulseMs) ? pulseMs : null}
+          isOpen={isOpen}
+          onSend={send}
+        />
+      )}
+
       {grids.map((c) => (
         <ChannelGrid
           key={c.id}
           control={c}
-          status={status}
+          isOpen={isOpen}
+          known={(key) => key !== undefined && status?.[key] !== undefined}
           disabled={!canSend}
           onSend={send}
           wide={wide}
@@ -112,7 +154,7 @@ export function UtilityControls({
       )}
 
       {telemetry && (
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-halo pt-2">
           {telemetry.fields.map((f) => {
             const value = status?.[f.key];
             if (value === undefined) return null;
@@ -133,108 +175,171 @@ export function UtilityControls({
 }
 
 /**
- * A `grid` control: one cell per piece of hardware, each with a live state lamp
- * and its own toggle/pulse.
+ * A `grid` control: one row per piece of hardware, each with a live lamp, a
+ * switch that latches it, and a pulse.
  *
  * A box has 18 controllable outputs; as flat buttons that would be 36 controls
  * in a wrapped row with no indication of which are open. The grid exists so a
  * lab tech priming a line can see, at a glance, exactly what is energized —
  * which for solenoids on a fluid rig is a safety readout, not a convenience.
  *
- * **The label gets its own line, above the buttons.** Sharing a row with them
- * left it whatever width was left over, which at the docked panel width was
- * about eight characters — so `Left water solenoid` and `Left odor valve`
- * rendered as the same ellipsis, on a control that opens a fluid line. Stacking
- * costs vertical space in a panel that already scrolls, and buys a name that is
- * correct at every width. The label wraps rather than truncating for the same
- * reason.
+ * **The switch IS the state.** It used to be an "Open"/"Close" button whose
+ * word flipped with the lamp, which is two things saying one fact and a verb
+ * that reads as an instruction rather than a position. A switch shows where
+ * the valve is and is the thing you move to change it — and it fills with the
+ * channel's family colour, so an open water line and an open odor line are
+ * told apart across the room.
  *
  * The lamp reads the channel's `state` telemetry key: "1"/"open"/"true" is
  * energized, anything else is closed, and an absent key means the sketch
- * doesn't report that channel — the lamp stays neutral rather than claiming
- * "closed", because not-reported and closed are different facts.
+ * doesn't report that channel — the lamp stays neutral and the switch stays
+ * at "off" without claiming it, because not-reported and closed are different
+ * facts.
  */
 function ChannelGrid({
   control,
-  status,
+  isOpen,
+  known,
   disabled,
   onSend,
   wide,
 }: {
   control: Control;
-  status: Record<string, string> | null;
+  isOpen: (key: string | undefined) => boolean;
+  known: (key: string | undefined) => boolean;
   disabled: boolean;
   onSend: (command: string) => void;
   wide: boolean;
 }) {
   const channels = control.channels ?? [];
-  if (channels.length === 0) return null;
+  const first = channels[0];
+  if (!first) return null;
+
+  const family = familyOf(first);
+  const colour = family ? (KIND_COLOR[family] ?? "var(--color-static)") : "var(--color-static)";
+  const openCount = channels.filter((ch) => isOpen(ch.state)).length;
 
   return (
-    <div className="mt-2">
-      <div className="mb-1 text-[11px] text-static">{control.label}</div>
+    <div className="mt-3">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span aria-hidden className="size-1.5 rounded-full" style={{ background: colour }} />
+        <span className="text-[11px] font-medium text-starlight">{control.label}</span>
+        <span className="font-mono text-[10px] text-static/70">
+          {openCount > 0 ? (
+            <span style={{ color: colour }}>{openCount} open</span>
+          ) : (
+            "all closed"
+          )}
+        </span>
+      </div>
       {/* Column count follows the panel's own width, not the viewport's — a
           `sm:` breakpoint would key an 820px panel's layout to the size of the
           monitor it happens to be on. */}
       <div className={`grid gap-1 ${wide ? "grid-cols-3" : "grid-cols-2"}`}>
         {channels.map((ch) => {
-          const raw = ch.state ? status?.[ch.state] : undefined;
-          const known = raw !== undefined;
-          const on = known && (raw === "1" || raw === "open" || raw === "true");
+          const on = isOpen(ch.state);
+          const reported = known(ch.state);
+          const own = KIND_COLOR[familyOf(ch) ?? ""] ?? colour;
           return (
             <div
               key={ch.label}
-              className="flex flex-col gap-1 rounded-sm border border-halo px-2 py-1.5"
+              className="flex items-center gap-2 rounded-sm border px-2 py-1.5 transition-colors"
+              style={{
+                borderColor: on ? own : "var(--color-halo)",
+                background: on ? `color-mix(in srgb, ${own} 9%, transparent)` : undefined,
+              }}
             >
-              <span className="flex items-start gap-1.5">
-                <motion.span
-                  className="mt-[5px] size-1.5 shrink-0 rounded-full"
-                  animate={{
-                    backgroundColor: !known
-                      ? "var(--color-halo)"
-                      : on
-                        ? "var(--color-status-ok)"
-                        : "var(--color-static)",
-                    opacity: known && !on ? 0.4 : 1,
-                  }}
-                  transition={springSnappy}
-                />
-                <span
-                  className={`min-w-0 font-mono text-[11px] leading-snug break-words ${
-                    on ? "text-starlight" : "text-static"
-                  }`}
-                >
-                  {ch.label}
-                </span>
+              <motion.span
+                aria-hidden
+                className="size-2 shrink-0 rounded-full"
+                animate={{
+                  backgroundColor: !reported ? "var(--color-halo)" : on ? own : "var(--color-static)",
+                  opacity: reported && !on ? 0.4 : 1,
+                  scale: on ? 1.25 : 1,
+                }}
+                transition={springSnappy}
+              />
+              <span
+                className={`min-w-0 flex-1 font-mono text-[11px] leading-snug break-words ${
+                  on ? "text-starlight" : "text-static"
+                }`}
+              >
+                {ch.label}
               </span>
-              {(ch.toggle || ch.pulse) && (
-                <span className="flex flex-wrap items-center gap-1">
-                  {ch.toggle && (
-                    <Button
-                      onClick={() => onSend(ch.toggle!)}
-                      disabled={disabled}
-                      title={disabled ? "Open passthrough to control" : ch.toggle}
-                    >
-                      {on ? "Close" : "Open"}
-                    </Button>
-                  )}
-                  {ch.pulse && (
-                    <Button
-                      variant="ghost"
-                      onClick={() => onSend(ch.pulse!)}
-                      disabled={disabled}
-                      title={disabled ? "Open passthrough to control" : ch.pulse}
-                    >
-                      Pulse
-                    </Button>
-                  )}
-                </span>
+              {ch.pulse && (
+                <button
+                  type="button"
+                  onClick={() => onSend(ch.pulse!)}
+                  disabled={disabled}
+                  title={disabled ? "Open passthrough to control" : `${ch.pulse} — open for the pulse width, then close`}
+                  aria-label={`Pulse ${ch.label}`}
+                  className="shrink-0 rounded-sm p-1 text-static transition-colors hover:text-starlight disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Zap size={13} strokeWidth={1.75} />
+                </button>
+              )}
+              {ch.toggle && (
+                <ChannelSwitch
+                  on={on}
+                  colour={own}
+                  disabled={disabled}
+                  label={`${on ? "Close" : "Open"} ${ch.label}`}
+                  title={disabled ? "Open passthrough to control" : ch.toggle}
+                  onChange={() => onSend(ch.toggle!)}
+                />
               )}
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+/**
+ * The switch. `controls.Toggle`'s geometry with the fill in the channel's own
+ * colour rather than Pulsar — Pulsar is the accent for the app's controls, and
+ * a valve is not an app control, it is a piece of the rig.
+ *
+ * It sends `TOGGLE` and lets the board's telemetry move the knob: a switch that
+ * flipped on the click and then flipped back when the board disagreed would be
+ * the app claiming a valve state it does not know. So the knob follows `on`,
+ * which follows the sketch's `STATUS`.
+ */
+function ChannelSwitch({
+  on,
+  colour,
+  disabled,
+  label,
+  title,
+  onChange,
+}: {
+  on: boolean;
+  colour: string;
+  disabled: boolean;
+  label: string;
+  title: string;
+  onChange: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      title={title}
+      disabled={disabled}
+      onClick={onChange}
+      className="flex h-[20px] w-[34px] shrink-0 items-center rounded-xl p-[3px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      style={{ background: on ? colour : "var(--color-halo)" }}
+    >
+      <motion.span
+        layout
+        transition={springSnappy}
+        className="block size-[14px] rounded-xl bg-starlight"
+        style={{ marginLeft: on ? "auto" : 0 }}
+      />
+    </button>
   );
 }
 
@@ -266,6 +371,28 @@ function SelectControl({
       }}
     />
   );
+}
+
+/**
+ * Which channel family a grid row belongs to, from its telemetry key.
+ *
+ * The utility sketch's keys are `f1..f4`, `o1..o12`, `vac`, `light`; the
+ * families are the rig's channel kinds (`KIND_COLOR`), so a fluid line here
+ * wears the same colour it wears on the board map. Read from the key rather
+ * than from a declared kind because a `ControlChannel` declares none — and
+ * adding one would change `profile_hash` for every utility profile.
+ */
+function familyOf(ch: ControlChannel): keyof typeof KIND_COLOR | undefined {
+  const key = ch.state?.toLowerCase() ?? "";
+  if (/^f\d+$/.test(key)) return "reward";
+  if (/^o\d+$/.test(key)) return "emitter";
+  if (key === "vac") return "vacuum";
+  if (key === "light") return "cue";
+  return undefined;
+}
+
+function isAllOff(c: Control): boolean {
+  return c.id === "alloff" || /^ALLOFF$/i.test(c.command ?? "");
 }
 
 /** Whether the latest status carries at least one of the declared fields. */

@@ -47,7 +47,6 @@ from .hardware import store as hardware_store
 from .sessions.repository import SessionRepository
 from .sessions.runner import ActiveRun, BoxConfig, SessionRunner
 from .taskdef import bundled as bundled_sketches
-from .taskdef import presets as task_presets
 from .taskdef import store as taskdef_store
 from .taskdef.model import TaskDefinition, TaskDefinitionError
 from .taskdef.validate import validate as validate_task
@@ -193,8 +192,6 @@ class Application:
         self.server.register(Cmd.TASKS_PREVIEW, self._tasks_preview)
         self.server.register(Cmd.TASKS_SAVE, self._tasks_save)
         self.server.register(Cmd.TASKS_DELETE, self._tasks_delete)
-        self.server.register(Cmd.TASKS_PRESETS, self._tasks_presets)
-        self.server.register(Cmd.TASKS_FROM_PRESET, self._tasks_from_preset)
         self.server.register(Cmd.RIG_STROBES, self._rig_strobes)
         self.server.register(Cmd.COHORTS_SUGGEST_GROUPS, self._cohorts_suggest_groups)
 
@@ -921,34 +918,6 @@ class Application:
             await self._rescan()
             await self._broadcast_tasks()
         return {"deleted": deleted}
-
-    async def _tasks_presets(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        return {"presets": task_presets.summaries()}
-
-    async def _tasks_from_preset(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        preset_id = _str_arg(args, "presetId")
-        task_id = _str_arg(args, "taskId")
-        name = args.get("name") if isinstance(args.get("name"), str) else None
-        if not taskdef_store.is_usable_id(task_id):
-            raise CommandError(
-                ErrCode.TASK_INVALID,
-                f"{task_id!r} is not a usable task id — lower case, digits and "
-                "underscores, starting with a letter.",
-            )
-        try:
-            definition = task_presets.instantiate(preset_id, task_id, name)
-        except KeyError as exc:
-            raise CommandError(
-                ErrCode.TASK_NOT_FOUND,
-                f"No preset called {preset_id!r}.",
-                {"presetId": preset_id},
-            ) from exc
-        async with self._rig_gate:
-            diagnostics = await asyncio.to_thread(validate_task, definition)
-        return {
-            "definition": definition.to_json(),
-            "diagnostics": [d.to_json() for d in diagnostics],
-        }
 
     def _definition_arg(self, args: dict[str, Any]) -> TaskDefinition:
         """`TASK_INVALID` is for a document that is not a definition.

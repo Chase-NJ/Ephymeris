@@ -2,10 +2,11 @@ import { motion } from "framer-motion";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { NODE_PRIMARY } from "@/components/chrome/constellationStyle";
-import { OUTCOME_STYLE } from "@/lib/analytics/view";
+import { OUTCOME_STYLE, colorForIndex } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import type { TaskProfile } from "@/lib/sessions/types";
+import { tabOf } from "@/lib/tasks/topology";
 import type {
   Condition,
   LiveCondition,
@@ -149,11 +150,17 @@ export function SketchStateMachine({
     return out;
   }, [model, declared]);
 
-  /** The one hover, whichever end it came from. */
+  /** The one hover, whichever end it came from.
+   *
+   *  `hoverGroup` is a rail TAB, not a declared group — the rail folds a few
+   *  groups into one pill (`topology.tabOf`) and both ends of this link have to
+   *  agree about which. Comparing it raw lit nothing for a folded pill. */
   const litNodes = useMemo(() => {
     if (hoverGroup) {
       return new Set(
-        model.nodes.filter((n) => n.governedBy.includes(hoverGroup)).map((n) => n.id),
+        model.nodes
+          .filter((n) => n.governedBy.some((g) => tabOf(g) === hoverGroup))
+          .map((n) => n.id),
       );
     }
     if (hoverNode) return new Set([hoverNode.id]);
@@ -223,9 +230,12 @@ export function SketchStateMachine({
             onEnter={() => enterNode(node)}
             onLeave={leaveNode}
             onClick={() => onNodeClick(node)}
-            onChipEnter={onHoverGroup}
+            // A chip keeps its own short caption — it names the parameter
+            // family, which the fold does not change. What it SELECTS is the
+            // pill that family now lives under.
+            onChipEnter={(group) => onHoverGroup(tabOf(group))}
             onChipLeave={() => onHoverGroup(null)}
-            onChipClick={onSelectGroup}
+            onChipClick={(group) => onSelectGroup(tabOf(group))}
           />
         ))}
       </svg>
@@ -241,7 +251,7 @@ export function SketchStateMachine({
           <>
             <span className="text-starlight">{hoverGroup}</span> tunes{" "}
             {model.nodes
-              .filter((n) => n.governedBy.includes(hoverGroup))
+              .filter((n) => n.governedBy.some((g) => tabOf(g) === hoverGroup))
               .map((n) => n.label)
               .join(" · ") || "nothing on this task"}
           </>
@@ -606,6 +616,11 @@ function ConditionTicks({
         const active = condition.id === activeId;
         const seen = observed === null || observed.has(condition.id);
         const height = active ? TICK_ACTIVE_H : TICK_H;
+        // The condition's own colour — the same series slot its trial-table
+        // row, its glyph node and its Analytics curve wear. A tick is the one
+        // place the machine names a condition, so it names it in the colour
+        // everything else already uses for it.
+        const colour = colorForIndex(condition.index - 1);
         return (
           <rect
             key={condition.id}
@@ -614,10 +629,10 @@ function ConditionTicks({
             width={TICK_W}
             height={height}
             rx={0.5}
-            fill={seen ? "var(--color-starlight)" : "none"}
-            stroke={seen ? "none" : "var(--color-static)"}
+            fill={seen ? colour : "none"}
+            stroke={seen ? "none" : colour}
             strokeWidth={seen ? 0 : 0.7}
-            opacity={active ? 1 : litAll ? 0.75 : seen ? 0.4 : 0.55}
+            opacity={active ? 1 : litAll ? 0.85 : seen ? 0.6 : 0.55}
             style={{ transition: "opacity 160ms" }}
           />
         );
@@ -952,7 +967,8 @@ function NodeGlyph({
           group hover only that group's chips stay up, so the highlight names
           itself instead of leaving the reader to compare colours. */}
       {chips.map((chip, index) => {
-        const covered = hoverGroup !== null && chip.covers.includes(hoverGroup);
+        const covered =
+          hoverGroup !== null && chip.covers.some((g) => tabOf(g) === hoverGroup);
         const chipOpacity =
           hoverGroup === null ? (lit === false ? 0.15 : 0.55) : covered ? 1 : 0.12;
         return (

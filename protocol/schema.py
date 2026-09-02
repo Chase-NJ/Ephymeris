@@ -291,6 +291,30 @@ SHAPES = (
         ),
     ),
     Shape(
+        "CohortAppearance",
+        obj(
+            f(
+                "type",
+                STR,
+                doc="`rocky` | `gas` | `ice` | `ocean` | `lava`. Selects which "
+                "surface the planet shader draws; unknown values fall back to "
+                "`rocky` rather than rendering nothing.",
+            ),
+            f("hue", NUMBER, doc="0–360. Rotates the palette, nothing else."),
+            f("ring", BOOL),
+            f(
+                "seed",
+                NUMBER,
+                doc="Shifts the noise field and only that — a re-roll changes "
+                "the world's weather, never its type, hue or size.",
+            ),
+        ),
+        doc="How a cohort's world looks (cohorts.md §5). **Null is the normal "
+        "state**: an untouched cohort derives every field from a hash of its "
+        "`id`, so it already has a stable, distinct planet and the column that "
+        "stores this carries no data for it.",
+    ),
+    Shape(
         "Cohort",
         obj(
             f("id", STR),
@@ -301,9 +325,14 @@ SHAPES = (
             f("archivedAt", nullable(STR)),
             f("createdAt", STR),
             f("updatedAt", STR),
+            f(
+                "appearance",
+                nullable(Ref("CohortAppearance")),
+                doc="Null until the operator tunes it, and null is not a gap: "
+                "the whole record is derived from `id` when absent.",
+            ),
         ),
-        doc="The full record, fetched only when a card is opened. The icon is "
-        "deliberately absent — derived client-side from `id` (cohorts.md §5).",
+        doc="The full record, fetched only when a cohort is opened.",
     ),
     Shape(
         "CohortSummary",
@@ -315,16 +344,28 @@ SHAPES = (
             f(
                 "assignedBoxes",
                 ListOf(INT),
-                doc="Distinct box numbers this cohort's animals hold. The one "
-                "piece of animal detail the summary carries, so the browser "
-                "grid can flag a cohort whose boxes no longer exist on this "
-                "machine without fetching every cohort in full.",
+                doc="Distinct box numbers this cohort's animals hold. Animal "
+                "detail the summary carries so the browser can flag a cohort "
+                "whose boxes no longer exist on this machine without fetching "
+                "every cohort in full.",
+            ),
+            f(
+                "cageCount",
+                INT,
+                doc="Distinct home cages, and the second piece of animal detail "
+                "the summary carries, on the same argument: the cohort browser "
+                "draws one orbiting ship per cage, and deriving that from the "
+                "roster would cost a full `cohorts.get` per planet on every "
+                "route mount. A count, not the numbers — which animals share a "
+                "cage is the editor's business.",
             ),
             f("archived", BOOL),
             f("createdAt", STR),
             f("updatedAt", STR),
+            f("appearance", nullable(Ref("CohortAppearance"))),
         ),
-        doc="Enough for the grid and dashboard tile, no per-animal detail.",
+        doc="Enough for the cohort browser and the dashboard tile, no "
+        "per-animal detail.",
     ),
     Shape(
         "CohortPatch",
@@ -332,6 +373,13 @@ SHAPES = (
             f("name", STR, optional=True),
             f("animals", ListOf(Ref("Animal")), optional=True, doc="Replaced wholesale."),
             f("groups", ListOf(Ref("Group")), optional=True, doc="Replaced wholesale."),
+            f(
+                "appearance",
+                nullable(Ref("CohortAppearance")),
+                optional=True,
+                doc="Replaced wholesale. Explicit null resets the world to the "
+                "one derived from the cohort's id.",
+            ),
         ),
     ),
     Shape(
@@ -1286,7 +1334,7 @@ SHAPES = (
         obj(
             f("location", STR, doc="`trials[1].rewardChannel`, `stages[2].trials`."),
             f("message", STR),
-            f("code", STR, doc="TSK101–TSK109. Each names a failure that is silent without it."),
+            f("code", STR, doc="TSK101–TSK111. Each names a failure that is silent without it."),
         ),
     ),
     Shape(
@@ -1305,15 +1353,15 @@ SHAPES = (
                 "list: this reply is drawn on every route mount and would "
                 "otherwise grow with the library.",
             ),
+            # The three facts a task card states without opening the document.
+            # Counts rather than the arrays themselves, for the same reason
+            # `problems` is a count: this reply is drawn on every route mount.
+            f("trials", INT, doc="Rows in the trial table — how many conditions it presents."),
+            f("stages", INT, doc="Rows in the shaping ramp. 1 means no ramp."),
+            f("selectionMode", STR, doc="`antibias` or `pool`."),
         ),
-        doc="A row in the profile list.",
-    ),
-    Shape(
-        "TaskPreset",
-        obj(f("id", STR), f("name", STR), f("summary", STR)),
-        doc="A starting point, never a task. Instantiating one produces a "
-        "definition the operator owns — so editing a preset in a later build "
-        "cannot reach back into a study already running on it.",
+        doc="A row in the profile list, and everything a task card states "
+        "before the definition is opened.",
     ),
     Shape(
         "TaskSaved",
@@ -1660,32 +1708,9 @@ COMMANDS = (
         "because two clients racing on the same task is not an error.",
     ),
     Command(
-        "tasks.presets",
-        result=obj(f("presets", ListOf(Ref("TaskPreset")))),
-        doc="The tasks this lab was running before the firmware was unified, as "
-        "starting points. Static for the life of the process.",
-    ),
-    Command(
-        "tasks.fromPreset",
-        args=obj(
-            f("presetId", STR),
-            f("taskId", STR),
-            f("name", STR, optional=True),
-        ),
-        result=obj(
-            f("definition", ANY),
-            f("diagnostics", ListOf(Ref("TaskDiagnostic"))),
-        ),
-        doc="A fresh definition from a preset. **PURE — it writes nothing**, so "
-        "creating a task stays `tasks.save` and there is one definition of what "
-        "saving means. The id and name are the caller's: two tasks from one "
-        "preset is the normal case, and reusing the preset's id would make the "
-        "second overwrite the first.",
-    ),
-    Command(
         "rig.strobes",
         result=Ref("StrobeVocabulary"),
-        doc="The whole strobe registry, for the Rig tab's viewer and for the "
+        doc="The whole strobe registry, for the Task tab's viewer and for the "
         "task editor's code picker. Static unless a code is added.",
         section="Strobe vocabulary (tasks.md §3.3)",
     ),

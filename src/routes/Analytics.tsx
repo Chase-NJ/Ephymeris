@@ -9,16 +9,18 @@ import {
   CircleAlert,
   CircleCheck,
   Download,
+  Info,
+  Loader2,
   RefreshCw,
+  type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
 
 import { AnimalRail } from "@/components/analytics/AnimalRail";
-import {
-  ChangeCohort,
-  CohortLanding,
-} from "@/components/analytics/CohortLanding";
+import { ChangeCohort } from "@/components/analytics/ChangeCohort";
+import { CohortSky } from "@/components/cohorts/CohortSky";
+import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import type { ReportInput } from "@/components/analytics/report/ReportSheet";
 import {
   reportFilename,
@@ -51,11 +53,13 @@ import {
 import { useRunSeries } from "@/lib/analytics/series";
 import { ALL_SESSIONS } from "@/lib/analytics/store";
 import type {
+  AnalyticsSummary,
   DiskSession,
   RecoverResult,
   RescanPruned,
   RescanResult,
   RunSummary,
+  SessionListItem,
 } from "@/lib/analytics/types";
 import { sessionRunsOf } from "@/lib/analytics/session";
 import {
@@ -82,6 +86,9 @@ export function Analytics() {
   const { client, status } = useSidecar();
   const store = useAnalyticsStore();
   const cohorts = useCohorts();
+  /** What the landing can offer: an archived cohort is not a study you pick up
+   *  again, and the browser has no archived branch of its own. */
+  const pickable = useMemo(() => cohorts.filter((c) => !c.archived), [cohorts]);
   const location = useLocation();
 
   const cohortId = useSelectedCohort();
@@ -315,39 +322,69 @@ export function Analytics() {
     }
   }
 
-  // The picker is the landing state; a cohort is only chosen deliberately.
+  /*
+   * The picker is the landing state; a cohort is only chosen deliberately.
+   *
+   * The SAME browser `/cohorts` uses, differing only in what a pick does —
+   * there it opens the cohort, here it reveals the dashboard. Two grids that
+   * chose a cohort in near-identical ways is exactly what this replaced, and
+   * rebuilding one of them as a quieter variant would have recreated the split.
+   *
+   * The dim-sky rule (`dashboard.md` §2.5) still stands and is not being
+   * relaxed: it protects a *chart* from competing motion, and there is no chart
+   * on this branch. The moment one appears, the branch below drops back to
+   * `SkyBackdrop` at `DENSE_SKY_OPACITY`.
+   */
   if (!cohortId) {
     return (
-      // Every route sits on the rig's sky, dimmed here so a drifting nebula never
-      // competes with a learning curve (`SkyBackdrop`, `dashboard.md` §2.5). It is
-      // mounted rather than omitted because a route with no constellation is the
-      // one thing that releases the shared canvas.
       <div className="relative h-full">
-        <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
+        {!connected ? (
+          // With no backend there are no cohorts to draw, and a route that
+          // mounts no constellation at all is the one thing that releases the
+          // shared canvas — so the inert sky stands in. The notice itself is
+          // in the rail below, where the page's other lines are; a second
+          // column at the same corner printed the two through each other.
+          <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
+        ) : (
+          <CohortSky
+            cohorts={pickable}
+            focusedId={null}
+            // No panel here: a pick IS the action, so there is nothing to dock
+            // and nothing to tune. Tuning a world belongs where the library is
+            // managed, one tab over.
+            onFocus={(next) => {
+              if (next === null) return;
+              setReveal((n) => n + 1);
+              store.selectCohort(next);
+            }}
+          />
+        )}
 
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0 }}
           transition={springPanel}
-          className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
+          className="pointer-events-none absolute inset-0"
         >
-          <section className="pointer-events-auto mx-auto max-w-6xl px-8 py-8">
-            {!connected ? (
+          <div className="pointer-events-auto absolute left-8 top-4 max-w-[420px]">
+            <h1 className="font-display text-[22px] text-starlight">Analytics</h1>
+            <p className="mt-1 text-[12px] leading-relaxed text-static">
+              Pick a cohort to study its recorded sessions. Every world is a
+              cohort — click one.
+            </p>
+            {!connected && (
               <Notice>
-                Waiting for the backend — Analytics reads recorded sessions from
-                it.
+                Waiting for the backend — Analytics reads recorded sessions
+                from it.
               </Notice>
-            ) : (
-              <CohortLanding
-                cohorts={cohorts}
-                onPick={(next) => {
-                  setReveal((n) => n + 1);
-                  store.selectCohort(next);
-                }}
-              />
             )}
-          </section>
+            {connected && pickable.length === 0 && (
+              <Notice>
+                No cohorts yet — Analytics reads sessions recorded against one.
+              </Notice>
+            )}
+          </div>
         </motion.div>
       </div>
     );
@@ -369,22 +406,43 @@ export function Analytics() {
         className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
       >
         <section className="pointer-events-auto mx-auto max-w-6xl px-8 py-8">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            {/* `items-start`, not centre: the text block is three lines here
+                (title, breadcrumb, fact) and a chip centred on it sat beside
+                the breadcrumb. The chip is centred on the *title* instead. */}
+            <div className="flex items-start gap-3">
+              <span className="-mt-1 flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
                 <ChartLine
                   size={18}
                   strokeWidth={1.75}
                   className="text-pulsar"
                 />
               </span>
-              <div>
+              <div className="min-w-0">
                 <h1 className="font-display text-[22px] text-starlight">
                   Analytics
                 </h1>
                 <ChangeCohort
                   name={active?.name ?? "All cohorts"}
+                  // The cohort's world, as the browser drew it — so the
+                  // breadcrumb reads "you are on this planet" and not just
+                  // a name.
+                  disc={
+                    active ? (
+                      <PlanetDisc
+                        cohortId={active.id}
+                        appearance={active.appearance}
+                        size={16}
+                      />
+                    ) : undefined
+                  }
                   onBack={() => store.selectCohort(null)}
+                />
+                <ArchiveFact
+                  sessions={sessions}
+                  summary={summary}
+                  loading={state === "loading"}
+                  folderMissing={Boolean(folderWarning)}
                 />
               </div>
             </div>
@@ -451,58 +509,51 @@ export function Analytics() {
 
           {exporter.portal}
 
+          {/* Every message the page can carry is one `Strip`: an icon, a
+              tone, a line. They used to be five shapes — a green button, a
+              red box, two plain paragraphs and a bare mono line — and the
+              reader had to learn each one to know whether it mattered. */}
           {banner && (
-            <button
-              type="button"
-              onClick={() => setBanner(null)}
-              className="mt-4 flex w-full items-center gap-1.5 rounded-sm border border-halo px-3 py-2 text-left font-mono text-[12px]"
-              style={{ color: "var(--color-status-ok)" }}
-            >
-              <CircleCheck size={14} strokeWidth={1.75} className="shrink-0" />
+            <Strip tone="ok" icon={CircleCheck} onDismiss={() => setBanner(null)}>
               {banner} ended and saved.
-              <span className="ml-auto text-static/70">dismiss</span>
-            </button>
+            </Strip>
           )}
 
           {!connected && (
-            <Notice>
+            <Strip tone="neutral" icon={CircleAlert}>
               Waiting for the backend — Analytics reads recorded sessions from
               it.
-            </Notice>
+            </Strip>
           )}
 
           {connected && loadError && (
-            <div
-              className="mt-4 flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
-              style={{ color: "var(--color-status-error)" }}
-            >
-              <CircleAlert size={14} strokeWidth={1.75} />
+            <Strip tone="error" icon={CircleAlert}>
               {loadError}
-            </div>
+            </Strip>
           )}
 
           {connected && state === "loading" && (
-            <Notice>
+            <Strip tone="neutral" icon={Loader2} spin>
               {progress
                 ? `Reading session files — ${progress.done} of ${progress.total}…`
                 : "Loading…"}
-            </Notice>
+            </Strip>
           )}
 
           {rescanNote && (
-            <p className="mt-3 font-mono text-[11px] text-static">
+            <Strip tone="neutral" icon={Info} onDismiss={() => setRescanNote(null)}>
               {rescanNote}
-            </p>
+            </Strip>
           )}
 
           {exporter.note && (
-            <button
-              type="button"
-              onClick={() => exporter.setNote(null)}
-              className="mt-3 block text-left font-mono text-[11px] text-static"
+            <Strip
+              tone="neutral"
+              icon={Download}
+              onDismiss={() => exporter.setNote(null)}
             >
               {exporter.note}
-            </button>
+            </Strip>
           )}
 
           {connected && summary && (
@@ -752,5 +803,102 @@ function Notice({ children }: { children: ReactNode }) {
     <p className="mt-4 max-w-prose text-[13px] leading-relaxed text-static">
       {children}
     </p>
+  );
+}
+
+/**
+ * The archive in one mono line under the breadcrumb — the Rig and Task tabs'
+ * fact line, answered with numbers: how many sessions, how many animals, when
+ * the last one ran.
+ *
+ * Coloured by whether the numbers can be trusted, not by how good they are: the
+ * warning tone while the cohort's folder is out of reach, because every figure
+ * under it is then the last successful read (§9); quiet otherwise. Not Ion
+ * when healthy — a readable archive is the normal state, and status colour is
+ * for the exceptions.
+ */
+function ArchiveFact({
+  sessions,
+  summary,
+  loading,
+  folderMissing,
+}: {
+  sessions: SessionListItem[];
+  summary: AnalyticsSummary | null;
+  loading: boolean;
+  folderMissing: boolean;
+}) {
+  const muted = "mt-1 font-mono text-[10px] text-static/70";
+  if (!summary) {
+    return loading ? <p className={muted}>reading the archive…</p> : null;
+  }
+  // By ordinal, never by list position or session number — `ordinal` is the
+  // chronological rank and the number is free text (`SessionListItem`).
+  const last = sessions.reduce<SessionListItem | null>(
+    (best, session) =>
+      best === null || session.ordinal > best.ordinal ? session : best,
+    null,
+  );
+  const n = (count: number, word: string) =>
+    `${count} ${word}${count === 1 ? "" : "s"}`;
+  const parts = [n(sessions.length, "session"), n(summary.animals.length, "animal")];
+  if (summary.groups.length > 1) parts.push(n(summary.groups.length, "group"));
+  parts.push(last ? `last ran ${last.date}` : "nothing recorded yet");
+  if (folderMissing) parts.push("folder unreachable");
+  return (
+    <p
+      className={muted}
+      style={folderMissing ? { color: "var(--color-status-warning)" } : undefined}
+    >
+      {parts.join(" · ")}
+    </p>
+  );
+}
+
+/**
+ * One message strip: an icon, a tone, a line — and `dismiss` when the reader
+ * can put it away. The tone is the state (Ion for a session safely on disk,
+ * the error tone for a summary that could not be read) and nothing else; a
+ * rescan report and an export note are facts, and stay in static.
+ */
+function Strip({
+  tone,
+  icon: Icon,
+  spin = false,
+  onDismiss,
+  children,
+}: {
+  tone: "ok" | "error" | "neutral";
+  icon: LucideIcon;
+  spin?: boolean;
+  onDismiss?: () => void;
+  children: ReactNode;
+}) {
+  const color = {
+    ok: "var(--color-status-ok)",
+    error: "var(--color-status-error)",
+    neutral: "var(--color-static)",
+  }[tone];
+  const className =
+    "mt-3 flex w-full items-center gap-2 rounded-sm border border-halo bg-nebula/60 px-3 py-2 text-left font-mono text-[11px] leading-relaxed";
+  const body = (
+    <>
+      <Icon
+        size={14}
+        strokeWidth={1.75}
+        className={`shrink-0 ${spin ? "animate-spin" : ""}`}
+      />
+      <span className="min-w-0 flex-1">{children}</span>
+      {onDismiss && <span className="ml-auto shrink-0 text-static/70">dismiss</span>}
+    </>
+  );
+  return onDismiss ? (
+    <button type="button" onClick={onDismiss} className={className} style={{ color }}>
+      {body}
+    </button>
+  ) : (
+    <div className={className} style={{ color }}>
+      {body}
+    </div>
   );
 }

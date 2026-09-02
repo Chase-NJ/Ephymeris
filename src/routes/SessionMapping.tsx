@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
   Check,
+  CheckCheck,
   CircleAlert,
   Lightbulb,
   Undo2,
@@ -60,9 +61,25 @@ import {
  * views of the same six rows: choose (which sketch, which box), place (one
  * animal at a time, with that box lit — §3.5), then flash. Splitting them into
  * routes would mean re-establishing which row you were on twice.
+ *
+ * **The flash rides the walk** (§7.4). The mapping is confirmed the moment the
+ * walk starts, and each box is flashed the moment its enclosure is closed —
+ * while the operator is already carrying the next animal. A six-box group used
+ * to be placed and *then* flashed six times in a row, with the operator
+ * watching a progress star; now the compile time hides inside the walk and the
+ * last confirmation lands on a rig that is nearly ready. Two shortcuts sit
+ * beside the walk for the operator who has already done it by hand: "They're
+ * already in" from the review, and "All animals are in" from any step of it.
  */
 
-type FlashState = "idle" | "flashing" | "done" | "failed";
+type FlashState = "idle" | "queued" | "flashing" | "done" | "failed";
+
+/**
+ * How long a queued flash waits for its port to come free before giving up.
+ * A baseline restore still in flight on that box is the usual reason — it was
+ * queued the instant the walk began, and a compile is a minute or two.
+ */
+const PORT_WAIT_MS = 180_000;
 
 /** `review` edits the mapping, `placing` walks the rig, `placed` flashes. */
 type Phase = "review" | "placing" | "placed";
@@ -387,21 +404,157 @@ export function SessionMapping() {
     };
   }, [connected, currentBox, canLight, identify]);
 
-  function startPlacement() {
+  /*
+   * --- the flash queue -----------------------------------------------------
+   *
+   * One box at a time, in the order their enclosures were closed, never in
+   * parallel (§7.4 — two `arduino-cli` builds at once on the lab machines is
+   * slower than one after the other, and a half-flashed pair is worse than a
+   * whole one). The queue and the worker live in refs because they outlive any
+   * one render: a flash takes a minute, and the operator is three boxes down
+   * the bench by the time it lands. The card states are the only thing React
+   * sees.
+   *
+   * Each flash waits for two things first. The identify light on that box goes
+   * out through the same serial queue the walk lights with, so the flash waits
+   * behind it rather than racing it; and the port has to be free — a baseline
+   * restore queued the instant the walk began may still be flashing that very
+   * box. `PASSTHROUGH` counts as free: entering `FLASHING` force-releases a
+   * console (`dashboard.md` §5.2), and a light whose console was just taken
+   * goes out with the reset that follows anyway.
+   */
+  const portStatesRef = useRef(portStates);
+  portStatesRef.current = portStates;
+  const flashStatesRef = useRef(flashStates);
+  flashStatesRef.current = flashStates;
+  const mappingsRef = useRef(mappings);
+  mappingsRef.current = mappings;
+  const queueRef = useRef<number[]>([]);
+  const drainingRef = useRef(false);
+
+  const setFlashState = useCallback((box: number, state: FlashState) => {
+    flashStatesRef.current = { ...flashStatesRef.current, [box]: state };
+    setFlashStates(flashStatesRef.current);
+  }, []);
+
+  const waitForPort = useCallback((box: number) => {
+    return new Promise<void>((resolve, reject) => {
+      const started = Date.now();
+      const tick = () => {
+        const state = portStatesRef.current[box]?.state ?? "IDLE";
+        if (state === "IDLE" || state === "PASSTHROUGH") return resolve();
+        if (state === "ERROR") {
+          return reject(
+            new Error("the box is in an error state — acknowledge it, then retry the flash."),
+          );
+        }
+        if (Date.now() - started > PORT_WAIT_MS) {
+          return reject(
+            new Error(`the port stayed ${state.toLowerCase()} for three minutes — retry once it is free.`),
+          );
+        }
+        window.setTimeout(tick, 400);
+      };
+      tick();
+    });
+  }, []);
+
+  const drain = useCallback(async () => {
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    try {
+      while (queueRef.current.length > 0) {
+        const box = queueRef.current.shift()!;
+        const sketchPath = mappingsRef.current.find((m) => m.box === box)?.sketchPath;
+        if (!sketchPath) continue;
+        await identifyChain.current;
+        setFlashState(box, "flashing");
+        try {
+          await waitForPort(box);
+          await flashForSession(client, box, sketchPath);
+          setFlashState(box, "done");
+        } catch (err) {
+          setFlashState(box, "failed");
+          setError(`Box ${box} didn't flash: ${errorMessage(err)}`);
+        }
+      }
+    } finally {
+      drainingRef.current = false;
+    }
+  }, [client, setFlashState, waitForPort]);
+
+  /** Queue boxes that aren't already flashed, flashing or waiting. */
+  const enqueue = useCallback(
+    (boxes: number[]) => {
+      const fresh = boxes.filter((box) => {
+        const state = flashStatesRef.current[box] ?? "idle";
+        return state === "idle" || state === "failed";
+      });
+      if (fresh.length === 0) return;
+      for (const box of fresh) setFlashState(box, "queued");
+      queueRef.current.push(...fresh);
+      void drain();
+    },
+    [drain, setFlashState],
+  );
+
+  /**
+   * Confirm the mapping and start the walk — or, for the operator who has
+   * already placed everyone, skip straight to flashing the lot.
+   *
+   * Confirming *first* is what lets the boxes be flashed as the walk goes:
+   * the confirmed mapping puts the utility baseline on hold, and without that
+   * a box falling idle after its task flash would be quietly restored to the
+   * utility sketch before the session ever started (`settings.md` §8.2). The
+   * baseline nudge goes out just before, for a box still carrying last
+   * session's sketch; the hold that follows drops whatever of it hasn't
+   * started, and a restore already in flight is what `waitForPort` is for.
+   */
+  async function startPlacement(skipWalk = false) {
+    if (!sessionId || !allChosen) return;
+    setBusy(true);
     setError(null);
-    setPlaceIndex(0);
-    setPhase("placing");
-    // Nudge these boxes toward baseline in case one still carries the last
-    // session's task sketch. Deliberately not awaited: the walk starts now,
-    // and a box that isn't ready yet is a box without a light, not a blocker.
-    if (utility.configured) {
-      void client
-        .call(CMD.UTILITY_ENSURE, { boxes: placementOrder.map((m) => m.box) })
-        .catch(() => undefined);
+    try {
+      if (utility.configured) {
+        void client
+          .call(CMD.UTILITY_ENSURE, { boxes: placementOrder.map((m) => m.box) })
+          .catch(() => undefined);
+      }
+      await confirmMapping(client, sessionId, groupId, mappings);
+      // Past this point the record is no longer an abandonable orphan: it
+      // holds the rig. The unmount cleanup must not touch it.
+      handledExit.current = true;
+      // A confirmed mapping begins a fresh group run — drop the previous
+      // group's telemetry and finished-run messages so Mission Control
+      // doesn't show them against the new animals.
+      sessionStore.resetRun();
+      queueRef.current = [];
+      flashStatesRef.current = {};
+      setFlashStates({});
+      if (skipWalk) {
+        setPlaceIndex(placementOrder.length);
+        setPhase("placed");
+        enqueue(placementOrder.map((m) => m.box));
+      } else {
+        setPlaceIndex(0);
+        setPhase("placing");
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
     }
   }
 
+  /** The walk again, without re-confirming: boxes already flashed stay flashed. */
+  function walkAgain() {
+    setError(null);
+    setPlaceIndex(0);
+    setPhase("placing");
+  }
+
   function advancePlacement() {
+    if (current) enqueue([current.box]);
     if (placeIndex + 1 >= placementOrder.length) {
       setPhase("placed");
       setLight(null);
@@ -410,8 +563,22 @@ export function SessionMapping() {
     }
   }
 
+  /** Every remaining box at once — the operator did the walk without us. */
+  function placeAll() {
+    enqueue(placementOrder.slice(placeIndex).map((m) => m.box));
+    setPlaceIndex(placementOrder.length);
+    setPhase("placed");
+    setLight(null);
+  }
+
   function retreatPlacement() {
     if (placeIndex === 0) {
+      // Back to editing: the mapping can change under a flash that already
+      // landed, so nothing flashed so far is trusted — the next walk confirms
+      // and flashes afresh. Boxes still waiting simply stop waiting.
+      queueRef.current = [];
+      flashStatesRef.current = {};
+      setFlashStates({});
       setPhase("review");
       setLight(null);
     } else {
@@ -425,11 +592,26 @@ export function SessionMapping() {
       await client.call(CMD.PORT_ERROR_ACK, { box });
       // The star stays red on a cleared fault otherwise — the card would
       // still read "failed" for a box that is now ready to flash.
-      setFlashStates((s) => ({ ...s, [box]: "idle" }));
+      setFlashState(box, "idle");
     } catch (err) {
       setError(errorMessage(err));
     }
   }
+
+  const controlUrl = `/session/${sessionId}/control?cohort=${cohort?.id ?? ""}&group=${groupId}`;
+  const flashedCount = mappings.filter((m) => flashStates[m.box] === "done").length;
+  const allFlashed = mappings.length > 0 && flashedCount === mappings.length;
+  const flashPending = mappings.some((m) => {
+    const state = flashStates[m.box];
+    return state === "queued" || state === "flashing";
+  });
+
+  // Everyone placed and every box flashed: the rig is ready, and nothing on
+  // this screen is the next step any more.
+  useEffect(() => {
+    if (phase !== "placed" || !allFlashed) return;
+    navigate(controlUrl);
+  }, [phase, allFlashed, controlUrl, navigate]);
 
   // Which group this is, for the rail's chip — only meaningful multi-group.
   const groupInfo = useMemo(() => {
@@ -442,11 +624,15 @@ export function SessionMapping() {
   }, [cohort, groupId]);
 
   const hint = busy
-    ? "Flashing each box in turn — keep the boards plugged in."
+    ? "Confirming the boxes…"
     : phase === "placing"
-      ? `Placing ${placeIndex + 1} of ${placementOrder.length} — ${current ? (names[current.animalId]?.name ?? "this animal") : ""} into box ${currentBox}.`
+      ? `Placing ${placeIndex + 1} of ${placementOrder.length} — ${current ? (names[current.animalId]?.name ?? "this animal") : ""} into box ${currentBox}. Each box flashes as you close it.`
       : phase === "placed"
-        ? "Every animal is placed. Confirm and flash to start."
+        ? allFlashed
+          ? "Every box is flashed — opening Mission Control."
+          : flashPending
+            ? `Every animal is placed. Flashing ${flashedCount + 1} of ${mappings.length} — keep the boards plugged in.`
+            : "A box didn't flash. Acknowledge it and retry, or walk the boxes again."
         : // Before "pick a sketch": with an unset or moved Arduino Directory
           // there are none to pick, and the picker alone cannot say so.
           sketches.length === 0
@@ -458,43 +644,6 @@ export function SessionMapping() {
               : !allChosen
                 ? "Pick a sketch for every box, then confirm."
                 : "Confirm the boxes, then place the animals one at a time.";
-
-  async function confirmAndFlash() {
-    if (!sessionId || !allChosen) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await confirmMapping(client, sessionId, groupId, mappings);
-      // Past this point the record is no longer an abandonable orphan: it holds
-      // the rig. The unmount cleanup must not touch it even if a flash below
-      // fails and the operator leaves from here.
-      handledExit.current = true;
-
-      // A confirmed mapping begins a fresh group run — drop the previous
-      // group's telemetry and finished-run messages so Mission Control
-      // doesn't show them against the new animals.
-      sessionStore.resetRun();
-
-      // §4 — flashed in sequence, one box after another, never in parallel.
-      for (const mapping of mappings) {
-        setFlashStates((s) => ({ ...s, [mapping.box]: "flashing" }));
-        try {
-          await flashForSession(client, mapping.box, mapping.sketchPath!);
-          setFlashStates((s) => ({ ...s, [mapping.box]: "done" }));
-        } catch (err) {
-          setFlashStates((s) => ({ ...s, [mapping.box]: "failed" }));
-          throw err;
-        }
-      }
-      navigate(
-        `/session/${sessionId}/control?cohort=${cohort?.id ?? ""}&group=${groupId}`,
-      );
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     // Same scaffold as the Dashboard and step 1: the sky is continuous across
@@ -514,12 +663,18 @@ export function SessionMapping() {
         <section className="pointer-events-auto mx-auto max-w-5xl px-8 py-8">
           <SessionJourney step="boxes" hint={hint} group={groupInfo} />
           <h1 className="font-display text-[22px] text-starlight">
-            {phase === "placing" ? "Place the animals" : "Confirm boxes"}
+            {phase === "placing"
+              ? "Place the animals"
+              : phase === "placed"
+                ? "Flashing the boxes"
+                : "Confirm boxes"}
           </h1>
           <p className="mt-1 text-[12px] text-static">
             {phase === "placing"
-              ? "One at a time, in box order. The mapping is locked while you walk the rig."
-              : "Changes here apply to this run only."}
+              ? "One at a time, in box order. Each box is flashed the moment you close it, while you fetch the next animal."
+              : phase === "placed"
+                ? "The boxes are flashing in the order you closed them. Mission Control opens when the last one lands."
+                : "Changes here apply to this run only."}
           </p>
 
           {error && (
@@ -677,6 +832,18 @@ export function SessionMapping() {
                         />
                       )}
                     </div>
+
+                    {/* What the flash queue is doing to this box, said on the
+                    box — the star beside the name draws it, this names it. */}
+                    <FlashLine
+                      state={flashStates[mapping.box] ?? "idle"}
+                      canRetry={
+                        connected &&
+                        portStates[mapping.box]?.state !== "ERROR" &&
+                        phase !== "review"
+                      }
+                      onRetry={() => enqueue([mapping.box])}
+                    />
 
                     {/* Mapping line, reading left to right: sketch → arrow → box.
                     The picker takes the slack and ellipsizes long sketch
@@ -862,16 +1029,44 @@ export function SessionMapping() {
             the only firmware that can be asked to light one (§3.5). Flashing
             first would put the tasks on and the lights out of reach. */}
             {phase === "review" && (
-              <Button
-                variant="primary"
-                onClick={startPlacement}
-                disabled={
-                  !allChosen || busy || !connected || mappings.length === 0
-                }
-              >
-                Place the animals
-                <ArrowRight size={13} strokeWidth={2} />
-              </Button>
+              <>
+                <Button
+                  variant="primary"
+                  onClick={() => void startPlacement()}
+                  disabled={
+                    !allChosen ||
+                    busy ||
+                    !connected ||
+                    mappings.length === 0 ||
+                    erroredBoxes.length > 0
+                  }
+                  {...(erroredBoxes.length > 0
+                    ? {
+                        title:
+                          "Acknowledge the box error first — a box in ERROR can't be flashed",
+                      }
+                    : {})}
+                >
+                  {busy ? "Confirming…" : "Place the animals"}
+                  {!busy && <ArrowRight size={13} strokeWidth={2} />}
+                </Button>
+                {/* The shortcut for a rig that was loaded before the screen
+                    was opened: no walk, every box flashed in box order. */}
+                <Button
+                  variant="ghost"
+                  onClick={() => void startPlacement(true)}
+                  disabled={
+                    !allChosen ||
+                    busy ||
+                    !connected ||
+                    mappings.length === 0 ||
+                    erroredBoxes.length > 0
+                  }
+                >
+                  <CheckCheck size={13} strokeWidth={1.75} />
+                  They&rsquo;re already in — flash all
+                </Button>
+              </>
             )}
 
             {phase === "placing" && (
@@ -890,33 +1085,35 @@ export function SessionMapping() {
                 >
                   Skip this box
                 </Button>
+                {/* The rest of the walk in one press — the operator who went
+                    down the bench faster than the screen did. */}
+                <Button variant="outline" disabled={busy} onClick={placeAll}>
+                  <CheckCheck size={13} strokeWidth={1.75} />
+                  All animals are in
+                </Button>
               </>
             )}
 
             {phase === "placed" && (
               <>
+                {/* Not a Confirm any more — the mapping was confirmed when the
+                    walk began and the boxes are flashing on their own. This is
+                    the door, and it opens itself the moment the last flash
+                    lands; until then it reports the queue. */}
                 <Button
                   variant="primary"
-                  onClick={() => void confirmAndFlash()}
-                  disabled={
-                    !allChosen || busy || !connected || erroredBoxes.length > 0
-                  }
-                  {...(erroredBoxes.length > 0
-                    ? {
-                        title:
-                          "Acknowledge the box error first — a box in ERROR can't be flashed",
-                      }
-                    : {})}
+                  onClick={() => navigate(controlUrl)}
+                  disabled={!allFlashed || !connected}
                 >
                   <Zap size={13} strokeWidth={1.75} />
-                  {busy ? "Flashing…" : "Confirm and flash"}
-                  {!busy && <ArrowRight size={13} strokeWidth={2} />}
+                  {allFlashed
+                    ? "Open Mission Control"
+                    : flashPending
+                      ? `Flashing ${flashedCount + 1} of ${mappings.length}…`
+                      : "Waiting on a failed box"}
+                  {allFlashed && <ArrowRight size={13} strokeWidth={2} />}
                 </Button>
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={startPlacement}
-                >
+                <Button variant="ghost" disabled={busy} onClick={walkAgain}>
                   <Undo2 size={13} strokeWidth={1.75} />
                   Walk the boxes again
                 </Button>
@@ -1002,8 +1199,55 @@ function FlowArrow() {
 }
 
 /**
+ * The queue's word on one box, under the name: waiting, flashing, flashed, or
+ * failed with the way to try again. Nothing for an idle box — before the walk
+ * reaches it there is nothing to say, and six "not yet" lines would be noise.
+ */
+function FlashLine({
+  state,
+  canRetry,
+  onRetry,
+}: {
+  state: FlashState;
+  canRetry: boolean;
+  onRetry: () => void;
+}) {
+  if (state === "idle") return null;
+  const colour =
+    state === "done"
+      ? "var(--color-ion)"
+      : state === "failed"
+        ? "var(--color-status-error)"
+        : "var(--color-static)";
+  const text =
+    state === "queued"
+      ? "waiting to flash"
+      : state === "flashing"
+        ? "flashing…"
+        : state === "done"
+          ? "flashed"
+          : "flash failed";
+  return (
+    <div className="mt-2 flex items-center gap-2 font-mono text-[10px]" style={{ color: colour }}>
+      <Zap size={11} strokeWidth={1.75} className="shrink-0" />
+      <span>{text}</span>
+      {state === "failed" && canRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="ml-auto rounded-sm border border-halo px-2 py-0.5 text-starlight transition-colors hover:border-static/60"
+        >
+          Retry flash
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
  * §4 — a box mid-flash shows its star "flaring" rather than a generic spinner,
- * keeping the visual language consistent with the rest of the app.
+ * keeping the visual language consistent with the rest of the app. A queued
+ * box holds a steady half-light: claimed, not yet burning.
  */
 function BoxStar({ state }: { state: FlashState }) {
   const fill =
@@ -1022,7 +1266,7 @@ function BoxStar({ state }: { state: FlashState }) {
         animate={
           state === "flashing"
             ? { r: [4, 9, 4], opacity: [0.9, 0.35, 0.9] }
-            : { r: 5, opacity: state === "idle" ? 0.5 : 1 }
+            : { r: 5, opacity: state === "idle" ? 0.5 : state === "queued" ? 0.7 : 1 }
         }
         transition={
           state === "flashing"

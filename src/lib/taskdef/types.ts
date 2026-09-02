@@ -1,7 +1,7 @@
 import type { RigDocument } from "@/lib/hardware/types";
-import type { TaskDiagnostic, TaskEntry, TaskPreset } from "@/lib/ws/protocol";
+import type { TaskDiagnostic, TaskEntry } from "@/lib/ws/protocol";
 
-export type { TaskDiagnostic, TaskEntry, TaskPreset };
+export type { TaskDiagnostic, TaskEntry };
 
 /**
  * The definition document, as the editor holds it.

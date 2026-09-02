@@ -3,7 +3,7 @@
  * box-status constellation (dashboard.md §1.7, §4.6).
  *
  * Data, not code, on purpose: unlike the per-cohort icons (seeded PRNG in
- * `components/cohorts/CohortIcon.tsx`), these must be *recognizable* — Scorpius
+ * `components/cohorts/PlanetDisc.tsx`), these must be *recognizable* — Scorpius
  * has to read as the fishhook, the Teapot as the Teapot. Coordinates are
  * authored directly in the widget's native 100×54 frame (x right, y down);
  * `frameFor()` refits the viewBox anyway, so only proportions matter.

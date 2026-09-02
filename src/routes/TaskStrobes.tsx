@@ -1,6 +1,9 @@
 import { motion } from "framer-motion";
+import { ArrowLeft } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 
+import { Button } from "@/components/common/controls";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { springPanel } from "@/lib/motion";
@@ -11,11 +14,15 @@ import type { StrobeVocabulary } from "@/lib/ws/protocol";
 /**
  * The strobe vocabulary — every code this rig can record, and what it means.
  *
- * A RIG PAGE RATHER THAN A TASK ONE, on the same split the wiring editor sits
- * on: the Rig tab answers *what does every pin do*, and a strobe code is the
- * same kind of fact — an event this hardware can report, true of every task
- * that runs on it. Which of them a particular task declares is the Task tab's
- * business, and it is decided there by the trial table.
+ * A TASK PAGE. It sat under Rig for a while on the argument that a code is a
+ * fact about what the hardware can REPORT, in the same way a pin is a fact
+ * about what it can drive. That symmetry is real and it is not the one that
+ * matters: a pin is compile-time INPUT to the firmware every task generates and
+ * belongs to the box, while a code is what a *condition is named by* — the
+ * onset picker one page away in the trial table is the only surface in the app
+ * that consumes this table, and an operator reaches for it mid-sentence while
+ * typing a trial row. Rig keeps the pins; the codes travel with the task that
+ * declares them.
  *
  * READ-ONLY, DELIBERATELY. The registry is **append-only**: four years of
  * recorded sessions carry these numbers, so a code is never renumbered, never
@@ -30,8 +37,9 @@ import type { StrobeVocabulary } from "@/lib/ws/protocol";
  * session needs to be told "retired", which is an explanation, rather than
  * "unknown", which is a question.
  */
-export function RigStrobes() {
+export function TaskStrobes() {
   const { client, status } = useSidecar();
+  const navigate = useNavigate();
   const [vocabulary, setVocabulary] = useState<StrobeVocabulary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,7 +66,14 @@ export function RigStrobes() {
         transition={springPanel}
         className="scrollbar-none absolute inset-0 overflow-y-auto p-4 pl-8"
       >
-        <h1 className="pb-1 pt-3 font-display text-[22px] text-starlight">
+        {/* The way back, which this page went without while it was a Rig
+            sub-page and the wiring editor beside it had one. A door leads
+            somewhere; a room with no handle is a dead end. */}
+        <Button variant="ghost" onClick={() => navigate("/task")}>
+          <ArrowLeft size={13} strokeWidth={1.75} />
+          Task
+        </Button>
+        <h1 className="pb-1 pt-2 font-display text-[22px] text-starlight">
           Strobe vocabulary
         </h1>
         <p className="max-w-prose pb-4 text-[12px] leading-relaxed text-static">

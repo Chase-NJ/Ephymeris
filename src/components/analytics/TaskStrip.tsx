@@ -1,6 +1,8 @@
+import { Layers } from "lucide-react";
 import { useMemo } from "react";
 
 import {
+  colorForIndex,
   describeTaskMix,
   sessionSlot,
   type SessionOutcomePoint,
@@ -34,11 +36,14 @@ export function TaskStrip({
   return (
     <div className="surface rounded-md px-4 pt-3 pb-2">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[11px] text-static">
-          Task
-          <span className="ml-2 text-static/70">
-            what each session below was running — the trends pool every task
-            and this is where they change
+        <span className="flex items-center gap-1.5 text-[11px] text-static">
+          <Layers size={13} strokeWidth={1.75} className="shrink-0 text-pulsar" />
+          <span>
+            Task
+            <span className="ml-2 text-static/70">
+              what each session below was running — the trends pool every task
+              and this is where they change
+            </span>
           </span>
         </span>
       </div>
@@ -116,6 +121,12 @@ function StripSegment({
   points: SessionOutcomePoint[];
 }) {
   const label = labels.get(segment.hash) ?? "unknown";
+  // A task's colour is its place in the archive's order of first appearance —
+  // `taskLabels` lists them that way — on the same series ramp the animals
+  // use. Identity, not state: two segments of one task match across a gap,
+  // and a return to shaping after discrimination reads as a return.
+  const taskIndex = Math.max(0, [...labels.keys()].indexOf(segment.hash));
+  const color = colorForIndex(taskIndex);
   const first = points[segment.start]!.session;
   const last = points[segment.end]!.session;
   const count = segment.end - segment.start + 1;
@@ -146,6 +157,13 @@ function StripSegment({
       style={{ left: `${segment.left}%`, width: `${segment.width}%` }}
       title={title}
     >
+      {/* The task's colour as a hairline along the top edge — a tint of the
+          whole segment would fight the labels and the chart under it. */}
+      <span
+        aria-hidden
+        className="absolute inset-x-0 top-0 h-[2px] opacity-80"
+        style={{ background: color }}
+      />
       {/* Below ~4% a truncated label is one letter and an ellipsis — noise.
           The segment itself and its hover still carry the task. */}
       {segment.width >= 4 && (

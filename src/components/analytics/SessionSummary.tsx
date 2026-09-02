@@ -1,3 +1,4 @@
+import { ClipboardList } from "lucide-react";
 import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
 
@@ -133,6 +134,7 @@ export function SessionSummary({
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="flex items-center gap-2 text-[11px] text-static">
+          <ClipboardList size={13} strokeWidth={1.75} className="shrink-0 text-pulsar" />
           <span>
             Session summary
             <span className="ml-2 font-mono text-starlight">

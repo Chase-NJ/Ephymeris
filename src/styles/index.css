@@ -325,3 +325,26 @@
     border-color: var(--color-pulsar);
   }
 }
+
+/* The appearance panel's hue slider. A native range so the drag is native,
+   themed so the thumb is the app's and not the platform's. The track is set
+   inline — it is the hue circle itself. */
+.hue-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-starlight);
+  border: 2px solid var(--color-void);
+  box-shadow: 0 0 0 1px var(--color-halo);
+  cursor: pointer;
+}
+.hue-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-starlight);
+  border: 2px solid var(--color-void);
+  box-shadow: 0 0 0 1px var(--color-halo);
+  cursor: pointer;
+}

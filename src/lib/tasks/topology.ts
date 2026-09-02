@@ -279,6 +279,43 @@ export const GROUP_ORDER: readonly string[] = [
 ];
 
 /**
+ * Groups the parameter rail folds into ONE pill.
+ *
+ * A tab is a *reading* of a profile, never a key in one. `group` rides in
+ * `ConfigField.to_json`, so it is inside `profile_hash` — re-filing a field
+ * server-side would give every regenerated `task.json` a new hash and split each
+ * task's historical runs from its future ones in Analytics, permanently. The
+ * same reasoning `QUICK_TUNE_GROUPS` below rests on, and the reason both
+ * registries live in the app rather than in `fields.py`.
+ *
+ * What is folded and why: a correction budget and a reward volume are both
+ * *session* settings — set once for this cohort, unchanged trial to trial —
+ * and each was one or four fields behind a pill of its own. The state machine's
+ * chips keep the real group names, because a chip names the parameter family;
+ * only the pill it opens is folded.
+ */
+const TAB_OF: Record<string, string> = {
+  "Correction trials": "Session",
+  "Reward volume": "Session",
+};
+
+/** Which rail pill a declared group appears under. Identity for most groups. */
+export function tabOf(group: string): string {
+  return TAB_OF[group] ?? group;
+}
+
+/**
+ * The groups one tab holds, in `GROUP_ORDER`, out of those a profile declares.
+ *
+ * Order matters here for the same reason it does in the rail: the fold renders
+ * as stacked sub-sections, and "Session, then correction, then volumes" is the
+ * order the values take effect in.
+ */
+export function groupsOfTab(tab: string, declared: Iterable<string>): string[] {
+  return orderGroups([...declared].filter((group) => tabOf(group) === tab));
+}
+
+/**
  * The groups the mapping step promotes to the top of per-box tuning.
  *
  * These are the values the lab actually turns on the fly, animal by animal,
@@ -972,6 +1009,19 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
 export function nodesGovernedBy(model: TaskGraphModel, group: string | null): TaskNode[] {
   if (!group) return [];
   return model.nodes.filter((node) => node.governedBy.includes(group));
+}
+
+/**
+ * The same, for a rail TAB rather than a declared group.
+ *
+ * Separate from `nodesGovernedBy` on purpose: the explain tile asks about one
+ * FIELD, and a correction field does not govern the states that `num_trials`
+ * does. Widening the exact function would have made that tile quietly
+ * over-claim on every folded field rather than fail.
+ */
+export function nodesGovernedByTab(model: TaskGraphModel, tab: string | null): TaskNode[] {
+  if (!tab) return [];
+  return model.nodes.filter((node) => node.governedBy.some((g) => tabOf(g) === tab));
 }
 
 // --- live mode -------------------------------------------------------------

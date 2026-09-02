@@ -16,7 +16,7 @@ import type { TaskDefinition, TaskDiagnostic } from "./types";
  * track dirt, validate continuously, write once. Three things are specific to
  * a task.
  *
- * VALIDATION IS A ROUND TRIP. `tasks.preview` runs the eight rules against the
+ * VALIDATION IS A ROUND TRIP. `tasks.preview` runs the eleven rules against the
  * COMPOSED channel map — the same code the save will run — so the editor cannot
  * drift from what a save accepts. Most of those rules depend on the wiring, and
  * the frontend has no copy of it.

@@ -54,8 +54,6 @@ export const CMD = {
   TASKS_PREVIEW: "tasks.preview",
   TASKS_SAVE: "tasks.save",
   TASKS_DELETE: "tasks.delete",
-  TASKS_PRESETS: "tasks.presets",
-  TASKS_FROM_PRESET: "tasks.fromPreset",
 
   // Strobe vocabulary (tasks.md §3.3)
   RIG_STROBES: "rig.strobes",
@@ -366,9 +364,27 @@ export interface Animal {
 }
 
 /**
- * The full record, fetched only when a card is opened. The icon is deliberately absent — derived
- * client-side from `id` (cohorts.md §5).
+ * How a cohort's world looks (cohorts.md §5). **Null is the normal state**: an untouched cohort
+ * derives every field from a hash of its `id`, so it already has a stable, distinct planet and
+ * the column that stores this carries no data for it.
  */
+export interface CohortAppearance {
+  /**
+   * `rocky` | `gas` | `ice` | `ocean` | `lava`. Selects which surface the planet shader draws;
+   * unknown values fall back to `rocky` rather than rendering nothing.
+   */
+  type: string;
+  /** 0–360. Rotates the palette, nothing else. */
+  hue: number;
+  ring: boolean;
+  /**
+   * Shifts the noise field and only that — a re-roll changes the world's weather, never its type,
+   * hue or size.
+   */
+  seed: number;
+}
+
+/** The full record, fetched only when a cohort is opened. */
 export interface Cohort {
   id: string;
   name: string;
@@ -380,23 +396,36 @@ export interface Cohort {
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Null until the operator tunes it, and null is not a gap: the whole record is derived from
+   * `id` when absent.
+   */
+  appearance: CohortAppearance | null;
 }
 
-/** Enough for the grid and dashboard tile, no per-animal detail. */
+/** Enough for the cohort browser and the dashboard tile, no per-animal detail. */
 export interface CohortSummary {
   id: string;
   name: string;
   animalCount: number;
   groupCount: number;
   /**
-   * Distinct box numbers this cohort's animals hold. The one piece of animal detail the summary
-   * carries, so the browser grid can flag a cohort whose boxes no longer exist on this machine
-   * without fetching every cohort in full.
+   * Distinct box numbers this cohort's animals hold. Animal detail the summary carries so the
+   * browser can flag a cohort whose boxes no longer exist on this machine without fetching every
+   * cohort in full.
    */
   assignedBoxes: number[];
+  /**
+   * Distinct home cages, and the second piece of animal detail the summary carries, on the same
+   * argument: the cohort browser draws one orbiting ship per cage, and deriving that from the
+   * roster would cost a full `cohorts.get` per planet on every route mount. A count, not the
+   * numbers — which animals share a cage is the editor's business.
+   */
+  cageCount: number;
   archived: boolean;
   createdAt: string;
   updatedAt: string;
+  appearance: CohortAppearance | null;
 }
 
 export interface CohortPatch {
@@ -405,6 +434,8 @@ export interface CohortPatch {
   animals?: Animal[];
   /** Replaced wholesale. */
   groups?: Group[];
+  /** Replaced wholesale. Explicit null resets the world to the one derived from the cohort's id. */
+  appearance?: CohortAppearance | null;
 }
 
 export interface ProposedAnimal {
@@ -1267,11 +1298,11 @@ export interface TaskDiagnostic {
   /** `trials[1].rewardChannel`, `stages[2].trials`. */
   location: string;
   message: string;
-  /** TSK101–TSK109. Each names a failure that is silent without it. */
+  /** TSK101–TSK111. Each names a failure that is silent without it. */
   code: string;
 }
 
-/** A row in the profile list. */
+/** A row in the profile list, and everything a task card states before the definition is opened. */
 export interface TaskEntry {
   id: string;
   /** Also the generated sketch's folder name. */
@@ -1287,16 +1318,12 @@ export interface TaskEntry {
    * route mount and would otherwise grow with the library.
    */
   problems: number;
-}
-
-/**
- * A starting point, never a task. Instantiating one produces a definition the operator owns — so
- * editing a preset in a later build cannot reach back into a study already running on it.
- */
-export interface TaskPreset {
-  id: string;
-  name: string;
-  summary: string;
+  /** Rows in the trial table — how many conditions it presents. */
+  trials: number;
+  /** Rows in the shaping ramp. 1 means no ramp. */
+  stages: number;
+  /** `antibias` or `pool`. */
+  selectionMode: string;
 }
 
 export interface TaskSaved {
@@ -1406,8 +1433,6 @@ export interface CommandArgsMap {
   "tasks.preview": { definition: unknown };
   "tasks.save": { definition: unknown };
   "tasks.delete": { taskId: string };
-  "tasks.presets": Record<string, never>;
-  "tasks.fromPreset": { presetId: string; taskId: string; name?: string };
   "rig.strobes": Record<string, never>;
   "sessions.suggestNumber": { prefixId: string };
   "sessions.create": { cohortId: string; prefixId: string; sessionNumber: string; durationMinutes?: number };
@@ -1466,8 +1491,6 @@ export interface CommandResultMap {
   "tasks.preview": TaskPreview;
   "tasks.save": TaskSaved;
   "tasks.delete": { deleted: boolean };
-  "tasks.presets": { presets: TaskPreset[] };
-  "tasks.fromPreset": { definition: unknown; diagnostics: TaskDiagnostic[] };
   "rig.strobes": StrobeVocabulary;
   "sessions.suggestNumber": { suggestion: string | null; sameDayNumbers: string[] };
   "sessions.create": { session: Session };

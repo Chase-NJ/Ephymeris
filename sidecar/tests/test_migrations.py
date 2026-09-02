@@ -825,6 +825,88 @@ def test_a_newer_database_does_not_run_migrations(
     assert ran == []
 
 
+# --- the real v8 -> v9 migration ------------------------------------------
+
+
+def write_v8_database(path: Path) -> None:
+    """A v8 file: everything through the recorded-run columns, with a `cohorts`
+    table that carries **no** `appearance_json`.
+
+    Built from the v7 fixture rather than from today's `SCHEMA`, like every
+    fixture above it: `CREATE TABLE IF NOT EXISTS` would build `cohorts` with
+    the column already on it, and the migration this exercises would then be a
+    no-op against a table that never lacked it — precisely the class of database
+    it exists for.
+    """
+    write_v7_database(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("ALTER TABLE run_metrics_cache ADD COLUMN params_hash TEXT")
+        conn.execute(
+            "ALTER TABLE run_metrics_cache ADD COLUMN scored_profile_hash TEXT"
+        )
+        conn.execute("PRAGMA user_version = 8")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_v8_gains_the_cohort_appearance_column(tmp_path: Path) -> None:
+    """The operator's tuning of a cohort's world (`cohorts.md` §5).
+
+    A column on `cohorts` rather than a table, so `CREATE TABLE IF NOT EXISTS`
+    does nothing for it: without the registered migration it would appear only
+    on databases created after this build, while `user_version` was stamped to 9
+    regardless — and the first save of an appearance on a lab machine would
+    raise `OperationalError` mid-run.
+    """
+    path = tmp_path / "ephymeris.db"
+    write_v8_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        assert "appearance_json" in table_columns(db.conn, "cohorts")
+        # Writable, not merely present in the metadata.
+        db.conn.execute(
+            "UPDATE cohorts SET appearance_json = ? WHERE id = 'c1'",
+            ('{"type": "gas", "hue": 41, "ring": true, "seed": 7734}',),
+        )
+        row = db.conn.execute(
+            "SELECT appearance_json FROM cohorts WHERE id = 'c1'"
+        ).fetchone()
+        assert row["appearance_json"].startswith('{"type": "gas"')
+    finally:
+        db.close()
+
+    assert user_version(path) == SCHEMA_VERSION
+
+
+def test_a_cohort_from_before_v9_has_no_stored_appearance(tmp_path: Path) -> None:
+    """NULL is the answer, not a gap to backfill.
+
+    An absent appearance means "derive the world from the cohort's id", which is
+    what every cohort did before this column and what the client still does when
+    it reads NULL. Writing a derived record in during the migration would freeze
+    each existing cohort against every later correction to the palette or the
+    default type, for no gain — and would make a cohort that had never been
+    touched indistinguishable from one deliberately tuned to today's defaults.
+    """
+    path = tmp_path / "ephymeris.db"
+    write_v8_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        row = db.conn.execute(
+            "SELECT name, appearance_json FROM cohorts WHERE id = 'c1'"
+        ).fetchone()
+        assert row["name"] == "Batch A"          # the row survived
+        assert row["appearance_json"] is None    # and carries no world
+    finally:
+        db.close()
+
+
 # --- backup amplification -------------------------------------------------
 
 

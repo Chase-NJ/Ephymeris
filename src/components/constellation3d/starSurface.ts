@@ -113,26 +113,23 @@ export function rampColors(t: number): { core: THREE.Color; edge: THREE.Color } 
  * keeps facing the camera as the star turns instead of rotating away with the
  * cells.
  */
-export const STAR_VERTEX = /* glsl */ `
-  varying vec3 vPos;
-  varying vec3 vNormal;
-  void main() {
-    vPos = position;
-    vNormal = normalize(normalMatrix * normal);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-export const STAR_FRAGMENT = /* glsl */ `
-  precision mediump float;
-
-  uniform float uTime;
-  uniform vec3 uCore;
-  uniform vec3 uEdge;
-  uniform float uActivity;   // 0 = still (unlit), 1 = fully churning
-  varying vec3 vPos;
-  varying vec3 vNormal;
-
+/**
+ * Value noise and 4-octave fBm, shared by every procedural surface in the scene.
+ *
+ * Pulled out of `STAR_FRAGMENT` when the cohort planets arrived
+ * (`planetSurface.ts`) rather than copied: two implementations of the same
+ * noise would drift, and the drift would be invisible — a star and a planet
+ * side by side would simply have subtly different grain, which reads as one of
+ * them being wrong without saying which.
+ *
+ * Hash-based rather than a texture lookup or an imported library: it costs no
+ * upload, no dependency, and `glsl-noise` is only on disk as a transitive of
+ * drei (importing it would be an undeclared dependency).
+ *
+ * Lacunarity 2.02 rather than 2.0 on purpose — an exact doubling lines the
+ * octaves' lattices up and prints a faint grid through the result.
+ */
+export const GLSL_NOISE = /* glsl */ `
   float hash(vec3 p) {
     p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
     p *= 17.0;
@@ -161,6 +158,29 @@ export const STAR_FRAGMENT = /* glsl */ `
     }
     return sum;
   }
+`;
+
+export const STAR_VERTEX = /* glsl */ `
+  varying vec3 vPos;
+  varying vec3 vNormal;
+  void main() {
+    vPos = position;
+    vNormal = normalize(normalMatrix * normal);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+export const STAR_FRAGMENT = /* glsl */ `
+  precision mediump float;
+
+  uniform float uTime;
+  uniform vec3 uCore;
+  uniform vec3 uEdge;
+  uniform float uActivity;   // 0 = still (unlit), 1 = fully churning
+  varying vec3 vPos;
+  varying vec3 vNormal;
+
+  ${GLSL_NOISE}
 
   void main() {
     // Two drifting noise fields: coarse convection cells over a finer churn.

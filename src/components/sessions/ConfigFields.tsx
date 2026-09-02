@@ -54,13 +54,16 @@ export function ConfigFields({
   onChange: (next: Record<string, unknown>) => void;
   disabled?: boolean;
   /**
-   * Render one group only, with no section header — the Task tab gives each
-   * group its own tile and supplies the heading itself. Kept as a filter on the
-   * one renderer rather than a second component: a form that splits its fields
-   * two ways is a form that will eventually disagree with itself about
-   * validation, clamping or the changed-marker.
+   * Render these groups only. ONE group renders with no section header — the
+   * Task tab gives it a heading of its own; SEVERAL keep their headers, because
+   * the rail folds a few groups into one pill (`topology.tabOf`) and the
+   * sub-headings are then the only thing saying which values are which.
+   *
+   * Kept as a filter on the one renderer rather than a second component: a form
+   * that splits its fields two ways is a form that will eventually disagree
+   * with itself about validation, clamping or the changed-marker.
    */
-  only?: string;
+  only?: string | readonly string[];
   /**
    * Skip these groups entirely — the mapping step renders them separately as
    * its quick-tune strip (`TaskConfigForm`), and a field that appears twice
@@ -83,6 +86,13 @@ export function ConfigFields({
   // Sections in first-declared order. The profile's authored order is
   // load-bearing elsewhere (`data.md` §11.8) and there is no reason for the
   // form to disagree with it.
+  /** `only` as a list, whatever it arrived as. Undefined stays undefined —
+   *  "every group" is not the same request as "these zero groups". */
+  const wanted = useMemo(
+    () => (only === undefined ? undefined : typeof only === "string" ? [only] : [...only]),
+    [only],
+  );
+
   const sections = useMemo(() => {
     const bySection = new Map<string, ConfigField[]>();
     for (const field of profile?.config ?? []) {
@@ -92,10 +102,17 @@ export function ConfigFields({
       else bySection.set(key, [field]);
     }
     const all = [...bySection.entries()];
-    if (only !== undefined) return all.filter(([name]) => name === only);
+    // Ordered by `wanted` rather than by declaration when it is given: the
+    // caller folded these groups into one pill and decided their order there.
+    if (wanted !== undefined) {
+      return wanted.flatMap((name) => {
+        const fields = bySection.get(name);
+        return fields ? [[name, fields] as [string, ConfigField[]]] : [];
+      });
+    }
     if (exclude !== undefined) return all.filter(([name]) => !exclude.includes(name));
     return all;
-  }, [profile, only, exclude]);
+  }, [profile, wanted, exclude]);
 
   if (!profile || profile.config.length === 0) return null;
 
@@ -124,7 +141,7 @@ export function ConfigFields({
 
         return (
           <section key={section || "__ungrouped"} className="flex flex-col gap-1.5">
-            {section && only === undefined && (
+            {section && (wanted === undefined || wanted.length > 1) && (
               <header className="flex items-center justify-between gap-2 border-b border-halo pb-1">
                 <span className="font-mono text-[10px] uppercase tracking-wider text-static">
                   {section}

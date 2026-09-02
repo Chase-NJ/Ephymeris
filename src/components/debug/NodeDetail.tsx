@@ -1,21 +1,10 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { motion } from "framer-motion";
-import {
-  ArrowLeft,
-  Check,
-  ChevronsLeftRight,
-  ChevronsRightLeft,
-  CircleAlert,
-  Copy,
-  Download,
-  RotateCcw,
-  Send,
-  Zap,
-} from "lucide-react";
+import { ArrowLeft, Check, ChevronsLeftRight, ChevronsRightLeft, CircleAlert, Copy, Cpu, Download, RotateCcw, Send, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useBoxHealth } from "@/components/chrome/ConstellationStatus";
+import { NODE_FILL, useBoxHealth } from "@/components/chrome/ConstellationStatus";
 import { Button, Select } from "@/components/common/controls";
 import { HudPanel, HudSection } from "@/components/common/HudPanel";
 import { FlashDialog } from "./FlashDialog";
@@ -342,10 +331,13 @@ export function NodeDetail({
           {binding?.label ?? `Box ${box}`}
         </h2>
         {/* The health word is the legend for the star's colour behind the
-            panel; the Connection group reports the port state it derives
-            from. */}
-        <p className="shrink-0 font-mono text-[11px] text-static">
-          box {box} · {health}
+            panel — so it wears that colour, the constellation's own
+            `NODE_FILL`, with the star's dot beside it. The Connection group
+            reports the port state it derives from. */}
+        <p className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] text-static">
+          box {box} ·{" "}
+          <span aria-hidden className="size-1.5 rounded-full" style={{ background: NODE_FILL[health] }} />
+          <span style={{ color: NODE_FILL[health] }}>{health}</span>
         </p>
         <div className="ml-auto">
           <Button
@@ -575,15 +567,33 @@ export function NodeDetail({
             a last resort for a window too short for the grid; the wide toggle
             (a third grid column) is the intended answer. */}
         <div className="flex min-h-0 flex-col">
-          <HudSection title="Sketch" className="flex min-h-0 flex-col">
+          <HudSection
+            title="Sketch"
+            headerRight={
+              profile?.kind === "utility" ? (
+                <span className="pr-1 font-mono text-[10px] text-static/70">
+                  {canSend ? "live" : "open passthrough to control"}
+                </span>
+              ) : null
+            }
+            className="flex min-h-0 flex-col"
+          >
             <div className="scrollbar-slim min-h-0 overflow-y-auto">
-              <div className="flex flex-wrap items-center gap-1.5 px-3 py-2.5">
-                <span className="min-w-0 truncate font-mono text-[11px] text-static">
-                  {effectiveSketch
-                    ? atBaseline && !flashed
-                      ? `${effectiveSketch.name} · baseline`
-                      : effectiveSketch.name
-                    : baselineWord(utilityBox?.state)}
+              {/* The carried sketch, in the icon-headed row every other tile
+                  uses: what is on the board, and where it came from. */}
+              <div className="flex flex-wrap items-center gap-2.5 px-3 py-2.5">
+                <Cpu size={16} strokeWidth={1.75} className="shrink-0 text-pulsar" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] font-medium text-starlight">
+                    {effectiveSketch ? effectiveSketch.name : "nothing carried"}
+                  </span>
+                  <span className="block truncate font-mono text-[10px] text-static/70">
+                    {effectiveSketch
+                      ? atBaseline && !flashed
+                        ? "the utility baseline — restored to every idle box"
+                        : "flashed from Debug Mode"
+                      : baselineWord(utilityBox?.state)}
+                  </span>
                 </span>
                 <div className="ml-auto">
                   <Button

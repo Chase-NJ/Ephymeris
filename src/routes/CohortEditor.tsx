@@ -27,7 +27,7 @@ import { Button, TextInput } from "@/components/common/controls";
 import { SettingGroup } from "@/components/settings/SettingRow";
 import { AnimalTable } from "@/components/cohorts/AnimalTable";
 import { CageAssignment } from "@/components/cohorts/CageAssignment";
-import { CohortIcon } from "@/components/cohorts/CohortIcon";
+import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import { DataFolderField } from "@/components/cohorts/DataFolderField";
 import { GroupsPanel } from "@/components/cohorts/GroupsPanel";
 import {
@@ -260,16 +260,21 @@ export function CohortEditor() {
           </Button>
 
           <div className="mt-3 flex items-center gap-4">
-            <motion.span
-              layoutId={`cohort-icon-${iconId}`}
-              transition={springSnappy}
-            >
-              <CohortIcon
+            {/* The world this cohort is in the browser, at header scale.
+                **No `layoutId` any more.** It used to pair with the grid card's
+                icon so the mark flew into place across the route change; the
+                card is a planet in a WebGL scene now, and a Framer layout
+                transition cannot run from a mesh to a DOM node. What carries
+                the continuity instead is the camera — clicking a world flies to
+                it and lays the arrival rings, and this is the same world at the
+                other end. */}
+            <span>
+              <PlanetDisc
                 cohortId={iconId}
-                animalCount={animals.length}
+                appearance={cohort?.appearance ?? null}
                 size={64}
               />
-            </motion.span>
+            </span>
             <div className="min-w-0">
               <h1 className="font-display text-[22px] text-starlight">
                 {heading}

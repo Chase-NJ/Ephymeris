@@ -1,9 +1,10 @@
 import { motion } from "framer-motion";
-import { ArrowLeft, CircuitBoard } from "lucide-react";
+import { ArrowLeft, CircuitBoard, ListOrdered } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
+import { KindStrip } from "@/components/hardware/KindStrip";
 import { Button } from "@/components/common/controls";
 import { PinTable } from "@/components/hardware/PinTable";
 import { RigWiringEditor } from "@/components/hardware/RigWiringEditor";
@@ -65,7 +66,7 @@ export function RigWiring() {
             <span className="flex size-9 items-center justify-center rounded-md border border-halo bg-nebula">
               <CircuitBoard size={18} strokeWidth={1.75} className="text-pulsar" />
             </span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h1 className="font-display text-[22px] text-starlight">Wiring</h1>
               <p className="font-mono text-[10px] text-static/70">
                 every pin, and what it means — the map every task compiles
@@ -73,6 +74,16 @@ export function RigWiring() {
               </p>
             </div>
           </div>
+
+          {/* The same strip the landing's door carries, so the door and the
+              room agree about what the wiring is made of. It reads the LIVE
+              document, unsaved edits included — adding a channel grows its
+              segment before the save. */}
+          {doc !== null && (
+            <div className="mt-4 max-w-[560px]">
+              <KindStrip doc={doc} />
+            </div>
+          )}
 
           {/* The editor tile. The frosted material is the page's; the editor
               brings its own action strip, board, rail and problem lists. */}
@@ -93,6 +104,7 @@ export function RigWiring() {
               className="hud mt-6 overflow-hidden rounded-md"
             >
               <div className="flex items-center gap-3 border-b border-halo px-4 py-3">
+                <ListOrdered size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
                 <span className="text-[13px] font-medium text-starlight">
                   Configured pins
                 </span>

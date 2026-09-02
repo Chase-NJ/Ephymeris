@@ -6,6 +6,8 @@ import { useNavigate, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/common/controls";
 import { useBackupStatus } from "@/lib/backup/useBackupStatus";
 import { RatPlacementBanner } from "@/components/sessions/RatPlacementBanner";
+import { ReturnChecklist } from "@/components/sessions/ReturnChecklist";
+import { SessionWrapUp } from "@/components/sessions/SessionWrapUp";
 import { ElapsedClock, StateChip, clockSpan } from "@/components/sessions/BoxStatus";
 import { Constellation3D } from "@/components/sessions/Constellation3D";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
@@ -235,6 +237,52 @@ export function MissionControl() {
 
   const lastGroup = groupInfo === null || groupInfo.index === groupInfo.count;
   const journeyStep = groupDone && lastGroup ? ("finish" as const) : ("run" as const);
+
+  /*
+   * The way back out (§8.5, §8.7): which boxes have had their animal carried
+   * home, ticked by the operator. Kept per group — a new group's animals are
+   * new animals — and "All animals are out" is the one-press answer for the
+   * operator who emptied the rig before looking at the screen.
+   */
+  const [returned, setReturned] = useState<Set<number>>(() => new Set());
+  const [wrapDismissed, setWrapDismissed] = useState(false);
+  const groupKey = snapshot?.groupId ?? null;
+  useEffect(() => {
+    setReturned(new Set());
+    setWrapDismissed(false);
+  }, [groupKey]);
+  const toggleReturned = useCallback((box: number) => {
+    setReturned((prev) => {
+      const next = new Set(prev);
+      if (next.has(box)) next.delete(box);
+      else next.add(box);
+      return next;
+    });
+  }, []);
+  const allReturned = useCallback(
+    () => setReturned(new Set(boxes.map((b) => b.box))),
+    [boxes],
+  );
+  const everyoneOut = boxes.length > 0 && boxes.every((b) => returned.has(b.box));
+
+  // The wrap-up is dismissable — "Not yet" puts the rails back — but comes
+  // back for the next group, and for the same group only if a box restarts and
+  // finishes again (`groupDone` flips false and true).
+  useEffect(() => {
+    if (!groupDone) setWrapDismissed(false);
+  }, [groupDone]);
+  const wrapOpen = connected && groupDone && lastGroup && hasRun && !wrapDismissed;
+
+  // Whole-session elapsed, for the wrap-up's fact line only — the header has
+  // its own ticking clock.
+  const sessionSeconds = session?.startedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000))
+    : 0;
+  const wrapFacts = [
+    `${boxes.length} animal${boxes.length === 1 ? "" : "s"}`,
+    groupInfo ? `${groupInfo.count} groups` : "1 group",
+    `${clockSpan(sessionSeconds)} elapsed`,
+  ].join(" · ");
   const hint = !connected
     ? "Waiting for the hardware service…"
     : neverConfirmed
@@ -289,6 +337,31 @@ export function MissionControl() {
       return;
     }
     navigate(`/session/${sessionId}/mapping?cohort=${cohort.id}&group=${group.id}`);
+  }
+
+  // Shared by the left rail's End Session and the wrap-up's (§8.7).
+  function doEndSession() {
+    void run(async () => {
+      // A session that never recorded anything is discarded, not "ended":
+      // marking it completed would seed Analytics with an empty session — the
+      // same rule as the session dock's Discard. Keyed on whether a box ever
+      // ran, NOT on the session status: boxes started one at a time leave the
+      // status at `configuring` forever, and discarding on that basis threw
+      // away real runs.
+      if (!hasRun) {
+        await abandonSession(client, sessionId!);
+        navigate("/");
+        return;
+      }
+      await endSession(client, sessionId!);
+      navigate("/analytics", {
+        state: {
+          endedSession: sessionName,
+          cohortId: session?.cohortId,
+          sessionId,
+        },
+      });
+    });
   }
 
   // Shared by the header button and the group-swap prompt (§5.5).
@@ -460,30 +533,7 @@ export function MissionControl() {
               <Button
                 variant="ghost"
                 disabled={busy || !connected}
-                onClick={() =>
-                  void run(async () => {
-                    // A session that never recorded anything is discarded, not
-                    // "ended": marking it completed would seed Analytics with an
-                    // empty session — the same rule as the session dock's
-                    // Discard. Keyed on whether a box ever ran, NOT on the
-                    // session status: boxes started one at a time leave the
-                    // status at `configuring` forever, and discarding on that
-                    // basis threw away real runs.
-                    if (!hasRun) {
-                      await abandonSession(client, sessionId!);
-                      navigate("/");
-                      return;
-                    }
-                    await endSession(client, sessionId!);
-                    navigate("/analytics", {
-                      state: {
-                        endedSession: sessionName,
-                        cohortId: session?.cohortId,
-                        sessionId,
-                      },
-                    });
-                  })
-                }
+                onClick={doEndSession}
               >
                 {hasRun ? "End Session" : "Discard session"}
               </Button>
@@ -595,17 +645,32 @@ export function MissionControl() {
                   mode="return"
                   boxes={boxes.map((b) => b.box)}
                   caption="All boxes finished — return each animal to its home cage, then switch groups."
-                  footer={
-                    <Button
-                      variant="primary"
-                      disabled={busy || !connected}
-                      onClick={doSwitchGroup}
-                    >
-                      <Users size={13} strokeWidth={1.75} />
-                      Switch Group
-                    </Button>
-                  }
                 />
+                {/* Ticked off per box, or all at once: the next group's
+                    animals go into these same chambers, so "everyone is out"
+                    is the fact Switch Group waits on. */}
+                <div className="mt-3">
+                  <ReturnChecklist
+                    boxes={boxes}
+                    returned={returned}
+                    onToggle={toggleReturned}
+                    onAll={allReturned}
+                    disabled={busy || !connected}
+                  />
+                </div>
+                <div className="mt-3 flex justify-center">
+                  <Button
+                    variant="primary"
+                    disabled={busy || !connected || !everyoneOut}
+                    onClick={doSwitchGroup}
+                    {...(everyoneOut
+                      ? {}
+                      : { title: "Every animal needs to be out of its box first" })}
+                  >
+                    <Users size={13} strokeWidth={1.75} />
+                    Switch Group
+                  </Button>
+                </div>
               </motion.div>
             ) : boxes.length === 0 ? (
               <motion.div
@@ -644,6 +709,21 @@ export function MissionControl() {
           </AnimatePresence>
         </motion.div>
       </motion.div>
+
+      {/* §8.7 — the last group has run and every box has finished: the
+          session is over in every sense but the record, and this says so. */}
+      <SessionWrapUp
+        open={wrapOpen}
+        sessionName={sessionName ?? "—"}
+        boxes={boxes}
+        facts={wrapFacts}
+        returned={returned}
+        busy={busy}
+        onToggle={toggleReturned}
+        onAll={allReturned}
+        onEnd={doEndSession}
+        onDismiss={() => setWrapDismissed(true)}
+      />
     </div>
   );
 }

@@ -37,19 +37,6 @@ export async function deleteTask(client: SidecarClient, taskId: string) {
   return client.call(CMD.TASKS_DELETE, { taskId });
 }
 
-export async function listPresets(client: SidecarClient) {
-  return client.call(CMD.TASKS_PRESETS, {});
-}
-
-export async function taskFromPreset(
-  client: SidecarClient,
-  presetId: string,
-  taskId: string,
-  name?: string,
-) {
-  return client.call(CMD.TASKS_FROM_PRESET, { presetId, taskId, ...(name ? { name } : {}) });
-}
-
 export async function getStrobes(client: SidecarClient) {
   return client.call(CMD.RIG_STROBES, {});
 }

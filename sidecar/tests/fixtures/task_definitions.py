@@ -1,26 +1,21 @@
-"""The five tasks the lab was running, as starting points.
+"""The five tasks the lab was running, as test data.
 
-Each was a separate `.ino` until the firmware was unified. They differed by one
-substantive line apiece — which bare-START defaults they applied, and which pool
-weight they set — so what they really were is five sets of NUMBERS over one task.
-That is exactly what a preset is, and it is why deleting the sketches cost
-nothing: every value below is transcribed from the sketch it replaces.
+**Not shipped, and not reachable from the app.** These were `taskdef/presets.py`
+until the preset path was retired: a task is now built from scratch and the one
+thing a preset seeded that nothing else can — `legacyNames` — is typed by the
+operator on the Task tab (`tasks.md` §11.4, which lists these names verbatim for
+exactly that reason).
 
-A PRESET IS NOT A TASK. It is instantiated into a definition the operator then
-owns and edits; nothing here is ever flashed, and editing a preset in a later
-build does not reach back into a task somebody already made. The alternative —
-shipping tasks — would mean an app update silently retuning a running study.
-
-`legacyNames` rides on the preset rather than being added afterward, because the
-name a historical run recorded is a fact about THAT task: `Shape - R` belongs to
-the go-right shaping preset and nowhere else. Attaching them all to one task
-would make Analytics adopt a shaping run into a discrimination profile.
+They stay here because they are the only five REAL task definitions in
+existence: every value below is transcribed from the sketch it replaced, so a
+generator, validator or profile change that breaks one of them is breaking
+something the lab actually ran. A hand-rolled fixture would only ever exercise
+the shapes whoever wrote it thought of.
 
 > [!CAUTION]
-> **The channel names here are the shipped wiring's.** A rig that renamed
-> `odor_line_1` gets a preset that will not validate — which is correct and
-> visible (`TSK101` names the missing channel), rather than a preset that
-> silently binds something else.
+> **The channel names here are the shipped wiring's.** A test that composes a
+> renamed rig gets `TSK101` on these, which is correct and visible rather than
+> a silent rebind.
 """
 
 from __future__ import annotations
@@ -28,7 +23,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from .model import StageRow, TaskDefinition, TrialTypeDef
+from ephymeris_sidecar.taskdef.model import StageRow, TaskDefinition, TrialTypeDef
 
 #: The two trial types every shipped task presents: odor line 1 means go-right,
 #: odor line 3 means go-left, both paid from reward line 1 of their own well.
@@ -265,24 +260,16 @@ PRESETS: tuple[dict[str, Any], ...] = (
 )
 
 
-def summaries() -> list[dict[str, Any]]:
-    """The gallery listing — everything but the definitions themselves."""
-    return [
-        {"id": p["id"], "name": p["name"], "summary": p["summary"]}
-        for p in PRESETS
-    ]
-
-
 def get(preset_id: str) -> dict[str, Any] | None:
     return next((p for p in PRESETS if p["id"] == preset_id), None)
 
 
 def instantiate(preset_id: str, task_id: str, name: str | None = None) -> TaskDefinition:
-    """A fresh, editable definition from a preset.
+    """A fresh, independent definition from one of the five.
 
-    The id and name are the caller's, not the preset's: two tasks from one
-    preset is the normal case (a per-cohort copy with different reward volumes),
-    and reusing the preset's id would make the second overwrite the first.
+    The id and name are the caller's: reusing the fixture's id would make two
+    tasks built from one entry overwrite each other, which is the property
+    `test_a_preset_is_a_starting_point_not_a_task` pins.
     """
     preset = get(preset_id)
     if preset is None:

@@ -60,6 +60,13 @@ class TaskEntry:
     path: str
     edited_at: str | None
     problems: int
+    #: What the task IS, at card resolution. Counts rather than the arrays: the
+    #: landing draws one tile per task and `tasks.list` is answered on every
+    #: route mount, so a tile that had to open the definition to letter itself
+    #: would cost a round trip each.
+    trials: int
+    stages: int
+    selection_mode: str
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -69,6 +76,9 @@ class TaskEntry:
             "path": self.path,
             "editedAt": self.edited_at,
             "problems": self.problems,
+            "trials": self.trials,
+            "stages": self.stages,
+            "selectionMode": self.selection_mode,
         }
 
 
@@ -151,6 +161,9 @@ class TaskStore:
                     path=str(self.sketch_dir(definition)),
                     edited_at=edited_at,
                     problems=len(validate(definition)),
+                    trials=definition.trial_count,
+                    stages=definition.stage_count,
+                    selection_mode=definition.selection_mode,
                     # `label` is what `impact_of` renders; the name is it.
                 ).to_json()
                 | {"label": definition.name}

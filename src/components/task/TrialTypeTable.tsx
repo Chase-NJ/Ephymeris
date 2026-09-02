@@ -1,10 +1,11 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowRight, Layers, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 import type { ReactNode } from "react";
 
 import { Dropdown, type DropdownOption } from "@/components/common/Dropdown";
-import { NumberInput } from "@/components/common/controls";
+import { NumberInput, Segmented } from "@/components/common/controls";
+import { colorForIndex } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
 import { blankTrial, channelLabel, diagnosticsAt } from "@/lib/taskdef/types";
 import type { SelectionMode, TaskDiagnostic, TrialTypeDef } from "@/lib/taskdef/types";
@@ -48,7 +49,7 @@ import type { StrobeVocabulary } from "@/lib/ws/protocol";
  *                             part of the task's record and changing it is a
  *                             task edit.
  *
- * The presets seed the row label empty for that reason: "odor 1 (sandalwood)"
+ * A new row arrives with an empty label for that reason: "odor 1 (sandalwood)"
  * was a claim about one bench's bottles baked into a shipped constant, which is
  * exactly what this table exists to stop. Empty is a starting point, not a
  * finished row — REQUIRED (TSK110), because the name is the only handle every
@@ -64,6 +65,7 @@ export function TrialTypeTable({
   vocabulary,
   diagnostics,
   onChange,
+  onModeChange,
 }: {
   trials: TrialTypeDef[];
   mode: SelectionMode;
@@ -71,6 +73,14 @@ export function TrialTypeTable({
   vocabulary: StrobeVocabulary | null;
   diagnostics: TaskDiagnostic[];
   onChange: (next: TrialTypeDef[]) => void;
+  /**
+   * How the next trial is chosen. It lives on THIS header rather than in a
+   * details panel because the choice is visible here and nowhere else: pool
+   * mode grows a weight column on every row, and anti-bias hides it. Until the
+   * presets were retired the mode arrived pre-set and had no editor at all,
+   * which made a pool task unbuildable from scratch.
+   */
+  onModeChange: (next: SelectionMode) => void;
 }) {
   /**
    * Channels by kind, in DOCUMENT order — the order the firmware indexes.
@@ -151,7 +161,8 @@ export function TrialTypeTable({
   return (
     <div className="hud flex min-h-0 flex-col rounded-md">
       <header className="flex items-center justify-between gap-3 border-b border-halo px-3.5 py-2.5">
-        <div className="min-w-0">
+        <Layers size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
+        <div className="min-w-0 flex-1">
           <div className="text-[12px] font-medium text-starlight">Trial types</div>
           <div className="mt-0.5 text-[10px] text-static/70">
             {mode === "pool"
@@ -159,14 +170,25 @@ export function TrialTypeTable({
               : "Presented by anti-bias selection: a side is drawn against the animal's recent bias, then a type from that side."}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={add}
-          className="flex shrink-0 items-center gap-1 rounded-md border border-halo px-2.5 py-1 text-[10px] text-static transition-colors hover:border-pulsar hover:text-starlight"
-        >
-          <Plus size={11} strokeWidth={1.75} />
-          Add trial type
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Segmented<SelectionMode>
+            label="How the next trial is chosen"
+            value={mode}
+            options={[
+              { value: "antibias", label: "Anti-bias" },
+              { value: "pool", label: "Pool" },
+            ]}
+            onChange={onModeChange}
+          />
+          <button
+            type="button"
+            onClick={add}
+            className="flex shrink-0 items-center gap-1 rounded-md border border-halo px-2.5 py-1 text-[10px] text-static transition-colors hover:border-pulsar hover:text-starlight"
+          >
+            <Plus size={11} strokeWidth={1.75} />
+            Add trial type
+          </button>
+        </div>
       </header>
 
       <div className="scrollbar-none flex min-h-0 flex-col gap-2 overflow-y-auto p-2.5">
@@ -204,7 +226,14 @@ export function TrialTypeTable({
                 className="group rounded-md border border-halo/60 bg-nebula/30 px-3 py-2.5"
               >
                 <div className="mb-2 flex items-center gap-2">
-                  <span className="flex size-[18px] shrink-0 items-center justify-center rounded-sm bg-halo/50 font-mono text-[9px] text-static">
+                  {/* The slot number in the condition's own colour — the series
+                      slot its glyph node, its state-machine tick and its
+                      Analytics curve all wear. One colour per condition,
+                      everywhere the condition appears. */}
+                  <span
+                    className="flex size-[18px] shrink-0 items-center justify-center rounded-sm font-mono text-[9px] font-medium text-void"
+                    style={{ background: colorForIndex(index) }}
+                  >
                     {index + 1}
                   </span>
                   <input

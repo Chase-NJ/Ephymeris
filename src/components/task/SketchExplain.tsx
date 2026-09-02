@@ -1,7 +1,12 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
 import type { ConfigField, TaskProfile } from "@/lib/sessions/types";
-import { nodesGovernedBy, type TaskGraphModel } from "@/lib/tasks/topology";
+import {
+  nodesGovernedBy,
+  nodesGovernedByTab,
+  tabOf,
+  type TaskGraphModel,
+} from "@/lib/tasks/topology";
 
 /**
  * What the parameter under the cursor actually means — the wizard's
@@ -170,14 +175,20 @@ function explainField(
   return { title: field.label, kicker: kicker || null, body };
 }
 
-/** A hovered tile: which moment of the trial this group is. */
+/** A hovered pill: which moment of the trial this TAB is.
+ *
+ *  A tab, not a group: the rail folds a few groups into one pill
+ *  (`topology.tabOf`) and this is what the pill's hover reports. A field's own
+ *  explanation above stays on the exact group, because a correction field does
+ *  not govern the states `num_trials` does. */
 function explainGroup(
-  group: string,
+  tab: string,
   profile: TaskProfile,
   model: TaskGraphModel,
 ): Entry {
-  const fields = profile.config.filter((f) => f.group === group);
-  const governed = nodesGovernedBy(model, group).map((n) => n.label);
+  const group = tab;
+  const fields = profile.config.filter((f) => f.group && tabOf(f.group) === tab);
+  const governed = nodesGovernedByTab(model, tab).map((n) => n.label);
   const body: string[] = [];
   if (governed.length > 0) {
     const shown = governed.slice(0, 4);

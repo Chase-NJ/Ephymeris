@@ -131,3 +131,7 @@ export function overriddenKeys(
     .map((f) => f.metadataKey)
     .filter((key) => key in config && !Object.is(config[key], base[key]));
 }
+
+/** One row of a `grid` control — re-exported beside `Control` so Debug Mode's
+ *  channel grid and Prime read the same shape from the same place. */
+export type { ControlChannel } from "@/lib/ws/protocol";

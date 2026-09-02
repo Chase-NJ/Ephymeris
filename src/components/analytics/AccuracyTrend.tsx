@@ -1,3 +1,4 @@
+import { Target } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 
 import { ChartDots, type Dot } from "@/components/charts/ChartDots";
@@ -158,6 +159,7 @@ function TrendBody({
     <Panel>
       <div ref={ref}>
         <ChartFrame
+          icon={Target}
           title={
             <span>
               Accuracy

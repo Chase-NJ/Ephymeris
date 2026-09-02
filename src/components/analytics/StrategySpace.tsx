@@ -1,3 +1,4 @@
+import { Compass } from "lucide-react";
 import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
 
@@ -92,6 +93,7 @@ export function StrategySpace({
   return (
     <StrategyPanel>
       <ChartFrame
+        icon={Compass}
         title={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>

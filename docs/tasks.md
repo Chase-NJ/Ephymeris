@@ -1027,8 +1027,20 @@ These never error, and are the ones to know about when something looks wrong but
 
 ## 10. The Task screen
 
-`/task` is the **task-profile editor**. It replaced the sketch *viewer*: a
-viewer could show what a sketch declared, and this decides it.
+`/task` is the **landing** — this rig's saved tasks as a card grid, with the
+Strobes door (§3.3, `settings.md` §5.0) and the Walkthrough door beneath it. The
+**editor** is behind it at `/task/new` and `/task/:taskId`; it replaced the
+sketch *viewer*, because a viewer could show what a sketch declared and this
+decides it.
+
+The split happened when the presets went (§11.4). While a task was born from one
+of five starting points, the library and those five were one rail beside the
+editor and touching either opened something. Built from scratch there is no menu
+to pick from, and the first question became *what have I got* — which a text
+rail answered badly and a grid of cards answers at a glance. Each card carries
+a **glyph**: one dot per condition in the six-colour series ramp (`data.md`
+§7.1), one ring per shaping stage, and the arrangement saying which selection
+mode — so a shelf is scannable before a name is read.
 
 > [!IMPORTANT]
 > **The Dashboard's HUD layout survives, and so does its point** (`dashboard.md`
@@ -1040,15 +1052,19 @@ viewer could show what a sketch declared, and this decides it.
 
 | Region | Contents |
 |---|---|
-| **Left** | `TaskLibrary` — this rig's profiles grouped by category, each carrying a problem count; beneath it the five presets a new task starts from, and `LibraryStatusNote`. The library note is kept from the viewer because a profile is generated *from* the bundled root sketch, so "the install is damaged" is the one thing that stops a task existing at all — and with the sketch list gone this is the only place it shows |
-| **Centre** | The derived **state machine** (`SketchStateMachine`, unchanged), then `TrialTypeTable`, then `StageRamp` |
-| **Right** | `ParameterInspector`, unchanged from the viewer — group pills, one group's fields, a Pulsar dot on every group this profile pins |
+| **Left** | The **section spine**: the way back to the landing, this task's glyph and name, then scroll targets for the four editors with their counts (`Conditions 4`, `Shaping ramp 5`), and the problem count at the foot. It was the library rail; the list moved to the landing, because *what have I got* and *what is this one* are different questions |
+| **Centre** | `TaskDetails` (category, `legacyNames`, notes — §11.4), the derived **state machine** (`SketchStateMachine`), `TrialTypeTable`, then `StageRamp` |
+| **Right** | `ParameterInspector` — group pills, one group's fields, a Pulsar dot on every group this profile pins |
+
+`LibraryStatusNote` is on the **landing**. A profile is generated *from* the
+bundled root sketch, so "the install is damaged" is the one thing that stops a
+task existing at all, and it belongs where the absence would be noticed.
 
 **Every redraw comes from `tasks.preview`.** The state machine is derived from
 the profile the *current* definition compiles to, not from a saved file, so
 adding a trial type grows an arm before the save. That same round trip is what
-validates, because most of the eight rules depend on the wiring and the frontend
-holds no copy of it.
+validates, because most of the eleven rules depend on the wiring and the
+frontend holds no copy of it.
 
 ### 10.1 The trial table
 
@@ -1126,6 +1142,40 @@ a different thing and its editor went with the sketch viewer.
 > **inert** rather than wrong: `defaultConfig` iterates the *profile's* fields,
 > so a key no sketch declares cannot reach a `START` line. They are dead weight
 > in the store, not a hazard — but nothing can currently clear them.
+
+### 10.5 The walkthrough
+
+`TaskGuide` — a **spotlight over the editor's own controls**, not a wizard. It
+dims the page, cuts a hole around the thing the current step is about, and says
+what to do there; the operator edits the real table underneath and the step
+ticks itself off when the *document* satisfies it.
+
+A wizard was the obvious alternative and is the wrong one twice over. It would
+be a second form over the same document — two places that have to agree about
+what a trial type is, what clamps, and which values are legal, and the one used
+twice a year is the one that drifts. And it is the shape this app already
+retired once, when the five-step rig setup wizard went (`settings.md` §1).
+
+> [!IMPORTANT]
+> **Nothing is blocked.** The scrim is `pointer-events-none` and only the step
+> card takes clicks, so every control on the page stays live at every moment —
+> including the ones the spotlight is not on. That is the whole reason to prefer
+> a coach: it can be ignored, worked around, or done out of order, and it can
+> never trap someone in a step they cannot satisfy. Each step's `done` is a
+> statement about the definition, never about whether anyone clicked Next, so
+> working ahead ticks the steps behind you.
+
+Six steps — name, conditions, selection mode, ramp, parameters, save — of which
+four are `optional` and never gate Next. The hole is **measured, never
+modelled**: `getBoundingClientRect` on a ref the editor hands down, re-measured
+on scroll (capturing, at the window: the scroller is whichever ancestor has
+overflow and this page has two), on resize, and on anything the `ResizeObserver`
+sees. A remembered rectangle drifts off its target within one wheel click.
+
+It appears **unasked exactly once**: `/task/new` on a rig with no saved tasks,
+unless `ephymeris:taskGuideSeen` is set. The landing's Walkthrough door
+(`/task/new?guide=1`) is the only way back in, and it ignores both conditions —
+somebody asking for it has answered the question the conditions ask.
 
 ---
 
@@ -1221,17 +1271,42 @@ the substance, which belongs to the rig's wiring.
 A definition with diagnostics **still saves**. A half-finished task must be
 savable; the gate is flashing, not saving.
 
-### 11.4 Presets
+### 11.4 Building one from scratch, and `legacyNames`
 
-Five, one per sketch the lab ran before the firmware was unified. They differed
-by one substantive line apiece, so what they really were is five sets of
-*numbers* over one task — which is exactly what a preset is.
+**There are no presets.** Five shipped for a while — one per sketch the lab ran
+before the firmware was unified, since those differed by one substantive line
+apiece and so really were five sets of *numbers* over one task. They were
+retired with `tasks.presets` / `tasks.fromPreset`, because the thing a preset
+seeded that mattered most was a **condition's name**, and a name is the one
+value the trial table cannot derive: "go right" is a restatement of the row,
+"sandalwood" is a claim about one bench's bottles, and every rig's odor lines
+carry something different. A preset that guessed it guessed wrong for everyone
+but its author, silently. A task is built from scratch now, and `/task/new` on a
+rig with no tasks opens a walkthrough that points at each step in turn.
 
-**A preset is not a task.** Instantiating one yields a definition the operator
-owns, so editing a preset in a later build cannot reach back into a study
-already running on it. Each carries its own `legacyNames`, because the name a
-historical run recorded is a fact about *that* task: `Shape - R` belongs to the
-go-right shaping preset and nowhere else.
+The five definitions survive as **test data** (`sidecar/tests/fixtures/
+task_definitions.py`): they are the only real task definitions in existence,
+every value transcribed from the sketch it replaced, so a generator or validator
+change that breaks one is breaking something the lab actually ran.
+
+**`legacyNames` is what a preset supplied that nothing else could**, and it is
+now a field on the Task tab's Details card. A pre-Ephymeris archive records
+`sketch` as a human label, and the archive walk (`data.md` §8.1) resolves that to
+a task by matching this list — so a name typed here is what makes those runs
+decode against the profile that actually ran them instead of falling through to
+inference. Declared and never guessed: matching `Shape - L` to a task by
+resemblance is a guess, and a wrong guess decodes real data with the wrong
+strobe map.
+
+The names the lab's own archives carry, for anyone re-declaring them:
+
+| Task | `legacyNames` |
+|---|---|
+| 2-odor discrimination | `GRGL_2-Odor` |
+| 2-odor discrimination, eased | `GRGL_2-Odor_EZ` |
+| Shaping, go-right | `shaping_GR`, `Shape - R` |
+| Shaping, go-left | `shaping_GL`, `Shape - L` |
+| Shaping, eased | `shaping_GR_EZ`, `shaping_GL_EZ` |
 
 ### 11.5 Regeneration
 

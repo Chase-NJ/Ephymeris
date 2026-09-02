@@ -8,12 +8,13 @@ import { Cohorts } from "./routes/Cohorts";
 import { Dashboard } from "./routes/Dashboard";
 import { DebugMode } from "./routes/DebugMode";
 import { MissionControl } from "./routes/MissionControl";
-import { RigStrobes } from "./routes/RigStrobes";
 import { RigWiring } from "./routes/RigWiring";
 import { SessionConfig } from "./routes/SessionConfig";
 import { SessionMapping } from "./routes/SessionMapping";
 import { Settings } from "./routes/Settings";
 import { Task } from "./routes/Task";
+import { TaskEditor } from "./routes/TaskEditor";
+import { TaskStrobes } from "./routes/TaskStrobes";
 
 export default function App() {
   return (
@@ -26,10 +27,23 @@ export default function App() {
         <Route path="/cohorts/new" element={<CohortEditor />} />
         <Route path="/cohorts/:id" element={<CohortEditor />} />
         <Route path="/debug" element={<DebugMode />} />
-        {/* Task is the task-profile editor (`tasks.md` §11): the trial table,
-            the ramp, the parameters. Saving one generates a sketch that
-            discovery finds, so `port.flash` takes it like any other. */}
+        {/* Task is a landing over an editor. `/task` lists this rig's saved
+            profiles; the editor (`tasks.md` §11 — the trial table, the ramp,
+            the parameters) opens on one of them, or on nothing at `/task/new`.
+            Saving generates a sketch that discovery finds, so `port.flash`
+            takes it like any other.
+
+            `/task/new` is declared BEFORE `/task/:taskId` for readability
+            only — the router ranks a static segment above a dynamic one
+            regardless of order, so there is no task whose id shadows it. */}
         <Route path="/task" element={<Task />} />
+        {/* The strobe vocabulary, read-only. A Task page and not a Rig one: a
+            pin is compile-time input to the firmware a task generates, while a
+            code is what a condition is NAMED by, and the trial table's onset
+            picker one page away is the only thing that reads this table. */}
+        <Route path="/task/strobes" element={<TaskStrobes />} />
+        <Route path="/task/new" element={<TaskEditor />} />
+        <Route path="/task/:taskId" element={<TaskEditor />} />
         {/* Rig wiring is a subpage of the Rig screen — box↔board and
             channel↔pin are different wirings but one subject, so the editor
             lives at `/config/wiring` behind the landing's Wiring door. Old
@@ -46,10 +60,7 @@ export default function App() {
             desktop app never shows its URL. `routes/Config.tsx` likewise. */}
         <Route path="/config" element={<Config />} />
         <Route path="/config/wiring" element={<RigWiring />} />
-        {/* Strobes sit beside wiring, not under Task: a code is a fact about
-            what this hardware can report, true of every task on it. Which
-            codes a task DECLARES is decided by its trial table. */}
-        <Route path="/config/strobes" element={<RigStrobes />} />
+        <Route path="/config/strobes" element={<Navigate to="/task/strobes" replace />} />
         <Route path="/settings" element={<Settings />} />
         {/* Two-step session setup (`dashboard.md` §7.2–§4); the runner
             takes over at /session/:id/control. */}

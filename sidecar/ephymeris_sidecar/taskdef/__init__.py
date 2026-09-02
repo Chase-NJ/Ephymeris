@@ -10,7 +10,6 @@ the session flow, `tasks.getProfile` and Analytics need no special case at all.
     fields.py    the parameter surface, declared once instead of per sketch
     validate.py  everything wrong with one, located
     generate.py  definition + wiring -> .ino, TaskPins.h, TaskTrials.h, task.json
-    presets.py   the five tasks the lab ran, as starting points
     store.py     <data_dir>/tasks/, and regeneration on a wiring change
 
 The split that matters: what fits on a `START` line stays on the wire, so one

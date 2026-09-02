@@ -4,7 +4,7 @@
 
 > **What this is** · The Cohort / Animal / Group data model and everything the Cohorts tab does with it.
 >
-> **Owns** · The data model and its validation · the cohort browser and procedural icon · the create/edit flow · Auto-Balance grouping · data-folder resolution · archive and delete semantics.
+> **Owns** · The data model and its validation · the 3D cohort browser and procedural worlds · the create/edit flow · Auto-Balance grouping · data-folder resolution · archive and delete semantics.
 >
 > **Read with** · [data.md](data.md) (the SQLite schema, and the folder written beneath) · [dashboard.md](dashboard.md) (what a session does with a cohort) · [settings.md](settings.md) (box bindings, which the editor gates on).
 
@@ -122,36 +122,76 @@ The schema has grown well past the three cohort tables. **The full schema, the m
 
 ## 4. The cohort browser
 
-Route `/cohorts`.
+Route `/cohorts`. **A sky of worlds, not a card grid.**
 
-- **A responsive card grid, not a list** — "visualizing and selecting" calls for something you scan visually, not read top to bottom.
-- **Card material:** `Nebula` surface, `Halo` hairline border, standard `md` radius.
-- **Card contents:** the procedural icon, the cohort name in Inter (**not** Space Grotesk — that face stays confined to section headers), and a small stat line in JetBrains Mono (animal count, group count if > 1).
-- **Motion:** spring-based hover/press; the icon's twinkle subtly accelerates on hover.
-- **Search and sort:** a text filter and a name/recency sort above the grid.
-- **Archived cohorts are hidden by default**, behind a *Show archived* toggle. Restore and permanent-delete live only there.
+It was a responsive card grid for a long time, on the sound argument that "visualizing and selecting" calls for something you scan rather than read. The grid did that and was inert, while the app already owned a full 3D constellation stage that every route outside the rig views mounted as dead wallpaper. So the browser became the stage: one **planet per cohort**, laid out in a field you pan across, with that cohort's home cages orbiting it as ships.
 
-**The "+ New Cohort" tile** is always first in the grid and visually distinct rather than just another card: a dashed `Halo` border instead of solid, and a single dim, slowly pulsing star instead of a full generated system — *a nebula that hasn't collapsed into a star system yet*. Hover brightens the pulse.
+- **The browser IS this route's constellation.** It mounts `CohortSky` instead of `SkyBackdrop`, the way the Dashboard mounts `DebugConstellation`. That keeps the invariant that every route mounts *some* constellation, and so keeps the shared canvas from ever being released.
+- **Everything a star does, a planet does** — by construction, not by reimplementation. A cohort is a `SceneNode` whose `body` is a world, so the hover swell, the pointer cursor, the sweeping reticle, the nameplate, the arrival rings, the eased flight on click and click-away-to-deselect are all `ConstellationScene`'s.
+- **Search dims; it does not filter.** A non-matching world darkens *in place* and stops being clickable; it does not leave and let its neighbours close the gap. Spatial memory is the entire return on spending a layout — once you know where a cohort lives, it stays there while you type.
+- **Sort decides slot order.** It is the one control that genuinely rearranges the sky, which is right: changing it is a deliberate act, unlike a keystroke.
+- **Focusing a world docks a panel** carrying what the cohort is (animals, cages, groups), the way into it, and the appearance editor (§5.1).
+- **Archived cohorts stay a 2D list** behind the *Show archived* toggle. That is a recovery surface rather than a browsing one, and permanent delete is only reachable there (§9).
+
+**"+ New Cohort" is a protoplanetary disc** in the innermost slot — dust bands around one slow pulsing point, in `Halo`, with no surface and no atmosphere. This doc described exactly that shape back when the affordance was a dashed tile: *a nebula that hasn't collapsed into a star system yet*. It is drawn rather than described now. Deliberately not a dim planet, which would read as a cohort somebody had already made and left dark.
+
+> [!CAUTION]
+> **The layout is sized against `Scene.tsx`'s geometry, and the two move together.** A node's `radius` drives the hit sphere (x4), the reticle (x2.1), the arrival rings (x2.6-4.8), the orbit reach (x2.6+) and — the one that bit — the **nameplate drop (x3.5)**. At the radius range this first shipped with, a big world's plate hung far enough below it to land under a *different* planet and label it. `radiusFor` and `cohortSky.ts`'s span are tuned against each other; changing one alone re-opens that.
 
 ---
 
-## 5. Procedural icon generation
+## 5. Procedural world generation
 
-Each cohort's icon is **derived, not stored** — computed client-side from the cohort's `id` every time it renders. Nothing about it needs a database column beyond the id that already exists.
+A cohort's world is **derived, not stored**, unless the operator says otherwise. With nothing stored, all four fields come from a hash of the cohort's `id` — so every cohort that has ever existed already has a stable, distinct planet, and the column backing this carries no data for almost all of them.
+
+This replaced a procedural *constellation* icon, which followed the same derive-from-`id` contract. What changed is only what gets drawn.
+
+> [!CAUTION]
+> **A planet has to mean something.** [dashboard.md §2.2](dashboard.md) forbids gradients and glow, and there was exactly one sanctioned exception before this: a star, allowed because its colour *is* its temperature *is* an animal's pooled accuracy. This is the second, and it is fenced the same way — three of a world's four dimensions are readings, and the exception lives only in `planetSurface.ts`, `PlanetarySurface.tsx` and the browser's scene. Nothing in the 2D chrome gains a gradient or a glow, `PlanetDisc` included.
+
+| Reads as | From | |
+|---|---|---|
+| **Size** | `animalCount` | A bigger colony is a bigger world. The same move `starSurface.sizeFor` makes, where temperature sets size too so the two readings agree instead of competing |
+| **Spin rate + day-side brightness** | `updatedAt` | A cohort worked on today turns visibly and catches the light; a dormant one barely moves. Never to zero — a frozen world beside turning ones reads as a rendering fault |
+| **Ships in orbit** | home cages | One craft per cage, coasting. Already the app's metaphor: `CageAssignment` calls itself *crewing the fleet the sky will draw*. They coast rather than burn because "active" means a crew is running, which is a rig fact and not a library one |
+| **Type, hue, ring** | the operator | §5.1 |
+
+Rules the generation keeps from the icon it replaced:
 
 1. Seed a small deterministic PRNG (`mulberry32`) from the cohort `id`.
-2. **Node count** = number of animals, capped at 8. Above 8, render a denser "cluster" glyph rather than placing nodes individually.
-3. **Layout:** nodes at seeded angle + radius within a bounded circle, angularly spaced (`360° / nodeCount`) plus small seeded jitter so it doesn't look mechanically even.
-4. **Connections:** each node links to its nearest neighbour(s), as thin `Pulsar` lines at reduced opacity — the exact line treatment the hardware status widget uses, so the two read as one visual family.
-5. **Colour:** primarily `Pulsar`, with seeded per-node size and opacity variation. **Exactly one node** per icon renders in `Ion` — a single hero star for visual pop without introducing a hue outside the palette.
-6. **No glow, no gradients.** Flat matte fills only.
-7. **Animation:** gentle independent twinkle per node, falling back to a static render under reduced motion.
+2. **The `rand()` call order is the contract.** Reordering it silently re-rolls every untouched cohort in the lab, with no error anywhere. Add new fields at the *end*. `appearance.test.ts` pins the output for one id against literal values for exactly this reason.
+3. **A ring lands on about a quarter of worlds.** A mark most things carry stops distinguishing anything, which is the only job a ring has here.
+4. **Saturation and lightness belong to the TYPE, not the hue.** That is what keeps an ice world pale and a lava world dark at every hue — so a type survives being recoloured, and one slider cannot reach the saturated primaries a free HSL picker would.
+5. **Animation stops under reduced motion** rather than anything disappearing: the spin, the band drift and the lava pulse all freeze by not advancing `uTime`, and the world stays fully drawn.
+
+**Topography is lit, not painted.** The surface perturbs its normal by the height field's gradient before lighting (finite-difference bump mapping in object space, taken into world space with `modelMatrix` — which three prepends to the *vertex* stage only, so the fragment shader declares it itself), so a slope facing the light is bright and the slope behind it is in shadow. Without that a height field is a map, not terrain, and every rocky world came out one flat tan. The ground is a **four-stop ramp** (deep, low, high, peak) with a second `mineral` hue laid down in slow patches — one colour family across a whole world is paint; two is geology.
+
+**A ring is a plane plus a field.** The plane carries structure (a handful of annuli with real gaps), grain (noise along the angle as well as the radius) and the planet's shadow cast across its far side; a few hundred additive point sprites scattered through the same annuli with a little vertical spread give it the thickness a plane cannot have. The grains are small on purpose — sized like the backdrop's stars, four hundred of them summed to a white bar and the ring vanished under its own debris.
+
+The surface itself is one shader with five branches — fBm elevation with polar caps (rocky), domain-warped latitude bands with a single storm (gas), low contrast with fracture ridges (ice), an fBm *threshold* into sea and land with foam at the cut (ocean), dark crust with emissive cracks that breathe (lava) — over a soft terminator whose night side is tinted rather than black, because a black hemisphere on a dark sky is a hole punched in the scene. The value noise and fBm are lifted out of the star shader into one shared `GLSL_NOISE` chunk; two implementations would drift, and the drift would read as one of the two being wrong without saying which.
+
+> [!CAUTION]
+> **The planet must not use `meshStandardMaterial`.** The scene's only real light is the `pointLight` inside `OrbiterBelt`, which exists so ship hulls get a day and a night side as they orbit. A standard-material planet would catch it and be lit by its own fleet — brightness would then track cage count and contradict the table above. The terminator comes from a `uLight` uniform instead.
+
+### 5.1 What the operator chooses, and where
+
+Four fields — `type` (rocky / gas giant / ice / ocean / lava), `hue`, `ring` and a re-roll `seed` — stored as one nullable JSON column on `cohorts`. **Null is the normal state** and means "derive it".
+
+**`seed` shifts the noise field and nothing else.** A re-roll changes a world's weather, never its type, hue or size. That split is what lets someone hunt for a pattern they like without losing the identity the room already recognises.
+
+The editor is **docked beside the focused planet**, not in the cohort editor: you are tuning the thing you are looking at, at the size you will see it, and a hue chosen against a 64px preview is a hue chosen for a different object. Edits are live — the uniforms are mutated per frame rather than rebuilt, so a hue drag never recompiles a material — and unsaved until Save, because a drag is not a decision and writing per slider pixel would put a `cohorts.update` and a broadcast behind each one. Reset writes an explicit `null`, which is the only way back to the derived world.
+
+### 5.2 `PlanetDisc` — the same world at icon scale
+
+A flat SVG disc drawn from the same record: hue, banding, a hard terminator, a hairline ring. It stands in wherever a cohort appears small — the archived list (32), the session-setup picker (40), the analytics rail (48), the cohort editor's header (64).
+
+It exists for continuity and nothing else. A cohort that is a banded amber world in the browser and an unrelated star cluster in the session picker has two identities, and neither reminds you of the other. No canvas and no WebGL: a second GL context per list row would be absurd.
 
 > [!NOTE]
-> **Group membership is deliberately not encoded.** The icon stays a pure "how many animals" glyph, with group count left to the text stat line. Making it also convey grouping would turn a fun identifier into a dense infographic.
+> **The `layoutId` shared element is gone.** The grid card's icon used to fly into the cohort editor's header on a Framer layout transition. A card is a mesh in a WebGL scene now, and a layout transition cannot run from a mesh to a DOM node. The continuity is the camera instead — clicking a world flies to it and lays the arrival rings, and the header shows the same world at the other end.
 
-> [!TIP]
-> This is the **second** of the three constellations in the app, and its link rule is nearest-neighbour — unlike the status widget's declared adjacency and unlike Mission Control's asterism. See [dashboard.md §1.7](dashboard.md#17-the-signature-element--the-constellation-status-widget).
+> [!NOTE]
+> **Group membership is still not encoded, and cages now are.** The old rule was that making the icon convey grouping too would turn a fun identifier into a dense infographic — right, for 56px of flat SVG where a second reading crowded the first. The browser is the whole viewport, the ships are separate objects rather than marks on a disc, and the fleet is something the operator crews by hand one screen away. Run *groups* remain text in the panel.
 
 ---
 

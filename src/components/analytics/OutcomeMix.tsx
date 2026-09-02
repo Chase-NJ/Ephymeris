@@ -1,3 +1,4 @@
+import { ChartPie } from "lucide-react";
 import { motion } from "framer-motion";
 import { useMemo } from "react";
 
@@ -72,6 +73,7 @@ function MixBody({ summary }: { summary: AnalyticsSummary }) {
   return (
     <div className="surface rounded-md p-4" ref={ref}>
       <ChartFrame
+        icon={ChartPie}
         title={
           <span>
             Outcome mix

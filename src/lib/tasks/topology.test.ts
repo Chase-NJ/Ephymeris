@@ -14,7 +14,12 @@ import type { TaskProfile } from "@/lib/ws/protocol";
 import {
   armsCongruent,
   correctWellOf,
+  groupsOfTab,
   liveConditionId,
+  nodesGovernedBy,
+  nodesGovernedByTab,
+  orderGroups,
+  tabOf,
   taskGraph,
   type Condition,
 } from "./topology";
@@ -311,5 +316,81 @@ describe("conditions", () => {
   it("carries a 1-based index matching the trial table's slot order", () => {
     const conditions: Condition[] = conditionsOf(3);
     expect(conditions.map((c) => c.index)).toEqual([1, 2, 3]);
+  });
+});
+
+// --- the rail's fold -------------------------------------------------------
+
+/**
+ * `tabOf` is presentation, and it has to STAY presentation.
+ *
+ * The temptation it exists to resist is re-filing these fields in `fields.py`,
+ * which is two lines and would be wrong: `group` rides in `ConfigField.to_json`
+ * and therefore inside `profile_hash`, so every regenerated `task.json` would
+ * land under a new hash and each task's recorded runs would stop being
+ * comparable to its future ones — with no error anywhere.
+ */
+describe("parameter tabs", () => {
+  it("folds correction trials and reward volume under Session", () => {
+    expect(tabOf("Correction trials")).toBe("Session");
+    expect(tabOf("Reward volume")).toBe("Session");
+  });
+
+  it("leaves every other group as its own tab", () => {
+    for (const group of [
+      "Session",
+      "Trial pool",
+      "Trial timing",
+      "Holds & windows",
+      "Stage 3",
+      "Abstention penalty",
+      "Anti-bias selection",
+      "Something a future profile invents",
+    ]) {
+      expect(tabOf(group)).toBe(group);
+    }
+  });
+
+  it("orders a folded tab's members the way the trial takes them", () => {
+    // Declaration order is the profile's; the rail renders them stacked, and
+    // "the session, then the correction budget, then the volumes" is the order
+    // they take effect in — which is what GROUP_ORDER already encodes.
+    const declared = ["Reward volume", "Correction trials", "Session", "Trial timing"];
+    expect(groupsOfTab("Session", declared)).toEqual([
+      "Session",
+      "Correction trials",
+      "Reward volume",
+    ]);
+    expect(groupsOfTab("Trial timing", declared)).toEqual(["Trial timing"]);
+  });
+
+  it("keeps Session first once the folded names are ordered as tabs", () => {
+    const tabs = orderGroups(
+      new Set(
+        ["Reward volume", "Anti-bias selection", "Correction trials", "Trial timing"].map(
+          tabOf,
+        ),
+      ),
+    );
+    expect(tabs).toEqual(["Session", "Trial timing", "Anti-bias selection"]);
+  });
+
+  it("lights a folded tab from any of the groups it swallowed", () => {
+    // The machine→rail half of the highlight link. `nodesGovernedBy` stays
+    // EXACT — the explain tile asks about one field, and a correction field does
+    // not govern what `num_trials` governs — so the widening is its own
+    // function rather than a looser comparison inside that one.
+    const model = taskGraph(profile(2));
+    const byTab = nodesGovernedByTab(model, "Session").map((n) => n.id);
+    const correction = nodesGovernedBy(model, "Correction trials").map((n) => n.id);
+    const session = nodesGovernedBy(model, "Session").map((n) => n.id);
+
+    expect(correction.length).toBeGreaterThan(0);
+    expect(session.length).toBeGreaterThan(0);
+    for (const id of [...correction, ...session]) expect(byTab).toContain(id);
+    // And the exact function has not quietly become the folded one: at least
+    // one correction-governed state is NOT a Session-governed state.
+    expect(correction.some((id) => !session.includes(id))).toBe(true);
+    expect(byTab.length).toBeGreaterThan(session.length);
   });
 });

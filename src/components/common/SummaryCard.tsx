@@ -31,7 +31,9 @@ export function SummaryCard({
 }: {
   icon: LucideIcon;
   label: string;
-  status: string;
+  /** One live fact. A node rather than a string so it can carry its state's
+   *  colour — the Boxes tile's health dots (`HudTile` makes the same call). */
+  status: React.ReactNode;
   onOpen?: () => void;
   empty: string | null;
   children?: React.ReactNode;

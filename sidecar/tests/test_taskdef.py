@@ -16,7 +16,8 @@ import json
 import pytest
 
 from ephymeris_sidecar.rig import registry
-from ephymeris_sidecar.taskdef import generate, presets, store
+from ephymeris_sidecar.taskdef import generate, store
+from tests.fixtures import task_definitions as presets
 from ephymeris_sidecar.taskdef.model import (
     StageRow,
     TaskDefinition,
@@ -66,6 +67,35 @@ def test_an_id_that_would_not_survive_being_a_filename_is_refused():
             TaskDefinition.from_json({"id": bad, "name": "Fine"})
 
 
+def test_an_unfinished_trial_row_parses_and_is_reported_rather_than_refused():
+    """A half-filled row is an incomplete TASK, not a non-definition.
+
+    It used to be refused at parse time, which meant `tasks.preview` failed
+    outright the moment "Add trial type" was pressed: the state machine, the
+    parameter rail and every other diagnostic left the screen until both
+    dropdowns were filled. Nothing caught it while every task started from a
+    preset with its rows already filled.
+    """
+    definition = TaskDefinition.from_json({
+        "id": "fresh",
+        "name": "Fresh",
+        "trials": [
+            {"odorChannel": "", "onsetStrobe": "", "isGo": True, "label": ""}
+        ],
+    })
+    assert definition.trials[0].odor_channel == ""
+
+    found = {(d.code, d.location) for d in validate(definition)}
+    assert ("TSK101", "trials[0].odorChannel") in found
+    assert ("TSK104", "trials[0].onsetStrobe") in found
+    # And the empty row says "not filled in yet" rather than naming '' as a
+    # channel this rig has lost — a different thing to do about it.
+    message = next(
+        d.message for d in validate(definition) if d.location == "trials[0].odorChannel"
+    )
+    assert "no stimulus channel yet" in message
+
+
 def test_a_name_that_would_not_survive_being_a_sketch_folder_is_refused():
     # It becomes `<name>/<name>.ino`, which is arduino-cli's own rule.
     for bad in ("../evil", "trailing/slash", "", "x" * 60):
@@ -110,16 +140,6 @@ def test_every_preset_fits_the_start_line():
         config = {f.metadata_key: f.default for f in profile.config}
         line = with_trial_seed(build_start_command(profile, config), 2147483646)
         assert len(line) <= START_LINE_MAX, (preset["id"], len(line))
-
-
-def test_the_retired_sketch_names_all_survive_on_some_preset():
-    """Every name the lab's archives record must still resolve, or those runs
-    stop decoding in Analytics — silently, because a missing profile is treated
-    as data rather than as an error."""
-    declared = {n for p in presets.PRESETS for n in p["definition"].legacy_names}
-    for name in ("GRGL_2-Odor", "GRGL_2-Odor_EZ", "shaping_GR", "shaping_GL",
-                 "Shape - R", "Shape - L"):
-        assert name in declared, name
 
 
 def test_a_preset_is_a_starting_point_not_a_task():

@@ -1,3 +1,4 @@
+import { PawPrint } from "lucide-react";
 import { useMemo } from "react";
 
 import { DrawOn } from "@/components/charts/DrawOn";
@@ -64,7 +65,10 @@ export function AnimalRail({
         scroll ? "lg:absolute lg:inset-x-0 lg:top-0 lg:max-h-full" : ""
       }`}
     >
-      <span className="shrink-0 text-[11px] text-static">Animals</span>
+      <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-static">
+        <PawPrint size={13} strokeWidth={1.75} className="text-pulsar" />
+        Animals
+      </span>
       {/* The groups live in their own box so the heading stays put while they
           scroll, and so spacing is identical either way — the root's `gap-3`
           used to separate the heading and every group, and this now owns the

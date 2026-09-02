@@ -1,3 +1,4 @@
+import { CalendarDays } from "lucide-react";
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -124,9 +125,12 @@ export function SessionRail({
     // chrome-free navigation above them.
     <div className="rounded-md px-4 py-3">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[11px] text-static">
-          Sessions
-          <span className="ml-2 text-static/70">spaced by date — a gap is a real gap</span>
+        <span className="flex items-center gap-1.5 text-[11px] text-static">
+          <CalendarDays size={13} strokeWidth={1.75} className="text-pulsar" />
+          <span>
+            Sessions
+            <span className="ml-2 text-static/70">spaced by date — a gap is a real gap</span>
+          </span>
         </span>
         <Button
           variant={selected === ALL_SESSIONS ? "primary" : "outline"}

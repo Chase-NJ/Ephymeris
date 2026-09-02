@@ -67,8 +67,6 @@ class Cmd:
     TASKS_PREVIEW: Final = "tasks.preview"
     TASKS_SAVE: Final = "tasks.save"
     TASKS_DELETE: Final = "tasks.delete"
-    TASKS_PRESETS: Final = "tasks.presets"
-    TASKS_FROM_PRESET: Final = "tasks.fromPreset"
 
     # Strobe vocabulary (tasks.md §3.3)
     RIG_STROBES: Final = "rig.strobes"
@@ -197,9 +195,10 @@ SHAPES: Final[dict[str, Any]] = {
     "Sex": ('lit', ('M', 'F', 'unknown')),
     "Group": ('obj', (('id', 'str', False), ('name', 'str', False), ('order', 'int', False))),
     "Animal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('cage', ('union', ('int', 'null')), False), ('sex', ('union', (('ref', 'Sex'), 'null')), False), ('idNumber', ('union', ('str', 'null')), False), ('notes', ('union', ('str', 'null')), False))),
-    "Cohort": ('obj', (('id', 'str', False), ('name', 'str', False), ('dataFolder', 'str', False), ('animals', ('list', ('ref', 'Animal')), False), ('groups', ('list', ('ref', 'Group')), False), ('archivedAt', ('union', ('str', 'null')), False), ('createdAt', 'str', False), ('updatedAt', 'str', False))),
-    "CohortSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('animalCount', 'int', False), ('groupCount', 'int', False), ('assignedBoxes', ('list', 'int'), False), ('archived', 'bool', False), ('createdAt', 'str', False), ('updatedAt', 'str', False))),
-    "CohortPatch": ('obj', (('name', 'str', True), ('animals', ('list', ('ref', 'Animal')), True), ('groups', ('list', ('ref', 'Group')), True))),
+    "CohortAppearance": ('obj', (('type', 'str', False), ('hue', ('union', ('int', 'float')), False), ('ring', 'bool', False), ('seed', ('union', ('int', 'float')), False))),
+    "Cohort": ('obj', (('id', 'str', False), ('name', 'str', False), ('dataFolder', 'str', False), ('animals', ('list', ('ref', 'Animal')), False), ('groups', ('list', ('ref', 'Group')), False), ('archivedAt', ('union', ('str', 'null')), False), ('createdAt', 'str', False), ('updatedAt', 'str', False), ('appearance', ('union', (('ref', 'CohortAppearance'), 'null')), False))),
+    "CohortSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('animalCount', 'int', False), ('groupCount', 'int', False), ('assignedBoxes', ('list', 'int'), False), ('cageCount', 'int', False), ('archived', 'bool', False), ('createdAt', 'str', False), ('updatedAt', 'str', False), ('appearance', ('union', (('ref', 'CohortAppearance'), 'null')), False))),
+    "CohortPatch": ('obj', (('name', 'str', True), ('animals', ('list', ('ref', 'Animal')), True), ('groups', ('list', ('ref', 'Group')), True), ('appearance', ('union', (('ref', 'CohortAppearance'), 'null')), True))),
     "ProposedAnimal": ('obj', (('animalId', 'str', False), ('boxNumber', 'int', False))),
     "ProposedGroup": ('obj', (('name', 'str', False), ('order', 'int', False), ('animals', ('list', ('ref', 'ProposedAnimal')), False))),
     "GroupRejection": ('obj', (('reason', 'str', False), ('minimumGroups', 'int', False))),
@@ -267,8 +266,7 @@ SHAPES: Final[dict[str, Any]] = {
     "RigImpact": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('codes', ('list', 'str'), False))),
     "RigSaved": ('obj', (('status', ('ref', 'RigStatus'), False), ('problems', ('list', ('ref', 'RigProblem')), False), ('breaks', ('list', ('ref', 'RigImpact')), False))),
     "TaskDiagnostic": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', 'str', False))),
-    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False))),
-    "TaskPreset": ('obj', (('id', 'str', False), ('name', 'str', False), ('summary', 'str', False))),
+    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', 'str', False))),
     "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
     "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('startLineLength', 'int', False), ('startLineMax', 'int', False), ('profile', ('ref', 'TaskProfile'), False), ('catalogueDefaults', ('map', 'any'), False))),
     "TasksUpdatedData": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
@@ -309,8 +307,6 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "tasks.preview": ('obj', (('definition', 'any', False),)),
     "tasks.save": ('obj', (('definition', 'any', False),)),
     "tasks.delete": ('obj', (('taskId', 'str', False),)),
-    "tasks.presets": ('obj', ()),
-    "tasks.fromPreset": ('obj', (('presetId', 'str', False), ('taskId', 'str', False), ('name', 'str', True))),
     "rig.strobes": ('obj', ()),
     "sessions.suggestNumber": ('obj', (('prefixId', 'str', False),)),
     "sessions.create": ('obj', (('cohortId', 'str', False), ('prefixId', 'str', False), ('sessionNumber', 'str', False), ('durationMinutes', 'int', True))),
@@ -368,8 +364,6 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "tasks.preview": ('ref', 'TaskPreview'),
     "tasks.save": ('ref', 'TaskSaved'),
     "tasks.delete": ('obj', (('deleted', 'bool', False),)),
-    "tasks.presets": ('obj', (('presets', ('list', ('ref', 'TaskPreset')), False),)),
-    "tasks.fromPreset": ('obj', (('definition', 'any', False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False))),
     "rig.strobes": ('ref', 'StrobeVocabulary'),
     "sessions.suggestNumber": ('obj', (('suggestion', ('union', ('str', 'null')), False), ('sameDayNumbers', ('list', 'str'), False))),
     "sessions.create": ('obj', (('session', ('ref', 'Session'), False),)),

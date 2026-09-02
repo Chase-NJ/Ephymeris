@@ -1,3 +1,4 @@
+import { Gauge } from "lucide-react";
 import { motion } from "framer-motion";
 import { useMemo } from "react";
 
@@ -78,6 +79,7 @@ function EffortBody({ summary }: { summary: AnalyticsSummary }) {
   return (
     <div className="surface rounded-md p-4" ref={ref}>
       <ChartFrame
+        icon={Gauge}
         title={
           <span>
             Effort

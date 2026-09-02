@@ -79,8 +79,9 @@ def test_every_shipped_profile_keeps_its_hash_through_a_round_trip() -> None:
     and no error anywhere. Anything added to `TaskProfile` has to keep this
     true.
     """
-    from ephymeris_sidecar.taskdef import generate, presets
+    from ephymeris_sidecar.taskdef import generate
     from ephymeris_sidecar.tasks.profile import profile_hash
+    from tests.fixtures import task_definitions as presets
 
     for preset in presets.PRESETS:
         definition = presets.instantiate(preset["id"], preset["id"])

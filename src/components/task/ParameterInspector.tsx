@@ -2,7 +2,13 @@ import { RotateCcw } from "lucide-react";
 import { useMemo } from "react";
 
 import { ConfigFields } from "@/components/sessions/ConfigFields";
-import { nodesGovernedBy, orderGroups, type TaskGraphModel } from "@/lib/tasks/topology";
+import {
+  groupsOfTab,
+  nodesGovernedByTab,
+  orderGroups,
+  tabOf,
+  type TaskGraphModel,
+} from "@/lib/tasks/topology";
 import type { TaskProfile } from "@/lib/sessions/types";
 
 /**
@@ -28,6 +34,14 @@ import type { TaskProfile } from "@/lib/sessions/types";
  * governed by its group, carries a Pulsar dot while any of its values diverge
  * from the sketch's own, and hovering it lights the machine — the tiles'
  * hover contract, moved onto smaller furniture.
+ *
+ * A PILL IS A TAB, NOT A GROUP (`topology.tabOf`). Correction trials and reward
+ * volumes are session settings that were each carrying a pill of their own, so
+ * the rail folds them under Session and `ConfigFields` renders them as
+ * sub-sections there. The fold is the rail's alone: `group` is inside
+ * `profile_hash`, so it cannot be the thing that moves. Everything the pill
+ * computes — the dot, the lit border, the governed states, the reset count —
+ * therefore reduces its groups through `tabOf` first.
  */
 export function ParameterInspector({
   profile,
@@ -55,25 +69,33 @@ export function ParameterInspector({
   /** Groups the hovered *state* is tuned by — the machine→rail half of the link. */
   litGroups: Set<string>;
 }) {
-  const groups = useMemo(() => {
-    const declared = new Set<string>();
+  /** Groups this profile declares that some pill is allowed to show. `exclude`
+   *  tests the RAW group (`isRampGroup`), because that is what it names. */
+  const declared = useMemo(() => {
+    const out = new Set<string>();
     for (const field of profile?.config ?? []) {
-      if (field.group && !exclude?.(field.group)) declared.add(field.group);
+      if (field.group && !exclude?.(field.group)) out.add(field.group);
     }
-    return orderGroups(declared);
+    return out;
   }, [profile, exclude]);
 
-  if (!profile || groups.length === 0) return null;
+  const tabs = useMemo(
+    () => orderGroups(new Set([...declared].map(tabOf))),
+    [declared],
+  );
 
-  const group = selected !== null && groups.includes(selected) ? selected : groups[0]!;
-  const fields = profile.config.filter((f) => f.group === group);
+  if (!profile || tabs.length === 0) return null;
+
+  const tab = selected !== null && tabs.includes(selected) ? selected : tabs[0]!;
+  const members = groupsOfTab(tab, declared);
+  const fields = profile.config.filter((f) => f.group && tabOf(f.group) === tab);
   const changed = fields.filter(
     (f) =>
       f.metadataKey in config && !Object.is(config[f.metadataKey], baseline[f.metadataKey]),
   );
-  const states = nodesGovernedBy(model, group).map((n) => n.label);
+  const states = nodesGovernedByTab(model, tab).map((n) => n.label);
 
-  /** Which groups carry values this rig changed — the pill dots. */
+  /** Which tabs carry values this rig changed — the pill dots. */
   const diverging = new Set(
     profile.config
       .filter(
@@ -82,15 +104,17 @@ export function ParameterInspector({
           f.metadataKey in config &&
           !Object.is(config[f.metadataKey], baseline[f.metadataKey]),
       )
-      .map((f) => f.group as string),
+      .map((f) => tabOf(f.group as string)),
   );
 
   return (
     <div className="hud flex min-h-0 flex-col rounded-md">
       <div className="flex flex-wrap gap-1 border-b border-halo p-2.5">
-        {groups.map((name) => {
-          const active = name === group;
-          const lit = litGroups.has(name);
+        {tabs.map((name) => {
+          const active = name === tab;
+          // `litGroups` is a hovered NODE's `governedBy` — raw groups. A folded
+          // pill has to light for any of the groups it swallowed.
+          const lit = [...litGroups].some((g) => tabOf(g) === name);
           return (
             <button
               key={name}
@@ -125,7 +149,7 @@ export function ParameterInspector({
       <div className="scrollbar-none min-h-0 overflow-y-auto p-3.5">
         <header className="mb-2 flex items-baseline justify-between gap-3">
           <div className="min-w-0">
-            <div className="truncate text-[12px] font-medium text-starlight">{group}</div>
+            <div className="truncate text-[12px] font-medium text-starlight">{tab}</div>
             {states.length > 0 && (
               <div className="mt-0.5 truncate font-mono text-[10px] text-static/70">
                 {states.join(" · ")}
@@ -152,7 +176,7 @@ export function ParameterInspector({
           config={config}
           baseline={baseline}
           onChange={onChange}
-          only={group}
+          only={members}
           quiet
         />
       </div>

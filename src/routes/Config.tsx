@@ -8,13 +8,18 @@ import {
   Radio,
   SlidersHorizontal,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { useBoxHealth } from "@/components/chrome/ConstellationStatus";
+import {
+  NODE_FILL,
+  useBoxHealth,
+  type BoxHealth,
+} from "@/components/chrome/ConstellationStatus";
+import { KindStrip } from "@/components/hardware/KindStrip";
 import { TextInput } from "@/components/common/controls";
 import { Dropdown } from "@/components/common/Dropdown";
+import { HudTile } from "@/components/common/HudTile";
 import { UtilitySketchPanel } from "@/components/config/UtilitySketchPanel";
 import { SettingRow } from "@/components/settings/SettingRow";
 import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
@@ -181,14 +186,10 @@ export function Config() {
               className="mt-7 flex flex-col gap-5"
             >
               <motion.div variants={RISE}>
-                <RigTile
+                <HudTile
                   icon={Radio}
                   label="Boxes"
-                  status={
-                    bound.length === 0
-                      ? "nothing bound"
-                      : `${connectedCount}/${bound.length} connected`
-                  }
+                  status={<BoxesFact bound={bound} health={health} connected={connectedCount} />}
                 >
                   {/* Bind, see it come alive, prove it took — one row per box.
                       The handshake used to be a second list of the same boxes
@@ -200,11 +201,11 @@ export function Config() {
                     connected={connected}
                     onChange={onBoxesChange}
                   />
-                </RigTile>
+                </HudTile>
               </motion.div>
 
               <motion.div variants={RISE}>
-                <RigTile
+                <HudTile
                   icon={Anchor}
                   label="Utility baseline"
                   status={settings.utilitySketchName ?? "off"}
@@ -221,31 +222,27 @@ export function Config() {
                     }
                     onReflash={() => void reflashBaseline()}
                   />
-                </RigTile>
+                </HudTile>
               </motion.div>
 
-              {/* The two reference doors, side by side: both answer "what does
-                  this hardware mean", one for pins and one for codes, and a
-                  pair of half-width doors reads as a pair — stacked full-width
-                  they read as two more forms. */}
-              <motion.div variants={RISE} className="grid grid-cols-2 items-stretch gap-5">
-                {/* The channel→pin map. The editor kept its own save
-                    discipline through every move — preview, list what would
-                    break, ask — and keeps its own page too. */}
+              {/* The one reference door this page keeps: the channel→pin map.
+                  The strobe vocabulary used to sit beside it at half width, on
+                  the argument that a code and a pin are the same kind of fact.
+                  It reads codes as a fact about the TASK now (`settings.md`
+                  §5.0) and lives on the Task tab; what is left is a single
+                  door, which is the width `WiringDoor` was drawn at. */}
+              <motion.div variants={RISE}>
+                {/* The editor kept its own save discipline through every move —
+                    preview, list what would break, ask — and keeps its own
+                    page too. */}
                 <WiringDoor
-                  status={wiring}
+                  summary={wiring}
                   onOpen={() => navigate("/config/wiring")}
                 />
-                {/* The strobe vocabulary, beside the wiring rather than under
-                    Task. A code is a fact about what this hardware can REPORT
-                    — true of every task that runs on it — in the same way a
-                    pin is a fact about what it can drive. Which codes a task
-                    declares is decided by its trial table, one tab over. */}
-                <StrobeDoor onOpen={() => navigate("/config/strobes")} />
               </motion.div>
 
               <motion.div variants={RISE}>
-                <RigTile
+                <HudTile
                   icon={SlidersHorizontal}
                   label="Hardware"
                   status={`${settings.defaultBaud} baud`}
@@ -285,7 +282,7 @@ export function Config() {
                       className="w-[280px]"
                     />
                   </SettingRow>
-                </RigTile>
+                </HudTile>
               </motion.div>
             </motion.div>
           </fieldset>
@@ -303,130 +300,48 @@ export function Config() {
 }
 
 /**
- * One subject, as a HUD tile — `SummaryCard`'s header grammar (pulsar icon,
- * label, one mono fact on the right) over that subject's working surface.
+ * The Boxes tile's fact: the bound boxes as health dots, then the count.
  *
- * Not `SummaryCard` itself: that component's body is a row list with its own
- * padding and its header can be a destination, while these bodies are forms
- * that manage their own edges and the header goes nowhere. Not `SettingGroup`
- * either — its title sits *outside* the card, which read as a document; the
- * HUD idiom puts the name on the glass.
+ * The dots are the sidebar constellation's stars in a row — same `NODE_FILL`,
+ * same four states — so the tile header and the widget beside it agree about
+ * every box before either is read. The count takes the colour of what it sums
+ * to: Ion when everything bound is on the bus, the error tone the moment any
+ * box is in fault (a fault is exactly the thing this page exists to surface),
+ * and quiet otherwise. Status colours as state, never as decoration.
  */
-function RigTile({
-  icon: Icon,
-  label,
-  status,
-  children,
+function BoxesFact({
+  bound,
+  health,
+  connected,
 }: {
-  icon: LucideIcon;
-  label: string;
-  /** One live fact, in the header's right corner. */
-  status?: string;
-  children: ReactNode;
+  bound: readonly { box: number }[];
+  health: Partial<Record<number, BoxHealth>>;
+  connected: number;
 }) {
+  if (bound.length === 0) return <span>nothing bound</span>;
+  const states = bound.map((b) => health[b.box] ?? "absent");
+  const anyFault = states.includes("fault");
+  const allUp = connected === bound.length;
+  const colour = anyFault
+    ? "var(--color-status-error)"
+    : allUp
+      ? "var(--color-status-ok)"
+      : "var(--color-static)";
   return (
-    <section className="hud overflow-hidden rounded-md">
-      <div className="flex items-center gap-3 border-b border-halo px-4 py-3">
-        <Icon size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
-        <span className="text-[13px] font-medium text-starlight">{label}</span>
-        {status && (
-          <span className="ml-auto shrink-0 font-mono text-[11px] text-static">
-            {status}
-          </span>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/**
- * The Strobes door.
- *
- * The destination is a reference table rather than a workbench, so the fact
- * line stays off — but in the doors row it carries a motif for parity with
- * Wiring's: a strobe train, one pulse picking up the accent on hover. Matte,
- * single accent, movement only (§1.2), same as everything else on the glass.
- */
-function StrobeDoor({ onOpen }: { onOpen: () => void }) {
-  return (
-    <motion.button
-      type="button"
-      onClick={onOpen}
-      initial="idle"
-      animate="idle"
-      whileHover="hover"
-      whileTap={{ scale: 0.995 }}
-      variants={{ idle: { y: 0 }, hover: { y: -2 } }}
-      transition={springSnappy}
-      className="hud group relative flex h-full w-full items-center gap-4 overflow-hidden rounded-md py-3.5 pl-4 pr-0 text-left transition-colors hover:border-static/40"
-    >
-      <Radio size={18} strokeWidth={1.75} className="shrink-0 self-start text-pulsar" />
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1 text-[13px] font-medium text-starlight">
-          Strobes
-          <ArrowRight
-            size={11}
-            strokeWidth={2}
-            className="text-static transition-transform group-hover:translate-x-0.5"
+    <>
+      <span className="flex items-center gap-1" aria-hidden>
+        {states.map((state, i) => (
+          <span
+            key={bound[i]!.box}
+            className="size-1.5 rounded-full"
+            style={{ background: NODE_FILL[state] }}
           />
-        </span>
-        <span className="mt-0.5 block text-[11px] leading-snug text-static">
-          Every event a box can report, and the number it reports it with.
-          Append-only — the recorded archive carries these.
-        </span>
+        ))}
       </span>
-      <span
-        aria-hidden
-        className="pointer-events-none -my-3.5 shrink-0 self-center opacity-70 transition-opacity group-hover:opacity-100"
-      >
-        <StrobeMotif />
+      <span style={{ color: colour }}>
+        {connected}/{bound.length} connected
       </span>
-    </motion.button>
-  );
-}
-
-/**
- * The Strobes door's motif: a strobe train — event ticks on a timeline, one of
- * them picking up the accent and announcing its number on hover. The same
- * grammar as the wiring trace: the gesture the room behind the door exists
- * for, at the corner of the eye.
- */
-function StrobeMotif() {
-  const ticks = [10, 22, 30, 44, 58, 66, 78];
-  return (
-    <svg width="104" height="62" viewBox="0 0 104 62" fill="none" aria-hidden>
-      {/* The recording's baseline. */}
-      <path d="M6 40 H98" stroke="var(--color-halo)" strokeWidth="1" />
-      {ticks.map((x) => (
-        <rect key={x} x={x} y={28} width="2" height="12" rx="1" fill="var(--color-halo)" />
-      ))}
-      {/* The one event being looked up. */}
-      <motion.rect
-        x={44}
-        y={24}
-        width="2.5"
-        height="16"
-        rx="1"
-        variants={{
-          idle: { fill: "var(--color-static)", opacity: 0.5 },
-          hover: { fill: "var(--color-pulsar)", opacity: 1 },
-        }}
-        transition={springSnappy}
-      />
-      <motion.text
-        x={45}
-        y={16}
-        textAnchor="middle"
-        fontSize="8"
-        fontFamily="JetBrains Mono, monospace"
-        fill="var(--color-pulsar)"
-        variants={{ idle: { opacity: 0, y: 3 }, hover: { opacity: 1, y: 0 } }}
-        transition={springSnappy}
-      >
-        233
-      </motion.text>
-    </svg>
+    </>
   );
 }
 
@@ -441,11 +356,11 @@ function StrobeMotif() {
  * exists for. Matte throughout: movement and a single accent, no glow (§1.2).
  */
 function WiringDoor({
-  status,
+  summary,
   onOpen,
 }: {
-  /** The live fact line, once the wiring document has been read. */
-  status: string | null;
+  /** The wiring document and its provenance, once read. */
+  summary: WiringSummary | null;
   onOpen: () => void;
 }) {
   return (
@@ -478,9 +393,15 @@ function WiringDoor({
           Every pin, and what it means — the channel→pin map every task compiles
           against.
         </span>
-        {status && (
-          <span className="mt-1 block font-mono text-[10px] text-static/70">
-            {status}
+        {/* The strip: one segment per channel kind in the colour that kind
+            wears on the board map and in every task's trial table, so the door
+            says what the room behind it is made of. */}
+        {summary && (
+          <span className="mt-2 block">
+            <KindStrip doc={summary.doc} />
+            <span className="mt-1 block font-mono text-[10px] text-static/70">
+              {summary.custom ? "this rig's own wiring" : "as shipped"}
+            </span>
           </span>
         )}
       </span>
@@ -564,9 +485,14 @@ function WiringMotif() {
  * `hardware.get` the editor opens with — read-only here, refreshed when
  * another surface saves, and quietly absent until the backend answers.
  */
-function useWiringSummary(): string | null {
+interface WiringSummary {
+  doc: RigDocument;
+  custom: boolean;
+}
+
+function useWiringSummary(): WiringSummary | null {
   const { client, status } = useSidecar();
-  const [summary, setSummary] = useState<string | null>(null);
+  const [summary, setSummary] = useState<WiringSummary | null>(null);
 
   useEffect(() => {
     if (status !== "connected") return;
@@ -575,13 +501,10 @@ function useWiringSummary(): string | null {
       void getRig(client)
         .then((reply) => {
           if (cancelled) return;
-          const doc = reply.document as RigDocument;
-          const channels = Object.keys(doc.channels ?? {}).length;
-          setSummary(
-            `${channels} channel${channels === 1 ? "" : "s"} · ${
-              reply.status.custom ? "this rig's own" : "as shipped"
-            }`,
-          );
+          setSummary({
+            doc: reply.document as RigDocument,
+            custom: Boolean(reply.status.custom),
+          });
         })
         .catch(() => {
           // The door works without its fact line; the page behind it is where

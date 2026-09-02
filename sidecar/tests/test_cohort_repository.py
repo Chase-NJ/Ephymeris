@@ -351,3 +351,91 @@ def test_groups_are_returned_in_run_order(repo) -> None:
         },
     )
     assert [g.name for g in repo.get(cohort.id).groups] == ["First", "Second"]
+
+
+# --- the cohort's world (§5) ----------------------------------------------
+
+
+def test_a_new_cohort_stores_no_appearance(repo) -> None:
+    """Absent is the normal state, and it is not a gap.
+
+    A cohort with no stored appearance is drawn from a hash of its id, exactly
+    as the icon it replaced always was. Writing a derived record at creation
+    would freeze that cohort against every later correction to the palette or
+    the default type, and would make a cohort nobody had touched
+    indistinguishable from one deliberately tuned to today's defaults.
+    """
+    cohort = repo.create("Batch A", "/tmp/batch-a")
+    assert cohort.appearance is None
+    assert cohort.to_summary()["appearance"] is None
+
+
+def test_an_appearance_survives_a_round_trip(repo) -> None:
+    cohort = repo.create("Batch A", "/tmp/batch-a")
+    saved = repo.update(
+        cohort.id,
+        {"appearance": {"type": "gas", "hue": 41, "ring": True, "seed": 7734}},
+    )
+    assert saved.appearance is not None
+    assert saved.appearance.type == "gas"
+    assert saved.appearance.ring is True
+
+    reloaded = repo.get(cohort.id)
+    assert reloaded.appearance is not None
+    assert reloaded.appearance.to_json() == saved.appearance.to_json()
+
+
+def test_an_absent_appearance_key_leaves_the_world_alone(repo) -> None:
+    """A patch that renames a cohort must not silently reset its planet.
+
+    `"appearance" in patch` is the only thing separating "leave it" from "reset
+    it" — reading the VALUE would make every roster edit a reset, because a
+    patch that omits the key and one that sends null both read as None.
+    """
+    cohort = repo.create("Batch A", "/tmp/batch-a")
+    repo.update(cohort.id, {"appearance": {"type": "ice", "hue": 200, "ring": False, "seed": 1}})
+    renamed = repo.update(cohort.id, {"name": "Batch B"})
+    assert renamed.appearance is not None
+    assert renamed.appearance.type == "ice"
+
+
+def test_an_explicit_null_appearance_resets_the_world(repo) -> None:
+    """The only way back to the derived planet, and it has to be reachable —
+    the editor's Reset is this call."""
+    cohort = repo.create("Batch A", "/tmp/batch-a")
+    repo.update(cohort.id, {"appearance": {"type": "lava", "hue": 10, "ring": True, "seed": 2}})
+    assert repo.update(cohort.id, {"appearance": None}).appearance is None
+
+
+def test_an_unusable_appearance_is_treated_as_absent(repo) -> None:
+    """A type the shader cannot draw would otherwise be stored and come back as
+    a world that renders as nothing. Refused into `None`, which renders as the
+    cohort's derived planet — a wrong-but-drawable answer beats a blank one."""
+    cohort = repo.create("Batch A", "/tmp/batch-a")
+    saved = repo.update(
+        cohort.id,
+        {"appearance": {"type": "ringworld", "hue": 41, "ring": True, "seed": 1}},
+    )
+    assert saved.appearance is None
+
+
+def test_the_summary_counts_distinct_home_cages(repo) -> None:
+    """One orbiting ship per cage, so the browser needs the count without
+    opening every cohort. Cageless animals contribute nothing: an animal with no
+    cage rides alone in the RIG views, but that is a fact about who is running,
+    not about housing."""
+    cohort = repo.create("Batch A", "/tmp/batch-a")
+    gid = cohort.groups[0].id
+    saved = repo.update(
+        cohort.id,
+        {
+            "animals": [
+                animal("R1", gid, cage=1),
+                animal("R2", gid, cage=1),
+                animal("R3", gid, cage=2),
+                animal("R4", gid),
+            ]
+        },
+    )
+    assert saved.cage_count == 2
+    assert saved.to_summary()["cageCount"] == 2

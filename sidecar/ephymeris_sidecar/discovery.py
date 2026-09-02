@@ -130,6 +130,30 @@ class SketchDiscovery:
         }
 
 
+def _plain(value: str) -> Path:
+    r"""Read a path from the environment without Windows' verbatim prefix.
+
+    The shell simplifies these before exporting them, so this is the second
+    line — but it is worth having, because the value ends up as
+    `arduino-cli --libraries` and the failure mode is silent. `arduino-cli` is
+    Go: handed `\\?\C:\...\libraries` it finds no libraries there and says
+    nothing, and the compile fails much later on `#include <BehaviorBox.h>`,
+    reading exactly like a library missing from the install. That shipped once
+    (v1.1.0-rc.2), and a sidecar running under an older shell would hit it
+    again.
+
+    Only the `\\?\C:\` form is stripped. `\\?\UNC\...` is left alone, and so is
+    anything past `MAX_PATH`, where the prefix is what makes the path work.
+    """
+    path = Path(value).expanduser()
+    text = str(path)
+    if text.startswith("\\\\?\\") and not text.startswith("\\\\?\\UNC"):
+        rest = text[4:]
+        if len(rest) < 260:
+            return Path(rest)
+    return path
+
+
 def library_root() -> tuple[Path | None, LibrarySource]:
     """Where the sketch library lives, and whether it is the shipped one.
 
@@ -146,11 +170,11 @@ def library_root() -> tuple[Path | None, LibrarySource]:
     """
     override = os.environ.get(LIBRARY_ENV)
     if override and override.strip():
-        return Path(override).expanduser(), "override"
+        return _plain(override), "override"
 
     bundled = os.environ.get(BUNDLED_ENV)
     if bundled and bundled.strip():
-        return Path(bundled).expanduser(), "bundled"
+        return _plain(bundled), "bundled"
 
     # sidecar/ephymeris_sidecar/discovery.py -> <repo>/sketches
     repo = Path(__file__).resolve().parent.parent.parent / "sketches"

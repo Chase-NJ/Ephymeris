@@ -59,6 +59,26 @@ def test_the_resolution_order_is_override_then_bundled_then_repo(
     assert source == "bundled"
 
 
+def test_a_verbatim_windows_path_is_simplified_before_it_reaches_arduino_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r"""A `\\?\C:\...` path from the shell must not reach `--libraries`.
+
+    Tauri's `resource_dir()` is verbatim on Windows, so the exported bundled
+    path carried the prefix. Python reads such a path perfectly well, which is
+    why this went unnoticed: discovery reported a librariesPath, the compile
+    ran, and arduino-cli — being Go — resolved no libraries under it and failed
+    much later on `#include <BehaviorBox.h>`. Shipped in v1.1.0-rc.2.
+    """
+    monkeypatch.delenv(LIBRARY_ENV)
+    monkeypatch.setenv(BUNDLED_ENV, "\\\\?\\" + str(tmp_path))
+
+    root, source = library_root()
+    assert source == "bundled"
+    assert not str(root).startswith("\\\\?\\")
+    assert root == tmp_path
+
+
 def test_a_missing_library_is_damaged_and_points_at_reinstalling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

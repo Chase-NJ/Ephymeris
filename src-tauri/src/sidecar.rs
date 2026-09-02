@@ -90,7 +90,9 @@ fn venv_launch() -> SidecarLaunch {
 /// The frozen sidecar staged by `scripts/package-resources.mjs` and bundled
 /// under the app's resource directory.
 fn frozen_launch<R: Runtime>(app: &AppHandle<R>) -> Option<SidecarLaunch> {
-    let resources = app.path().resource_dir().ok()?;
+    // Simplified like the rest: the verbatim form spawns fine, but it also
+    // becomes the sidecar's own cwd and shows up in every process listing.
+    let resources = simplified(app.path().resource_dir().ok()?);
     let exe = resources
         .join("sidecar")
         .join(if cfg!(windows) { "ephymeris-sidecar.exe" } else { "ephymeris-sidecar" });
@@ -131,6 +133,38 @@ fn resolve_launch<R: Runtime>(app: &AppHandle<R>) -> Result<SidecarLaunch, Strin
     })
 }
 
+/// Drop Windows' verbatim (`\\?\`) prefix when what's left is still an ordinary
+/// path — the same policy the `dunce` crate calls "simplified".
+///
+/// **Load-bearing, not cosmetic.** `resource_dir()` hands back a verbatim path
+/// on Windows, and every path built from it inherits the prefix. Windows APIs
+/// accept that, so the sidecar spawns and Python reads the directories happily —
+/// but `arduino-cli` is Go, and a verbatim path given to `--libraries` resolves
+/// to nothing. The failure has no symptom at that layer: the compile runs, the
+/// library is silently absent, and the sketch fails on `#include <BehaviorBox.h>`
+/// as though the library were missing from the install. Shipped as v1.1.0-rc.2.
+///
+/// Only `\\?\C:\…` is simplified. A verbatim UNC path (`\\?\UNC\…`) is left
+/// exactly as it came: rewriting one is a different transformation, and the
+/// prefix is load-bearing for paths past `MAX_PATH`, which is the one case
+/// where dropping it would break something that currently works.
+fn simplified(path: PathBuf) -> PathBuf {
+    use std::path::{Component, Prefix};
+
+    let verbatim_disk = matches!(
+        path.components().next(),
+        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::VerbatimDisk(_))
+    );
+    if !verbatim_disk {
+        return path;
+    }
+    match path.as_os_str().to_string_lossy().strip_prefix(r"\\?\") {
+        // Past MAX_PATH the prefix is what makes the path usable at all.
+        Some(rest) if rest.len() < 260 => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
 /// Bundled arduino-cli locations, exported to the sidecar as env vars.
 ///
 /// Present only when the resources exist (i.e. an installed build), so the
@@ -141,7 +175,7 @@ fn bundled_arduino_env<R: Runtime>(app: &AppHandle<R>) -> Vec<(&'static str, Pat
     let Ok(resources) = app.path().resource_dir() else {
         return vec![];
     };
-    let dir = resources.join("arduino");
+    let dir = simplified(resources.join("arduino"));
     let cli = dir.join(if cfg!(windows) { "arduino-cli.exe" } else { "arduino-cli" });
     let data = dir.join("data");
 
@@ -165,7 +199,9 @@ fn bundled_sketches_env<R: Runtime>(app: &AppHandle<R>) -> Vec<(&'static str, Pa
     let Ok(resources) = app.path().resource_dir() else {
         return vec![];
     };
-    let dir = resources.join("sketches");
+    // Simplified before export: this one is handed to `arduino-cli --libraries`
+    // via the sidecar, and Go does not resolve a verbatim path (see `simplified`).
+    let dir = simplified(resources.join("sketches"));
     if dir.is_dir() {
         vec![("EPHYMERIS_BUNDLED_SKETCHES", dir)]
     } else {
@@ -312,5 +348,42 @@ mod tests {
         assert!(parse_handshake("sidecar listening on 127.0.0.1:53834").is_none());
         assert!(parse_handshake("EPHYMERIS_WS_PORT=53834").is_none());
         assert!(parse_handshake("EPHYMERIS_WS_PORT=notaport EPHYMERIS_WS_TOKEN=x").is_none());
+    }
+
+    /// `resource_dir()` returns a verbatim path on Windows, and everything
+    /// built from it inherits the prefix. arduino-cli is Go and resolves
+    /// nothing under one, so a bundled `--libraries` silently found no
+    /// libraries and the compile failed on the include (v1.1.0-rc.2).
+    #[cfg(windows)]
+    #[test]
+    fn strips_the_verbatim_prefix_from_a_drive_path() {
+        assert_eq!(
+            simplified(PathBuf::from(r"\\?\C:\Users\lab\Ephymeris\sketches")),
+            PathBuf::from(r"C:\Users\lab\Ephymeris\sketches")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn leaves_ordinary_and_unc_paths_alone() {
+        // Nothing to strip.
+        assert_eq!(
+            simplified(PathBuf::from(r"C:\Users\lab\sketches")),
+            PathBuf::from(r"C:\Users\lab\sketches")
+        );
+        // A verbatim UNC path is a different transformation; don't guess at it.
+        assert_eq!(
+            simplified(PathBuf::from(r"\\?\UNC\server\share\sketches")),
+            PathBuf::from(r"\\?\UNC\server\share\sketches")
+        );
+    }
+
+    /// Past MAX_PATH the prefix is what makes the path usable at all, so the
+    /// one case where stripping would break something keeps it.
+    #[cfg(windows)]
+    #[test]
+    fn keeps_the_prefix_on_a_path_past_max_path() {
+        let long = format!(r"\\?\C:\{}", "segment\\".repeat(40));
+        assert_eq!(simplified(PathBuf::from(&long)), PathBuf::from(&long));
     }
 }

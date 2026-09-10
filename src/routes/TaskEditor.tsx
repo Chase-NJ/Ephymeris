@@ -475,8 +475,10 @@ export function TaskEditor() {
                   selected={selectedGroup}
                   // The four ramped holds are the StageRamp's, and a ramp only
                   // reads as a table. Offering them here too would be a second
-                  // surface for one field.
-                  exclude={isRampGroup}
+                  // surface for one field. Reward volume is the trial table's
+                  // for a stronger reason: the generator reads it off the ROW,
+                  // so a rail edit into `params` would be accepted and ignored.
+                  exclude={(group) => isRampGroup(group) || group === "Reward volume"}
                   onSelect={setSelectedGroup}
                   onChange={onParams}
                   onHoverGroup={setHoverGroup}
@@ -565,14 +567,14 @@ function guideSteps({
     {
       id: "trials",
       title: "Add a condition for each stimulus",
-      body: "One row per odor you present: which line carries it, which port answers it, which reward line pays, and what you call it. The name is the only one you cannot derive — every chart downstream is titled from it.",
+      body: "One row per odor you present: which line carries it, which port answers it, which reward line pays and for how long, and what you call it. The name is the only one you cannot derive — every chart downstream is titled from it.",
       target: refs.trialsRef,
       done: usableRows > 0,
     },
     {
       id: "mode",
       title: "Choose how the next trial is drawn",
-      body: "Anti-bias picks a side against the animal's recent bias and then a type from that side. Pool draws from a weighted, block-shuffled bag — pick it if you want the proportions fixed, and a weight column appears on every row.",
+      body: "Anti-bias picks a side against the animal's recent bias and then a type from that side. Weighted draws the side the same way but picks within it by a weight column — give a new odor a larger weight to show it more often while it is being learned. Pool draws from a weighted, block-shuffled bag — pick it if you want the proportions fixed.",
       target: refs.trialsRef,
       done: usableRows > 0,
       optional: true,
@@ -588,7 +590,7 @@ function guideSteps({
     {
       id: "params",
       title: "Set the numbers",
-      body: "Session holds the trial count, the correction budget and the reward volume for each fluid line. The rest are grouped by when they take effect during a trial — hover a state on the diagram and the groups that tune it light up.",
+      body: "Session holds the trial count and the correction budget; each condition's reward volume lives on its row in the trial table. The rest are grouped by when they take effect during a trial — hover a state on the diagram and the groups that tune it light up. Every value here can be overridden per box at mapping.",
       target: refs.paramsRef,
       done: true,
       optional: true,

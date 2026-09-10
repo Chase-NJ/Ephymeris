@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-SelectionMode = Literal["antibias", "pool"]
+SelectionMode = Literal["antibias", "pool", "weighted"]
 
 #: Lower snake case, bounded. It becomes a folder name and part of a C
 #: identifier, and it is typed by hand.
@@ -54,12 +54,22 @@ class TrialTypeDef:
     is_go: bool = True
     response_channel: str | None = None
     reward_channel: str | None = None
-    #: Pool mode only. Ignored under anti-bias selection, which weights nothing.
+    #: Pool and weighted modes. Ignored under plain anti-bias selection, which
+    #: weights nothing; under weighted selection it is this type's share
+    #: WITHIN its side, which is how a newly introduced odor is shown more
+    #: often than a learned one.
     weight: int = 1
     #: The operator's own words, for the trial-table editor. Never generated
     #: from the channels: "orange -> left" is what they call it, and a
     #: derived label would overwrite that on every edit.
     label: str = ""
+    #: Solenoid open time on a correct answer, in ms — the reward volume. On
+    #: the ROW rather than in `params` for the same reason `weight` is: it is a
+    #: property of this condition, so two types paying from one fluid line can
+    #: pay differently, and deleting the row takes its volume with it. The
+    #: generator compiles it into `TrialType` as the default and declares wire
+    #: key RW<slot+1> so a run can override it per box. Meaningless on a no-go.
+    reward_time: int = 100
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -70,6 +80,7 @@ class TrialTypeDef:
             "rewardChannel": self.reward_channel,
             "weight": self.weight,
             "label": self.label,
+            "rewardTime": self.reward_time,
         }
 
     @staticmethod
@@ -93,6 +104,9 @@ class TrialTypeDef:
             reward_channel=_opt_str(raw.get("rewardChannel")),
             weight=_int(raw.get("weight", 1), "weight"),
             label=str(raw.get("label", "")),
+            # Absent on a definition saved before reward volume moved onto the
+            # row; 100 ms is what every fluid line paid then.
+            reward_time=_int(raw.get("rewardTime", 100), "rewardTime"),
         )
 
 
@@ -203,9 +217,9 @@ class TaskDefinition:
             )
 
         mode = raw.get("selectionMode", "antibias")
-        if mode not in ("antibias", "pool"):
+        if mode not in ("antibias", "pool", "weighted"):
             raise TaskDefinitionError(
-                f"selectionMode must be 'antibias' or 'pool', not {mode!r}"
+                f"selectionMode must be 'antibias', 'pool' or 'weighted', not {mode!r}"
             )
 
         trials_raw = raw.get("trials", [])

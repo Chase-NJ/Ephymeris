@@ -27,11 +27,19 @@ export interface TrialTypeDef {
   /** null on a no-go type only, where withholding is the correct answer. */
   responseChannel: string | null;
   rewardChannel: string | null;
-  /** Pool mode only. Ignored under anti-bias selection, which weights nothing. */
+  /** Pool and weighted modes. Ignored under plain anti-bias selection, which
+   *  weights nothing; under weighted selection it is this type's share WITHIN
+   *  its side. */
   weight: number;
   /** The operator's own words. Never generated from the channels — a derived
    *  label would overwrite what they typed on every edit. */
   label: string;
+  /** Solenoid open time on a correct answer, ms — the reward volume. On the
+   *  row, like `weight`, because it is a property of the condition: two types
+   *  paying from one fluid line may pay differently. Compiled into the
+   *  firmware's `TrialType` as the default and sent as `RW<slot+1>`, so the
+   *  mapping step can override it per box. Meaningless on a no-go row. */
+  rewardTime: number;
 }
 
 export interface StageRow {
@@ -42,7 +50,7 @@ export interface StageRow {
   odorPortTimeout: number;
 }
 
-export type SelectionMode = "antibias" | "pool";
+export type SelectionMode = "antibias" | "pool" | "weighted";
 
 export interface TaskDefinition {
   id: string;
@@ -69,6 +77,7 @@ export function blankTrial(): TrialTypeDef {
     rewardChannel: null,
     weight: 1,
     label: "",
+    rewardTime: 100,
   };
 }
 

@@ -116,6 +116,17 @@ def test_a_true_weight_is_not_a_one():
         )
 
 
+def test_a_definition_saved_before_reward_time_existed_pays_what_it_paid():
+    """Every fluid line paid 100 ms then; a row without the key reads as that."""
+    row = TrialTypeDef.from_json({"odorChannel": "odor_line_1", "onsetStrobe": "ODOR_1_ON"})
+    assert row.reward_time == 100
+    assert row.to_json()["rewardTime"] == 100
+    with pytest.raises(TaskDefinitionError):
+        TrialTypeDef.from_json(
+            {"odorChannel": "odor_line_1", "onsetStrobe": "ODOR_1_ON", "rewardTime": True}
+        )
+
+
 # --------------------------------------------------------------------------- #
 # The presets
 # --------------------------------------------------------------------------- #
@@ -196,12 +207,45 @@ def test_the_trial_table_reproduces_the_hand_written_one():
     trials = generate.task_trials_h(a_task())
     assert (
         "TrialType(true, Odors[0], rightWell, 2, BF_ODOR_1_ON, BF_FLUID_R, "
-        "BF_STOP_FLUID_G_R)" in trials
+        "BF_STOP_FLUID_G_R, 100)" in trials
     )
     assert (
         "TrialType(true, Odors[2], leftWell, 0, BF_ODOR_3_ON, BF_FLUID_L, "
-        "BF_STOP_FLUID_G_L)" in trials
+        "BF_STOP_FLUID_G_L, 100)" in trials
     )
+    # Not const: the last argument is overwritten from the START line.
+    assert "static TrialType kTrials[]" in trials
+    assert "static const TrialType" not in trials
+
+
+def test_the_reward_volume_rides_the_row_into_the_table_and_the_wire():
+    """Two conditions paying from ONE fluid line may pay differently -- that is
+    the whole reason the volume moved off the line and onto the type."""
+    from dataclasses import replace
+
+    task = a_task()
+    task = replace(task, trials=[
+        replace(task.trials[0], reward_time=150),
+        replace(task.trials[1], reward_time=80),
+    ])
+    trials = generate.task_trials_h(task)
+    assert "BF_STOP_FLUID_G_R, 150)" in trials
+    assert "BF_STOP_FLUID_G_L, 80)" in trials
+    profile = generate.build_profile(task)
+    by_key = {f.wire_key: f for f in profile.config}
+    assert by_key["RW1"].default == 150 and by_key["RW2"].default == 80
+    assert by_key["RW1"].group == "Reward volume"
+    assert not any(k.startswith("FL") for k in by_key)
+
+
+def test_a_reward_field_is_read_off_the_row_never_out_of_params():
+    """`params` merges only catalogue fields. A stale `reward_time_1` entry --
+    say from a row that was deleted and re-added -- must not reach the wire."""
+    from dataclasses import replace
+
+    task = replace(a_task(), params={"reward_time_1": 999})
+    profile = generate.build_profile(task)
+    assert next(f for f in profile.config if f.wire_key == "RW1").default == 100
 
 
 def test_the_stage_count_and_its_key_list_always_agree():
@@ -225,6 +269,30 @@ def test_the_trial_count_and_its_pool_keys_always_agree():
     assert "#define BOX_MAX_TRIAL_TYPES 3" in pins
     assert 'P_INT("PW3", poolWeights[2])' in pins
     assert 'P_INT("PW4"' not in pins
+
+
+def test_the_trial_count_and_its_reward_keys_always_agree():
+    """Same pairing rule as the pool list, and the no-go slot keeps its key so
+    the list is exactly BOX_MAX_TRIAL_TYPES long; only task.json omits it."""
+    trials = [
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2"),
+        TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False, label="Withhold"),
+        TrialTypeDef("odor_line_3", "ODOR_3_ON", True, "left_well", "fluid_0"),
+    ]
+    definition = a_task(trials=trials)
+    pins = generate.task_pins_h(definition)
+    assert "#define BOX_MAX_TRIAL_TYPES 3" in pins
+    assert (
+        '#define BOX_REWARD_KEY_LIST P_INT("RW1", rewardTimes[0]) '
+        'P_INT("RW2", rewardTimes[1]) P_INT("RW3", rewardTimes[2])' in pins
+    )
+    assert 'P_INT("RW4"' not in pins
+    keys = {f.wire_key for f in generate.build_profile(definition).config}
+    assert "RW1" in keys and "RW3" in keys and "RW2" not in keys
+    # An empty table: bare macros, not the guarded four-slot defaults.
+    empty = generate.task_pins_h(a_task(trials=[]))
+    assert "#define BOX_REWARD_KEY_LIST\n" in empty
+    assert "#define BOX_POOL_KEY_LIST\n" in empty
 
 
 def test_a_one_row_ramp_declares_no_stage_group_and_no_engage_field():
@@ -253,6 +321,26 @@ def test_the_selection_mode_reaches_the_firmware():
     assert "#define BOX_SELECTION_MODE BOX_SELECT_POOL" in generate.task_pins_h(
         a_task(selection_mode="pool")
     )
+    weighted = generate.task_pins_h(a_task(selection_mode="weighted"))
+    assert "#define BOX_SELECTION_MODE BOX_SELECT_WEIGHTED" in weighted
+    assert "#define BOX_SELECT_WEIGHTED 2" in weighted
+
+
+def test_an_unknown_selection_mode_is_refused_not_defaulted():
+    with pytest.raises(TaskDefinitionError):
+        TaskDefinition.from_json({"id": "x", "name": "X", "selectionMode": "novelty"})
+
+
+def test_the_weights_are_front_row_only_where_they_are_read():
+    """Under plain anti-bias the weight column does nothing, so it folds behind
+    the advanced disclosure and the mapping step's quick-tune strip skips it."""
+    def weight_fields(mode):
+        return [f for f in generate.build_profile(a_task(selection_mode=mode)).config
+                if f.wire_key.startswith("PW")]
+    assert all(f.advanced for f in weight_fields("antibias"))
+    assert not any(f.advanced for f in weight_fields("pool"))
+    assert not any(f.advanced for f in weight_fields("weighted"))
+    assert "ITS side" in weight_fields("weighted")[0].help
 
 
 def test_a_no_go_type_carries_the_sentinel_and_no_reward():
@@ -263,7 +351,7 @@ def test_a_no_go_type_carries_the_sentinel_and_no_reward():
     ])
     assert validate(definition) == []
     trials = generate.task_trials_h(definition)
-    assert "TrialType(false, Odors[4], SENTINEL, SENTINEL, BF_ODOR_5_ON, 0, 0)" in trials
+    assert "TrialType(false, Odors[4], SENTINEL, SENTINEL, BF_ODOR_5_ON, 0, 0, 0)" in trials
 
 
 def test_a_repin_moves_the_generated_header_and_nothing_else():
@@ -435,6 +523,34 @@ def test_an_all_zero_pool_is_silent_under_anti_bias_selection():
     task = a_task(selection_mode="antibias")
     zeroed = replace(task, trials=[replace(t, weight=0) for t in task.trials])
     assert "TSK109" not in codes(zeroed)
+
+
+def test_an_all_zero_table_is_reported_under_weighted_selection_too():
+    """The weighted selector reads the same weights and makes the same uniform
+    fallback, so the same silent-wrong-data case applies."""
+    from dataclasses import replace
+
+    task = a_task(selection_mode="weighted")
+    assert "TSK109" not in codes(task)
+    zeroed = replace(task, trials=[replace(t, weight=0) for t in task.trials])
+    assert "TSK109" in codes(zeroed)
+
+
+def test_a_go_condition_paying_nothing_is_reported():
+    """The line opens for 0 ms between two fluid strobes: a dry well that every
+    readout scores as rewarded. A no-go pays nothing by definition and is not."""
+    from dataclasses import replace
+
+    task = a_task()
+    dry = replace(task, trials=[replace(task.trials[0], reward_time=0), task.trials[1]])
+    found = validate(dry)
+    assert [d.code for d in found] == ["TSK113"]
+    assert found[0].location == "trials[0].rewardTime"
+    nogo = a_task(trials=[
+        task.trials[0],
+        TrialTypeDef("odor_line_5", "ODOR_5_ON", is_go=False, label="Withhold"),
+    ])
+    assert "TSK113" not in codes(nogo)
 
 
 def test_every_problem_is_reported_not_just_the_first():

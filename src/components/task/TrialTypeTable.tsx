@@ -32,11 +32,11 @@ import type { StrobeVocabulary } from "@/lib/ws/protocol";
  * compiles and drives nothing. Same for the onset code: it is a name from the
  * vocabulary, because the codes are not contiguous and nothing may compute one.
  *
- * ROW ORDER IS THE CONTRACT. Slot i is pool weight PW<i+1> is `kTrials[i]` in
- * the generated firmware, so reordering re-weights a pool task — which is why
- * there is no drag handle here, and why the weight column lives ON the row
- * rather than in the parameter rail where it would outlive the row it
- * describes.
+ * ROW ORDER IS THE CONTRACT. Slot i is pool weight PW<i+1> AND reward volume
+ * RW<i+1> is `kTrials[i]` in the generated firmware, so reordering re-weights
+ * a pool task and re-pays every condition — which is why there is no drag
+ * handle here, and why the weight and reward columns live ON the row rather
+ * than in the parameter rail where they would outlive the row they describe.
  *
  * TWO KINDS OF NAME, and keeping them apart is the point.
  *
@@ -146,6 +146,10 @@ export function TrialTypeTable({
 
   const remove = (index: number) => onChange(trials.filter((_, i) => i !== index));
 
+  // Plain anti-bias draws a side and weights nothing, so the column would be
+  // a number with no effect; the other two modes read it.
+  const showWeights = mode !== "antibias";
+
   const add = () => {
     // Seeded from the LAST row rather than from nothing, so adding a second
     // condition to a working task means changing the two cells that differ.
@@ -167,7 +171,9 @@ export function TrialTypeTable({
           <div className="mt-0.5 text-[10px] text-static/70">
             {mode === "pool"
               ? "Presented from a weighted, block-shuffled pool."
-              : "Presented by anti-bias selection: a side is drawn against the animal's recent bias, then a type from that side."}
+              : mode === "weighted"
+                ? "A side is drawn against the animal's recent bias, then a type from that side by weight — give a stimulus still being learned a larger weight to present it more often."
+                : "Presented by anti-bias selection: a side is drawn against the animal's recent bias, then a type from that side."}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -176,6 +182,7 @@ export function TrialTypeTable({
             value={mode}
             options={[
               { value: "antibias", label: "Anti-bias" },
+              { value: "weighted", label: "Weighted" },
               { value: "pool", label: "Pool" },
             ]}
             onChange={onModeChange}
@@ -278,11 +285,19 @@ export function TrialTypeTable({
                   </button>
                 </div>
 
+                {/* Spelled out per combination rather than assembled: Tailwind
+                    only emits an arbitrary-value class it can read verbatim. A
+                    go row carries its reward volume; a weighted or pool task
+                    adds the weight column on every row. */}
                 <div
                   className={`grid items-end gap-2 ${
-                    mode === "pool"
-                      ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_3.25rem]"
-                      : "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]"
+                    trial.isGo
+                      ? showWeights
+                        ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_4rem_3.25rem]"
+                        : "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_4rem]"
+                      : showWeights
+                        ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_3.25rem]"
+                        : "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]"
                   }`}
                 >
                   <Field caption="odor line">
@@ -327,17 +342,38 @@ export function TrialTypeTable({
                           onChange={(v) => update(index, { rewardChannel: v || null })}
                         />
                       </Field>
+                      <Field caption="reward ms">
+                        <NumberInput
+                          label={`Reward volume for trial type ${index + 1}`}
+                          title="Solenoid open time when this condition is answered correctly — its reward volume. Tunable per box at mapping."
+                          value={trial.rewardTime}
+                          // 100 ms is what every line paid before the volume
+                          // lived on the row; an emptied box falls back to it
+                          // rather than to 0, which is a dry well (TSK113).
+                          fallback={100}
+                          integer
+                          min={0}
+                          max={5000}
+                          align="right"
+                          className="w-full px-2 py-1 text-[11px]"
+                          onChange={(rewardTime) => update(index, { rewardTime })}
+                        />
+                      </Field>
                     </>
                   ) : (
                     <div className="col-span-2 flex h-[26px] items-center px-1 text-[10px] italic text-static/60">
                       correct answer is to withhold
                     </div>
                   )}
-                  {mode === "pool" && (
+                  {showWeights && (
                     <Field caption="weight">
                       <NumberInput
                         label={`Weight for trial type ${index + 1}`}
-                        title="Relative share of trials presenting this type"
+                        title={
+                          mode === "weighted"
+                            ? "This type's share of the trials on its side — anti-bias still balances the sides"
+                            : "Relative share of trials presenting this type"
+                        }
                         value={trial.weight}
                         // Clearing the box means "never present this type", and 0 is
                         // the honest reading of an empty weight. Nothing merges

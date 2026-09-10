@@ -73,7 +73,12 @@ export function TaskCard({
               {task.name}
             </span>
             <span className="mt-0.5 block truncate font-mono text-[9px] uppercase tracking-wide text-static/70">
-              {task.category} · {task.selectionMode === "pool" ? "pool" : "anti-bias"}
+              {task.category} ·{" "}
+              {task.selectionMode === "pool"
+                ? "pool"
+                : task.selectionMode === "weighted"
+                  ? "weighted"
+                  : "anti-bias"}
             </span>
           </span>
         </span>

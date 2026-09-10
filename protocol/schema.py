@@ -1334,7 +1334,12 @@ SHAPES = (
         obj(
             f("location", STR, doc="`trials[1].rewardChannel`, `stages[2].trials`."),
             f("message", STR),
-            f("code", STR, doc="TSK101–TSK111. Each names a failure that is silent without it."),
+            f(
+                "code",
+                STR,
+                doc="TSK101–TSK111 and TSK113 from the sidecar; TSK112 is derived "
+                "on the Task tab. Each names a failure that is silent without it.",
+            ),
         ),
     ),
     Shape(
@@ -1358,7 +1363,13 @@ SHAPES = (
             # `problems` is a count: this reply is drawn on every route mount.
             f("trials", INT, doc="Rows in the trial table — how many conditions it presents."),
             f("stages", INT, doc="Rows in the shaping ramp. 1 means no ramp."),
-            f("selectionMode", STR, doc="`antibias` or `pool`."),
+            f(
+                "selectionMode",
+                lit("antibias", "pool", "weighted"),
+                doc="How the next trial is drawn: a side against recent bias then "
+                "a type uniformly; a block-shuffled weighted pool; or the side "
+                "draw with a weighted pick within it.",
+            ),
         ),
         doc="A row in the profile list, and everything a task card states "
         "before the definition is opened.",

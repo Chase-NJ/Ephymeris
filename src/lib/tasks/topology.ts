@@ -325,15 +325,24 @@ export function groupsOfTab(tab: string, declared: Iterable<string>): string[] {
  * and then left alone, so "first" here is decided by frequency of change,
  * not by trial order.
  *
+ * Reward volume joined when it became per condition: a new odor is paid more
+ * while it is being learned and less once it is, per animal. Trial pool is
+ * the same story for the weighted selector — a stimulus's share is raised and
+ * then decayed over days. Under plain anti-bias the weights are all `advanced`
+ * (they do nothing there), and `TaskConfigForm` promotes only a group with a
+ * front-row field, so that profile gets no empty strip.
+ *
  * An app-level registry (like `GROUP_ORDER` above) rather than a `task.json`
  * flag, deliberately: any new key in a profile changes its `profile_hash` and
  * permanently splits a sketch's historical runs from its future ones in
- * Analytics. A profile that declares neither group simply gets no quick-tune
- * section.
+ * Analytics. A profile that declares none of these groups simply gets no
+ * quick-tune section.
  */
 export const QUICK_TUNE_GROUPS: readonly string[] = [
   "Correction trials",
   "Abstention penalty",
+  "Reward volume",
+  "Trial pool",
 ];
 
 /** Sort a profile's declared groups into trial order, unknown ones last. */

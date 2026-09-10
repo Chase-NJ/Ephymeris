@@ -58,8 +58,8 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
     Assembled from the field catalogue, the definition's values, and the strobe
     vocabulary. The three count-dependent families are expanded here because
     only the definition knows how many of each there are: one ramp group per
-    stage row, one pool weight per trial type, one reward volume per fluid line
-    the rig declares.
+    stage row, one pool weight per trial type, one reward volume per go trial
+    type.
     """
     channels = registry.channels()
     vocab = registry.vocabulary()
@@ -73,7 +73,7 @@ def profile_json(definition: TaskDefinition) -> dict[str, Any]:
             field["max"] = max(0, definition.stage_count - 1)
         config.append(_with_value(field, definition))
 
-    config.extend(_reward_fields(definition, channels))
+    config.extend(_reward_fields(definition))
     config.extend(_pool_fields(definition))
     config.extend(_stage_fields(definition))
 
@@ -114,34 +114,41 @@ def _with_value(field: dict[str, Any], definition: TaskDefinition) -> dict[str, 
     return field
 
 
-def _reward_fields(definition, channels) -> list[dict[str, Any]]:
-    """One per fluid line, labelled from the wiring rather than from a constant.
+def _reward_fields(definition: TaskDefinition) -> list[dict[str, Any]]:
+    """One reward volume per GO trial type, in table order.
 
-    "Left well, line 1" is a fact about how the box is plumbed, so it is read
-    off the reward channel's `well` — a rig that re-plumbs a line gets a form
-    that says so.
+    THE SAME CONTRACT AS THE POOL WEIGHTS: slot i is `rewardTimes[i]` is wire
+    key RW<i+1> is `kTrials[i]`, and the value lives on the row rather than in
+    `params` for the same reason — it is a property of that condition. So the
+    default here is read off the row, never merged through `_with_value`: a
+    `params` entry for a reward key could outlive the row it described, and the
+    row is the one place the editor lets it be typed.
+
+    A no-go row pays nothing and gets no field. Its slot still has a wire key
+    in `TaskPins.h`, so the key list pairs with `BOX_MAX_TRIAL_TYPES` exactly
+    like the pool list; a key that is never sent simply leaves the compiled 0.
     """
     out: list[dict[str, Any]] = []
-    reward_channels = channels.declared_of_kind("reward")
-    for i, wire_key in enumerate(fields.REWARD_WIRE_KEYS):
-        channel = reward_channels[i] if i < len(reward_channels) else None
-        if channel is None:
+    for i, trial in enumerate(definition.trials):
+        if not trial.is_go:
             continue
-        serves = channel.well.replace("_", " ") if channel.well else "unplumbed"
-        field = {
-            "metadataKey": f"fluid_time_{channel.name}",
-            "wireKey": wire_key,
-            "label": f"{channel.name.replace('_', ' ')} — {serves}",
+        label = trial.label or f"{trial.odor_channel.replace('_', ' ')}"
+        out.append({
+            "metadataKey": f"reward_time_{i + 1}",
+            "wireKey": f"{fields.REWARD_WIRE_KEY}{i + 1}",
+            "label": f"Reward — {label}",
             "type": "int",
-            "default": 100,
+            "default": trial.reward_time,
             "group": "Reward volume",
             "unit": "ms",
             "min": 0,
             "max": 5000,
             "step": 10,
-            "help": "Solenoid open time — the reward volume for this line.",
-        }
-        out.append(_with_value(field, definition))
+            "help": (
+                "Solenoid open time when this condition is answered correctly — "
+                "its reward volume. Overrides the trial-table row for this run."
+            ),
+        })
     return out
 
 
@@ -157,10 +164,27 @@ def _pool_fields(definition: TaskDefinition) -> list[dict[str, Any]]:
     and a `params` entry would outlive the row it described.
     """
     out: list[dict[str, Any]] = []
-    ignored = definition.selection_mode != "pool"
+    # Plain anti-bias draws a side and weights nothing; the other two modes
+    # read the weights. Only where they are read are they worth a front-row
+    # field -- under anti-bias they fold behind the advanced disclosure so the
+    # quick-tune strip does not promote a knob that does nothing.
+    ignored = definition.selection_mode == "antibias"
+    if ignored:
+        help_text = (
+            "Relative share of trials presenting this type. "
+            "Ignored while anti-bias selection is on."
+        )
+    elif definition.selection_mode == "weighted":
+        help_text = (
+            "This type's share of the trials on ITS side — anti-bias still "
+            "balances the sides. Raise it for a stimulus the animal is still "
+            "learning; lower it again once learned."
+        )
+    else:
+        help_text = "Relative share of trials presenting this type."
     for i, trial in enumerate(definition.trials):
         label = trial.label or f"{trial.odor_channel.replace('_', ' ')}"
-        out.append({
+        field: dict[str, Any] = {
             "metadataKey": f"pool_weight_{i + 1}",
             "wireKey": f"{fields.POOL_WIRE_KEY}{i + 1}",
             "label": f"Weight — {label}",
@@ -170,12 +194,11 @@ def _pool_fields(definition: TaskDefinition) -> list[dict[str, Any]]:
             "min": 0,
             "max": 100,
             "step": 1,
-            "help": (
-                "Relative share of trials presenting this type."
-                + (" Ignored while anti-bias selection is on." if ignored else "")
-            ),
-            "advanced": True,
-        })
+            "help": help_text,
+        }
+        if ignored:
+            field["advanced"] = True
+        out.append(field)
     return out
 
 
@@ -480,35 +503,57 @@ def task_pins_h(definition: TaskDefinition) -> str:
         f"#define NUM_STAGES {definition.stage_count}",
         f"#define BOX_STAGE_KEY_LIST {stage_keys}",
         "",
-        "/*  How many trial types the table declares, and the pool weight keys for",
-        "    them. Same pairing rule as the ramp. */",
+        "/*  How many trial types the table declares, and the two per-type key",
+        "    lists -- pool weights and reward volumes, one of each per slot.",
+        "    Same pairing rule as the ramp: the count sizes both arrays. */",
         f"#define BOX_MAX_TRIAL_TYPES {max(1, definition.trial_count)}",
     ]
     pool_keys = [
         f'P_INT("PW{i + 1}", poolWeights[{i}])' for i in range(definition.trial_count)
     ]
+    # Every slot, go and no-go alike, so the list pairs with the count exactly
+    # as the pool list does. task.json declares a field only for go rows; a
+    # slot the line never names keeps the 0 compiled into its TrialType.
+    reward_keys = [
+        f'P_INT("{fields.REWARD_WIRE_KEY}{i + 1}", rewardTimes[{i}])'
+        for i in range(definition.trial_count)
+    ]
     if pool_keys:
         lines.append("#define BOX_POOL_KEY_LIST " + " ".join(pool_keys))
+        lines.append("#define BOX_REWARD_KEY_LIST " + " ".join(reward_keys))
     else:
-        # An empty macro rather than none: BOX_POOL_KEY_LIST is referenced
-        # unconditionally by TASK_PARAM_LIST, and leaving it to the guarded
-        # default would declare four weights for a table with no rows.
+        # An empty macro rather than none: both lists are referenced
+        # unconditionally by TASK_PARAM_LIST, and leaving them to the guarded
+        # defaults would declare four slots for a table with no rows.
         lines.append("#define BOX_POOL_KEY_LIST")
+        lines.append("#define BOX_REWARD_KEY_LIST")
 
-    mode = "BOX_SELECT_POOL" if definition.selection_mode == "pool" else "BOX_SELECT_ANTIBIAS"
+    mode = _SELECTION_MACRO[definition.selection_mode]
     lines += [
         "",
         "/*  Which selector the loop runs. Anti-bias draws a side against the",
-        "    animal's recent expressed bias and then a type from that side; the",
-        "    pool draws a block-shuffled sequence from the weights at START. */",
+        "    animal's recent expressed bias and then a type from that side",
+        "    uniformly; weighted draws the side the same way and the type by",
+        "    poolWeights; the pool draws a block-shuffled sequence from the",
+        "    weights at START. BehaviorBox.h guards the same three values. */",
         "#define BOX_SELECT_ANTIBIAS 0",
         "#define BOX_SELECT_POOL 1",
+        "#define BOX_SELECT_WEIGHTED 2",
         f"#define BOX_SELECTION_MODE {mode}",
         "",
         "#endif // TASK_PINS_H",
         "",
     ]
     return "\n".join(lines)
+
+
+#: Definition mode -> the firmware macro. A dict rather than a ternary so an
+#: unknown mode is a KeyError here, not a silent fall-through to anti-bias.
+_SELECTION_MACRO: dict[str, str] = {
+    "antibias": "BOX_SELECT_ANTIBIAS",
+    "pool": "BOX_SELECT_POOL",
+    "weighted": "BOX_SELECT_WEIGHTED",
+}
 
 
 #: Channel name -> the guarded macro in BoxPins.h. Resolution is by KIND for the
@@ -547,10 +592,15 @@ def task_trials_h(definition: TaskDefinition) -> str:
         "#ifndef TASK_TRIALS_H",
         "#define TASK_TRIALS_H",
         "",
-        "/*  THE ORDER IS THE CONTRACT: slot i is poolWeights[i] is wire key",
-        "    PW<i+1>. Reordering silently re-weights a pool task, so the app emits",
-        "    this table and those weights from one pass over one list. */",
-        "static const TrialType kTrials[] = {",
+        "/*  THE ORDER IS THE CONTRACT: slot i is poolWeights[i] (wire key PW<i+1>)",
+        "    and rewardTimes[i] (wire key RW<i+1>). Reordering silently re-weights",
+        "    a pool task and re-pays every condition, so the app emits this table",
+        "    and both key lists from one pass over one list.",
+        "",
+        "    NOT const: each row's last argument is its reward volume, the",
+        "    profile's default, and applyRewardTimes() overwrites it from the",
+        "    START line before the first trial. */",
+        "static TrialType kTrials[] = {",
     ]
 
     # Declaration order, matching BOX_ODOR_PINS above: slot i of that table is
@@ -578,14 +628,14 @@ def task_trials_h(definition: TaskDefinition) -> str:
                 f"    /* {label} */",
                 "    TrialType(true, "
                 f"Odors[{odor_index}], {well}, {reward_index}, "
-                f"{onset}, {fluid_code}, {stop_code}),",
+                f"{onset}, {fluid_code}, {stop_code}, {trial.reward_time}),",
             ]
         else:
             label = trial.label or f"{trial.odor_channel} -> withhold"
             lines += [
                 f"    /* {label} (no-go: no correct port, no reward) */",
                 "    TrialType(false, "
-                f"Odors[{odor_index}], {SENTINEL}, {SENTINEL}, {onset}, 0, 0),",
+                f"Odors[{odor_index}], {SENTINEL}, {SENTINEL}, {onset}, 0, 0, 0),",
             ]
 
     lines += [

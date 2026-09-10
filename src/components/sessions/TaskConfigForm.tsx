@@ -52,10 +52,12 @@ export function TaskConfigForm({
     (f) => f.metadataKey in config && !Object.is(config[f.metadataKey], baseline[f.metadataKey]),
   ).length;
 
-  // Which quick-tune groups this profile actually declares — a profile with
-  // neither renders exactly the old single list.
+  // Which quick-tune groups this profile actually declares with a FRONT-ROW
+  // field — a group whose every field is advanced (an anti-bias profile's
+  // pool weights, which do nothing there) would render as a header over a
+  // disclosure. A profile with none renders exactly the old single list.
   const promoted = QUICK_TUNE_GROUPS.filter((group) =>
-    profile.config.some((field) => field.group === group),
+    profile.config.some((field) => field.group === group && !field.advanced),
   );
   // The header's second glance: how many of the overrides are quick-tune ones,
   // so "2 overridden" on a collapsed card already says whether it is the usual

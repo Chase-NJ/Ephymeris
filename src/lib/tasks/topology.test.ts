@@ -22,6 +22,7 @@ import {
   tabOf,
   taskGraph,
   type Condition,
+  QUICK_TUNE_GROUPS,
 } from "./topology";
 
 /** The shared BF_* vocabulary, as every profile in the lab mirrors it. */
@@ -330,6 +331,20 @@ describe("conditions", () => {
  * land under a new hash and each task's recorded runs would stop being
  * comparable to its future ones — with no error anywhere.
  */
+describe("quick tune", () => {
+  it("promotes the four groups the lab turns per animal, in that order", () => {
+    // Reward volume and Trial pool joined when reward time and the weighted
+    // selector made them per-condition knobs that change over days. A group
+    // added here changes nothing in any profile hash; that is the point.
+    expect([...QUICK_TUNE_GROUPS]).toEqual([
+      "Correction trials",
+      "Abstention penalty",
+      "Reward volume",
+      "Trial pool",
+    ]);
+  });
+});
+
 describe("parameter tabs", () => {
   it("folds correction trials and reward volume under Session", () => {
     expect(tabOf("Correction trials")).toBe("Session");

@@ -266,7 +266,7 @@ SHAPES: Final[dict[str, Any]] = {
     "RigImpact": ('obj', (('specId', 'str', False), ('label', ('union', ('str', 'null')), False), ('codes', ('list', 'str'), False))),
     "RigSaved": ('obj', (('status', ('ref', 'RigStatus'), False), ('problems', ('list', ('ref', 'RigProblem')), False), ('breaks', ('list', ('ref', 'RigImpact')), False))),
     "TaskDiagnostic": ('obj', (('location', 'str', False), ('message', 'str', False), ('code', 'str', False))),
-    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', 'str', False))),
+    "TaskEntry": ('obj', (('id', 'str', False), ('name', 'str', False), ('category', 'str', False), ('path', 'str', False), ('label', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('problems', 'int', False), ('trials', 'int', False), ('stages', 'int', False), ('selectionMode', ('lit', ('antibias', 'pool', 'weighted')), False))),
     "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
     "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('startLineLength', 'int', False), ('startLineMax', 'int', False), ('profile', ('ref', 'TaskProfile'), False), ('catalogueDefaults', ('map', 'any'), False))),
     "TasksUpdatedData": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),

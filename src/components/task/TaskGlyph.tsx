@@ -53,16 +53,20 @@ export function TaskGlyph({
   /**
    * Anti-bias draws a SIDE first and then a type from it, so its conditions
    * are two opposed groups; a pool is one bag, evenly weighted until the
-   * weights say otherwise. The arrangement says which without a legend.
+   * weights say otherwise. Weighted keeps the two groups and steps the radius
+   * within each — sides, unequal shares. The arrangement says which without a
+   * legend.
    */
+  const sided = task.selectionMode !== "pool";
   const nodes = Array.from({ length: count }, (_, i) => {
     const wobble = 0.9 + random() * 0.2;
-    const angle =
-      task.selectionMode === "antibias"
-        ? // Two opposed arcs: even indices to one side, odd to the other.
-          spin + (i % 2 === 0 ? -0.55 : Math.PI - 0.55) + Math.floor(i / 2) * 0.55
-        : spin + (i / Math.max(1, count)) * Math.PI * 2;
-    const radius = 34 * wobble;
+    const angle = sided
+      ? // Two opposed arcs: even indices to one side, odd to the other.
+        spin + (i % 2 === 0 ? -0.55 : Math.PI - 0.55) + Math.floor(i / 2) * 0.55
+      : spin + (i / Math.max(1, count)) * Math.PI * 2;
+    const radius =
+      (task.selectionMode === "weighted" ? (Math.floor(i / 2) % 2 === 0 ? 34 : 24) : 34) *
+      wobble;
     return {
       x: 50 + Math.cos(angle) * radius,
       y: 50 + Math.sin(angle) * radius,

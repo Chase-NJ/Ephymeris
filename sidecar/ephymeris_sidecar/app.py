@@ -231,9 +231,22 @@ class Application:
         # after a launch could serve the shipped pins while every later one
         # served the rig's -- a difference nobody would connect to a restart.
         pinned = bundled_sketches.repin_all(self.pinned_root)
-        if pinned:
+        # The stored task profiles too, for a different reason: their folders
+        # were written by whichever version of the generator last saved them.
+        # When the generator's output changes shape -- the TrialType
+        # constructor grew a reward-volume argument, FL keys became RW keys --
+        # an old folder stops compiling (loud) or sends keys the firmware no
+        # longer parses (silent: the session runs on the compiled-in value).
+        # Regenerating on every start is a few file writes per profile and
+        # makes what is on disk always what THIS version would write.
+        regenerated = self.task_store.regenerate_all()
+        if pinned or regenerated:
             self.discovery = discovery.discover(self.task_store.root, self.pinned_root)
-            log.info("%d bundled sketch(es) rebuilt for this rig's wiring", pinned)
+            log.info(
+                "%d bundled sketch(es) and %d task profile(s) rebuilt at startup",
+                pinned,
+                regenerated,
+            )
         loop = asyncio.get_running_loop()
         self.backup = BackupManager(
             loop=loop,

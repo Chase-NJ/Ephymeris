@@ -1298,7 +1298,10 @@ export interface TaskDiagnostic {
   /** `trials[1].rewardChannel`, `stages[2].trials`. */
   location: string;
   message: string;
-  /** TSK101–TSK111. Each names a failure that is silent without it. */
+  /**
+   * TSK101–TSK111 and TSK113 from the sidecar; TSK112 is derived on the Task tab. Each names a
+   * failure that is silent without it.
+   */
   code: string;
 }
 
@@ -1322,8 +1325,11 @@ export interface TaskEntry {
   trials: number;
   /** Rows in the shaping ramp. 1 means no ramp. */
   stages: number;
-  /** `antibias` or `pool`. */
-  selectionMode: string;
+  /**
+   * How the next trial is drawn: a side against recent bias then a type uniformly; a
+   * block-shuffled weighted pool; or the side draw with a weighted pick within it.
+   */
+  selectionMode: "antibias" | "pool" | "weighted";
 }
 
 export interface TaskSaved {

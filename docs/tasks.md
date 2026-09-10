@@ -28,7 +28,7 @@ There is exactly one behaviour sketch — `GRGL` — and everything an experimen
 | | Arrives at | Carries | Changing it costs |
 |---|---|---|---|
 | **Generated headers** | compile time | the trial table, the channel→pin map, the strobe selection, how many ramp stages exist, which selector runs | a rebuild + reflash |
-| **The `START` line** | run time | every timing, hold, window, penalty, reward volume, anti-bias clamp and stage threshold | a serial line |
+| **The `START` line** | run time | every timing, hold, window, penalty, per-condition reward volume, pool weight, anti-bias clamp and stage threshold | a serial line |
 
 The dividing line is the [`START_LINE_MAX` cap](#63-the-line-length-cap). A trial table and a pin map do not fit on a 640-byte line, and pins have to be compile-time constants anyway. Everything that *does* fit stays on the wire, which is what lets **one flashed binary serve six boxes tuned differently** — the per-box overrides at mapping would otherwise mean six compiles.
 
@@ -808,6 +808,8 @@ _SEED_TOKEN_BUDGET = 16       # len(" SEED=2147483646")
 
 The budget reserves 16 characters for a `SEED` token that doesn't exist yet, because the config half of the line is built at `sessions.confirmMapping` — minutes before the seed is drawn.
 
+The practical ceiling: with a reward volume per condition (`RW<n>`) beside the pool weights (`PW<n>`), an eight-condition, five-stage profile with every scalar at its declared maximum builds to 561 characters including the seed budget, and the twelve-odor vocabulary ceiling still fits. `TSK107` reports the edge before a mapping does.
+
 A `TaskProfileError` here becomes `TASK_PROFILE_INVALID` with the offending box, and **the mapping is refused**, deliberately.
 
 ### 6.4 `SEED`
@@ -1077,11 +1079,25 @@ removed shows as a diagnostic against the row that binds it rather than as a
 task that compiles and drives nothing.
 
 > [!CAUTION]
-> **Row order is the contract.** Slot *i* is pool weight `PW<i+1>` is
-> `kTrials[i]` in the generated firmware, so reordering the table re-weights a
-> pool task. That is why there is no drag handle, and why the weight column
-> lives *on* the row rather than in the parameter rail, where it would outlive
-> the row it describes.
+> **Row order is the contract.** Slot *i* is pool weight `PW<i+1>` **and**
+> reward volume `RW<i+1>` is `kTrials[i]` in the generated firmware, so
+> reordering the table re-weights a pool task and re-pays every condition. That
+> is why there is no drag handle, and why the weight and reward columns live
+> *on* the row rather than in the parameter rail, where they would outlive the
+> row they describe. The generator reads both off the row and never out of
+> `params`, so the rail excludes the "Reward volume" group outright rather than
+> offering an edit it would ignore.
+
+Each go row carries its **reward volume** — solenoid open time in ms on a
+correct answer. It moved onto the row (from one value per fluid line, `FL1..FL4`)
+because two conditions paying from the same line may pay differently: a newly
+introduced odor is typically paid more than a learned one. The row's value is
+compiled into the firmware's `TrialType` as the default and declared as `RW<i+1>`,
+so the mapping step can still override it per box. A go row paying 0 ms is
+`TSK113` — a dry well that every readout scores as rewarded.
+
+The **weight** column appears under pool and weighted selection, where the
+firmware reads it, and is hidden under plain anti-bias, where it does nothing.
 
 Each row is **named by the operator, and the name is required** (`TSK110`,
 `TSK111`). Two kinds of name meet on this screen and keeping them apart is the
@@ -1209,8 +1225,8 @@ Four answers, and nothing derivable:
 
 | | |
 |---|---|
-| `trials[]` | which trials the animal sees — each naming an **odor channel**, a **response channel**, a **reward channel** and an **onset strobe** |
-| `selectionMode` | `antibias` (draw a side against recent bias, then a type from that side) or `pool` (a block-shuffled weighted sequence drawn at `START`) |
+| `trials[]` | which trials the animal sees — each naming an **odor channel**, a **response channel**, a **reward channel** and an **onset strobe**, and carrying its own **reward volume** and **weight** |
+| `selectionMode` | `antibias` (draw a side against recent bias, then a type from that side uniformly), `weighted` (the same side draw, then a type from that side **by weight** — for presenting a stimulus still being learned more often without giving up the side balancing) or `pool` (a block-shuffled weighted sequence drawn at `START`) |
 | `stages[]` | the shaping ramp, one row to as many as fit the line |
 | `params{}` | only what **diverges** from the field catalogue's default |
 
@@ -1238,13 +1254,14 @@ others saying something else.
 
 Three families are *not* in the catalogue, because only the definition knows how
 many of each exist: the ramp rows, the pool weights (one per trial type), and
-the reward volumes (one per fluid line the rig declares).
+the reward volumes (one per go trial type, read off the row).
 
-### 11.3 The eleven diagnostics
+### 11.3 The diagnostics
 
-Each names a failure that is silent without it. `TSK103`, `TSK105` and `TSK109`
-are the three that produce plausible-looking wrong **data** rather than an
-obvious failure.
+Each names a failure that is silent without it. `TSK103`, `TSK105`, `TSK109` and
+`TSK113` are the four that produce plausible-looking wrong **data** rather than
+an obvious failure. (`TSK112` is the Task tab's own, derived client-side —
+§4.10.)
 
 | | |
 |---|---|
@@ -1256,9 +1273,10 @@ obvious failure.
 | `TSK106` | a ramp that is not ascending — `liveStage()` scans down, so the row simply never engages |
 | `TSK107` | a `START` line over the cap — the firmware truncates in silence ([§6.3](#63-the-line-length-cap)) |
 | `TSK108` | a table with no presentable trial — a session that runs nothing |
-| `TSK109` | **a pool whose weights are all zero** — `generateTrials()` would divide by the total, so it falls back to equal weights; the box runs a uniform pool while the table on screen says otherwise. Pool mode only: anti-bias draws a side and weights nothing |
+| `TSK109` | **a pool whose weights are all zero** — `generateTrials()` would divide by the total, so it falls back to equal weights; the box runs a uniform pool while the table on screen says otherwise. Pool and weighted modes, whose within-side draw makes the same fallback: plain anti-bias draws a side and weights nothing |
 | `TSK110` | a condition with no name — the generator falls back to the odor channel, so every readout titles the condition after whichever line happened to carry it |
 | `TSK111` | two conditions sharing a name — two curves under one title, compared case- and whitespace-insensitively because that is how a reader compares them |
+| `TSK113` | **a go condition paying 0 ms** — the line opens for nothing between two fluid strobes, so the well stays dry while every readout scores the trial as rewarded |
 
 **Naming every condition is required**, which is what `TSK110` and `TSK111` say
 between them. A trial type's name is the one thing the table cannot derive, and
@@ -1358,6 +1376,13 @@ That is **correct** — it is a different declaration — and unavoidable, since
 old hash cannot be recomputed. `legacyNames` keeps archive adoption working, so
 historical runs still decode; what changes is that they group separately from
 runs made on the profile that replaced them.
+
+The same split happened again when reward volume moved from the fluid line to
+the condition (2026-09-10): every regenerated `task.json` lost its `FL1..FL4`
+fields and gained `RW<n>`, so every profile's `profile_hash` moved. Runs recorded
+before that day form their own group; each still carries its own snapshot
+([data.md §4.4](data.md#44-the-embedded-task-profile)) and scores exactly as it
+did.
 
 ---
 

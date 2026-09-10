@@ -21,8 +21,8 @@ means.
 > `GRGL/task.json`, which is the closest thing to a check that exists.
 
 The three count-dependent families — the ramp rows, the pool weights, and the
-per-line reward volumes — are NOT here. A profile's stage count and trial-type
-count decide how many of each exist, so `generate.py` emits them.
+per-condition reward volumes — are NOT here. A profile's stage count and
+trial-type count decide how many of each exist, so `generate.py` emits them.
 """
 
 from __future__ import annotations
@@ -189,10 +189,10 @@ STAGE_TRIALS_FIELD = _f(
     unit="trials", minimum=0, maximum=32000, step=5,
 )
 
-#: One per fluid line the box has, keyed FL1..FL4. Labels are rewritten from the
-#: rig's own channel names in `generate.py` — "Left well, line 1" is a fact about
-#: the wiring, not about the firmware.
-REWARD_WIRE_KEYS: tuple[str, ...] = ("FL1", "FL2", "FL3", "FL4")
+#: Keyed RW1..RW<n>, one per declared GO trial type — the reward volume for
+#: that condition. It used to be FL1..FL4, one per fluid line, which forced two
+#: conditions paying from one line to pay the same volume.
+REWARD_WIRE_KEY = "RW"
 
 #: Keyed PW1..PW<n>, one per declared trial type.
 POOL_WIRE_KEY = "PW"

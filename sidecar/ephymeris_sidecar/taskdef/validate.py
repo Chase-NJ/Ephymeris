@@ -18,9 +18,14 @@ rather than a warning:
   TSK109  a pool whose weights are all zero    -> a uniform pool, silently
   TSK110  a condition with no name             -> a chart titled after a channel
   TSK111  two conditions sharing a name        -> two curves, one title
+  TSK113  a go condition paying 0 ms           -> a dry well scored as rewarded
 
-TSK103, TSK105 and TSK109 are the three that produce plausible-looking wrong
-DATA rather than an obvious failure, and are the reason this file exists at all.
+(TSK112 is the Task tab's own, derived client-side: an onset code no live
+metric scores.)
+
+TSK103, TSK105, TSK109 and TSK113 are the four that produce plausible-looking
+wrong DATA rather than an obvious failure, and are the reason this file exists
+at all.
 
 TSK110 and TSK111 are the naming pair, and they are errors for the same reason
 TSK105 is: a condition is only ever read back by its NAME. It titles the live
@@ -62,6 +67,7 @@ def validate(definition: TaskDefinition) -> list[Diagnostic]:
     vocab = registry.vocabulary()
 
     out.extend(_trial_problems(definition, channels, vocab))
+    out.extend(_reward_problems(definition))
     out.extend(_pool_problems(definition))
     out.extend(_stage_problems(definition))
     out.extend(_line_problems(definition))
@@ -250,10 +256,11 @@ def _pool_problems(definition: TaskDefinition) -> list[Diagnostic]:
     The likeliest way to arrive here is zeroing rows to disable them and then
     zeroing the last one too. A zero on SOME rows is deliberate and supported —
     that row is inert, which is how a type is parked without deleting it — so
-    this fires only on the total, and only in the mode that reads weights at
-    all. Anti-bias selection draws a side and weights nothing.
+    this fires only on the total, and only in the modes that read weights at
+    all: the pool, and weighted anti-bias, whose within-side draw makes the
+    same uniform fallback. Plain anti-bias draws a side and weights nothing.
     """
-    if definition.selection_mode != "pool" or not definition.trials:
+    if definition.selection_mode == "antibias" or not definition.trials:
         return []
     # `<= 0` rather than `== 0`: this mirrors `generateTrials()`'s own condition,
     # so the two agree about the edge even if a negative weight ever reaches it.
@@ -293,6 +300,27 @@ def _stage_problems(definition: TaskDefinition) -> list[Diagnostic]:
             ))
         previous = max(previous, stage.trials)
     return out
+
+
+def _reward_problems(definition: TaskDefinition) -> list[Diagnostic]:
+    """A go condition that pays nothing.
+
+    The firmware opens the line for `rewardTime` ms and strobes FLUID/STOP_FLUID
+    either side of it regardless, so a 0 ms reward is a dry well that every
+    readout scores as a rewarded, correct trial. The value used to be per fluid
+    line with the same floor; per condition there are more places to type it,
+    and a 0 is the one value that is never what an operator meant.
+    """
+    return [
+        Diagnostic(
+            f"trials[{i}].rewardTime",
+            "this condition pays 0 ms — the well stays dry while the recording "
+            "scores the trial as rewarded",
+            "TSK113",
+        )
+        for i, trial in enumerate(definition.trials)
+        if trial.is_go and trial.reward_time <= 0
+    ]
 
 
 def _line_problems(definition: TaskDefinition) -> list[Diagnostic]:

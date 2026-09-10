@@ -81,7 +81,7 @@ int main() {
   //     `rightWell`/`leftWell` rather than raw pins: the selector splits the
   //     table by comparing correctWell against them, which is what lets it stop
   //     knowing a pin number.
-  TrialType goR(true,1,rightWell,2,101,253,357), goL(true,3,leftWell,0,103,252,369);
+  TrialType goR(true,1,rightWell,2,101,253,357,100), goL(true,3,leftWell,0,103,252,369,100);
   const TrialType twoSided[] = { goR, goL };
   { AntiBiasSelector s(twoSided,2,20,0.5,0.05,0.95,6);
     const TrialType* t = s.selectNext(); assert(t==&twoSided[0] || t==&twoSided[1]);
@@ -93,7 +93,7 @@ int main() {
   // --- ...and with two types per side it still de-biases the SIDE, presenting
   //     both of that side's odors. This is the case the two-pointer selector
   //     could not express at all.
-  { TrialType r2(true,5,rightWell,2,102,253,357), l2(true,7,leftWell,0,104,252,369);
+  { TrialType r2(true,5,rightWell,2,102,253,357,100), l2(true,7,leftWell,0,104,252,369,100);
     const TrialType four[] = { goR, r2, goL, l2 };
     AntiBiasSelector s(four,4,20,0.5,0.05,0.95,32);
     int right=0, seenR0=0, seenR1=0;
@@ -111,10 +111,63 @@ int main() {
     for(int i=0;i<50;i++) assert(s.selectNext()==&oneSided[0]); }
 
   // --- a no-go type has no side, so the selector never presents it ---
-  { TrialType nogo(false,9,SENTINEL,SENTINEL,105,0,0);
+  { TrialType nogo(false,9,SENTINEL,SENTINEL,105,0,0,0);
     const TrialType mixed[] = { goR, goL, nogo };
     AntiBiasSelector s(mixed,3);
     for(int i=0;i<200;i++) assert(s.selectNext() != &mixed[2]); }
+
+  // --- WeightedAntiBiasSelector: the same side draw, a weighted pick within it ---
+  //     Slots: 0 goR, 1 r2, 2 goL, 3 l2. Weights 3:1 on each side.
+  { TrialType r2(true,5,rightWell,2,102,253,357,100), l2(true,7,leftWell,0,104,252,369,100);
+    const TrialType four[] = { goR, r2, goL, l2 };
+    TaskParams c; parseStart("START PW1=3 PW2=1 PW3=3 PW4=1 SEED=7 BW=20 MCS=32", c);
+    beginSessionRng(c);
+    WeightedAntiBiasSelector s(four,4); s.configure(c);
+    int right=0, n0=0, n1=0, n2=0, n3=0;
+    for(int i=0;i<800;i++){
+      const TrialType* t = s.selectNext();
+      if(t==&four[0]) n0++; else if(t==&four[1]) n1++; else if(t==&four[2]) n2++; else n3++;
+      if(t->correctWell==rightWell) right++;
+    }
+    assert(right > 300 && right < 500);   // the weights do not move the SIDE balance
+    assert(n0 > 2*n1 && n2 > 2*n3);       // ~3:1 within each side
+    assert(n1 > 0 && n3 > 0); }           // the light types are still presented
+
+  // --- ...and it still pushes against an expressed side bias, like the base ---
+  { TrialType r2(true,5,rightWell,2,102,253,357,100), l2(true,7,leftWell,0,104,252,369,100);
+    const TrialType four[] = { goR, r2, goL, l2 };
+    TaskParams c; parseStart("START PW1=3 PW2=1 PW3=3 PW4=1 DBS=0.5 PMN=0.05 PMX=0.95 MCS=6", c);
+    WeightedAntiBiasSelector s(four,4); s.configure(c);
+    for(int i=0;i<20;i++) s.recordChoice(true);
+    int left=0; for(int i=0;i<200;i++){ if(s.selectNext()->correctWell==leftWell) left++; }
+    assert(left > 120); }
+
+  // --- a zero weight parks a type; all-zero on a side falls back to uniform ---
+  { TrialType r2(true,5,rightWell,2,102,253,357,100), l2(true,7,leftWell,0,104,252,369,100);
+    const TrialType four[] = { goR, r2, goL, l2 };
+    TaskParams c; parseStart("START PW1=1 PW2=0 PW3=0 PW4=0", c);
+    WeightedAntiBiasSelector s(four,4); s.configure(c);
+    int n1=0, n2=0, n3=0;
+    for(int i=0;i<400;i++){
+      const TrialType* t = s.selectNext();
+      if(t==&four[1]) n1++; else if(t==&four[2]) n2++; else if(t==&four[3]) n3++;
+    }
+    assert(n1 == 0);                      // weighted 0 -> never drawn
+    assert(n2 > 0 && n3 > 0); }           // left side all-zero -> uniform, both seen
+
+  // --- a one-sided table must not fault under the weighted draw either ---
+  { const TrialType oneSided[] = { goR };
+    TaskParams c; parseStart("START PW1=0", c);
+    WeightedAntiBiasSelector s(oneSided,1); s.configure(c);
+    for(int i=0;i<50;i++) assert(s.selectNext()==&oneSided[0]); }
+
+  // --- the runner's view of it is the base pointer, and that is enough ---
+  { TrialType r2(true,5,rightWell,2,102,253,357,100);
+    const TrialType two[] = { goR, r2 };
+    WeightedAntiBiasSelector s(two,2);
+    TrialPolicy policy; policy.selector = &s;   // what runTrial() is handed
+    policy.selector->recordChoice(true);        // base methods, resolved on the base
+    policy.selector->recordAbstention(false); }
 
   // --- generateTrials: honors weights, fills exactly numTrials ---
   { TrialWeight pool[] = { {goR, 3}, {goL, 1} };
@@ -151,9 +204,28 @@ int main() {
   { TaskParams p; parseStart("START ERR=9000 ITI=1500 POL=3 PRM=750 NWP=800", p);
     assert(p.errorDelay==9000 && p.standardITI==1500);
     assert(p.pollingRate==3 && p.primingDelay==750 && p.nogoWellPoll==800); }
-  { TaskParams p; parseStart("START FL1=80 FL2=90 FL3=110 FL4=120", p); // reward volumes
-    assert(p.fluidPinTimes[0]==80 && p.fluidPinTimes[1]==90);
-    assert(p.fluidPinTimes[2]==110 && p.fluidPinTimes[3]==120); }
+  { TaskParams p; parseStart("START RW1=80 RW2=90 RW3=110 RW4=120", p); // per-type reward volumes
+    assert(p.rewardTimes[0]==80 && p.rewardTimes[1]==90);
+    assert(p.rewardTimes[2]==110 && p.rewardTimes[3]==120); }
+  { TaskParams p; parseStart("START RW2=250", p);                         // unsent slots read "not sent"
+    assert(p.rewardTimes[0]==-1 && p.rewardTimes[1]==250 && p.rewardTimes[3]==-1); }
+  { TaskParams p;                                                          // every slot, not just slot 0:
+    for (int i = 0; i < BOX_MAX_TRIAL_TYPES; i++) assert(p.rewardTimes[i]==-1); } // a {-1} initialiser zero-fills the tail
+
+  // --- applyRewardTimes: the line overrides the table, silence keeps it, 0 is a value ---
+  { TrialType t[] = { TrialType(true,1,rightWell,2,101,253,357,100),
+                      TrialType(true,3,leftWell,0,103,252,369,150) };
+    TaskParams p; parseStart("START RW2=250", p);
+    applyRewardTimes(p, t, 2);
+    assert(t[0].rewardTime==100 && t[1].rewardTime==250); }   // slot 1 sent, slot 0 kept
+  { TrialType t[] = { TrialType(true,1,rightWell,2,101,253,357,100) };
+    TaskParams p; parseStart("START RW1=0", p);
+    applyRewardTimes(p, t, 1);
+    assert(t[0].rewardTime==0); }                                 // a sent 0 ms is honoured
+  { TrialType t[] = { TrialType(true,1,rightWell,2,101,253,357,100) };
+    TaskParams p; parseStart("START", p);
+    applyRewardTimes(p, t, 1);
+    assert(t[0].rewardTime==100); }                               // bare START -> compiled default
   { TaskParams p; parseStart("START DBS=0.75 PMN=0.1 PMX=0.9 BW=12 MCS=4", p);
     assert(p.debiasStrength>0.74f && p.debiasStrength<0.76f);
     assert(p.pSideMin>0.09f && p.pSideMin<0.11f);
@@ -163,10 +235,10 @@ int main() {
     assert(p.numTrials==240 && p.blockSize==24); }
 
   // --- clampTaskParams: operator-typed values can no longer hang the runner ---
-  { TaskParams p; parseStart("START POL=0 NT=0 BS=-5 BW=999 MCS=0 FL1=-20", p);
+  { TaskParams p; parseStart("START POL=0 NT=0 BS=-5 BW=999 MCS=0 RW1=-20", p);
     assert(p.pollingRate==1 && p.numTrials==1 && p.blockSize==1);
     assert(p.biasWindow==BEHAVIOR_MAX_BIAS_WINDOW && p.maxConsecutiveSide==1);
-    assert(p.fluidPinTimes[0]==0); }
+    assert(p.rewardTimes[0]==-1); }                                     // a negative reads as "not sent"
   { TaskParams p; parseStart("START PMN=-1 PMX=5", p);                  // probabilities held to [0,1]
     assert(p.pSideMin==0.0f && p.pSideMax==1.0f); }
   { TaskParams p; parseStart("START LZG=99", p);                        // stage index held in range
@@ -232,7 +304,7 @@ int main() {
   { char line[START_LINE_MAX];
     int n = snprintf(line, sizeof(line),
       "START ERR=20000 NWP=2000 LZD=6000 LZS=6000 LZM=30000 NPH=10000 ITI=4000 "
-      "PRM=1000 POL=5 FL1=100 FL2=100 FL3=100 FL4=100 CL=0 CR=0 LZG=4 NT=1000 "
+      "PRM=1000 POL=5 RW1=100 RW2=100 RW3=100 RW4=100 CL=0 CR=0 LZG=4 NT=1000 "
       "BS=30 PW1=1 PW2=0 PW3=0 PW4=0 BW=20 MCS=6 DBS=0.5 PMN=0.05 PMX=0.95 LAZY=1 "
       "S0T=0 S0P=10 S0H=10 S0W=10000 S0O=8000 S1T=15 S1P=100 S1H=50 S1W=10000 S1O=8000 "
       "S2T=30 S2P=200 S2H=200 S2W=5000 S2O=6000 S3T=50 S3P=350 S3H=350 S3W=3000 S3O=4000 "
@@ -241,7 +313,7 @@ int main() {
     TaskParams p; parseStartCommand(line, p);    // and every token lands
     assert(p.lazyEscalationStage==4 && p.trialSeed==2147483646UL);
     assert(p.stage[2].fluidWellPoll==5000 && p.stage[4].odorPokeHold==500);
-    assert(p.maxConsecutiveSide==6 && p.fluidPinTimes[3]==100); }
+    assert(p.maxConsecutiveSide==6 && p.rewardTimes[3]==100); }
 
   // --- THE CROSS-REPO CHECK: the exact line Ephymeris builds for the shipped
   //     GRGL profile, parsed by the parser that will receive it.
@@ -258,7 +330,7 @@ int main() {
   { char line[START_LINE_MAX];
     int n = snprintf(line, sizeof(line),
       "START ERR=20000 ITI=4000 NPH=10000 NWP=2000 PRM=1000 POL=5 LZD=6000 "
-      "LAZY=1 LZS=6000 LZM=30000 LZG=0 FL1=100 FL2=100 FL3=100 FL4=100 NT=1000 "
+      "LAZY=1 LZS=6000 LZM=30000 LZG=0 RW1=100 RW2=100 NT=1000 "
       "PW1=1 PW2=1 BS=30 CL=0 CR=0 BW=20 MCS=10 DBS=0.5 PMN=0.02 PMX=0.98 "
       "S0P=500 S0H=200 S0W=2000 S0O=4000 SEED=2147483646");
     assert(n > 0 && (size_t)n < sizeof(line));
@@ -266,7 +338,7 @@ int main() {
     // One assertion per group, so a dropped token names which one went.
     assert(p.errorDelay==20000 && p.standardITI==4000);          // trial timing
     assert(p.lazyRatDelay==6000 && p.lazyEscalationEnabled);     // abstention
-    assert(p.fluidPinTimes[0]==100 && p.fluidPinTimes[3]==100);  // reward volume
+    assert(p.rewardTimes[0]==100 && p.rewardTimes[1]==100);      // reward volume, per type
     assert(p.numTrials==1000 && p.blockSize==30);                // session
     assert(p.poolWeights[0]==1 && p.poolWeights[1]==1);          // trial pool
     assert(p.correctionLeft==0 && p.correctionRight==0);         // correction

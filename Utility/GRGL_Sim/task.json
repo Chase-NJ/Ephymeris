@@ -144,9 +144,9 @@
       "help": "Escalation stays off until this stage is reached, so an animal still being eased in is never escalated against."
     },
     {
-      "metadataKey": "fluid_time_l1",
-      "wireKey": "FL1",
-      "label": "Left well, line 1",
+      "metadataKey": "reward_time_1",
+      "wireKey": "RW1",
+      "label": "Reward — Go right",
       "type": "int",
       "default": 100,
       "group": "Reward volume",
@@ -154,12 +154,12 @@
       "min": 0,
       "max": 5000,
       "step": 10,
-      "help": "Solenoid open time -- the reward volume for this line."
+      "help": "Solenoid open time when this condition is answered correctly -- its reward volume. Overrides the trial-table row for this run."
     },
     {
-      "metadataKey": "fluid_time_l2",
-      "wireKey": "FL2",
-      "label": "Left well, line 2",
+      "metadataKey": "reward_time_2",
+      "wireKey": "RW2",
+      "label": "Reward — Go left",
       "type": "int",
       "default": 100,
       "group": "Reward volume",
@@ -167,33 +167,7 @@
       "min": 0,
       "max": 5000,
       "step": 10,
-      "help": "Solenoid open time -- the reward volume for this line."
-    },
-    {
-      "metadataKey": "fluid_time_r1",
-      "wireKey": "FL3",
-      "label": "Right well, line 1",
-      "type": "int",
-      "default": 100,
-      "group": "Reward volume",
-      "unit": "ms",
-      "min": 0,
-      "max": 5000,
-      "step": 10,
-      "help": "Solenoid open time -- the reward volume for this line."
-    },
-    {
-      "metadataKey": "fluid_time_r2",
-      "wireKey": "FL4",
-      "label": "Right well, line 2",
-      "type": "int",
-      "default": 100,
-      "group": "Reward volume",
-      "unit": "ms",
-      "min": 0,
-      "max": 5000,
-      "step": 10,
-      "help": "Solenoid open time -- the reward volume for this line."
+      "help": "Solenoid open time when this condition is answered correctly -- its reward volume. Overrides the trial-table row for this run."
     },
     {
       "metadataKey": "num_trials",

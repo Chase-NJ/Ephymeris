@@ -1,7 +1,7 @@
 #!/bin/sh
 # Host-compile BehaviorBox.h against a minimal Arduino.h shim and run the logic
-# tests (parseStartCommand, CorrectionPolicy, AbstentionPenalty, AntiBiasSelector,
-# generateTrials). This exercises the SHARED LIBRARY logic off-target -- it does
+# tests (parseStartCommand, applyRewardTimes, CorrectionPolicy, AbstentionPenalty,
+# AntiBiasSelector, WeightedAntiBiasSelector, generateTrials). This exercises the SHARED LIBRARY logic off-target -- it does
 # NOT replace flashing the sketches to the rig (only arduino-cli does the full
 # AVR compile).
 #

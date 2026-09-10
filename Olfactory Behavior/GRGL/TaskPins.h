@@ -29,14 +29,18 @@
 #define NUM_STAGES 1
 #define BOX_STAGE_KEY_LIST P_STAGE(0)
 
-/*  How many trial types the table declares, and the pool weight keys for them.
-    GRGL runs live anti-bias selection and ignores the weights, but they are
-    still parsed: the same firmware runs a pool task, and the profile decides
-    which by BOX_SELECTION_MODE below. */
+/*  How many trial types the table declares, and the two per-type key lists:
+    pool weights and reward volumes, one of each per slot. Plain anti-bias
+    selection ignores the weights, but they are still parsed: the same firmware
+    runs a pool or weighted task, and the profile decides which by
+    BOX_SELECTION_MODE below. */
 #define BOX_MAX_TRIAL_TYPES 2
 #define BOX_POOL_KEY_LIST      \
   P_INT("PW1", poolWeights[0]) \
   P_INT("PW2", poolWeights[1])
+#define BOX_REWARD_KEY_LIST    \
+  P_INT("RW1", rewardTimes[0]) \
+  P_INT("RW2", rewardTimes[1])
 
 /*  Which selector the loop uses.
       BOX_SELECT_ANTIBIAS -- draw a side against the animal's recent bias, then
@@ -45,10 +49,15 @@
       BOX_SELECT_POOL     -- a block-shuffled sequence built from poolWeights,
                              generated once at START. No policy objects, and a
                              completed trial always advances.
-    Defined as numbers rather than a bool so a third mode reads as an addition
-    rather than an inversion. */
+      BOX_SELECT_WEIGHTED -- the anti-bias side draw, then a type from that
+                             side by poolWeights. For over-presenting a
+                             stimulus the animal is still learning.
+    Numbers rather than a bool so a further mode reads as an addition rather
+    than an inversion. BehaviorBox.h guards the same three, so a header that
+    omits them still compiles anti-bias. */
 #define BOX_SELECT_ANTIBIAS 0
 #define BOX_SELECT_POOL 1
+#define BOX_SELECT_WEIGHTED 2
 #define BOX_SELECTION_MODE BOX_SELECT_ANTIBIAS
 
 #endif // TASK_PINS_H

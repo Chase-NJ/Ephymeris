@@ -16,7 +16,9 @@
       per profile and per run instead of being recompiled;
     * the reusable TRIAL primitives (TrialClock, TrialType, TrialWeight +
       generateTrials) and the session POLICY classes (anti-bias selection,
-      the lazy-penalty escalator, per-side correction budgets);
+      plain and weighted, the lazy-penalty escalator, per-side correction
+      budgets). A trial type carries its own reward volume, overwritten per
+      run from the START line (applyRewardTimes);
     * the TRIAL RUNNER -- one loop for every behavior task. A weighted pool and
       live anti-bias selection run the same trial and differ only in which
       policies they hand it, which is why GRGL.ino covers both in ~110 lines.
@@ -108,16 +110,25 @@ struct TrialType
   const bool isGo;
   const int odorPin;        // Odor solenoid pin
   const int correctWell;    // pin of correct well, or -1 for no-go
-  const int rewardIndex;    // Index into Fluids[] AND FluidPinTimes[], or -1 for no-go
+  const int rewardIndex;    // Index into Fluids[], or -1 for no-go
   const int odorOnCode;     // host code for Odor on (distinct between odors)
   const int fluidEventCode; // host code for fluid delivery
   const int stopFluidCode;  // host code for fluid stop
+  /*  Solenoid open time when this type is answered correctly (ms) -- the open
+      time IS the delivered volume. The one member that is NOT const: the value
+      compiled here is the profile's default, and the START line overwrites it
+      per run through applyRewardTimes() (wire key RW<slot+1>). It lives on the
+      type rather than on the fluid line because two conditions that pay from
+      the same line may pay different volumes -- a newly introduced odor is
+      typically paid more than a learned one. */
+  int rewardTime;
 
   TrialType(bool isGo, int odorPin, int correctWell, int rewardIndex,
-            int odorOnCode, int fluidEventCode, int stopFluidCode)
+            int odorOnCode, int fluidEventCode, int stopFluidCode, int rewardTime)
       : isGo(isGo), odorPin(odorPin), correctWell(correctWell),
         rewardIndex(rewardIndex), odorOnCode(odorOnCode),
-        fluidEventCode(fluidEventCode), stopFluidCode(stopFluidCode) {}
+        fluidEventCode(fluidEventCode), stopFluidCode(stopFluidCode),
+        rewardTime(rewardTime) {}
 };
 
 /* Lets a task manipulate the proportion of each trial type it administers.
@@ -436,6 +447,39 @@ inline void flashLight(int duration, int pollMs)
 #define BOX_MAX_TRIAL_TYPES 4
 #endif
 
+/*  Which selector the sketch's loop runs. A generated TaskPins.h sets
+    BOX_SELECTION_MODE; these are the values it may pick from.
+
+      BOX_SELECT_ANTIBIAS -- draw a side against the animal's recent bias, then
+                             a type from that side UNIFORMLY. Adds the abstention
+                             escalator and per-side correction budgets.
+      BOX_SELECT_POOL     -- a block-shuffled sequence built from poolWeights,
+                             generated once at START. No policy objects, and a
+                             completed trial always advances.
+      BOX_SELECT_WEIGHTED -- the anti-bias side draw, then a type from that side
+                             BY WEIGHT (poolWeights, the same PW keys). Lets a
+                             newly introduced stimulus be presented more often
+                             than a learned one without giving up the side
+                             balancing.
+
+    GUARDED, AND THAT IS NOT OPTIONAL. Before these defaults lived here they were
+    defined only in the generated header, so a sketch whose TaskPins.h omitted
+    them evaluated `#if BOX_SELECTION_MODE == BOX_SELECT_POOL` as `0 == 0` --
+    true -- and silently compiled pool mode. Numbers rather than a bool so a
+    further mode reads as an addition rather than an inversion. */
+#ifndef BOX_SELECT_ANTIBIAS
+#define BOX_SELECT_ANTIBIAS 0
+#endif
+#ifndef BOX_SELECT_POOL
+#define BOX_SELECT_POOL 1
+#endif
+#ifndef BOX_SELECT_WEIGHTED
+#define BOX_SELECT_WEIGHTED 2
+#endif
+#ifndef BOX_SELECTION_MODE
+#define BOX_SELECTION_MODE BOX_SELECT_ANTIBIAS
+#endif
+
 /*  The trial count no session reaches, so a ramp row carrying it never engages.
     32767 rather than a rounder large number because `trials` is an int and an
     int is 16 bits on AVR -- 100000 wraps to -31072, a count every trial
@@ -483,12 +527,6 @@ struct TaskParams
   int standardITI = 4000;         // intertrial interval on correct trials
   int primingDelay = 1000;        // odor primed before the trial light
   int pollingRate = 5;            // IR sensor polling interval (ms)
-  /*  Per-line open time; the open time IS the delivered volume. The initialiser
-      names four because FL1-FL4 are four wire keys and this box has four lines
-      -- a box generation with more would zero-fill the tail, and a 0 ms reward
-      is a dry well that reports a correct trial. The assert below is what makes
-      that a build failure instead. */
-  int fluidPinTimes[NUM_FLUIDS] = {100, 100, 100, 100};
 
   /* --- session policy --- */
   int correctionLeft = 0;            // CL: leading correction budget, LEFT-correct trials
@@ -502,9 +540,19 @@ struct TaskParams
   /* --- trial generation --- */
   int numTrials = 1000;              // session cap
   int blockSize = 30;                // pool proportions enforced within each block
-  int poolWeights[BOX_MAX_TRIAL_TYPES] = {1}; // pool mode only; ignored where selection is live
+  int poolWeights[BOX_MAX_TRIAL_TYPES] = {1}; // pool + weighted modes; ignored by anti-bias
                                               // (the rest zero-fill, which is what
                                               // "present only the first type" means)
+
+  /* --- per-type reward volume, keyed RW<slot+1> ---
+     Slot i is kTrials[i], the same contract as poolWeights. -1 means the host
+     sent nothing for that slot and the type keeps the value compiled into its
+     TrialType; applyRewardTimes() copies everything >= 0 onto the table. The
+     sentinel is -1 and not 0 because a 0 ms reward is a dry well that still
+     reports a correct trial -- a sent 0 must stay distinguishable from silence.
+     Filled by the constructor: a brace initialiser `{-1}` would set slot 0 only
+     and zero-fill the rest, which is exactly that dry well on every other type. */
+  int rewardTimes[BOX_MAX_TRIAL_TYPES];
 
   /* --- adaptive anti-bias selection (ignored by shaping) --- */
   int biasWindow = 20;         // sliding window of recent expressed choices
@@ -528,6 +576,8 @@ struct TaskParams
       to have advanced. This is the one construction that cannot get it wrong. */
   TaskParams()
   {
+    for (int i = 0; i < BOX_MAX_TRIAL_TYPES; i++)
+      rewardTimes[i] = -1; // "not sent" -- see the field
     for (int i = 0; i < NUM_STAGES; i++)
       stage[i] = StageStep{STAGE_UNREACHABLE, 500, 200, 2000, 4000};
     /*  Row 0's own `trials` is never read -- liveStage() scans down to i > 0 and
@@ -548,14 +598,6 @@ struct TaskParams
      the board's own clock. */
   unsigned long trialSeed = 0;
 };
-
-/*  See fluidPinTimes above: the four FL* wire keys and the four-element
-    initialiser both assume this. A box generation that re-declares
-    BOX_NUM_FLUIDS must extend both, and should fail here rather than water one
-    well for 0 ms. */
-static_assert(NUM_FLUIDS == 4,
-              "fluidPinTimes and the FL1-FL4 wire keys both assume four fluid "
-              "lines; extend TASK_PARAM_LIST and the initialiser together");
 
 /*  int liveStage(const TaskParams&, int completedTrials) ->
     Index of the ramp row in force at this trial count. Scans DESCENDING with
@@ -589,13 +631,15 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
   return liveStage(p, completedTrials) >= p.lazyEscalationStage;
 }
 
-/*  Which pool slots and which ramp rows the START grammar can reach.
+/*  Which pool slots, which reward slots and which ramp rows the START grammar
+    can reach.
 
-    GUARDED, and each must agree with its count above -- BOX_MAX_TRIAL_TYPES and
-    NUM_STAGES. A key list SHORTER than its count leaves the tail unreachable
-    from the wire, which is merely wasteful; a key list LONGER writes past the
-    end of the array, which is not. A generated `TaskPins.h` emits both halves
-    together, which is the only reason this is safe to make variable.
+    GUARDED, and each must agree with its count above -- BOX_MAX_TRIAL_TYPES
+    sizes BOTH per-type lists, NUM_STAGES the ramp. A key list SHORTER than its
+    count leaves the tail unreachable from the wire, which is merely wasteful; a
+    key list LONGER writes past the end of the array, which is not. A generated
+    `TaskPins.h` emits each count together with its list(s), which is the only
+    reason this is safe to make variable.
 
     The defaults are the historical four-slot pool and five-row ramp, so a
     sketch with no generated header parses exactly the line it always did. */
@@ -605,6 +649,14 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
   P_INT("PW2", poolWeights[1])              \
   P_INT("PW3", poolWeights[2])              \
   P_INT("PW4", poolWeights[3])
+#endif
+
+#ifndef BOX_REWARD_KEY_LIST
+#define BOX_REWARD_KEY_LIST                 \
+  P_INT("RW1", rewardTimes[0])              \
+  P_INT("RW2", rewardTimes[1])              \
+  P_INT("RW3", rewardTimes[2])              \
+  P_INT("RW4", rewardTimes[3])
 #endif
 
 #ifndef BOX_STAGE_KEY_LIST
@@ -631,10 +683,6 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
   P_INT("ITI", standardITI)                 \
   P_INT("PRM", primingDelay)                \
   P_INT("POL", pollingRate)                 \
-  P_INT("FL1", fluidPinTimes[0])            \
-  P_INT("FL2", fluidPinTimes[1])            \
-  P_INT("FL3", fluidPinTimes[2])            \
-  P_INT("FL4", fluidPinTimes[3])            \
   P_INT("CL", correctionLeft)               \
   P_INT("CR", correctionRight)              \
   P_INT("LZG", lazyEscalationStage)         \
@@ -648,6 +696,7 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
   P_BOOL("LAZY", lazyEscalationEnabled)     \
   P_ULONG("SEED", trialSeed)                \
   BOX_POOL_KEY_LIST                         \
+  BOX_REWARD_KEY_LIST                       \
   BOX_STAGE_KEY_LIST
 
 /*  One ramp row's five keys: S<n>T trials, S<n>P poke hold, S<n>H well hold,
@@ -687,10 +736,12 @@ inline void clampTaskParams(TaskParams &p)
   if (p.pSideMin < 0.0f) p.pSideMin = 0.0f;
   if (p.pSideMax > 1.0f) p.pSideMax = 1.0f;
   if (p.pSideMax < p.pSideMin) p.pSideMax = p.pSideMin;
-  for (int i = 0; i < NUM_FLUIDS; i++)
-    if (p.fluidPinTimes[i] < 0) p.fluidPinTimes[i] = 0;
   for (int i = 0; i < BOX_MAX_TRIAL_TYPES; i++)
     if (p.poolWeights[i] < 0) p.poolWeights[i] = 0;
+  // Any negative reads as "not sent": the table's compiled value stands. A 0
+  // is NOT folded in -- a sent 0 ms is a choice, and the row keeps it.
+  for (int i = 0; i < BOX_MAX_TRIAL_TYPES; i++)
+    if (p.rewardTimes[i] < 0) p.rewardTimes[i] = -1;
 }
 
 /*  void parseStartCommand(char* line, TaskParams& p) ->
@@ -734,6 +785,23 @@ inline void parseStartCommand(char *line, TaskParams &p)
   }
   clampTaskParams(p);
   applyStage(p, 0); // the live holds must reflect row 0 before trial 1 runs
+}
+
+/*  void applyRewardTimes(const TaskParams&, TrialType*, int) ->
+    Copy every reward volume the host sent (RW<i+1> >= 0) onto slot i of the
+    trial table; a slot the line did not name keeps the value compiled into its
+    TrialType. Call once, after parseStartCommand() and before the first trial.
+
+    The table must be non-const for this -- `static TrialType kTrials[]`, not
+    `static const`. (On AVR a const table without PROGMEM lived in RAM anyway,
+    so nothing is lost.) `count` is capped at BOX_MAX_TRIAL_TYPES, which is what
+    sizes rewardTimes[]; the generated TaskTrials.h static_asserts the table
+    never exceeds it. */
+inline void applyRewardTimes(const TaskParams &p, TrialType *table, int count)
+{
+  for (int i = 0; i < count && i < BOX_MAX_TRIAL_TYPES; i++)
+    if (p.rewardTimes[i] >= 0)
+      table[i].rewardTime = p.rewardTimes[i];
 }
 
 /*  unsigned long beginSessionRng(const TaskParams& p) ->
@@ -791,6 +859,8 @@ inline unsigned long beginSessionRng(const TaskParams &p)
     and the behaviour is bit-for-bit what the two-pointer version did. With two
     odors meaning go-right, it presents them equally often while still
     de-biasing the side, which is the thing the animal can be biased about.
+    WeightedAntiBiasSelector below keeps the side draw and replaces only that
+    within-side pick.
 
     Pin-agnostic: it speaks in `bool wentRight` / `presentedRight` and reads the
     trial table it was handed. A type's side is `correctWell == rightWell`, so
@@ -871,8 +941,15 @@ public:
      estimator -- log a weak vote AGAINST engaging the presented side. */
   void recordAbstention(bool presentedRight) { recordChoice(presentedRight); }
 
-  /* Draw the next trial's correct side, nudged against recent bias and capped. */
-  const TrialType *selectNext()
+  /* Draw the next trial's correct side, nudged against recent bias and capped,
+     then one type from that side uniformly. */
+  const TrialType *selectNext() { return pickFrom(drawSide()); }
+
+  /*  The side draw alone: true for right. Split out of selectNext() so the
+      weighted subclass can reuse it verbatim -- the side is the thing the
+      animal can be biased about, and every selector here must push against it
+      the same way. */
+  bool drawSide()
   {
     float pRight = 0.5;
     if (_len > 0)
@@ -899,11 +976,10 @@ public:
       _hasLast = true;
       _selectedRun = 1;
     }
-
-    return pickFrom(chooseRight);
+    return chooseRight;
   }
 
-private:
+protected:
   /*  One type from the chosen side, uniformly.
 
       Falls through to the other side when the chosen one is empty rather than
@@ -925,10 +1001,13 @@ private:
     return &_types[side[n == 1 ? 0 : (int)random(0, n)]];
   }
 
+  /*  The table and its two side lists (indices into it), read by the subclass. */
   const TrialType *_types = NULL;
   int _right[BOX_MAX_TRIAL_TYPES] = {0};
   int _left[BOX_MAX_TRIAL_TYPES] = {0};
   int _nRight = 0, _nLeft = 0;
+
+private:
   int _window;
   float _debias, _pMin, _pMax;
   int _maxRun;
@@ -937,6 +1016,82 @@ private:
   int _len = 0, _idx = 0, _rightInWindow = 0;
   bool _lastWasRight = false, _hasLast = false;
   int _selectedRun = 0;
+};
+
+/*  Anti-bias selection with a WEIGHTED within-side draw.
+
+    The use it exists for: an animal being worked up from two odors to six or
+    eight should meet the odors it is still learning more often than the ones
+    it already knows, without the session drifting to one side. So the side is
+    drawn exactly as AntiBiasSelector draws it -- same estimator, same clamps,
+    same run cap -- and only the pick within that side changes: each type is
+    drawn in proportion to its pool weight (poolWeights[slot], wire key
+    PW<slot+1>), the same numbers a pool task uses. An operator raises a new
+    odor's weight and lowers it again as the animal learns, per box, on the
+    START line, with no rebuild.
+
+    The overall share of a type is therefore P(its side) x its share WITHIN the
+    side. The side draw does not see the weights, so a heavily weighted type
+    cannot pull the session toward its side -- that is the point.
+
+    All-zero weights on a side fall back to a uniform draw, the same choice
+    generateTrials() makes for an all-zero pool (the app reports it as TSK109).
+    A type weighted 0 is never drawn, which is how a type is parked. An empty
+    side falls through to the other, as the base class does.
+
+    NO VIRTUALS, on purpose (see the header banner). TrialPolicy holds an
+    AntiBiasSelector* and the trial runner only ever calls recordChoice() and
+    recordAbstention() through it -- both base methods, both fine. selectNext()
+    and configure() are resolved statically on the concrete object, which the
+    sketch owns; that is why they are re-declared here rather than overridden. */
+class WeightedAntiBiasSelector : public AntiBiasSelector
+{
+public:
+  WeightedAntiBiasSelector(const TrialType *types, int count)
+      : AntiBiasSelector(types, count) {}
+
+  /*  Adopt the tuning AND the weights from the parsed START line. Copied rather
+      than pointed at so the selector cannot see a later change to params. */
+  void configure(const TaskParams &p)
+  {
+    AntiBiasSelector::configure(p);
+    for (int i = 0; i < BOX_MAX_TRIAL_TYPES; i++)
+      _weights[i] = p.poolWeights[i] < 0 ? 0 : p.poolWeights[i];
+  }
+
+  const TrialType *selectNext() { return pickWeighted(drawSide()); }
+
+private:
+  const TrialType *pickWeighted(bool wantRight) const
+  {
+    const int *side = wantRight ? _right : _left;
+    int n = wantRight ? _nRight : _nLeft;
+    if (n == 0)
+    {
+      side = wantRight ? _left : _right;
+      n = wantRight ? _nLeft : _nRight;
+    }
+    if (n == 0)
+      return &_types[0];
+
+    long total = 0;
+    for (int i = 0; i < n; i++)
+      total += _weights[side[i]];
+    if (total <= 0)
+      return &_types[side[n == 1 ? 0 : (int)random(0, n)]]; // uniform fallback
+
+    long roll = random(0, total);
+    long cumulative = 0;
+    for (int i = 0; i < n; i++)
+    {
+      cumulative += _weights[side[i]];
+      if (roll < cumulative)
+        return &_types[side[i]];
+    }
+    return &_types[side[n - 1]]; // unreachable: roll < total by construction
+  }
+
+  int _weights[BOX_MAX_TRIAL_TYPES] = {0};
 };
 
 /*  The lazy-rat timeout and its escalation. Owns the consecutive-abstention
@@ -1062,11 +1217,16 @@ inline int outcomeDelay(TrialOutcome outcome, const TaskParams &p)
   return p.errorDelay;
 }
 
-/* Open this trial's fluid line for its configured duration (the reward volume). */
+/*  Open this trial's fluid line for THIS TYPE's duration (the reward volume).
+    The duration is the trial type's own -- see TrialType::rewardTime -- so two
+    conditions paying from the same line can pay different volumes. `p` is kept
+    in the signature for symmetry with the other runner steps; nothing in it
+    decides the volume any more. */
 inline void deliverReward(const TrialType &trial, const TaskParams &p, TrialClock &clock)
 {
+  (void)p;
   int fluidPin = Fluids[trial.rewardIndex];
-  int fluidDuration = p.fluidPinTimes[trial.rewardIndex];
+  int fluidDuration = trial.rewardTime;
 
   emitStrobe(clock, trial.fluidEventCode); // log fluid delivery
   digitalWrite(fluidPin, HIGH);            // open fluid solenoid

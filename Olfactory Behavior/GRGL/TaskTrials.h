@@ -15,45 +15,51 @@
     Odor 3  ->  go LEFT   (orange extract)
   A checkout compiles and runs exactly that with no app involved.
 
-  THE ORDER IS THE CONTRACT. Slot i here is `poolWeights[i]` and wire key PW<i+1>,
-  so reordering the table silently re-weights a pool task. The generator emits
-  both together; a hand edit must too.
+  THE ORDER IS THE CONTRACT. Slot i here is `poolWeights[i]` (wire key PW<i+1>)
+  AND `rewardTimes[i]` (wire key RW<i+1>), so reordering the table silently
+  re-weights a pool task and re-pays every condition. The generator emits the
+  table and both key lists together; a hand edit must too.
 */
 
 #ifndef TASK_TRIALS_H
 #define TASK_TRIALS_H
 
-/*  `kTrials` is read by both selectors and by runTrial(); it is const and file-
-    scope so it lives in flash rather than costing RAM per entry. */
-static const TrialType kTrials[] = {
+/*  `kTrials` is read by the selectors and by runTrial(). NOT const: each row's
+    reward volume is the profile's default and the START line overwrites it
+    (applyRewardTimes, RW<slot+1>). Everything else in a row stays const. */
+static TrialType kTrials[] = {
     TrialType(
-        true,             // go trial
-        Odors[0],         // odor line 1
-        rightWell,        // correct response port
-        RIGHT_WELL_FL_1,  // index into Fluids[] AND params.fluidPinTimes[]
-        BF_ODOR_1_ON,     // stimulus onset
-        BF_FLUID_R,       // reward delivered
-        BF_STOP_FLUID_G_R // reward line closed
+        true,              // go trial
+        Odors[0],          // odor line 1
+        rightWell,         // correct response port
+        RIGHT_WELL_FL_1,   // index into Fluids[]
+        BF_ODOR_1_ON,      // stimulus onset
+        BF_FLUID_R,        // reward delivered
+        BF_STOP_FLUID_G_R, // reward line closed
+        100                // reward volume (ms open); RW1 overrides
         ),
     TrialType(
         true,
-        Odors[2],        // odor line 3
+        Odors[2],          // odor line 3
         leftWell,
         LEFT_WELL_FL_1,
         BF_ODOR_3_ON,
         BF_FLUID_L,
-        BF_STOP_FLUID_G_L),
+        BF_STOP_FLUID_G_L,
+        100                // RW2 overrides
+        ),
 };
 
 static const int kTrialCount = (int)(sizeof(kTrials) / sizeof(kTrials[0]));
 
-/*  The table cannot be longer than the arrays that index it -- poolWeights[] and
-    the selector's two side lists are both BOX_MAX_TRIAL_TYPES long. Generated
+/*  The table cannot be longer than the arrays that index it -- poolWeights[],
+    rewardTimes[] and the selector's two side lists are all BOX_MAX_TRIAL_TYPES
+    long. Generated
     together, so this only fires on a hand edit; it fires at build time, which is
     the point. */
 static_assert(kTrialCount <= BOX_MAX_TRIAL_TYPES,
               "more trial types than BOX_MAX_TRIAL_TYPES -- raise it in "
-              "TaskPins.h, or the pool weights and the side lists cannot "
-              "address them all");
+              "TaskPins.h, or the pool weights, the reward volumes and the "
+              "side lists cannot address them all");
 
 #endif // TASK_TRIALS_H

@@ -82,7 +82,7 @@ const int NUM_FLUIDS = BOX_NUM_FLUIDS;
 const int Odors[NUM_ODORS]   = BOX_ODOR_PINS;
 const int Fluids[NUM_FLUIDS] = BOX_FLUID_PINS;
 
-/*  Indices into Fluids[] and TaskParams::fluidPinTimes[], plus the sentinel a
+/*  Indices into Fluids[], plus the sentinel a
     no-go trial type carries where a reward index would be. Names rather than
     numbers at the call site, because 0 and 2 are indistinguishable in a
     constructor argument list and one of them waters the wrong well. */

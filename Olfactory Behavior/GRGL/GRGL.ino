@@ -15,12 +15,14 @@ Purpose:
       which selector runs. None of these fit on a START line, and pins have to
       be constants anyway.
     * at START time, on the START line. Every timing, hold, window, penalty,
-      reward volume, anti-bias clamp and stage threshold. So tuning a run costs
-      a serial line, not a rebuild -- which is what lets one flashed binary
-      serve six boxes running the same task with different reward volumes.
+      per-condition reward volume, pool weight, anti-bias clamp and stage
+      threshold. So tuning a run costs a serial line, not a rebuild -- which is
+      what lets one flashed binary serve six boxes running the same task with
+      different reward volumes.
 
   Features, all of them driven by the profile rather than by this file:
-  - anti-bias selection, or a block-shuffled weighted pool
+  - anti-bias selection (uniform or weighted within a side), or a
+    block-shuffled weighted pool
   - a shaping ramp of any length, including none
   - the escalating lazy-rat penalty, stage-gated
   - per-side correction trials
@@ -52,7 +54,13 @@ void recordEvent(int eventCode) { emitStrobe(clock, eventCode); }
    per-side correction budgets each live in their own small class. They are
    globals, so they are constructed long before START arrives -- each one adopts
    the run's parameters in configure(), called once after the line is parsed. */
+#if BOX_SELECTION_MODE == BOX_SELECT_WEIGHTED
+/* Same side draw as anti-bias; the pick WITHIN the side follows poolWeights,
+   so a stimulus still being learned can be shown more often than a known one. */
+WeightedAntiBiasSelector selector(kTrials, kTrialCount);
+#else
 AntiBiasSelector selector(kTrials, kTrialCount);
+#endif
 AbstentionPenalty abstention;
 CorrectionPolicy correction;
 TrialPolicy policy; // the three, handed to the shared runner
@@ -113,6 +121,10 @@ void setup()
       break;                          // START received -- begin session
     }
   }
+
+  /* Each type's reward volume: the value compiled into TaskTrials.h unless the
+     line carried RW<slot+1> for it. Before the first trial, after the parse. */
+  applyRewardTimes(params, kTrials, kTrialCount);
 
   selector.configure(params);
   abstention.configure(params);
@@ -178,7 +190,9 @@ void loop()
     recordEvent(BF_INVALID_TRIAL); // Trial aborted -- repeat the same slot
   }
 #else
-  /* Pick the next trial live. We only re-select when the previous trial
+  /* Anti-bias and weighted anti-bias both land here; the two selectors differ
+     only inside selectNext().
+     Pick the next trial live. We only re-select when the previous trial
      ADVANCED; a trial that returns false (an abort, or an in-block correction
      error) keeps currentTrialPtr so the SAME side is re-presented. */
   if (currentTrialPtr == nullptr)

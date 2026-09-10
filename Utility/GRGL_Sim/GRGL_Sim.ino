@@ -16,7 +16,7 @@ APP and nothing else, and left the one thing you cannot check from a desk --
 that the wiring drives what the strobes claim -- untested.
 
 > CAUTION: THE FLUID LINES OPEN. A default session is 200 trials and every
-> correct one pulses a reward line for `fluidPinTimes` milliseconds. Run it with
+> correct one pulses a reward line for that trial type's `rewardTime` milliseconds. Run it with
 > the fluid lines dry, or with a catch vessel under the wells, unless you mean
 > to dispense. Everything else it drives is a valve or a lamp.
 
@@ -151,9 +151,9 @@ const int SIM_POLICY = POLICY_ODOR;
    (types, count) and splits it into side lists rather than taking the two
    pointers it once did. Slot 0 is go-right; `simGoRight` names it so the
    comparison at the selection site below still reads as a side test. */
-const TrialType simTrials[] = {
-    TrialType(true, Odors[0], rightWell, RIGHT_WELL_FL_1, BF_ODOR_1_ON, BF_FLUID_R, BF_STOP_FLUID_G_R),
-    TrialType(true, Odors[2], leftWell, LEFT_WELL_FL_1, BF_ODOR_3_ON, BF_FLUID_L, BF_STOP_FLUID_G_L),
+static TrialType simTrials[] = { // not const: START overwrites each row's rewardTime
+    TrialType(true, Odors[0], rightWell, RIGHT_WELL_FL_1, BF_ODOR_1_ON, BF_FLUID_R, BF_STOP_FLUID_G_R, 100),
+    TrialType(true, Odors[2], leftWell, LEFT_WELL_FL_1, BF_ODOR_3_ON, BF_FLUID_L, BF_STOP_FLUID_G_L, 100),
 };
 const int simTrialCount = (int)(sizeof(simTrials) / sizeof(simTrials[0]));
 const TrialType *const simGoRight = &simTrials[0];
@@ -188,7 +188,7 @@ const TrialType *activeTrial = NULL;
     in hundreds of milliseconds, and it keeps the mapping one table instead of
     two. The one place the ordering carries real duration -- the fluid pulse --
     is exact anyway: the line opens at FLUID and closes at STOP_FLUID, and the
-    gap between them IS fluidPinTimes. */
+    gap between them IS the type's rewardTime. */
 void actuate(int code)
 {
   if (code == BF_LIGHTS_ON)
@@ -379,13 +379,12 @@ void goTrial(bool goRight, int outcome)
   bool correct = (outcome != OUT_WRONG_WELL); // reward & hold-fail are both correct-well
   emit(BF_ODOR_UNPOKE, 0);   // withdrew from the port; the light drops next
   emit(BF_LIGHTS_OFF, movementTime(goRight, correct)); // then movement to the well
-  int rewardIndex = goRight ? RIGHT_WELL_FL_1 : LEFT_WELL_FL_1;
   switch (outcome)
   {
   case OUT_REWARD: // correct well, held to fluid
     emit(goRight ? BF_WATER_POKE_R : BF_WATER_POKE_L,
          params.fluidWellHold); // hold cleared -> fluid
-    emit(goRight ? BF_FLUID_R : BF_FLUID_L, params.fluidPinTimes[rewardIndex]);
+    emit(goRight ? BF_FLUID_R : BF_FLUID_L, activeTrial->rewardTime); // this type's volume
     emit(goRight ? BF_STOP_FLUID_G_R : BF_STOP_FLUID_G_L,
          WITHDRAW_TIME); // drinking, then the animal withdraws
     emit(goRight ? BF_WATER_UNPOKE_R : BF_WATER_UNPOKE_L,
@@ -490,6 +489,7 @@ void setup()
   params.numTrials = 200;
 
   waitForStart(params);
+  applyRewardTimes(params, simTrials, simTrialCount); // RW1/RW2 onto the rows
 
   // Seed and report it, exactly as the firmware does on START -- host-supplied
   // SEED, clock fallback, same echo (BehaviorBox.h). Sharing the real helper is

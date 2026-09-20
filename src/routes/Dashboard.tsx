@@ -31,6 +31,7 @@ import type { DiskSession } from "@/lib/analytics/types";
 import { setRigSelection, useRigSelection } from "@/lib/constellations/viewMemory";
 import { PANEL_TRAVEL, springPanel, springSnappy } from "@/lib/motion";
 import { useActiveCohorts, useCohortsLoaded } from "@/lib/cohorts/context";
+import { RecordingTile } from "@/components/dashboard/RecordingTile";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useRunningSession } from "@/lib/sessions/context";
 import { useSettings } from "@/lib/settings/context";
@@ -191,6 +192,13 @@ export function Dashboard() {
                 }
               }}
             />
+
+            {running === null && (
+              <RecordingTile
+                disabled={!hasCohorts}
+                onOpen={() => navigate("/session/new?mode=recording")}
+              />
+            )}
 
             <SessionDock />
           </div>

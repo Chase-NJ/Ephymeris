@@ -72,6 +72,17 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   [CMD.ANALYTICS_RESCAN]: 300_000,
   // Same walk as the rescan, plus a .json/.mat write per orphan found.
   [CMD.SESSIONS_RECOVER]: 300_000,
+  // A RECORDING session ends gracefully (`recording.md` §5): every box is
+  // allowed to finish the trial it is in — up to 45 s — before RHX is stopped.
+  // A behavior-only session still answers in well under a second.
+  [CMD.SESSIONS_END]: 90_000,
+  [CMD.SESSIONS_SWITCH_GROUP]: 90_000,
+  // Starting a recording waits for RHX to enter Record, for samples to be
+  // arriving, and out a pre-roll, all before the first box is started.
+  [CMD.SESSIONS_START_ALL]: 45_000,
+  [CMD.PORT_START_SESSION]: 45_000,
+  // Several hundred `set`s on a 128-channel headstage, each batch confirmed.
+  [CMD.INTAN_CONFIGURE]: 60_000,
 };
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;

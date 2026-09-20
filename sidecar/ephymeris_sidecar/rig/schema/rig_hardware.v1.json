@@ -88,7 +88,8 @@
               "emitter",
               "reward",
               "cue",
-              "vacuum"
+              "vacuum",
+              "sync"
             ],
             "description": "Resolution is BY KIND for the structural channels: a task asks for 'the engagement channel', not for a name. Exactly one engagement channel, one cue and one vacuum should resolve; ambiguity returns nothing rather than picking the first."
           },

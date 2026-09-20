@@ -942,3 +942,59 @@ def test_startup_commits_at_most_once(
         db.close()
 
     assert len(commits) <= 1, f"startup committed {len(commits)} times"
+
+
+# --- the real v9 -> v10 migration -----------------------------------------
+
+
+def write_v9_database(path: Path) -> None:
+    """A v9 file: a `sessions` table with **no** `recording_json`.
+
+    Built up from the v8 fixture for the reason every fixture here is: today's
+    `SCHEMA` would create `sessions` with the column already on it, and the
+    migration would be exercised against a table that never lacked it.
+    """
+    write_v8_database(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("ALTER TABLE cohorts ADD COLUMN appearance_json TEXT")
+        conn.execute(
+            "INSERT INTO sessions (id, cohort_id, prefix_id, prefix_name, session_number,"
+            " date, started_at, status, folder_path) VALUES"
+            " ('s-old', 'c1', 'p1', 'GRGL', '7', '2026-09-01', '2026-09-01T09:00:00+00:00',"
+            " 'completed', 'C:/data/GRGL/GRGL_7_2026-09-01')"
+        )
+        conn.execute("PRAGMA user_version = 9")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_v9_gains_the_session_recording_column(tmp_path: Path) -> None:
+    """Whether a session is also an Intan recording (`recording.md` §6).
+
+    A column, so `CREATE TABLE IF NOT EXISTS` does nothing for it. Without the
+    registered migration the first "Start Recording" on a lab machine would
+    raise `OperationalError` at `sessions.create` -- on exactly the databases
+    that hold the lab's history, and on no developer's fresh one.
+    """
+    from ephymeris_sidecar.sessions.repository import SessionRepository
+
+    path = tmp_path / "ephymeris.db"
+    write_v9_database(path)
+
+    db = Database(path)
+    db.connect()
+    try:
+        assert "recording_json" in table_columns(db.conn, "sessions")
+        repo = SessionRepository(db)
+        # A session from before the column is behavior-only: NULL, not {}.
+        assert repo.get_session("s-old").recording is None
+        assert repo.get_session("s-old").to_json()["recording"] is None
+        # ...and the column is writable, not merely present in the metadata.
+        updated = repo.set_recording("s-old", {"runs": [{"groupId": "g1"}]})
+        assert updated.recording == {"runs": [{"groupId": "g1"}]}
+    finally:
+        db.close()
+
+    assert user_version(path) == SCHEMA_VERSION

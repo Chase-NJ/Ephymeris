@@ -1,4 +1,4 @@
-"""The rig wiring document: the store, the composition, and RIG101-104.
+"""The rig wiring document: the store, the composition, and RIG101-105.
 
 Everything here was unreachable until the pinout became editable. The shipped
 pair is a transcription of BehaviorBox.h that lives inside the package and is
@@ -12,6 +12,7 @@ errors rather than warnings:
   RIG102  a pin the board does not have compiles fine and never fires
   RIG103  two channels on one pin makes every reverse lookup arbitrary
   RIG104  a response port with no slot has no strobes, and generates anyway
+  RIG105  a second sync line is a wire believed to carry events that carries none
 """
 
 from __future__ import annotations
@@ -211,6 +212,22 @@ def test_the_shipped_wiring_trips_none_of_them():
     assert chans.pin_problems() == []
     assert chans.duplicate_pins() == []
     assert chans.slot_problems(registry.vocabulary()) == []
+    assert chans.sync_problems() == []
+
+
+def test_rig105_a_second_sync_line_is_refused_and_none_at_all_is_not():
+    """The firmware pulses ONE line, so a second sync channel is a wire that is
+    believed to carry events and carries nothing.
+
+    Zero is legal, and deliberately: a box with no recording controller has no
+    sync line. It is the recording walkthrough that refuses such a rig, because
+    only there is the absence a problem.
+    """
+    doc = rig(channels={"sync_two": {"kind": "sync"}}, pins={"sync_two": {"index": 47}})
+    assert "RIG105" in codes_for(doc)
+
+    doc = rig(channels={"sync_out": None}, pins={"sync_out": None})
+    assert codes_for(doc) == set()
 
 
 def test_the_default_document_is_the_shipped_wiring_even_with_a_rig_installed():

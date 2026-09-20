@@ -239,6 +239,8 @@ Owns everything stateful. See [§6.4](#64-dependency-policy) before adding a run
 | `tasks/metrics.py` | Rolling live-metric computation. Scientific output, not a UI detail | [tasks §5](tasks.md#5-live-metrics) |
 | `tasks/seed.py` | Draws the per-run `SEED` value | [tasks §6.4](tasks.md#64-seed) |
 | `utility.py` | The hardware utility baseline: what firmware each box is believed to carry, restoring idle boxes, and the `identify` signal | [settings §8](settings.md#8-the-hardware-utility-baseline) |
+| `intan/` | **The Intan RHX recording subsystem.** `client.py` — the command socket, with every write confirmed by a sentinel `get` and a fenced fallback if RHX will not answer one; `streams.py` — pure parsers for the waveform and spike sockets (two-ended block confirmation, mid-run layout change); `analysis.py` — pure: sync-edge detection, the **`EdgeMatcher`** that pairs a box's strobes with its sync edges by order *and time*, ISI, PSTH, spike and waveform rings; `probemap.py` — Intan's probe-map XML; `service.py` — the long-lived `IntanService` (`Application` owns it like the utility baseline). **Stdlib only.** Never on the session path except at `start_recording` | [recording](recording.md) |
+| `debug_run.py` | Live metrics for a task started by hand from Debug Mode: the session's own `MetricSet`, armed by `port.sendStart`, fed from `port.output`, ended by the board's `END_SESSION` strobe or the port leaving `PASSTHROUGH`. Records nothing | [dashboard §6.1](dashboard.md#61-flashing) |
 
 ### 4.2 React frontend — `src/`
 
@@ -271,8 +273,8 @@ Talks to the sidecar over the WebSocket only.
 | `components/common/SummaryCard.tsx` | The HUD tile — icon, label, status, divider, rows. Shared by the Dashboard and the Task tab so the two "tiles over the sky" pages are one motif |
 | `components/common/HudTile.tsx` | The same header grammar over a *form* body that manages its own edges — the Rig and Settings tabs' tiles. One live fact on the glass, carried as a node so it can take its state's colour |
 | `components/hardware/` | `BoardMap` — the Mega2560 pin diagram Rig wiring selects and drags on, ported from `ConstellationBoard` |
-| `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view; the deep sky is `Backdrop.tsx` (star field, dust band, nebulae, the sky's drift) with `HomeGalaxy` (the galaxy we orbit), `DistantGalaxies`, `SkyEvents` (meteors, supernovae, comets on one seeded schedule) and `skyTextures.ts` (every painted canvas) beside it — [dashboard.md §9.2](dashboard.md) |
-| `components/debug/` | Constellation landing, per-box detail, scrollback, flash dialog, state badges, utility controls; `PrimeControls` — Prime: chosen fluid lines for a chosen time, sequenced over the utility sketch's own `PULSE` ([dashboard.md §4.3](dashboard.md)); the channel grids give every output a lamp, a family-coloured switch and a pulse |
+| `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view; the deep sky is `Backdrop.tsx` (star field, dust band, nebulae, the sky's drift) with `HomeGalaxy` (the galaxy we orbit), `DistantGalaxies`, `SkyEvents` (meteors, supernovae, comets on one seeded schedule) and `skyTextures.ts` (every painted canvas) beside it — [dashboard.md §9.2](dashboard.md). **The scene contains no lights**: ship hulls are shaded by `shipSurface.ts` (which also holds the one shared set of ship geometry), because a light count is in every program's cache key. `ProgramWarmth.tsx` links the cohort browser's programs in the background and holds them for the life of the canvas; `planetMaterials.ts` is the one table both it and `PlanetarySurface.tsx` build from, so the warmed program is the drawn one |
+| `components/debug/` | `DebugLive` — Mission Control's `MetricStrip` and `LivePanels`, mounted unchanged for a task started from the console. Constellation landing, per-box detail, scrollback, flash dialog, state badges, utility controls; `PrimeControls` — Prime: chosen fluid lines for a chosen time, sequenced over the utility sketch's own `PULSE` ([dashboard.md §4.3](dashboard.md)); the channel grids give every output a lamp, a family-coloured switch and a pulse |
 | `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, journey rail, placement banner, `ReturnChecklist` (animals ticked home, or all at once), `SessionWrapUp` (the last-group pop-up), and `ConfigFields` (the one grouped renderer for a profile's `config`) |
 | `components/analytics/` | The Observatory's panels: rails, learning curves, strategy space and its profile picker, trends, summaries |
 | `components/analytics/report/` | The PNG export: composed cohort/session sheets built from the panels above, and the capture and save path ([data.md §10.6](data.md)) |
@@ -355,6 +357,7 @@ Every assertion in these was **mutation-checked**: the original defect was reint
 | `test_grouping.py` | 19 | Auto-Balance round-robin |
 | `test_data_folder.py` | 19 | Resolution, sanitization, collision suffixing |
 | `test_utility.py` | 18 | The baseline against the real port manager: restores only from `IDLE`, the session hold, belief invalidation, the identify handshake incl. the silent-board case. The harness deliberately feeds the retired `utilitySketchPath` key, doubling as an integration test of the basename healing |
+| `test_debug_flash.py` | 21 | **A Debug Mode flash survives and can be started.** Drives the real `port.flash` handler over a port manager whose idle hook is wired the way `app.py`'s is — `test_utility.py` wires it to a no-op, which is how the baseline re-flashing itself over an operator's task went unseen. The pin against every automatic trigger, each of the five things that release it, a session flash staying unpinned, and `port.sendStart` building the line a session would. And the live scoring it arms: a Debug run scores **identically** to a plain `MetricSet` over the same stream (against GRGL's shipped profile), one payload per output batch, ended by the board's end strobe or a closed console, never armed by chatter or a tx echo |
 | `test_bundled_library_covers_archives.py` | 3 | Every sketch name the lab's real archives record resolves against the bundled library — the guard on Analytics' orphan decoding |
 | `test_wire_shapes.py` | 16 | Validator semantics + real `to_json` emitters conform to `protocol/schema.py` |
 | `test_session_runner.py` | 13 | Runner orchestration, including the end-all finalization drain |
@@ -460,6 +463,11 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 **The utility baseline and the placement walk are untested on hardware.** Built and covered by 18 sidecar tests against the real port state machine, but never run against boards. Three things want watching: **cold start is six sequential flashes** (the first presence poll after launch restores every bound box, so a fresh launch has the rig busy for a minute or two — if that proves annoying, defer the cold restore rather than parallelising it, which would fight the one-owner rule); **the identify confirmation assumes `telemetry`** (a utility sketch declaring `identify` but no `telemetry` gets no confirmation and is trusted on the send alone); and **the hold window is load-bearing** (if any path out of a session fails to release, the rig quietly stops returning to baseline; if a release landed *early*, a restore would erase a task sketch mid-setup).
 
 </td></tr>
+<tr><td><b>31</b></td><td>
+
+**Recording has met a real RHX only through its probe** (`tests/test_intan_real_rhx.py`, 2026-09-20 — batched `get`s answered, refusals reported, a save path keeps its space, `digital-in-01` naming; a channel highpass TCP output and its spike threshold can both change while RHX runs; and **two real bugs found and fixed**: commands batched behind `set runmode run` are not processed until acquisition stops, which read as RHX having stopped answering and would have failed every Start All, and `CurrentTimestamp` replies namelessly, which would have failed it next. `recording.md` §8 has the table). What follows was written before that run and the parts it settled are settled. The whole Intan integration ([recording.md](recording.md)) is tested against a fake RHX on real sockets — 60-odd tests — and **not once against the real one**: RHX's command server was not open on the development machine when it was built. `recording.md` §8 lists the open questions and what each costs. Three are *handled* if the answer is the bad one (RHX ignoring a `get` that rides a batch → the client falls back and says so; a save location with a space being truncated → refused with a clear message, and **the lab's data directory has a space in it**, so this one will be met; USB-Interface-Board input naming). Three are **not**, and want checking first: whether `TCPDataOutputEnabledHigh` can change while RHX runs (if not, a SpikeScope opened mid-recording waits forever — nothing corrupts, but the fix is to enable the band at configure time); whether a channel threshold can change while running (the SpikeScope's drag); and whether the RMS-relative threshold needs the board to have run first. `GRGL_Sim` pulses the sync line exactly as a task does, so the electrical half — pin 49 into a digital input — can be proven dry, with RHX in synthetic mode, and no animal. **Every lab rig with a saved `rig.json` has no sync channel until one is added** on the wiring page; the recording step checks for it.
+
+</td></tr>
 <tr><td><b>5</b></td><td>
 
 **Switch Group's second lap is untested on hardware.** The bookkeeping that makes Switch Group advance rather than cycle is verified. What hasn't been driven end to end is a full two-group session: switch, re-map, re-flash, run, end. This is the highest-value remaining hardware test, and multi-group runs are normal for any cohort larger than the box count. Note a `null` `nextGroupId` now completes the session sidecar-side, so the pass should confirm the final status flip too.
@@ -513,7 +521,7 @@ Small things that are true today and will confuse a reader who assumes otherwise
 
 ## 8. Documentation map
 
-Six documents. This one is the entry point.
+Seven documents. This one is the entry point.
 
 | If you need to know… | Read |
 |---|---|
@@ -523,6 +531,7 @@ Six documents. This one is the entry point.
 | `task.json`, how the trial-flow graph is derived, how to author a task | [**tasks.md**](tasks.md) |
 | What lands on disk, the database, the metrics, the Observatory | [**data.md**](data.md) |
 | Every settings key, box bindings, the utility baseline | [**settings.md**](settings.md) |
+| Recording with Intan RHX: the TCP subset, the sync line, start/end, the live windows | [**recording.md**](recording.md) |
 | The exact shape of any command, event, payload, or error code | [**websocket-protocol.md**](websocket-protocol.md) |
 
 ### 8.1 Conventions

@@ -83,6 +83,7 @@ def _rule_problems(document: Any) -> list[dict[str, Any]]:
             ("RIG102", chans.pin_problems()),
             ("RIG103", chans.duplicate_pins()),
             ("RIG104", chans.slot_problems(vocab)),
+            ("RIG105", chans.sync_problems()),
         )
         for loc, msg in pairs
     ]

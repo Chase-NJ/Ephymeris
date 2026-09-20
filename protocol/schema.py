@@ -131,7 +131,27 @@ SHAPES = (
             f("box", INT),
             f("hardwareId", nullable(STR), doc="USB serial number — stable across COM renumbering."),
             f("label", STR),
+            f(
+                "intanDigitalIn",
+                nullable(INT),
+                optional=True,
+                doc="Which of the recording controller's digital inputs this box's "
+                "sync line is wired to, 1–16 (`recording.md` §3). Null = the box is "
+                "not wired for recording. A binding like `hardwareId`, and for the "
+                "same reason a setting rather than part of the rig document: it "
+                "describes a cable between two instruments, not the box.",
+            ),
         ),
+    ),
+    Shape(
+        "IntanSettings",
+        obj(
+            f("commandPort", INT),
+            f("waveformPort", INT),
+            f("spikePort", INT),
+        ),
+        doc="Where Intan RHX's three TCP servers listen. The host is not a "
+        "setting: Ephymeris only ever talks to an RHX on this machine.",
     ),
     Shape(
         "EphymerisSettings",
@@ -150,6 +170,20 @@ SHAPES = (
             ),
             f("defaultBaud", INT),
             f("boxes", ListOf(Ref("BoxBinding"))),
+            f(
+                "intan",
+                Ref("IntanSettings"),
+                optional=True,
+                doc="Absent on a store written before recording existed; both "
+                "ends fall back to RHX's defaults (5000/5001/5002).",
+            ),
+            f(
+                "recordingDefaults",
+                MapOf(ANY),
+                optional=True,
+                doc="The last recording setup the operator confirmed, offered as "
+                "the next one's starting point. Shell-only.",
+            ),
             f("reducedMotion", BOOL),
             f(
                 "constellation",
@@ -181,10 +215,12 @@ SHAPES = (
     # Hardware utility baseline (settings.md §8)
     Shape(
         "UtilityBaselineState",
-        lit("unknown", "restoring", "ready", "busy", "held", "unavailable", "failed"),
+        lit("unknown", "restoring", "ready", "busy", "held", "pinned", "unavailable", "failed"),
         doc="What the sidecar believes about one box's baseline firmware. "
-        "`busy` (the port has another owner) and `held` (a confirmed session "
-        "mapping owns the rig) are both 'not now' rather than 'not working' — "
+        "`busy` (the port has another owner), `held` (a confirmed session "
+        "mapping owns the rig) and `pinned` (the operator flashed another "
+        "sketch here from Debug Mode, and it stays until they ask for the "
+        "baseline back) are all 'not now' rather than 'not working' — "
         "the distinction is the whole reason a restore never fights the user.",
     ),
     Shape(
@@ -442,6 +478,13 @@ SHAPES = (
                 doc="Per-box time limit: the sidecar sends STOP to a box this "
                 "many minutes after that box's own start. Null means no limit.",
             ),
+            f(
+                "recording",
+                nullable(Ref("SessionRecording")),
+                doc="Set when the session is also an Intan recording "
+                "(`recording.md` §6). Null = behavior only, which is every "
+                "session from before recording existed.",
+            ),
         ),
     ),
     Shape("ConfigFieldType", lit("int", "float", "bool", "string")),
@@ -617,6 +660,22 @@ SHAPES = (
     Shape(
         "BoxTelemetry",
         obj(f("box", INT), f("animalId", STR), f("metrics", ListOf(Ref("TelemetryMetric")))),
+    ),
+    Shape(
+        "PortTelemetry",
+        obj(
+            f("box", INT),
+            f(
+                "running",
+                BOOL,
+                doc="A task started with `port.sendStart` is still running. Goes "
+                "false when the board emits its `END_SESSION` strobe or the port "
+                "leaves PASSTHROUGH — observed by the sidecar, never assumed.",
+            ),
+            f("metrics", ListOf(Ref("TelemetryMetric"))),
+        ),
+        doc="Debug Mode's counterpart to `BoxTelemetry`. No `animalId`: a task "
+        "started by hand from the console is nobody's run and records nothing.",
     ),
     Shape(
         "AnimalEnded",
@@ -1257,7 +1316,7 @@ SHAPES = (
             f(
                 "code",
                 nullable(STR),
-                doc="The wiring rule, when one produced it — RIG101 through RIG104. "
+                doc="The wiring rule, when one produced it — RIG101 through RIG105. "
                 "Null for a schema violation, which has no rule number because it "
                 "is caught before the halves are composed.",
             ),
@@ -1456,6 +1515,137 @@ SHAPES = (
         "repurposed and never deleted — four years of recorded sessions carry "
         "them.",
     ),
+    # Intan recording (recording.md)
+    Shape(
+        "RecordingBox",
+        obj(
+            f("box", INT),
+            f("digitalIn", INT, doc="The controller input this box's sync line reaches, 1–16."),
+            f("port", STR, doc="Headstage port letter, A–H."),
+            f("channels", ListOf(STR), doc="Native channel names recorded for this box."),
+            f("probeMap", nullable(STR), doc="File name of the probe map copied beside the data."),
+        ),
+    ),
+    Shape(
+        "RecordingRun",
+        obj(
+            f("groupId", STR),
+            f("path", STR, doc="The directory handed to RHX as `Filename.Path`."),
+            f("baseFilename", STR),
+            f(
+                "fileTimestamp",
+                nullable(STR),
+                doc="RHX's own `YYMMDD_HHMMSS` suffix, read back after the recording "
+                "started — it names the folder and files RHX actually created.",
+            ),
+            f("fileFormat", STR),
+            f("sampleRate", INT),
+            f("startedAt", nullable(STR)),
+            f("endedAt", nullable(STR)),
+            f("boxes", ListOf(Ref("RecordingBox"))),
+        ),
+        doc="One group run's recording. A session records once per group, "
+        "because the animals — and so the ports and probes — change between groups.",
+    ),
+    Shape("SessionRecording", obj(f("runs", ListOf(Ref("RecordingRun"))))),
+    Shape(
+        "RecordingBoxConfig",
+        obj(
+            f("box", INT),
+            f("port", STR),
+            f("firstChannel", INT),
+            f("lastChannel", INT),
+            f("probeMapPath", nullable(STR), optional=True),
+        ),
+    ),
+    Shape(
+        "RecordingThreshold",
+        obj(
+            f(
+                "mode",
+                lit("keep", "absolute", "rms"),
+                doc="`keep` leaves RHX's thresholds as the operator set them there.",
+            ),
+            f("microvolts", INT, doc="Absolute threshold, −5000…5000 µV."),
+            f("rmsMultiple", FLOAT, doc="3.0…20.0 × each channel's RMS noise."),
+            f("negative", BOOL, doc="Polarity of the RMS-relative threshold."),
+        ),
+    ),
+    Shape(
+        "RecordingConfig",
+        obj(
+            f("saveDirectory", STR),
+            f("fileFormat", lit("Traditional", "OneFilePerSignalType", "OneFilePerChannel")),
+            f("saveWideband", BOOL),
+            f("saveSpikes", BOOL),
+            f("saveSpikeSnapshots", BOOL),
+            f("snapshotPreMs", INT, doc="0…3, stored positive; RHX takes it negated."),
+            f("snapshotPostMs", INT, doc="1…6."),
+            f("saveLowpass", BOOL),
+            f("lowpassDownsample", INT, doc="1, 2, 4 … 128."),
+            f("saveHighpass", BOOL),
+            f("newFileMinutes", INT, optional=True, doc="Traditional format only; 1…999."),
+            f("threshold", Ref("RecordingThreshold")),
+            f("boxes", ListOf(Ref("RecordingBoxConfig"))),
+        ),
+        doc="Everything the recording walkthrough collects (`recording.md` §4).",
+    ),
+    Shape(
+        "IntanState",
+        lit("disconnected", "idle", "configured", "recording", "stopping", "error"),
+    ),
+    Shape(
+        "IntanSyncStat",
+        obj(
+            f("box", INT),
+            f("matched", INT),
+            f("spuriousEdges", INT),
+            f("unmatchedStrobes", INT),
+        ),
+        doc="How well a box's sync edges are pairing with its strobes. A climbing "
+        "`unmatchedStrobes` with zero `matched` is a sync line that is not connected.",
+    ),
+    Shape(
+        "IntanStatus",
+        obj(
+            f("state", Ref("IntanState")),
+            f("message", nullable(STR), doc="Why, when the state alone does not say."),
+            f("connected", BOOL),
+            f("controller", nullable(STR), doc="RHX's `Type`, e.g. ControllerRecordUSB3."),
+            f("version", nullable(STR)),
+            f("sampleRate", nullable(INT)),
+            f("synthetic", BOOL, doc="RHX is generating data; no controller is attached."),
+            f("headstagePresent", BOOL),
+            f("runMode", nullable(STR)),
+            f("ports", MapOf(INT), doc="Port letter → amplifier channels present."),
+            f(
+                "confirmsWrites",
+                nullable(BOOL),
+                doc="False when this RHX does not answer a `get` that rides a batch, "
+                "so a refused command cannot be detected (`recording.md` §2).",
+            ),
+            f("rigHasSync", BOOL, doc="This rig's wiring declares a `sync` channel."),
+            f("liveStreams", BOOL, doc="The waveform and spike sockets are both open."),
+            f("recording", nullable(Ref("RecordingRun"))),
+            f(
+                "waitingOn",
+                ListOf(INT),
+                doc="While `stopping`: boxes still finishing their trial.",
+            ),
+            f("sync", ListOf(Ref("IntanSyncStat"))),
+        ),
+    ),
+    Shape("ScopeKind", lit("spikescope", "psth", "isi", "probemap")),
+    Shape(
+        "ScopeData",
+        obj(
+            f("scopeId", STR),
+            f("kind", Ref("ScopeKind")),
+            f("box", INT),
+            f("channel", nullable(STR)),
+            f("data", ANY, doc="Per kind; see `recording.md` §7."),
+        ),
+    ),
 )
 
 
@@ -1508,6 +1698,20 @@ COMMANDS = (
         ),
         result=obj(f("bytesWritten", INT)),
         doc="Rejected with SEND_NOT_PASSTHROUGH unless the port is in PASSTHROUGH.",
+    ),
+    Command(
+        "port.sendStart",
+        args=obj(
+            f("box", INT),
+            f("sketchPath", STR, doc="The sketch believed to be on the board; its Task Profile shapes the line."),
+            f("config", MapOf(ANY), optional=True, doc="Keyed by `metadataKey`, exactly as in a session mapping."),
+        ),
+        result=obj(f("command", STR, doc="The line as sent, for the console's record."), f("bytesWritten", INT)),
+        doc="Debug Mode's way to start a behaviour sketch by hand: builds the "
+        "`START` line from the sketch's Task Profile the way a session would "
+        "and writes it to the open console. No `SEED` token and no strobe "
+        "parsing — this is not a run and nothing it produces is data. "
+        "Rejected with SEND_NOT_PASSTHROUGH unless the port is in PASSTHROUGH.",
     ),
     Command(
         "port.flash",
@@ -1746,6 +1950,14 @@ COMMANDS = (
                 doc="Optional per-box time limit in whole minutes; omitted "
                 "means the session runs until stopped by the operator or board.",
             ),
+            f(
+                "recording",
+                BOOL,
+                optional=True,
+                doc="True makes the session an Intan recording as well "
+                "(`recording.md` §5): `sessions.startAll` then refuses unless "
+                "`intan.configure` has run for the group.",
+            ),
         ),
         result=_SESSION,
         doc="Rejected with SESSION_NOT_READY if no group has a box-assigned animal.",
@@ -1943,6 +2155,87 @@ COMMANDS = (
         "shipped with. The reply is `hardware.get`'s, so the editor re-renders "
         "from one shape either way.",
     ),
+    # ------------------------------------------------------------ Intan recording
+    #
+    # RHX MAY BE SLOW, ABSENT OR DEAD AND NONE OF THAT MAY STALL OR FAIL A
+    # BEHAVIOR SESSION -- the Backup mirror's rule, restated. The one exception
+    # is starting: a recording that cannot start refuses before any box does.
+    Command(
+        "intan.status",
+        result=Ref("IntanStatus"),
+        doc="The current snapshot; also replayed on connect and pushed as `intan.status`.",
+        section="Intan recording (recording.md)",
+    ),
+    Command(
+        "intan.connect",
+        result=Ref("IntanStatus"),
+        doc="Open RHX's command socket now rather than at the next background "
+        "attempt. INTAN_UNAVAILABLE says what to click in RHX.",
+    ),
+    Command("intan.disconnect", result=Ref("IntanStatus"), doc="Refused while recording."),
+    Command(
+        "intan.configure",
+        args=obj(f("sessionId", STR), f("groupId", STR), f("config", Ref("RecordingConfig"))),
+        result=Ref("IntanStatus"),
+        doc="Apply a recording setup to RHX for one group run. Every value that "
+        "decides WHERE and AS WHAT the data is saved is read back and refused on "
+        "a mismatch. INTAN_NOT_READY for a box with no digital input, a rig with "
+        "no sync channel, or a controller that is running.",
+    ),
+    Command(
+        "intan.parseProbeMap",
+        args=obj(f("path", STR)),
+        result=obj(f("probeMap", ANY)),
+        doc="Parse an Intan probe-map XML for the setup preview. RHX cannot be "
+        "asked to load one over TCP, so Ephymeris reads the same file itself.",
+    ),
+    Command(
+        "intan.probeMap",
+        args=obj(f("box", INT)),
+        result=obj(f("probeMap", ANY)),
+        doc="The probe map configured for this box, or null.",
+    ),
+    Command(
+        "intan.setThreshold",
+        args=obj(f("channel", STR), f("microvolts", INT)),
+        result=obj(f("channel", STR), f("microvolts", INT)),
+        doc="One channel's spike threshold, from the SpikeScope's threshold line.",
+    ),
+    Command(
+        "intan.scope.open",
+        args=obj(
+            f("kind", Ref("ScopeKind")),
+            f("box", INT),
+            f("channel", nullable(STR), optional=True),
+            f("params", MapOf(ANY), optional=True),
+        ),
+        result=obj(f("scopeId", STR)),
+        doc="Begin publishing one live view as `intan.scope.data`. A SpikeScope "
+        "also asks RHX to stream that channel's highpass band, which is why "
+        "there is a cap on how many may be open.",
+    ),
+    Command(
+        "intan.scope.update",
+        args=obj(
+            f("scopeId", STR),
+            f("channel", nullable(STR), optional=True),
+            f("params", MapOf(ANY), optional=True),
+        ),
+        result=obj(f("ok", BOOL)),
+    ),
+    Command(
+        "intan.scope.close",
+        args=obj(f("scopeId", STR)),
+        result=obj(f("ok", BOOL)),
+        doc="Idempotent. A window that vanishes without closing its scope is "
+        "swept when its connection drops.",
+    ),
+    Command(
+        "intan.forceStop",
+        result=obj(f("ok", BOOL)),
+        doc="Stop waiting for boxes to finish their trials during a graceful "
+        "end; the recording is then stopped at once.",
+    ),
 )
 
 
@@ -1952,6 +2245,13 @@ EVENTS = (
     Event("server.hello", Ref("ServerHello"), doc="First frame on every connection."),
     Event("port.state", Ref("PortStateData"), doc="Emitted on every transition."),
     Event("port.output", Ref("PortOutputData"), doc="Batched at ~20Hz per port (§5.3)."),
+    Event(
+        "port.telemetry",
+        Ref("PortTelemetry"),
+        doc="Live metrics for a task started from Debug Mode with `port.sendStart`, "
+        "scored by the same `MetricSet` a session uses. At most one per "
+        "`port.output` batch; every payload is the whole picture.",
+    ),
     Event("boards.presence", Ref("BoardsPresenceData"), doc="The out-of-band poll; never opens a port."),
     Event("flash.progress", Ref("FlashProgressData"), doc="Carries the causing command's `corr`."),
     Event("sketches.updated", Ref("SketchDiscovery"), doc="Pushed whenever discovery re-runs."),
@@ -2005,6 +2305,17 @@ EVENTS = (
         "because the wiring moved. Replayed on connect and pushed on change, "
         "the `sketches.updated` pattern. It arrives WITH a `sketches.updated`, "
         "never instead of one: a saved profile is also a new sketch.",
+    ),
+    Event(
+        "intan.status",
+        Ref("IntanStatus"),
+        doc="A full snapshot, on every change and on connect.",
+    ),
+    Event(
+        "intan.scope.data",
+        Ref("ScopeData"),
+        doc="One live view's payload, a few times a second, only while that "
+        "scope is open. Never persisted — like `port.output`, it is a view.",
     ),
 )
 
@@ -2062,6 +2373,21 @@ ERRORS = (
         "NOT the same as a task that will not run: a well-formed definition "
         "describing an impossible task is a successful reply carrying located "
         "diagnostics, exactly as a wiring document is.",
+    ),
+    ErrorCode(
+        "INTAN_UNAVAILABLE",
+        "RHX is not reachable: not running, its Remote TCP Control command "
+        "server not opened, or the socket died.",
+    ),
+    ErrorCode(
+        "INTAN_NOT_READY",
+        "RHX is reachable but this cannot be done now — the controller is "
+        "running, no recording is configured, a box has no digital input, or "
+        "the rig's wiring has no sync channel.",
+    ),
+    ErrorCode(
+        "INTAN_COMMAND_FAILED",
+        "RHX refused a command, or accepted it and stored something else.",
     ),
     ErrorCode("INTERNAL", "Unhandled sidecar exception; also carried by sidecar.error."),
 )

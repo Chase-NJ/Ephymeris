@@ -43,6 +43,21 @@ export function useActiveLoaded(): boolean {
   return useSyncExternalStore(subscribe, () => store.activeIsLoaded());
 }
 
+/**
+ * Whether this session is also an Intan recording (`recording.md`).
+ *
+ * Read from the sidecar's own snapshot rather than carried in the URL: the
+ * flow is re-entered from the session dock, from a group switch and from a
+ * reload, and a query flag would have to survive every one of those doors. A
+ * session is in exactly one of the two lists for as long as it is unfinished.
+ */
+export function useIsRecordingSession(sessionId: string | undefined): boolean {
+  const active = useActiveSessions();
+  if (!sessionId || !active) return false;
+  if (active.running?.session.id === sessionId) return active.running.session.recording != null;
+  return active.configuring.some((s) => s.id === sessionId && s.recording != null);
+}
+
 /** The runner-held session, or null — what the sidebar dot and hero CTA read. */
 export function useRunningSession(): SessionSnapshot | null {
   const store = useSessionStore();
@@ -58,6 +73,16 @@ export function useBoxTelemetry(box: number): TelemetryMetric[] {
     [store, box],
   );
   return useSyncExternalStore(subscribe, () => store.getTelemetry(box));
+}
+
+/** A task started by hand from Debug Mode is still running on this box. */
+export function useDebugRunning(box: number): boolean {
+  const store = useSessionStore();
+  const subscribe = useCallback(
+    (cb: () => void) => store.subscribe(`debug:${box}`, cb),
+    [store, box],
+  );
+  return useSyncExternalStore(subscribe, () => store.isDebugRunning(box));
 }
 
 /** One metric's recent values for a box — what the live charts draw. */

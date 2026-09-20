@@ -3,8 +3,10 @@
  *
  * The baseline is meant to be invisible while it works, so these labels are
  * written for the moment it *doesn't*: each one says what the operator would
- * need to do next, and only `failed` is coloured as a fault. `busy` and `held`
- * are the sidecar deliberately keeping its hands off a port someone else owns,
+ * need to do next, and only `failed` is coloured as a fault. `busy`, `held` and
+ * `pinned` (a sketch the operator flashed from Debug Mode, kept until they ask
+ * for the baseline back)
+ * are the sidecar deliberately keeping its hands off a box someone else owns,
  * which is correct behaviour and must not read as a warning.
  */
 
@@ -17,6 +19,7 @@ const LABELS: Record<BaselineState, string> = {
   restoring: "Preparing…",
   busy: "In use",
   held: "Session running",
+  pinned: "Holding a Debug flash",
   unavailable: "No board",
   unknown: "Not checked",
   failed: "Failed",

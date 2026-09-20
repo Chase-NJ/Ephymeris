@@ -35,6 +35,7 @@ class Cmd:
     PORT_PASSTHROUGH_OPEN: Final = "port.passthrough.open"
     PORT_PASSTHROUGH_CLOSE: Final = "port.passthrough.close"
     PORT_SEND: Final = "port.send"
+    PORT_SEND_START: Final = "port.sendStart"
     PORT_FLASH: Final = "port.flash"
     PORT_RESET: Final = "port.reset"
     PORT_ERROR_ACK: Final = "port.error.ack"
@@ -99,6 +100,19 @@ class Cmd:
     HARDWARE_SAVE: Final = "hardware.save"
     HARDWARE_RESET: Final = "hardware.reset"
 
+    # Intan recording (recording.md)
+    INTAN_STATUS: Final = "intan.status"
+    INTAN_CONNECT: Final = "intan.connect"
+    INTAN_DISCONNECT: Final = "intan.disconnect"
+    INTAN_CONFIGURE: Final = "intan.configure"
+    INTAN_PARSE_PROBE_MAP: Final = "intan.parseProbeMap"
+    INTAN_PROBE_MAP: Final = "intan.probeMap"
+    INTAN_SET_THRESHOLD: Final = "intan.setThreshold"
+    INTAN_SCOPE_OPEN: Final = "intan.scope.open"
+    INTAN_SCOPE_UPDATE: Final = "intan.scope.update"
+    INTAN_SCOPE_CLOSE: Final = "intan.scope.close"
+    INTAN_FORCE_STOP: Final = "intan.forceStop"
+
 
 ALL_COMMANDS: Final[frozenset[str]] = frozenset(
     v for k, v in vars(Cmd).items() if not k.startswith("_") and isinstance(v, str)
@@ -111,6 +125,7 @@ class Evt:
     SERVER_HELLO: Final = "server.hello"
     PORT_STATE: Final = "port.state"
     PORT_OUTPUT: Final = "port.output"
+    PORT_TELEMETRY: Final = "port.telemetry"
     BOARDS_PRESENCE: Final = "boards.presence"
     FLASH_PROGRESS: Final = "flash.progress"
     SKETCHES_UPDATED: Final = "sketches.updated"
@@ -125,6 +140,8 @@ class Evt:
     ANALYTICS_PROGRESS: Final = "analytics.progress"
     SIDECAR_ERROR: Final = "sidecar.error"
     TASKS_UPDATED: Final = "tasks.updated"
+    INTAN_STATUS: Final = "intan.status"
+    INTAN_SCOPE_DATA: Final = "intan.scope.data"
 
 
 ALL_EVENTS: Final[frozenset[str]] = frozenset(
@@ -160,6 +177,9 @@ class ErrCode:
     RIG_WOULD_BREAK_TASKS: Final = "RIG_WOULD_BREAK_TASKS"
     TASK_NOT_FOUND: Final = "TASK_NOT_FOUND"
     TASK_INVALID: Final = "TASK_INVALID"
+    INTAN_UNAVAILABLE: Final = "INTAN_UNAVAILABLE"
+    INTAN_NOT_READY: Final = "INTAN_NOT_READY"
+    INTAN_COMMAND_FAILED: Final = "INTAN_COMMAND_FAILED"
     INTERNAL: Final = "INTERNAL"
 
 
@@ -184,9 +204,10 @@ SHAPES: Final[dict[str, Any]] = {
     "SketchEntry": ('obj', (('category', 'str', False), ('name', 'str', False), ('path', 'str', False))),
     "SkippedEntry": ('obj', (('path', 'str', False), ('reason', 'str', False))),
     "SketchDiscovery": ('obj', (('library', ('ref', 'SketchLibraryStatus'), False), ('sketches', ('list', ('ref', 'SketchEntry')), False), ('skipped', ('list', ('ref', 'SkippedEntry')), False), ('skippedCount', 'int', False), ('libraries', ('list', 'str'), False), ('librariesPath', ('union', ('str', 'null')), False))),
-    "BoxBinding": ('obj', (('box', 'int', False), ('hardwareId', ('union', ('str', 'null')), False), ('label', 'str', False))),
-    "EphymerisSettings": ('obj', (('dataDirectory', ('union', ('str', 'null')), False), ('backupDirectory', ('union', ('str', 'null')), False), ('arduinoCliPath', ('union', ('str', 'null')), False), ('utilitySketchName', ('union', ('str', 'null')), False), ('defaultBaud', 'int', False), ('boxes', ('list', ('ref', 'BoxBinding')), False), ('reducedMotion', 'bool', False), ('constellation', ('union', ('str', 'null')), False), ('constellationSlots', ('map', 'int'), False), ('taskDefaults', ('map', ('map', 'any')), False))),
-    "UtilityBaselineState": ('lit', ('unknown', 'restoring', 'ready', 'busy', 'held', 'unavailable', 'failed')),
+    "BoxBinding": ('obj', (('box', 'int', False), ('hardwareId', ('union', ('str', 'null')), False), ('label', 'str', False), ('intanDigitalIn', ('union', ('int', 'null')), True))),
+    "IntanSettings": ('obj', (('commandPort', 'int', False), ('waveformPort', 'int', False), ('spikePort', 'int', False))),
+    "EphymerisSettings": ('obj', (('dataDirectory', ('union', ('str', 'null')), False), ('backupDirectory', ('union', ('str', 'null')), False), ('arduinoCliPath', ('union', ('str', 'null')), False), ('utilitySketchName', ('union', ('str', 'null')), False), ('defaultBaud', 'int', False), ('boxes', ('list', ('ref', 'BoxBinding')), False), ('intan', ('ref', 'IntanSettings'), True), ('recordingDefaults', ('map', 'any'), True), ('reducedMotion', 'bool', False), ('constellation', ('union', ('str', 'null')), False), ('constellationSlots', ('map', 'int'), False), ('taskDefaults', ('map', ('map', 'any')), False))),
+    "UtilityBaselineState": ('lit', ('unknown', 'restoring', 'ready', 'busy', 'held', 'pinned', 'unavailable', 'failed')),
     "UtilityBoxState": ('obj', (('box', 'int', False), ('state', ('ref', 'UtilityBaselineState'), False), ('detail', ('union', ('str', 'null')), False), ('identifying', 'bool', False))),
     "UtilityStatus": ('obj', (('configured', 'bool', False), ('sketchPath', ('union', ('str', 'null')), False), ('sketchName', ('union', ('str', 'null')), False), ('canIdentify', 'bool', False), ('held', 'bool', False), ('message', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'UtilityBoxState')), False))),
     "BackupState": ('lit', ('disabled', 'pending', 'ok', 'failed')),
@@ -206,7 +227,7 @@ SHAPES: Final[dict[str, Any]] = {
     "Prefix": ('obj', (('id', 'str', False), ('name', 'str', False))),
     "SessionStatus": ('lit', ('configuring', 'running', 'completed', 'aborted')),
     "GroupRun": ('obj', (('groupId', 'str', False), ('order', 'int', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False))),
-    "Session": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('groupRuns', ('list', ('ref', 'GroupRun')), False), ('durationMinutes', ('union', ('int', 'null')), False))),
+    "Session": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('groupRuns', ('list', ('ref', 'GroupRun')), False), ('durationMinutes', ('union', ('int', 'null')), False), ('recording', ('union', (('ref', 'SessionRecording'), 'null')), False))),
     "ConfigFieldType": ('lit', ('int', 'float', 'bool', 'string')),
     "ConfigField": ('obj', (('metadataKey', 'str', False), ('wireKey', 'str', False), ('label', 'str', False), ('type', ('ref', 'ConfigFieldType'), False), ('default', 'any', False), ('group', 'str', True), ('unit', 'str', True), ('min', ('union', ('int', 'float')), True), ('max', ('union', ('int', 'float')), True), ('step', ('union', ('int', 'float')), True), ('help', 'str', True), ('advanced', 'bool', True))),
     "LiveMetric": ('obj', (('id', 'str', False), ('label', 'str', False), ('triggerCode', 'int', False), ('successCode', 'int', False), ('alternateCode', 'int', False), ('windowSize', 'int', False))),
@@ -222,6 +243,7 @@ SHAPES: Final[dict[str, Any]] = {
     "SessionBox": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('animalName', 'str', False), ('sketchName', 'str', False), ('sketchPath', 'str', False), ('running', 'bool', False), ('startedAt', ('union', ('str', 'null')), False))),
     "TelemetryMetric": ('obj', (('id', 'str', False), ('value', ('union', ('float', 'null')), False), ('n', 'int', False))),
     "BoxTelemetry": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('metrics', ('list', ('ref', 'TelemetryMetric')), False))),
+    "PortTelemetry": ('obj', (('box', 'int', False), ('running', 'bool', False), ('metrics', ('list', ('ref', 'TelemetryMetric')), False))),
     "AnimalEnded": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('stopReason', 'str', False), ('filePath', ('union', ('str', 'null')), False))),
     "RunnerSession": ('obj', (('session', ('ref', 'Session'), False), ('groupId', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'SessionBox')), False))),
     "ActiveSessions": ('obj', (('running', ('union', (('ref', 'RunnerSession'), 'null')), False), ('configuring', ('list', ('ref', 'Session')), False), ('stale', ('list', ('ref', 'Session')), False))),
@@ -273,6 +295,17 @@ SHAPES: Final[dict[str, Any]] = {
     "StrobeCode": ('obj', (('name', 'str', False), ('code', 'int', False), ('origin', 'str', False), ('emittedOn', 'str', True), ('rationale', 'str', True))),
     "RetiredStrobe": ('obj', (('name', 'str', False), ('code', 'int', False))),
     "StrobeVocabulary": ('obj', (('version', 'int', False), ('codeMin', 'int', False), ('codeMax', 'int', False), ('freeRanges', ('list', ('list', 'int')), False), ('codes', ('list', ('ref', 'StrobeCode')), False), ('retired', ('list', ('ref', 'RetiredStrobe')), False), ('portSlots', ('map', ('map', 'str')), False))),
+    "RecordingBox": ('obj', (('box', 'int', False), ('digitalIn', 'int', False), ('port', 'str', False), ('channels', ('list', 'str'), False), ('probeMap', ('union', ('str', 'null')), False))),
+    "RecordingRun": ('obj', (('groupId', 'str', False), ('path', 'str', False), ('baseFilename', 'str', False), ('fileTimestamp', ('union', ('str', 'null')), False), ('fileFormat', 'str', False), ('sampleRate', 'int', False), ('startedAt', ('union', ('str', 'null')), False), ('endedAt', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'RecordingBox')), False))),
+    "SessionRecording": ('obj', (('runs', ('list', ('ref', 'RecordingRun')), False),)),
+    "RecordingBoxConfig": ('obj', (('box', 'int', False), ('port', 'str', False), ('firstChannel', 'int', False), ('lastChannel', 'int', False), ('probeMapPath', ('union', ('str', 'null')), True))),
+    "RecordingThreshold": ('obj', (('mode', ('lit', ('keep', 'absolute', 'rms')), False), ('microvolts', 'int', False), ('rmsMultiple', 'float', False), ('negative', 'bool', False))),
+    "RecordingConfig": ('obj', (('saveDirectory', 'str', False), ('fileFormat', ('lit', ('Traditional', 'OneFilePerSignalType', 'OneFilePerChannel')), False), ('saveWideband', 'bool', False), ('saveSpikes', 'bool', False), ('saveSpikeSnapshots', 'bool', False), ('snapshotPreMs', 'int', False), ('snapshotPostMs', 'int', False), ('saveLowpass', 'bool', False), ('lowpassDownsample', 'int', False), ('saveHighpass', 'bool', False), ('newFileMinutes', 'int', True), ('threshold', ('ref', 'RecordingThreshold'), False), ('boxes', ('list', ('ref', 'RecordingBoxConfig')), False))),
+    "IntanState": ('lit', ('disconnected', 'idle', 'configured', 'recording', 'stopping', 'error')),
+    "IntanSyncStat": ('obj', (('box', 'int', False), ('matched', 'int', False), ('spuriousEdges', 'int', False), ('unmatchedStrobes', 'int', False))),
+    "IntanStatus": ('obj', (('state', ('ref', 'IntanState'), False), ('message', ('union', ('str', 'null')), False), ('connected', 'bool', False), ('controller', ('union', ('str', 'null')), False), ('version', ('union', ('str', 'null')), False), ('sampleRate', ('union', ('int', 'null')), False), ('synthetic', 'bool', False), ('headstagePresent', 'bool', False), ('runMode', ('union', ('str', 'null')), False), ('ports', ('map', 'int'), False), ('confirmsWrites', ('union', ('bool', 'null')), False), ('rigHasSync', 'bool', False), ('liveStreams', 'bool', False), ('recording', ('union', (('ref', 'RecordingRun'), 'null')), False), ('waitingOn', ('list', 'int'), False), ('sync', ('list', ('ref', 'IntanSyncStat')), False))),
+    "ScopeKind": ('lit', ('spikescope', 'psth', 'isi', 'probemap')),
+    "ScopeData": ('obj', (('scopeId', 'str', False), ('kind', ('ref', 'ScopeKind'), False), ('box', 'int', False), ('channel', ('union', ('str', 'null')), False), ('data', 'any', False))),
 }
 
 COMMAND_ARGS: Final[dict[str, Any]] = {
@@ -283,6 +316,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "port.passthrough.open": ('obj', (('box', 'int', False), ('baud', 'int', True))),
     "port.passthrough.close": ('obj', (('box', 'int', False),)),
     "port.send": ('obj', (('box', 'int', False), ('text', 'str', False), ('lineEnding', ('lit', ('none', 'lf', 'cr', 'crlf')), True))),
+    "port.sendStart": ('obj', (('box', 'int', False), ('sketchPath', 'str', False), ('config', ('map', 'any'), True))),
     "port.flash": ('obj', (('box', 'int', False), ('sketchPath', 'str', False), ('suppressPassthroughResume', 'bool', True))),
     "port.reset": ('obj', (('box', 'int', False),)),
     "port.error.ack": ('obj', (('box', 'int', False),)),
@@ -309,7 +343,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "tasks.delete": ('obj', (('taskId', 'str', False),)),
     "rig.strobes": ('obj', ()),
     "sessions.suggestNumber": ('obj', (('prefixId', 'str', False),)),
-    "sessions.create": ('obj', (('cohortId', 'str', False), ('prefixId', 'str', False), ('sessionNumber', 'str', False), ('durationMinutes', 'int', True))),
+    "sessions.create": ('obj', (('cohortId', 'str', False), ('prefixId', 'str', False), ('sessionNumber', 'str', False), ('durationMinutes', 'int', True), ('recording', 'bool', True))),
     "sessions.abandon": ('obj', (('sessionId', 'str', False),)),
     "sessions.confirmMapping": ('obj', (('sessionId', 'str', False), ('groupId', 'str', False), ('boxes', ('list', ('ref', 'SessionBoxMapping')), False))),
     "sessions.status": ('obj', (('sessionId', 'str', False),)),
@@ -330,6 +364,17 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "hardware.preview": ('obj', (('document', 'any', False),)),
     "hardware.save": ('obj', (('document', 'any', False), ('confirm', 'bool', False))),
     "hardware.reset": ('obj', ()),
+    "intan.status": ('obj', ()),
+    "intan.connect": ('obj', ()),
+    "intan.disconnect": ('obj', ()),
+    "intan.configure": ('obj', (('sessionId', 'str', False), ('groupId', 'str', False), ('config', ('ref', 'RecordingConfig'), False))),
+    "intan.parseProbeMap": ('obj', (('path', 'str', False),)),
+    "intan.probeMap": ('obj', (('box', 'int', False),)),
+    "intan.setThreshold": ('obj', (('channel', 'str', False), ('microvolts', 'int', False))),
+    "intan.scope.open": ('obj', (('kind', ('ref', 'ScopeKind'), False), ('box', 'int', False), ('channel', ('union', ('str', 'null')), True), ('params', ('map', 'any'), True))),
+    "intan.scope.update": ('obj', (('scopeId', 'str', False), ('channel', ('union', ('str', 'null')), True), ('params', ('map', 'any'), True))),
+    "intan.scope.close": ('obj', (('scopeId', 'str', False),)),
+    "intan.forceStop": ('obj', ()),
 }
 
 COMMAND_RESULTS: Final[dict[str, Any]] = {
@@ -340,6 +385,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "port.passthrough.open": ('obj', (('state', ('ref', 'PortStateName'), False),)),
     "port.passthrough.close": ('obj', (('state', ('ref', 'PortStateName'), False),)),
     "port.send": ('obj', (('bytesWritten', 'int', False),)),
+    "port.sendStart": ('obj', (('command', 'str', False), ('bytesWritten', 'int', False))),
     "port.flash": ('obj', (('state', ('ref', 'PortStateName'), False), ('resumedPassthrough', 'bool', False))),
     "port.reset": ('obj', (('state', ('ref', 'PortStateName'), False), ('resumedPassthrough', 'bool', False))),
     "port.error.ack": ('obj', (('state', ('ref', 'PortStateName'), False),)),
@@ -387,12 +433,24 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "hardware.preview": ('ref', 'RigSaved'),
     "hardware.save": ('ref', 'RigSaved'),
     "hardware.reset": ('ref', 'RigDocument'),
+    "intan.status": ('ref', 'IntanStatus'),
+    "intan.connect": ('ref', 'IntanStatus'),
+    "intan.disconnect": ('ref', 'IntanStatus'),
+    "intan.configure": ('ref', 'IntanStatus'),
+    "intan.parseProbeMap": ('obj', (('probeMap', 'any', False),)),
+    "intan.probeMap": ('obj', (('probeMap', 'any', False),)),
+    "intan.setThreshold": ('obj', (('channel', 'str', False), ('microvolts', 'int', False))),
+    "intan.scope.open": ('obj', (('scopeId', 'str', False),)),
+    "intan.scope.update": ('obj', (('ok', 'bool', False),)),
+    "intan.scope.close": ('obj', (('ok', 'bool', False),)),
+    "intan.forceStop": ('obj', (('ok', 'bool', False),)),
 }
 
 EVENT_DATA: Final[dict[str, Any]] = {
     "server.hello": ('ref', 'ServerHello'),
     "port.state": ('ref', 'PortStateData'),
     "port.output": ('ref', 'PortOutputData'),
+    "port.telemetry": ('ref', 'PortTelemetry'),
     "boards.presence": ('ref', 'BoardsPresenceData'),
     "flash.progress": ('ref', 'FlashProgressData'),
     "sketches.updated": ('ref', 'SketchDiscovery'),
@@ -407,6 +465,8 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "analytics.progress": ('ref', 'AnalyticsProgress'),
     "sidecar.error": ('ref', 'SidecarErrorData'),
     "tasks.updated": ('ref', 'TasksUpdatedData'),
+    "intan.status": ('ref', 'IntanStatus'),
+    "intan.scope.data": ('ref', 'ScopeData'),
 }
 
 

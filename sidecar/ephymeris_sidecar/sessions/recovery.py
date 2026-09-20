@@ -52,7 +52,13 @@ _STROBE = re.compile(r"^(\d{1,3})\t(\d+)$")
 
 #: §5 core fields that are always strings, exempt from value coercion — an
 #: animal named "123" must not come back as an integer.
-_STRING_FIELDS = frozenset({"rat", "serial_port", "session_id", "sketch"})
+_STRING_FIELDS = frozenset(
+    {
+        "rat", "serial_port", "session_id", "sketch",
+        # An RHX base filename like "0423_7" must not come back as a number.
+        "intan_recording", "intan_path", "intan_port", "intan_channels",
+    }
+)
 
 #: Footer keys `finalize` appends after the data (§7.1) — never header fields.
 _FOOTER_KEYS = frozenset({"stop_reason", "n_events"})

@@ -1,12 +1,14 @@
 import { Html } from "@react-three/drei";
 import { MAX_FRAME_SECONDS } from "./CameraRig";
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
 import { GL, GL_NAV } from "@/components/chrome/constellationStyle";
 import { seededRandom } from "@/lib/prng";
 import { useReduceMotion } from "@/lib/useReduceMotion";
+
+import { SHIP_GEOMETRY, createHullMaterial } from "./shipSurface";
 
 /**
  * Cage-ships: one small craft in orbit around a box's star per *home cage*,
@@ -16,12 +18,13 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * way you'd know a satellite was up there at all.
  *
  * The craft reads as a made thing at annotation scale: a metal hull with a
- * canopy and fins, *lit by its star* — the belt carries a point light at the
- * star's centre, so a ship shows a day side and a night side as it orbits.
- * That light touches only the ships (everything else in the scene is
- * shader-or-basic material) and is the one place the scene does literal
- * lighting; the ion engine adds a small green exhaust flicker while under way.
- * None of it lands on Pulsar, whose matte flatness §2.2 protects.
+ * canopy and fins, *lit by its star* — a ship shows a day side and a night side
+ * as it orbits. That shading is `shipSurface.ts`'s, computed from the direction
+ * of the belt's centre; **the scene contains no lights**, because a light's
+ * mere presence is part of every program's cache key and one per belt made the
+ * whole scene relink whenever a fleet appeared or left (see that module). The
+ * ion engine adds a small green exhaust flicker while under way. None of it
+ * lands on Pulsar, whose matte flatness §2.2 protects.
  *
  * **Every ship orbits, always.** The craft used to park when its crew wasn't
  * running, on the app's "stillness is the status" grammar, but the fleet is not
@@ -95,38 +98,88 @@ export function OrbiterBelt({
   orbiters: SceneOrbiter[];
   starRadius: number;
 }) {
+  const belt = useRef<THREE.Group>(null);
+
+  /*
+   * The star lights its own fleet — as a direction, not as a light. The
+   * day/night line crawling across a hull as it orbits is what makes the craft
+   * read as a body in space instead of a decal, and `shipSurface.ts` gets it
+   * from where the belt's centre is. One `uStar` object is shared by every
+   * material below, so writing the position once reaches the whole fleet.
+   *
+   * Materials are per BELT, in the two opacities a ship can wear, rather than
+   * per ship: a fleet of eight was thirty-two hull materials for two looks.
+   */
+  const paint = useMemo(() => {
+    const star = { value: new THREE.Vector3() };
+    const accent = (color: string, opacity: number) =>
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity });
+    return {
+      star,
+      running: {
+        hull: createHullMaterial(star, HULL_OPACITY.running),
+        canopy: accent(GL.pulsar, HULL_OPACITY.running * 0.9),
+        nozzle: accent(GL.halo, HULL_OPACITY.running),
+      },
+      coasting: {
+        hull: createHullMaterial(star, HULL_OPACITY.coasting),
+        canopy: accent(GL.pulsar, HULL_OPACITY.coasting * 0.9),
+        nozzle: accent(GL.halo, HULL_OPACITY.coasting),
+      },
+    };
+  }, []);
+  useEffect(
+    () => () => {
+      for (const look of [paint.running, paint.coasting]) {
+        look.hull.dispose();
+        look.canopy.dispose();
+        look.nozzle.dispose();
+      }
+    },
+    [paint],
+  );
+
+  // Every frame rather than once: a node's position is a prop, and the cost is
+  // one matrix read per belt.
+  useFrame(() => {
+    belt.current?.getWorldPosition(paint.star.value);
+  });
+
   return (
-    <group>
-      {/* The star lights its own fleet. A point light rather than an ambient:
-          the day/night line crawling across a hull as it orbits is what makes
-          the craft read as a body in space instead of a decal. Standard
-          materials exist only on the ships, so nothing else can catch this. */}
-      <pointLight
-        color={GL.starlight}
-        intensity={2.6}
-        distance={starRadius * 14}
-        decay={1.6}
-      />
+    <group ref={belt}>
       {orbiters.map((orbiter, index) => (
         <Orbiter
           key={orbiter.id}
           orbiter={orbiter}
           starRadius={starRadius}
           index={index}
+          paint={orbiter.active ? paint.running : paint.coasting}
         />
       ))}
     </group>
   );
 }
 
+/** A running crew's hull is solid; a coasting one is present but recessive. */
+const HULL_OPACITY = { running: 0.96, coasting: 0.45 } as const;
+
+/** The three materials a hull wears that depend only on running/coasting. */
+interface HullPaint {
+  hull: THREE.ShaderMaterial;
+  canopy: THREE.MeshBasicMaterial;
+  nozzle: THREE.MeshBasicMaterial;
+}
+
 function Orbiter({
   orbiter,
   starRadius,
   index,
+  paint,
 }: {
   orbiter: SceneOrbiter;
   starRadius: number;
   index: number;
+  paint: HullPaint;
 }) {
   const reduceMotion = useReduceMotion();
   const carousel = useRef<THREE.Group>(null);
@@ -153,6 +206,39 @@ function Orbiter({
       navOffset: rand() * 9,
     };
   }, [orbiter.id, index]);
+
+  /*
+   * The lamps and the burn: the only materials that are genuinely per ship,
+   * because each one's opacity is animated on its own phase below. Built here
+   * and disposed here — the meshes that wear them carry `dispose={null}` for
+   * the sake of the shared geometry (`shipSurface.ts`), which switches off
+   * r3f's own disposal for the material too.
+   */
+  const lamps = useMemo(() => {
+    const glow = (color: string, opacity: number, additive: boolean, side?: THREE.Side) =>
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity,
+        depthWrite: false,
+        ...(additive ? { blending: THREE.AdditiveBlending } : {}),
+        ...(side !== undefined ? { side } : {}),
+      });
+    return {
+      beacon: glow(GL.starlight, 0.12, false),
+      bloom: glow(GL.starlight, 0, true),
+      port: glow(GL_NAV.port, 0.42, true),
+      starboard: glow(GL_NAV.starboard, 0.42, true),
+      throat: glow(GL.ion, 0, true),
+      plume: glow(GL.ion, 0, true, THREE.DoubleSide),
+    };
+  }, []);
+  useEffect(
+    () => () => {
+      for (const material of Object.values(lamps)) material.dispose();
+    },
+    [lamps],
+  );
 
   /** Seconds this craft has been flying, accumulated locally — see the frame
    *  callback below for why not `clock.elapsedTime`. */
@@ -269,71 +355,51 @@ function Orbiter({
     <group rotation={params.tilt}>
       <group ref={carousel} rotation={[0, params.bearing, 0]}>
         <group position={[orbitRadius, 0, 0]}>
-          {/* Nose into the direction of travel: the carousel spins +y, which
-              moves a craft at +x toward −z. */}
-          <ShipHull
-            starRadius={starRadius}
-            active={orbiter.active}
-            exhaust={exhaust}
-          />
+          {/* The craft is modelled at `starRadius = 1` and scaled here, so every
+              ship in the app shares one set of buffers (`shipSurface.ts`). */}
+          <group scale={starRadius}>
+            {/* Nose into the direction of travel: the carousel spins +y, which
+                moves a craft at +x toward −z. */}
+            <ShipHull paint={paint} lamps={lamps} exhaust={exhaust} />
 
-          {/* The anti-collision beacon on the spine: the lamp itself, plus an
-              additive bloom around it that only exists while the strobe fires.
-              Both are `depthWrite={false}` so neither punches a hole in the
-              hull it sits on. */}
-          <mesh
-            ref={light}
-            position={[0, starRadius * 0.12, starRadius * 0.02]}
-          >
-            <sphereGeometry args={[starRadius * 0.042, 8, 8]} />
-            <meshBasicMaterial
-              color={GL.starlight}
-              transparent
-              opacity={0.12}
-              depthWrite={false}
+            {/* The anti-collision beacon on the spine: the lamp itself, plus an
+                additive bloom around it that only exists while the strobe
+                fires. Neither writes depth, so neither punches a hole in the
+                hull it sits on. */}
+            <mesh
+              ref={light}
+              position={[0, 0.12, 0.02]}
+              geometry={SHIP_GEOMETRY.beacon}
+              material={lamps.beacon}
+              dispose={null}
             />
-          </mesh>
-          <mesh ref={halo} position={[0, starRadius * 0.12, starRadius * 0.02]}>
-            <sphereGeometry args={[starRadius * 0.055, 8, 8]} />
-            <meshBasicMaterial
-              color={GL.starlight}
-              transparent
-              opacity={0}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
+            <mesh
+              ref={halo}
+              position={[0, 0.12, 0.02]}
+              geometry={SHIP_GEOMETRY.bloom}
+              material={lamps.bloom}
+              dispose={null}
             />
-          </mesh>
 
-          {/* Navigation lights (`constellationStyle.ts`'s `GL_NAV`): port red to
-              the left of travel, starboard green to the right. The nose points
-              −z and up is +y, so left is −x. Smaller than the beacon — they
-              mark the hull's extent, they don't announce it. */}
-          <mesh
-            ref={port}
-            position={[-starRadius * 0.088, 0, starRadius * 0.03]}
-          >
-            <sphereGeometry args={[starRadius * 0.034, 8, 8]} />
-            <meshBasicMaterial
-              color={GL_NAV.port}
-              transparent
-              opacity={0.42}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
+            {/* Navigation lights (`constellationStyle.ts`'s `GL_NAV`): port red
+                to the left of travel, starboard green to the right. The nose
+                points −z and up is +y, so left is −x. Smaller than the beacon —
+                they mark the hull's extent, they don't announce it. */}
+            <mesh
+              ref={port}
+              position={[-0.088, 0, 0.03]}
+              geometry={SHIP_GEOMETRY.lamp}
+              material={lamps.port}
+              dispose={null}
             />
-          </mesh>
-          <mesh
-            ref={starboard}
-            position={[starRadius * 0.088, 0, starRadius * 0.03]}
-          >
-            <sphereGeometry args={[starRadius * 0.034, 8, 8]} />
-            <meshBasicMaterial
-              color={GL_NAV.starboard}
-              transparent
-              opacity={0.42}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
+            <mesh
+              ref={starboard}
+              position={[0.088, 0, 0.03]}
+              geometry={SHIP_GEOMETRY.lamp}
+              material={lamps.starboard}
+              dispose={null}
             />
-          </mesh>
+          </group>
 
           {/* The mini tag. DOM, like the nameplates, so it stays crisp — but a
               step smaller and fainter: this labels an annotation, and it must
@@ -370,117 +436,94 @@ function Orbiter({
 }
 
 /**
- * The craft itself, nose toward −z. Everything is sized off the star so the
- * whole ship spans roughly the old octahedron's footprint — it must stay an
- * annotation, never a second star.
+ * The craft itself, nose toward −z, at unit scale — the caller scales it to
+ * its star, so the whole ship spans roughly the old octahedron's footprint. It
+ * must stay an annotation, never a second star.
  *
- * Hull and fins are standard material so the belt's star-light shades them;
- * the low Halo emissive keeps the night side legible instead of vanishing.
- * Canopy and nozzle stay basic-material accents, and the exhaust is the one
- * additive element — an ion drive's glow, in Ion, animated by the parent.
+ * Hull and fins wear `shipSurface.ts`'s star-lit material; its Halo floor keeps
+ * the night side legible instead of vanishing. Canopy and nozzle stay
+ * basic-material accents, and the exhaust is the one additive element — an ion
+ * drive's glow, in Ion, animated by the parent.
  */
 function ShipHull({
-  starRadius: s,
-  active,
+  paint,
+  lamps,
   exhaust,
 }: {
-  starRadius: number;
-  active: boolean;
+  paint: HullPaint;
+  lamps: { throat: THREE.MeshBasicMaterial; plume: THREE.MeshBasicMaterial };
   exhaust: React.RefObject<THREE.Group | null>;
 }) {
-  const hullOpacity = active ? 0.96 : 0.45;
-
   return (
     <group>
       {/* Fuselage: a capsule laid along z. */}
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <capsuleGeometry args={[s * 0.055, s * 0.2, 4, 10]} />
-        <meshStandardMaterial
-          color={GL.starlight}
-          metalness={0.45}
-          roughness={0.5}
-          emissive={GL.halo}
-          emissiveIntensity={0.55}
-          transparent
-          opacity={hullOpacity}
-        />
-      </mesh>
+      <mesh
+        rotation={[Math.PI / 2, 0, 0]}
+        geometry={SHIP_GEOMETRY.fuselage}
+        material={paint.hull}
+        dispose={null}
+      />
 
       {/* Canopy: a small blister forward of midships. */}
-      <mesh position={[0, s * 0.045, -s * 0.06]}>
-        <sphereGeometry args={[s * 0.032, 10, 10]} />
-        <meshBasicMaterial
-          color={GL.pulsar}
-          transparent
-          opacity={hullOpacity * 0.9}
-        />
-      </mesh>
+      <mesh
+        position={[0, 0.045, -0.06]}
+        geometry={SHIP_GEOMETRY.canopy}
+        material={paint.canopy}
+        dispose={null}
+      />
 
       {/* Fins: two swept side planes and a tail, at the stern. */}
-      {[
-        { position: [s * 0.085, 0, s * 0.08], rotation: [0, -0.35, 0] },
-        { position: [-s * 0.085, 0, s * 0.08], rotation: [0, 0.35, 0] },
-        { position: [0, s * 0.085, s * 0.08], rotation: [0, 0, Math.PI / 2] },
-      ].map((fin, i) => (
+      {FINS.map((fin, i) => (
         <mesh
           key={i}
-          position={fin.position as [number, number, number]}
-          rotation={fin.rotation as [number, number, number]}
-        >
-          <boxGeometry args={[s * 0.11, s * 0.012, s * 0.09]} />
-          <meshStandardMaterial
-            color={GL.starlight}
-            metalness={0.45}
-            roughness={0.55}
-            emissive={GL.halo}
-            emissiveIntensity={0.55}
-            transparent
-            opacity={hullOpacity}
-          />
-        </mesh>
+          position={fin.position}
+          rotation={fin.rotation}
+          geometry={SHIP_GEOMETRY.fin}
+          material={paint.hull}
+          dispose={null}
+        />
       ))}
 
       {/* Engine nozzle, flaring aft. */}
-      <mesh position={[0, 0, s * 0.17]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[s * 0.05, s * 0.032, s * 0.05, 10]} />
-        <meshBasicMaterial color={GL.halo} transparent opacity={hullOpacity} />
-      </mesh>
+      <mesh
+        position={[0, 0, 0.17]}
+        rotation={[Math.PI / 2, 0, 0]}
+        geometry={SHIP_GEOMETRY.nozzle}
+        material={paint.nozzle}
+        dispose={null}
+      />
 
       {/* The burn: throat glow plus a tapering plume, additive so it reads as
           light. Opacity is driven per-frame by the parent; `peak` is each
           part's ceiling so throat and plume flicker in ratio. */}
       <group ref={exhaust} visible={false}>
-        <mesh position={[0, 0, s * 0.2]} userData={{ peak: 1 }}>
-          <sphereGeometry args={[s * 0.028, 8, 8]} />
-          <meshBasicMaterial
-            color={GL.ion}
-            transparent
-            opacity={0}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-          />
-        </mesh>
+        <mesh
+          position={[0, 0, 0.2]}
+          userData={{ peak: 1 }}
+          geometry={SHIP_GEOMETRY.throat}
+          material={lamps.throat}
+          dispose={null}
+        />
         {/* +90° about x points the cone's apex aft, so the plume tapers away
             from the nozzle. */}
         <mesh
-          position={[0, 0, s * 0.29]}
+          position={[0, 0, 0.29]}
           rotation={[Math.PI / 2, 0, 0]}
           userData={{ peak: 0.45 }}
-        >
-          <coneGeometry args={[s * 0.022, s * 0.16, 8, 1, true]} />
-          <meshBasicMaterial
-            color={GL.ion}
-            transparent
-            opacity={0}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
+          geometry={SHIP_GEOMETRY.plume}
+          material={lamps.plume}
+          dispose={null}
+        />
       </group>
     </group>
   );
 }
+
+const FINS: { position: [number, number, number]; rotation: [number, number, number] }[] = [
+  { position: [0.085, 0, 0.08], rotation: [0, -0.35, 0] },
+  { position: [-0.085, 0, 0.08], rotation: [0, 0.35, 0] },
+  { position: [0, 0.085, 0.08], rotation: [0, 0, Math.PI / 2] },
+];
 
 /**
  * Sharp attack, **quadratic** falloff — the shape of a xenon strobe, not a

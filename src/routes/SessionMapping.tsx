@@ -33,7 +33,7 @@ import {
   getTaskProfile,
   sessionStatus,
 } from "@/lib/sessions/commands";
-import { useSessionStore } from "@/lib/sessions/context";
+import { useIsRecordingSession, useSessionStore } from "@/lib/sessions/context";
 import {
   animalsInGroup,
   defaultConfig,
@@ -598,7 +598,13 @@ export function SessionMapping() {
     }
   }
 
-  const controlUrl = `/session/${sessionId}/control?cohort=${cohort?.id ?? ""}&group=${groupId}`;
+  // A recording session has one more step before Mission Control: the boxes
+  // are mapped and flashed now, which is exactly what the recording setup
+  // needs in order to ask which headstage port each one is on.
+  const isRecording = useIsRecordingSession(sessionId);
+  const controlUrl =
+    `/session/${sessionId}/${isRecording ? "recording" : "control"}` +
+    `?cohort=${cohort?.id ?? ""}&group=${groupId}`;
   const flashedCount = mappings.filter((m) => flashStates[m.box] === "done").length;
   const allFlashed = mappings.length > 0 && flashedCount === mappings.length;
   const flashPending = mappings.some((m) => {
@@ -661,7 +667,12 @@ export function SessionMapping() {
         className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
       >
         <section className="pointer-events-auto mx-auto max-w-5xl px-8 py-8">
-          <SessionJourney step="boxes" hint={hint} group={groupInfo} />
+          <SessionJourney
+            step="boxes"
+            hint={hint}
+            group={groupInfo}
+            recording={isRecording}
+          />
           <h1 className="font-display text-[22px] text-starlight">
             {phase === "placing"
               ? "Place the animals"

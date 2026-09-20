@@ -30,10 +30,13 @@ type Stage = "pick" | "flashing" | "done";
 
 export function FlashDialog({
   box,
+  baud,
   open,
   onClose,
 }: {
   box: number;
+  /** The panel's console baud — what the post-flash console opens at. */
+  baud: number;
   open: boolean;
   onClose: () => void;
 }) {
@@ -91,11 +94,37 @@ export function FlashDialog({
       // Task Profile (utility controls / telemetry).
       const name = discovery.sketches.find((s) => s.path === selected)?.name ?? selected;
       store.setFlashed(box, { path: selected, name });
+
+      /*
+       * **A flash from Debug Mode ends with a console, whichever state it
+       * started in.** The sidecar resumes passthrough only when one was open
+       * before the flash (`dashboard.md` §5.3), so a flash from `IDLE` — the
+       * resting state of every box, and so the usual case — used to land in
+       * `IDLE` with the send box disabled and nothing on screen to say why.
+       * Someone who has just put a sketch on a board wants to talk to it.
+       *
+       * Opened here rather than by the sidecar so §5.3 stays true as written
+       * and the session sequence's `IDLE` landing is untouched. The open also
+       * toggles DTR, which reboots the Mega: a behaviour sketch prints `READY`
+       * into the console and waits there for `START`.
+       *
+       * Best-effort. The flash succeeded either way, and the Open button is
+       * still there; a failed open only changes what the message says.
+       */
+      let consoleOpen = res.resumedPassthrough;
+      if (!consoleOpen) {
+        try {
+          await client.call(CMD.PORT_PASSTHROUGH_OPEN, { box, baud });
+          consoleOpen = true;
+        } catch {
+          consoleOpen = false;
+        }
+      }
       setResult({
         ok: true,
-        message: res.resumedPassthrough
-          ? "Flashed. Passthrough resumed — the sketch's output is in the console."
-          : "Flashed.",
+        message: consoleOpen
+          ? "Flashed. The console is open — the sketch's output is in it."
+          : "Flashed. Open the console to talk to the sketch.",
       });
     } catch (err) {
       setResult({ ok: false, message: err instanceof Error ? err.message : String(err) });

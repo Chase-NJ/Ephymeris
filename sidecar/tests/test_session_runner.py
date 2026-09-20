@@ -346,3 +346,107 @@ async def test_the_snapshot_reports_the_mapping_and_what_is_live(tmp_path: Path)
     ports.on_strobe(246, 10)
     await wait_until(lambda: runner.snapshot()[0]["running"] is False)
     assert runner.snapshot()[0]["running"] is False
+
+
+# --- graceful end, and the recording's taps (recording.md §5) ---------------
+
+
+async def test_a_graceful_end_waits_for_the_board_to_close_its_own_trial(tmp_path: Path) -> None:
+    """The default 100 ms cuts the trial in flight, which is the behavior-only
+    contract. A RECORDING cannot afford that: electrophysiology with no
+    behavioral outcome to align to. With a real timeout the run ends on the
+    board's own end strobe, and says so."""
+    runner, ports, _events, ended = make_runner(tmp_path)
+    runner.start_box(1)
+    ports.on_ready(None)
+    waiting: list[list[int]] = []
+
+    async def board_finishes_its_trial() -> None:
+        await asyncio.sleep(0.3)  # three times the default grace
+        ports.on_strobe(249, 1000)
+        ports.on_strobe(246, 1200)  # END_SESSION
+
+    finishing = asyncio.ensure_future(board_finishes_its_trial())
+    await runner.end_all("operator stop", graceful_timeout_s=5.0, on_waiting=waiting.append)
+    await finishing
+
+    assert ports.stopped == [1]  # STOP was a request...
+    assert [reason for _, reason in ended] == [CLEAN_STOP_REASON]  # ...the board did the ending
+    assert waiting == [[1], []]
+    document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
+    assert document["n_events"] == 2  # the trial's outcome made it in
+
+
+async def test_the_operator_can_stop_waiting(tmp_path: Path) -> None:
+    runner, ports, _events, ended = make_runner(tmp_path)
+    runner.start_box(1)
+    ports.on_ready(None)
+    force = asyncio.Event()
+    asyncio.get_event_loop().call_later(0.1, force.set)
+
+    started = asyncio.get_event_loop().time()
+    await runner.end_all("operator stop", graceful_timeout_s=30.0, force=force)
+
+    assert asyncio.get_event_loop().time() - started < 5.0
+    assert [reason for _, reason in ended] == ["operator stop"]
+
+
+async def test_the_default_end_is_unchanged(tmp_path: Path) -> None:
+    runner, ports, _events, ended = make_runner(tmp_path)
+    runner.start_box(1)
+    ports.on_ready(None)
+    started = asyncio.get_event_loop().time()
+    await runner.end_all("operator stop")
+    assert asyncio.get_event_loop().time() - started < 2.0
+    assert [reason for _, reason in ended] == ["operator stop"]
+
+
+async def test_recording_fields_ride_the_document_and_stay_out_of_the_parameters(tmp_path: Path) -> None:
+    """Core, not config: they describe the rig, not the task. Two runs of one
+    tuning are comparable whether or not one of them was recorded, so nothing
+    the recording adds may reach `config_metadata` -- which is what
+    `params_hash` is taken over."""
+    runner, ports, _events, ended = make_runner(tmp_path)
+    runner.recording_fields = lambda box: {"intan_recording": "base_260920_101500", "intan_digital_in": 5}
+    started, tapped = [], []
+    runner.on_box_started = lambda box, animal: started.append((box, animal))
+    runner.on_strobe_tap = lambda box, code, ms: tapped.append((box, code, ms))
+
+    runner.start_box(1)
+    ports.on_ready(None)
+    ports.on_strobe(101, 40)
+    ports.on_strobe(246, 90)
+    await wait_until(lambda: len(ended) == 1)
+
+    document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
+    assert document["intan_recording"] == "base_260920_101500"
+    assert document["intan_digital_in"] == 5
+    run, _reason = ended[0]
+    assert not any(key.startswith("intan_") for key in run.config.config_metadata)
+    assert started == [(1, "remy1")]
+    assert tapped == [(1, 101, 40), (1, 246, 90)]
+    # It survives a crash: the header is the durable copy.
+    header = next((tmp_path / "behavior.tsv").glob("*.tsv")).read_text()
+    assert "# intan_recording: base_260920_101500" in header
+
+
+async def test_a_recording_tap_that_throws_costs_the_run_nothing(tmp_path: Path) -> None:
+    """The taps sit between a strobe arriving and the next one. A behavior
+    session never pays for the recording's problems."""
+    runner, ports, _events, ended = make_runner(tmp_path)
+
+    def broken(*_args):
+        raise RuntimeError("the recording layer fell over")
+
+    runner.recording_fields = broken
+    runner.on_box_started = broken
+    runner.on_strobe_tap = broken
+
+    runner.start_box(1)
+    ports.on_ready(None)
+    ports.on_strobe(101, 40)
+    ports.on_strobe(246, 90)
+    await wait_until(lambda: len(ended) == 1)
+
+    document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
+    assert document["n_events"] == 2 and document["stop_reason"] == CLEAN_STOP_REASON

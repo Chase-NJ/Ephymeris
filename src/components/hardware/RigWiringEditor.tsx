@@ -449,7 +449,9 @@ function ChannelInspector({
         <span className="text-[10px] leading-relaxed text-static">
           What this channel is FOR. The engagement port, the cue and the vacuum are
           resolved by kind rather than by name, so a template asks for "the engagement
-          channel" and this is what answers.
+          channel" and this is what answers. A sync channel pulses on every event, into
+          the recording controller's digital input — a rig without one cannot be
+          recorded from.
         </span>
       </label>
 

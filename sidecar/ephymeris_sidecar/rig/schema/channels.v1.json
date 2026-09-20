@@ -40,6 +40,10 @@
     "vacuum": {
       "direction": "out",
       "doc": "Odor-routing hardware with no behavioural meaning of its own."
+    },
+    "sync": {
+      "direction": "out",
+      "doc": "The electrical twin of the strobe stream: one pulse per emitted event, into one digital input of a recording controller. AT MOST ONE channel may carry this kind -- the firmware pulses a single line (BOX_PIN_SYNC_OUT), and which controller input it reaches is a per-box binding in settings, not a property of the box. A rig with no sync channel compiles the pulse out and cannot be recorded from."
     }
   },
   "channels": {
@@ -132,6 +136,10 @@
       "kind": "reward",
       "well": "right_well",
       "rationale": "Right well, reward line 2. Unused by every current task."
+    },
+    "sync_out": {
+      "kind": "sync",
+      "rationale": "Pulses on every strobe. The rising edge is the event's true time on the recording clock; what the event WAS is the serial line, matched by order. Named in no task profile -- like the engagement port it is a structural fact of the box."
     }
   }
 }

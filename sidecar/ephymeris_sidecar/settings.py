@@ -39,6 +39,25 @@ class BoxBinding:
     box: int
     hardware_id: str | None = None
     label: str = ""
+    #: The recording controller's digital input this box's sync line reaches,
+    #: 1-16, or None when the box is not wired for recording.
+    intan_digital_in: int | None = None
+
+
+#: Intan RHX's own defaults (Network -> Remote TCP Control).
+INTAN_COMMAND_PORT = 5000
+INTAN_WAVEFORM_PORT = 5001
+INTAN_SPIKE_PORT = 5002
+INTAN_DIGITAL_INPUTS = 16
+
+
+@dataclass(frozen=True)
+class IntanEndpoints:
+    """Where RHX's three TCP servers listen. Always on this machine."""
+
+    command_port: int = INTAN_COMMAND_PORT
+    waveform_port: int = INTAN_WAVEFORM_PORT
+    spike_port: int = INTAN_SPIKE_PORT
 
 
 @dataclass
@@ -61,6 +80,7 @@ class SidecarSettings:
     backup_directory: str | None = None
     default_baud: int = DEFAULT_BAUD
     boxes: list[BoxBinding] = field(default_factory=list)
+    intan: IntanEndpoints = field(default_factory=IntanEndpoints)
 
     @classmethod
     def from_payload(cls, payload: Any) -> "SidecarSettings":
@@ -75,6 +95,7 @@ class SidecarSettings:
             backup_directory=_opt_str(payload.get("backupDirectory")),
             default_baud=_baud(payload.get("defaultBaud")),
             boxes=_boxes(payload.get("boxes")),
+            intan=_intan(payload.get("intan")),
         )
 
     def binding_for(self, box: int) -> BoxBinding | None:
@@ -125,6 +146,28 @@ def _baud(value: Any) -> int:
     return DEFAULT_BAUD
 
 
+def _port(value: Any, fallback: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return fallback
+    return value if 1 <= value <= 65535 else fallback
+
+
+def _intan(value: Any) -> IntanEndpoints:
+    if not isinstance(value, dict):
+        return IntanEndpoints()
+    return IntanEndpoints(
+        command_port=_port(value.get("commandPort"), INTAN_COMMAND_PORT),
+        waveform_port=_port(value.get("waveformPort"), INTAN_WAVEFORM_PORT),
+        spike_port=_port(value.get("spikePort"), INTAN_SPIKE_PORT),
+    )
+
+
+def _digital_in(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 1 <= value <= INTAN_DIGITAL_INPUTS else None
+
+
 def _default_boxes() -> list[BoxBinding]:
     return [BoxBinding(box=n, label=f"Box {n}") for n in range(1, BOX_COUNT + 1)]
 
@@ -134,16 +177,29 @@ def _boxes(value: Any) -> list[BoxBinding]:
         return _default_boxes()
 
     by_number: dict[int, BoxBinding] = {}
+    # Two boxes on one digital input are indistinguishable in the recording --
+    # every edge would be matched against both strobe streams. The first claim
+    # stands and the second is dropped, so the later box reads as "not wired"
+    # and the recording walkthrough refuses it, rather than both recording
+    # plausibly and wrongly.
+    claimed: set[int] = set()
     for raw in value:
         if not isinstance(raw, dict):
             continue
         number = raw.get("box")
         if not isinstance(number, int) or not 1 <= number <= BOX_COUNT:
             continue
+        digital_in = _digital_in(raw.get("intanDigitalIn"))
+        if digital_in is not None and digital_in in claimed:
+            log.warning("box %d repeats DIGITAL-IN-%d; ignoring it", number, digital_in)
+            digital_in = None
+        if digital_in is not None:
+            claimed.add(digital_in)
         by_number[number] = BoxBinding(
             box=number,
             hardware_id=_opt_str(raw.get("hardwareId")),
             label=_opt_str(raw.get("label")) or f"Box {number}",
+            intan_digital_in=digital_in,
         )
 
     # Always return all six, so callers never have to handle a missing box.

@@ -19,6 +19,14 @@ Two rules keep this from being hostile:
   `sessions.confirmMapping` and the session ending, boxes carry task sketches
   and land in `IDLE` constantly; restoring then would erase the very sketch the
   runner is about to start. `hold()`/`release()` bracket that window.
+* **A deliberate flash is pinned.** An operator who flashes a sketch from Debug
+  Mode has said what that box should carry, and the port falls `IDLE` the moment
+  the flash completes — which is exactly the trigger a restore listens for. With
+  no pin the task was overwritten by the baseline within seconds of being put
+  there, silently. The pin is respected by every *automatic* trigger and is
+  released only by something the operator did: asking for the baseline
+  (`utility.ensure`), running a session, replugging the board, flashing the
+  utility sketch themselves, or naming a different utility sketch.
 
 The payoff is `identify()`: with a known sketch on the board, the app can ask
 one box to point at itself (`dashboard.md` §7.3). The commands come
@@ -80,6 +88,11 @@ class BoxBaseline:
     #: perform below can't bounce straight back into another doomed flash;
     #: cleared only by a new board, new settings, or an explicit `force`.
     failed: bool = False
+    #: The operator flashed something other than the baseline here ON PURPOSE
+    #: (Debug Mode), so no automatic trigger may take it back. Not the same
+    #: fact as `believed`: a session flash also moves `believed`, and that one
+    #: the baseline is *supposed* to reclaim once the session lets go.
+    pinned: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -132,6 +145,8 @@ class UtilityBaseline:
             for state in self._boxes.values():
                 state.believed = None
                 state.failed = False
+                # A newly named baseline is the operator asking for it.
+                state.pinned = False
 
     def hold(self) -> None:
         """Suspend restores — a confirmed session mapping owns the boxes."""
@@ -149,6 +164,9 @@ class UtilityBaseline:
         self._held = False
         log.info("utility baseline released")
         for state in self._boxes.values():
+            # A session has used the rig since; whatever was pinned before it
+            # has been flashed over, and the rig goes back to baseline whole.
+            state.pinned = False
             if state.state == "held":
                 state.state = "unknown"
                 state.detail = None
@@ -166,8 +184,15 @@ class UtilityBaseline:
 
     # --- beliefs ----------------------------------------------------------
 
-    def note_flashed(self, box: int, sketch_path: str) -> None:
-        """Record what a flash — any flash, from anywhere — actually put on a board."""
+    def note_flashed(self, box: int, sketch_path: str, *, pin: bool = False) -> None:
+        """Record what a flash — any flash, from anywhere — actually put on a board.
+
+        `pin` marks a flash the operator asked for by hand (Debug Mode), as
+        opposed to the session flash sequence. A pinned box is left alone by
+        every automatic restore until the operator releases it — see the module
+        docstring. Flashing the utility sketch itself is, by definition, a
+        return to baseline, so it clears the pin whatever `pin` says.
+        """
         state = self._boxes.get(box)
         if state is None:
             return
@@ -175,7 +200,12 @@ class UtilityBaseline:
         entry = self._sketch_entry()
         if entry is not None and sketch_path == entry.path:
             state.state, state.detail, state.failed = "ready", None, False
-        elif state.state == "ready":
+            state.pinned = False
+            return
+        state.pinned = pin
+        if pin:
+            state.state, state.detail = "pinned", _pinned_detail(sketch_path)
+        elif state.state in ("ready", "pinned"):
             # The board now carries something else; say so rather than keep
             # claiming a baseline that a session flash has just overwritten.
             state.state, state.detail = "unknown", None
@@ -190,11 +220,27 @@ class UtilityBaseline:
                 # answer to this box number may be a different board entirely.
                 state.believed = None
                 state.failed = False
-                if state.state in ("ready", "failed", "busy"):
+                state.pinned = False
+                if state.state in ("ready", "failed", "busy", "pinned"):
                     state.state, state.detail = "unavailable", f"no board detected for box {box}"
             elif bound is not None and state.failed:
                 # Replugging a board is the operator's usual "try again".
                 state.failed = False
+
+    def unpin(self, boxes: Iterable[int] | None = None) -> None:
+        """The operator asked for the baseline back on these boxes (all, if None).
+
+        Called for every `utility.ensure` that arrives over the wire — Config's
+        restore, the placement walk, Debug Mode's "Return to baseline" — and
+        for nothing automatic. That split is the whole rule: a pin yields to a
+        person and to nothing else.
+        """
+        targets = list(boxes) if boxes is not None else list(self._boxes)
+        for box in targets:
+            state = self._boxes.get(box)
+            if state is not None and state.pinned:
+                state.pinned = False
+                state.state, state.detail = "unknown", None
 
     # --- restores ---------------------------------------------------------
 
@@ -259,6 +305,11 @@ class UtilityBaseline:
             # port, and taking it back would be the bug.
             state.state, state.detail = "busy", f"port is {port_state.value}"
             return
+        if state.pinned and not force:
+            # Not a fault either: the operator put this sketch here by hand.
+            # The idle transition that follows their flash lands exactly here.
+            state.state, state.detail = "pinned", _pinned_detail(state.believed)
+            return
         if state.believed == entry.path and not force:
             state.state, state.detail = "ready", None
             return
@@ -294,6 +345,7 @@ class UtilityBaseline:
 
         state.believed = entry.path
         state.state, state.detail, state.failed = "ready", None, False
+        state.pinned = False
 
     def _clear_error(self, box: int) -> None:
         try:
@@ -546,6 +598,13 @@ class UtilityBaseline:
         from .protocol import Evt, event
 
         await self._broadcast(event(Evt.UTILITY_UPDATED, self.status()))
+
+
+def _pinned_detail(sketch_path: str | None) -> str:
+    # The folder name is the sketch name (`discovery.py`). Either separator may
+    # reach here: the sidecar runs on Windows and is tested on POSIX.
+    name = (sketch_path or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    return f"holding {name or 'a sketch'}, flashed from Debug Mode"
 
 
 def _scrollback(handler: Any) -> list[Any]:

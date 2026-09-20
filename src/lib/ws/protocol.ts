@@ -22,6 +22,7 @@ export const CMD = {
   PORT_PASSTHROUGH_OPEN: "port.passthrough.open",
   PORT_PASSTHROUGH_CLOSE: "port.passthrough.close",
   PORT_SEND: "port.send",
+  PORT_SEND_START: "port.sendStart",
   PORT_FLASH: "port.flash",
   PORT_RESET: "port.reset",
   PORT_ERROR_ACK: "port.error.ack",
@@ -85,6 +86,19 @@ export const CMD = {
   HARDWARE_PREVIEW: "hardware.preview",
   HARDWARE_SAVE: "hardware.save",
   HARDWARE_RESET: "hardware.reset",
+
+  // Intan recording (recording.md)
+  INTAN_STATUS: "intan.status",
+  INTAN_CONNECT: "intan.connect",
+  INTAN_DISCONNECT: "intan.disconnect",
+  INTAN_CONFIGURE: "intan.configure",
+  INTAN_PARSE_PROBE_MAP: "intan.parseProbeMap",
+  INTAN_PROBE_MAP: "intan.probeMap",
+  INTAN_SET_THRESHOLD: "intan.setThreshold",
+  INTAN_SCOPE_OPEN: "intan.scope.open",
+  INTAN_SCOPE_UPDATE: "intan.scope.update",
+  INTAN_SCOPE_CLOSE: "intan.scope.close",
+  INTAN_FORCE_STOP: "intan.forceStop",
 } as const;
 
 export type CommandName = (typeof CMD)[keyof typeof CMD];
@@ -95,6 +109,7 @@ export const EVT = {
   SERVER_HELLO: "server.hello",
   PORT_STATE: "port.state",
   PORT_OUTPUT: "port.output",
+  PORT_TELEMETRY: "port.telemetry",
   BOARDS_PRESENCE: "boards.presence",
   FLASH_PROGRESS: "flash.progress",
   SKETCHES_UPDATED: "sketches.updated",
@@ -109,6 +124,8 @@ export const EVT = {
   ANALYTICS_PROGRESS: "analytics.progress",
   SIDECAR_ERROR: "sidecar.error",
   TASKS_UPDATED: "tasks.updated",
+  INTAN_STATUS: "intan.status",
+  INTAN_SCOPE_DATA: "intan.scope.data",
 } as const;
 
 export type EventName = (typeof EVT)[keyof typeof EVT];
@@ -141,6 +158,9 @@ export const ERR = {
   RIG_WOULD_BREAK_TASKS: "RIG_WOULD_BREAK_TASKS",
   TASK_NOT_FOUND: "TASK_NOT_FOUND",
   TASK_INVALID: "TASK_INVALID",
+  INTAN_UNAVAILABLE: "INTAN_UNAVAILABLE",
+  INTAN_NOT_READY: "INTAN_NOT_READY",
+  INTAN_COMMAND_FAILED: "INTAN_COMMAND_FAILED",
   INTERNAL: "INTERNAL",
 } as const;
 
@@ -222,6 +242,23 @@ export interface BoxBinding {
   /** USB serial number — stable across COM renumbering. */
   hardwareId: string | null;
   label: string;
+  /**
+   * Which of the recording controller's digital inputs this box's sync line is wired to, 1–16
+   * (`recording.md` §3). Null = the box is not wired for recording. A binding like `hardwareId`,
+   * and for the same reason a setting rather than part of the rig document: it describes a cable
+   * between two instruments, not the box.
+   */
+  intanDigitalIn?: number | null;
+}
+
+/**
+ * Where Intan RHX's three TCP servers listen. The host is not a setting: Ephymeris only ever
+ * talks to an RHX on this machine.
+ */
+export interface IntanSettings {
+  commandPort: number;
+  waveformPort: number;
+  spikePort: number;
 }
 
 /**
@@ -241,6 +278,16 @@ export interface EphymerisSettings {
   utilitySketchName: string | null;
   defaultBaud: number;
   boxes: BoxBinding[];
+  /**
+   * Absent on a store written before recording existed; both ends fall back to RHX's defaults
+   * (5000/5001/5002).
+   */
+  intan?: IntanSettings;
+  /**
+   * The last recording setup the operator confirmed, offered as the next one's starting point.
+   * Shell-only.
+   */
+  recordingDefaults?: Record<string, unknown>;
   reducedMotion: boolean;
   /**
    * Zodiac layout id for the box-status constellation; null = the legacy fixed layout. Shell-only
@@ -261,10 +308,12 @@ export interface EphymerisSettings {
 
 /**
  * What the sidecar believes about one box's baseline firmware. `busy` (the port has another
- * owner) and `held` (a confirmed session mapping owns the rig) are both 'not now' rather than
- * 'not working' — the distinction is the whole reason a restore never fights the user.
+ * owner), `held` (a confirmed session mapping owns the rig) and `pinned` (the operator flashed
+ * another sketch here from Debug Mode, and it stays until they ask for the baseline back) are all
+ * 'not now' rather than 'not working' — the distinction is the whole reason a restore never
+ * fights the user.
  */
-export type UtilityBaselineState = "unknown" | "restoring" | "ready" | "busy" | "held" | "unavailable" | "failed";
+export type UtilityBaselineState = "unknown" | "restoring" | "ready" | "busy" | "held" | "pinned" | "unavailable" | "failed";
 
 export interface UtilityBoxState {
   box: number;
@@ -499,6 +548,11 @@ export interface Session {
    * start. Null means no limit.
    */
   durationMinutes: number | null;
+  /**
+   * Set when the session is also an Intan recording (`recording.md` §6). Null = behavior only,
+   * which is every session from before recording existed.
+   */
+  recording: SessionRecording | null;
 }
 
 export type ConfigFieldType = "int" | "float" | "bool" | "string";
@@ -670,6 +724,20 @@ export interface TelemetryMetric {
 export interface BoxTelemetry {
   box: number;
   animalId: string;
+  metrics: TelemetryMetric[];
+}
+
+/**
+ * Debug Mode's counterpart to `BoxTelemetry`. No `animalId`: a task started by hand from the
+ * console is nobody's run and records nothing.
+ */
+export interface PortTelemetry {
+  box: number;
+  /**
+   * A task started with `port.sendStart` is still running. Goes false when the board emits its
+   * `END_SESSION` strobe or the port leaves PASSTHROUGH — observed by the sidecar, never assumed.
+   */
+  running: boolean;
   metrics: TelemetryMetric[];
 }
 
@@ -1237,7 +1305,7 @@ export interface RigProblem {
   location: string;
   message: string;
   /**
-   * The wiring rule, when one produced it — RIG101 through RIG104. Null for a schema violation,
+   * The wiring rule, when one produced it — RIG101 through RIG105. Null for a schema violation,
    * which has no rule number because it is caught before the halves are composed.
    */
   code: string | null;
@@ -1404,6 +1472,137 @@ export interface StrobeVocabulary {
   portSlots: Record<string, Record<string, string>>;
 }
 
+export interface RecordingBox {
+  box: number;
+  /** The controller input this box's sync line reaches, 1–16. */
+  digitalIn: number;
+  /** Headstage port letter, A–H. */
+  port: string;
+  /** Native channel names recorded for this box. */
+  channels: string[];
+  /** File name of the probe map copied beside the data. */
+  probeMap: string | null;
+}
+
+/**
+ * One group run's recording. A session records once per group, because the animals — and so the
+ * ports and probes — change between groups.
+ */
+export interface RecordingRun {
+  groupId: string;
+  /** The directory handed to RHX as `Filename.Path`. */
+  path: string;
+  baseFilename: string;
+  /**
+   * RHX's own `YYMMDD_HHMMSS` suffix, read back after the recording started — it names the folder
+   * and files RHX actually created.
+   */
+  fileTimestamp: string | null;
+  fileFormat: string;
+  sampleRate: number;
+  startedAt: string | null;
+  endedAt: string | null;
+  boxes: RecordingBox[];
+}
+
+export interface SessionRecording {
+  runs: RecordingRun[];
+}
+
+export interface RecordingBoxConfig {
+  box: number;
+  port: string;
+  firstChannel: number;
+  lastChannel: number;
+  probeMapPath?: string | null;
+}
+
+export interface RecordingThreshold {
+  /** `keep` leaves RHX's thresholds as the operator set them there. */
+  mode: "keep" | "absolute" | "rms";
+  /** Absolute threshold, −5000…5000 µV. */
+  microvolts: number;
+  /** 3.0…20.0 × each channel's RMS noise. */
+  rmsMultiple: number;
+  /** Polarity of the RMS-relative threshold. */
+  negative: boolean;
+}
+
+/** Everything the recording walkthrough collects (`recording.md` §4). */
+export interface RecordingConfig {
+  saveDirectory: string;
+  fileFormat: "Traditional" | "OneFilePerSignalType" | "OneFilePerChannel";
+  saveWideband: boolean;
+  saveSpikes: boolean;
+  saveSpikeSnapshots: boolean;
+  /** 0…3, stored positive; RHX takes it negated. */
+  snapshotPreMs: number;
+  /** 1…6. */
+  snapshotPostMs: number;
+  saveLowpass: boolean;
+  /** 1, 2, 4 … 128. */
+  lowpassDownsample: number;
+  saveHighpass: boolean;
+  /** Traditional format only; 1…999. */
+  newFileMinutes?: number;
+  threshold: RecordingThreshold;
+  boxes: RecordingBoxConfig[];
+}
+
+export type IntanState = "disconnected" | "idle" | "configured" | "recording" | "stopping" | "error";
+
+/**
+ * How well a box's sync edges are pairing with its strobes. A climbing `unmatchedStrobes` with
+ * zero `matched` is a sync line that is not connected.
+ */
+export interface IntanSyncStat {
+  box: number;
+  matched: number;
+  spuriousEdges: number;
+  unmatchedStrobes: number;
+}
+
+export interface IntanStatus {
+  state: IntanState;
+  /** Why, when the state alone does not say. */
+  message: string | null;
+  connected: boolean;
+  /** RHX's `Type`, e.g. ControllerRecordUSB3. */
+  controller: string | null;
+  version: string | null;
+  sampleRate: number | null;
+  /** RHX is generating data; no controller is attached. */
+  synthetic: boolean;
+  headstagePresent: boolean;
+  runMode: string | null;
+  /** Port letter → amplifier channels present. */
+  ports: Record<string, number>;
+  /**
+   * False when this RHX does not answer a `get` that rides a batch, so a refused command cannot
+   * be detected (`recording.md` §2).
+   */
+  confirmsWrites: boolean | null;
+  /** This rig's wiring declares a `sync` channel. */
+  rigHasSync: boolean;
+  /** The waveform and spike sockets are both open. */
+  liveStreams: boolean;
+  recording: RecordingRun | null;
+  /** While `stopping`: boxes still finishing their trial. */
+  waitingOn: number[];
+  sync: IntanSyncStat[];
+}
+
+export type ScopeKind = "spikescope" | "psth" | "isi" | "probemap";
+
+export interface ScopeData {
+  scopeId: string;
+  kind: ScopeKind;
+  box: number;
+  channel: string | null;
+  /** Per kind; see `recording.md` §7. */
+  data: unknown;
+}
+
 // --- Per-command and per-event payload maps --------------------------------
 
 /** Args each command takes; `Record<string, never>` = none. */
@@ -1415,6 +1614,7 @@ export interface CommandArgsMap {
   "port.passthrough.open": { box: number; baud?: number };
   "port.passthrough.close": { box: number };
   "port.send": { box: number; text: string; lineEnding?: "none" | "lf" | "cr" | "crlf" };
+  "port.sendStart": { box: number; sketchPath: string; config?: Record<string, unknown> };
   "port.flash": { box: number; sketchPath: string; suppressPassthroughResume?: boolean };
   "port.reset": { box: number };
   "port.error.ack": { box: number };
@@ -1441,7 +1641,7 @@ export interface CommandArgsMap {
   "tasks.delete": { taskId: string };
   "rig.strobes": Record<string, never>;
   "sessions.suggestNumber": { prefixId: string };
-  "sessions.create": { cohortId: string; prefixId: string; sessionNumber: string; durationMinutes?: number };
+  "sessions.create": { cohortId: string; prefixId: string; sessionNumber: string; durationMinutes?: number; recording?: boolean };
   "sessions.abandon": { sessionId: string };
   "sessions.confirmMapping": { sessionId: string; groupId: string; boxes: SessionBoxMapping[] };
   "sessions.status": { sessionId: string };
@@ -1462,6 +1662,17 @@ export interface CommandArgsMap {
   "hardware.preview": { document: unknown };
   "hardware.save": { document: unknown; confirm: boolean };
   "hardware.reset": Record<string, never>;
+  "intan.status": Record<string, never>;
+  "intan.connect": Record<string, never>;
+  "intan.disconnect": Record<string, never>;
+  "intan.configure": { sessionId: string; groupId: string; config: RecordingConfig };
+  "intan.parseProbeMap": { path: string };
+  "intan.probeMap": { box: number };
+  "intan.setThreshold": { channel: string; microvolts: number };
+  "intan.scope.open": { kind: ScopeKind; box: number; channel?: string | null; params?: Record<string, unknown> };
+  "intan.scope.update": { scopeId: string; channel?: string | null; params?: Record<string, unknown> };
+  "intan.scope.close": { scopeId: string };
+  "intan.forceStop": Record<string, never>;
 }
 
 /** The `result` field of each command's ok-reply. */
@@ -1473,6 +1684,7 @@ export interface CommandResultMap {
   "port.passthrough.open": { state: PortStateName };
   "port.passthrough.close": { state: PortStateName };
   "port.send": { bytesWritten: number };
+  "port.sendStart": { command: string; bytesWritten: number };
   "port.flash": { state: PortStateName; resumedPassthrough: boolean };
   "port.reset": { state: PortStateName; resumedPassthrough: boolean };
   "port.error.ack": { state: PortStateName };
@@ -1520,6 +1732,17 @@ export interface CommandResultMap {
   "hardware.preview": RigSaved;
   "hardware.save": RigSaved;
   "hardware.reset": RigDocument;
+  "intan.status": IntanStatus;
+  "intan.connect": IntanStatus;
+  "intan.disconnect": IntanStatus;
+  "intan.configure": IntanStatus;
+  "intan.parseProbeMap": { probeMap: unknown };
+  "intan.probeMap": { probeMap: unknown };
+  "intan.setThreshold": { channel: string; microvolts: number };
+  "intan.scope.open": { scopeId: string };
+  "intan.scope.update": { ok: boolean };
+  "intan.scope.close": { ok: boolean };
+  "intan.forceStop": { ok: boolean };
 }
 
 /** The `data` field of each event. */
@@ -1527,6 +1750,7 @@ export interface EventDataMap {
   "server.hello": ServerHello;
   "port.state": PortStateData;
   "port.output": PortOutputData;
+  "port.telemetry": PortTelemetry;
   "boards.presence": BoardsPresenceData;
   "flash.progress": FlashProgressData;
   "sketches.updated": SketchDiscovery;
@@ -1541,6 +1765,8 @@ export interface EventDataMap {
   "analytics.progress": AnalyticsProgress;
   "sidecar.error": SidecarErrorData;
   "tasks.updated": TasksUpdatedData;
+  "intan.status": IntanStatus;
+  "intan.scope.data": ScopeData;
 }
 
 // --- Envelopes -------------------------------------------------------------

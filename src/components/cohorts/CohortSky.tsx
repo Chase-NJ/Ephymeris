@@ -1,10 +1,11 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 import { GL } from "@/components/chrome/constellationStyle";
 import { MAX_FRAME_SECONDS } from "@/components/constellation3d/CameraRig";
 import { PlanetarySurface } from "@/components/constellation3d/PlanetarySurface";
+import { useProgramsWarm } from "@/components/constellation3d/ProgramWarmth";
 import {
   ConstellationScene,
   type SceneNode,
@@ -12,6 +13,7 @@ import {
 import type { SceneOrbiter } from "@/components/constellation3d/Orbiters";
 import {
   livelinessFor,
+  planetPalette,
   radiusFor,
   resolveAppearance,
   type ResolvedAppearance,
@@ -66,6 +68,27 @@ export function CohortSky({
   // one. Counted here rather than inside `planetSlots` because the layout has
   // no opinion about what fills a slot.
   const offset = onCreate ? 1 : 0;
+
+  /*
+   * Two things the sky waits for, and neither of them is allowed to be a
+   * frozen window.
+   *
+   * `warm` — the planet shader is linked (`ProgramWarmth.tsx`). Normally true
+   * long before anyone gets here; when the app opens straight onto this route
+   * it is not, and drawing a real world then would block on the link for
+   * seconds. Until it is, a world is a flat disc in its own colour.
+   *
+   * `fleetsReady` — the ships mount one frame after the planets. A library's
+   * fleet is around a hundred craft; building them in the same commit as the
+   * worlds made the sky's first frame wait on its least important content.
+   */
+  const warm = useProgramsWarm();
+  const [fleetsReady, setFleetsReady] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setFleetsReady(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   const slots = useMemo(
     () => planetSlots(cohorts.length + offset),
     [cohorts.length, offset],
@@ -94,12 +117,13 @@ export function CohortSky({
               radius={radius}
               cohort={cohort}
               faded={faded}
+              warm={warm}
             />
           ),
           // One craft per home cage. `Orbiters` already keys ships this way —
           // cohort-scoped, because cage numbers restart in every cohort — so a
           // cohort's fleet needs no new machinery, only the count.
-          orbiters: faded ? undefined : fleetFor(cohort),
+          orbiters: faded || !fleetsReady ? undefined : fleetFor(cohort),
         };
       }
     });
@@ -120,7 +144,7 @@ export function CohortSky({
       },
       ...worlds,
     ];
-  }, [cohorts, slots, dimmed, offset, onCreate]);
+  }, [cohorts, slots, dimmed, offset, onCreate, warm, fleetsReady]);
 
   return (
     <ConstellationScene
@@ -219,20 +243,27 @@ function PlanetBody({
   radius,
   cohort,
   faded,
+  warm,
 }: {
   appearance: ResolvedAppearance;
   radius: number;
   cohort: CohortSummary;
   faded: boolean;
+  /** The planet shader is linked; before that, draw the stand-in. */
+  warm: boolean;
 }) {
   return (
     <group>
-      <PlanetarySurface
-        radius={radius}
-        appearance={appearance}
-        liveliness={livelinessFor(cohort.updatedAt)}
-        seed={cohort.id}
-      />
+      {warm ? (
+        <PlanetarySurface
+          radius={radius}
+          appearance={appearance}
+          liveliness={livelinessFor(cohort.updatedAt)}
+          seed={cohort.id}
+        />
+      ) : (
+        <PlanetStandIn radius={radius} appearance={appearance} />
+      )}
       {faded && (
         <mesh scale={1.06}>
           <sphereGeometry args={[radius, 24, 24]} />
@@ -246,6 +277,32 @@ function PlanetBody({
         </mesh>
       )}
     </group>
+  );
+}
+
+/**
+ * A world before its shader is ready: the right size, in the right place, in
+ * its own dominant colour, and nothing else.
+ *
+ * Deliberately featureless. It exists for the seconds between the app opening
+ * onto this route and `ProgramWarmth` finishing, and what matters in those
+ * seconds is that the sky pans, the nameplates read and a click lands — every
+ * one of which the scene gives a node regardless of its body. A basic material
+ * links in milliseconds, which is the whole reason it can stand in.
+ */
+function PlanetStandIn({
+  radius,
+  appearance,
+}: {
+  radius: number;
+  appearance: ResolvedAppearance;
+}) {
+  const colour = useMemo(() => planetPalette(appearance).core, [appearance]);
+  return (
+    <mesh>
+      <sphereGeometry args={[radius, 24, 24]} />
+      <meshBasicMaterial color={colour} transparent opacity={0.55} />
+    </mesh>
   );
 }
 

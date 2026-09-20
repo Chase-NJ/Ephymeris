@@ -10,7 +10,7 @@
  */
 
 import type { SidecarClient } from "../ws/client";
-import { CMD, EVT } from "../ws/protocol";
+import { CMD, EVT, type PortTelemetry } from "../ws/protocol";
 import type {
   ActiveSessions,
   AnimalEnded,
@@ -58,6 +58,13 @@ export class SessionStore {
   private history = new Map<number, Map<string, number[]>>();
   /** Finished runs this session, per box. */
   private ended = new Map<number, AnimalEnded>();
+  /**
+   * Boxes running a task started by hand from Debug Mode, on the sidecar's
+   * word (`port.telemetry`). Never set from a click: the task ends when the
+   * BOARD says so, a trial boundary after `STOP`, and a button that flipped
+   * this itself would show "ended" over a task still delivering odor.
+   */
+  private debugRunning = new Set<number>();
   /**
    * Every strobe this box has emitted, in order.
    *
@@ -120,6 +127,21 @@ export class SessionStore {
         this.notify(`telemetry:${d.box}`);
       }),
 
+      // Debug Mode's counterpart to the above (`debug_run.py`). Same slot, same
+      // history: a port in PASSTHROUGH cannot also be IN_SESSION, so the two
+      // sources can never be writing one box at once, and sharing the slot is
+      // what lets Debug Mode mount Mission Control's own components unchanged.
+      client.on(EVT.PORT_TELEMETRY, (data) => {
+        const d = data as PortTelemetry;
+        if (typeof d?.box !== "number") return;
+        this.telemetry.set(d.box, d.metrics ?? NO_METRICS);
+        this.appendHistory(d.box, d.metrics ?? NO_METRICS);
+        if (d.running) this.debugRunning.add(d.box);
+        else this.debugRunning.delete(d.box);
+        this.notify(`telemetry:${d.box}`);
+        this.notify(`debug:${d.box}`);
+      }),
+
       client.on(EVT.PORT_OUTPUT, (data) => {
         const d = data as { box: number; lines: Array<{ dir: string; text: string }> };
         if (typeof d?.box !== "number" || !d.lines?.length) return;
@@ -178,6 +200,10 @@ export class SessionStore {
   }
 
   // --- live session -----------------------------------------------------
+
+  isDebugRunning(box: number): boolean {
+    return this.debugRunning.has(box);
+  }
 
   getTelemetry(box: number): TelemetryMetric[] {
     return this.telemetry.get(box) ?? NO_METRICS;

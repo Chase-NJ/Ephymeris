@@ -53,7 +53,10 @@ DB_FILENAME = "ephymeris.db"
 #: (`cohorts.md` §5) — the operator's tuning of a cohort's world. NULL on every
 #: cohort that has never been tuned, which is the normal state: the whole record
 #: is derived from a hash of the cohort's `id` when absent.
-SCHEMA_VERSION = 9
+#: v10 added sessions.recording_json (`recording.md` §6) -- whether a session is
+#: also an electrophysiology recording, and what each group run's recording was.
+#: NULL on every behavior-only session, which is every session before this.
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -110,7 +113,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     group_runs     TEXT NOT NULL DEFAULT '[]',  -- JSON array, small and read whole
     -- Optional per-box time limit (dashboard.md §7.2). NULL = no
     -- limit; the runner STOPs each box this many minutes after ITS OWN start.
-    duration_minutes INTEGER
+    duration_minutes INTEGER,
+    -- Set when the session is also an Intan recording (recording.md §6): a JSON
+    -- object holding one entry per group run -- where RHX saved it, under what
+    -- name, at what sample rate, and which digital input and headstage port
+    -- each box was on. NULL = behavior only.
+    recording_json TEXT
 );
 
 -- One animal's run within a session (data.md §3.2). Forward-looking
@@ -355,6 +363,15 @@ def _to_v5(conn: sqlite3.Connection) -> None:
     add_column(conn, "animals", "cage", "INTEGER")
 
 
+def _to_v10(conn: sqlite3.Connection) -> None:
+    """v9 → v10: the session's recording record (`recording.md` §6).
+
+    NULL is "behavior only", which is true of every session recorded before
+    this column existed, so there is nothing to backfill.
+    """
+    add_column(conn, "sessions", "recording_json", "TEXT")
+
+
 #: Migrations, keyed by the version they upgrade **to**, applied in ascending
 #: order.
 #:
@@ -372,6 +389,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     7: _to_v7,
     8: _to_v8,
     9: _to_v9,
+    10: _to_v10,
 }
 
 

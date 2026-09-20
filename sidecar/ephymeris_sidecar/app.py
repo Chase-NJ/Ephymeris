@@ -44,6 +44,10 @@ from .sessions import recovery
 from .sessions.paths import resolve_session_folder
 from .hardware import service as hardware_service
 from .hardware import store as hardware_store
+from .intan.client import RhxCommandFailed, RhxError, RhxUnavailable
+from .intan import probemap as intan_probemap
+from .intan.service import IntanNotReady, IntanService
+from .rig import registry as rig_registry
 from .sessions.repository import SessionRepository
 from .sessions.runner import ActiveRun, BoxConfig, SessionRunner
 from .taskdef import bundled as bundled_sketches
@@ -52,6 +56,7 @@ from .taskdef.model import TaskDefinition, TaskDefinitionError
 from .taskdef.validate import validate as validate_task
 from .tasks import profile as task_profile
 from .tasks.start_command import build_start_command
+from .debug_run import DebugRuns
 from .ports.handler import DEFAULT_LINE_ENDING, LINE_ENDINGS, OutputLine, PortBusy
 from .ports.manager import BoardNotDetected, PortManager, PortNotBound
 from .ports.states import IllegalTransition, PortState
@@ -132,6 +137,8 @@ class Application:
         self.tool = create_board_tool(app_data_dir=data_dir)
         self.ports: PortManager | None = None
         self.utility: UtilityBaseline | None = None
+        #: Tasks started by hand from Debug Mode, scored live (`debug_run.py`).
+        self.debug_runs = DebugRuns()
 
         self.db = Database(data_dir / DB_FILENAME)
         self.cohorts = CohortRepository(self.db)
@@ -139,6 +146,9 @@ class Application:
         self.runner: SessionRunner | None = None
         self.backup: BackupManager | None = None
         self.analytics: AnalyticsService | None = None
+        #: The Intan RHX recording subsystem (`recording.md`). Never on the
+        #: session path except at `start_recording`.
+        self.intan: IntanService | None = None
         self.profiles = AnalyticsRepository(self.db)
         self._running_session_id: str | None = None
         #: One rig operation at a time. `hardware.preview` fires on every
@@ -168,6 +178,7 @@ class Application:
         self.server.register(Cmd.PORT_PASSTHROUGH_OPEN, self._passthrough_open)
         self.server.register(Cmd.PORT_PASSTHROUGH_CLOSE, self._passthrough_close)
         self.server.register(Cmd.PORT_SEND, self._port_send)
+        self.server.register(Cmd.PORT_SEND_START, self._port_send_start)
         self.server.register(Cmd.PORT_FLASH, self._port_flash)
         self.server.register(Cmd.PORT_RESET, self._port_reset)
         self.server.register(Cmd.PORT_ERROR_ACK, self._port_error_ack)
@@ -219,6 +230,18 @@ class Application:
         self.server.register(Cmd.HARDWARE_PREVIEW, self._hardware_preview)
         self.server.register(Cmd.HARDWARE_SAVE, self._hardware_save)
         self.server.register(Cmd.HARDWARE_RESET, self._hardware_reset)
+
+        self.server.register(Cmd.INTAN_STATUS, self._intan_status)
+        self.server.register(Cmd.INTAN_CONNECT, self._intan_connect)
+        self.server.register(Cmd.INTAN_DISCONNECT, self._intan_disconnect)
+        self.server.register(Cmd.INTAN_CONFIGURE, self._intan_configure)
+        self.server.register(Cmd.INTAN_PARSE_PROBE_MAP, self._intan_parse_probe_map)
+        self.server.register(Cmd.INTAN_PROBE_MAP, self._intan_probe_map)
+        self.server.register(Cmd.INTAN_SET_THRESHOLD, self._intan_set_threshold)
+        self.server.register(Cmd.INTAN_SCOPE_OPEN, self._intan_scope_open)
+        self.server.register(Cmd.INTAN_SCOPE_UPDATE, self._intan_scope_update)
+        self.server.register(Cmd.INTAN_SCOPE_CLOSE, self._intan_scope_close)
+        self.server.register(Cmd.INTAN_FORCE_STOP, self._intan_force_stop)
 
         self.server.on_client_ready(self._replay_state)
 
@@ -287,8 +310,24 @@ class Application:
             on_animal_ended=self._on_animal_ended,
             backup=self.backup,
         )
+        self.intan = IntanService(
+            loop=loop,
+            broadcast=self.server.broadcast,
+            settings=self.settings,
+            rig_has_sync=lambda: rig_registry.channels().unique_of_kind("sync") is not None,
+        )
+        self.intan.start()
+        # The runner's three taps. They run on a port's session thread, which
+        # is why the service's side of each is a `call_soon_threadsafe`.
+        self.runner.recording_fields = self.intan.recording_fields
+        self.runner.on_box_started = self.intan.box_started
+        self.runner.on_strobe_tap = self.intan.on_strobe
 
     async def stop(self) -> None:
+        # First, and it only closes OUR sockets: a recording in progress belongs
+        # to RHX and outlives the sidecar (`recording.md` §5).
+        if self.intan is not None:
+            await self.intan.stop()
         # Before the ports go: a lit box has a console open that must be closed
         # through the state machine rather than yanked out from under it.
         if self.utility is not None:
@@ -406,6 +445,8 @@ class Application:
             await send(event(Evt.UTILITY_UPDATED, self.utility.status()))
         if self.backup is not None:
             await send(event(Evt.BACKUP_STATUS, self.backup.status()))
+        if self.intan is not None:
+            await send(event(Evt.INTAN_STATUS, self.intan.status_json()))
 
     # --- hardware callbacks ----------------------------------------------
 
@@ -442,11 +483,24 @@ class Application:
         # console closing, an error acknowledged — is covered by one hook.
         if current == PortState.IDLE and self.utility is not None:
             self.utility.ensure([box])
+        # A hand-started task is only being listened to while the console is
+        # open; a reset or a flash has rebooted the board besides.
+        if current != PortState.PASSTHROUGH:
+            closing = self.debug_runs.drop(box)
+            if closing is not None:
+                asyncio.create_task(
+                    self.server.broadcast(event(Evt.PORT_TELEMETRY, closing))
+                )
 
     async def _handle_output(self, box: int, lines: list[OutputLine]) -> None:
         await self.server.broadcast(
             event(Evt.PORT_OUTPUT, {"box": box, "lines": [line.to_json() for line in lines]})
         )
+        # After the lines themselves, so a client never holds a metric for a
+        # trial whose strobes it has not been shown yet.
+        scored = self.debug_runs.offer(box, lines)
+        if scored is not None:
+            await self.server.broadcast(event(Evt.PORT_TELEMETRY, scored))
 
     async def _handle_presence(self, boards: list[dict[str, object]]) -> None:
         await self.server.broadcast(event(Evt.BOARDS_PRESENCE, {"boards": boards}))
@@ -494,6 +548,8 @@ class Application:
         await self._rescan()
         # After the rescan, so a newly-chosen utility sketch resolves against
         # the library as it is now rather than as it was one push ago.
+        if self.intan is not None:
+            self.intan.update_settings(self.settings)
         if self.utility is not None:
             self.utility.update_settings(self.settings)
             self.utility.ensure()
@@ -536,6 +592,49 @@ class Application:
         with _mapped_errors(box):
             written = self._require_ports().send(box, text, line_ending)
         return {"bytesWritten": written}
+
+    async def _port_send_start(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """Start a behaviour sketch by hand from the Debug console.
+
+        The line is built here rather than in the client for the reason a
+        session's is: `build_start_command` is the one place that knows the
+        profile's wire keys and the firmware's line cap, and a `START` the board
+        silently truncates is the failure this whole path exists to avoid.
+        """
+        box = _box_arg(args)
+        path = args.get("sketchPath")
+        sketch = next((s for s in self.discovery.sketches if s.path == path), None)
+        if sketch is None:
+            raise CommandError(
+                ErrCode.SKETCH_UNKNOWN,
+                "That sketch isn't in the sketch library — refresh the list and "
+                "flash it again.",
+                {"sketchPath": path},
+            )
+        config = args.get("config")
+        if config is None:
+            config = {}
+        if not isinstance(config, dict):
+            raise CommandError(ErrCode.BAD_MESSAGE, "`config` must be an object")
+
+        try:
+            profile = await asyncio.to_thread(task_profile.load_profile, sketch.path)
+        except task_profile.TaskProfileError:
+            profile = None  # profile-less: bare START, as in a session
+        try:
+            command = build_start_command(profile, config)
+        except task_profile.TaskProfileError as exc:
+            raise CommandError(ErrCode.TASK_PROFILE_INVALID, str(exc), {"box": box}) from exc
+
+        with _mapped_errors(box):
+            written = self._require_ports().send(box, command, DEFAULT_LINE_ENDING)
+        # Armed only once the line is really on the wire, and only here: this is
+        # the one moment the sidecar knows which profile the strobes that follow
+        # should be scored against (`debug_run.py`).
+        await self.server.broadcast(
+            event(Evt.PORT_TELEMETRY, self.debug_runs.arm(box, profile))
+        )
+        return {"command": command, "bytesWritten": written}
 
     async def _port_flash(self, _server, _conn, args, corr) -> dict[str, Any]:  # noqa: ANN001
         box = _box_arg(args)
@@ -582,8 +681,13 @@ class Application:
         # Whatever the app just put on that board is now what's on it — the one
         # place every deliberate flash passes through, so the baseline belief
         # can't be left claiming a utility sketch a session flash overwrote.
+        #
+        # A flash that is NOT the session sequence is one the operator asked for
+        # by hand, and it is pinned (`utility.py`): this port is about to fall
+        # IDLE, the idle hook is about to ask for a restore, and without the pin
+        # that restore overwrote the task within seconds of it landing.
         if self.utility is not None:
-            self.utility.note_flashed(box, sketch.path)
+            self.utility.note_flashed(box, sketch.path, pin=not suppress)
             await self.utility.publish()
         # Flashing is precisely what changes a board's interpreter baud, so the
         # cached detection result dies with the old firmware.
@@ -627,6 +731,9 @@ class Application:
             if isinstance(boxes, list)
             else None
         )
+        # Arriving over the wire means a person asked: that is what releases a
+        # Debug Mode pin. The automatic triggers call `ensure` directly.
+        utility.unpin(targets)
         utility.ensure(targets, force=args.get("force") is True)
         return utility.status()
 
@@ -1280,6 +1387,7 @@ class Application:
             when.date().isoformat(),
             str(folder),
             duration,
+            args.get("recording") is True,
         )
         await self._broadcast_lifecycle()
         return {"session": session.to_json()}
@@ -1302,6 +1410,11 @@ class Application:
         if self._running_session_id == session_id:
             self._require_runner().clear()
             self._running_session_id = None
+        if self.intan is not None:
+            # A recording that was set up and never started. One that IS
+            # running is left alone -- `release` refuses nothing and stops
+            # nothing.
+            self.intan.release()
         session = await asyncio.to_thread(self.sessions.set_status, session_id, "aborted")
         await self._release_baseline()
         await self._broadcast_lifecycle()
@@ -1419,6 +1532,7 @@ class Application:
     async def _sessions_start_all(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         session_id = _str_arg(args, "sessionId")
         runner = self._require_runner()
+        await self._begin_recording_if_any(session_id)
         for box in runner.configured_boxes():
             # `start_box` is a no-op for a box already running (§5.2).
             with _session_errors(box):
@@ -1431,7 +1545,7 @@ class Application:
     async def _sessions_switch_group(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         session_id = _str_arg(args, "sessionId")
         runner = self._require_runner()
-        await runner.end_all("operator stop")
+        await self._end_all_boxes(session_id)
         session = await asyncio.to_thread(self._close_group_run, session_id)
         cohort = await asyncio.to_thread(self.cohorts.get, session.cohort_id)
         # Next populated group after those already run, by order (§5.2).
@@ -1452,13 +1566,76 @@ class Application:
 
     async def _sessions_end(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         session_id = _str_arg(args, "sessionId")
-        await self._require_runner().end_all("operator stop")
+        await self._end_all_boxes(session_id)
         await asyncio.to_thread(self._close_group_run, session_id)
         session = await asyncio.to_thread(self.sessions.set_status, session_id, "completed")
         self._running_session_id = None
         await self._release_baseline()
         await self._broadcast_lifecycle()
         return {"session": session.to_json()}
+
+    # --- recording (recording.md §5) --------------------------------------
+
+    #: How long a recording waits for each box to finish the trial it is in
+    #: after STOP. Longer than any trial the lab runs -- a 20 s error delay plus
+    #: a 4 s ITI plus the holds -- and the operator can cut it short.
+    RECORDING_GRACE_S = 45.0
+
+    async def _is_recording_session(self, session_id: str) -> bool:
+        try:
+            session = await asyncio.to_thread(self.sessions.get_session, session_id)
+        except SessionNotFound:
+            return False
+        return session.recording is not None
+
+    async def _begin_recording_if_any(self, session_id: str) -> None:
+        """Start RHX recording BEFORE any box starts, or refuse.
+
+        The one place the recording may fail the session path, and on purpose:
+        a behavior session quietly missing its electrophysiology cannot be
+        re-run, so this raises while no animal has seen a trial yet.
+        """
+        if self.intan is None or not await self._is_recording_session(session_id):
+            return
+        runner = self._require_runner()
+        if not self.intan.configured_for(session_id, runner.group_id):
+            raise CommandError(
+                ErrCode.INTAN_NOT_READY,
+                "This is a recording session, but no recording is set up for this "
+                "group. Finish the Recording step first.",
+            )
+        with _intan_errors():
+            await self.intan.start_recording()
+
+    async def _end_all_boxes(self, session_id: str) -> None:
+        """End every box, and the recording around them if there is one.
+
+        Order is the whole point: STOP the boxes, WAIT for each to close its
+        trial, and only then stop RHX -- so the last event of every animal is
+        inside the recording, with a post-roll after it.
+        """
+        runner = self._require_runner()
+        intan = self.intan
+        if intan is None or not intan.is_recording:
+            await runner.end_all("operator stop")
+            if intan is not None:
+                intan.release()
+            return
+        await runner.end_all(
+            "operator stop",
+            graceful_timeout_s=self.RECORDING_GRACE_S,
+            force=intan.force_stop,
+            on_waiting=intan.note_waiting,
+        )
+        run = await intan.stop_recording()
+        if run is not None:
+            await asyncio.to_thread(self._record_recording_run, session_id, run)
+
+    def _record_recording_run(self, session_id: str, run: dict[str, Any]) -> None:
+        session = self.sessions.get_session(session_id)
+        recording = dict(session.recording or {"runs": []})
+        recording["runs"] = [*recording.get("runs", []), run]
+        self.sessions.set_recording(session_id, recording)
 
     async def _release_baseline(self) -> None:
         """Hand the rig back to the utility baseline once a session lets go."""
@@ -1492,6 +1669,8 @@ class Application:
 
     async def _port_start_session(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         box = _box_arg(args)
+        if self._running_session_id is not None:
+            await self._begin_recording_if_any(self._running_session_id)
         with _session_errors(box):
             self._require_runner().start_box(box)
         return {"state": self._require_ports().handler(box).state.value}
@@ -1540,6 +1719,8 @@ class Application:
                     params_hash=task_profile.params_hash(run_config),
                 ),
             )
+        if self.intan is not None:
+            self.intan.box_ended(run.box, run.config.animal_name, reason)
         await self.server.broadcast(
             event(
                 Evt.SESSION_ANIMAL_ENDED,
@@ -1551,6 +1732,112 @@ class Application:
                 },
             )
         )
+
+    # --- Intan recording (recording.md) -----------------------------------
+
+    def _require_intan(self) -> IntanService:
+        if self.intan is None:
+            raise CommandError(ErrCode.INTERNAL, "the recording layer isn't running")
+        return self.intan
+
+    async def _intan_status(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        return self._require_intan().status_json()
+
+    async def _intan_connect(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        intan = self._require_intan()
+        with _intan_errors():
+            await intan.connect()
+        return intan.status_json()
+
+    async def _intan_disconnect(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        intan = self._require_intan()
+        with _intan_errors():
+            await intan.disconnect()
+        return intan.status_json()
+
+    async def _intan_configure(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        intan = self._require_intan()
+        session_id = _str_arg(args, "sessionId")
+        group_id = _str_arg(args, "groupId")
+        config = args.get("config")
+        if not isinstance(config, dict):
+            raise CommandError(ErrCode.BAD_MESSAGE, "`config` must be an object")
+        try:
+            session = await asyncio.to_thread(self.sessions.get_session, session_id)
+            cohort = await asyncio.to_thread(self.cohorts.get, session.cohort_id)
+        except (SessionNotFound, CohortNotFound) as exc:
+            raise CommandError(ErrCode.SESSION_INVALID, "That session no longer exists.") from exc
+        if session.recording is None:
+            raise CommandError(ErrCode.SESSION_INVALID, "That session is not a recording.")
+
+        group = next((g for g in cohort.groups if g.id == group_id), None)
+        group_name = group.name if group is not None else group_id
+        # `<prefix>_<number>_<date>_<group>`, RHX appends its own timestamp. No
+        # spaces: the name is one token of a `set` command.
+        base = "_".join(
+            _filename_token(part)
+            for part in (session.prefix_name, session.session_number, session.date, group_name)
+        )
+        runner = self.runner
+        animals = {
+            cfg.box: cfg.animal_name for cfg in (runner.box_configs() if runner else [])
+        }
+        mapping = ", ".join(
+            f"box {b['box']}={animals.get(b['box'], '?')} port {b.get('port')}"
+            for b in config.get("boxes") or []
+            if isinstance(b, dict)
+        )
+        notes = (
+            f"Ephymeris {session.prefix_name} {session.session_number} {session.date}",
+            f"cohort {cohort.name} group {group_name}",
+            mapping,
+        )
+        with _intan_errors():
+            await intan.configure(session_id, group_id, config, base, notes)
+        return intan.status_json()
+
+    async def _intan_parse_probe_map(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        path = _str_arg(args, "path")
+        try:
+            parsed = await asyncio.to_thread(intan_probemap.parse_file, path)
+        except intan_probemap.ProbeMapError as exc:
+            raise CommandError(ErrCode.INTAN_NOT_READY, str(exc)) from exc
+        return {"probeMap": parsed}
+
+    async def _intan_probe_map(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        return {"probeMap": self._require_intan().probe_map_for(_box_arg(args))}
+
+    async def _intan_set_threshold(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        channel = _str_arg(args, "channel")
+        with _intan_errors():
+            value = await self._require_intan().set_threshold(channel, args.get("microvolts"))
+        return {"channel": channel.upper(), "microvolts": value}
+
+    async def _intan_scope_open(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        kind = _str_arg(args, "kind")
+        params = args.get("params") if isinstance(args.get("params"), dict) else {}
+        with _intan_errors():
+            scope_id = await self._require_intan().open_scope(
+                kind, _box_arg(args), args.get("channel"), params
+            )
+        return {"scopeId": scope_id}
+
+    async def _intan_scope_update(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        params = args.get("params") if isinstance(args.get("params"), dict) else None
+        with _intan_errors():
+            ok = await self._require_intan().update_scope(
+                _str_arg(args, "scopeId"), args.get("channel"), params
+            )
+        return {"ok": ok}
+
+    async def _intan_scope_close(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        with _intan_errors():
+            await self._require_intan().close_scope(_str_arg(args, "scopeId"))
+        return {"ok": True}
+
+    async def _intan_force_stop(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        self._require_intan().force_stop.set()
+        return {"ok": True}
 
     # --- internals --------------------------------------------------------
 
@@ -1619,6 +1906,40 @@ class _session_errors:
                 {"box": self.box, "from": exc.current.value, "to": exc.requested.value},
             ) from exc
         return False
+
+
+class _intan_errors:
+    """Map the recording layer's failures onto its three protocol codes.
+
+    Three, because the operator's next step differs: click Connect in RHX
+    (UNAVAILABLE), fix the setup (NOT_READY), or read what RHX said
+    (COMMAND_FAILED).
+    """
+
+    def __enter__(self) -> "_intan_errors":
+        return self
+
+    def __exit__(self, _exc_type, exc, _tb) -> bool:  # noqa: ANN001
+        if exc is None:
+            return False
+        if isinstance(exc, IntanNotReady):
+            raise CommandError(ErrCode.INTAN_NOT_READY, str(exc)) from exc
+        if isinstance(exc, RhxUnavailable):
+            raise CommandError(ErrCode.INTAN_UNAVAILABLE, str(exc)) from exc
+        if isinstance(exc, RhxCommandFailed):
+            raise CommandError(
+                ErrCode.INTAN_COMMAND_FAILED, str(exc), {"command": exc.command}
+            ) from exc
+        if isinstance(exc, RhxError):
+            raise CommandError(ErrCode.INTAN_COMMAND_FAILED, str(exc)) from exc
+        return False
+
+
+def _filename_token(text: str) -> str:
+    """One piece of an RHX base filename: no spaces (the name is a single
+    token of a `set` command) and nothing a filesystem objects to."""
+    cleaned = "".join(c if c.isalnum() or c in "-." else "-" for c in str(text).strip())
+    return cleaned.strip("-") or "x"
 
 
 def _str_arg(args: dict[str, Any], key: str) -> str:

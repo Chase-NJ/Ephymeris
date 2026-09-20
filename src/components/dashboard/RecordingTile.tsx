@@ -1,0 +1,82 @@
+import { motion } from "framer-motion";
+import { ArrowRight, AudioWaveform } from "lucide-react";
+
+import { useIntanStatus } from "@/lib/intan/context";
+import { springSnappy } from "@/lib/motion";
+import { useReduceMotion } from "@/lib/useReduceMotion";
+
+/**
+ * The Dashboard's second way in: a session that is also an Intan recording
+ * (`recording.md` §4).
+ *
+ * A `.hud` tile, NOT a second solid button. The solid Pulsar tile above it is
+ * the primary action and the one opaque thing in the column on purpose
+ * (`LaunchButton`); two of them would be two primaries. This one is glass like
+ * everything else over the sky, and earns its place with what it knows: the
+ * line under the title is RHX's live state, so whether a recording can start
+ * is answered before the operator commits to the walkthrough.
+ *
+ * Hidden while a session runs — the tile above has become Resume, and a second
+ * door into a flow that is already open would only be a way to get lost.
+ */
+export function RecordingTile({ disabled, onOpen }: { disabled: boolean; onOpen: () => void }) {
+  const intan = useIntanStatus();
+  const reduceMotion = useReduceMotion();
+
+  const fact = intan.connected
+    ? `RHX ${intan.version ?? ""} connected · ${intan.sampleRate ? `${intan.sampleRate / 1000} kS/s` : "—"}${
+        intan.synthetic ? " · synthetic" : ""
+      }`
+    : "RHX not connected — open its Remote TCP Control";
+
+  return (
+    <motion.button
+      type="button"
+      initial="idle"
+      animate="idle"
+      whileHover={disabled ? "idle" : "hover"}
+      whileTap={disabled ? {} : { scale: 0.985 }}
+      disabled={disabled}
+      onClick={onOpen}
+      className="hud group flex w-full items-center gap-4 rounded-lg py-3.5 pl-5 pr-5 text-left disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <span className="relative flex h-6 w-6 shrink-0 items-center justify-center" aria-hidden>
+        <AudioWaveform size={22} strokeWidth={1.6} className="text-pulsar" />
+        {/* The trace's sync pulse: one flat tick that steps across on hover.
+            Matte, no glow — the accent's rule holds here too. */}
+        {!reduceMotion && (
+          <motion.span
+            variants={{
+              idle: { opacity: 0, x: -8 },
+              hover: {
+                opacity: [0, 1, 1, 0],
+                x: [-8, 8],
+                transition: { duration: 1.1, repeat: Infinity, ease: "linear" },
+              },
+            }}
+            transition={springSnappy}
+            className="absolute bottom-[-3px] h-[3px] w-[3px] rounded-full bg-ion"
+          />
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-display text-[15px] font-semibold text-starlight">
+          Start a Recording
+        </span>
+        <span className="mt-0.5 flex items-center gap-1.5 text-[12px] text-static">
+          <span
+            aria-hidden
+            className="size-[6px] shrink-0 rounded-full"
+            style={{ background: intan.connected ? "var(--color-ion)" : "var(--color-static)" }}
+          />
+          <span className="truncate">{fact}</span>
+        </span>
+      </span>
+      <ArrowRight
+        size={16}
+        strokeWidth={2}
+        className="shrink-0 text-static transition-transform group-hover:translate-x-0.5 group-hover:text-starlight"
+      />
+    </motion.button>
+  );
+}

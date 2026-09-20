@@ -168,6 +168,7 @@ class SessionRepository:
         date: str,
         folder_path: str,
         duration_minutes: int | None = None,
+        recording: bool = False,
     ) -> Session:
         session = Session(
             id=_new_id(),
@@ -180,14 +181,15 @@ class SessionRepository:
             status="configuring",
             folder_path=folder_path,
             duration_minutes=duration_minutes,
+            recording={"runs": []} if recording else None,
         )
         with self._db.lock:
             self._db.conn.execute(
                 "INSERT INTO sessions"
                 " (id, cohort_id, prefix_id, prefix_name, session_number, date,"
                 "  started_at, ended_at, status, folder_path, group_runs,"
-                "  duration_minutes)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  duration_minutes, recording_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session.id,
                     session.cohort_id,
@@ -201,6 +203,7 @@ class SessionRepository:
                     session.folder_path,
                     "[]",
                     session.duration_minutes,
+                    json.dumps(session.recording) if session.recording is not None else None,
                 ),
             )
             self._db.conn.commit()
@@ -231,6 +234,15 @@ class SessionRepository:
             self._db.conn.execute(
                 "UPDATE sessions SET group_runs = ? WHERE id = ?",
                 (json.dumps([r.to_json() for r in runs]), session_id),
+            )
+            self._db.conn.commit()
+        return self.get_session(session_id)
+
+    def set_recording(self, session_id: str, recording: dict[str, Any]) -> Session:
+        with self._db.lock:
+            self._db.conn.execute(
+                "UPDATE sessions SET recording_json = ? WHERE id = ?",
+                (json.dumps(recording), session_id),
             )
             self._db.conn.commit()
         return self.get_session(session_id)
@@ -400,4 +412,5 @@ class SessionRepository:
             folder_path=row["folder_path"],
             group_runs=[GroupRun.from_json(r) for r in raw_runs],
             duration_minutes=row["duration_minutes"],
+            recording=json.loads(row["recording_json"]) if row["recording_json"] else None,
         )

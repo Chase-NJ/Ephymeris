@@ -256,7 +256,7 @@ Finalization is **idempotent** (the first `stop_reason` wins, so a double-stop c
 
 ## 6. The SQLite database
 
-`ephymeris.db`, in the **app data directory** — *not* in the user's `dataDirectory`, which is for browsable session output. Owned by [`cohorts/db.py`](../sidecar/ephymeris_sidecar/cohorts/db.py). **`SCHEMA_VERSION = 8`.**
+`ephymeris.db`, in the **app data directory** — *not* in the user's `dataDirectory`, which is for browsable session output. Owned by [`cohorts/db.py`](../sidecar/ephymeris_sidecar/cohorts/db.py). **`SCHEMA_VERSION = 10`** (v9 added `cohorts.appearance_json`; v10 added `sessions.recording_json` — whether a session is also an Intan recording, and one entry per group run saying where RHX saved it and which digital input and headstage port each box was on. `NULL` = behavior only. [recording.md §6](recording.md#6-what-is-written).)
 
 ### 6.1 Tables
 
@@ -266,7 +266,7 @@ Finalization is **idempotent** (the first `stop_reason` wins, so a double-stop c
 | `groups` | Groups within a cohort, with `order` |
 | `animals` | Roster, with `group_id`, `box_number`, cage, sex, weight |
 | `prefixes` | The global prefix list |
-| `sessions` | One row per session-flow invocation |
+| `sessions` | One row per session-flow invocation. `recording_json` is set when the session is also an Intan recording |
 | `session_animal_runs` | One row per animal per session — the unit Analytics scores |
 | `task_profiles` | **Content-addressed** profile snapshots, keyed by `hash`. Identical profiles store once, so comparability is an indexed equality test rather than a blob comparison |
 | `run_metrics_cache` | Persisted derived summaries. **No foreign key on the run id** — adopted orphans have no run record. Carries two profile digests, and they answer different questions: `profile_hash` is what *resolution* reached and is half the freshness key, `scored_profile_hash` is what the run was actually **scored** with ([§8.3](#83-which-profile-decodes-a-run)) |

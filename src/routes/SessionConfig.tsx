@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { ArrowRight, CircleAlert, Minus, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 
 import { Button, TextInput } from "@/components/common/controls";
 import { Dropdown } from "@/components/common/Dropdown";
@@ -37,6 +37,10 @@ export function SessionConfig() {
   const { client, status } = useSidecar();
   const cohorts = useActiveCohorts();
   const prefixes = usePrefixes();
+  // The Dashboard's Start Recording tile arrives here with `?mode=recording`:
+  // the same first step, creating a session that is also an Intan recording.
+  const [search] = useSearchParams();
+  const recording = search.get("mode") === "recording";
 
   const [cohortId, setCohortId] = useState<string | null>(null);
   const [cohort, setCohort] = useState<Cohort | null>(null);
@@ -146,9 +150,11 @@ export function SessionConfig() {
         prefixId,
         sessionNumber.trim(),
         durationTrim === "" ? undefined : (durationMinutes ?? undefined),
+        recording,
       );
       navigate(
-        `/session/${session.id}/mapping?cohort=${cohort.id}&group=${firstGroup.id}`,
+        `/session/${session.id}/mapping?cohort=${cohort.id}&group=${firstGroup.id}` +
+          (recording ? "&recording=1" : ""),
       );
     });
   }
@@ -177,9 +183,9 @@ export function SessionConfig() {
         className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
       >
         <section className="pointer-events-auto mx-auto max-w-4xl px-8 py-8">
-          <SessionJourney step="configure" hint={hint} />
+          <SessionJourney step="configure" hint={hint} recording={recording} />
           <h1 className="font-display text-[22px] text-starlight">
-            Start a Session
+            {recording ? "Start a Recording" : "Start a Session"}
           </h1>
 
           {error && (

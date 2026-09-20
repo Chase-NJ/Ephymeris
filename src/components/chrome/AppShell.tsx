@@ -168,6 +168,10 @@ function flowStep(pathname: string): number | null {
   if (pathname === "/") return 0;
   if (pathname === "/session/new") return 1;
   if (/^\/session\/[^/]+\/mapping$/.test(pathname)) return 2;
+  // A recording session's extra step (`recording.md` §4). Fractional so the
+  // steps either side keep their numbers — what matters is only the ORDER,
+  // which decides which way a transition travels.
+  if (/^\/session\/[^/]+\/recording$/.test(pathname)) return 2.5;
   if (/^\/session\/[^/]+\/control$/.test(pathname)) return 3;
   if (pathname === "/analytics") return 4;
   return null;

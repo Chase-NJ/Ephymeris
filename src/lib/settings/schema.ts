@@ -11,11 +11,17 @@
  */
 
 import { zodiacById } from "@/lib/constellations/zodiac";
-import type { BoxBinding, EphymerisSettings, SketchDiscovery } from "@/lib/ws/protocol";
+import type {
+  BoxBinding,
+  EphymerisSettings,
+  IntanSettings,
+  SketchDiscovery,
+} from "@/lib/ws/protocol";
 
 export type {
   BoxBinding,
   EphymerisSettings,
+  IntanSettings,
   LibraryState,
   SketchLibraryStatus,
   SketchEntry,
@@ -49,8 +55,18 @@ export const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 250000] as
  * configurable.
  */
 export function newBinding(box: number): BoxBinding {
-  return { box, hardwareId: null, label: `Box ${box}` };
+  return { box, hardwareId: null, label: `Box ${box}`, intanDigitalIn: null };
 }
+
+/** The recording controller has sixteen digital inputs (`recording.md` §3). */
+export const INTAN_DIGITAL_INPUTS = 16;
+
+/** Intan RHX's own defaults (Network → Remote TCP Control). */
+export const DEFAULT_INTAN: IntanSettings = {
+  commandPort: 5000,
+  waveformPort: 5001,
+  spikePort: 5002,
+};
 
 /** Lowest unused box number, or null when all six are taken. */
 export function nextAvailableBox(boxes: BoxBinding[]): number | null {
@@ -71,6 +87,8 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
   defaultBaud: DEFAULT_BAUD,
   // No boxes until the user adds them.
   boxes: [],
+  intan: { ...DEFAULT_INTAN },
+  recordingDefaults: {},
   reducedMotion: false,
   // Null = the legacy fixed layout, until the user picks a zodiac (§4.6).
   constellation: null,
@@ -119,9 +137,42 @@ function normalizeBoxes(value: unknown): BoxBinding[] {
       box,
       hardwareId: optString(entry["hardwareId"]),
       label: optString(entry["label"]) ?? `Box ${box}`,
+      intanDigitalIn: normalizeDigitalIn(entry["intanDigitalIn"]),
     });
   }
-  return [...byNumber.values()].sort((a, b) => a.box - b.box);
+  // Two boxes on one digital input are indistinguishable in the recording. The
+  // lower box number keeps the claim — the same rule the sidecar applies, so
+  // the two ends never disagree about which box is wired.
+  const claimed = new Set<number>();
+  return [...byNumber.values()]
+    .sort((a, b) => a.box - b.box)
+    .map((binding) => {
+      const din = binding.intanDigitalIn ?? null;
+      if (din === null) return binding;
+      if (claimed.has(din)) return { ...binding, intanDigitalIn: null };
+      claimed.add(din);
+      return binding;
+    });
+}
+
+function normalizeDigitalIn(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isInteger(value)) return null;
+  return value >= 1 && value <= INTAN_DIGITAL_INPUTS ? value : null;
+}
+
+function normalizePort(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) return fallback;
+  return value >= 1 && value <= 65535 ? value : fallback;
+}
+
+function normalizeIntan(value: unknown): IntanSettings {
+  if (typeof value !== "object" || value === null) return { ...DEFAULT_INTAN };
+  const entry = value as Record<string, unknown>;
+  return {
+    commandPort: normalizePort(entry["commandPort"], DEFAULT_INTAN.commandPort),
+    waveformPort: normalizePort(entry["waveformPort"], DEFAULT_INTAN.waveformPort),
+    spikePort: normalizePort(entry["spikePort"], DEFAULT_INTAN.spikePort),
+  };
 }
 
 function normalizeSlots(value: unknown): Record<string, number> {
@@ -180,6 +231,11 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
     utilitySketchName: normalizeUtilitySketch(value),
     defaultBaud: typeof baud === "number" && baud > 0 ? baud : DEFAULT_BAUD,
     boxes: normalizeBoxes(value["boxes"]),
+    intan: normalizeIntan(value["intan"]),
+    recordingDefaults:
+      typeof value["recordingDefaults"] === "object" && value["recordingDefaults"] !== null
+        ? { ...(value["recordingDefaults"] as Record<string, unknown>) }
+        : {},
     reducedMotion: value["reducedMotion"] === true,
     // Validated against the catalogue so a corrupt store can never select a
     // nonexistent map — it degrades to the legacy layout instead.

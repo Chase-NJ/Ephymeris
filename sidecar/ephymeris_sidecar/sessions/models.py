@@ -62,6 +62,11 @@ class Session:
     #: Per-box time limit in whole minutes (`dashboard.md` §7.2);
     #: None means the session runs until stopped by the operator or board.
     duration_minutes: int | None = None
+    #: Set when the session is also an Intan recording (`recording.md` §6):
+    #: `{"runs": [...]}`, one entry per group run. None = behavior only. Kept as
+    #: the JSON it is stored as -- nothing in the sidecar branches on its
+    #: contents, only on its presence.
+    recording: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -77,6 +82,7 @@ class Session:
             "folderPath": self.folder_path,
             "groupRuns": [g.to_json() for g in self.group_runs],
             "durationMinutes": self.duration_minutes,
+            "recording": self.recording,
         }
 
     def to_list_item(self, ordinal: int, run_count: int | None = None) -> dict[str, Any]:

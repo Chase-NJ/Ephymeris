@@ -111,6 +111,18 @@ class SessionRunner:
         self._session_id_label: str = ""
         self._group_id: str = ""
         self._duration_s: float | None = None
+        # The recording subsystem's three taps (`intan/service.py`), all
+        # optional and all called ON THE SESSION THREAD, so whatever is hung
+        # here must be thread-safe and must not block: it sits between a strobe
+        # arriving and that strobe being fsync'd. None of them can fail a run
+        # -- each call site swallows, because a behavior session never pays for
+        # the recording's problems.
+        #   recording_fields(box) -> flat `intan_*` fields for the document
+        #   on_box_started(box, animal)
+        #   on_strobe_tap(box, code, ms)
+        self.recording_fields: Callable[[int], dict[str, Any]] | None = None
+        self.on_box_started: Callable[[int, str], None] | None = None
+        self.on_strobe_tap: Callable[[int, int, int], None] | None = None
 
     # --- configuration ----------------------------------------------------
 
@@ -175,6 +187,9 @@ class SessionRunner:
 
     def configured_boxes(self) -> list[int]:
         return sorted(self._configs)
+
+    def box_configs(self) -> list[BoxConfig]:
+        return [self._configs[box] for box in sorted(self._configs)]
 
     # --- start ------------------------------------------------------------
 
@@ -243,6 +258,16 @@ class SessionRunner:
             "session_id": run.session_id_label,
             "sketch": run.config.sketch_name,
         }
+        if self.recording_fields is not None:
+            # Which recording this run is inside, and which digital input and
+            # headstage port carry it (`recording.md` §6). Core rather than
+            # config: they describe the rig, not the task, and must stay out of
+            # `params_hash` -- two runs of one tuning are comparable whether or
+            # not one of them was recorded.
+            try:
+                core.update(self.recording_fields(box))
+            except Exception:  # noqa: BLE001
+                log.exception("box %d: couldn't describe its recording", box)
         config_meta = dict(run.config.config_metadata)
         if seed is not None:
             # §6.4: what the firmware reports it is *running on*. Recorded
@@ -298,6 +323,11 @@ class SessionRunner:
         # its own cadence and never on this thread (`data.md` §7).
         if self._backup is not None:
             self._backup.track(files.tsv)
+        if self.on_box_started is not None:
+            try:
+                self.on_box_started(box, run.config.animal_name)
+            except Exception:  # noqa: BLE001
+                log.exception("box %d: recording start hook failed", box)
 
     def _on_strobe(self, box: int, code: int, ts: int) -> None:
         run = self._active.get(box)
@@ -313,6 +343,13 @@ class SessionRunner:
                 self._schedule(self._emit_write_error(box, str(exc)))
                 return
             values = run.metrics.offer(code) if run.metrics else []
+
+        # After the fsync, never before: the strobe is on disk whatever this does.
+        if self.on_strobe_tap is not None:
+            try:
+                self.on_strobe_tap(box, code, ts)
+            except Exception:  # noqa: BLE001
+                log.exception("box %d: recording strobe tap failed", box)
 
         if values:
             payload = {
@@ -384,12 +421,40 @@ class SessionRunner:
         if box in self._active:
             self._schedule_finalize(box, "board disconnected", clean=False)
 
-    async def end_all(self, reason: str = "operator stop") -> None:
+    async def end_all(
+        self,
+        reason: str = "operator stop",
+        *,
+        graceful_timeout_s: float = 0.1,
+        force: asyncio.Event | None = None,
+        on_waiting: Callable[[list[int]], None] | None = None,
+    ) -> None:
+        """STOP every box, give them `graceful_timeout_s`, finalize the rest.
+
+        STOP is a request the firmware honours at its next trial boundary, and
+        the board then ends the run itself with `BF_END_SESSION`. The default
+        100 ms is the behavior-only contract and is unchanged: the operator
+        pressed End, and the trial in flight is cut.
+
+        A RECORDING passes a real timeout (`recording.md` §5). Cutting a trial
+        there leaves electrophysiology with no behavioral outcome to align to,
+        so the session waits for each box to finish the trial it is in. `force`
+        lets the operator stop waiting; `on_waiting` reports who is still out.
+        """
         for box in list(self._active):
             self.stop_box(box)
-        # Give boards a moment to honour STOP at their next trial boundary; then
-        # force-finalize any that didn't self-end.
-        await asyncio.sleep(0.1)
+        deadline = self._loop.time() + graceful_timeout_s
+        waiting: list[int] | None = None
+        while self._active and self._loop.time() < deadline:
+            if force is not None and force.is_set():
+                break
+            now_waiting = sorted(self._active)
+            if on_waiting is not None and now_waiting != waiting:
+                waiting = now_waiting
+                on_waiting(now_waiting)
+            await asyncio.sleep(min(0.05, max(0.0, deadline - self._loop.time())))
+        if on_waiting is not None and waiting:
+            on_waiting([])
         for box in list(self._active):
             await self.finalize_box(box, reason, clean=True)
         # Fire-and-forget finalizations (an end strobe that landed just before

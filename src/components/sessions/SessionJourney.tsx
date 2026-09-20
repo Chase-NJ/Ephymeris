@@ -19,7 +19,7 @@ import { springPanel, springSnappy } from "@/lib/motion";
  * flow's state changes so it always names the next action.
  */
 
-export type JourneyStep = "configure" | "boxes" | "run" | "finish";
+export type JourneyStep = "configure" | "boxes" | "record" | "run" | "finish";
 
 export interface JourneyGroup {
   /** 1-based position of the running group among populated groups. */
@@ -34,6 +34,17 @@ const STEPS: { id: JourneyStep; label: string }[] = [
   { id: "run", label: "Run" },
   { id: "finish", label: "Finish" },
 ];
+
+/**
+ * A recording session's rail: the same journey with one more star.
+ *
+ * After Boxes, not before, because the recording step assigns a headstage port
+ * to each MAPPED box — it has nothing to ask until the mapping exists
+ * (`recording.md` §4).
+ */
+const RECORDING_STEPS: { id: JourneyStep; label: string }[] = STEPS.flatMap((s) =>
+  s.id === "run" ? [{ id: "record" as const, label: "Record" }, s] : [s],
+);
 
 /**
  * How much the bar shrinks once the flow reaches Mission Control.
@@ -54,14 +65,18 @@ export function SessionJourney({
   hint,
   group,
   compact = false,
+  recording = false,
 }: {
   step: JourneyStep;
   hint: string;
   group?: JourneyGroup | null;
   /** Mission Control's rail. See `COMPACT_SCALE`. */
   compact?: boolean;
+  /** The session is also an Intan recording, so the rail has a Record star. */
+  recording?: boolean;
 }) {
-  const active = STEPS.findIndex((s) => s.id === step);
+  const steps = recording ? RECORDING_STEPS : STEPS;
+  const active = steps.findIndex((s) => s.id === step);
 
   return (
     /*
@@ -101,7 +116,7 @@ export function SessionJourney({
           the bar resizing itself on arrival. At a fixed width it is the same
           object everywhere and nothing downstream can resize it. */}
         <div className="flex items-start justify-center">
-          {STEPS.map((s, i) => (
+          {steps.map((s, i) => (
             <Fragment key={s.id}>
               {i > 0 && (
                 <div
@@ -109,8 +124,10 @@ export function SessionJourney({
                   // with a width and no shrink guard still gives it up under
                   // pressure, which is the stretchiness this replaced wearing a
                   // different hat. 4×20 + 3×76 = 308px, inside the narrowest host
-                  // (Mission Control's 344px rail) with room to spare.
-                  className="mt-[9px] h-px w-[76px] shrink-0"
+                  // (Mission Control's 344px rail) with room to spare. Five
+                  // stars take shorter connectors to stay inside the same rail:
+                  // 5×20 + 4×56 = 324px.
+                  className={`mt-[9px] h-px shrink-0 ${recording ? "w-[56px]" : "w-[76px]"}`}
                   style={{
                     background: LINK_STROKE,
                     opacity: i <= active ? LINK_OPACITY_LIVE : LINK_OPACITY_DIM,

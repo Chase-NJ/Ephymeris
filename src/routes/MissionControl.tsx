@@ -10,7 +10,9 @@ import { ReturnChecklist } from "@/components/sessions/ReturnChecklist";
 import { SessionWrapUp } from "@/components/sessions/SessionWrapUp";
 import { ElapsedClock, StateChip, clockSpan } from "@/components/sessions/BoxStatus";
 import { Constellation3D } from "@/components/sessions/Constellation3D";
+import { RecordingRail, ScopeButtons } from "@/components/recording/RecordingRail";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
+import type { ScopeTrigger } from "@/lib/intan/windows";
 import { MetricStrip } from "@/components/sessions/MetricStrip";
 import { StarPanel } from "@/components/sessions/StarPanel";
 import { errorMessage, getCohort } from "@/lib/cohorts/commands";
@@ -131,6 +133,10 @@ export function MissionControl() {
 
   const session = snapshot?.session ?? null;
   const boxes = useMemo(() => snapshot?.boxes ?? [], [snapshot]);
+  // Also an Intan recording (`recording.md`). Everything it adds to this screen
+  // is an ADDITION — the rail block and each box's scope buttons — and renders
+  // nothing for a behavior-only session.
+  const isRecording = session?.recording != null;
 
   /*
    * `configuring` is NOT "the mapping was never confirmed", tempting as the name
@@ -159,6 +165,19 @@ export function MissionControl() {
   const labelsFor = useMemo(() => {
     const out: Record<string, Record<string, string>> = {};
     for (const path of new Set(sketchPaths)) out[path] = metricLabels(profiles[path]);
+    return out;
+  }, [sketchPaths, profiles]);
+  // Each sketch's strobe vocabulary, as the events a PSTH can be aligned to. It
+  // travels to the pop-up in its URL: a scope window shares no memory with this
+  // one and has no profile to look the names up in.
+  const triggersFor = useMemo(() => {
+    const out: Record<string, ScopeTrigger[]> = {};
+    for (const path of new Set(sketchPaths)) {
+      out[path] = Object.entries(profiles[path]?.strobes ?? {})
+        .map(([code, name]) => ({ code: Number(code), name }))
+        .filter((t) => Number.isFinite(t.code))
+        .sort((a, b) => a.code - b.code);
+    }
     return out;
   }, [sketchPaths, profiles]);
   // Recorded history, for the cage-ships' "most recently ran" anchor — reads
@@ -484,7 +503,13 @@ export function MissionControl() {
               groupName={groupInfo?.name ?? null}
             />
 
-            <SessionJourney step={journeyStep} hint={hint} group={groupInfo} compact />
+            <SessionJourney
+              step={journeyStep}
+              hint={hint}
+              group={groupInfo}
+              compact
+              recording={isRecording}
+            />
 
             {error && (
               <div
@@ -538,6 +563,8 @@ export function MissionControl() {
                 {hasRun ? "End Session" : "Discard session"}
               </Button>
             </div>
+
+            {isRecording && <RecordingRail />}
           </div>
         </div>
 
@@ -588,6 +615,15 @@ export function MissionControl() {
                   void run(() => client.call(CMD.PORT_RESET, { box: focusedBox.box }))
                 }
                 onBack={() => setFocusedId(null)}
+                extra={
+                  isRecording ? (
+                    <ScopeButtons
+                      box={focusedBox.box}
+                      animalName={focusedBox.animalName}
+                      triggers={triggersFor[focusedBox.sketchPath] ?? []}
+                    />
+                  ) : null
+                }
               />
             ) : boxes.length > 0 ? (
               <motion.div
@@ -604,6 +640,7 @@ export function MissionControl() {
                     box={box}
                     busy={busy || !connected}
                     metricLabels={labelsFor[box.sketchPath] ?? {}}
+                    triggers={isRecording ? (triggersFor[box.sketchPath] ?? []) : null}
                     durationMinutes={session?.durationMinutes ?? null}
                     onOpen={() => setFocusedId(box.animalId)}
                     onStart={() => void run(() => startOne(box.box))}
@@ -826,6 +863,7 @@ function BoxCard({
   box,
   busy,
   metricLabels,
+  triggers,
   durationMinutes,
   onOpen,
   onStart,
@@ -838,6 +876,9 @@ function BoxCard({
    *  shows the condition's name rather than the slot number telemetry sends.
    *  Empty until the profile arrives, or when the sketch has none. */
   metricLabels: Record<string, string>;
+  /** This box's strobe vocabulary, for its PSTH — null when the session is not
+   *  a recording, which is also what hides the scope buttons. */
+  triggers: ScopeTrigger[] | null;
   durationMinutes: number | null;
   onOpen: () => void;
   onStart: () => void;
@@ -897,6 +938,7 @@ function BoxCard({
       ) : (
         <MetricStrip box={box.box} metrics={metrics} labels={metricLabels} />
       )}
+      {triggers && <ScopeButtons box={box.box} animalName={box.animalName} triggers={triggers} />}
     </section>
   );
 }

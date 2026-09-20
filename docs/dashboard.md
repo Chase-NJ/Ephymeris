@@ -187,6 +187,7 @@ Route `/`. Two columns of translucent HUD tiles docked over the full-bleed sky. 
 
 - **Page title**, with the rig's fact line under it in mono — `4/6 boxes on the bus · 3 cohorts · session running` — coloured by state only: the error tone the moment any bound box is in fault, Ion when every bound box is connected, quiet otherwise. The title keeps its grid (Debug's title crossfades onto the same line), which is why the line hangs under it rather than a chip sitting beside it.
 - **Hero CTA** — "Start a Session," primary `Pulsar`-filled, and the one deliberately **opaque** tile: the primary action doesn't dissolve into the sky. It navigates straight to its destination — `/session/new` normally, `/cohorts` when no cohort exists yet, Mission Control while a session runs ("Resume Session"). On hover the rocket lifts toward its heading and a looping booster trail streams behind it — fire drawn with **motion, not colour or glow**; the loop stands down under reduced motion.
+- **Start a Recording** — the second way in: the same session flow, creating a session that is also an Intan recording ([recording.md §4](recording.md#4-the-walkthrough)). A **`.hud` glass tile, not a second solid button** — the Pulsar tile above it is the primary action and the one opaque thing in the column on purpose, and two of them would be two primaries. It earns its place with what it knows: the line under the title is RHX's live state (`RHX 3.5.0 connected · 30 kS/s`), so whether a recording *can* start is answered before the operator commits to the walkthrough. Hidden while a session runs — the tile above has become Resume, and a second door into a flow that is already open is only a way to get lost.
 - **Session dock** — everything `sessions.active` reports: the running session's card (live per-box liveness, Open Mission Control, End Session), `configuring` set-ups (Resume setup / Discard), and crash-orphaned `stale` rows shown **read-only** (View in Analytics / Close out — **never** Resume). Renders nothing when there is nothing to act on, and nothing before `sessions.active` has answered — the no-spinner rule.
 
 ### 3.2 The overview column (right)
@@ -335,7 +336,8 @@ A transition to the state a port is already in is a **silent no-op**, not an err
 - Only one state may be active per port at any time.
 - Entering `FLASHING` or `RESETTING` **forces a clean release** of `PASSTHROUGH` first — close the port cleanly before handing it to `arduino-cli` or the DTR toggle.
 - **Auto-resume:** if the port was in `PASSTHROUGH` immediately before a flash or reset, the sidecar auto-resumes `PASSTHROUGH` afterward, so the user sees the new sketch's output without an extra click.
-- **One deliberate exception**: `port.flash` accepts `suppressPassthroughResume` (default `false`). The session flash sequence sets it `true`, forcing every box to land in `IDLE`. Debug Mode leaves it `false`.
+- **One deliberate exception**: `port.flash` accepts `suppressPassthroughResume` (default `false`). The session flash sequence sets it `true`, forcing every box to land in `IDLE`. Debug Mode leaves it `false` — and that same flag is how the utility baseline knows a flash was the operator's own and **pins** it (`settings.md` §8.2).
+- **A Debug Mode flash always ends with a console.** Auto-resume only covers a port that was already in `PASSTHROUGH`; a flash from `IDLE` — the resting state of every box, so the usual case — lands in `IDLE`. The flash dialog then opens passthrough itself, at the panel's baud. It is the *client* that does this, so the rule above stays true as written and the session sequence's `IDLE` landing is untouched. The open toggles DTR, so a behaviour sketch reboots and prints `READY` into the console it will be started from.
 - `IN_SESSION` is exclusive with everything.
 
 > [!IMPORTANT]
@@ -352,6 +354,13 @@ Two steps via `arduino-cli` (FQBN `arduino:avr:mega`): `compile` then `upload -p
 The sketch comes from the categorized picker over the [bundled sketch library](tasks.md#2-the-bundled-sketch-library) — there is no arbitrary file browse.
 
 On failure (compile error or upload failure) the port transitions to `ERROR` with the parsed message surfaced; it does **not** silently fall back to `IDLE`.
+
+**What a Debug Mode flash leaves behind is a box you can use.** The sketch stays (it is pinned against the utility baseline, `settings.md` §8.2), the console is open (§5.3), and the Sketch tile offers three controls and a readout that exist only for this:
+
+- **Send START** — for anything that is not a utility sketch. A behaviour sketch boots, prints `READY`, and blocks until it is told to start; in a session the runner does that, and in Debug Mode nothing used to. The button sends `port.sendStart` with the values a session would use — the profile's defaults under this rig's `taskDefaults`, merged by the same `defaultConfig` — and the **sidecar** builds the line, because `build_start_command` is the one place that knows the wire keys and the firmware's `START_LINE_MAX`. There is no config form here and no `SEED`: this is not a run, and nothing it produces is data.
+- **End** — Mission Control's Stop, from the console. It sends the `STOP` line through `port.send`, like anything else the operator could type. **What ends the task is the board**: the firmware polls for `STOP` once per trial boundary (never mid-trial, so a stop cannot truncate one), shuts its hardware down and emits `BF_END_SESSION` itself. The host cannot send that strobe — a strobe is something only firmware emits — so the panel reads *running* until the sidecar has seen it come back, and on a bench with nobody poking, End takes effect when the current trial times out rather than on the click. A sketch that has ended sits in `loop()` returning forever; **Send START** then stays disabled until the board is Reset, which is the only way back to the `START` it reads in `setup()`.
+- **Live** — the readouts Mission Control shows for a running box (§9.4), for any sketch whose profile declares `liveMetrics`: the rolling metrics with their sparklines, rolling accuracy, and the response / outcome / well-hold panels. They are `MetricStrip` and `LivePanels` themselves, not Debug Mode versions of them. The trial panels fold the session store's strobe log, which is parsed out of `port.output` for every box in every state; the rolling metrics are the sidecar's own `MetricSet`, armed for a console by `port.sendStart` (`debug_run.py`) and delivered as `port.telemetry` into the same per-box slot `session.telemetry` fills. **One scorer, one trial fold, one set of charts** — so a number here and the same number in Mission Control cannot disagree — and nothing is written: a Debug run has no writer, no run row and no `SEED`, and cannot become data. A `START` typed by hand still runs the task but is not scored, because the sidecar only knows which profile to score against at the moment `port.sendStart` names the sketch.
+- **Return to baseline** — shown while the box is `pinned`. It asks for the baseline (`utility.ensure` for that box, which is what unpins) and then closes the console if one is open; the close's own `IDLE` transition performs the restore.
 
 **Each phase opens with the invocation, echoed by the backend that performs it** — never composed by the port manager, which knows neither which backend will serve the call nor what it will send. The subprocess backend prints the real argv, `--libraries` and `--format json` included, as one pasteable `$ …` line; the daemon backend prints `arduino-cli daemon: Compile(fqbn=…, sketch=…, libraries=[…])`, deliberately not dressed as a shell command, because no such process runs on that path. A fallback from the daemon to the subprocess therefore shows both lines, which is the truth of what happened.
 
@@ -477,6 +486,12 @@ A box mid-flash shows its star "flaring" rather than a generic spinner, so the v
 
 A fault inherited from before a reload carries only the replay placeholder reason, so the card states plainly that the box is in an error state rather than repeating a word that explains nothing.
 
+### 7.5 Step 2c — the recording step (`/session/:id/recording`)
+
+Only on a session created from **Start a Recording**, and only then does the rail grow a fifth star — *Configure · Boxes · **Record** · Run · Finish* — on shorter connectors (5×20 + 4×56 = 324px) so it still fits Mission Control's 344px rail. The mapping step hands off here instead of to Mission Control; this step hands off there on **Continue**, which is the one moment anything is sent to RHX.
+
+It comes **after** the mapping because what it asks is which headstage port each *mapped* box is on, and it runs **once per group** for the reason the mapping does: different animals. Readiness, saving, thresholds and the per-box port / channel range / probe map are specified in [recording.md §4](recording.md#4-the-walkthrough). Whether a session is a recording is read from the sidecar's own snapshot (`useIsRecordingSession`), never from the URL — the flow is re-entered from the dock, a group switch and a reload, and a query flag would have to survive all three.
+
 ---
 
 ## 8. Mission Control
@@ -495,11 +510,14 @@ Always visible: session name (`<prefix>_<sessionNumber>`), date, current time, a
 | **Switch Group** | Only shown for a cohort with more than one populated group, and only once a group has run. Ends the current group's runs, then re-enters **Step 2** scoped to the next group by `order` — since different animals are physically going into the boxes, the mapping/sketch/config confirmation and flash sequence genuinely need to happen again |
 | **End Session** | Gracefully stops every running box, waits for each to finalize, marks the record `completed`, and lands on Analytics. A session with no run is **abandoned** rather than ended |
 
+**A recording session adds a block to the rail and nothing else** (`RecordingRail`, [recording.md §5](recording.md#5-start-and-end)): RHX's state with a flat status dot, the file RHX is writing, the elapsed clock, and per-box **sync counters** — which are the wiring check, since strobes arriving with no edge to match them mean a sync line that is not reaching its digital input. **Start All starts the recording first** and refuses, with no box started, if it cannot. **End Session and Switch Group end gracefully**: each box is allowed to finish the trial it is in (up to 45 s, against the behavior-only 100 ms) so its last outcome lands inside the recording; the block names who is still out and offers **End now**. Everything here renders nothing for a behavior-only session — a recording is an addition to Mission Control, not a mode of it.
+
 ### 8.3 Per-box affordances
 
 - **Start** — the entry sequence for that one box.
 - **Stop** — sends the literal `STOP` line over that box's serial connection. The firmware checks for it once per trial boundary, so a trial in progress always completes before the board honors it. **This is firmware behaviour the app relies on, not something it enforces.**
 - **Reset** — the DTR-toggle reset. Rebooting mid-session returns that box to waiting-at-`READY`; the operator presses Start again to resume.
+- **Spike Scope · PSTH · ISI · Probe map** — on a *recorded* box only, on both its tile and its star panel. Each opens **its own OS window** ([recording.md §7](recording.md#7-the-live-windows)), not a panel here: they are dragged to a second monitor beside RHX and left open across boxes. The probe-map button appears only when a map was added for that box at the recording step.
 
 ### 8.4 Run clocks and the time-limit auto-stop
 

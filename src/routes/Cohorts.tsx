@@ -57,6 +57,10 @@ type SortKey = "recent" | "name";
 
 export function Cohorts() {
   const navigate = useNavigate();
+  // Stable, because `CohortSky` builds its node list in a memo keyed on this:
+  // an inline arrow here rebuilt every world's scene node on every render of
+  // this route — each keystroke in the search box included.
+  const createCohort = useCallback(() => navigate("/cohorts/new"), [navigate]);
   const { client, status } = useSidecar();
   const cohorts = useCohorts();
   const loaded = useCohortsLoaded();
@@ -269,7 +273,7 @@ export function Cohorts() {
         focusedId={focusedId}
         onFocus={chooseFocus}
         dimmed={dimmed}
-        {...(connected && loaded ? { onCreate: () => navigate("/cohorts/new") } : {})}
+        {...(connected && loaded ? { onCreate: createCohort } : {})}
         frameShift={PANEL_FRAME_SHIFT}
       />
 

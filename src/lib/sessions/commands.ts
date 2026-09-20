@@ -64,6 +64,7 @@ export async function createSession(
   prefixId: string,
   sessionNumber: string,
   durationMinutes?: number,
+  recording = false,
 ): Promise<Session> {
   const r = (await client.call(CMD.SESSIONS_CREATE, {
     cohortId,
@@ -71,6 +72,8 @@ export async function createSession(
     sessionNumber,
     // Optional on the wire — omitted entirely means "no time limit".
     ...(durationMinutes !== undefined ? { durationMinutes } : {}),
+    // Also an Intan recording (`recording.md`). Omitted = behavior only.
+    ...(recording ? { recording: true } : {}),
   })) as { session: Session };
   return r.session;
 }

@@ -106,6 +106,10 @@
     "fluid_3": {
       "index": 48,
       "source": "BehaviorBox.h:91 Fluids[3] -- RIGHT_WELL_FL_2"
+    },
+    "sync_out": {
+      "index": 49,
+      "source": "BoxPins.h BOX_PIN_SYNC_OUT -- free on the box as built, beside the fluid bank. Not 13: the bootloader blinks it on every reset, which a recording logs as events."
     }
   }
 }

@@ -21,12 +21,14 @@ import { GLSL_NOISE } from "./starSurface";
  * `PlanetDisc` — the flat mark that stands in for a planet at 32px — is drawn
  * in the matte register like every other icon.
  *
- * **Lighting is a uniform, never a light.** The only real light in the scene is
- * the `pointLight` inside `OrbiterBelt`, which exists so ship hulls get a day
- * and a night side as they orbit. A `meshStandardMaterial` planet would catch
- * it and be lit by its own fleet — brightness would then track ship count and
- * contradict the reading above. So the terminator comes from `uLight`, exactly
- * as the star's limb darkening comes from the view vector.
+ * **Lighting is a uniform, never a light.** The terminator comes from `uLight`,
+ * exactly as the star's limb darkening comes from the view vector. The scene
+ * contains no lights at all, and must not gain one: a light's mere presence is
+ * part of every program's cache key, which is what made the per-belt light the
+ * ships once carried relink the whole scene whenever a fleet came or went, and
+ * what would make the programs `ProgramWarmth.tsx` links ahead of time miss
+ * (`shipSurface.ts`). This shader is the expensive one — seconds to link on
+ * Windows — so it is the one that most needs that warm-up to hit.
  *
  * **Topography is lit, not painted.** The first version coloured elevation and
  * left it at that, and every rocky world came out a flat tan: a height field

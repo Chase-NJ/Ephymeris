@@ -37,7 +37,7 @@ export type RigProblem = CommandResultMap["hardware.get"]["problems"][number];
 export type RigStatus = CommandResultMap["hardware.get"]["status"];
 export type RigImpact = CommandResultMap["hardware.preview"]["breaks"][number];
 
-/** The six kinds `channels.v1.json` declares, in the order the rail lists them. */
+/** The seven kinds `channels.v1.json` declares, in the order the rail lists them. */
 export const KINDS = [
   "engagement",
   "response",
@@ -45,6 +45,7 @@ export const KINDS = [
   "reward",
   "cue",
   "vacuum",
+  "sync",
 ] as const;
 
 /**
@@ -54,6 +55,8 @@ export const KINDS = [
  * the six tokens `docs/dashboard.md` §1.2 fixes. `engagement` takes pulsar and
  * `response` takes ion because those two are what an animal touches — the
  * accent and the success colour, used for the thing the task is actually about.
+ * `sync` takes series-2, the one series colour the six behavioural kinds left
+ * unused — it is the only channel that leaves the box for another instrument.
  */
 export const KIND_COLOR: Record<string, string> = {
   engagement: "var(--color-pulsar)",
@@ -62,6 +65,7 @@ export const KIND_COLOR: Record<string, string> = {
   reward: "var(--color-series-3)",
   cue: "var(--color-series-4)",
   vacuum: "var(--color-series-6)",
+  sync: "var(--color-series-2)",
 };
 
 export function kindColor(kind: string | undefined): string {

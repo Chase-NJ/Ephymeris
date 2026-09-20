@@ -12,15 +12,7 @@ import { hashString, mulberry32 } from "@/lib/prng";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 import { MAX_FRAME_SECONDS } from "./CameraRig";
-import {
-  ATMOSPHERE_FRAGMENT,
-  DEBRIS_FRAGMENT,
-  DEBRIS_VERTEX,
-  PLANET_FRAGMENT,
-  PLANET_VERTEX,
-  RING_FRAGMENT,
-  RING_VERTEX,
-} from "./planetSurface";
+import { ATMOSPHERE_SPHERE, PLANET_LAYERS, PLANET_SPHERE } from "./planetMaterials";
 
 /**
  * A cohort's world — the body a `SceneNode` in the cohort browser draws.
@@ -38,8 +30,8 @@ import {
  * show for it — the note `StellarSurface` leaves about its corona.
  *
  * **The light is a fixed direction, not a light.** See `planetSurface.ts`: the
- * scene's one real light belongs to the ship belt, and a planet that caught it
- * would have its brightness track its own cage count.
+ * scene contains no lights, by rule, because a light count is part of every
+ * program's cache key.
  */
 export function PlanetarySurface({
   radius,
@@ -125,12 +117,40 @@ export function PlanetarySurface({
     debrisUniforms.uPixelRatio.value = pixelRatio;
   }, [debrisUniforms, pixelRatio]);
 
+  /*
+   * The materials, from the one table `ProgramWarmth` also builds from — that
+   * shared origin is what makes these hit the programs it compiled ahead of
+   * time rather than linking their own (`planetMaterials.ts`). Created once for
+   * the same reason the uniforms are: a replaced material is a recompile.
+   */
+  const materials = useMemo(
+    () => ({
+      surface: new THREE.ShaderMaterial({ ...PLANET_LAYERS.surface, uniforms }),
+      atmosphere: new THREE.ShaderMaterial({
+        ...PLANET_LAYERS.atmosphere,
+        uniforms: atmosphereUniforms,
+      }),
+      ring: new THREE.ShaderMaterial({ ...PLANET_LAYERS.ring, uniforms: ringUniforms }),
+      debris: new THREE.ShaderMaterial({ ...PLANET_LAYERS.debris, uniforms: debrisUniforms }),
+    }),
+    [uniforms, atmosphereUniforms, ringUniforms, debrisUniforms],
+  );
+  useEffect(
+    () => () => {
+      for (const material of Object.values(materials)) material.dispose();
+    },
+    [materials],
+  );
+
   /* The debris field — seeded from the world's own seed, so a re-roll
    * re-scatters it along with the plane it sits over. Spread through the same
    * annuli the plane draws (a little tighter, so points never float past the
    * plane's soft edge) with a small vertical scatter for thickness. Disposed
-   * with the world. */
+   * with the world. Built only for a world that HAS a ring: most do not, and
+   * the field is drawn nowhere else. */
+  const ringed = appearance.ring;
   const debris = useMemo(() => {
+    if (!ringed) return null;
     const geometry = new THREE.BufferGeometry();
     const rand = mulberry32(hashString(`debris:${seed}:${Math.floor(appearance.seed)}`));
     const positions = new Float32Array(DEBRIS_COUNT * 3);
@@ -152,8 +172,18 @@ export function PlanetarySurface({
     geometry.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
     geometry.setAttribute("aBright", new THREE.BufferAttribute(bright, 1));
     return geometry;
-  }, [seed, appearance.seed, radius]);
-  useEffect(() => () => debris.dispose(), [debris]);
+  }, [ringed, seed, appearance.seed, radius]);
+  useEffect(() => () => debris?.dispose(), [debris]);
+
+  // Owned here rather than declared as JSX: the mesh that wears it carries
+  // `dispose={null}` for its shared-table material, which would otherwise leave
+  // this buffer undisposed on every visit to the browser.
+  const ringPlane = useMemo(
+    () =>
+      ringed ? new THREE.RingGeometry(radius * RING_INNER, radius * RING_OUTER, 128) : null,
+    [ringed, radius],
+  );
+  useEffect(() => () => ringPlane?.dispose(), [ringPlane]);
 
   const spin = useRef<THREE.Group>(null);
   const ringGroup = useRef<THREE.Group>(null);
@@ -219,62 +249,32 @@ export function PlanetarySurface({
           because it works off the world normal. */}
       <group rotation={[axis.tiltX, 0, axis.tiltZ]}>
         <group ref={spin}>
-          <mesh>
-            <sphereGeometry args={[radius, 64, 64]} />
-            <shaderMaterial
-              vertexShader={PLANET_VERTEX}
-              fragmentShader={PLANET_FRAGMENT}
-              uniforms={uniforms}
-            />
-          </mesh>
+          {/* A shared unit sphere, scaled — see `planetMaterials.ts`. The
+              geometry is passed as a prop, so it is kept out of r3f's disposal
+              with `dispose={null}` and the material, which r3f would then also
+              skip, is owned below. */}
+          <mesh scale={radius} geometry={PLANET_SPHERE} material={materials.surface} dispose={null} />
         </group>
       </group>
 
       {/* Outside the spin: a fresnel shell is rotationally symmetric. */}
-      <mesh scale={1.045}>
-        <sphereGeometry args={[radius, 32, 32]} />
-        <shaderMaterial
-          vertexShader={PLANET_VERTEX}
-          fragmentShader={ATMOSPHERE_FRAGMENT}
-          uniforms={atmosphereUniforms}
-          transparent
-          depthWrite={false}
-          side={THREE.BackSide}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
+      <mesh
+        scale={radius * 1.045}
+        geometry={ATMOSPHERE_SPHERE}
+        material={materials.atmosphere}
+        dispose={null}
+      />
 
-      {appearance.ring && (
+      {debris && (
         // Tilted with the axis, so the ring sits in the world's equatorial
         // plane rather than at an angle of its own — the thing that makes a
         // ring read as belonging to the planet it circles.
         <group rotation={[axis.tiltX + Math.PI / 2, 0, axis.tiltZ]}>
           <group ref={ringGroup}>
             {/* The plane: structure, grain and the planet's shadow. */}
-            <mesh>
-              <ringGeometry args={[radius * RING_INNER, radius * RING_OUTER, 128]} />
-              <shaderMaterial
-                vertexShader={RING_VERTEX}
-                fragmentShader={RING_FRAGMENT}
-                uniforms={ringUniforms}
-                transparent
-                depthWrite={false}
-                side={THREE.DoubleSide}
-              />
-            </mesh>
-            {/* The debris: the thickness a plane cannot have. Additive and
-                without depth writes, like every particle field in the scene,
-                so grains in front of the planet's limb blend rather than cut. */}
-            <points geometry={debris}>
-              <shaderMaterial
-                vertexShader={DEBRIS_VERTEX}
-                fragmentShader={DEBRIS_FRAGMENT}
-                uniforms={debrisUniforms}
-                transparent
-                depthWrite={false}
-                blending={THREE.AdditiveBlending}
-              />
-            </points>
+            <mesh geometry={ringPlane!} material={materials.ring} dispose={null} />
+            {/* The debris: the thickness a plane cannot have. */}
+            <points geometry={debris} material={materials.debris} dispose={null} />
           </group>
         </group>
       )}

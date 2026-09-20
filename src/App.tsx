@@ -11,6 +11,7 @@ import { MissionControl } from "./routes/MissionControl";
 import { RigWiring } from "./routes/RigWiring";
 import { SessionConfig } from "./routes/SessionConfig";
 import { SessionMapping } from "./routes/SessionMapping";
+import { SessionRecording } from "./routes/SessionRecording";
 import { Settings } from "./routes/Settings";
 import { Task } from "./routes/Task";
 import { TaskEditor } from "./routes/TaskEditor";
@@ -66,6 +67,7 @@ export default function App() {
             takes over at /session/:id/control. */}
         <Route path="/session/new" element={<SessionConfig />} />
         <Route path="/session/:id/mapping" element={<SessionMapping />} />
+        <Route path="/session/:id/recording" element={<SessionRecording />} />
         <Route path="/session/:id/control" element={<MissionControl />} />
         {/* Unknown routes **redirect** to the dashboard rather than rendering
             it under a foreign URL. Rendering it in place left the URL, the

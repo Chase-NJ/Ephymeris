@@ -126,6 +126,7 @@ function detailOf(
     parts.push(`slot ${entry.port_slot}`);
   if (entry.kind === "reward")
     parts.push(entry.well ? `serves ${entry.well}` : "not plumbed");
+  if (entry.kind === "sync") parts.push("pulses on every event → recording DIN");
   if (pin?.watch_bit !== undefined) parts.push(`watch bit ${pin.watch_bit}`);
   return parts.join(" · ");
 }

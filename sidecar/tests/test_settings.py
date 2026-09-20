@@ -97,3 +97,41 @@ def test_unlabelled_boxes_get_a_default_label() -> None:
     settings = SidecarSettings.from_payload({"boxes": [{"box": 3}]})
     assert settings.binding_for(3) is not None
     assert settings.binding_for(3).label == "Box 3"
+
+
+# --- recording bindings ---------------------------------------------------
+
+
+def test_a_box_carries_the_digital_input_its_sync_line_reaches():
+    settings = SidecarSettings.from_payload(
+        {"boxes": [{"box": 2, "hardwareId": "A", "label": "Two", "intanDigitalIn": 5}]}
+    )
+    assert settings.binding_for(2).intan_digital_in == 5
+    assert settings.binding_for(1).intan_digital_in is None
+
+
+def test_a_digital_input_the_controller_does_not_have_reads_as_unwired():
+    for bad in (0, 17, -1, "3", True, 2.0):
+        settings = SidecarSettings.from_payload({"boxes": [{"box": 1, "intanDigitalIn": bad}]})
+        assert settings.binding_for(1).intan_digital_in is None, bad
+
+
+def test_two_boxes_cannot_share_a_digital_input():
+    """Every edge on a shared input would be matched against both boxes' strobe
+    streams. The first claim stands; the second box reads as unwired, which the
+    recording walkthrough refuses -- loud, where recording both would be
+    plausible and wrong."""
+    settings = SidecarSettings.from_payload(
+        {"boxes": [{"box": 1, "intanDigitalIn": 4}, {"box": 3, "intanDigitalIn": 4}]}
+    )
+    assert settings.binding_for(1).intan_digital_in == 4
+    assert settings.binding_for(3).intan_digital_in is None
+
+
+def test_intan_endpoints_default_to_rhx_s_own_and_survive_garbage():
+    assert SidecarSettings.from_payload({}).intan.command_port == 5000
+    settings = SidecarSettings.from_payload(
+        {"intan": {"commandPort": 6000, "waveformPort": "x", "spikePort": 99999}}
+    )
+    assert (settings.intan.command_port, settings.intan.waveform_port) == (6000, 5001)
+    assert settings.intan.spike_port == 5002

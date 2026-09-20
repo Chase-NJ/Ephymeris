@@ -79,6 +79,22 @@ pub fn run() {
                     log::warn!("could not size the window to the display: {err}");
                 }
                 let _ = window.show();
+
+                // The recording pop-ups (`scope-*`, `recording.md` §7) are
+                // windows of THIS app, not of the main window, so closing main
+                // would otherwise leave them open over a shell that is on its
+                // way out — and the app would not exit until each was closed
+                // by hand, holding the sidecar (and its serial ports) with it.
+                let handle = app.handle().clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { .. } = event {
+                        for (label, other) in handle.webview_windows() {
+                            if label != "main" {
+                                let _ = other.close();
+                            }
+                        }
+                    }
+                });
             }
 
             if cfg!(debug_assertions) {

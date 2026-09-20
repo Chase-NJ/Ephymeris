@@ -8,7 +8,13 @@ import { HandshakeIndicator } from "@/components/config/HandshakeIndicator";
 import type { useHandshakeTest } from "@/lib/hardware/useHandshakeTest";
 import { useBoardPresence } from "@/lib/hardware/context";
 import { springPanel } from "@/lib/motion";
-import { BOX_COUNT, nextAvailableBox, newBinding, type BoxBinding } from "@/lib/settings/schema";
+import {
+  BOX_COUNT,
+  INTAN_DIGITAL_INPUTS,
+  nextAvailableBox,
+  newBinding,
+  type BoxBinding,
+} from "@/lib/settings/schema";
 
 /**
  * Box → board bindings (README.md §1).
@@ -29,6 +35,13 @@ import { BOX_COUNT, nextAvailableBox, newBinding, type BoxBinding } from "@/lib/
  * The list is user-managed and starts empty: a rig may run two boxes or six,
  * and six rows of "not bound" is a worse starting point than none. Box numbers
  * stay 1–6 (the stable protocol key); only which of them exist is configurable.
+ *
+ * THE SYNC COLUMN IS THE ROW'S SECOND CABLE. A box has a USB lead to this
+ * machine and, if it records, a sync line to one of the recording controller's
+ * digital inputs (`recording.md` §3). Both are bindings between two instruments
+ * rather than facts about the box, so both live here and not in the rig's
+ * wiring document. An input another box holds is not offered: two boxes on one
+ * input are indistinguishable in the recording.
  */
 export function BoxBindingsTable({
   boxes,
@@ -75,10 +88,13 @@ export function BoxBindingsTable({
     fault: "error",
   };
 
+  const dinElsewhere = (din: number, box: number) =>
+    boxes.some((b) => b.box !== box && b.intanDigitalIn === din);
+
   const testable = handshake !== undefined;
   const grid = testable
-    ? "grid grid-cols-[38px_1fr_1.4fr_minmax(190px,1.1fr)_28px] items-center gap-x-3"
-    : "grid grid-cols-[38px_1fr_1.4fr_28px] items-center gap-x-3";
+    ? "grid grid-cols-[38px_1fr_1.4fr_104px_minmax(190px,1.1fr)_28px] items-center gap-x-3"
+    : "grid grid-cols-[38px_1fr_1.4fr_104px_28px] items-center gap-x-3";
 
   return (
     <div className="px-4 py-3.5">
@@ -87,6 +103,9 @@ export function BoxBindingsTable({
           <span>Box</span>
           <span>Label</span>
           <span>Bound board</span>
+          <span title="The recording controller's digital input this box's sync line is wired to">
+            Intan sync
+          </span>
           {testable && (
             <span title="Opens the box's console and waits for its firmware to announce itself">
               Handshake
@@ -112,6 +131,12 @@ export function BoxBindingsTable({
             !detected.some((d) => d.hardwareId === binding.hardwareId)
               ? [{ value: binding.hardwareId, label: binding.hardwareId, detail: "not detected" }]
               : []),
+          ];
+          const dinOptions: DropdownOption[] = [
+            { value: "", label: "— none —" },
+            ...Array.from({ length: INTAN_DIGITAL_INPUTS }, (_, i) => i + 1)
+              .filter((n) => n === binding.intanDigitalIn || !dinElsewhere(n, binding.box))
+              .map((n) => ({ value: String(n), label: `DIN ${n}` })),
           ];
           const state = handshake?.stateFor(binding.box);
 
@@ -154,6 +179,17 @@ export function BoxBindingsTable({
                 options={options}
                 placeholder="— not bound —"
                 onChange={(v) => patch(binding.box, { hardwareId: v === "" ? null : v })}
+              />
+
+              <Dropdown
+                label={`Intan digital input for box ${binding.box}`}
+                size="regular"
+                value={binding.intanDigitalIn ? String(binding.intanDigitalIn) : ""}
+                options={dinOptions}
+                placeholder="— none —"
+                onChange={(v) =>
+                  patch(binding.box, { intanDigitalIn: v === "" ? null : Number(v) })
+                }
               />
 
               {testable && state && (

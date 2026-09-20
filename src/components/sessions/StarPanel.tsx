@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { ArrowLeft, Play, RotateCcw, Square } from "lucide-react";
-import { useEffect, useMemo, type Ref } from "react";
+import { useEffect, useMemo, type ReactNode, type Ref } from "react";
 
 import { Button } from "@/components/common/controls";
 import { HudPanel, HudSection } from "@/components/common/HudPanel";
@@ -59,6 +59,7 @@ export function StarPanel({
   onBack,
   busy,
   durationMinutes,
+  extra,
   ref,
 }: {
   box: SessionBox;
@@ -69,6 +70,9 @@ export function StarPanel({
   busy: boolean;
   /** The session's optional time limit, for the run clock the tile also shows. */
   durationMinutes: number | null;
+  /** Rendered under the header band. A recording session puts the box's scope
+   *  buttons here, so the panel offers what its tile does. */
+  extra?: ReactNode;
   /**
    * **Required by `AnimatePresence mode="popLayout"`, which is how this panel
    * leaves.** On exit, framer clones the child with a ref, measures the element
@@ -199,6 +203,8 @@ export function StarPanel({
           </div>
         </div>
       </div>
+
+      {extra}
 
       {model.usable && (
         <div className="mt-3 border-t border-halo pt-3">

@@ -1,12 +1,13 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, ChevronsLeftRight, ChevronsRightLeft, CircleAlert, Copy, Cpu, Download, RotateCcw, Send, Zap } from "lucide-react";
+import { ArrowLeft, Check, ChevronsLeftRight, ChevronsRightLeft, CircleAlert, Copy, Cpu, Download, Play, RotateCcw, Send, Square, Undo2, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { NODE_FILL, useBoxHealth } from "@/components/chrome/ConstellationStatus";
 import { Button, Select } from "@/components/common/controls";
 import { HudPanel, HudSection } from "@/components/common/HudPanel";
+import { DebugLive } from "./DebugLive";
 import { FlashDialog } from "./FlashDialog";
 import { DEFAULT_STATUS_MATCH, Scrollback, isStatusLine } from "./Scrollback";
 import { StateBadge } from "./StateBadge";
@@ -21,12 +22,13 @@ import {
 } from "@/lib/hardware/context";
 import { springSnappy } from "@/lib/motion";
 import { getTaskProfile } from "@/lib/sessions/commands";
+import { useDebugRunning, useSessionStore } from "@/lib/sessions/context";
 import { useSettings } from "@/lib/settings/context";
 import { BAUD_RATES } from "@/lib/settings/schema";
 import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 import type { UtilityBaselineState } from "@/lib/ws/protocol";
-import type { TaskProfile } from "@/lib/sessions/types";
+import { defaultConfig, sketchName, type TaskProfile } from "@/lib/sessions/types";
 
 /**
  * One box, up close (dashboard.md §4).
@@ -112,6 +114,10 @@ export function NodeDetail({
   const flashed = useFlashedSketch(box);
   const utility = useUtilityStatus();
   const health = useBoxHealth()[box] ?? "absent";
+  const sessionStore = useSessionStore();
+  // The sidecar's word, not this panel's guess: it goes false when the board's
+  // own END_SESSION strobe arrives, or the console stops being a console.
+  const running = useDebugRunning(box);
 
   // What the board is actually carrying (`settings.md` §8): the
   // baseline keeps every idle bound box on the configured utility sketch, so
@@ -127,6 +133,10 @@ export function NodeDetail({
   const effectiveSketch = atBaseline
     ? { path: utility.sketchPath!, name: utility.sketchName ?? "utility sketch" }
     : flashed;
+  // A sketch the operator flashed here by hand, which the baseline is leaving
+  // alone until they say otherwise (`settings.md` §8.2). Sidecar-reported, so
+  // it survives a reload that forgets the client-tracked `flashed`.
+  const pinned = utilityBox?.state === "pinned";
 
   const binding = settings.boxes.find((b) => b.box === box);
   const board = boards.find((b) => b.boxId === box) ?? null;
@@ -251,6 +261,77 @@ export function NodeDetail({
     };
   }, [client, box]);
   const ackError = () => void run(() => client.call(CMD.PORT_ERROR_ACK, { box }));
+
+  /*
+   * **Send START** — a behaviour sketch boots, prints `READY`, and blocks until
+   * it is told to start. In a session the runner does that; here nothing did,
+   * so a flashed task sat inert and the only way forward was to know the
+   * `START` grammar and type it.
+   *
+   * The values are the ones a session would send — the profile's defaults under
+   * this rig's `taskDefaults`, merged by the same `defaultConfig` — and the
+   * line is built by the sidecar, which owns the wire keys and the firmware's
+   * length cap. Sending it twice is harmless: a sketch already running reads
+   * `START` as an unknown command.
+   */
+  const sendStart = () => {
+    if (!effectiveSketch) return;
+    // A fresh count: the trial panels fold this box's strobe log, and the last
+    // run's trials are not this run's.
+    sessionStore.resetBox(box);
+    const config = defaultConfig(
+      profile,
+      settings.taskDefaults[sketchName(effectiveSketch.path)] ?? {},
+    );
+    void run(() =>
+      client.call(CMD.PORT_SEND_START, { box, sketchPath: effectiveSketch.path, config }),
+    ).then((sent) => {
+      // Only a START that really went out can leave a spent sketch behind.
+      if (sent) setRanOnce(true);
+    });
+  };
+
+  /*
+   * **End** — Mission Control's Stop, from the console.
+   *
+   * What it sends is the `STOP` line. What ends the task is the board: the
+   * firmware polls for `STOP` once per trial boundary — never mid-trial, so a
+   * stop cannot truncate one — then shuts its hardware down and emits
+   * `BF_END_SESSION` itself. The host cannot send that strobe; a strobe is
+   * something only firmware emits, and the panel shows `running` until the
+   * sidecar has actually seen it come back. So on a bench with nobody poking,
+   * End takes effect when the current trial times out, not on the click.
+   *
+   * Sent through `port.send` like anything typed into the console — it IS
+   * something the operator could type, and it shows up in the scrollback as
+   * such.
+   */
+  const sendStop = () =>
+    void run(() => client.call(CMD.PORT_SEND, { box, text: "STOP", lineEnding: "lf" }));
+
+  // A sketch that has run to its end sits in `loop()` returning forever; only
+  // a reboot gets it back to the `START` it reads in `setup()`. Cleared by the
+  // reboot itself — any trip out of PASSTHROUGH is a reset, a flash or a close,
+  // and reopening the console is a DTR reset too.
+  const [ranOnce, setRanOnce] = useState(false);
+  useEffect(() => {
+    if (port.state !== "PASSTHROUGH") setRanOnce(false);
+  }, [port.state]);
+  const spent = ranOnce && !running;
+
+  /*
+   * **Return to baseline** — the one thing that releases a pinned box. The
+   * sidecar never takes a port from a console (§8.2), so an open one is closed
+   * first; asking comes first all the same, because the ask is what unpins, and
+   * the close's own `IDLE` transition then performs the restore.
+   */
+  const returnToBaseline = () =>
+    void run(async () => {
+      await client.call(CMD.UTILITY_ENSURE, { boxes: [box] });
+      if (openStateRef.current === "PASSTHROUGH") {
+        await client.call(CMD.PORT_PASSTHROUGH_CLOSE, { box });
+      }
+    });
   const resetBoard = () => void run(() => client.call(CMD.PORT_RESET, { box }));
 
   async function send() {
@@ -304,6 +385,9 @@ export function NodeDetail({
   // covers the passthrough case, so the UI shouldn't force a manual close.
   const canOperate =
     connected && board !== null && (port.state === "IDLE" || port.state === "PASSTHROUGH");
+  // Anything that isn't a utility sketch waits for START — a profile-less one
+  // included, which gets the bare line exactly as it would in a session.
+  const showStart = effectiveSketch !== null && !atBaseline && profile?.kind !== "utility";
 
   return (
     <HudPanel
@@ -591,11 +675,63 @@ export function NodeDetail({
                     {effectiveSketch
                       ? atBaseline && !flashed
                         ? "the utility baseline — restored to every idle box"
-                        : "flashed from Debug Mode"
-                      : baselineWord(utilityBox?.state)}
+                        : running
+                          ? "running — End stops it at the next trial boundary"
+                          : spent
+                            ? "ended — Reset the board to run it again"
+                            : pinned
+                              ? "flashed from Debug Mode — stays until returned to baseline"
+                              : "flashed from Debug Mode"
+                      : pinned
+                        ? (utilityBox?.detail ?? "holding a sketch flashed from Debug Mode")
+                        : baselineWord(utilityBox?.state)}
                   </span>
                 </span>
-                <div className="ml-auto">
+                <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                  {showStart && (
+                    <Button
+                      variant="primary"
+                      onClick={sendStart}
+                      disabled={!canSend || running || spent}
+                      title={
+                        !canSend
+                          ? "Open the console first — START goes through it"
+                          : running
+                            ? "The task is running"
+                            : spent
+                              ? "The task has ended — Reset the board to run it again"
+                              : "Send START with this rig's defaults for the sketch"
+                      }
+                    >
+                      <Play size={13} strokeWidth={1.75} />
+                      Send START
+                    </Button>
+                  )}
+                  {showStart && (
+                    <Button
+                      onClick={sendStop}
+                      disabled={!canSend || !running}
+                      title={
+                        running
+                          ? "Send STOP — the board finishes its current trial, then emits END_SESSION"
+                          : "Nothing is running"
+                      }
+                    >
+                      <Square size={13} strokeWidth={1.75} />
+                      End
+                    </Button>
+                  )}
+                  {pinned && utility.configured && (
+                    <Button
+                      variant="ghost"
+                      onClick={returnToBaseline}
+                      disabled={!canOperate}
+                      title={`Flash ${utility.sketchName ?? "the utility sketch"} back onto this box`}
+                    >
+                      <Undo2 size={13} strokeWidth={1.75} />
+                      Return to baseline
+                    </Button>
+                  )}
                   <Button
                     onClick={() => setFlashOpen(true)}
                     disabled={!canOperate}
@@ -608,6 +744,9 @@ export function NodeDetail({
                   </Button>
                 </div>
               </div>
+              {showStart && profile && profile.liveMetrics.length > 0 && (
+                <DebugLive box={box} profile={profile} running={running} />
+              )}
               {profile?.kind === "utility" && (
                 <UtilityControls
                   box={box}
@@ -622,7 +761,7 @@ export function NodeDetail({
         </div>
       </div>
 
-      <FlashDialog box={box} open={flashOpen} onClose={() => setFlashOpen(false)} />
+      <FlashDialog box={box} baud={baud} open={flashOpen} onClose={() => setFlashOpen(false)} />
     </HudPanel>
   );
 }
@@ -683,6 +822,8 @@ function baselineWord(state: UtilityBaselineState | undefined): string {
       return "restoring baseline…";
     case "failed":
       return "baseline restore failed — see Config";
+    case "pinned":
+      return "holding a sketch flashed from Debug Mode";
     default:
       return "none flashed this session";
   }

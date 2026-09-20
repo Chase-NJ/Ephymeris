@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 
 import { SceneBackdrop } from "./Backdrop";
 import { CameraRig, SceneControls } from "./CameraRig";
+import { ProgramWarmth } from "./ProgramWarmth";
 
 /**
  * The shared constellation stage: **one** WebGL canvas for the whole app.
@@ -265,6 +266,10 @@ function StageCanvas({ stage }: { stage: ConstellationStage }) {
           seeded point fields and painted nebula textures. Living beside the
           swapped content, it survives every navigation. */}
       <SceneBackdrop />
+
+      {/* Permanent for a different reason: it holds the cohort browser's shader
+          programs compiled, so that route never links them on entry. */}
+      <ProgramWarmth />
 
       {/* **The camera and its controls are permanent too**, and for a stronger
           reason than cost. Mounted inside the swapped content, the camera was a

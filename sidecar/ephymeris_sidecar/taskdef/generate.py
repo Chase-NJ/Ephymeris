@@ -421,6 +421,7 @@ def bundled_pins_h(sketch_name: str) -> str:
         channel = channels.get(name)
         if channel is not None:
             lines.append(f"#define {macro} {channel.index}")
+    lines += _sync_lines(channels)
 
     # Declaration order, not pin order: `Odors[i]` is odor line i+1 and the pins
     # are not monotonic past line 6. See `declared_of_kind`.
@@ -462,6 +463,7 @@ def task_pins_h(definition: TaskDefinition) -> str:
         channel = channels.get(name)
         if channel is not None:
             lines.append(f"#define {macro} {channel.index}")
+    lines += _sync_lines(channels)
 
     # DECLARATION order, not pin order. `Odors[i]` is odor line i+1, and the
     # pins are not monotonic past line 6 -- sorting by pin would put line 7
@@ -566,6 +568,28 @@ _PIN_MACROS: tuple[tuple[str, str], ...] = (
     ("trial_light", "BOX_PIN_TRIAL_LIGHT"),
     ("vacuum", "BOX_PIN_VACUUM"),
 )
+
+
+def _sync_lines(channels: Any) -> list[str]:
+    """`BOX_PIN_SYNC_OUT`, which is the one pin that is ALWAYS emitted.
+
+    Every other pin that the rig does not declare is left unmentioned and keeps
+    the number in BoxPins.h, so a partial document degrades one pin at a time.
+    That rule is wrong for this line. The shipped default would pulse pin 49 on
+    a rig whose operator never declared a sync channel -- and may have put
+    something else there -- while the app, reading the same document, reports
+    that the box has no sync line. So absence is stated: -1 compiles the pulse
+    out, and the header and the app cannot disagree.
+
+    Resolved by KIND, like the engagement port: it is a structural fact of the
+    box and no task names it. Two sync channels (RIG105) resolve to none.
+    """
+    sync = channels.unique_of_kind("sync")
+    return [
+        "/*  One pulse per strobe, into a recording controller's digital input.",
+        "    -1 = this rig declares no sync channel; the pulse is compiled out. */",
+        f"#define BOX_PIN_SYNC_OUT {sync.index if sync is not None else -1}",
+    ]
 
 
 def _onset_macro(trial: TrialTypeDef) -> str:

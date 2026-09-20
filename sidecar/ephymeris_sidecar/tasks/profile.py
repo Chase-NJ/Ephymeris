@@ -56,6 +56,14 @@ CORE_METADATA_KEYS = frozenset(
         "ts_data",
         "trial_seed",
         "host_seed",
+        # `recording.md` §6 -- written beside the core fields when a run is
+        # inside an Intan recording.
+        "intan_recording",
+        "intan_path",
+        "intan_digital_in",
+        "intan_port",
+        "intan_channels",
+        "intan_sample_rate",
     }
 )
 

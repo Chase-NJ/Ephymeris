@@ -1,14 +1,14 @@
 # Settings
 
-![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![keys](https://img.shields.io/badge/settings_keys-11-8B7EC8?style=flat-square) ![owner](https://img.shields.io/badge/owner-Tauri_shell-16151F?style=flat-square)
+![status](https://img.shields.io/badge/status-built-7CC98F?style=flat-square) ![keys](https://img.shields.io/badge/settings_keys-12-8B7EC8?style=flat-square) ![owner](https://img.shields.io/badge/owner-Tauri_shell-16151F?style=flat-square)
 
 > **What this is** · Every configurable value, where it is edited, and the rig-level machinery those values drive.
 >
-> **Owns** · The Rig / Settings / Task split · all ten settings keys · persistence and the push to the sidecar · box→board bindings · board discovery · **the hardware utility baseline** · the handshake test.
+> **Owns** · The Rig / Settings / Task split · all twelve settings keys · persistence and the push to the sidecar · box→board bindings · board discovery · **the hardware utility baseline** · the handshake test.
 >
 > **Read with** · [dashboard.md](dashboard.md) (the port state machine these values feed) · [tasks.md](tasks.md) (the bundled sketch library and rig task defaults) · [data.md](data.md) (what the data and backup directories mean).
 
-**Contents** — [1. The split](#1-the-split) · [2. The ten keys](#2-the-ten-keys) · [3. Persistence & push](#3-persistence--push) · [4. The Settings screen](#4-the-settings-screen) · [5. The Rig screen](#5-the-rig-screen-config) · [6. Box bindings](#6-box-bindings) · [7. Board discovery](#7-board-discovery) · [8. **The utility baseline**](#8-the-hardware-utility-baseline) · [9. The handshake test](#9-the-handshake-test)
+**Contents** — [1. The split](#1-the-split) · [2. The twelve keys](#2-the-twelve-keys) · [3. Persistence & push](#3-persistence--push) · [4. The Settings screen](#4-the-settings-screen) · [5. The Rig screen](#5-the-rig-screen-config) · [6. Box bindings](#6-box-bindings) · [7. Board discovery](#7-board-discovery) · [8. **The utility baseline**](#8-the-hardware-utility-baseline) · [9. The handshake test](#9-the-handshake-test)
 
 ---
 
@@ -40,7 +40,7 @@ Three screens edit settings. **The split is by subject, not by shape.**
 
 ---
 
-## 2. The ten keys
+## 2. The twelve keys
 
 Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/settings/schema.ts); the shape is generated into `src/lib/ws/protocol.ts`.
 
@@ -52,13 +52,15 @@ Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/set
 | `utilitySketchName` | `string \| null` | `null` | **Rig** → Utility baseline | The baseline every idle box is returned to ([§8](#8-the-hardware-utility-baseline)), by sketch **folder name** — the same key `taskDefaults` uses, because the bundled library's path is per-install while the name survives an update. `null` turns the baseline off |
 | `defaultBaud` | `number` | **`115200`** | **Rig** → Hardware | Starting baud for each console. Debug Mode allows a per-box override. Options: 9600, 19200, 38400, 57600, 115200, 230400, 250000. **The default only applies to a fresh install** — the value is persisted, so an existing machine keeps whatever its store holds |
 | `boxes` | `BoxBinding[]` | `[]` | **Rig** → Boxes | The user-managed box list — see [§6](#6-box-bindings) |
+| `intan` | `{commandPort, waveformPort, spikePort}` | `5000 / 5001 / 5002` | **Rig** → Recording | Where Intan RHX's three TCP servers listen ([recording.md §2](recording.md#2-talking-to-rhx)). **No host** — Ephymeris only talks to an RHX on this machine. Absent on a store from before recording existed; both ends fall back to RHX's defaults |
+| `recordingDefaults` | `Record<string, unknown>` | `{}` | the **Record** step (written on Continue) | The last recording setup confirmed — save root, format and save flags, thresholds, and each box's port / range / probe map — offered as the next one's starting point. Not the save directory (per session) nor the box list (per group). **Shell-only** |
 | `reducedMotion` | `boolean` | `false` | **Settings** → Interface | Forces reduced motion on regardless of the system setting (which is always respected on top). **Shell-only** |
 | `constellation` | `string \| null` | `null` | **Settings** → Constellation | Zodiac layout id for the box-status constellation. `null` = the legacy fixed layout. **Shell-only** |
 | `constellationSlots` | `Record<string, number>` | `{}` | **Settings** → Constellation (drag), and box add/remove on Rig (reconciled) | Which star each box sits on, box number as a string key. **Shell-only** |
 | `taskDefaults` | `Record<string, Record<string, unknown>>` | `{}` | **Sketches** | This rig's default task parameters, per sketch. **Shell-only** |
 
 > [!IMPORTANT]
-> **The sidecar reads only six of these** — `arduinoCliPath`, `utilitySketchName`, `dataDirectory`, `backupDirectory`, `defaultBaud`, `boxes` — and ignores the rest. That is why adding a settings field is deliberately a **non-event**: the shell-only keys needed no sidecar change at all. Removing one is a non-event on the same grounds: the retired `arduinoDirectory` is dropped by `normalizeSettings` on load, and a stale store still carrying it (or the path-valued `utilitySketchPath`, which heals to its basename) disturbs nothing.
+> **The sidecar reads only seven of these** — `arduinoCliPath`, `utilitySketchName`, `dataDirectory`, `backupDirectory`, `defaultBaud`, `boxes`, `intan` — and ignores the rest. That is why adding a settings field is deliberately a **non-event**: the shell-only keys needed no sidecar change at all. Removing one is a non-event on the same grounds: the retired `arduinoDirectory` is dropped by `normalizeSettings` on load, and a stale store still carrying it (or the path-valued `utilitySketchPath`, which heals to its basename) disturbs nothing.
 
 **Normalization rules worth knowing:**
 
@@ -136,6 +138,7 @@ One screen, in the order a rig comes up in — a column of HUD tiles in the Dash
 | **Boxes** | The bindings table — add/remove a box, name it, bind it to a board — with a per-row health dot (the sidebar constellation's states and colours), plus the per-box handshake test. Header fact: connected/bound counts |
 | **Utility baseline** | The utility sketch panel: which sketch idle boxes rest on, the per-box baseline state, and **Reflash boxes**. Header fact: the sketch name, or `off` |
 | **Wiring** | A **door**, not a section: a full-width entrance tile in `EntranceTile`'s hover vocabulary (the tile lifts, a trace draws itself across a pin-header motif) opening the editor's own page at `/config/wiring` ([§5.1](#51-the-wiring-page-configwiring)). Fact line: channel count, and whether the wiring is this rig's own or as shipped. It is **full width** because the Strobes door that used to sit beside it moved to the Task landing ([§5.0](#50-why-the-strobe-vocabulary-is-a-task-page)) |
+| **Recording** | The link to Intan RHX ([recording.md](recording.md)): connection state with RHX's controller, version, sample rate and per-port channel counts; a **Connect** button that says what to click in RHX when it cannot; and the three TCP ports. On the Rig tab because it answers *what is this rig connected to*, like the bindings above it. Header fact: connected or not |
 | **Hardware** | The default baud select and the `arduino-cli` path override. Header fact: the baud |
 
 ### 5.0 Why the strobe vocabulary is a Task page
@@ -188,6 +191,9 @@ Two surfaces, one document, one selection — the **page** owns the `useRig` ses
 
 The constellation board and picker are on **Settings → Constellation** now ([§4](#4-the-settings-screen)): they style the status display and never touch the hardware. The slot map still follows box add/remove made here — `reconcileSlots` runs in the same settings write.
 
+> [!NOTE]
+> **A seventh kind: `sync`.** One output channel that pulses on every strobe, into a recording controller's digital input ([recording.md §3](recording.md#3-the-sync-line)) — `sync_out`, pin 49 as shipped. Resolved **by kind**, like the engagement port, so a rig may call it anything. **`RIG105`** refuses a second one: the firmware pulses a single line (`BOX_PIN_SYNC_OUT`), so a second sync channel is a wire believed to carry events that carries nothing. **Zero is legal** — a box with no recording controller has no sync line — and is *stated* in the generated header as `-1` rather than left to `BoxPins.h`'s default, because the default would pulse a pin the operator never declared. A rig document saved before this kind existed **has no sync channel until one is added**, since the document replaces the shipped pair rather than merging with it; the recording step checks and links here.
+
 ### 5.2 Zodiac layouts
 
 Twelve **hand-authored, simplified asterisms** — data, not generated, because they must be recognizable.
@@ -201,7 +207,7 @@ Twelve **hand-authored, simplified asterisms** — data, not generated, because 
 ## 6. Box bindings
 
 ```ts
-BoxBinding = { box: number; hardwareId: string | null; label: string }
+BoxBinding = { box: number; hardwareId: string | null; label: string; intanDigitalIn: number | null }
 ```
 
 > [!IMPORTANT]
@@ -213,6 +219,7 @@ BoxBinding = { box: number; hardwareId: string | null; label: string }
 | Not padded | The list holds only the boxes the user created — a two-box rig has two rows, not six |
 | **"Bound"** | `hardwareId !== null`. This is the single definition of a real box, and what every "is there a box here" check gates on |
 | `label` | Defaults to `Box N`. The per-box nickname |
+| `intanDigitalIn` | Which of the recording controller's digital inputs this box's **sync line** reaches, 1–16, or `null` when the box is not wired for recording ([recording.md §3.2](recording.md#32-wiring-and-binding)). **A binding, not wiring**, for exactly the reason `hardwareId` is: it describes a cable between two instruments, not the box. **Two boxes may not share an input** — every edge would be matched against both strobe streams — so the picker does not offer one another box holds, and both normalizers drop a duplicate (lower box number wins), which leaves the later box reading as unwired and refused by the recording step rather than recording plausibly and wrongly |
 
 > [!NOTE]
 > **Gates are on *bound*, not *detected*.** Detection only downgrades a label. A cohort can be fully configured — animals assigned to boxes 1–6 — before any hardware is connected, and the sidecar validates a cohort's `boxNumber` against the bare 1–6 range only, never against which boards happen to be bound right now. That is what keeps a cohort editable on the other lab machine.
@@ -254,9 +261,9 @@ The reason to want it is concrete. Before this, the state of a board between ses
 |---|---|
 | **On startup** | When the presence poll first reports the rig. The cold case: nothing is known about any board, so every bound box is a candidate |
 | **When a board appears** | Replugged, or newly bound on the Rig tab |
-| **When a port falls back to `IDLE`** | A run finishing, a console closing, an error acknowledged. Hooking the **transition** rather than each command means every path to idleness is covered by one rule, including ones added later |
+| **When a port falls back to `IDLE`** | A run finishing, a console closing, an error acknowledged. Hooking the **transition** rather than each command means every path to idleness is covered by one rule, including ones added later — **which is also how it came to cover one it should not have**: a Debug Mode flash ends in `IDLE` too (§8.2, the pin) |
 | **When a session lets go** | `sessions.end`, `sessions.switchGroup`, or `sessions.abandon`. Switch Group restores *immediately* rather than waiting for the whole session, because the operator's very next act is walking the rig to swap animals — and that walk is what wants the lights |
-| **On demand** | The Rig tab's **Reflash boxes** button, the only path that passes `force` |
+| **On demand** | The Rig tab's **Reflash boxes** button (the only path that passes `force`), the placement walk's request for its boxes, and Debug Mode's **Return to baseline**. Any `utility.ensure` arriving over the wire is a person asking, and is what releases a pin (§8.2) |
 
 Restores run **one box at a time, sequentially**, for the same reason the session flash sequence does.
 
@@ -265,7 +272,7 @@ Restores run **one box at a time, sequentially**, for the same reason the sessio
 
 ### 8.2 What it will never do
 
-Two exclusions carry the whole design, and both are about not being clever.
+Three exclusions carry the whole design, and all of them are about not being clever.
 
 > [!CAUTION]
 > **Only an `IDLE` port is ever touched.** Entering `FLASHING` would happily force-release a `PASSTHROUGH` console — correct when a *user* asks to flash, and unacceptable when a background restore does. **The check is on the port already being idle, not on the transition being legal.**
@@ -274,6 +281,13 @@ Two exclusions carry the whole design, and both are about not being clever.
 > **A confirmed session mapping holds the entire rig.** Between `sessions.confirmMapping` and the session ending, boxes carry task sketches and fall idle constantly — between the flash sequence and Start All, and again after each animal finishes. A restore in that window would **erase the sketch the runner is about to start**. The hold is not an optimisation; it is the difference between this feature working and it destroying sessions.
 >
 > If any path out of a session ever fails to release the hold, the rig quietly stops returning to baseline. If a release ever landed *early*, a restore would erase a task sketch mid-setup.
+
+> [!CAUTION]
+> **A deliberate flash is pinned.** A `port.flash` from Debug Mode puts a sketch on a box because the operator wants it there — and the port falls `IDLE` the moment that flash completes, which is exactly the trigger §8.1 listens for. With no pin, the baseline re-flashed itself over the operator's task **within seconds of it landing, silently**: the box could not be started or talked to, and nothing on screen said why. It was latent from the day the idle hook was written and surfaced when the Task tab made flashing a task from Debug Mode an ordinary thing to do.
+>
+> The sidecar tells the two kinds of flash apart by `suppressPassthroughResume`, which the session flash sequence already sets and Debug Mode never does (`dashboard.md` §5.3). A pinned box reports `pinned` and is skipped by **every automatic trigger**. The pin is released only by something a person did: any `utility.ensure` over the wire naming that box, a session releasing the rig, the board being unplugged, a different utility sketch being named, or the operator flashing the utility sketch by hand. `force` overrides it, as it overrides everything.
+>
+> `tests/test_debug_flash.py` drives the real `port.flash` handler over a port manager whose idle hook is wired the way the app's is. `test_utility.py`'s harness wires that hook to a no-op, which is how this went unseen.
 
 **A failed restore is reported and then acknowledged back out of `ERROR`.** A failed flash normally leaves the port in `ERROR` awaiting a manual ack, which is right when the operator asked for the flash and wrong when they didn't: a broken `arduino-cli` would otherwise put all six boxes into a state needing individual clearing before anything else could run. The fault is surfaced in Config instead, and **the failure is sticky per box** so the acknowledgement can't bounce straight into another doomed attempt.
 

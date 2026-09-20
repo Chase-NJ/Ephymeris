@@ -370,6 +370,34 @@ def test_a_repin_moves_the_generated_header_and_nothing_else():
     assert generate.task_trials_h(a_task()).count("Odors[0]") == 1
 
 
+def test_the_sync_pin_is_always_stated_and_minus_one_means_none():
+    """Every other undeclared pin is left unmentioned and keeps BoxPins.h's
+    number. This one must not: the shipped default would pulse pin 49 on a rig
+    whose wiring declares no sync channel, while the app -- reading the same
+    document -- tells the operator the box has no sync line. So absence is
+    written down, and a saved rig.json from before the channel existed (which
+    REPLACES the shipped pair, and so has none) compiles the pulse out."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    for header in (generate.task_pins_h(a_task()), generate.bundled_pins_h("BOX_Utility")):
+        assert "#define BOX_PIN_SYNC_OUT 49" in header
+
+    doc = rig_store.default_document()
+    doc["channels"].pop("sync_out")
+    doc["pins"].pop("sync_out")
+    registry.set_rig_source(lambda: doc)
+    for header in (generate.task_pins_h(a_task()), generate.bundled_pins_h("BOX_Utility")):
+        assert "#define BOX_PIN_SYNC_OUT -1" in header
+
+    # By KIND, like the engagement port: a rig may call it anything.
+    doc = rig_store.default_document()
+    doc["channels"]["intan_ttl"] = doc["channels"].pop("sync_out")
+    doc["pins"]["intan_ttl"] = {"index": 12}
+    doc["pins"].pop("sync_out")
+    registry.set_rig_source(lambda: doc)
+    assert "#define BOX_PIN_SYNC_OUT 12" in generate.task_pins_h(a_task())
+
+
 def test_the_generated_profile_is_parsed_by_the_same_code_an_authored_one_is():
     """Round-tripping through `parse_profile` is what subjects a generated
     profile to every check an authored one gets — a duplicate wire key, a

@@ -222,7 +222,7 @@ class Channel:
     name: str
     index: int          # the Arduino pin number -- from the PINOUT
     direction: str      # "in" | "out" -- from the kind, not the channel
-    kind: str           # engagement | response | emitter | reward | cue | vacuum
+    kind: str           # engagement | response | emitter | reward | cue | vacuum | sync
     watch_bit: int | None = None   # dense 0-based index over the watchable channels
     well: str | None = None        # reward lines declare which port they serve
     port_slot: int | None = None   # response ports: which strobe family they report with
@@ -420,6 +420,26 @@ class ChannelMap:
                     "reporting with one set of codes are indistinguishable in the data.",
                 ))
         return out
+
+    def sync_problems(self) -> list[tuple[str, str]]:
+        """More than one `sync` channel.
+
+        The firmware pulses ONE line (`BOX_PIN_SYNC_OUT`), so a second sync
+        channel is a wire the operator believes is carrying events and which is
+        carrying nothing. ZERO is legal and is not reported here: a box with no
+        recording controller has no sync line, and the generated header says so
+        with -1. It is the recording walkthrough that refuses a rig without one,
+        because only there is its absence a problem.
+        """
+        found = sorted(c.name for c in self.of_kind("sync"))
+        if len(found) <= 1:
+            return []
+        return [(
+            self.channels_source,
+            f"{', '.join(found)} are all `sync` channels. The firmware pulses one "
+            "sync line, so only one can be real; the recording would be aligned "
+            "against whichever the generator happened to emit.",
+        )]
 
     def content_hash(self) -> str:
         """SHA-256 over the wiring that can change a compiled byte, truncated.

@@ -197,6 +197,7 @@ export function Dashboard() {
               <RecordingTile
                 disabled={!hasCohorts}
                 onOpen={() => navigate("/session/new?mode=recording")}
+                onSettings={() => navigate("/recording")}
               />
             )}
 

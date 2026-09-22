@@ -58,6 +58,17 @@ export function useCanvas(draw: Draw) {
   return { canvasRef, redraw };
 }
 
+/** The data face, for labels drawn onto a canvas — which cannot take `var(--…)`. */
+let cachedFont: string | null = null;
+
+export function monoFont(px: number): string {
+  if (!cachedFont) {
+    const face = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
+    cachedFont = face || '"JetBrains Mono", monospace';
+  }
+  return `${px}px ${cachedFont}`;
+}
+
 /** The theme's tokens, read once — a canvas cannot take `var(--…)`. */
 let cached: Record<string, string> | null = null;
 

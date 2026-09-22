@@ -7,9 +7,8 @@ import { ISI_BINS_MS, ISI_SPANS_MS, type IsiPayload, type ScopeData } from "@/li
 import { scopeTitle } from "@/lib/intan/windows";
 
 import { useScopeContext } from "./ScopeApp";
-import { ChannelPick, NumberPick, ScopeFrame, ScopeOption } from "./ScopeFrame";
-import { Waiting } from "./SpikeScopeWindow";
-import { palette, useCanvas } from "./useCanvas";
+import { ChannelPick, NumberPick, ScopeFrame, ScopeOption, Waiting } from "./ScopeFrame";
+import { monoFont, palette, useCanvas } from "./useCanvas";
 
 /**
  * Inter-spike interval histogram for one channel.
@@ -66,6 +65,15 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
       const barHeight = Math.max(1, h * (height - 8));
       g.fillRect(rect.x + 0.5, height - barHeight, rect.w, barHeight);
     });
+
+    // The tallest bar's count, and whether the axis is log — said on the
+    // canvas, where a bar half the height of its neighbour can mean 2× or 10×.
+    const max = Math.max(...data.counts);
+    g.font = monoFont(10);
+    g.fillStyle = colors.static;
+    g.textBaseline = "top";
+    g.textAlign = "left";
+    g.fillText(`${max}${logRef.current ? " · log" : ""}`, 6, 4);
   });
 
   useEffect(redraw, [redraw, logY]);
@@ -118,11 +126,19 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
               {summary.beyond} beyond {spanMs} ms
             </span>
           )}
+          <span className="ml-auto">{binMs} ms bins{logY ? " · log y" : ""}</span>
         </>
       }
     >
       <div className="absolute inset-0 flex flex-col px-3 pt-3 pb-1">
-        <canvas ref={canvasRef} className="min-h-0 w-full flex-1" />
+        <div className="relative min-h-0 w-full flex-1">
+          <canvas ref={canvasRef} className="absolute inset-0 size-full" />
+          {(summary?.intervals ?? 0) === 0 && (
+            <Waiting overlay detail="two spikes make the first interval">
+              No spikes on {channel} yet
+            </Waiting>
+          )}
+        </div>
         <div className="flex justify-between pt-1 font-mono text-[10px] text-static">
           <span>0</span>
           <span>inter-spike interval</span>

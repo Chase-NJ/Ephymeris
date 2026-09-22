@@ -15,8 +15,8 @@ import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 
 import { useScopeContext } from "./ScopeApp";
-import { ChannelPick, NumberPick, ScopeFrame } from "./ScopeFrame";
-import { palette, useCanvas } from "./useCanvas";
+import { ChannelPick, NumberPick, ScopeFrame, Waiting } from "./ScopeFrame";
+import { monoFont, palette, useCanvas } from "./useCanvas";
 
 /** How close to the threshold line a press must land to grab it, in px. */
 const GRAB_PX = 7;
@@ -65,6 +65,8 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
   const [total, setTotal] = useState(0);
   const [discarded, setDiscarded] = useState(0);
   const [commitError, setCommitError] = useState<string | null>(null);
+  const [nearLine, setNearLine] = useState(false);
+  const [dragged, setDragged] = useState(false);
 
   const snippets = useRef<SpikeSnippet[]>([]);
   const meta = useRef({ sampleRate: ctx.sampleRate, preMs: 2 });
@@ -85,6 +87,15 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
     g.moveTo(Math.round(width / 3) + 0.5, 0);
     g.lineTo(Math.round(width / 3) + 0.5, height);
     g.stroke();
+
+    // The scale, said on the canvas: ±half the full height.
+    g.font = monoFont(10);
+    g.fillStyle = colors.static;
+    g.textBaseline = "top";
+    g.textAlign = "left";
+    g.fillText(`+${scale / 2} µV`, 6, 5);
+    g.textBaseline = "bottom";
+    g.fillText(`−${scale / 2} µV`, 6, height - 5);
 
     const recent = snippets.current.slice(-count);
     recent.forEach((snippet, index) => {
@@ -117,6 +128,14 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
       g.lineTo(width, y);
       g.stroke();
       g.setLineDash([]);
+      // The level, at the line's right end — live while dragging, so the
+      // number being committed is the number being looked at.
+      g.font = monoFont(10);
+      g.fillStyle = colors.warning;
+      g.textAlign = "right";
+      g.textBaseline = y > height / 2 ? "bottom" : "top";
+      g.fillText(`${level} µV`, width - 6, y > height / 2 ? y - 3 : y + 3);
+      g.textAlign = "left";
     }
   });
 
@@ -150,17 +169,25 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
     return Math.max(-5000, Math.min(5000, uv));
   }
 
-  function onPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (threshold === null) return;
+  function isNear(event: React.PointerEvent<HTMLCanvasElement>): boolean {
+    if (threshold === null) return false;
     const rect = event.currentTarget.getBoundingClientRect();
     const lineY = voltageToY(threshold, scaleUv, rect.height);
-    if (Math.abs(event.clientY - rect.top - lineY) > GRAB_PX) return;
+    return Math.abs(event.clientY - rect.top - lineY) <= GRAB_PX;
+  }
+
+  function onPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (!isNear(event) || threshold === null) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     dragging.current = threshold;
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (dragging.current === null) return;
+    if (dragging.current === null) {
+      const near = isNear(event);
+      if (near !== nearLine) setNearLine(near);
+      return;
+    }
     dragging.current = levelAt(event);
     redraw();
   }
@@ -171,6 +198,7 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
     event.currentTarget.releasePointerCapture(event.pointerId);
     dragging.current = null;
     setThreshold(level);
+    setDragged(true);
     setCommitError(null);
     void client
       .call(CMD.INTAN_SET_THRESHOLD, { channel, microvolts: level })
@@ -195,8 +223,9 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
         <>
           <span>{total} spikes</span>
           <span>threshold {threshold === null ? "—" : `${threshold} µV`}</span>
-          {!streaming && <span style={{ color: "var(--color-status-warning)" }}>waiting for RHX to stream this channel</span>}
-          {streaming && total === 0 && <span>streaming · no threshold crossings yet</span>}
+          {streaming && threshold !== null && !dragged && (
+            <span className="text-static/70">drag the line to set RHX's threshold</span>
+          )}
           {/* A frame shape RHX and the sidecar disagree on parses as nothing
               and looks like a quiet channel; the count is the tell. */}
           {discarded > 0 && (
@@ -204,27 +233,28 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
               stream shape mismatch · {discarded} bytes discarded
             </span>
           )}
-          <span className="ml-auto">±{scaleUv / 2} µV · {timeScaleMs} ms</span>
+          <span className="ml-auto">±{scaleUv / 2} µV · {timeScaleMs} ms · last {shown}</span>
         </>
       }
     >
       <canvas
         ref={canvasRef}
         className="absolute inset-0 size-full touch-none"
-        style={{ cursor: threshold === null ? "default" : "ns-resize" }}
+        style={{ cursor: nearLine || dragging.current !== null ? "ns-resize" : "default" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       />
+      {!streaming ? (
+        <Waiting overlay detail={channel}>Waiting for RHX to stream this channel…</Waiting>
+      ) : (
+        total === 0 && (
+          <Waiting overlay detail="the waveform is arriving; the threshold has not been crossed">
+            No threshold crossings yet
+          </Waiting>
+        )
+      )}
     </ScopeFrame>
-  );
-}
-
-export function Waiting({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="absolute inset-0 flex items-center justify-center px-8 text-center text-[12px] text-static">
-      {children}
-    </div>
   );
 }

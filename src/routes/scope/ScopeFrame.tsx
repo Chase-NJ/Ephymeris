@@ -5,15 +5,20 @@ import type { ReactNode } from "react";
 import { Dropdown } from "@/components/common/Dropdown";
 import { useIntanStatus } from "@/lib/intan/context";
 import { channelNumber } from "@/lib/intan/scopeMath";
+import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
  * The chrome every recording pop-up shares: a drag bar that says what the
- * window is, a row of options, the view, and one line of status underneath.
+ * window is and whether the recording is live, a row of options, the view, and
+ * one line of status underneath.
  *
  * The windows are frameless like the main one, so this IS the title bar —
  * `data-tauri-drag-region` makes it draggable and the two buttons are the only
- * window controls a scope needs.
+ * window controls a scope needs. The flat dot beside the title is the one
+ * thing a window parked on a second monitor needs to say at a glance: live,
+ * or frozen. Ion while recording, static otherwise, and the only motion is
+ * the opacity pulse the theme already uses.
  */
 export function ScopeFrame({
   title,
@@ -33,7 +38,14 @@ export function ScopeFrame({
 }) {
   const { status: link } = useSidecar();
   const intan = useIntanStatus();
-  const frozen = link !== "connected" ? "Reconnecting to Ephymeris…" : !intan.recording ? "No recording is running — this view is frozen." : null;
+  const reduceMotion = useReduceMotion();
+  const frozen =
+    link !== "connected"
+      ? "Reconnecting to Ephymeris…"
+      : !intan.recording
+        ? "No recording is running — this view is frozen."
+        : null;
+  const live = link === "connected" && intan.state === "recording";
 
   return (
     <div className="flex h-screen flex-col bg-void text-starlight">
@@ -41,7 +53,13 @@ export function ScopeFrame({
         data-tauri-drag-region
         className="flex h-9 shrink-0 items-center justify-between border-b border-halo pl-3"
       >
-        <div data-tauri-drag-region className="pointer-events-none flex min-w-0 items-baseline gap-2">
+        <div data-tauri-drag-region className="pointer-events-none flex min-w-0 items-center gap-2">
+          <span
+            aria-hidden
+            title={live ? "recording" : "not recording"}
+            className={`size-1.5 shrink-0 rounded-full ${live && !reduceMotion ? "animate-pulse" : ""}`}
+            style={{ background: live ? "var(--color-ion)" : "var(--color-static)" }}
+          />
           <span className="font-display text-[13px] font-semibold tracking-tight">{title}</span>
           {subtitle && <span className="truncate font-mono text-[11px] text-static">{subtitle}</span>}
         </div>
@@ -56,7 +74,7 @@ export function ScopeFrame({
       </header>
 
       {options && (
-        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-halo px-3 py-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-halo px-3 py-1.5">
           {options}
         </div>
       )}
@@ -87,6 +105,32 @@ function FrameButton({ label, onClick, children }: { label: string; onClick: () 
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * The pop-ups' shared empty state. As an `overlay` it floats over a canvas
+ * that is still drawing its axes, and lets pointer events through so a
+ * threshold line under it can still be grabbed.
+ */
+export function Waiting({
+  children,
+  detail,
+  overlay = false,
+}: {
+  children: ReactNode;
+  detail?: ReactNode;
+  overlay?: boolean;
+}) {
+  return (
+    <div
+      className={`absolute inset-0 flex flex-col items-center justify-center gap-1 px-8 text-center ${
+        overlay ? "pointer-events-none" : ""
+      }`}
+    >
+      <span className="text-[12px] text-static">{children}</span>
+      {detail && <span className="font-mono text-[10px] text-static/70">{detail}</span>}
+    </div>
   );
 }
 

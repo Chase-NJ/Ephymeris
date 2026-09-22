@@ -27,6 +27,7 @@ export function ProbeMapView({
   channels,
   selected,
   onSelect,
+  legend = false,
   className = "",
 }: {
   map: ProbeMap;
@@ -37,6 +38,8 @@ export function ProbeMapView({
   channels?: readonly string[] | undefined;
   selected?: string | null | undefined;
   onSelect?: ((channel: string) => void) | undefined;
+  /** The live window's key: what a filled, a hollow and a dim site mean. */
+  legend?: boolean;
   className?: string;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -95,7 +98,9 @@ export function ProbeMapView({
                 stroke: isSelected ? "var(--color-starlight)" : "var(--color-static)",
                 strokeOpacity: live ? 1 : 0.35,
                 strokeWidth: isSelected ? 1.75 : 1,
-                className: onSelect && live ? "cursor-pointer" : undefined,
+                // Hover lifts the outline to starlight, so the site under the
+                // pointer is the one that reads as clickable.
+                className: onSelect && live ? "cursor-pointer hover:[stroke:var(--color-starlight)]" : undefined,
                 onClick: onSelect && live ? () => onSelect(site.channel) : undefined,
               };
               const rate = rates?.[site.channel];
@@ -148,6 +153,41 @@ export function ProbeMapView({
           ))}
         </svg>
       )}
+      {legend && (
+        <div className="pointer-events-none absolute bottom-2 left-2.5 flex flex-col gap-0.5 font-mono text-[10px] text-static">
+          <LegendRow fill={0.85} strokeOpacity={1}>firing · fill ∝ √rate</LegendRow>
+          <LegendRow fill={0.08} strokeOpacity={1}>recorded, quiet</LegendRow>
+          <LegendRow fill={0} strokeOpacity={0.35}>not recorded</LegendRow>
+        </div>
+      )}
     </div>
+  );
+}
+
+function LegendRow({
+  fill,
+  strokeOpacity,
+  children,
+}: {
+  fill: number;
+  strokeOpacity: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <svg width="10" height="10" aria-hidden>
+        <rect
+          x="1"
+          y="1"
+          width="8"
+          height="8"
+          fill="var(--color-pulsar)"
+          fillOpacity={fill}
+          stroke="var(--color-static)"
+          strokeOpacity={strokeOpacity}
+        />
+      </svg>
+      {children}
+    </span>
   );
 }

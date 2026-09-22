@@ -14,9 +14,8 @@ import {
 import { scopeTitle } from "@/lib/intan/windows";
 
 import { useScopeContext } from "./ScopeApp";
-import { ChannelPick, NumberPick, ScopeFrame, ScopeOption } from "./ScopeFrame";
-import { Waiting } from "./SpikeScopeWindow";
-import { palette, useCanvas } from "./useCanvas";
+import { ChannelPick, NumberPick, ScopeFrame, ScopeOption, Waiting } from "./ScopeFrame";
+import { monoFont, palette, useCanvas } from "./useCanvas";
 
 /**
  * Peri-stimulus time histogram: one channel's spikes around one kind of event.
@@ -70,8 +69,9 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
     const rasterHeight = Math.round(height * 0.55);
     const histTop = rasterHeight + 10;
     const histHeight = height - histTop;
-    const span = (data?.preMs ?? preMs) + (data?.postMs ?? postMs);
-    const zeroX = Math.round(((data?.preMs ?? preMs) / span) * width) + 0.5;
+    const pre = data?.preMs ?? preMs;
+    const span = pre + (data?.postMs ?? postMs);
+    const zeroX = Math.round((pre / span) * width) + 0.5;
 
     g.strokeStyle = colors.halo;
     g.lineWidth = 1;
@@ -81,6 +81,11 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
     g.moveTo(0, height - 0.5);
     g.lineTo(width, height - 0.5);
     g.stroke();
+
+    g.font = monoFont(10);
+    g.fillStyle = colors.static;
+    g.textBaseline = "top";
+    g.textAlign = "left";
 
     if (data && data.trials > 0) {
       const rowHeight = Math.min(8, rasterHeight / data.rasters.length);
@@ -105,6 +110,11 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
         const barHeight = Math.max(1, (hz / ceiling) * (histHeight - 4));
         g.fillRect(rect.x + 0.5, height - barHeight, rect.w, barHeight);
       });
+
+      // The two axes' ceilings, said on the canvas.
+      g.fillStyle = colors.static;
+      g.fillText(`${data.trials} trials`, 6, 4);
+      g.fillText(`${ceiling} Hz`, 6, histTop + 2);
     }
 
     g.strokeStyle = colors.warning;
@@ -136,6 +146,7 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
   const scope = useScope("psth", ctx.box, channel, params, onData);
 
   const triggerName = ctx.triggers.find((t) => t.code === triggerCode)?.name ?? null;
+  const zeroPercent = (preMs / (preMs + postMs)) * 100;
 
   return (
     <ScopeFrame
@@ -163,7 +174,7 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
       status={
         <>
           <span>{trials} trials</span>
-          <span>peak axis {peak} Hz</span>
+          <span>y max {peak} Hz</span>
           {ctx.triggers.length === 0 && (
             <span style={{ color: "var(--color-status-warning)" }}>
               this box's task declares no strobe names to align to
@@ -179,16 +190,33 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
           )}
           {/* Only trials whose post-window has CLOSED are counted, so the right
               of the histogram never sags by how recent the last trigger was. */}
-          <span className="ml-auto">complete trials only</span>
+          <span className="ml-auto">{binMs} ms bins · complete trials only</span>
         </>
       }
     >
       <div className="absolute inset-0 flex flex-col px-3 pt-3 pb-1">
-        <canvas ref={canvasRef} className="min-h-0 w-full flex-1" />
-        <div className="flex justify-between pt-1 font-mono text-[10px] text-static">
-          <span>−{preMs} ms</span>
-          <span>{triggerName ?? "event"}</span>
-          <span>+{postMs} ms</span>
+        <div className="relative min-h-0 w-full flex-1">
+          <canvas ref={canvasRef} className="absolute inset-0 size-full" />
+          {trials === 0 && (
+            <Waiting
+              overlay
+              detail={triggerName ? `aligned to ${triggerName}` : "pick an event to align to"}
+            >
+              {triggerCode === null ? "No event chosen" : "No complete trials yet"}
+            </Waiting>
+          )}
+        </div>
+        {/* The trigger label sits UNDER the dashed line, wherever pre/post put
+            it — centred it would sit at 50% while the line sat at 20%. */}
+        <div className="relative h-4 pt-1 font-mono text-[10px] text-static">
+          <span className="absolute left-0">−{preMs} ms</span>
+          <span
+            className="absolute -translate-x-1/2 whitespace-nowrap"
+            style={{ left: `${zeroPercent}%`, color: "var(--color-status-warning)" }}
+          >
+            {triggerName ?? "event"}
+          </span>
+          <span className="absolute right-0">+{postMs} ms</span>
         </div>
       </div>
     </ScopeFrame>

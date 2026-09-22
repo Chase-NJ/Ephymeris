@@ -42,7 +42,7 @@ Three things the request for this feature assumed, and RHX's TCP protocol does n
 
 - **No command opens RHX's SpikeScope, PSTH or ISI windows.** It exposes their *parameters* only. So the four live windows are Ephymeris' own, computed from RHX's data sockets (§7).
 - **No command loads a probe map.** Ephymeris parses the same XML the operator would have loaded in RHX (`intan/probemap.py`).
-- **No "pin channel" command.** "Enable and pin a digital input per box" is implemented as a **binding**: each box is bound to one `DIGITAL-IN-n` on the Rig tab (`settings.md` §6), and the recording setup enables, names (`BOX3_EVENTS`) and streams exactly those.
+- **No "pin channel" command.** "Enable and pin a digital input per box" is implemented as a **binding**: each box is bound to one `DIGITAL-IN-n` on the Recording tab (`settings.md` §6), and the recording setup enables, names (`BOX3_EVENTS`) and streams exactly those.
 
 ### 2.2 The confirmed write
 
@@ -54,7 +54,7 @@ The protocol is bare text with no framing: a `get` answers `Return: <Name> <valu
 So every write from `intan/client.py` is **one transmission that ends in a `get`** — the *sentinel*. Commands in a transmission are `;`-separated (the documented batching form) and answered in order, so whatever arrives before the sentinel's reply is that transmission's error text, and the reply itself is the receipt. No two transmissions are ever in flight. A 128-channel setup is a few dozen confirmed round trips rather than several hundred sleeps.
 
 > [!CAUTION]
-> **The sentinel is an assumption about RHX, and it is fenced.** The documentation shows batching with `set` only. If a build of RHX does not answer a `get` that rides a batch, the first write times out waiting for its receipt; the client then drops to the examples' discipline — one command per transmission, a fixed settle — for the rest of the connection, logs it, and reports `confirmsWrites: false` (the Rig tab says so). Slower and blind to refusals, but correct: *degrade, don't disappear* (`README.md` §6.4).
+> **The sentinel is an assumption about RHX, and it is fenced.** The documentation shows batching with `set` only. If a build of RHX does not answer a `get` that rides a batch, the first write times out waiting for its receipt; the client then drops to the examples' discipline — one command per transmission, a fixed settle — for the rest of the connection, logs it, and reports `confirmsWrites: false` (the Recording tab says so). Slower and blind to refusals, but correct: *degrade, don't disappear* (`README.md` §6.4).
 
 **The three values a recording cannot be wrong about are read back regardless** — `FileFormat`, `Filename.Path`, `Filename.BaseFilename` (`set(..., verify=True)`). That works in both disciplines, and it is the only thing that catches RHX *accepting* a command and storing something else.
 
@@ -117,7 +117,7 @@ The behavioral timestamps that matter are the ones on the **recording's** clock.
 Two different facts, kept in two different places (`settings.md` §5.1, §6):
 
 - **Which Mega pin pulses** is *wiring* — a channel of the new kind **`sync`** in the rig document (`sync_out`, pin 49 as shipped), edited on `/config/wiring` like any other pin and compiled into `TaskPins.h`. `RIG105` refuses a second sync channel: the firmware pulses one line, so a second is a wire believed to carry events that carries nothing.
-- **Which controller input that pin reaches** is a *binding* — `BoxBinding.intanDigitalIn`, 1–16, on the Rig tab's box table. A cable between two instruments, not a fact about the box; exactly the reasoning that makes `hardwareId` a binding. Two boxes may not share an input (each end enforces it, lower box number wins).
+- **Which controller input that pin reaches** is a *binding* — `BoxBinding.intanDigitalIn`, 1–16, on the Recording tab's Sync inputs table (the value lives in the same box list the Rig tab edits). A cable between two instruments, not a fact about the box; exactly the reasoning that makes `hardwareId` a binding. Two boxes may not share an input (each end enforces it, lower box number wins).
 
 > [!CAUTION]
 > **`BOX_PIN_SYNC_OUT` is the one pin that is always emitted.** Every other pin a rig document does not declare is left unmentioned and keeps `BoxPins.h`'s number, so a partial document degrades one pin at a time. That rule is wrong here: the default would pulse pin 49 on a rig whose operator declared no sync channel — and may have put something else there — while the app, reading the same document, reports that the box has no sync line. So absence is *stated*: `-1`.
@@ -151,6 +151,17 @@ So order proposes and **time disposes**. An edge is accepted for a strobe only i
 
 ## 4. The walkthrough
 
+### 4.0 The Recording tab
+
+Everything about the link to RHX lives on one sidebar tab, `/recording` (`routes/Recording.tsx`), a column of HUD tiles in the order a recording comes up in:
+
+| Tile | Holds |
+|---|---|
+| **Live** (only while a recording exists) | `RecordingStatus` — the same block Mission Control's rail shows (state chip, elapsed, run name, RHX's message, the graceful end, the sync check) — and a door to Mission Control |
+| **Connection** | Connected or not, the controller/version/rate/headstage line, **Connect** / **Disconnect**, the three numbered steps RHX needs when the door is shut, a `synthetic` chip, and the TCP ports |
+| **Sync inputs** | Box → `DIGITAL-IN-n`, one row per configured box with the Rig's health dot, and whether the rig's wiring declares a sync channel (with a door to the wiring page) |
+| **Defaults** | Save root, file format, what to save, thresholds — `settings.recordingDefaults`, edited outright. The Record step opens with these and writes back what it confirmed |
+
 The Dashboard's **Start a Recording** tile (`RecordingTile`, glass rather than a second solid primary; its subtitle is RHX's live state) opens the ordinary session flow with `?mode=recording`, which creates the session with `recording: true`. From there the flow reads the flag off the sidecar's own session snapshot (`useIsRecordingSession`), not the URL — the flow is re-entered from the dock, from a group switch and from a reload, and a query flag would have to survive every one of those doors.
 
 ```
@@ -164,9 +175,8 @@ Configure  →  Boxes  →  Record  →  Run  →  Finish
 | Section | Holds |
 |---|---|
 | **Readiness** | RHX connected · not already recording · a headstage present · the wiring has a sync channel · every recorded box has a DIN. Each failing line is the operator's next step, with a door to where it is fixed |
-| **Saving** | Location — `<session folder>/ephys` by default, or a root of the operator's choosing (recordings are large and often live on their own drive; the session's folder name is kept under it so the two halves match by eye). File format. **Wideband** toggle, and what it reveals when off: spikes (+ snapshots, pre/post ms), highpass, lowpass (+ downsample) |
-| **Spike thresholds** | Keep RHX's · one absolute voltage · a multiple of each channel's RMS (+ polarity). Applied **after** the channel enables, because `SetSpikeDetectionThresholds` touches enabled channels only |
-| **Boxes** | Per mapped box: record it or run it behavior-only · port · channel range · optional probe-map XML with a live preview. Two boxes may share a port on disjoint ranges; an overlap is refused |
+| **Saving** | The resolved location — `<session folder>/ephys` by default, or the session's folder under the root chosen on the Recording tab (recordings are large and often live on their own drive; the folder name is kept so the two halves match by eye) — always visible, and under it **"Using your defaults"**: one line summarising format, what is saved and how thresholds are set, with **Edit for this session** unfolding the same rows the Recording tab's Defaults tile shows (`RecordingConfigRows`: format, wideband/spikes/snapshots/highpass/lowpass, thresholds). Edits made here become the new defaults on Continue |
+| **Boxes** | One card per mapped box: **Record / Behavior only**, a `DIN n` chip (or `no DIN` with a door to the Recording tab), port, channel range, optional probe-map XML with a live preview. Two boxes may share a port on disjoint ranges; an overlap is refused |
 
 **Wideband defaults ON**, and the row says why: it is the one option that cannot lose data. Everything else RHX saves is derived from it, and a threshold picked badly before a session cannot be re-picked afterwards without it.
 
@@ -209,7 +219,7 @@ Any failure in 1–2 is an `INTAN_*` error with no box started.
 | Event | What happens |
 |---|---|
 | **RHX hangs up** (Disconnect pressed in its Remote TCP Control dialog, or RHX quit) | Seen **within a quarter second, without sending anything**: the transport feeds EOF to the reader the moment the peer closes, and the poll loop sleeps in 250 ms slices watching for it (`RhxCommandClient.peer_closed`). `intan.status` goes `connected: false` at once, and the 1 s reconnect attempt brings the link back by itself as soon as Connect is pressed in RHX again |
-| **RHX goes silent with the socket open** | The harder case — nothing about the socket says so. **Two** consecutive unanswered polls (one silence can be RHX busy) and the link is declared lost **and our end is closed**. That close is the fix for a bug reported from the bench: `connected` is the socket's, so a link marked lost while the socket stayed open went on reading *connected* on the Rig tab and the Dashboard |
+| **RHX goes silent with the socket open** | The harder case — nothing about the socket says so. **Two** consecutive unanswered polls (one silence can be RHX busy) and the link is declared lost **and our end is closed**. That close is the fix for a bug reported from the bench: `connected` is the socket's, so a link marked lost while the socket stayed open went on reading *connected* on the Recording tab and the Dashboard |
 | Command socket lost mid-recording | `state: error`, "RHX keeps recording on its own; reconnecting". The session is untouched. On reconnect, if RHX is still in `Record`, the run is picked back up and the streams reopened |
 | Someone presses Stop in RHX | The 1 s poll sees `runmode ≠ record` → `error`, said plainly. The session is untouched |
 | RHX unreachable at End | `stop_recording` swallows it, records the run, and says to stop RHX by hand |

@@ -9,8 +9,7 @@ import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 
 import { useScopeContext } from "./ScopeApp";
-import { ScopeFrame } from "./ScopeFrame";
-import { Waiting } from "./SpikeScopeWindow";
+import { ScopeFrame, Waiting } from "./ScopeFrame";
 
 /**
  * The box's probe, with each site lit by how much it fired in the last second.
@@ -45,7 +44,7 @@ export function ProbeMapWindow() {
     };
   }, [client, status, ctx.box]);
 
-  // Rates change under twice a second and there are at most a few hundred
+  // Rates change a few times a second and there are at most a few hundred
   // sites, so — unlike the SpikeScope — this one can simply be React state.
   const onData = useCallback((message: ScopeData) => {
     setRates((message.data as ProbeRatesPayload).rates);
@@ -82,7 +81,7 @@ export function ProbeMapWindow() {
       status={
         <>
           <span>
-            {active}/{ctx.channels.length} sites active
+            {active}/{ctx.channels.length} sites firing
           </span>
           {busiest && (
             <span>
@@ -101,10 +100,13 @@ export function ProbeMapWindow() {
           channels={ctx.channels}
           selected={selected}
           onSelect={openSite}
+          legend
           className="absolute inset-0"
         />
       ) : (
-        <Waiting>{missing ?? "Loading the probe map…"}</Waiting>
+        <Waiting detail={missing ? "add one on the Record step next time" : undefined}>
+          {missing ?? "Loading the probe map…"}
+        </Waiting>
       )}
     </ScopeFrame>
   );

@@ -1,30 +1,37 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { motion } from "framer-motion";
-import { ArrowRight, Check, CircleAlert, FileUp, Minus, PlugZap, X } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  ArrowRight,
+  Check,
+  CircleAlert,
+  FileUp,
+  HardDrive,
+  ListChecks,
+  PlugZap,
+  Radio,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
-import { Button, NumberInput, Segmented, Toggle } from "@/components/common/controls";
+import { HudTile } from "@/components/common/HudTile";
+import { Button, NumberInput, Segmented } from "@/components/common/controls";
 import { Dropdown } from "@/components/common/Dropdown";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { ProbeMapView } from "@/components/recording/ProbeMapView";
+import { SavingRows, ThresholdRows } from "@/components/recording/RecordingConfigRows";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
-import { DirectoryField } from "@/components/settings/DirectoryField";
-import { SettingGroup, SettingRow } from "@/components/settings/SettingRow";
+import { SettingRow } from "@/components/settings/SettingRow";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { useIntanStatus } from "@/lib/intan/context";
+import { summarizeRecordingConfig, type RecordingConfigDefaults } from "@/lib/intan/defaults";
 import { channelRange } from "@/lib/intan/scopeMath";
-import {
-  FILE_FORMATS,
-  defaultRecordingConfig,
-  type ProbeMap,
-  type RecordingBoxConfig,
-  type RecordingConfig,
-} from "@/lib/intan/types";
+import { FILE_FORMATS, type ProbeMap, type RecordingBoxConfig, type RecordingConfig } from "@/lib/intan/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { sessionStatus } from "@/lib/sessions/commands";
 import type { SessionSnapshot } from "@/lib/sessions/types";
 import { useSettings } from "@/lib/settings/context";
+import { useRecordingDefaults } from "@/lib/settings/useRecordingDefaults";
 import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 
@@ -36,6 +43,11 @@ import { CMD } from "@/lib/ws/protocol";
  * each MAPPED box is on, and there is nothing to ask until the mapping exists.
  * It runs once per group, because the animals — and so the ports and probes —
  * change between groups; the second time it opens prefilled.
+ *
+ * The policy — what to save, how to set thresholds — has a home of its own on
+ * the Recording tab now, so here it is a collapsed summary with an Edit door:
+ * this step's job is the per-group facts (which port, which range, which
+ * probe). Whatever is confirmed here is written back as the new defaults.
  *
  * Nothing here talks to RHX until Continue. The form is a description of a
  * recording; `intan.configure` applies it in one pass, reading back the three
@@ -56,12 +68,6 @@ interface BoxRow {
   probeError: string | null;
 }
 
-interface StoredDefaults {
-  saveRoot?: string;
-  config?: Partial<RecordingConfig>;
-  boxes?: Record<string, Partial<RecordingBoxConfig> & { record?: boolean }>;
-}
-
 export function SessionRecording() {
   const { id: sessionId } = useParams<{ id: string }>();
   const [params] = useSearchParams();
@@ -69,13 +75,14 @@ export function SessionRecording() {
   const cohortId = params.get("cohort") ?? "";
   const navigate = useNavigate();
   const { client, status: link } = useSidecar();
-  const { settings, update } = useSettings();
+  const { settings } = useSettings();
+  const { defaults, save } = useRecordingDefaults();
   const intan = useIntanStatus();
 
-  const stored = settings.recordingDefaults as StoredDefaults;
   const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
-  const [config, setConfig] = useState<RecordingConfig | null>(null);
-  const [saveRoot, setSaveRoot] = useState<string | null>(stored.saveRoot ?? null);
+  const [config, setConfig] = useState<RecordingConfigDefaults | null>(null);
+  const [saveRoot, setSaveRoot] = useState<string | null>(defaults.saveRoot);
+  const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<BoxRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -117,25 +124,25 @@ export function SessionRecording() {
   // never on an `intan.status` tick — that would discard what was typed.
   useEffect(() => {
     if (!snapshot) return;
-    setConfig((current) => current ?? { ...defaultRecordingConfig(""), ...(stored.config ?? {}) });
+    setConfig((current) => current ?? { ...defaults.config });
     setRows((current) => {
       if (current.length > 0) return current;
       return snapshot.boxes.map((b) => {
-        const memory = stored.boxes?.[String(b.box)] ?? {};
+        const memory = defaults.boxes[String(b.box)];
         return {
           box: b.box,
           animalName: b.animalName,
-          record: memory.record ?? true,
-          port: memory.port ?? "",
-          firstChannel: memory.firstChannel ?? 0,
-          lastChannel: memory.lastChannel ?? -1,
-          probeMapPath: memory.probeMapPath ?? null,
+          record: memory?.record ?? true,
+          port: memory?.port ?? "",
+          firstChannel: memory?.firstChannel ?? 0,
+          lastChannel: memory?.lastChannel ?? -1,
+          probeMapPath: memory?.probeMapPath ?? null,
           probeMap: null,
           probeError: null,
         };
       });
     });
-    // `stored` is read once, as a starting point.
+    // The defaults are read once, as a starting point.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
 
@@ -177,7 +184,7 @@ export function SessionRecording() {
     setRows((current) => current.map((r) => (r.box === box ? { ...r, ...changes } : r)));
   }
 
-  function patchConfig(changes: Partial<RecordingConfig>) {
+  function patchConfig(changes: Partial<RecordingConfigDefaults>) {
     setConfig((current) => (current ? { ...current, ...changes } : current));
   }
 
@@ -227,6 +234,7 @@ export function SessionRecording() {
             intan.sampleRate ? `${intan.sampleRate / 1000} kS/s` : "—"
           }${intan.synthetic ? " · synthetic" : ""}`
         : "RHX is not connected — in RHX: Network → Remote TCP Control → Connect (Commands tab)",
+      fix: { label: "Open Recording", to: "/recording" },
     },
     {
       ok: intan.connected && intan.runMode !== "record" && intan.runMode !== "trigger",
@@ -257,9 +265,11 @@ export function SessionRecording() {
           : unbound.length === 0
             ? "Every recorded box has an Intan digital input"
             : `Box ${unbound.map((r) => r.box).join(", ")} has no Intan digital input bound`,
-      fix: { label: "Open Rig", to: "/config" },
+      fix: { label: "Open Recording", to: "/recording" },
     },
   ];
+  const okCount = checks.filter((c) => c.ok).length;
+  const firstProblem = checks.find((c) => !c.ok)?.label ?? overlap ?? (!savesSomething ? "Nothing would be saved" : null);
   const ready = checks.every((c) => c.ok) && !overlap && savesSomething && saveDirectory !== "";
 
   const hint = !intan.connected
@@ -285,24 +295,21 @@ export function SessionRecording() {
 
       // Remembered as the next recording's starting point — not the save
       // directory (it is per session) and not the boxes list (it is per group).
-      const { saveDirectory: _dir, boxes: _boxes, ...remembered } = full;
-      update({
-        recordingDefaults: {
-          ...(saveRoot ? { saveRoot } : {}),
-          config: remembered,
-          boxes: Object.fromEntries(
-            rows.map((r) => [
-              String(r.box),
-              {
-                record: r.record,
-                port: r.port,
-                firstChannel: r.firstChannel,
-                lastChannel: r.lastChannel,
-                probeMapPath: r.probeMapPath,
-              },
-            ]),
-          ),
-        },
+      void save({
+        saveRoot,
+        config,
+        boxes: Object.fromEntries(
+          rows.map((r) => [
+            String(r.box),
+            {
+              record: r.record,
+              port: r.port,
+              firstChannel: r.firstChannel,
+              lastChannel: r.lastChannel,
+              probeMapPath: r.probeMapPath,
+            },
+          ]),
+        ),
       });
       navigate(`/session/${sessionId}/control?cohort=${cohortId}&group=${groupId}`);
     } catch (err) {
@@ -326,6 +333,7 @@ export function SessionRecording() {
     label: `Port ${p}`,
     detail: `${intan.ports[p] ?? 0} ch`,
   }));
+  const formatLabel = config ? (FILE_FORMATS.find((f) => f.value === config.fileFormat)?.label ?? "") : "";
 
   return (
     <div className="relative h-full">
@@ -352,59 +360,61 @@ export function SessionRecording() {
             </div>
           )}
 
-          <motion.div variants={CASCADE} initial="hidden" animate="shown">
+          <motion.div variants={CASCADE} initial="hidden" animate="shown" className="mt-6 flex flex-col gap-5">
             <motion.div variants={RISE}>
-              <SettingGroup title="Readiness" variant="hud">
-                <ul className="px-4 py-3">
-                  {checks.map((check) => (
-                    <li key={check.label} className="flex items-center gap-2.5 py-1 text-[12px]">
+              <HudTile
+                icon={ListChecks}
+                label="Readiness"
+                status={
+                  <span style={okCount === checks.length ? { color: "var(--color-ion)" } : undefined}>
+                    {okCount}/{checks.length} ready
+                  </span>
+                }
+              >
+                <ul className="px-4 py-2.5">
+                  {checks.map((check, index) => (
+                    <li key={check.label} className="flex items-center gap-2.5 py-1.5 text-[12px]">
                       <span
-                        className="flex size-4 shrink-0 items-center justify-center rounded-full"
-                        style={{
-                          color: check.ok ? "var(--color-ion)" : "var(--color-status-warning)",
-                        }}
+                        className="flex size-4 shrink-0 items-center justify-center"
+                        style={{ color: check.ok ? "var(--color-ion)" : "var(--color-status-warning)" }}
                       >
-                        {check.ok ? <Check size={13} strokeWidth={2} /> : <Minus size={13} strokeWidth={2} />}
+                        {check.ok ? (
+                          <Check size={13} strokeWidth={2} />
+                        ) : (
+                          <CircleAlert size={13} strokeWidth={2} />
+                        )}
                       </span>
                       <span className={check.ok ? "text-static" : "text-starlight"}>{check.label}</span>
+                      {/* The first line is the link itself: its repair is a
+                          click here, not a trip to another tab. */}
+                      {!check.ok && index === 0 && (
+                        <Button variant="outline" className="ml-auto" onClick={() => void connect()}>
+                          <PlugZap size={13} strokeWidth={1.75} />
+                          Connect
+                        </Button>
+                      )}
                       {!check.ok && check.fix && (
-                        <Button variant="ghost" onClick={() => navigate(check.fix!.to)}>
+                        <Button
+                          variant="ghost"
+                          className={index === 0 ? "" : "ml-auto"}
+                          onClick={() => navigate(check.fix!.to)}
+                        >
                           {check.fix.label}
                         </Button>
                       )}
                     </li>
                   ))}
                 </ul>
-                {!intan.connected && (
-                  <div className="border-t border-halo px-4 py-3">
-                    <Button variant="outline" onClick={() => void connect()}>
-                      <PlugZap size={13} strokeWidth={1.75} />
-                      Connect to RHX
-                    </Button>
-                  </div>
-                )}
-              </SettingGroup>
+              </HudTile>
             </motion.div>
 
             {config && (
               <motion.div variants={RISE}>
-                <SettingGroup title="Saving" variant="hud">
-                  <SettingRow
-                    label="Save location"
-                    description={
-                      saveRoot
-                        ? "This session's folder, under the directory you chose."
-                        : "Beside this session's behavior data. Choose a directory to keep recordings elsewhere — they are large."
-                    }
-                  >
-                    <DirectoryField
-                      value={saveRoot}
-                      onChange={setSaveRoot}
-                      title="Where recordings are saved"
-                    />
-                  </SettingRow>
-                  <div className="border-b border-halo px-4 py-2.5">
-                    <div className="font-mono text-[11px] break-all text-static" data-selectable>
+                <HudTile icon={HardDrive} label="Saving" status={formatLabel}>
+                  {/* The one per-session fact, always visible. */}
+                  <div className="border-b border-halo px-4 py-3">
+                    <div className="text-[13px] font-medium text-starlight">Save location</div>
+                    <div className="mt-1 font-mono text-[11px] break-all text-static" data-selectable>
                       {saveDirectory || "—"}
                     </div>
                     {/\s/.test(saveDirectory) && (
@@ -414,283 +424,156 @@ export function SessionRecording() {
                       </p>
                     )}
                   </div>
-                  <SettingRow
-                    label="File format"
-                    description={FILE_FORMATS.find((f) => f.value === config.fileFormat)?.hint ?? ""}
-                  >
-                    <Segmented
-                      label="File format"
-                      value={config.fileFormat}
-                      options={FILE_FORMATS.map((f) => ({ value: f.value, label: f.label }))}
-                      onChange={(fileFormat) => patchConfig({ fileFormat })}
-                    />
-                  </SettingRow>
-                  <SettingRow
-                    label="Save wideband"
-                    description="The raw amplifier signal. The one option that cannot lose data: everything else RHX saves is derived from it, and a threshold picked badly today cannot be re-picked later without it."
-                  >
-                    <Toggle
-                      label="Save wideband"
-                      checked={config.saveWideband}
-                      onChange={(saveWideband) =>
-                        // Turning wideband off with nothing else on would save
-                        // nothing at all; spikes are what is wanted instead.
-                        patchConfig({
-                          saveWideband,
-                          ...(!saveWideband && !config.saveSpikes && !config.saveHighpass
-                            ? { saveSpikes: true }
-                            : {}),
-                        })
-                      }
-                    />
-                  </SettingRow>
-                  <SettingRow
-                    label="Save spikes"
-                    description="Threshold crossings detected by RHX, per channel. Only as good as the thresholds below."
-                  >
-                    <Toggle
-                      label="Save spikes"
-                      checked={config.saveSpikes}
-                      onChange={(saveSpikes) => patchConfig({ saveSpikes })}
-                    />
-                  </SettingRow>
-                  {config.saveSpikes && (
-                    <SettingRow
-                      label="Spike snapshots"
-                      description="A short waveform around every spike, from before to after the crossing."
-                    >
-                      <span className="flex items-center gap-2">
-                        <Toggle
-                          label="Save spike snapshots"
-                          checked={config.saveSpikeSnapshots}
-                          onChange={(saveSpikeSnapshots) => patchConfig({ saveSpikeSnapshots })}
-                        />
-                        {config.saveSpikeSnapshots && (
-                          <>
-                            <NumberInput
-                              label="Milliseconds before the spike"
-                              value={config.snapshotPreMs}
-                              fallback={1}
-                              integer
-                              min={0}
-                              max={3}
-                              className="w-14"
-                              onChange={(v) => patchConfig({ snapshotPreMs: Number(v) })}
-                            />
-                            <span className="text-[11px] text-static">ms before ·</span>
-                            <NumberInput
-                              label="Milliseconds after the spike"
-                              value={config.snapshotPostMs}
-                              fallback={2}
-                              integer
-                              min={1}
-                              max={6}
-                              className="w-14"
-                              onChange={(v) => patchConfig({ snapshotPostMs: Number(v) })}
-                            />
-                            <span className="text-[11px] text-static">ms after</span>
-                          </>
-                        )}
-                      </span>
-                    </SettingRow>
-                  )}
-                  <SettingRow label="Save highpass" description="The spike band, as RHX filters it.">
-                    <Toggle
-                      label="Save highpass"
-                      checked={config.saveHighpass}
-                      onChange={(saveHighpass) => patchConfig({ saveHighpass })}
-                    />
-                  </SettingRow>
-                  <SettingRow label="Save lowpass" description="The LFP band, optionally downsampled.">
-                    <span className="flex items-center gap-2">
-                      <Toggle
-                        label="Save lowpass"
-                        checked={config.saveLowpass}
-                        onChange={(saveLowpass) => patchConfig({ saveLowpass })}
-                      />
-                      {config.saveLowpass && (
-                        <Dropdown
-                          label="Lowpass downsample"
-                          value={String(config.lowpassDownsample)}
-                          placeholder="1×"
-                          options={[1, 2, 4, 8, 16, 32, 64, 128].map((n) => ({
-                            value: String(n),
-                            label: n === 1 ? "no downsampling" : `every ${n}th sample`,
-                          }))}
-                          onChange={(v) => patchConfig({ lowpassDownsample: Number(v) })}
-                        />
-                      )}
-                    </span>
-                  </SettingRow>
-                  {!savesSomething && (
-                    <p className="px-4 py-2.5 text-[12px]" style={{ color: "var(--color-status-warning)" }}>
-                      Nothing would be saved. Turn on wideband, spikes, highpass or lowpass.
-                    </p>
-                  )}
-                </SettingGroup>
-              </motion.div>
-            )}
 
-            {config && (
-              <motion.div variants={RISE}>
-                <SettingGroup title="Spike thresholds" variant="hud">
                   <SettingRow
-                    label="Set thresholds"
-                    description={
-                      config.threshold.mode === "keep"
-                        ? "Leave every channel's threshold as it is set in RHX."
-                        : config.threshold.mode === "absolute"
-                          ? "One voltage for every recorded channel."
-                          : "A multiple of each channel's own RMS noise, so a quiet channel and a noisy one are held to the same standard."
-                    }
+                    label="Using your defaults"
+                    description={summarizeRecordingConfig(config)}
                   >
-                    <Segmented
-                      label="Threshold mode"
-                      value={config.threshold.mode}
-                      options={[
-                        { value: "keep", label: "Keep RHX's" },
-                        { value: "absolute", label: "Absolute" },
-                        { value: "rms", label: "× RMS" },
-                      ]}
-                      onChange={(mode) => patchConfig({ threshold: { ...config.threshold, mode } })}
-                    />
+                    <Button variant="ghost" onClick={() => setEditing((e) => !e)}>
+                      {editing ? "Done" : "Edit for this session"}
+                    </Button>
                   </SettingRow>
-                  {config.threshold.mode === "absolute" && (
-                    <SettingRow label="Threshold" description="−5000 to 5000 µV. Negative for the usual extracellular spike.">
-                      <span className="flex items-center gap-2">
-                        <NumberInput
-                          label="Threshold in microvolts"
-                          value={config.threshold.microvolts}
-                          fallback={-70}
-                          integer
-                          min={-5000}
-                          max={5000}
-                          className="w-24"
-                          onChange={(v) =>
-                            patchConfig({ threshold: { ...config.threshold, microvolts: Number(v) } })
-                          }
+
+                  <AnimatePresence initial={false}>
+                    {(editing || !savesSomething) && (
+                      <motion.div
+                        key="edit"
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={springPanel}
+                        className="overflow-hidden"
+                      >
+                        <SavingRows
+                          value={config}
+                          onChange={patchConfig}
+                          saveRoot={saveRoot}
+                          onSaveRoot={setSaveRoot}
                         />
-                        <span className="text-[11px] text-static">µV</span>
-                      </span>
-                    </SettingRow>
-                  )}
-                  {config.threshold.mode === "rms" && (
-                    <SettingRow label="Multiple" description="3.0 to 20.0 × RMS.">
-                      <span className="flex items-center gap-3">
-                        <NumberInput
-                          label="RMS multiple"
-                          value={config.threshold.rmsMultiple}
-                          fallback={4}
-                          min={3}
-                          max={20}
-                          className="w-20"
-                          onChange={(v) =>
-                            patchConfig({ threshold: { ...config.threshold, rmsMultiple: Number(v) } })
-                          }
-                        />
-                        <Segmented
-                          label="Threshold polarity"
-                          value={config.threshold.negative ? "neg" : "pos"}
-                          options={[
-                            { value: "neg", label: "Negative" },
-                            { value: "pos", label: "Positive" },
-                          ]}
-                          onChange={(v) =>
-                            patchConfig({ threshold: { ...config.threshold, negative: v === "neg" } })
-                          }
-                        />
-                      </span>
-                    </SettingRow>
-                  )}
-                  <p className="px-4 py-2.5 text-[11px] leading-relaxed text-static">
-                    A single channel can be adjusted live, by dragging the threshold line in its SpikeScope.
-                  </p>
-                </SettingGroup>
+                        <div className="border-b border-halo px-4 py-2 text-[11px] font-medium text-static">
+                          Spike thresholds
+                        </div>
+                        <ThresholdRows value={config} onChange={patchConfig} />
+                        <p className="border-t border-halo px-4 py-2.5 text-[11px] leading-relaxed text-static">
+                          Edits here become the new defaults when you continue.
+                        </p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </HudTile>
               </motion.div>
             )}
 
             <motion.div variants={RISE}>
-              <SettingGroup title="Boxes" variant="hud">
+              <HudTile
+                icon={Radio}
+                label="Boxes"
+                status={
+                  rows.length === 0
+                    ? "waiting for the mapping"
+                    : `${recorded.length} of ${rows.length} recording`
+                }
+              >
                 {rows.length === 0 && (
-                  <p className="px-4 py-3 text-[12px] text-static">Waiting for this group's mapping…</p>
+                  <p className="px-4 py-6 text-center text-[12px] text-static">Waiting for this group's mapping…</p>
                 )}
-                {rows.map((row) => {
-                  const count = intan.ports[row.port] ?? 0;
-                  const din = settings.boxes.find((b) => b.box === row.box)?.intanDigitalIn ?? null;
-                  return (
-                    <div key={row.box} className="border-b border-halo px-4 py-3.5 last:border-b-0">
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-[12px] text-static">Box {row.box}</span>
-                        <span className="text-[13px] font-medium text-starlight">{row.animalName}</span>
-                        <span className="font-mono text-[11px] text-static">
-                          {din ? `DIN ${din}` : "no DIN"}
-                        </span>
-                        <span className="ml-auto flex items-center gap-2 text-[11px] text-static">
-                          {row.record ? "Recording" : "Behavior only"}
-                          <Toggle
-                            label={`Record box ${row.box}`}
-                            checked={row.record}
-                            onChange={(record) => patchRow(row.box, { record })}
-                          />
-                        </span>
-                      </div>
+                <div className={rows.length > 0 ? "flex flex-col gap-2.5 p-3" : ""}>
+                  {rows.map((row) => {
+                    const count = intan.ports[row.port] ?? 0;
+                    const din = settings.boxes.find((b) => b.box === row.box)?.intanDigitalIn ?? null;
+                    return (
+                      <div
+                        key={row.box}
+                        className={`surface-inset rounded-sm px-3.5 py-3 transition-opacity ${
+                          row.record ? "" : "opacity-60"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="font-mono text-[12px] text-static">Box {row.box}</span>
+                          <span className="truncate text-[13px] font-medium text-starlight">{row.animalName}</span>
+                          {row.record && (
+                            <span
+                              className="shrink-0 rounded-sm border border-halo px-1.5 py-0.5 font-mono text-[10px]"
+                              style={{ color: din ? "var(--color-static)" : "var(--color-status-warning)" }}
+                              title={
+                                din
+                                  ? "The recording controller's digital input this box's sync line is on"
+                                  : "No digital input is bound to this box"
+                              }
+                            >
+                              {din ? `DIN ${din}` : "no DIN"}
+                            </span>
+                          )}
+                          {row.record && !din && (
+                            <Button variant="ghost" onClick={() => navigate("/recording")}>
+                              Bind one
+                            </Button>
+                          )}
+                          <span className="ml-auto">
+                            <Segmented
+                              label={`Box ${row.box}: record, or behavior only`}
+                              value={row.record ? "record" : "behavior"}
+                              options={[
+                                { value: "record", label: "Record" },
+                                { value: "behavior", label: "Behavior only" },
+                              ]}
+                              onChange={(v) => patchRow(row.box, { record: v === "record" })}
+                            />
+                          </span>
+                        </div>
 
-                      {row.record && (
-                        <div className="mt-3 grid grid-cols-[1fr_220px] gap-4">
-                          <div className="flex flex-col gap-2.5">
-                            <div className="flex items-center gap-2">
-                              <Dropdown
-                                label={`Headstage port for box ${row.box}`}
-                                size="regular"
-                                value={row.port}
-                                options={portOptions}
-                                placeholder="— port —"
-                                className="w-40"
-                                onChange={(port) =>
-                                  patchRow(row.box, {
-                                    port,
-                                    firstChannel: 0,
-                                    lastChannel: Math.max(0, (intan.ports[port] ?? 1) - 1),
-                                  })
-                                }
-                              />
-                              <span className="text-[11px] text-static">channels</span>
-                              <NumberInput
-                                label="First channel"
-                                value={row.firstChannel}
-                                fallback={0}
-                                integer
-                                min={0}
-                                max={Math.max(0, row.lastChannel)}
-                                className="w-16"
-                                onChange={(v) => patchRow(row.box, { firstChannel: Number(v) })}
-                              />
-                              <span className="text-[11px] text-static">to</span>
-                              <NumberInput
-                                label="Last channel"
-                                value={row.lastChannel}
-                                fallback={Math.max(0, count - 1)}
-                                integer
-                                min={row.firstChannel}
-                                max={Math.max(0, count - 1)}
-                                className="w-16"
-                                onChange={(v) => patchRow(row.box, { lastChannel: Number(v) })}
-                              />
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Button variant="outline" onClick={() => void chooseProbeMap(row.box)}>
-                                <FileUp size={13} strokeWidth={1.75} />
-                                {row.probeMapPath ? "Change probe map" : "Add probe map"}
-                              </Button>
-                              {row.probeMapPath && (
-                                <>
-                                  <span className="truncate font-mono text-[11px] text-static">
-                                    {row.probeMapPath.split(/[\\/]/).pop()}
-                                    {row.probeMap ? ` · ${row.probeMap.siteCount} sites` : ""}
-                                  </span>
+                        {row.record && (
+                          <div className="mt-3 grid grid-cols-[1fr_200px] gap-4">
+                            <div className="flex flex-col gap-2.5">
+                              <div className="flex items-center gap-2">
+                                <Dropdown
+                                  label={`Headstage port for box ${row.box}`}
+                                  size="regular"
+                                  value={row.port}
+                                  options={portOptions}
+                                  placeholder={intan.connected && presentPorts.length === 0 ? "no headstage" : "— port —"}
+                                  className="w-40"
+                                  onChange={(port) =>
+                                    patchRow(row.box, {
+                                      port,
+                                      firstChannel: 0,
+                                      lastChannel: Math.max(0, (intan.ports[port] ?? 1) - 1),
+                                    })
+                                  }
+                                />
+                                <span className="text-[11px] text-static">channels</span>
+                                <NumberInput
+                                  label="First channel"
+                                  value={row.firstChannel}
+                                  fallback={0}
+                                  integer
+                                  min={0}
+                                  max={Math.max(0, row.lastChannel)}
+                                  className="w-16"
+                                  onChange={(v) => patchRow(row.box, { firstChannel: Number(v) })}
+                                />
+                                <span className="text-[11px] text-static">to</span>
+                                <NumberInput
+                                  label="Last channel"
+                                  value={row.lastChannel}
+                                  fallback={Math.max(0, count - 1)}
+                                  integer
+                                  min={row.firstChannel}
+                                  max={Math.max(0, count - 1)}
+                                  className="w-16"
+                                  onChange={(v) => patchRow(row.box, { lastChannel: Number(v) })}
+                                />
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button variant="outline" onClick={() => void chooseProbeMap(row.box)}>
+                                  <FileUp size={13} strokeWidth={1.75} />
+                                  {row.probeMapPath ? "Change probe map" : "Add probe map"}
+                                </Button>
+                                {row.probeMapPath && (
                                   <Button
                                     variant="ghost"
                                     shape="icon"
+                                    label="Remove the probe map"
                                     title="Remove the probe map"
                                     onClick={() =>
                                       patchRow(row.box, { probeMapPath: null, probeMap: null, probeError: null })
@@ -698,44 +581,57 @@ export function SessionRecording() {
                                   >
                                     <X size={13} strokeWidth={1.75} />
                                   </Button>
-                                </>
+                                )}
+                              </div>
+                              {row.probeError && (
+                                <p className="text-[11px]" style={{ color: "var(--color-status-error)" }}>
+                                  {row.probeError}
+                                </p>
                               )}
                             </div>
-                            {row.probeError && (
-                              <p className="text-[11px]" style={{ color: "var(--color-status-error)" }}>
-                                {row.probeError}
-                              </p>
-                            )}
-                          </div>
-                          <div className="surface-inset h-[150px] rounded-sm">
-                            {row.probeMap ? (
-                              <ProbeMapView
-                                map={row.probeMap}
-                                channels={channelRange(row.port, row.firstChannel, row.lastChannel)}
-                                className="h-full"
-                              />
-                            ) : (
-                              <div className="flex h-full items-center justify-center px-4 text-center text-[11px] text-static">
-                                Optional. With a probe map, this box's sites light up live as they fire.
+                            <div className="flex flex-col gap-1">
+                              <div className="h-[180px] overflow-hidden rounded-sm border border-halo bg-void/40">
+                                {row.probeMap ? (
+                                  <ProbeMapView
+                                    map={row.probeMap}
+                                    channels={channelRange(row.port, row.firstChannel, row.lastChannel)}
+                                    className="h-full"
+                                  />
+                                ) : (
+                                  <div className="flex h-full items-center justify-center px-4 text-center text-[11px] leading-relaxed text-static">
+                                    Optional — a probe map lights this box's sites live as they fire.
+                                  </div>
+                                )}
                               </div>
-                            )}
+                              {row.probeMap && row.probeMapPath && (
+                                <div className="truncate font-mono text-[10px] text-static" title={row.probeMapPath}>
+                                  {row.probeMapPath.split(/[\\/]/).pop()} · {row.probeMap.siteCount} sites
+                                  {row.probeMap.pages.length > 1 ? ` · ${row.probeMap.pages.length} pages` : ""}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
                 {overlap && (
-                  <p className="px-4 py-2.5 text-[12px]" style={{ color: "var(--color-status-error)" }}>
+                  <p className="border-t border-halo px-4 py-2.5 text-[12px]" style={{ color: "var(--color-status-error)" }}>
                     {overlap}.
                   </p>
                 )}
-              </SettingGroup>
+              </HudTile>
             </motion.div>
 
-            <motion.div variants={RISE} className="mt-6 flex items-center gap-2">
-              <Button variant="primary" onClick={() => void applyAndContinue()} disabled={!ready || busy}>
-                {busy ? "Configuring RHX…" : "Continue"}
+            <motion.div variants={RISE} className="mt-1 flex items-center gap-2">
+              <Button
+                variant="primary"
+                onClick={() => void applyAndContinue()}
+                disabled={!ready || busy}
+                {...(!ready && firstProblem ? { title: firstProblem } : {})}
+              >
+                {busy ? "Configuring RHX…" : "Configure RHX and continue"}
                 <ArrowRight size={13} strokeWidth={2} />
               </Button>
               <Button

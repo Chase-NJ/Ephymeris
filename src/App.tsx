@@ -8,6 +8,7 @@ import { Cohorts } from "./routes/Cohorts";
 import { Dashboard } from "./routes/Dashboard";
 import { DebugMode } from "./routes/DebugMode";
 import { MissionControl } from "./routes/MissionControl";
+import { Recording } from "./routes/Recording";
 import { RigWiring } from "./routes/RigWiring";
 import { SessionConfig } from "./routes/SessionConfig";
 import { SessionMapping } from "./routes/SessionMapping";
@@ -62,6 +63,12 @@ export default function App() {
         <Route path="/config" element={<Config />} />
         <Route path="/config/wiring" element={<RigWiring />} />
         <Route path="/config/strobes" element={<Navigate to="/task/strobes" replace />} />
+        {/* Recording: the link to Intan RHX, the box->digital-input bindings
+            and the recording defaults, gathered from the Rig tab where the
+            first two used to live. `/config/recording` never existed as a
+            page, but it is the address a bookmark or a doc would guess. */}
+        <Route path="/recording" element={<Recording />} />
+        <Route path="/config/recording" element={<Navigate to="/recording" replace />} />
         <Route path="/settings" element={<Settings />} />
         {/* Two-step session setup (`dashboard.md` §7.2–§4); the runner
             takes over at /session/:id/control. */}

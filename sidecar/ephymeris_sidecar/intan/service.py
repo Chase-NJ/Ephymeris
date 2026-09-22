@@ -479,7 +479,7 @@ class IntanService:
     async def _lost(self, why: str) -> None:
         """The link is gone. ALWAYS closes our end, and that is the point: the
         UI's `connected` is the socket's, so a link declared lost while the
-        socket stayed open went on reading "connected" on the Rig tab and the
+        socket stayed open went on reading "connected" on the Recording tab and the
         Dashboard -- which is exactly how a silent RHX was reported."""
         self._close_streams()
         self._silent_polls = 0
@@ -624,7 +624,7 @@ class IntanService:
             digital_in = binding.intan_digital_in if binding else None
             if digital_in is None:
                 raise IntanNotReady(
-                    f"Box {box} has no Intan digital input. Bind one on the Rig tab."
+                    f"Box {box} has no Intan digital input. Bind one on the Recording tab."
                 )
             port = str(raw.get("port") or "").strip().upper()
             count = present.get(port, 0)

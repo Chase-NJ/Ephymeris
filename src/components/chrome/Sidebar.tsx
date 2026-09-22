@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ChartLine, Orbit, Radio, Settings, Users, Workflow } from "lucide-react";
+import { AudioWaveform, ChartLine, Orbit, Radio, Settings, Users, Workflow } from "lucide-react";
 import { useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
 import type { LucideIcon } from "lucide-react";
@@ -61,6 +61,12 @@ const NAV_MAIN: readonly NavItem[] = [
   { to: "/config", label: "Rig", icon: Radio },
   { to: "/cohorts", label: "Cohorts", icon: Users },
   { to: "/task", label: "Task", icon: Workflow },
+  // **Recording**: the link to Intan RHX, which digital input each box pulses,
+  // and what a recording saves. Between Task and Analytics — a recording sits
+  // between what the animal does and what is made of it. Prefix-matched, so
+  // `/recording` lights it; `/session/:id/recording` starts with `/session`
+  // and stays with Dashboard.
+  { to: "/recording", label: "Recording", icon: AudioWaveform },
   { to: "/analytics", label: "Analytics", icon: ChartLine },
 ];
 

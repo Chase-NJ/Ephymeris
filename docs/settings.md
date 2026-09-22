@@ -14,16 +14,18 @@
 
 ## 1. The split
 
-Three screens edit settings. **The split is by subject, not by shape.**
+Four screens edit settings. **The split is by subject, not by shape.**
 
 | Screen | Answers | Owns |
 |---|---|---|
 | ⚙️ **Settings** (`/settings`) | *Where does data go, and how does the app feel?* | Data directory, backup directory, reduced motion |
 | 📡 **Rig** (`/config`) | *Which board is box 3, and what does every pin do?* | Box→board bindings (add/remove/name, with per-row health), the handshake test, the utility baseline, **the channel→pin wiring editor** (`/config/wiring`) behind a door on the landing, default baud, `arduino-cli` path. **The tab is labelled Rig; the route and `routes/Config.tsx` keep the old spelling** — the label is the operator's word for the subject, the path is an internal address nothing displays |
+| 🎙 **Recording** (`/recording`) | *Is RHX reachable, which input does each box pulse, and what does a recording save?* | The link to Intan RHX (connection state, Connect/Disconnect, the click RHX needs, the three TCP ports), the **box→digital-input table** (`boxes[].intanDigitalIn` — the value stays in the box list, only the editor lives here), and the **recording defaults** (`recordingDefaults`: save root, file format, what to save, thresholds) the Record step opens with. While a recording exists, a **Live** tile comes first with the way back to Mission Control |
 | 🔀 **Task** (`/task`) | *What is the animal doing?* | A **landing** listing this rig's saved tasks as cards (edit, delete, create), over the **task-profile editor** at `/task/new` and `/task/:taskId` (`tasks.md` §10–§11): the trial table, the shaping ramp, the parameters, and the state machine they derive. Saving one generates a flashable sketch. **The strobe vocabulary** (`/task/strobes`) sits behind a door here ([§5.0](#50-why-the-strobe-vocabulary-is-a-task-page)); the channel→pin map is on Rig |
 
 > [!NOTE]
-> **Both of the first two rows are about wiring, and they are different wirings.**
+> **Two of these rows are about wiring, and they are different wirings** — and a third cable, the box's sync line into the recording controller, is a *binding* like the board binding but is edited on **Recording**, because its far end is the recording controller and the person plugging it in is setting up a recording, not the rig.
+>
 > The Rig tab binds a **box number to a board** — runtime indirection, per rig,
 > changing whenever a board is swapped or Windows renumbers a COM port. Task → Rig
 > wiring binds a **channel to a pin** — compile-time input, per box generation,
@@ -51,9 +53,9 @@ Defaults and normalization live in [`src/lib/settings/schema.ts`](../src/lib/set
 | `arduinoCliPath` | `string \| null` | `null` | **Rig** → Hardware | Override for the bundled `arduino-cli`. Empty string coerces to `null` |
 | `utilitySketchName` | `string \| null` | `null` | **Rig** → Utility baseline | The baseline every idle box is returned to ([§8](#8-the-hardware-utility-baseline)), by sketch **folder name** — the same key `taskDefaults` uses, because the bundled library's path is per-install while the name survives an update. `null` turns the baseline off |
 | `defaultBaud` | `number` | **`115200`** | **Rig** → Hardware | Starting baud for each console. Debug Mode allows a per-box override. Options: 9600, 19200, 38400, 57600, 115200, 230400, 250000. **The default only applies to a fresh install** — the value is persisted, so an existing machine keeps whatever its store holds |
-| `boxes` | `BoxBinding[]` | `[]` | **Rig** → Boxes | The user-managed box list — see [§6](#6-box-bindings) |
-| `intan` | `{commandPort, waveformPort, spikePort}` | `5000 / 5001 / 5002` | **Rig** → Recording | Where Intan RHX's three TCP servers listen ([recording.md §2](recording.md#2-talking-to-rhx)). **No host** — Ephymeris only talks to an RHX on this machine. Absent on a store from before recording existed; both ends fall back to RHX's defaults |
-| `recordingDefaults` | `Record<string, unknown>` | `{}` | the **Record** step (written on Continue) | The last recording setup confirmed — save root, format and save flags, thresholds, and each box's port / range / probe map — offered as the next one's starting point. Not the save directory (per session) nor the box list (per group). **Shell-only** |
+| `boxes` | `BoxBinding[]` | `[]` | **Rig** → Boxes (board, label) · **Recording** → Sync inputs (`intanDigitalIn`) | The user-managed box list — see [§6](#6-box-bindings). One store, two doors |
+| `intan` | `{commandPort, waveformPort, spikePort}` | `5000 / 5001 / 5002` | **Recording** → Connection | Where Intan RHX's three TCP servers listen ([recording.md §2](recording.md#2-talking-to-rhx)). **No host** — Ephymeris only talks to an RHX on this machine. Absent on a store from before recording existed; both ends fall back to RHX's defaults |
+| `recordingDefaults` | `RecordingDefaults` — `{saveRoot, config, boxes}` (`src/lib/intan/defaults.ts`; a loose record on the wire) | `saveRoot: null`, wideband on, keep RHX's thresholds | **Recording** → Defaults, and the **Record** step on Continue | What a recording saves and how spikes are detected (`config`), where recordings go (`saveRoot`; `null` = beside the session's behavior data), and each box's last port / range / probe map (`boxes`, per-group memory, not shown on the tab). The Record step opens with these and writes back what was confirmed. Normalized per key — a stored value that is no longer legal falls back alone — and never allowed to save nothing. **Shell-only** |
 | `reducedMotion` | `boolean` | `false` | **Settings** → Interface | Forces reduced motion on regardless of the system setting (which is always respected on top). **Shell-only** |
 | `constellation` | `string \| null` | `null` | **Settings** → Constellation | Zodiac layout id for the box-status constellation. `null` = the legacy fixed layout. **Shell-only** |
 | `constellationSlots` | `Record<string, number>` | `{}` | **Settings** → Constellation (drag), and box add/remove on Rig (reconciled) | Which star each box sits on, box number as a string key. **Shell-only** |
@@ -138,7 +140,6 @@ One screen, in the order a rig comes up in — a column of HUD tiles in the Dash
 | **Boxes** | The bindings table — add/remove a box, name it, bind it to a board — with a per-row health dot (the sidebar constellation's states and colours), plus the per-box handshake test. Header fact: connected/bound counts |
 | **Utility baseline** | The utility sketch panel: which sketch idle boxes rest on, the per-box baseline state, and **Reflash boxes**. Header fact: the sketch name, or `off` |
 | **Wiring** | A **door**, not a section: a full-width entrance tile in `EntranceTile`'s hover vocabulary (the tile lifts, a trace draws itself across a pin-header motif) opening the editor's own page at `/config/wiring` ([§5.1](#51-the-wiring-page-configwiring)). Fact line: channel count, and whether the wiring is this rig's own or as shipped. It is **full width** because the Strobes door that used to sit beside it moved to the Task landing ([§5.0](#50-why-the-strobe-vocabulary-is-a-task-page)) |
-| **Recording** | The link to Intan RHX ([recording.md](recording.md)): connection state with RHX's controller, version, sample rate and per-port channel counts; a **Connect** button that says what to click in RHX when it cannot; and the three TCP ports. On the Rig tab because it answers *what is this rig connected to*, like the bindings above it. Header fact: connected or not |
 | **Hardware** | The default baud select and the `arduino-cli` path override. Header fact: the baud |
 
 ### 5.0 Why the strobe vocabulary is a Task page
@@ -219,7 +220,7 @@ BoxBinding = { box: number; hardwareId: string | null; label: string; intanDigit
 | Not padded | The list holds only the boxes the user created — a two-box rig has two rows, not six |
 | **"Bound"** | `hardwareId !== null`. This is the single definition of a real box, and what every "is there a box here" check gates on |
 | `label` | Defaults to `Box N`. The per-box nickname |
-| `intanDigitalIn` | Which of the recording controller's digital inputs this box's **sync line** reaches, 1–16, or `null` when the box is not wired for recording ([recording.md §3.2](recording.md#32-wiring-and-binding)). **A binding, not wiring**, for exactly the reason `hardwareId` is: it describes a cable between two instruments, not the box. **Two boxes may not share an input** — every edge would be matched against both strobe streams — so the picker does not offer one another box holds, and both normalizers drop a duplicate (lower box number wins), which leaves the later box reading as unwired and refused by the recording step rather than recording plausibly and wrongly |
+| `intanDigitalIn` | Which of the recording controller's digital inputs this box's **sync line** reaches, 1–16, or `null` when the box is not wired for recording ([recording.md §3.2](recording.md#32-wiring-and-binding)). **A binding, not wiring**, for exactly the reason `hardwareId` is: it describes a cable between two instruments, not the box. **Edited on the Recording tab's Sync inputs table**, not in the Rig table beside the board binding: the far end of this cable is the recording controller, and the person plugging it in is setting up a recording. The value never left `boxes`, so the two screens cannot drift. **Two boxes may not share an input** — every edge would be matched against both strobe streams — so the picker does not offer one another box holds, and both normalizers drop a duplicate (lower box number wins), which leaves the later box reading as unwired and refused by the recording step rather than recording plausibly and wrongly |
 
 > [!NOTE]
 > **Gates are on *bound*, not *detected*.** Detection only downgrades a label. A cohort can be fully configured — animals assigned to boxes 1–6 — before any hardware is connected, and the sidecar validates a cohort's `boxNumber` against the bare 1–6 range only, never against which boards happen to be bound right now. That is what keeps a cohort editable on the other lab machine.

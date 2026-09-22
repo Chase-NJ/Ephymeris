@@ -3,7 +3,6 @@ import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import {
   Anchor,
   ArrowRight,
-  AudioWaveform,
   CircleAlert,
   CircuitBoard,
   Radio,
@@ -21,7 +20,6 @@ import { KindStrip } from "@/components/hardware/KindStrip";
 import { TextInput } from "@/components/common/controls";
 import { Dropdown } from "@/components/common/Dropdown";
 import { HudTile } from "@/components/common/HudTile";
-import { RecordingPanel } from "@/components/config/RecordingPanel";
 import { UtilitySketchPanel } from "@/components/config/UtilitySketchPanel";
 import { SettingRow } from "@/components/settings/SettingRow";
 import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
@@ -30,7 +28,6 @@ import { zodiacById } from "@/lib/constellations/zodiac";
 import { getRig } from "@/lib/hardware/commands";
 import type { RigDocument } from "@/lib/hardware/types";
 import { useUtilityStatus } from "@/lib/hardware/context";
-import { useIntanStatus } from "@/lib/intan/context";
 import { useHandshakeTest } from "@/lib/hardware/useHandshakeTest";
 import { CASCADE, RISE, springPanel, springSnappy } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
@@ -86,7 +83,6 @@ export function Config() {
   const health = useBoxHealth();
   const handshake = useHandshakeTest();
   const utility = useUtilityStatus();
-  const intan = useIntanStatus();
   const wiring = useWiringSummary();
   const [reflashing, setReflashing] = useState(false);
   const connected = status === "connected";
@@ -243,16 +239,6 @@ export function Config() {
                   summary={wiring}
                   onOpen={() => navigate("/config/wiring")}
                 />
-              </motion.div>
-
-              <motion.div variants={RISE}>
-                <HudTile
-                  icon={AudioWaveform}
-                  label="Recording"
-                  status={intan.connected ? "RHX connected" : "RHX not connected"}
-                >
-                  <RecordingPanel />
-                </HudTile>
               </motion.div>
 
               <motion.div variants={RISE}>

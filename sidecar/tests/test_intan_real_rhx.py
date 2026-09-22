@@ -2,7 +2,7 @@
 
 Opt-in, and doubly so: it needs `EPHYMERIS_REAL_RHX=1` AND RHX's command server
 free on 127.0.0.1:5000. RHX accepts ONE command client, so Ephymeris itself
-must be closed (or disconnected on the Rig tab) while this runs:
+must be closed (or disconnected on the Recording tab) while this runs:
 
     set EPHYMERIS_REAL_RHX=1
     pytest tests/test_intan_real_rhx.py -v -s

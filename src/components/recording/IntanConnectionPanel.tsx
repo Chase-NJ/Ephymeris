@@ -1,4 +1,4 @@
-import { PlugZap } from "lucide-react";
+import { PlugZap, Unplug } from "lucide-react";
 import { useState } from "react";
 
 import { Button, NumberInput } from "@/components/common/controls";
@@ -11,15 +11,16 @@ import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 
 /**
- * The Rig tab's Recording tile body (`settings.md` §9): where Intan RHX's three
- * TCP servers listen, and a way to prove the link.
+ * The Recording tab's Connection tile body (`recording.md` §2): the link to
+ * Intan RHX, the one click in RHX that opens it, and where its three TCP
+ * servers listen.
  *
- * On the RIG tab because it answers "what is this rig connected to", like the
- * box→board bindings above it — the per-box digital input lives in that table
- * for the same reason. There is no host field on purpose: Ephymeris only ever
- * talks to an RHX on this machine.
+ * On the RECORDING tab, beside the box→input bindings and the recording
+ * defaults, because the person setting it up is setting up a recording — the
+ * Rig tab is for the boxes themselves. There is no host field on purpose:
+ * Ephymeris only ever talks to an RHX on this machine.
  */
-export function RecordingPanel() {
+export function IntanConnectionPanel() {
   const { settings, update } = useSettings();
   const { client } = useSidecar();
   const intan = useIntanStatus();
@@ -33,11 +34,11 @@ export function RecordingPanel() {
     void update({ intan: { ...ports, [key]: next } });
   }
 
-  async function test() {
+  async function call(cmd: typeof CMD.INTAN_CONNECT | typeof CMD.INTAN_DISCONNECT) {
     setBusy(true);
     setError(null);
     try {
-      await client.call(CMD.INTAN_CONNECT, {});
+      await client.call(cmd, {});
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -49,6 +50,7 @@ export function RecordingPanel() {
     .filter(([, count]) => count > 0)
     .map(([letter, count]) => `${letter}:${count}`)
     .join("  ");
+  const recording = intan.state === "recording" || intan.state === "stopping";
 
   return (
     <>
@@ -58,8 +60,8 @@ export function RecordingPanel() {
           intan.connected
             ? `${intan.controller ?? "Controller"} · RHX ${intan.version ?? "?"} · ${
                 intan.sampleRate ? `${intan.sampleRate / 1000} kS/s` : "—"
-              }${intan.synthetic ? " · synthetic data" : ""}${present ? ` · headstage channels ${present}` : ""}`
-            : "In RHX: Network → Remote TCP Control → Connect, on the Commands tab. That one click is the only manual step — Ephymeris opens RHX's two data sockets itself."
+              }${present ? ` · headstage ${present}` : " · no headstage"}`
+            : "Ephymeris keeps trying every second. RHX has to open its door first — see below."
         }
       >
         <span className="flex items-center gap-2.5">
@@ -70,12 +72,48 @@ export function RecordingPanel() {
             <span aria-hidden className="size-[7px] rounded-full bg-current" />
             {intan.connected ? "connected" : "not connected"}
           </span>
-          <Button variant="outline" disabled={busy || intan.connected} onClick={() => void test()}>
-            <PlugZap size={13} strokeWidth={1.75} />
-            Connect
-          </Button>
+          {intan.connected && intan.synthetic && (
+            <span
+              className="rounded-sm border border-halo px-1.5 py-0.5 font-mono text-[10px] text-static"
+              title="RHX is generating its data — no controller is attached. The sync-line check is off and events are aligned by arrival."
+            >
+              synthetic
+            </span>
+          )}
+          {intan.connected ? (
+            <Button
+              variant="ghost"
+              disabled={busy || recording}
+              title={recording ? "A recording is running; end it first." : "Close Ephymeris' sockets to RHX"}
+              onClick={() => void call(CMD.INTAN_DISCONNECT)}
+            >
+              <Unplug size={13} strokeWidth={1.75} />
+              Disconnect
+            </Button>
+          ) : (
+            <Button variant="outline" disabled={busy} onClick={() => void call(CMD.INTAN_CONNECT)}>
+              <PlugZap size={13} strokeWidth={1.75} />
+              Connect
+            </Button>
+          )}
         </span>
       </SettingRow>
+
+      {!intan.connected && (
+        <ol className="flex flex-col gap-1 border-b border-halo px-4 py-3 text-[12px] leading-relaxed text-static">
+          <Step n={1}>
+            In RHX, open <span className="text-starlight">Network → Remote TCP Control</span>.
+          </Step>
+          <Step n={2}>
+            On the <span className="text-starlight">Commands</span> tab, press{" "}
+            <span className="text-starlight">Connect</span>. That is the only manual step.
+          </Step>
+          <Step n={3}>
+            Ephymeris opens RHX's two data sockets itself. RHX closes its door whenever a client
+            leaves, so the click is needed again after every disconnect.
+          </Step>
+        </ol>
+      )}
 
       {error && (
         <p className="border-b border-halo px-4 py-2.5 text-[12px]" style={{ color: "var(--color-status-error)" }}>
@@ -130,5 +168,14 @@ export function RecordingPanel() {
         </span>
       </SettingRow>
     </>
+  );
+}
+
+function Step({ n, children }: { n: number; children: React.ReactNode }) {
+  return (
+    <li className="flex items-start gap-2.5">
+      <span className="mt-px w-4 shrink-0 font-mono text-[10px] text-static/70">{n}.</span>
+      <span>{children}</span>
+    </li>
   );
 }

@@ -546,3 +546,93 @@ async def test_a_spikescope_can_move_to_another_channel(rig, tmp_path):
             for e in h.events
         )
     )
+
+
+async def test_two_scopes_opening_at_once_plan_one_change_not_two(rig, tmp_path):
+    """`_sync_scoped_channels` reads `_snippets` and acts on it three awaits
+    later, so two overlapping calls both planned against the state from before
+    either ran: the same enable sent twice, and TWO layout switches announced
+    with different markers.
+
+    Harmless when both reach the same layout, which is how it hid. On a
+    SAME-SIZE change it is not: the second `set_layout` overwrites `_switch_at`
+    with the later marker, and blocks between the two -- already written in the
+    new shape -- are dropped as ambiguous rather than parsed.
+
+    Seen against a real RHX on 2026-09-22 (`[] -> ['A-000']` logged twice 5 ms
+    apart) and never against the fake, because the race needs the command
+    round-trips to be slow enough to interleave. Overlapping the calls is what
+    makes it reproducible here.
+    """
+    h = await rig()
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+
+    parser = h.service._waveform
+    assert parser is not None
+    switches: list[tuple[FrameLayout, int | None]] = []
+    announce = parser.set_layout
+
+    def record(layout: FrameLayout, *, from_timestamp: int | None = None) -> None:
+        switches.append((layout, from_timestamp))
+        announce(layout, from_timestamp=from_timestamp)
+
+    parser.set_layout = record  # type: ignore[method-assign]
+
+    await asyncio.gather(
+        h.service.open_scope("spikescope", 1, "A-004", {}),
+        h.service.open_scope("spikescope", 1, "A-004", {}),
+    )
+
+    # The second call re-reads `wanted` inside the lock, finds it already
+    # satisfied, and falls out -- one announced switch, one marker.
+    assert len(switches) == 1
+    assert set(h.service._snippets) == {"A-004"}
+    assert h.fake.params["a-004.tcpdataoutputenabledhigh"] == "true"
+
+
+async def test_a_frame_shape_that_parses_nothing_still_reaches_the_window(rig, tmp_path):
+    """The discarded count exists to expose a frame shape the sidecar has
+    wrong. Such a shape parses as NOTHING, so there are no snippets -- and the
+    payload used to be sent only when there were. The window sat on a stale
+    number showing a quiet channel, which is the one thing the count was there
+    to tell apart from a real one. A change in the count now sends on its own.
+    """
+    h = await rig()
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    await h.service.open_scope("spikescope", 1, "A-004", {})
+
+    # Two amplifier columns where the layout says one: every block is longer
+    # than the parser believes, so no boundary ever confirms.
+    wrong = FrameLayout(amplifier=(("A-004", "high"), ("A-005", "high")), digital_in=True)
+    data = b""
+    for first in range(0, 4 * FRAMES_PER_BLOCK, FRAMES_PER_BLOCK):
+        stamps = tuple(range(first, first + FRAMES_PER_BLOCK))
+        data += pack_waveform_block(
+            wrong,
+            WaveformBlock(
+                stamps,
+                {
+                    ("A-004", "high"): tuple(33000 for _ in stamps),
+                    ("A-005", "high"): tuple(33000 for _ in stamps),
+                },
+                tuple(0 for _ in stamps),
+            ),
+        )
+    await h.fake.push_waveform(data)
+
+    await h.until(
+        lambda: any(
+            e["evt"] == Evt.INTAN_SCOPE_DATA and e["data"]["data"].get("discardedBytes")
+            for e in h.events
+        )
+    )
+    payload = next(
+        e["data"]["data"] for e in h.events
+        if e["evt"] == Evt.INTAN_SCOPE_DATA and e["data"]["data"].get("discardedBytes")
+    )
+    # Nothing parsed: the count is the only thing that moved, and it travelled.
+    assert payload["added"] == []
+    assert payload["streaming"] is False
+    assert payload["discardedBytes"] > 0

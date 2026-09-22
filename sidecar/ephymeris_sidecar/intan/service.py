@@ -207,6 +207,12 @@ class Scope:
     #: isi/psth/probemap: the payload last sent, so an unchanged one -- a PSTH
     #: between trials is unchanged for seconds at a time -- is not re-sent.
     last: Any = None
+    #: spikescope: the discarded-byte count last sent. A GATE, not a record: a
+    #: layout RHX and the sidecar disagree on parses as nothing, so there are
+    #: no snippets to send and the window would sit on a stale count showing a
+    #: quiet channel -- the one case the count exists to expose. A change in it
+    #: is therefore reason enough to send on its own.
+    discarded: int = 0
 
 
 @dataclass
@@ -276,6 +282,18 @@ class IntanService:
         #: spike ring where its coverage restarts.
         self._reopened = False
         self._scopes: dict[str, Scope] = {}
+        #: One scoped-channel sync at a time. `_sync_scoped_channels` reads
+        #: `_snippets` and acts on it three awaits later, so two overlapping
+        #: calls -- a window opening while another opens or changes channel --
+        #: both see the state from before either ran. Observed against a real
+        #: RHX on 2026-09-22: `[] -> ['A-000']` logged twice 5 ms apart, and
+        #: two layout switches announced with different markers. Harmless
+        #: there (both reached the same layout), silent data loss in general:
+        #: the second `set_layout` overwrites `_switch_at` with a LATER
+        #: marker, and a same-size change then drops blocks that were already
+        #: written in the new shape. Invisible against the fake, whose command
+        #: round-trips return at once.
+        self._scoping = asyncio.Lock()
         self._thresholds: dict[str, int] = {}
 
     # --- lifecycle --------------------------------------------------------
@@ -1051,42 +1069,52 @@ class IntanService:
         return name
 
     async def _sync_scoped_channels(self) -> None:
-        """Make RHX's streamed highpass channels match the open SpikeScopes."""
-        wanted = {s.channel for s in self._scopes.values() if s.kind == "spikescope" and s.channel}
-        current = set(self._snippets)
-        if wanted == current:
-            return
-        if len(wanted) > MAX_SCOPED_CHANNELS:
-            raise IntanNotReady(
-                f"At most {MAX_SCOPED_CHANNELS} channels can stream to a SpikeScope at once — "
-                "more and TCP falls behind acquisition."
-            )
-        commands = [f"set {n.lower()}.tcpdataoutputenabledhigh true" for n in sorted(wanted - current)]
-        commands += [f"set {n.lower()}.tcpdataoutputenabledhigh false" for n in sorted(current - wanted)]
-        await self._client.send(commands)
-        log.info("scoped highpass channels: %s -> %s", sorted(current), sorted(wanted))
-        # Read AFTER the change is acknowledged: a block stamped at or past
-        # this was written in the new shape. It is what a same-size change
-        # (one channel swapped for another) is switched on, since the framing
-        # cannot tell those apart -- `streams.py`, module doc.
-        marker: int | None = None
-        if self._waveform is not None:
-            try:
-                marker = int(float(await self._client.get("currenttimestamp")))
-            except (RhxError, ValueError):
-                marker = None
-        rate = self._recording.sample_rate if self._recording else 30000
-        for name in wanted - current:
-            self._snippets[name] = _Snippets(ring=WaveformRing(capacity=2 * rate))
-            try:
-                self._thresholds[name] = int(float(await self._client.get(f"{name.lower()}.spikethresholdmicrovolts")))
-            except (RhxError, ValueError):
-                pass
-        for name in current - wanted:
-            self._snippets.pop(name, None)
-        if self._waveform is not None:
-            log.info("waveform layout switches at sample %s", marker)
-            self._waveform.set_layout(self._layout(), from_timestamp=marker)
+        """Make RHX's streamed highpass channels match the open SpikeScopes.
+
+        SERIALIZED, and the whole body is inside the lock on purpose: both
+        `wanted` and `current` must be read after any call already in flight
+        has finished mutating `_snippets`, or the second caller plans its
+        change against a world that no longer exists (see `_scoping`). Every
+        caller has already updated `_scopes` before getting here, so a
+        duplicate call re-reads `wanted`, finds it equal to `current`, and
+        falls out as the no-op it should always have been.
+        """
+        async with self._scoping:
+            wanted = {s.channel for s in self._scopes.values() if s.kind == "spikescope" and s.channel}
+            current = set(self._snippets)
+            if wanted == current:
+                return
+            if len(wanted) > MAX_SCOPED_CHANNELS:
+                raise IntanNotReady(
+                    f"At most {MAX_SCOPED_CHANNELS} channels can stream to a SpikeScope at once — "
+                    "more and TCP falls behind acquisition."
+                )
+            commands = [f"set {n.lower()}.tcpdataoutputenabledhigh true" for n in sorted(wanted - current)]
+            commands += [f"set {n.lower()}.tcpdataoutputenabledhigh false" for n in sorted(current - wanted)]
+            await self._client.send(commands)
+            log.info("scoped highpass channels: %s -> %s", sorted(current), sorted(wanted))
+            # Read AFTER the change is acknowledged: a block stamped at or past
+            # this was written in the new shape. It is what a same-size change
+            # (one channel swapped for another) is switched on, since the framing
+            # cannot tell those apart -- `streams.py`, module doc.
+            marker: int | None = None
+            if self._waveform is not None:
+                try:
+                    marker = int(float(await self._client.get("currenttimestamp")))
+                except (RhxError, ValueError):
+                    marker = None
+            rate = self._recording.sample_rate if self._recording else 30000
+            for name in wanted - current:
+                self._snippets[name] = _Snippets(ring=WaveformRing(capacity=2 * rate))
+                try:
+                    self._thresholds[name] = int(float(await self._client.get(f"{name.lower()}.spikethresholdmicrovolts")))
+                except (RhxError, ValueError):
+                    pass
+            for name in current - wanted:
+                self._snippets.pop(name, None)
+            if self._waveform is not None:
+                log.info("waveform layout switches at sample %s", marker)
+                self._waveform.set_layout(self._layout(), from_timestamp=marker)
 
     async def set_threshold(self, channel: str, microvolts: int) -> int:
         name = channel.upper()
@@ -1150,12 +1178,19 @@ class IntanService:
             added = [] if store is None else [c for c in store.cut if c[0] > scope.sent]
             reset, scope.reset = scope.reset, False
             streaming = store is not None and store.ring.newest is not None
-            if not added and not reset and streaming == scope.streaming:
+            parser = self._waveform
+            discarded = 0 if parser is None else parser.discarded
+            if (
+                not added
+                and not reset
+                and streaming == scope.streaming
+                and discarded == scope.discarded
+            ):
                 return None
             if added:
                 scope.sent = added[-1][0]
             scope.streaming = streaming
-            parser = self._waveform
+            scope.discarded = discarded
             return {
                 "reset": reset,
                 "added": [{"sample": sample, "microvolts": uv} for _, sample, uv in added],
@@ -1164,10 +1199,15 @@ class IntanService:
                 "postMs": SNIPPET_POST_MS,
                 "thresholdMicrovolts": self._thresholds.get(scope.channel or ""),
                 "streaming": streaming,
-                # Bytes the parser threw away hunting for a block boundary. A
-                # number that climbs is a frame shape RHX and this sidecar
-                # disagree on -- shown in the window, so a report says so.
-                "discardedBytes": 0 if parser is None else parser.discarded,
+                # Bytes the parser threw away hunting for a block boundary.
+                # CUMULATIVE for the recording and never reset, so it is not
+                # an error level: a deliberate layout change (opening a scope,
+                # swapping its channel) pays a one-off resync of whatever was
+                # in flight, and that is a healthy stream's normal cost. Only
+                # a number that KEEPS climbing is a frame shape RHX and this
+                # sidecar disagree on, which is the distinction the window
+                # draws before it says anything.
+                "discardedBytes": discarded,
             }
         if scope.kind == "isi":
             ring = self._spikes.get(scope.channel or "")

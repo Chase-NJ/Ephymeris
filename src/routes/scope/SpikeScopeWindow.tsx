@@ -22,6 +22,18 @@ import { monoFont, palette, useCanvas } from "./useCanvas";
 const GRAB_PX = 7;
 /** Snippets held client-side — the largest count RHX's own scope offers. */
 const KEEP = 500;
+/**
+ * How long the discarded-byte count must go on rising before it is called a
+ * mismatch, in ms.
+ *
+ * The count is cumulative for the whole recording and is never reset, so a
+ * nonzero value is not a fault: every deliberate layout change — opening this
+ * window, swapping its channel — resyncs the parser and throws away whatever
+ * was in flight. That is one burst, then silence. A real disagreement never
+ * stops. Waiting out a burst is what separates the two, and it is why the
+ * banner is spelled from `climbing` rather than from `discarded > 0`.
+ */
+const DISCARD_GRACE_MS = 2000;
 
 /**
  * Spike Scope: the last N threshold crossings on one channel, overlaid and
@@ -64,11 +76,14 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
   const [streaming, setStreaming] = useState(false);
   const [total, setTotal] = useState(0);
   const [discarded, setDiscarded] = useState(0);
+  const [climbing, setClimbing] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
   const [nearLine, setNearLine] = useState(false);
   const [dragged, setDragged] = useState(false);
 
   const snippets = useRef<SpikeSnippet[]>([]);
+  /** Last count seen, and when this run of rises began (0 = not rising). */
+  const discards = useRef({ seen: 0, risingSince: 0 });
   const meta = useRef({ sampleRate: ctx.sampleRate, preMs: 2 });
   const view = useRef({ scaleUv, timeScaleMs, shown, threshold });
   view.current = { scaleUv, timeScaleMs, shown, threshold };
@@ -153,7 +168,21 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
       }
       meta.current = { sampleRate: data.sampleRate, preMs: data.preMs };
       setStreaming(data.streaming);
-      setDiscarded(data.discardedBytes ?? 0);
+      // A rise that outlasts the grace window is a mismatch; one that stops is
+      // the resync a deliberate layout change is entitled to. The sidecar
+      // sends on a change in this count alone, so a layout that parses NOTHING
+      // — no snippets, nothing else to report — still gets us here.
+      const bytes = data.discardedBytes ?? 0;
+      const runs = discards.current;
+      if (bytes > runs.seen) {
+        if (runs.risingSince === 0) runs.risingSince = performance.now();
+        setClimbing(performance.now() - runs.risingSince >= DISCARD_GRACE_MS);
+      } else {
+        runs.risingSince = 0;
+        setClimbing(false);
+      }
+      runs.seen = bytes;
+      setDiscarded(bytes);
       if (dragging.current === null) setThreshold(data.thresholdMicrovolts);
       redraw();
     },
@@ -227,8 +256,9 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
             <span className="text-static/70">drag the line to set RHX's threshold</span>
           )}
           {/* A frame shape RHX and the sidecar disagree on parses as nothing
-              and looks like a quiet channel; the count is the tell. */}
-          {discarded > 0 && (
+              and looks like a quiet channel; the count is the tell. Only while
+              it is STILL rising, though — see DISCARD_GRACE_MS. */}
+          {climbing && (
             <span style={{ color: "var(--color-status-warning)" }}>
               stream shape mismatch · {discarded} bytes discarded
             </span>

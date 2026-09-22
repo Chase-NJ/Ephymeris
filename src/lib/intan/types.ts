@@ -40,6 +40,11 @@ export interface SpikeScopePayload {
   thresholdMicrovolts: number | null;
   /** False until RHX is actually streaming this channel's waveform. */
   streaming: boolean;
+  /**
+   * Bytes the sidecar's parser has thrown away hunting for a block boundary.
+   * Climbing means RHX and the sidecar disagree on the frame's shape.
+   */
+  discardedBytes?: number;
 }
 
 export interface IsiPayload {

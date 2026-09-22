@@ -63,6 +63,7 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
   const [threshold, setThreshold] = useState<number | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [total, setTotal] = useState(0);
+  const [discarded, setDiscarded] = useState(0);
   const [commitError, setCommitError] = useState<string | null>(null);
 
   const snippets = useRef<SpikeSnippet[]>([]);
@@ -133,6 +134,7 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
       }
       meta.current = { sampleRate: data.sampleRate, preMs: data.preMs };
       setStreaming(data.streaming);
+      setDiscarded(data.discardedBytes ?? 0);
       if (dragging.current === null) setThreshold(data.thresholdMicrovolts);
       redraw();
     },
@@ -194,6 +196,14 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
           <span>{total} spikes</span>
           <span>threshold {threshold === null ? "—" : `${threshold} µV`}</span>
           {!streaming && <span style={{ color: "var(--color-status-warning)" }}>waiting for RHX to stream this channel</span>}
+          {streaming && total === 0 && <span>streaming · no threshold crossings yet</span>}
+          {/* A frame shape RHX and the sidecar disagree on parses as nothing
+              and looks like a quiet channel; the count is the tell. */}
+          {discarded > 0 && (
+            <span style={{ color: "var(--color-status-warning)" }}>
+              stream shape mismatch · {discarded} bytes discarded
+            </span>
+          )}
           <span className="ml-auto">±{scaleUv / 2} µV · {timeScaleMs} ms</span>
         </>
       }

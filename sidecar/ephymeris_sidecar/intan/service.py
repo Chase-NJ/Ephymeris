@@ -200,6 +200,10 @@ class Scope:
     #: spikescope: sequence number of the last snippet sent.
     sent: int = 0
     reset: bool = True
+    #: spikescope: the `streaming` flag last sent. A flip is sent on its own,
+    #: or a quiet channel -- waveform arriving, no crossing yet -- would read
+    #: as "waiting for RHX" until its first spike.
+    streaming: bool = False
     #: isi/psth/probemap: the payload last sent, so an unchanged one -- a PSTH
     #: between trials is unchanged for seconds at a time -- is not re-sent.
     last: Any = None
@@ -1023,7 +1027,7 @@ class IntanService:
         if channel is not None and channel != scope.channel:
             previous = scope.channel
             scope.channel = self._check_channel(scope.box, channel, required=True)
-            scope.sent, scope.reset, scope.last = 0, True, None
+            scope.sent, scope.reset, scope.last, scope.streaming = 0, True, None, False
             try:
                 await self._sync_scoped_channels()
             except Exception:
@@ -1060,6 +1064,7 @@ class IntanService:
         commands = [f"set {n.lower()}.tcpdataoutputenabledhigh true" for n in sorted(wanted - current)]
         commands += [f"set {n.lower()}.tcpdataoutputenabledhigh false" for n in sorted(current - wanted)]
         await self._client.send(commands)
+        log.info("scoped highpass channels: %s -> %s", sorted(current), sorted(wanted))
         # Read AFTER the change is acknowledged: a block stamped at or past
         # this was written in the new shape. It is what a same-size change
         # (one channel swapped for another) is switched on, since the framing
@@ -1080,6 +1085,7 @@ class IntanService:
         for name in current - wanted:
             self._snippets.pop(name, None)
         if self._waveform is not None:
+            log.info("waveform layout switches at sample %s", marker)
             self._waveform.set_layout(self._layout(), from_timestamp=marker)
 
     async def set_threshold(self, channel: str, microvolts: int) -> int:
@@ -1143,10 +1149,13 @@ class IntanService:
             store = self._snippets.get(scope.channel or "")
             added = [] if store is None else [c for c in store.cut if c[0] > scope.sent]
             reset, scope.reset = scope.reset, False
-            if not added and not reset:
+            streaming = store is not None and store.ring.newest is not None
+            if not added and not reset and streaming == scope.streaming:
                 return None
             if added:
                 scope.sent = added[-1][0]
+            scope.streaming = streaming
+            parser = self._waveform
             return {
                 "reset": reset,
                 "added": [{"sample": sample, "microvolts": uv} for _, sample, uv in added],
@@ -1154,7 +1163,11 @@ class IntanService:
                 "preMs": SNIPPET_PRE_MS,
                 "postMs": SNIPPET_POST_MS,
                 "thresholdMicrovolts": self._thresholds.get(scope.channel or ""),
-                "streaming": store is not None and store.ring.newest is not None,
+                "streaming": streaming,
+                # Bytes the parser threw away hunting for a block boundary. A
+                # number that climbs is a frame shape RHX and this sidecar
+                # disagree on -- shown in the window, so a report says so.
+                "discardedBytes": 0 if parser is None else parser.discarded,
             }
         if scope.kind == "isi":
             ring = self._spikes.get(scope.channel or "")

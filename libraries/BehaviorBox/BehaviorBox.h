@@ -226,12 +226,68 @@ inline void generateTrials(const TrialType *trials[], int numTrials, int blockSi
     Emit one strobe in the canonical "%03d\t<ms>" form the app's IN_SESSION
     parser accepts (^\d{1,3}\t\d+$). Each sketch keeps a 1-line `recordEvent`
     wrapper bound to its own clock, so existing call sites stay unchanged. */
+/*  The sync pulse (BoxPins.h, BOX_PIN_SYNC_OUT) brackets the print, in this
+    order and for these reasons:
+
+      1. wait out the LOW gap FIRST, so the wait lands before the timestamp and
+         the edge rather than between them;
+      2. stamp, then drive HIGH at once -- the rising edge is what the recording
+         controller timestamps, so nothing may sit between the two;
+      3. print while the line is high, which spends most of the pulse width on
+         work that had to happen anyway;
+      4. hold out the remainder, then LOW.
+
+    delayMicroseconds() on a computed remainder rather than a micros() spin:
+    the host shim's clock only advances when told to, and a spin would hang it. */
+/*  syncGap / syncRise / syncFall are the three moments, split out so a sketch
+    that prints its own strobes (GRGL_Sim) pulses exactly as emitStrobe does
+    rather than restating it. All three compile to nothing without a sync pin. */
+inline unsigned long &syncLastFallMicros()
+{
+  static unsigned long lastFall = 0;
+  return lastFall;
+}
+
+inline void syncGap()
+{
+#if BOX_PIN_SYNC_OUT >= 0
+  unsigned long sinceFall = micros() - syncLastFallMicros();
+  if (sinceFall < (unsigned long)BOX_SYNC_GAP_US)
+    delayMicroseconds((unsigned int)(BOX_SYNC_GAP_US - sinceFall));
+#endif
+}
+
+/* Returns micros() at the rising edge, for syncFall() to measure against. */
+inline unsigned long syncRise()
+{
+#if BOX_PIN_SYNC_OUT >= 0
+  digitalWrite(syncOut, HIGH);
+#endif
+  return micros();
+}
+
+inline void syncFall(unsigned long rose)
+{
+#if BOX_PIN_SYNC_OUT >= 0
+  unsigned long high = micros() - rose;
+  if (high < (unsigned long)BOX_SYNC_PULSE_US)
+    delayMicroseconds((unsigned int)(BOX_SYNC_PULSE_US - high));
+  digitalWrite(syncOut, LOW);
+  syncLastFallMicros() = micros();
+#else
+  (void)rose;
+#endif
+}
+
 inline void emitStrobe(TrialClock &clock, int eventCode)
 {
+  syncGap();
   unsigned long timestamp = clock.elapsed();
+  unsigned long rose = syncRise();
   char buf[16];
-  snprintf(buf, sizeof(buf), "%03d\t%lu", eventCode, timestamp);
+  snprintf(buf, sizeof(buf), "%03d	%lu", eventCode, timestamp);
   Serial.println(buf);
+  syncFall(rose);
 }
 
 /*  bool readLineInto(char* dst, size_t cap) ->
@@ -360,6 +416,11 @@ inline void shutdownHardware()
     digitalWrite(Fluids[i], LOW);
   digitalWrite(trialLight, LOW);
   digitalWrite(vac, LOW);
+#if BOX_PIN_SYNC_OUT >= 0
+  // Held LOW rather than left alone: a floating line on a recording
+  // controller's digital input reads as noise, i.e. as events.
+  digitalWrite(syncOut, LOW);
+#endif
 }
 
 /* Configure every box pin (IR inputs, solenoid + light + vac outputs) and land
@@ -375,6 +436,9 @@ inline void initBoxHardware()
   pinMode(rightWell, INPUT_PULLUP);
   pinMode(trialLight, OUTPUT);
   pinMode(vac, OUTPUT);
+#if BOX_PIN_SYNC_OUT >= 0
+  pinMode(syncOut, OUTPUT);
+#endif
   shutdownHardware();
 }
 

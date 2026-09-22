@@ -346,6 +346,34 @@ int main() {
     assert(p.odorPokeHold==500 && p.fluidWellPoll==2000);        // holds, via row 0
     assert(p.trialSeed==2147483646UL); }
 
+  // --- emitStrobe: one sync pulse per strobe, and never two fused into one ---
+  //
+  // The recording controller sees only edges, and the host matches the Nth edge
+  // to the Nth serial strobe. So the two properties that matter are that every
+  // strobe rises exactly once, and that back-to-back strobes are separated by a
+  // real LOW -- a fused pair is one edge, and every later event is then matched
+  // one strobe late, which looks like data rather than like a failure.
+  { TrialClock clock; clock.beginSession();
+    _pinLogCount = 0;
+    emitStrobe(clock, BF_END_SESSION);
+    emitStrobe(clock, BF_END_SESSION);   // immediately: the worst case
+    assert(_pinLogCount == 4);
+    for (int i = 0; i < 4; i++) assert(_pinLog[i].pin == syncOut);
+    assert(_pinLog[0].level == HIGH && _pinLog[1].level == LOW);
+    assert(_pinLog[2].level == HIGH && _pinLog[3].level == LOW);
+    assert(_pinLog[1].us - _pinLog[0].us >= (unsigned long)BOX_SYNC_PULSE_US);  // width
+    assert(_pinLog[2].us - _pinLog[1].us >= (unsigned long)BOX_SYNC_GAP_US);    // the LOW between
+    assert(_pinLog[3].us - _pinLog[2].us >= (unsigned long)BOX_SYNC_PULSE_US); }
+
+  // initBoxHardware() claims the line and parks it LOW: a floating input on the
+  // controller reads as noise, i.e. as events.
+  { _pinLogCount = 0;
+    initBoxHardware();
+    bool parked = false;
+    for (int i = 0; i < _pinLogCount; i++)
+      if (_pinLog[i].pin == syncOut) { assert(_pinLog[i].level == LOW); parked = true; }
+    assert(parked); }
+
   printf("ALL HEADER LOGIC TESTS PASSED\n");
   return 0;
 }

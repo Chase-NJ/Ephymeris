@@ -225,10 +225,15 @@ void actuate(int code)
 void emit(int code, int gap)
 {
   actuate(code);
+  // Pulsed exactly as emitStrobe() pulses (BehaviorBox.h), so the sync line and
+  // the recording controller's digital input can be proven with no animal.
+  syncGap();
   unsigned long ts = millis() - sessionStart;
+  unsigned long rose = syncRise();
   char buf[16];
   sprintf(buf, "%03d\t%lu", code, ts);
   Serial.println(buf);
+  syncFall(rose);
   int d = gap / SIM_SPEEDUP;
   if (d > 0)
     delay(d);

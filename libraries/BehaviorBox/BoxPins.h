@@ -47,6 +47,35 @@
 #define BOX_PIN_VACUUM 40
 #endif
 
+/* ---- Sync out: the electrical twin of every strobe ------------------------ */
+/*  One pulse per emitStrobe(), into one digital input of the recording
+    controller (Intan DIGITAL-IN-n; which n is a binding in Ephymeris, not a
+    property of this box). The RISING EDGE is the event's true time on the
+    recording clock; what the event WAS is the serial line, matched by order --
+    the Nth edge is the Nth strobe. A single line cannot carry the code, and
+    eight lines per box would leave room for two boxes on a 16-input controller.
+
+    -1 means "this box has no sync line" and compiles the pulse out entirely.
+    Ephymeris generates -1 when the rig's wiring declares no `sync` channel.
+
+    49 is free on the box as built and sits beside the fluid bank. NOT 13: the
+    bootloader blinks it on every reset, which the recording would log as
+    events. NOT 0/1 (serial) or 50-53 (SPI). */
+#ifndef BOX_PIN_SYNC_OUT
+#define BOX_PIN_SYNC_OUT 49
+#endif
+/*  Pulse width and the minimum LOW time before the next pulse, in microseconds.
+    500 us is 15 samples at 30 kS/s and 10 at 20 kS/s. The gap exists because
+    two events can be emitted back to back, and two pulses with no LOW between
+    them are ONE edge -- every later event would then be matched one strobe
+    late, which reads as plausible data rather than as a failure. */
+#ifndef BOX_SYNC_PULSE_US
+#define BOX_SYNC_PULSE_US 500
+#endif
+#ifndef BOX_SYNC_GAP_US
+#define BOX_SYNC_GAP_US 200
+#endif
+
 /* ---- Solenoid banks ------------------------------------------------------ */
 /*  NUM_ODORS/NUM_FLUIDS are the SIZE of the tables below and are not a task
     setting -- a box has the lines it has. A different box generation overrides
@@ -75,6 +104,7 @@ const int leftWell  = BOX_PIN_LEFT_WELL;
 
 const int trialLight = BOX_PIN_TRIAL_LIGHT;
 const int vac        = BOX_PIN_VACUUM;
+const int syncOut    = BOX_PIN_SYNC_OUT;
 
 const int NUM_ODORS  = BOX_NUM_ODORS;
 const int NUM_FLUIDS = BOX_NUM_FLUIDS;

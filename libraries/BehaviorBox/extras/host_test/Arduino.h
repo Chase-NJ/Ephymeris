@@ -13,9 +13,13 @@
 // ---- timing ----
 static unsigned long _ms = 0;
 inline unsigned long millis() { return _ms; }
-inline unsigned long micros() { return _ms * 1000UL; }
+// micros() is _ms plus whatever delayMicroseconds() has been asked to wait, so
+// the sync pulse's width and gap are observable. Nothing else advances it: a
+// loop that spins on micros() would hang here, which is why emitStrobe doesn't.
+static unsigned long _us = 0;
+inline unsigned long micros() { return _ms * 1000UL + _us; }
 inline void delay(unsigned long) {}
-inline void delayMicroseconds(unsigned long) {}
+inline void delayMicroseconds(unsigned long us) { _us += us; }
 
 // ---- random ----
 inline long _bb_random(long lo, long hi) { return lo + (long)(rand() % (hi - lo)); }
@@ -39,7 +43,16 @@ template <class T> T _bb_max(T a, T b) { return a > b ? a : b; }
 #define OUTPUT 1
 #define INPUT_PULLUP 2
 inline void pinMode(int, int) {}
-inline void digitalWrite(int, int) {}
+// Every write is logged with the micros() it happened at, so a test can read
+// back the edges a pin actually saw.
+struct _PinWrite { int pin; int level; unsigned long us; };
+static _PinWrite _pinLog[256];
+static int _pinLogCount = 0;
+inline void digitalWrite(int pin, int level)
+{
+  if (_pinLogCount < 256)
+    _pinLog[_pinLogCount++] = {pin, level, micros()};
+}
 inline int digitalRead(int) { return HIGH; }
 
 // ---- Serial ----

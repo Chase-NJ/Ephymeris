@@ -32,11 +32,14 @@ def test_seeds_do_not_repeat_across_a_run_of_draws() -> None:
 
     ``micros()``-at-START, the scheme this replaced, fails exactly here: its
     reachable range is a few hundred values clustered around one boot latency,
-    so a few thousand draws from it would collide constantly. A CSPRNG over 2^31
-    should produce none at this scale.
+    so a thousand draws from it would collide by the hundreds. A CSPRNG over
+    2^31 collides about once in 4000 such runs by the birthday bound
+    (n^2 / 2N with n = 1000), and the budget of ONE repeat pushes a false
+    failure out past one in ten million — the 5000-draw, zero-collision
+    version of this assertion failed on a green suite about once in 170 runs.
     """
-    draws = [new_trial_seed() for _ in range(5000)]
-    assert len(set(draws)) == len(draws)
+    draws = [new_trial_seed() for _ in range(1000)]
+    assert len(draws) - len(set(draws)) <= 1
 
 
 def test_consecutive_draws_are_not_adjacent() -> None:

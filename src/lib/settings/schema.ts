@@ -11,6 +11,10 @@
  */
 
 import { zodiacById } from "@/lib/constellations/zodiac";
+import {
+  DEFAULT_RECORDING_DEFAULTS,
+  normalizeRecordingDefaults,
+} from "@/lib/intan/defaults";
 import type {
   BoxBinding,
   EphymerisSettings,
@@ -28,6 +32,7 @@ export type {
   SkippedEntry,
   SketchDiscovery,
 } from "@/lib/ws/protocol";
+export type { RecordingDefaults } from "@/lib/intan/defaults";
 
 /** Hardware ceiling: six Mega2560s (`dashboard.md` §5). */
 export const BOX_COUNT = 6;
@@ -88,7 +93,9 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
   // No boxes until the user adds them.
   boxes: [],
   intan: { ...DEFAULT_INTAN },
-  recordingDefaults: {},
+  // Shell-only and fully shaped client-side (`lib/intan/defaults.ts`): the
+  // sidecar never reads it, so the wire carries it as a loose record.
+  recordingDefaults: { ...DEFAULT_RECORDING_DEFAULTS },
   reducedMotion: false,
   // Null = the legacy fixed layout, until the user picks a zodiac (§4.6).
   constellation: null,
@@ -232,10 +239,7 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
     defaultBaud: typeof baud === "number" && baud > 0 ? baud : DEFAULT_BAUD,
     boxes: normalizeBoxes(value["boxes"]),
     intan: normalizeIntan(value["intan"]),
-    recordingDefaults:
-      typeof value["recordingDefaults"] === "object" && value["recordingDefaults"] !== null
-        ? { ...(value["recordingDefaults"] as Record<string, unknown>) }
-        : {},
+    recordingDefaults: normalizeRecordingDefaults(value["recordingDefaults"]),
     reducedMotion: value["reducedMotion"] === true,
     // Validated against the catalogue so a corrupt store can never select a
     // nonexistent map — it degrades to the legacy layout instead.

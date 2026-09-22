@@ -1,11 +1,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useReducedMotion } from "framer-motion";
 import { Minus, X } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Dropdown } from "@/components/common/Dropdown";
 import { useIntanStatus } from "@/lib/intan/context";
 import { channelNumber } from "@/lib/intan/scopeMath";
-import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -19,6 +19,12 @@ import { useSidecar } from "@/lib/ws/context";
  * thing a window parked on a second monitor needs to say at a glance: live,
  * or frozen. Ion while recording, static otherwise, and the only motion is
  * the opacity pulse the theme already uses.
+ *
+ * NO `useSettings` IN HERE, or in anything a scope window renders. A pop-up
+ * mounts no `SettingsProvider` on purpose (`main.tsx`), and the app's own
+ * reduced-motion hook reads settings — it threw, and every window opened
+ * blank. Only the OS preference is honoured here; the app toggle cannot
+ * reach a window that has no settings.
  */
 export function ScopeFrame({
   title,
@@ -38,7 +44,7 @@ export function ScopeFrame({
 }) {
   const { status: link } = useSidecar();
   const intan = useIntanStatus();
-  const reduceMotion = useReduceMotion();
+  const reduceMotion = Boolean(useReducedMotion());
   const frozen =
     link !== "connected"
       ? "Reconnecting to Ephymeris…"

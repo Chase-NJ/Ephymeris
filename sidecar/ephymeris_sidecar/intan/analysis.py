@@ -8,11 +8,14 @@ rate RHX reports. The Arduino's milliseconds appear in exactly one place, the
 
 from __future__ import annotations
 
+from array import array
 from bisect import bisect_left, bisect_right
 from collections import deque
 from dataclasses import dataclass
 from functools import reduce
+from math import ceil
 from operator import and_, or_
+from typing import Sequence
 
 
 # --------------------------------------------------------------------------- #
@@ -191,36 +194,76 @@ class EdgeMatcher:
 
 
 class SpikeRing:
-    """One channel's recent spike times, in samples, oldest first."""
+    """One channel's recent spike times, in samples, oldest first.
 
-    def __init__(self, capacity: int = 20000) -> None:
-        self._times: deque[int] = deque(maxlen=capacity)
+    A preallocated int64 array, eight bytes a spike: a deque of Python ints
+    costs five times that, and a noisy 128-channel probe would hold a hundred
+    megabytes of timestamps by the end of a session.
+
+    `complete_since` is the sample from which the ring holds EVERY spike the
+    socket delivered. It moves when the oldest spike is evicted and when the
+    stream is reopened after a gap, and it is what lets a PSTH refuse a trial
+    that reaches back past it -- instead of drawing that trial with whichever
+    of its spikes happen to remain, which under-counts the oldest trials and
+    looks like a unit that has since become responsive.
+    """
+
+    def __init__(self, capacity: int = 50_000) -> None:
+        self._buf = array("q", bytes(8 * capacity))
+        self._capacity = capacity
+        self._head = 0
+        self._n = 0
+        self.complete_since = 0
 
     def add(self, sample: int) -> None:
-        self._times.append(sample)
+        if self._n == self._capacity:
+            evicted = self._buf[self._head]
+            self._head = (self._head + 1) % self._capacity
+            if evicted + 1 > self.complete_since:
+                self.complete_since = evicted + 1
+        else:
+            self._n += 1
+        self._buf[(self._head + self._n - 1) % self._capacity] = sample
+
+    def reopened(self, sample: int) -> None:
+        """The stream came back at `sample`; whatever fired while it was down
+        was never delivered, so nothing before this is complete."""
+        if sample > self.complete_since:
+            self.complete_since = sample
 
     def __len__(self) -> int:
-        return len(self._times)
+        return self._n
 
-    def snapshot(self) -> list[int]:
-        return list(self._times)
+    def snapshot(self) -> array:
+        """Oldest first. An `array`, not a list: `bisect` and slicing work on
+        it, and it is one memcpy rather than fifty thousand boxed ints."""
+        end = self._head + self._n
+        if end <= self._capacity:
+            return self._buf[self._head : end]
+        return self._buf[self._head :] + self._buf[: end - self._capacity]
 
     def count_since(self, sample: int) -> int:
-        times = self._times
+        buf, cap = self._buf, self._capacity
         n = 0
-        for t in reversed(times):
-            if t < sample:
-                break
+        last = self._head + self._n - 1
+        while n < self._n and buf[(last - n) % cap] >= sample:
             n += 1
         return n
 
 
-def isi_histogram(spikes: list[int], sample_rate: float, span_ms: float, bin_ms: float) -> dict:
+def _bin_count(span_ms: float, bin_ms: float) -> int:
+    """Bins covering [0, span): the last one may be PARTIAL. Rounding instead
+    would leave 40-50 ms of a 50 ms span at 20 ms bins uncounted -- shown as
+    "beyond the span" while the axis says 50."""
+    return max(1, int(ceil(span_ms / bin_ms - 1e-9)))
+
+
+def isi_histogram(spikes: Sequence[int], sample_rate: float, span_ms: float, bin_ms: float) -> dict:
     """Inter-spike intervals, binned over [0, span). Intervals at or past the
     span are counted in `beyond`, not dropped silently -- a histogram that
     looks complete while discarding most of its intervals is how a slow unit
     gets read as a quiet one."""
-    bins = max(1, int(round(span_ms / bin_ms)))
+    bins = _bin_count(span_ms, bin_ms)
     counts = [0] * bins
     beyond = 0
     per_ms = sample_rate / 1000.0
@@ -237,6 +280,7 @@ def isi_histogram(spikes: list[int], sample_rate: float, span_ms: float, bin_ms:
             beyond += 1
     n = max(0, len(spikes) - 1)
     return {
+        "spanMs": span_ms,
         "binMs": bin_ms,
         "counts": counts,
         "beyond": beyond,
@@ -246,26 +290,34 @@ def isi_histogram(spikes: list[int], sample_rate: float, span_ms: float, bin_ms:
 
 
 def psth(
-    spikes: list[int],
-    triggers: list[int],
+    spikes: Sequence[int],
+    triggers: Sequence[int],
     sample_rate: float,
     pre_ms: float,
     post_ms: float,
     bin_ms: float,
     max_trials: int,
     newest_sample: int,
+    complete_since: int = 0,
 ) -> dict:
     """Spikes around each trigger: a raster per trial and the pooled histogram.
 
     Only COMPLETE trials are counted -- ones whose post-window has fully
-    elapsed by `newest_sample`. A trial still filling would contribute its
-    early bins and not its late ones, so the histogram's right side would sag
-    in proportion to how recently the last trigger fired.
+    elapsed by `newest_sample`, AND whose pre-window begins no earlier than
+    `complete_since`, the sample from which every spike is still held. A trial
+    still filling would contribute its early bins and not its late ones, so
+    the histogram's right side would sag in proportion to how recently the
+    last trigger fired; a trial older than the spike ring would contribute
+    whichever of its spikes survived, which reads as a unit that fired less
+    back then.
     """
     per_ms = sample_rate / 1000.0
     pre, post = pre_ms * per_ms, post_ms * per_ms
-    complete = [t for t in triggers if t + post <= newest_sample][-max_trials:]
-    bins = max(1, int(round((pre_ms + post_ms) / bin_ms)))
+    complete = [
+        t for t in triggers if t + post <= newest_sample and t - pre >= complete_since
+    ][-max_trials:]
+    span_ms = pre_ms + post_ms
+    bins = _bin_count(span_ms, bin_ms)
     counts = [0] * bins
     rasters: list[list[float]] = []
     for trigger in complete:
@@ -280,14 +332,17 @@ def psth(
                 counts[index] += 1
         rasters.append(row)
     trials = len(complete)
-    scale = (1000.0 / bin_ms / trials) if trials else 0.0
+    # A partial last bin is normalised by ITS width, or its rate reads low.
+    widths = [bin_ms] * bins
+    widths[-1] = span_ms - bin_ms * (bins - 1)
+    rate = [round(c * 1000.0 / w / trials, 3) if trials else 0.0 for c, w in zip(counts, widths)]
     return {
         "preMs": pre_ms,
         "postMs": post_ms,
         "binMs": bin_ms,
         "trials": trials,
         "counts": counts,
-        "rateHz": [round(c * scale, 3) for c in counts],
+        "rateHz": rate,
         "rasters": rasters,
     }
 

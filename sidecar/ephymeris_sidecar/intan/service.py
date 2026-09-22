@@ -23,6 +23,16 @@ none of that may stall or fail a behavior session. Concretely --
 STROBES ARRIVE FROM ANOTHER THREAD. `SessionRunner._on_strobe` runs on a port's
 session thread; `on_strobe` hops to the loop and everything else here is
 loop-only, so there are no locks.
+
+SYNTHETIC DATA HAS NO SYNC LINE. RHX's demo mode (`synthetic`, no controller
+attached) generates its own digital inputs, which no box's pin drives, so the
+edge matcher would report every real strobe missed and every generated edge
+stray -- a wiring diagnosis of wiring that does not exist. In synthetic mode
+the matcher is bypassed: `sync` is published empty, and a strobe is placed on
+the recording clock by ARRIVAL -- the newest sample seen when the serial line
+delivered it, tens of milliseconds late -- so the PSTH still draws, labelled
+as approximate. Real data never takes this path; there, an unmatched strobe is
+a fact about the wiring and is reported as one.
 """
 
 from __future__ import annotations
@@ -39,7 +49,15 @@ from typing import Any, Awaitable, Callable
 
 from ..settings import IntanEndpoints, SidecarSettings
 from . import probemap
-from .analysis import EdgeDetector, EdgeMatcher, SpikeRing, WaveformRing, isi_histogram, psth
+from .analysis import (
+    EdgeDetector,
+    EdgeMatcher,
+    MatchedEvent,
+    SpikeRing,
+    WaveformRing,
+    isi_histogram,
+    psth,
+)
 from .client import (
     RhxCommandClient,
     RhxCommandFailed,
@@ -182,6 +200,9 @@ class Scope:
     #: spikescope: sequence number of the last snippet sent.
     sent: int = 0
     reset: bool = True
+    #: isi/psth/probemap: the payload last sent, so an unchanged one -- a PSTH
+    #: between trials is unchanged for seconds at a time -- is not re-sent.
+    last: Any = None
 
 
 @dataclass
@@ -247,6 +268,9 @@ class IntanService:
         self._spikes: dict[str, SpikeRing] = {}
         self._snippets: dict[str, _Snippets] = {}
         self._newest_sample = 0
+        #: Set when the data sockets (re)open; the first block then tells every
+        #: spike ring where its coverage restarts.
+        self._reopened = False
         self._scopes: dict[str, Scope] = {}
         self._thresholds: dict[str, int] = {}
 
@@ -317,7 +341,9 @@ class IntanService:
             "liveStreams": self._live,
             "recording": self._recording.to_json() if self._recording else None,
             "waitingOn": list(self._waiting_on),
-            "sync": [
+            # Synthetic data drives no sync line; the counters would diagnose
+            # wiring that does not exist, so they are not published at all.
+            "sync": [] if self.synthetic else [
                 {
                     "box": box,
                     "matched": self._matched.get(box, 0),
@@ -327,6 +353,12 @@ class IntanService:
                 for box, matcher in sorted(self._matchers.items())
             ],
         }
+
+    @property
+    def synthetic(self) -> bool:
+        """RHX is generating its data: no controller, and no box's pin on any
+        digital input."""
+        return bool(self._info.get("synthetic", False))
 
     async def publish(self, *, force: bool = False) -> None:
         from ..protocol import Evt, event
@@ -812,8 +844,15 @@ class IntanService:
 
     def _strobe(self, box: int, code: int, ms: int) -> None:
         matcher = self._matchers.get(box)
-        if matcher is not None:
-            self._take(box, matcher.add_strobe(code, ms))
+        if matcher is None:
+            return
+        if self.synthetic:
+            # No sync line to match against: place the strobe where the
+            # recording clock stood when the serial line delivered it.
+            if self._live and self._newest_sample > 0:
+                self._take(box, [MatchedEvent(code, ms, self._newest_sample)])
+            return
+        self._take(box, matcher.add_strobe(code, ms))
 
     def _take(self, box: int, events: list) -> None:
         triggers = self._triggers.setdefault(box, {})
@@ -861,6 +900,7 @@ class IntanService:
             self._live = False
             return
         self._waveform = WaveformParser(self._layout())
+        self._reopened = True
         self._stream_writers = [waveform[1], spike[1]]
         self._stream_tasks = [
             self._loop.create_task(self._read_waveform(waveform[0]), name="intan-waveform"),
@@ -892,7 +932,11 @@ class IntanService:
     def _on_block(self, block: Any) -> None:
         stamps = block.timestamps
         self._newest_sample = stamps[-1]
-        if block.digital_in is not None:
+        if self._reopened:
+            self._reopened = False
+            for ring in self._spikes.values():
+                ring.reopened(stamps[0])
+        if block.digital_in is not None and not self.synthetic:
             for box, detector in self._detectors.items():
                 edges = detector.feed(stamps, block.digital_in)
                 matcher = self._matchers.get(box)
@@ -940,6 +984,10 @@ class IntanService:
                     store = self._snippets.get(spike.channel)
                     if store is not None:
                         store.pending.append(spike.timestamp)
+                        # The two sockets are not in lockstep: if the waveform
+                        # tail is already here, cut now rather than at the
+                        # next block.
+                        self._cut(store)
         except (OSError, asyncio.CancelledError):
             return
         finally:
@@ -971,10 +1019,11 @@ class IntanService:
         scope.touched = time.monotonic()
         if params:
             scope.params.update(params)
+            scope.last = None
         if channel is not None and channel != scope.channel:
             previous = scope.channel
             scope.channel = self._check_channel(scope.box, channel, required=True)
-            scope.sent, scope.reset = 0, True
+            scope.sent, scope.reset, scope.last = 0, True, None
             try:
                 await self._sync_scoped_channels()
             except Exception:
@@ -1011,6 +1060,16 @@ class IntanService:
         commands = [f"set {n.lower()}.tcpdataoutputenabledhigh true" for n in sorted(wanted - current)]
         commands += [f"set {n.lower()}.tcpdataoutputenabledhigh false" for n in sorted(current - wanted)]
         await self._client.send(commands)
+        # Read AFTER the change is acknowledged: a block stamped at or past
+        # this was written in the new shape. It is what a same-size change
+        # (one channel swapped for another) is switched on, since the framing
+        # cannot tell those apart -- `streams.py`, module doc.
+        marker: int | None = None
+        if self._waveform is not None:
+            try:
+                marker = int(float(await self._client.get("currenttimestamp")))
+            except (RhxError, ValueError):
+                marker = None
         rate = self._recording.sample_rate if self._recording else 30000
         for name in wanted - current:
             self._snippets[name] = _Snippets(ring=WaveformRing(capacity=2 * rate))
@@ -1021,7 +1080,7 @@ class IntanService:
         for name in current - wanted:
             self._snippets.pop(name, None)
         if self._waveform is not None:
-            self._waveform.set_layout(self._layout())
+            self._waveform.set_layout(self._layout(), from_timestamp=marker)
 
     async def set_threshold(self, channel: str, microvolts: int) -> int:
         name = channel.upper()
@@ -1059,11 +1118,16 @@ class IntanService:
         if recording is None:
             return
         for scope in list(self._scopes.values()):
-            if scope.kind != "spikescope" and not slow:
+            # Snippets and site rates every tick; the histograms every third.
+            if scope.kind in ("isi", "psth") and not slow:
                 continue
             data = self._scope_payload(scope, recording)
             if data is None:
                 continue
+            if scope.kind != "spikescope":
+                if data == scope.last:
+                    continue
+                scope.last = data
             await self._broadcast(
                 event(
                     Evt.INTAN_SCOPE_DATA,
@@ -1103,12 +1167,17 @@ class IntanService:
             codes = params.get("triggerCodes") or []
             by_code = self._triggers.get(scope.box, {})
             triggers = sorted(s for code in codes for s in by_code.get(int(code), []))
-            return psth(
+            data = psth(
                 ring.snapshot() if ring else [], triggers, rate,
                 float(params.get("preMs", 500)), float(params.get("postMs", 500)),
                 float(params.get("binMs", 5)), int(params.get("maxTrials", 50)),
                 self._newest_sample,
+                ring.complete_since if ring else 0,
             )
+            # How each trigger was placed on the recording clock: by its sync
+            # edge, or -- synthetic data only -- by when its strobe arrived.
+            data["alignment"] = "arrival" if self.synthetic else "sync"
+            return data
         if scope.kind == "probemap":
             since = self._newest_sample - int(rate)
             return {

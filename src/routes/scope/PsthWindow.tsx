@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Dropdown } from "@/components/common/Dropdown";
 import { useScope } from "@/lib/intan/context";
-import { niceCeiling } from "@/lib/intan/scopeMath";
+import { binRects, niceCeiling } from "@/lib/intan/scopeMath";
 import {
   PSTH_BINS_MS,
   PSTH_MAX_TRIALS,
@@ -58,6 +58,7 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
   );
   const [trials, setTrials] = useState(0);
   const [peak, setPeak] = useState(0);
+  const [alignment, setAlignment] = useState<PsthPayload["alignment"]>("sync");
 
   const payload = useRef<PsthPayload | null>(null);
 
@@ -95,12 +96,14 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
       });
 
       const ceiling = niceCeiling(Math.max(...data.rateHz));
-      const step = width / data.rateHz.length;
+      // Bars sit where their bin is in time; a partial last bin is narrower.
+      const rects = binRects(data.rateHz.length, data.binMs, span, width);
       g.fillStyle = colors.pulsar;
       data.rateHz.forEach((hz, i) => {
-        if (hz <= 0) return;
+        const rect = rects[i];
+        if (hz <= 0 || !rect) return;
         const barHeight = Math.max(1, (hz / ceiling) * (histHeight - 4));
-        g.fillRect(i * step + 0.5, height - barHeight, Math.max(1, step - 1), barHeight);
+        g.fillRect(rect.x + 0.5, height - barHeight, rect.w, barHeight);
       });
     }
 
@@ -121,6 +124,7 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
       payload.current = data;
       setTrials(data.trials);
       setPeak(data.rateHz.length ? niceCeiling(Math.max(...data.rateHz)) : 0);
+      setAlignment(data.alignment ?? "sync");
       redraw();
     },
     [redraw],
@@ -163,6 +167,14 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
           {ctx.triggers.length === 0 && (
             <span style={{ color: "var(--color-status-warning)" }}>
               this box's task declares no strobe names to align to
+            </span>
+          )}
+          {/* Synthetic data has no sync line: each event sits where the
+              recording clock stood when its strobe ARRIVED, tens of ms late.
+              Said out loud, because the histogram looks the same either way. */}
+          {alignment === "arrival" && (
+            <span style={{ color: "var(--color-status-warning)" }}>
+              aligned by strobe arrival · synthetic data
             </span>
           )}
           {/* Only trials whose post-window has CLOSED are counted, so the right

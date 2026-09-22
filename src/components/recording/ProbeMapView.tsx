@@ -62,8 +62,11 @@ export function ProbeMapView({
   const recorded = useMemo(() => (channels ? new Set(channels) : null), [channels]);
   const maxRate = rates ? Math.max(0, ...Object.values(rates)) : 0;
 
+  // Positioning is the caller's: the live window passes `absolute inset-0`,
+  // and a `relative` here would win over it (Tailwind emits `.relative` after
+  // `.absolute`), leaving a host with no height and a map that never draws.
   return (
-    <div ref={host} className={`relative min-h-0 ${className}`}>
+    <div ref={host} className={`min-h-0 overflow-hidden ${className}`}>
       {current && fit && (
         <svg width={size.width} height={size.height} className="block">
           {current.lines.map((line, i) => (

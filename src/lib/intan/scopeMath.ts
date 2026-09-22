@@ -59,6 +59,30 @@ export function barHeights(counts: readonly number[], log = false): number[] {
   return max === 0 ? counts.map(() => 0) : counts.map((c) => scale(c) / max);
 }
 
+/**
+ * Where each bin's bar sits, in px from the left, when `count` bins of
+ * `binMs` cover `spanMs`. The last bin may be PARTIAL — 50 ms at 20 ms bins is
+ * three bins, the third 10 ms wide — and is drawn at its true width rather
+ * than stretched to a full one, which would show a count over 10 ms as if it
+ * were over 20. A one-pixel gutter separates bars; a bar is never under 1 px.
+ */
+export function binRects(
+  count: number,
+  binMs: number,
+  spanMs: number,
+  width: number,
+): { x: number; w: number }[] {
+  if (count <= 0 || !(spanMs > 0) || !(binMs > 0)) return [];
+  const perMs = width / spanMs;
+  const out: { x: number; w: number }[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const x = i * binMs * perMs;
+    const end = Math.min(width, (i + 1) * binMs * perMs);
+    out.push({ x, w: Math.max(1, end - x - 1) });
+  }
+  return out;
+}
+
 /** A round axis ceiling at or above `value`: 1, 2, 5 × a power of ten. */
 export function niceCeiling(value: number): number {
   if (!(value > 0)) return 1;

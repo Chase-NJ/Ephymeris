@@ -18,6 +18,16 @@ parser accumulates, and the two-ended check is also what makes a layout change
 mid-run safe -- bytes already in flight under the old layout stop confirming,
 and the parser moves to the pending layout the moment *it* confirms.
 
+EXCEPT when the two layouts are the same size. A SpikeScope switching from one
+channel to another swaps a column for a column: every block confirms under
+either layout, the old one is tried first, and it goes on "confirming" forever
+while the new channel's samples are filed under the old channel's name. So a
+same-size change is switched on a SAMPLE MARKER instead: the caller reads
+`currenttimestamp` after RHX has acknowledged the change, and a block whose
+first timestamp is at or past it was written after the change. Blocks before
+the marker are ambiguous -- they may be either shape -- and are DROPPED rather
+than guessed, because a wrong guess draws one channel's waveform as another's.
+
 SPIKE SOCKET. Fixed 14-byte chunks: magic, a 5-character native channel name
 ("A-010"), a uint32 timestamp, a uint8 spike id.
 
@@ -109,27 +119,37 @@ class WaveformParser:
     def __init__(self, layout: FrameLayout) -> None:
         self._layout = layout
         self._pending: FrameLayout | None = None
+        #: Sample marker for a same-size pending layout; None = switch now.
+        self._switch_at: int | None = None
+        self._drop_next = False
         self._buffer = bytearray()
         #: Bytes thrown away hunting for a block boundary. A number that climbs
         #: means the layout is wrong, not that the link is noisy -- TCP does not
         #: corrupt -- so it is surfaced rather than logged and forgotten.
         self.discarded = 0
+        #: Whole blocks dropped in the ambiguous window of a same-size change.
+        self.dropped_blocks = 0
 
     @property
     def layout(self) -> FrameLayout:
         return self._layout
 
-    def set_layout(self, layout: FrameLayout) -> None:
+    def set_layout(self, layout: FrameLayout, *, from_timestamp: int | None = None) -> None:
         """Announce a layout change made over the command socket.
 
         Not applied at once: blocks written before RHX saw the change are still
         arriving in the old shape. The old layout keeps parsing until it stops
         confirming, and only then does the pending one take over.
+
+        `from_timestamp` is the marker a SAME-SIZE change is switched on (see
+        the module doc): RHX's `currenttimestamp`, read after the change was
+        acknowledged. Without one a same-size change is applied at once --
+        right for a stream that is not running yet, a guess for one that is.
         """
         if layout == self._layout:
-            self._pending = None
+            self._pending, self._switch_at = None, None
             return
-        self._pending = layout
+        self._pending, self._switch_at = layout, from_timestamp
 
     def feed(self, data: bytes) -> list[WaveformBlock]:
         self._buffer += data
@@ -142,12 +162,28 @@ class WaveformParser:
                 continue
             body = bytes(self._buffer[4 : layout.block_bytes])
             del self._buffer[: layout.block_bytes]
+            if self._drop_next:
+                self._drop_next = False
+                self.dropped_blocks += 1
+                continue
             out.append(_unpack(layout, body))
 
     def _confirmed_layout(self) -> FrameLayout | None:
         """The layout whose NEXT block boundary is where it says, if any."""
         if self._buffer[:4] != _WAVEFORM_MAGIC_BYTES:
             return None
+        pending = self._pending
+        if pending is not None and pending.block_bytes == self._layout.block_bytes:
+            # Framing cannot tell these apart; the marker decides.
+            end = pending.block_bytes
+            if len(self._buffer) < end + 4 or self._buffer[end : end + 4] != _WAVEFORM_MAGIC_BYTES:
+                return None
+            marker = self._switch_at
+            if marker is None or _first_timestamp(self._buffer) >= marker:
+                self._layout, self._pending, self._switch_at = pending, None, None
+                return pending
+            self._drop_next = True
+            return pending  # its size, consumed and dropped by `feed`
         for candidate in (self._layout, self._pending):
             if candidate is None or candidate.empty:
                 continue
@@ -156,7 +192,7 @@ class WaveformParser:
                 continue
             if self._buffer[end : end + 4] == _WAVEFORM_MAGIC_BYTES:
                 if candidate is self._pending:
-                    self._layout, self._pending = candidate, None
+                    self._layout, self._pending, self._switch_at = candidate, None, None
                 return candidate
         return None
 
@@ -182,6 +218,11 @@ class WaveformParser:
         self.discarded += nxt
         del self._buffer[:nxt]
         return True
+
+
+def _first_timestamp(buffer: bytearray) -> int:
+    """The first frame's timestamp of the block at the front of `buffer`."""
+    return struct.unpack_from("<i", buffer, 4)[0]
 
 
 def _unpack(layout: FrameLayout, body: bytes) -> WaveformBlock:

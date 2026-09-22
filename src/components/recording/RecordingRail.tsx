@@ -86,6 +86,14 @@ export function RecordingRail() {
         </div>
       )}
 
+      {/* Synthetic data (RHX's demo, no controller) drives no sync line, so
+          the sidecar publishes no counters; say why rather than show nothing. */}
+      {intan.synthetic && (intan.state === "recording" || intan.state === "stopping") && (
+        <p className="mt-2.5 border-t border-halo pt-2 font-mono text-[11px] text-static">
+          synthetic data · sync line check off · events aligned by arrival
+        </p>
+      )}
+
       {/* The wiring check. A box whose strobes are arriving with no edge to
           match them has a sync line that is not reaching its digital input. */}
       {intan.sync.length > 0 && (

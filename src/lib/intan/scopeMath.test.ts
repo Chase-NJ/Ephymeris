@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   barHeights,
+  binRects,
   channelRange,
   cropSnippet,
   fitProbeMap,
@@ -124,5 +125,20 @@ describe("rateStrength", () => {
 describe("channelRange", () => {
   it("names channels the way RHX does", () => {
     expect(channelRange("a", 14, 16)).toEqual(["A-014", "A-015", "A-016"]);
+  });
+});
+
+describe("binRects", () => {
+  it("places bins by time and clips a partial last bin to its true width", () => {
+    // 50 ms at 20 ms bins over 500 px: 200, 200, then 100 px for 40–50 ms.
+    const rects = binRects(3, 20, 50, 500);
+    expect(rects.map((r) => r.x)).toEqual([0, 200, 400]);
+    expect(rects.map((r) => r.w)).toEqual([199, 199, 99]);
+  });
+
+  it("never draws a bar under a pixel wide, and nothing for no bins", () => {
+    expect(binRects(1000, 1, 1000, 100).every((r) => r.w >= 1)).toBe(true);
+    expect(binRects(0, 5, 100, 300)).toEqual([]);
+    expect(binRects(4, 5, 0, 300)).toEqual([]);
   });
 });

@@ -164,6 +164,34 @@ def test_psth_keeps_the_newest_trials_when_there_are_too_many():
     assert result["trials"] == 3
 
 
+def test_psth_refuses_a_trial_older_than_the_spikes_it_still_holds():
+    """A trial whose window reaches back past the ring's coverage would be
+    drawn with whichever of its spikes survived -- a unit that "fired less
+    back then". It is left out, not drawn short."""
+    triggers = [30_000, 90_000, 150_000]
+    spikes = sorted(t + 300 for t in triggers)
+    kwargs = dict(sample_rate=FS, pre_ms=100, post_ms=200, bin_ms=50, max_trials=50, newest_sample=10**6)
+    assert psth(spikes, triggers, **kwargs)["trials"] == 3
+    # Coverage begins 1 ms into the first trial's pre-window.
+    assert psth(spikes, triggers, complete_since=30_000 - 3000 + 30, **kwargs)["trials"] == 2
+    # ...and exactly at its start is fine.
+    assert psth(spikes, triggers, complete_since=30_000 - 3000, **kwargs)["trials"] == 3
+
+
+def test_a_span_that_is_not_a_whole_number_of_bins_gets_a_partial_last_bin():
+    """50 ms at 20 ms bins is three bins, the last covering 40-50 ms. Rounding
+    to two would report every 40-50 ms interval as beyond a 50 ms span."""
+    isi = isi_histogram([0, 1350, 2700], FS, span_ms=50, bin_ms=20)  # 45 ms twice
+    assert len(isi["counts"]) == 3 and isi["counts"] == [0, 0, 2] and isi["beyond"] == 0
+    assert isi["spanMs"] == 50
+
+    # PSTH: -50..+100 at 20 ms bins is 8 bins; the last is 10 ms wide and its
+    # rate is normalised by 10 ms, not 20.
+    result = psth([30_000 + 95 * 30], [30_000], FS, 50, 100, 20, 50, newest_sample=10**6)
+    assert len(result["counts"]) == 8 and result["counts"][7] == 1
+    assert result["rateHz"][7] == 100.0  # one spike in 10 ms over one trial
+
+
 # --- rings ------------------------------------------------------------------
 
 
@@ -190,5 +218,27 @@ def test_the_spike_ring_counts_a_recent_window():
     ring = SpikeRing(capacity=4)
     for t in (10, 20, 30, 40, 50):
         ring.add(t)
-    assert ring.snapshot() == [20, 30, 40, 50]
+    assert list(ring.snapshot()) == [20, 30, 40, 50]
     assert ring.count_since(35) == 2
+    assert ring.count_since(0) == 4 and ring.count_since(51) == 0
+
+
+def test_the_spike_ring_knows_how_far_back_it_is_complete():
+    """Evicting the oldest spike means everything before the next one may be
+    gone; a reopened stream means everything before it was never seen."""
+    ring = SpikeRing(capacity=3)
+    assert ring.complete_since == 0
+    for t in (100, 200, 300):
+        ring.add(t)
+    assert ring.complete_since == 0
+    ring.add(400)                        # 100 evicted
+    assert ring.complete_since == 101
+    assert list(ring.snapshot()) == [200, 300, 400]
+    ring.reopened(1000)
+    assert ring.complete_since == 1000
+    ring.reopened(50)                    # never moves backwards
+    assert ring.complete_since == 1000
+    for t in range(2000, 2000 + 10):
+        ring.add(t)
+    assert list(ring.snapshot()) == [2007, 2008, 2009]
+    assert len(ring) == 3

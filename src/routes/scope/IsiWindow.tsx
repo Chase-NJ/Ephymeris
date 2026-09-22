@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Toggle } from "@/components/common/controls";
 import { useScope } from "@/lib/intan/context";
-import { barHeights } from "@/lib/intan/scopeMath";
+import { barHeights, binRects } from "@/lib/intan/scopeMath";
 import { ISI_BINS_MS, ISI_SPANS_MS, type IsiPayload, type ScopeData } from "@/lib/intan/types";
 import { scopeTitle } from "@/lib/intan/windows";
 
@@ -57,12 +57,14 @@ function Live({ channel, onChannel }: { channel: string; onChannel: (c: string) 
     if (!data || data.counts.length === 0) return;
 
     const heights = barHeights(data.counts, logRef.current);
-    const step = width / heights.length;
+    // Bars sit where their bin is in time; a partial last bin is narrower.
+    const rects = binRects(heights.length, data.binMs, data.spanMs ?? data.binMs * heights.length, width);
     g.fillStyle = colors.pulsar;
     heights.forEach((h, i) => {
-      if (h <= 0) return;
+      const rect = rects[i];
+      if (h <= 0 || !rect) return;
       const barHeight = Math.max(1, h * (height - 8));
-      g.fillRect(i * step + 0.5, height - barHeight, Math.max(1, step - 1), barHeight);
+      g.fillRect(rect.x + 0.5, height - barHeight, rect.w, barHeight);
     });
   });
 

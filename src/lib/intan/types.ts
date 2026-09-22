@@ -43,6 +43,8 @@ export interface SpikeScopePayload {
 }
 
 export interface IsiPayload {
+  /** The span the bins cover; the last bin may be partial. */
+  spanMs: number;
   binMs: number;
   counts: number[];
   /** Intervals at or past the span — shown, never silently dropped. */
@@ -60,6 +62,11 @@ export interface PsthPayload {
   rateHz: number[];
   /** One row per trial: spike times in ms relative to the trigger. */
   rasters: number[][];
+  /**
+   * How each trigger was placed on the recording clock: by its sync edge, or
+   * — synthetic data only — by when its strobe arrived (tens of ms late).
+   */
+  alignment: "sync" | "arrival";
 }
 
 export interface ProbeRatesPayload {

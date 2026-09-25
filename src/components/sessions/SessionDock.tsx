@@ -19,6 +19,7 @@ import {
   type Session,
   type SessionSnapshot,
 } from "@/lib/sessions/types";
+import { useSetupResume } from "@/lib/sessions/setupResume";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -46,6 +47,7 @@ export function SessionDock() {
   const { client, status } = useSidecar();
   const active = useActiveSessions();
   const loaded = useActiveLoaded();
+  const resume = useSetupResume();
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -79,9 +81,14 @@ export function SessionDock() {
   }
 
   /** Step 2 needs `?group=` and the record doesn't carry one, so the way back
-   *  in is the group step — the same choice Step 1 offered. */
+   *  in is the group step — the same choice Step 1 offered — unless this app
+   *  remembers the step the set-up was left on (`setupResume.ts`). */
   function resumeSetup(session: Session) {
-    navigate(`/session/${session.id}/group?cohort=${session.cohortId}`);
+    navigate(
+      resume?.sessionId === session.id
+        ? resume.url
+        : `/session/${session.id}/group?cohort=${session.cohortId}`,
+    );
   }
 
   const today = localToday();

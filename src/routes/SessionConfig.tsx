@@ -26,6 +26,12 @@ import { listSessions } from "@/lib/analytics/commands";
 import type { SessionListItem } from "@/lib/analytics/types";
 import { useActiveSessions, usePrefixes } from "@/lib/sessions/context";
 import {
+  clearSetupDraft,
+  clearSetupResume,
+  getSetupDraft,
+  setSetupDraft,
+} from "@/lib/sessions/setupResume";
+import {
   isContinuable,
   isReadyToRun,
   localToday,
@@ -43,7 +49,19 @@ import { useSidecar } from "@/lib/ws/context";
  * A cohort with one of TODAY's sessions that already ran a group (the app was
  * closed between groups, or the session was ended too early) offers to continue
  * that session with another group instead (`sessions.resume`, §7.6).
+ *
+ * The form survives a trip to another tab: it is kept as a draft
+ * (`setupResume.ts`) and seeds the fields on the way back in, one draft per
+ * mode so a behavior set-up never fills in a recording one.
  */
+
+interface ConfigDraft {
+  cohortId: string | null;
+  groupId: string | null;
+  prefixId: string;
+  sessionNumber: string;
+  durationText: string;
+}
 export function SessionConfig() {
   const navigate = useNavigate();
   const { client, status } = useSidecar();
@@ -53,15 +71,17 @@ export function SessionConfig() {
   // the same first step, creating a session that is also an Intan recording.
   const [search] = useSearchParams();
   const recording = search.get("mode") === "recording";
+  const draftKey = `configure:${recording ? "recording" : "behavior"}`;
+  const [draft] = useState(() => getSetupDraft<ConfigDraft>(draftKey));
 
-  const [cohortId, setCohortId] = useState<string | null>(null);
+  const [cohortId, setCohortId] = useState<string | null>(draft?.cohortId ?? null);
   const [cohort, setCohort] = useState<Cohort | null>(null);
-  const [groupId, setGroupId] = useState<string | null>(null);
+  const [groupId, setGroupId] = useState<string | null>(draft?.groupId ?? null);
   const [todays, setTodays] = useState<SessionListItem[]>([]);
   const active = useActiveSessions();
-  const [prefixId, setPrefixId] = useState<string>("");
-  const [sessionNumber, setSessionNumber] = useState("");
-  const [durationText, setDurationText] = useState("");
+  const [prefixId, setPrefixId] = useState<string>(draft?.prefixId ?? "");
+  const [sessionNumber, setSessionNumber] = useState(draft?.sessionNumber ?? "");
+  const [durationText, setDurationText] = useState(draft?.durationText ?? "");
   const [sameDayNumbers, setSameDayNumbers] = useState<string[]>([]);
   const [newPrefix, setNewPrefix] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -69,6 +89,16 @@ export function SessionConfig() {
   const [busy, setBusy] = useState(false);
 
   const connected = status === "connected";
+
+  useEffect(() => {
+    setSetupDraft<ConfigDraft>(draftKey, {
+      cohortId,
+      groupId,
+      prefixId,
+      sessionNumber,
+      durationText,
+    });
+  }, [draftKey, cohortId, groupId, prefixId, sessionNumber, durationText]);
 
   // Full cohort detail is needed for the §1 readiness check.
   useEffect(() => {
@@ -205,6 +235,9 @@ export function SessionConfig() {
         durationTrim === "" ? undefined : (durationMinutes ?? undefined),
         recording,
       );
+      // The session exists now; from here the way back is the mapping step,
+      // which carries the cohort and group in its URL.
+      clearSetupDraft(draftKey);
       navigate(
         `/session/${session.id}/mapping?cohort=${cohort.id}&group=${groupId}` +
           (recording ? "&recording=1" : ""),
@@ -511,7 +544,13 @@ export function SessionConfig() {
               Continue
               <ArrowRight size={13} strokeWidth={2} />
             </Button>
-            <Button variant="ghost" onClick={() => navigate("/")}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                clearSetupResume();
+                navigate("/");
+              }}
+            >
               Cancel
             </Button>
           </motion.div>

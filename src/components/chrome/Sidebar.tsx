@@ -1,6 +1,6 @@
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { AudioWaveform, ChartLine, Orbit, Radio, Settings, Users, Workflow } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
 import type { LucideIcon } from "lucide-react";
 
@@ -10,7 +10,14 @@ import { Modal } from "@/components/common/Modal";
 import { springSnappy } from "@/lib/motion";
 import { runDeparture } from "@/lib/nav/departure";
 import { useUnsaved } from "@/lib/nav/unsavedGuard";
-import { useRunningSession } from "@/lib/sessions/context";
+import { useActiveSessions, useRunningSession } from "@/lib/sessions/context";
+import {
+  noteLocation,
+  SETUP_STEP_LABEL,
+  useSetupResume,
+  type SetupResume,
+} from "@/lib/sessions/setupResume";
+import type { ActiveSessions } from "@/lib/sessions/types";
 
 /**
  * Persistent sidebar (dashboard.md §2.2).
@@ -30,7 +37,11 @@ import { useRunningSession } from "@/lib/sessions/context";
  * action *and* the way back to a running session — the Launch nav item is
  * retired (§3.2): its content docks beside the Dashboard's hero CTA, so the
  * Dashboard row's active state deliberately covers the whole /session/*
- * flow, and a matte status-ok dot marks it while a session is running. The
+ * flow, and a matte status-ok dot marks it while a session is running. **A
+ * set-up left for another tab is kept** (`lib/sessions/setupResume.ts`): the
+ * Dashboard row then opens the step it was left on rather than `/`, and says
+ * so on a second line — from inside the flow it goes to `/` as ever, which is
+ * the way to the Dashboard itself while a set-up is pending. The
  * constellation widget stays at the very bottom so box connectivity is never
  * something the user has to navigate to check.
  */
@@ -80,11 +91,14 @@ function NavList({
   items,
   pathname,
   sessionRunning = false,
+  resume = null,
   onNavigate,
 }: {
   items: readonly NavItem[];
   pathname: string;
   sessionRunning?: boolean;
+  /** An unfinished set-up the Dashboard row returns to, with its caption. */
+  resume?: ResumeOffer | null;
   /** Returns false to swallow the click — the shell is asking first. */
   onNavigate: (to: string) => boolean;
 }) {
@@ -96,6 +110,8 @@ function NavList({
           : item.to === "/"
             ? pathname === "/"
             : pathname.startsWith(item.to);
+        const resumeHere = item.to === "/" ? resume : null;
+        const to = resumeHere?.url ?? item.to;
         return (
           <li key={item.to} className="relative">
             {/* Pulsar-tinted rounded-rect selection, macOS sidebar convention
@@ -110,9 +126,17 @@ function NavList({
               />
             )}
             <NavLink
-              to={item.to}
+              to={to}
+              // `end`: the resume URL carries a search string, and NavLink's
+              // own active matching is unused here anyway (see `active`).
+              end
+              title={
+                resumeHere
+                  ? `Resume ${resumeHere.recording ? "recording" : "session"} setup — ${resumeHere.step}`
+                  : undefined
+              }
               onClick={(event) => {
-                if (!onNavigate(item.to)) event.preventDefault();
+                if (!onNavigate(to)) event.preventDefault();
               }}
               className={`relative flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] transition-colors ${
                 active ? "text-starlight" : "text-static hover:text-starlight"
@@ -123,7 +147,28 @@ function NavList({
                 strokeWidth={1.75}
                 className={active ? "text-pulsar" : ""}
               />
-              <span className="font-medium">{item.label}</span>
+              <span className="flex min-w-0 flex-col">
+                <span className="font-medium">{item.label}</span>
+                <AnimatePresence initial={false}>
+                  {resumeHere && (
+                    <motion.span
+                      key="resume"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={springSnappy}
+                      className="flex items-center gap-1 overflow-hidden whitespace-nowrap text-[11px] leading-[15px] text-pulsar"
+                    >
+                      {/* The Recording tab's own mark, rather than a longer
+                          caption — the sidebar has room for about 20 characters. */}
+                      {resumeHere.recording && (
+                        <AudioWaveform size={11} strokeWidth={2} className="shrink-0" />
+                      )}
+                      Resume · {resumeHere.step}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </span>
               {item.to === "/" && sessionRunning && (
                 <span
                   title="Session running"
@@ -139,10 +184,60 @@ function NavList({
   );
 }
 
+interface ResumeOffer {
+  url: string;
+  /** The step's rail label (`SessionJourney`). */
+  step: string;
+  recording: boolean;
+}
+
+/** Whether a session the sidecar still reports is the one a set-up was on. */
+function findUnfinished(active: ActiveSessions, sessionId: string) {
+  if (active.running?.session.id === sessionId) return active.running.session;
+  return (
+    active.configuring.find((s) => s.id === sessionId) ??
+    active.stale.find((s) => s.id === sessionId) ??
+    null
+  );
+}
+
+/**
+ * The Dashboard row's way back into an unfinished set-up, or null.
+ *
+ * Offered only from outside the flow — inside it the operator is already
+ * there — and, past Step 1, only while `sessions.active` still reports the
+ * session: one discarded from the dock or ended from Mission Control must not
+ * be resumed into a dead record.
+ */
+function resumeOffer(
+  resume: SetupResume | null,
+  active: ActiveSessions | null,
+  pathname: string,
+): ResumeOffer | null {
+  if (!resume || pathname.startsWith("/session")) return null;
+  let recording: boolean;
+  if (resume.sessionId === null) {
+    recording = new URLSearchParams(resume.url.split("?")[1] ?? "").get("mode") === "recording";
+  } else {
+    const session = active ? findUnfinished(active, resume.sessionId) : null;
+    if (!session) return null;
+    recording = session.recording != null;
+  }
+  return { url: resume.url, step: SETUP_STEP_LABEL[resume.step], recording };
+}
+
 export function Sidebar() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
   const sessionRunning = useRunningSession() !== null;
+  const active = useActiveSessions();
+  const resume = resumeOffer(useSetupResume(), active, pathname);
+
+  // Every navigation passes through here, and the sidebar is always mounted —
+  // so this, rather than each step, is what remembers where a set-up was left.
+  useEffect(() => {
+    noteLocation(pathname, search);
+  }, [pathname, search]);
   /*
    * A screen holding unsaved work asks before it is left
    * (`lib/nav/unsavedGuard.ts`). The sidebar is the right place for this even
@@ -182,6 +277,7 @@ export function Sidebar() {
           items={NAV_MAIN}
           pathname={pathname}
           sessionRunning={sessionRunning}
+          resume={resume}
           onNavigate={onNavigate}
         />
       </div>

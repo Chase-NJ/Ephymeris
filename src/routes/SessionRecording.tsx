@@ -29,6 +29,7 @@ import { channelRange } from "@/lib/intan/scopeMath";
 import { FILE_FORMATS, type ProbeMap, type RecordingBoxConfig, type RecordingConfig } from "@/lib/intan/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { sessionStatus } from "@/lib/sessions/commands";
+import { getSetupDraft, setSetupDraft } from "@/lib/sessions/setupResume";
 import type { SessionSnapshot } from "@/lib/sessions/types";
 import { useSettings } from "@/lib/settings/context";
 import { useRecordingDefaults } from "@/lib/settings/useRecordingDefaults";
@@ -68,6 +69,13 @@ interface BoxRow {
   probeError: string | null;
 }
 
+interface RecordingDraft {
+  config: RecordingConfigDefaults | null;
+  saveRoot: string | null;
+  editing: boolean;
+  rows: BoxRow[];
+}
+
 export function SessionRecording() {
   const { id: sessionId } = useParams<{ id: string }>();
   const [params] = useSearchParams();
@@ -79,13 +87,25 @@ export function SessionRecording() {
   const { defaults, save } = useRecordingDefaults();
   const intan = useIntanStatus();
 
+  // The form as it was left for another tab (`setupResume.ts`). Seeding below
+  // only fills what is still empty, so a restored draft wins over the defaults.
+  const draftKey = `record:${sessionId ?? ""}:${groupId}`;
+  const [draft] = useState(() => getSetupDraft<RecordingDraft>(draftKey));
+
   const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
-  const [config, setConfig] = useState<RecordingConfigDefaults | null>(null);
-  const [saveRoot, setSaveRoot] = useState<string | null>(defaults.saveRoot);
-  const [editing, setEditing] = useState(false);
-  const [rows, setRows] = useState<BoxRow[]>([]);
+  const [config, setConfig] = useState<RecordingConfigDefaults | null>(draft?.config ?? null);
+  const [saveRoot, setSaveRoot] = useState<string | null>(
+    draft ? draft.saveRoot : defaults.saveRoot,
+  );
+  const [editing, setEditing] = useState(draft?.editing ?? false);
+  const [rows, setRows] = useState<BoxRow[]>(draft?.rows ?? []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (config === null && rows.length === 0) return;
+    setSetupDraft<RecordingDraft>(draftKey, { config, saveRoot, editing, rows });
+  }, [draftKey, config, saveRoot, editing, rows]);
 
   // The mapped boxes and the session's own folder come from the sidecar.
   useEffect(() => {

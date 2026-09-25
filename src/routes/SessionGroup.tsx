@@ -13,6 +13,7 @@ import type { Cohort } from "@/lib/cohorts/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { endSession, resumeSession, sessionStatus } from "@/lib/sessions/commands";
 import { useActiveSessions } from "@/lib/sessions/context";
+import { clearSetupResume } from "@/lib/sessions/setupResume";
 import {
   allGroupsRun,
   groupRunsFor,
@@ -133,6 +134,7 @@ export function SessionGroup() {
     if (!session) return;
     void run(async () => {
       await endSession(client, session.id);
+      clearSetupResume();
       navigate("/analytics", {
         state: { endedSession: name, cohortId: session.cohortId, sessionId: session.id },
       });
@@ -232,7 +234,14 @@ export function SessionGroup() {
                 <ArrowRight size={13} strokeWidth={2} />
               </Button>
               {needsResume ? (
-                <Button variant="ghost" disabled={busy} onClick={() => navigate("/")}>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    clearSetupResume();
+                    navigate("/");
+                  }}
+                >
                   Cancel
                 </Button>
               ) : (

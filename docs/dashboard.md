@@ -123,7 +123,7 @@ Two groups, 200 px wide:
 
 | | Item | Route |
 |---|---|---|
-| 1 | 🛰 **Dashboard** | `/` — default. Active for `/`, `/session/*` **and `/debug`**; carries a matte status dot while a session runs |
+| 1 | 🛰 **Dashboard** | `/` — default. Active for `/`, `/session/*` **and `/debug`**; carries a matte status dot while a session runs. **While a set-up is unfinished** it opens the step that set-up was left on instead of `/`, with a Pulsar *Resume · <step>* line under the label (a waveform mark for a recording) — see *Leaving the flow for another tab* in §7 |
 | 2 | 📡 **Config** | `/config` — directly under Dashboard: it is how *this rig* is wired, so it sits beside the sky it describes |
 | 3 | 👥 **Cohorts** | `/cohorts` |
 | 4 | 🔀 **Task** | `/task` |
@@ -475,7 +475,9 @@ Two shortcuts sit beside the walk, for the operator who has already loaded the r
 
 The lighting is `utility.identify`, which is why a box is lit **before** it is flashed: it is still carrying the utility sketch when the operator arrives at it, and that is the only firmware that can be asked to light one. Confirming the mapping — now the first thing the walk does — puts the baseline on hold; each box's light goes out through the same serial queue that lit it, and its flash waits behind that.
 
-**Leaving the step.** On first entry (session still `configuring`) Back returns to Step 1 and abandons the session record — marked `aborted` rather than left stranded. On re-entry from the group step the session already holds recorded group runs, so Back would be a lie; the step offers **Pick another group** (until the mapping is confirmed) and **End session** instead. A group's first per-box Start marks the session `running` exactly as Start All does, so a group started one box at a time is never mistaken for a discardable set-up.
+**Leaving the step.** On first entry (session still `configuring`) Back returns to Step 1 and abandons the session record — marked `aborted` rather than left stranded. **Any other exit keeps it** — a sidebar tab, Open Task, Open Rig — because that is a visit, not a cancellation (below). On re-entry from the group step the session already holds recorded group runs, so Back would be a lie; the step offers **Pick another group** (until the mapping is confirmed) and **End session** instead. A group's first per-box Start marks the session `running` exactly as Start All does, so a group started one box at a time is never mistaken for a discardable set-up.
+
+**Leaving the flow for another tab.** Every setup step — Step 1, the group step, Boxes, Record — can be left for any tab and come back to where it was. `lib/sessions/setupResume.ts` remembers the last step's URL (pathname *and* search, since Boxes carries its cohort and group there) and each step's form as a draft keyed by step, session and group; the sidebar's Dashboard row opens that URL instead of `/` and says *Resume · <step>*. From inside the flow the row still goes to `/`, which is the way to the Dashboard itself while a set-up is pending. The memory is dropped on reaching Mission Control, and by a deliberate Cancel or End session; the offer is also withheld whenever `sessions.active` no longer reports the session (discarded from the dock, ended elsewhere). It is memory only — after a restart the dock's *Set-up in progress* rows are the way back in, and the dock's own Resume uses the remembered step when it is this session's. A Boxes draft is dropped if the group's animals changed meanwhile, and a walk left mid-placement comes back to the review with the mapping re-confirmable — the confirm is idempotent, and the boxes re-flash.
 
 ### 7.4 Step 2b — the flash sequence
 

@@ -64,3 +64,26 @@ export function idFromName(name: string, taken: readonly string[] = []): string 
   }
   return `${base}_${Date.now().toString(36).slice(-4)}`;
 }
+
+/** The longest name the sidecar accepts (`taskdef/model.py`'s `NAME_RE`). */
+const NAME_MAX = 48;
+
+/**
+ * A name for a duplicated task: "GRGL copy", then "GRGL copy 2", and so on.
+ *
+ * Two saved tasks may not share a name — they would share a sketch folder, and
+ * `tasks.save` refuses — so the copy is named clear of every existing one,
+ * case-insensitively for the same reason the sidecar compares that way (the lab
+ * machines' filesystem is). No parentheses: the name is a folder name, and the
+ * sidecar's pattern does not allow them. The source name is cut, never the
+ * suffix, so a long name still reads as a copy.
+ */
+export function uniqueCopyName(name: string, taken: readonly string[]): string {
+  const used = new Set(taken.map((t) => t.toLowerCase()));
+  for (let n = 1; n < 1000; n++) {
+    const suffix = n === 1 ? " copy" : ` copy ${n}`;
+    const candidate = `${name.trim().slice(0, NAME_MAX - suffix.length).trimEnd()}${suffix}`;
+    if (!used.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${name.trim().slice(0, NAME_MAX - 9).trimEnd()} copy ${Date.now().toString(36).slice(-3)}`;
+}

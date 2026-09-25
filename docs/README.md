@@ -225,6 +225,7 @@ Owns everything stateful. See [§6.4](#64-dependency-policy) before adding a run
 | `sessions/matwriter.py` | Hand-written MAT v5 serializer — exists specifically to avoid a `scipy` dependency | [data §4.3](data.md#43-the-mat-mirror) |
 | `sessions/runner.py` | Live session runner: which animal is in which box, its writer, its metrics, its run record. Writer I/O stays on the port's session thread; anything touching the socket or state machine is scheduled back onto the event loop | [dashboard §10](dashboard.md#10-in_session-entry-and-exit) |
 | `sessions/recovery.py` | Crash-recovery backfill: rebuilds `.json`/`.mat` from an orphaned `.tsv`. The inverse of `writer.py`; discovery shares `analytics/reader.py`'s walker | [data §12](data.md#12-crash-recovery) |
+| `sessions/tidy.py` | **Tidy records**, the pure planner: which same-folder records merge into which, which records are empty, what is left alone and why. Applied by `AnalyticsService.tidy` under the scan lock; database only | [data §8.8](data.md#88-tidying-records--one-session-per-folder-no-empty-rows) |
 | **`analytics/`** | | |
 | `analytics/derive.py` | **Pure.** `(document, profile)` → summary or series. No I/O, no database, no clock — which is what lets a test assert it agrees with the live metric path over a recorded stream | [data §9](data.md#9-derived-metrics) |
 | `analytics/reader.py` | Walks a cohort's archive and reads a finalized `.json` back. A bad file becomes a status, never an exception. One traversal (`_walk_format_dirs`) underlies both adoption and crash recovery | [data §8](data.md#8-reading-the-archive-back) |
@@ -271,14 +272,14 @@ Talks to the sidecar over the WebSocket only.
 | `components/config/` | Interactive constellation board, zodiac picker (rendered on Settings), handshake indicator/list, utility sketch panel |
 | `components/recording/` | The recording feature's shared pieces: `IntanConnectionPanel` (RHX link + TCP ports), `SyncInputsTable` (box → digital input), `RecordingConfigRows` (what to save / thresholds — one set of rows for the Recording tab's Defaults tile and the Record step), `RecordingStatus` (RHX's state, shared by Mission Control's rail and the tab's Live tile), `RecordingRail`, `ProbeMapView` |
 | `lib/intan/defaults.ts` | `RecordingDefaults` — the fully-shaped `settings.recordingDefaults`, its per-key normalizer and the one-line summary; pure and unit-tested |
-| `components/task/` | The Task tab's parts. **Editor:** `SketchStateMachine` (the derived machine with the parameter mapping drawn on, plus `LiveStateMachine` for Mission Control's live panel), `TrialTypeTable` (odor → response → reward, with a contingency sentence per row and the selection-mode switch), `StageRamp`, `TaskDetails` (category, legacy names, notes), `ParameterInspector`, the explain tile, and `TaskGuide` (the spotlight walkthrough). **Landing:** `TaskCard`, `TaskGlyph` (a task's shape as a mark), `NewTaskTile`, `StrobeDoor` |
+| `components/task/` | The Task tab's parts. **Editor:** `SketchStateMachine` (the derived machine with the parameter mapping drawn on, plus `LiveStateMachine` for Mission Control's live panel), `TrialTypeTable` (odor → response → reward, with a contingency sentence per row and the selection-mode switch), `StageRamp`, `TaskDetails` (category, legacy names, notes), `ParameterInspector`, the explain tile, and `TaskGuide` (the spotlight walkthrough). **Landing:** `TaskRow` (one saved task in the list, with Duplicate and Delete), `TaskGlyph` (a task's shape as a mark), `NewTaskRow`, `StrobeDoor` |
 | `components/common/SummaryCard.tsx` | The HUD tile — icon, label, status, divider, rows. Shared by the Dashboard and the Task tab so the two "tiles over the sky" pages are one motif |
 | `components/common/HudTile.tsx` | The same header grammar over a *form* body that manages its own edges — the Rig and Settings tabs' tiles. One live fact on the glass, carried as a node so it can take its state's colour |
 | `components/hardware/` | `BoardMap` — the Mega2560 pin diagram Rig wiring selects and drags on, ported from `ConstellationBoard` |
 | `components/constellation3d/` | The shared 3D browser both Mission Control and Debug render: **one app-wide WebGL canvas** the views adopt in turn — never a canvas per view; the deep sky is `Backdrop.tsx` (star field, dust band, nebulae, the sky's drift) with `HomeGalaxy` (the galaxy we orbit), `DistantGalaxies`, `SkyEvents` (meteors, supernovae, comets on one seeded schedule) and `skyTextures.ts` (every painted canvas) beside it — [dashboard.md §9.2](dashboard.md). **The scene contains no lights**: ship hulls are shaded by `shipSurface.ts` (which also holds the one shared set of ship geometry), because a light count is in every program's cache key. `ProgramWarmth.tsx` links the cohort browser's programs in the background and holds them for the life of the canvas; `planetMaterials.ts` is the one table both it and `PlanetarySurface.tsx` build from, so the warmed program is the drawn one |
 | `components/debug/` | `DebugLive` — Mission Control's `MetricStrip` and `LivePanels`, mounted unchanged for a task started from the console. Constellation landing, per-box detail, scrollback, flash dialog, state badges, utility controls; `PrimeControls` — Prime: chosen fluid lines for a chosen time, sequenced over the utility sketch's own `PULSE` ([dashboard.md §4.3](dashboard.md)); the channel grids give every output a lamp, a family-coloured switch and a pulse |
 | `components/sessions/` | Mission Control surfaces — 3D constellation, metric strip, star panel, journey rail, placement banner, `ReturnChecklist` (animals ticked home, or all at once), `SessionWrapUp` (the last-group pop-up), and `ConfigFields` (the one grouped renderer for a profile's `config`) |
-| `components/analytics/` | The Observatory's panels: rails, learning curves, strategy space and its profile picker, trends, summaries |
+| `components/analytics/` | The Observatory's panels: rails, learning curves, strategy space and its profile picker, trends, summaries, and `TidyRecords` (the tidy preview-and-confirm) |
 | `components/analytics/report/` | The PNG export: composed cohort/session sheets built from the panels above, and the capture and save path ([data.md §10.6](data.md)) |
 | `components/charts/` | Shared chart primitives (`UnitChart`, `ChartFrame`, `ChartDots`, `DrawOn`) |
 
@@ -336,7 +337,8 @@ The interpreter resolves to `sidecar/.venv` unless `EPHYMERIS_SIDECAR_PYTHON` ov
 |---|---:|---|
 | `src/lib/tasks/topology.test.ts` | 23 | The condition collapse and its guard, `correctWellOf`'s refusal to guess, `liveConditionId`'s trial boundary and its four states |
 | `src/lib/tasks/graphLayout.test.ts` | 20 | Node measurement, the derived abort band's clearance in both hosts at 1–6 conditions, the fan fallback's spacing, height constant in N |
-| `src/lib/analytics/view.test.ts` | 10 | The strategy plane's axes: N conditions folding onto two sides, pooling over integers rather than rates, the withhold that is never an axis, and the three kinds of no-plane |
+| `src/lib/analytics/view.test.ts` | 15 | The strategy plane's axes: N conditions folding onto two sides, pooling over integers rather than rates, the withhold that is never an axis, the three kinds of no-plane, and the task-agnostic all-sessions plane (`sideAccuracy`, the 30-session `recentSessions` cut) |
+| `src/lib/taskdef/commands.test.ts` | 3 | A duplicated task's name: numbered clear of every saved one case-insensitively, cut to fit the sketch-name pattern, never the suffix |
 
 Every assertion in these was **mutation-checked**: the original defect was reintroduced and the suite confirmed to fail (12 failures for the constant abort band, 4 for the decoding shortcuts). One hole surfaced that way and was closed — a `successCode ?? alternateCode` fallback is inert against a no-go fixture and only lies when the success code is *unreadable*, which now has its own case.
 
@@ -370,6 +372,8 @@ Every assertion in these was **mutation-checked**: the original defect was reint
 | `test_recovery.py` | 10 | Crash-recovery backfill: writer round-trip, footer honesty, torn lines, recovery→adoption handoff |
 | `test_writer.py` | 9 | Write-ahead log, exclusive open, finalization |
 | `test_sessions_active.py` | 8 | Active/stale session surfacing |
+| `test_session_tidy.py` | 15 | Tidy records: same-folder records merge into the earliest with data (runs, group runs and recording runs carried), different numbers never merge, empty records and their empty folders go, a folder with any file is data, unreachable is never empty, the held session and today's set-up are left whole, a recovered file counts under its recorded session |
+| `test_session_groups.py` | 10 | Groups picked on the fly: `sessions.endGroup` leaves the session between groups, any order and repeats append, a per-box start records the group run, `sessions.resume` gates (same day, ran a group, nothing else held), Close Out never stops a live session |
 | `test_matwriter.py` | 6 | Hand-written MAT v5 output |
 | `test_trial_seed.py` | 5 | Seed drawing and range |
 
@@ -473,7 +477,7 @@ Dark mode only for v1 — no light mode, not even a placeholder toggle. Every to
 </td></tr>
 <tr><td><b>5</b></td><td>
 
-**Switch Group's second lap is untested on hardware.** The bookkeeping that makes Switch Group advance rather than cycle is verified. What hasn't been driven end to end is a full two-group session: switch, re-map, re-flash, run, end. This is the highest-value remaining hardware test, and multi-group runs are normal for any cohort larger than the box count. Note a `null` `nextGroupId` now completes the session sidecar-side, so the pass should confirm the final status flip too.
+**Choosing groups on the fly is untested on hardware.** Group order was retired 2026-09-25: Switch Group is now `sessions.endGroup` → the group step (`dashboard.md` §7.6), and a same-day session can be continued with another group after the app closes (`sessions.resume`). The sidecar bookkeeping is pinned by `tests/test_session_groups.py` (end-group leaves the session held and running; groups in any order and repeats append; a per-box start records the group run; resume's same-day / ran-a-group / nothing-else-held gates; Close Out never stops a live session). What hasn't been driven end to end is a full two-group session on the rig — pick, map, flash, run, switch, pick, run, end — plus quitting the app between groups and continuing from the Dashboard. This is the highest-value remaining hardware test.
 
 </td></tr>
 <tr><td><b>6</b></td><td>
@@ -501,7 +505,7 @@ Recorded so they aren't rediscovered as oversights. Each was decided, not missed
 
 | Item | Decision |
 |---|---|
-| **Session resumption after app/sidecar restart** | Out of scope. Materially bigger than crash recovery — reconnecting boards, resuming trial state, deciding whether the animal kept running. Mission Control recovers a *reload* fine via `sessions.status`; if the sidecar dies, the run is over and the `.tsv` is the record. Crash-orphaned `running` rows are *surfaced* read-only on the Dashboard — visibility changed, the decision did not. |
+| **Session resumption after app/sidecar restart** | Out of scope **mid-group**; continuing **between groups** is built (`sessions.resume`, `dashboard.md` §7.6). Mid-group resumption is materially bigger than crash recovery — reconnecting boards, resuming trial state, deciding whether the animal kept running. Mission Control recovers a *reload* fine via `sessions.status`; if the sidecar dies, the run is over and the `.tsv` is the record. Crash-orphaned `running` rows are surfaced on the Dashboard, and a same-day one offers **Continue with another group** — never a mid-group resume. |
 | **Light mode** | Out of scope for v1, not even a placeholder toggle. |
 | **Auto-respawn of a crashed sidecar** | No. A silent respawn would resurrect the process without the port ownership or session state it had — worse than an honest failure the user can see. |
 | **Auto-recovery from a mid-session board drop** | No. Always a hard stop into `ERROR`, cleared manually. Costs nothing in data because of the write-ahead log. |

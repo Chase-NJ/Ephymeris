@@ -202,7 +202,7 @@ Any failure in 1–2 is an `INTAN_*` error with no box started.
 
 ### 5.2 The graceful end
 
-`sessions.end` / `sessions.switchGroup`:
+`sessions.end` / `sessions.endGroup` (Switch Group):
 
 1. `STOP` to every box.
 2. **Wait for each box's own `BF_END_SESSION`** — up to 45 s (`Application.RECORDING_GRACE_S`: longer than any trial the lab runs, a 20 s error delay plus ITI plus holds). `intan.status.waitingOn` names who is still out and Mission Control offers **End now** (`intan.forceStop`).

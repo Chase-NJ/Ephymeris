@@ -316,3 +316,21 @@ def test_event_data_specs_cover_every_event() -> None:
 
     assert set(EVENT_DATA) == set(ALL_EVENTS)
     assert validate_event_data("no.such.event", {}) != []
+
+
+def test_tidy_plan_json_matches_schema() -> None:
+    """`sessions.tidy`'s reply, built by the one emitter the service uses."""
+    from dataclasses import replace
+
+    from ephymeris_sidecar.sessions import tidy
+
+    keep = _session()
+    other = replace(_session(), id="s2", status="completed")
+    empty = replace(_session(), id="s3", status="aborted", group_runs=[])
+    plan = tidy.TidyPlan(
+        merges=[tidy.Merge(keep, [other])],
+        empty=[tidy.Empty(empty, removes_folder=True)],
+        skipped=[tidy.Skipped(other, "in progress")],
+    )
+    payload = tidy.plan_json(plan, {"s1": 3}, cohort_id="c1", applied=False)
+    assert validate(("ref", "TidyPlan"), payload) == []

@@ -7,7 +7,7 @@
  */
 
 import type { Animal, Cohort, Group } from "@/lib/cohorts/types";
-import type { CommandResultMap, TaskProfile } from "@/lib/ws/protocol";
+import type { CommandResultMap, GroupRun, Session, TaskProfile } from "@/lib/ws/protocol";
 
 export type {
   Prefix,
@@ -61,7 +61,11 @@ export function isReadyToRun(cohort: Cohort): boolean {
   return cohort.animals.some((a) => a.boxNumber !== null);
 }
 
-/** Groups that hold at least one box-assigned animal, in run order. */
+/**
+ * Groups that hold at least one box-assigned animal, in the cohort's display
+ * order. Not a run order — there is none: the operator picks which group runs,
+ * at setup and at every switch (`dashboard.md` §5.2).
+ */
 export function populatedGroups(cohort: Cohort): Group[] {
   const populated = new Set(
     cohort.animals.filter((a) => a.boxNumber !== null).map((a) => a.groupId),
@@ -71,9 +75,57 @@ export function populatedGroups(cohort: Cohort): Group[] {
     .sort((a, b) => a.order - b.order);
 }
 
-/** §2.3 — the session begins with the lowest-`order` populated group. */
-export function firstGroupToRun(cohort: Cohort): Group | null {
-  return populatedGroups(cohort)[0] ?? null;
+/** Every run of one group in this session, oldest first (a group may run twice). */
+export function groupRunsFor(session: Session | null, groupId: string): GroupRun[] {
+  return (session?.groupRuns ?? []).filter((run) => run.groupId === groupId);
+}
+
+/**
+ * How many of the cohort's populated groups have run in this session, the one
+ * on the rig included — each group once, however many times it ran.
+ */
+export function groupsRunCount(cohort: Cohort, session: Session | null): number {
+  const done = new Set((session?.groupRuns ?? []).map((r) => r.groupId));
+  return populatedGroups(cohort).filter((g) => done.has(g.id)).length;
+}
+
+/** Whether every populated group has run in this session. */
+export function allGroupsRun(cohort: Cohort, session: Session | null): boolean {
+  return groupsRunCount(cohort, session) === populatedGroups(cohort).length;
+}
+
+/**
+ * A session the operator can pick back up with another group (`sessions.resume`):
+ * today's, one that ran at least one group, and either ended (`completed`) or
+ * left `running` by a closed app. Same day only — the folder carries its date.
+ */
+export function isContinuable(
+  session: Pick<Session, "date" | "status" | "groupRuns">,
+  today: string,
+): boolean {
+  return (
+    session.date === today &&
+    session.groupRuns.length > 0 &&
+    (session.status === "completed" || session.status === "running")
+  );
+}
+
+/**
+ * Where the way back into a held session leads: Mission Control while a group
+ * is on the rig, the group step while it is between groups (`dashboard.md`
+ * §7.6) — an empty cockpit is not the next step there.
+ */
+export function sessionDoor(running: SessionSnapshot): string {
+  const { id, cohortId } = running.session;
+  return running.groupId
+    ? `/session/${id}/control?cohort=${cohortId}`
+    : `/session/${id}/group?cohort=${cohortId}`;
+}
+
+/** Local calendar date as `YYYY-MM-DD` — the sidecar writes `Session.date` this way. */
+export function localToday(now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
 /** Box-assigned animals of one group, ordered by box number. */

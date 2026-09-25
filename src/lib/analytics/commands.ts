@@ -11,6 +11,7 @@ import type {
   AnalyticsSummary,
   DiskSession,
   RecoverResult,
+  TidyPlan,
   RescanResult,
   SeriesResult,
   SessionListItem,
@@ -88,6 +89,19 @@ export async function recover(
   cohortId: string,
 ): Promise<RecoverResult> {
   return (await client.call(CMD.SESSIONS_RECOVER, { cohortId })) as RecoverResult;
+}
+
+/**
+ * Merge a day's split session records and drop empty ones (`data.md` §8.8).
+ * `apply: false` is the preview; the sidecar re-plans on apply rather than
+ * trusting the preview it sent.
+ */
+export async function tidyRecords(
+  client: SidecarClient,
+  cohortId: string,
+  apply: boolean,
+): Promise<TidyPlan> {
+  return (await client.call(CMD.SESSIONS_TIDY, { cohortId, apply })) as TidyPlan;
 }
 
 export function errorMessage(err: unknown): string {

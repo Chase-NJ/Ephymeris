@@ -1,7 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  ChevronDown,
-  ChevronUp,
   CircleAlert,
   Minus,
   Plus,
@@ -54,7 +52,7 @@ import { springSnappy } from "@/lib/motion";
  *
  * Always rendered, even for a cohort with only the implicit single group: box
  * assignment has to happen somewhere regardless of group count, so there is
- * always at least one card. A single group hides its rename/reorder/remove
+ * always at least one card. A single group hides its rename/remove
  * chrome — that only appears once the user actually splits the cohort.
  *
  * **Boxes offered come from the rig, not from a constant.** The selector used
@@ -79,16 +77,6 @@ interface Target {
 
 function targetKey(target: Target): string {
   return `${target.groupId}:${target.box ?? "bench"}`;
-}
-
-/** Run order in words. Groups run consecutively and that is the whole reason
- *  order is editable, so the card says it rather than relying on the reader
- *  inferring it from card position. */
-function ordinal(index: number): string {
-  const n = index + 1;
-  const tens = n % 100;
-  if (tens >= 11 && tens <= 13) return `${n}th`;
-  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
 }
 
 export function GroupsPanel({
@@ -150,16 +138,6 @@ export function GroupsPanel({
       groups.map((g) => (g.id === id ? { ...g, name } : g)),
       animals,
     );
-  }
-
-  function move(id: string, delta: number) {
-    const index = ordered.findIndex((g) => g.id === id);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= ordered.length) return;
-    const next = [...ordered];
-    const [moved] = next.splice(index, 1);
-    next.splice(target, 0, moved!);
-    onChange(renumber(next), animals);
   }
 
   function addGroup() {
@@ -387,7 +365,6 @@ export function GroupsPanel({
             onCarry={(id) => setCarried((c) => (c === id ? null : id))}
             dropHandlers={dropHandlers}
             onRename={(name) => rename(group.id, name)}
-            onMove={(delta) => move(group.id, delta)}
             onRemove={() => removeGroup(group.id)}
             onFillBoxes={() => fillBoxes(group.id)}
           />
@@ -416,7 +393,7 @@ export function GroupsPanel({
 }
 
 /**
- * One group: its run position, its rack of box slots, and a bench for members
+ * One group: its name, its rack of box slots, and a bench for members
  * that don't hold a box yet.
  */
 function GroupCard({
@@ -433,7 +410,6 @@ function GroupCard({
   onCarry,
   dropHandlers,
   onRename,
-  onMove,
   onRemove,
   onFillBoxes,
 }: {
@@ -450,7 +426,6 @@ function GroupCard({
   onCarry: (id: string) => void;
   dropHandlers: (target: Target) => Record<string, unknown>;
   onRename: (name: string) => void;
-  onMove: (delta: number) => void;
   onRemove: () => void;
   onFillBoxes: () => void;
 }) {
@@ -478,14 +453,6 @@ function GroupCard({
   return (
     <div className="rounded-sm border border-halo bg-void/40 p-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-        {multiGroup && (
-          <span
-            title={`Runs ${ordinal(index)} of ${total}`}
-            className="shrink-0 rounded-sm border border-halo px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-pulsar"
-          >
-            {ordinal(index)}
-          </span>
-        )}
         {multiGroup ? (
           <TextInput
             label={`Name for ${group.name}`}
@@ -520,24 +487,6 @@ function GroupCard({
           )}
           {multiGroup && (
             <>
-              <Button
-                variant="outline"
-                shape="icon"
-                onClick={() => onMove(-1)}
-                disabled={index === 0}
-                title={`Run ${group.name} earlier`}
-              >
-                <ChevronUp size={14} strokeWidth={2} />
-              </Button>
-              <Button
-                variant="outline"
-                shape="icon"
-                onClick={() => onMove(1)}
-                disabled={index === total - 1}
-                title={`Run ${group.name} later`}
-              >
-                <ChevronDown size={14} strokeWidth={2} />
-              </Button>
               <Button
                 variant="outline"
                 shape="icon"

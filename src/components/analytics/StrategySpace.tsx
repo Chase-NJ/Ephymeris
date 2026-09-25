@@ -1,22 +1,11 @@
 import { Compass } from "lucide-react";
-import { motion } from "framer-motion";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
 import { HowToRead } from "@/components/charts/HowToRead";
-import { ProfilePicker } from "./ProfilePicker";
-import { HIGHLIGHT_DRAW } from "@/components/charts/reveal";
-import { edgesWithGaps, segmentsWithGaps, type Point } from "@/components/charts/UnitChart";
 import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
-import type { AnalyticsSummary, ProfileGroup, RunSummary } from "@/lib/analytics/types";
-import {
-  chronological,
-  pooledAxis,
-  runsInProfile,
-  strategyProfiles,
-  taskLabels,
-  type StrategyAxes,
-} from "@/lib/analytics/view";
+import type { AnalyticsSummary, RunSummary } from "@/lib/analytics/types";
+import { SIDE_AXES, recentSessions, sideAccuracy } from "@/lib/analytics/view";
 import {
   NoPlane,
   PLANE_VIEWBOX,
@@ -27,25 +16,38 @@ import {
   py,
 } from "./strategyPlane";
 
+/** How many sessions the plane shows — the most recent, cohort-wide. */
+export const STRATEGY_SESSIONS = 30;
+
 /**
  * Discrimination versus bias, **across sessions** (`data.md` §11.1).
  *
- * Both axes are "fraction correct for this condition", plotted **as authored**
- * — x is `liveMetrics[0]`, y is `liveMetrics[1]`. `strategyPlane.tsx` owns the
- * reference marks and what each region means, because the within-session panel
- * (§4.4) draws in the same plane and the two must not disagree.
+ * One point per animal per session, for the cohort's 30 most recent sessions:
+ * x is the fraction correct at the LEFT well, y at the RIGHT well, each pooled
+ * over integers across every condition answered there (`sideAccuracy`).
+ * `strategyPlane.tsx` owns the reference marks and what each region means,
+ * because the within-session panel draws in the same plane and the two must not
+ * disagree.
  *
- * The textbook ROC framing was rejected because it needs to know that one
- * metric's `successCode` and the other's `alternateCode` are the same physical
- * port, and a Task Profile declares no such relationship (§4.2).
+ * **Task-agnostic on purpose.** The plane used to scope itself to one task
+ * profile at a time, behind a picker, because two tasks' CONDITIONS are not
+ * comparable. Their SIDES are: a well is a physical place, and "how often was
+ * this animal right when the answer was left" means the same thing on a shaping
+ * day and a four-odor day. Reading each run's own `answerSide` rather than a
+ * profile group's axes is what lets every recent session share one frame, and
+ * what fixes the orientation — left is always x, whichever condition a profile
+ * happened to declare first.
  *
- * Each animal's sessions connect chronologically with opacity ramping oldest
- * to newest, so the trail reads as a direction of travel: off the bias
- * diagonal and toward the corner, over weeks.
+ * **Points, not trails.** Every session of every animal joined into polylines
+ * was the clutter: the history ran back to the cohort's first day and the
+ * lines crossed into a mat. The window is capped at the recent sessions, older
+ * points fade, and the latest is drawn larger, so direction of travel still
+ * reads without a line to follow. Hovering an animal lifts its points and dims
+ * the rest.
  *
  * **Across-session scope only.** Selecting one session replaces this panel with
- * `SessionStrategy`, rather than rendering both: a line here spans weeks and a
- * line there spans an hour, and nothing in the frame would tell them apart.
+ * `SessionStrategy`, rather than rendering both: a point here is a session and
+ * a point there is a trial, and nothing in the frame would tell them apart.
  */
 export function StrategySpace({
   summary,
@@ -54,64 +56,34 @@ export function StrategySpace({
   summary: AnalyticsSummary;
   colors: Map<string, string>;
 }) {
-  /*
-   * The one panel that must scope to a single task: a GRGL point beside an
-   * EZ-variant point on shared axes is a category error even when both fold to
-   * the same two sides (§4.3). So it scopes *itself* — the most-run plottable
-   * profile by default, every other profile the cohort holds one click away —
-   * rather than asking the dashboard for a filter.
-   *
-   * The list is now every profile in the data, not only the ones that declare
-   * exactly two conditions: a four-odor task folds four conditions onto two
-   * sides (`strategyAxes`) and belongs here, and one that genuinely cannot be
-   * plotted is shown disabled with its reason rather than silently missing.
-   */
-  const profiles = useMemo(() => strategyProfiles(summary), [summary]);
-  const plottable = profiles.filter((entry) => entry.axes !== null);
-  const labels = useMemo(() => taskLabels(summary), [summary]);
-  const [chosen, setChosen] = useState<string | null>(null);
-  const selected =
-    plottable.find((entry) => entry.group.hash === chosen) ?? plottable[0] ?? null;
-  const profile = selected?.group ?? null;
-  const axes = selected?.axes ?? null;
-  const trails = useMemo(
-    () => buildTrails(summary, profile, axes),
-    [summary, profile, axes],
-  );
+  const plot = useMemo(() => buildPoints(summary), [summary]);
 
-  if (!profile || !axes) {
+  if (plot.animals.length === 0) {
     return (
       <NoPlane
         hasRuns={summary.runs.length > 0}
-        reason={profiles[0]?.reason ?? null}
+        reason={
+          summary.runs.length > 0
+            ? "no recent run answered at both the left and the right well"
+            : null
+        }
       />
     );
   }
-
-  const elsewhere = summary.runs.length - profile.runCount;
 
   return (
     <StrategyPanel>
       <ChartFrame
         icon={Compass}
         title={
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span>
-              Strategy space
-              <span className="ml-2 text-static/70">one point per session</span>
+          <span>
+            Strategy space
+            <span className="ml-2 text-static/70">
+              {plot.sessionCount < STRATEGY_SESSIONS
+                ? `${plot.sessionCount} session${plot.sessionCount === 1 ? "" : "s"}`
+                : `last ${STRATEGY_SESSIONS} sessions`}{" "}
+              · one point per animal per session
             </span>
-            {profiles.length > 1 ? (
-              <ProfilePicker
-                profiles={profiles}
-                value={profile.hash}
-                onChange={setChosen}
-                labels={labels}
-              />
-            ) : (
-              <span className="font-mono text-[9px] text-static/70">
-                {labels.get(profile.hash) ?? profile.taskName}
-              </span>
-            )}
           </span>
         }
         yTop="1.0"
@@ -119,11 +91,8 @@ export function StrategySpace({
         xLeft="0.0"
         xRight="1.0"
         footer={
-          <span
-            className="truncate text-static/70"
-            title={`↑ ${axes.y.conditions.join(" · ")}\n→ ${axes.x.conditions.join(" · ")}`}
-          >
-            ↑ {axes.y.label} · → {axes.x.label} · P(correct)
+          <span className="truncate text-static/70">
+            ↑ right well · → left well · P(correct), pooled over conditions
           </span>
         }
       >
@@ -132,125 +101,82 @@ export function StrategySpace({
           className="w-full"
           preserveAspectRatio="xMidYMid meet"
           role="img"
-          aria-label="Discrimination against side bias, per animal over sessions"
+          aria-label="Left-well against right-well accuracy, one point per animal per recent session"
         >
           <PlaneReferences />
           {/* One component per animal — this is what keeps a hover from
-              re-rendering every trail in the panel (§2.1). */}
-          {trails.map((trail) => (
-            <AnimalTrail
-              key={trail.animalId}
-              trail={trail}
-              color={colors.get(trail.animalId) ?? "var(--color-series-1)"}
-              sessions={summary.sessions}
+              re-rendering every point in the panel (§2.1). */}
+          {plot.animals.map((animal) => (
+            <AnimalPoints
+              key={animal.animalId}
+              animal={animal}
+              color={colors.get(animal.animalId) ?? "var(--color-series-1)"}
+              sessionCount={plot.sessionCount}
             />
           ))}
         </svg>
       </ChartFrame>
       {/* A data disclosure, not education — stays outside the fold. */}
-      {elsewhere > 0 && (
+      {plot.skipped > 0 && (
         <p className="mt-1 font-mono text-[9px] leading-relaxed text-static/60">
-          {elsewhere} run{elsewhere === 1 ? "" : "s"} on other tasks
-          {plottable.length > 1
-            ? " — switch the profile above to plot them"
-            : " cannot be plotted on these axes"}
-          .
+          {plot.skipped} run{plot.skipped === 1 ? "" : "s"} in these sessions had no
+          answers at one of the wells, so there is no point to place.
         </p>
       )}
       <HowToRead>
-        <StrategyNote axes={axes} />
+        <StrategyNote axes={SIDE_AXES} />
       </HowToRead>
     </StrategyPanel>
   );
 }
 
-interface Trail {
-  animalId: string;
-  name: string;
-  runs: RunSummary[];
-  points: Array<Point | null>;
+interface PlanePoint {
+  run: RunSummary;
+  x: number;
+  y: number;
+  /** 0-based position of the run's session within the plotted window. */
+  slot: number;
+  label: string;
+  lowConfidence: boolean;
 }
 
-function AnimalTrail({
-  trail,
+interface AnimalPlot {
+  animalId: string;
+  name: string;
+  points: PlanePoint[];
+}
+
+function AnimalPoints({
+  animal,
   color,
-  sessions,
+  sessionCount,
 }: {
-  trail: Trail;
+  animal: AnimalPlot;
   color: string;
-  sessions: AnalyticsSummary["sessions"];
+  sessionCount: number;
 }) {
-  const highlighted = useIsHighlighted(trail.animalId);
+  const highlighted = useIsHighlighted(animal.animalId);
   const someoneHighlighted = useHasHighlight();
   // Dim the rest only when something is actually highlighted, so the resting
   // state is every animal at equal weight rather than everything faded.
   const dimmed = someoneHighlighted && !highlighted;
-
-  const total = trail.points.length;
-  const nodes = trail.points.flatMap((point, index) =>
-    point === null ? [] : [{ point, index, run: trail.runs[index]! }],
-  );
-
   return (
-    // Keyed on the highlight so picking this animal remounts the trail and
-    // replays the walk — hovering is the gesture that asks for it.
-    <g key={highlighted ? "walk" : "rest"} opacity={dimmed ? 0.18 : 1}>
-      {highlighted
-        ? edgesWithGaps(trail.points).map((edge) => (
-            <motion.polyline
-              key={edge.index}
-              points={`${px(edge.from.x)},${py(edge.from.y)} ${px(edge.to.x)},${py(edge.to.y)}`}
-              fill="none"
-              stroke={color}
-              strokeWidth={1.6}
-              strokeLinejoin="round"
-              strokeDasharray={edge.dashed ? "2 2" : undefined}
-              vectorEffect="non-scaling-stroke"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.65 }}
-              transition={{ duration: STEP, delay: walkDelay(edge.index, total) }}
-            />
-          ))
-        : segmentsWithGaps(trail.points).map((segment, index) => (
-            <polyline
-              key={index}
-              points={segment.points.map((p) => `${px(p.x)},${py(p.y)}`).join(" ")}
-              fill="none"
-              stroke={color}
-              strokeWidth={0.9}
-              strokeLinejoin="round"
-              strokeDasharray={segment.dashed ? "2 2" : undefined}
-              opacity={0.65}
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
-      {nodes.map(({ point, index, run }) => {
-        const isLatest = index === total - 1;
-        const lowConfidence = run.metrics.some((metric) => metric.lowConfidence);
-        const shared = {
-          cx: px(point.x),
-          cy: py(point.y),
-          r: isLatest ? 2.2 : 1.6,
-          fill: lowConfidence ? "none" : color,
-          stroke: lowConfidence ? color : "none",
-          strokeWidth: lowConfidence ? 0.5 : 0,
-          vectorEffect: "non-scaling-stroke" as const,
-        };
-        const settled = fade(index, total, 1);
-        const title = <title>{describe(run, trail, sessionLabel(run, sessions))}</title>;
-        return highlighted ? (
-          <motion.circle
-            key={run.runId}
-            {...shared}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: settled }}
-            transition={{ duration: STEP, delay: walkDelay(index, total) }}
+    <g opacity={dimmed ? 0.18 : 1}>
+      {animal.points.map((point) => {
+        const latest = point.slot === sessionCount - 1;
+        return (
+          <circle
+            key={point.run.runId}
+            cx={px(point.x)}
+            cy={py(point.y)}
+            r={latest ? 2.2 : highlighted ? 1.8 : 1.5}
+            fill={point.lowConfidence ? "none" : color}
+            stroke={point.lowConfidence ? color : "none"}
+            strokeWidth={point.lowConfidence ? 0.5 : 0}
+            vectorEffect="non-scaling-stroke"
+            opacity={fade(point.slot, sessionCount)}
           >
-            {title}
-          </motion.circle>
-        ) : (
-          <circle key={run.runId} {...shared} opacity={settled}>
-            {title}
+            <title>{describe(point, animal.name)}</title>
           </circle>
         );
       })}
@@ -258,84 +184,70 @@ function AnimalTrail({
   );
 }
 
-/** How long one hop takes to arrive, independent of how many there are. */
-const STEP = 0.18;
-
-/**
- * When the walk reaches a node, in seconds.
- *
- * Proportional to the node's **session ordinal** rather than to its position
- * among the points that exist, so a trail with sessions missing from the
- * middle pauses over the gap instead of closing it up — the same reason those
- * gaps are drawn dashed rather than interpolated. The last node lands at
- * `HIGHLIGHT_DRAW`, so every animal's walk takes the same time whatever its
- * length, and the trails read as comparable histories rather than as a race.
- */
-function walkDelay(index: number, total: number): number {
-  if (total <= 1) return 0;
-  return (index / (total - 1)) * HIGHLIGHT_DRAW;
+function describe(point: PlanePoint, name: string): string {
+  const left = sideAccuracy(point.run, "left");
+  const right = sideAccuracy(point.run, "right");
+  const parts = [
+    `${name} · ${point.label}`,
+    `left well: ${point.x.toFixed(2)} (n=${left.counted})`,
+    `right well: ${point.y.toFixed(2)} (n=${right.counted})`,
+  ];
+  if (point.lowConfidence) parts.push("too few trials to read firmly");
+  return parts.join("\n");
 }
 
-function describe(run: RunSummary, trail: Trail, label: string): string {
-  const parts = run.metrics.map(
-    (metric) =>
-      `${metric.label}: ${
-        metric.pSession === null ? "—" : metric.pSession.toFixed(2)
-      } (n=${metric.counted})`,
+function buildPoints(summary: AnalyticsSummary): {
+  animals: AnimalPlot[];
+  sessionCount: number;
+  skipped: number;
+} {
+  const sessions = recentSessions(summary, STRATEGY_SESSIONS);
+  const slotOf = new Map(sessions.map((session, index) => [session.id, index]));
+  const labelOf = new Map(
+    sessions.map((s) => [s.id, `${s.prefixName} ${s.sessionNumber} · ${s.date}`]),
   );
-  if (run.metrics.some((m) => m.lowConfidence)) {
-    parts.push("too few trials to read firmly");
-  }
-  return [`${trail.name} · ${label}`, ...parts].join("\n");
-}
-
-function buildTrails(
-  summary: AnalyticsSummary,
-  profile: ProfileGroup | null,
-  axes: StrategyAxes | null,
-): Trail[] {
-  if (!profile || !axes) return [];
-
-  // Only runs sharing this profile's hash — a GRGL point and an EZ-variant
-  // point on shared axes is a category error, even when both fold onto the
-  // same two sides (§4.3).
-  const eligible = runsInProfile(summary.runs, profile);
-  const byAnimal = new Map<string, RunSummary[]>();
-  for (const run of eligible) {
-    const bucket = byAnimal.get(run.animalId);
-    if (bucket) bucket.push(run);
-    else byAnimal.set(run.animalId, [run]);
-  }
-
   const names = new Map(summary.animals.map((animal) => [animal.id, animal.name]));
-  return [...byAnimal].map(([animalId, runs]) => {
-    const ordered = chronological(runs, summary.sessions);
-    return {
+  const byAnimal = new Map<string, PlanePoint[]>();
+  let skipped = 0;
+  for (const run of summary.runs) {
+    const slot = slotOf.get(run.sessionId);
+    if (slot === undefined || run.status !== "ok") continue;
+    const x = sideAccuracy(run, "left").p;
+    const y = sideAccuracy(run, "right").p;
+    // A run that answered nothing at one well has no position on this plane,
+    // and one is not invented for it (§3.6).
+    if (x === null || y === null) {
+      skipped += 1;
+      continue;
+    }
+    const point: PlanePoint = {
+      run,
+      x,
+      y,
+      slot,
+      label: labelOf.get(run.sessionId) ?? "",
+      lowConfidence: run.metrics.some(
+        (m) => (m.answerSide === "left" || m.answerSide === "right") && m.lowConfidence,
+      ),
+    };
+    const bucket = byAnimal.get(run.animalId);
+    if (bucket) bucket.push(point);
+    else byAnimal.set(run.animalId, [point]);
+  }
+  return {
+    animals: [...byAnimal].map(([animalId, points]) => ({
       animalId,
       name: names.get(animalId) ?? animalId,
-      runs: ordered,
-      points: ordered.map((run) => {
-        // Pooled per side over integers, so a task presenting four conditions
-        // lands on the same two axes a two-condition task does, weighted the
-        // way the session actually ran (`pooledAxis`).
-        const x = pooledAxis(run, axes.x.ids).p;
-        const y = pooledAxis(run, axes.y.ids).p;
-        // A session that scored nothing produces no point at all, and the
-        // trail bridges the gap dashed rather than interpolating through
-        // something that never happened (§3.6).
-        return x === null || y === null ? null : { x, y };
-      }),
-    };
-  });
+      // Oldest first, so the newest points paint on top.
+      points: points.sort((a, b) => a.slot - b.slot),
+    })),
+    sessionCount: sessions.length,
+    skipped,
+  };
 }
 
-function sessionLabel(run: RunSummary, sessions: AnalyticsSummary["sessions"]): string {
-  const session = sessions.find((entry) => entry.id === run.sessionId);
-  return session ? `${session.prefixName} ${session.sessionNumber} · ${session.date}` : "";
-}
-
-/** Older sessions fade, so the direction of travel is legible. */
-function fade(index: number, total: number, ceiling: number): number {
-  if (total <= 1) return ceiling;
-  return (0.4 + 0.6 * (index / (total - 1))) * ceiling;
+/** Older sessions fade, so the direction of travel is legible without a line. */
+function fade(slot: number, total: number): number {
+  if (total <= 1) return 1;
+  return 0.3 + 0.7 * (slot / (total - 1));
 }

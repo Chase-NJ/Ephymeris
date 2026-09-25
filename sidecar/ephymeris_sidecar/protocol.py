@@ -77,7 +77,8 @@ class Cmd:
     SESSIONS_CONFIRM_MAPPING: Final = "sessions.confirmMapping"
     SESSIONS_STATUS: Final = "sessions.status"
     SESSIONS_START_ALL: Final = "sessions.startAll"
-    SESSIONS_SWITCH_GROUP: Final = "sessions.switchGroup"
+    SESSIONS_END_GROUP: Final = "sessions.endGroup"
+    SESSIONS_RESUME: Final = "sessions.resume"
     SESSIONS_END: Final = "sessions.end"
     SESSIONS_ACTIVE: Final = "sessions.active"
     PORT_START_SESSION: Final = "port.startSession"
@@ -95,6 +96,7 @@ class Cmd:
 
     # Crash recovery (data.md §12, §11)
     SESSIONS_RECOVER: Final = "sessions.recover"
+    SESSIONS_TIDY: Final = "sessions.tidy"
     HARDWARE_GET: Final = "hardware.get"
     HARDWARE_PREVIEW: Final = "hardware.preview"
     HARDWARE_SAVE: Final = "hardware.save"
@@ -247,7 +249,7 @@ SHAPES: Final[dict[str, Any]] = {
     "AnimalEnded": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('stopReason', 'str', False), ('filePath', ('union', ('str', 'null')), False))),
     "RunnerSession": ('obj', (('session', ('ref', 'Session'), False), ('groupId', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'SessionBox')), False))),
     "ActiveSessions": ('obj', (('running', ('union', (('ref', 'RunnerSession'), 'null')), False), ('configuring', ('list', ('ref', 'Session')), False), ('stale', ('list', ('ref', 'Session')), False))),
-    "SessionListItem": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('ordinal', 'int', False), ('runCount', 'int', True))),
+    "SessionListItem": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('ordinal', 'int', False), ('runCount', 'int', True), ('groupRuns', ('list', ('ref', 'GroupRun')), False))),
     "DiskSession": ('obj', (('cohortId', 'str', False), ('cohortName', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('folderPath', 'str', False), ('recorded', 'bool', False))),
     "MetricSummary": ('obj', (('id', 'str', False), ('label', 'str', False), ('pSession', ('union', ('float', 'null')), False), ('pWindow', ('union', ('float', 'null')), False), ('hits', 'int', False), ('counted', 'int', False), ('triggered', 'int', False), ('excluded', 'int', False), ('windowSize', 'int', False), ('wilsonLow', ('union', ('float', 'null')), False), ('wilsonHigh', ('union', ('float', 'null')), False), ('lowConfidence', 'bool', False), ('answerSide', ('union', (('ref', 'AnswerSide'), 'null')), False))),
     "TrialOutcomes": ('obj', (('trials', 'int', False), ('administered', 'int', False), ('rewarded', 'int', False), ('holdFailed', 'int', False), ('wrongWell', 'int', False), ('noResponse', 'int', False), ('aborted', 'int', False), ('pRewarded', ('union', ('float', 'null')), False), ('pSide', ('union', ('float', 'null')), False), ('rewardedLow', ('union', ('float', 'null')), False), ('rewardedHigh', ('union', ('float', 'null')), False), ('sideLow', ('union', ('float', 'null')), False), ('sideHigh', ('union', ('float', 'null')), False))),
@@ -274,6 +276,11 @@ SHAPES: Final[dict[str, Any]] = {
     "AnalyticsProgress": ('obj', (('cohortId', 'str', False), ('phase', ('lit', ('reading', 'walking')), False), ('done', 'int', False), ('total', 'int', False))),
     "RecoveredTsv": ('obj', (('tsvPath', 'str', False), ('jsonPath', ('union', ('str', 'null')), False), ('status', ('lit', ('recovered', 'failed')), False), ('nEvents', 'int', False), ('stopReason', ('union', ('str', 'null')), False), ('reason', ('union', ('str', 'null')), False))),
     "RecoverResult": ('obj', (('scanned', 'int', False), ('recovered', 'int', False), ('failed', 'int', False), ('entries', ('list', ('ref', 'RecoveredTsv')), False), ('cohortId', 'str', False), ('dataFolder', 'str', False), ('folderMissing', 'bool', False))),
+    "TidySession": ('obj', (('sessionId', 'str', False), ('label', 'str', False), ('date', 'str', False), ('status', ('ref', 'SessionStatus'), False), ('startedAt', 'str', False), ('runCount', 'int', False), ('groupIds', ('list', 'str'), False))),
+    "TidyMerge": ('obj', (('keep', ('ref', 'TidySession'), False), ('absorb', ('list', ('ref', 'TidySession')), False))),
+    "TidyEmpty": ('obj', (('session', ('ref', 'TidySession'), False), ('removesFolder', 'bool', False))),
+    "TidySkipped": ('obj', (('session', ('ref', 'TidySession'), False), ('reason', 'str', False))),
+    "TidyPlan": ('obj', (('cohortId', 'str', False), ('applied', 'bool', False), ('merges', ('list', ('ref', 'TidyMerge')), False), ('empty', ('list', ('ref', 'TidyEmpty')), False), ('skipped', ('list', ('ref', 'TidySkipped')), False))),
     "ServerHello": ('obj', (('protocolVersion', 'int', False), ('sidecarVersion', 'str', False))),
     "PortStateData": ('obj', (('box', 'int', False), ('state', ('ref', 'PortStateName'), False), ('prev', ('ref', 'PortStateName'), False), ('reason', 'str', False))),
     "PortOutputData": ('obj', (('box', 'int', False), ('lines', ('list', ('ref', 'OutputLine')), False))),
@@ -348,7 +355,8 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "sessions.confirmMapping": ('obj', (('sessionId', 'str', False), ('groupId', 'str', False), ('boxes', ('list', ('ref', 'SessionBoxMapping')), False))),
     "sessions.status": ('obj', (('sessionId', 'str', False),)),
     "sessions.startAll": ('obj', (('sessionId', 'str', False),)),
-    "sessions.switchGroup": ('obj', (('sessionId', 'str', False),)),
+    "sessions.endGroup": ('obj', (('sessionId', 'str', False),)),
+    "sessions.resume": ('obj', (('sessionId', 'str', False),)),
     "sessions.end": ('obj', (('sessionId', 'str', False),)),
     "sessions.active": ('obj', ()),
     "port.startSession": ('obj', (('box', 'int', False),)),
@@ -360,6 +368,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "analytics.rescan": ('obj', (('cohortId', 'str', False), ('adoptOrphans', 'bool', True))),
     "analytics.recentSessions": ('obj', (('limit', 'int', True),)),
     "sessions.recover": ('obj', (('cohortId', 'str', False),)),
+    "sessions.tidy": ('obj', (('cohortId', 'str', False), ('apply', 'bool', True))),
     "hardware.get": ('obj', ()),
     "hardware.preview": ('obj', (('document', 'any', False),)),
     "hardware.save": ('obj', (('document', 'any', False), ('confirm', 'bool', False))),
@@ -417,7 +426,8 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "sessions.confirmMapping": ('obj', (('ok', 'bool', False),)),
     "sessions.status": ('obj', (('session', ('ref', 'Session'), False), ('groupId', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'SessionBox')), False))),
     "sessions.startAll": ('obj', (('session', ('ref', 'Session'), False),)),
-    "sessions.switchGroup": ('obj', (('nextGroupId', ('union', ('str', 'null')), False),)),
+    "sessions.endGroup": ('obj', (('session', ('ref', 'Session'), False),)),
+    "sessions.resume": ('obj', (('session', ('ref', 'Session'), False),)),
     "sessions.end": ('obj', (('session', ('ref', 'Session'), False),)),
     "sessions.active": ('ref', 'ActiveSessions'),
     "port.startSession": ('obj', (('state', ('ref', 'PortStateName'), False),)),
@@ -429,6 +439,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "analytics.rescan": ('ref', 'RescanResult'),
     "analytics.recentSessions": ('obj', (('sessions', ('list', ('ref', 'DiskSession')), False),)),
     "sessions.recover": ('ref', 'RecoverResult'),
+    "sessions.tidy": ('ref', 'TidyPlan'),
     "hardware.get": ('ref', 'RigDocument'),
     "hardware.preview": ('ref', 'RigSaved'),
     "hardware.save": ('ref', 'RigSaved'),

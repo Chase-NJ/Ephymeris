@@ -1029,7 +1029,7 @@ These never error, and are the ones to know about when something looks wrong but
 
 ## 10. The Task screen
 
-`/task` is the **landing** — this rig's saved tasks as a card grid, with the
+`/task` is the **landing** — this rig's saved tasks as a list, with the
 Strobes door (§3.3, `settings.md` §5.0) and the Walkthrough door beneath it. The
 **editor** is behind it at `/task/new` and `/task/:taskId`; it replaced the
 sketch *viewer*, because a viewer could show what a sketch declared and this
@@ -1039,10 +1039,23 @@ The split happened when the presets went (§11.4). While a task was born from on
 of five starting points, the library and those five were one rail beside the
 editor and touching either opened something. Built from scratch there is no menu
 to pick from, and the first question became *what have I got* — which a text
-rail answered badly and a grid of cards answers at a glance. Each card carries
-a **glyph**: one dot per condition in the six-colour series ramp (`data.md`
-§7.1), one ring per shaping stage, and the arrangement saying which selection
-mode — so a shelf is scannable before a name is read.
+rail answered badly. It was a grid of cards for a while; it is a **list** now
+(`TaskRow`, most recently edited first), because a shelf of near-identical
+variants is compared column by column and a grid scatters the one fact that
+differs across a different spot in each cell. Each row carries a **glyph**: one
+dot per condition in the six-colour series ramp (`data.md` §7.1), one ring per
+shaping stage, and the arrangement saying which selection mode — so a shelf is
+scannable before a name is read.
+
+**Duplicate** (on each row, beside Delete) opens an unsaved copy in the editor,
+for a small variation on a task that already runs. The copy is named clear of
+every saved task (`GRGL copy`, `GRGL copy 2` — no parentheses, which a sketch
+folder name cannot carry) and **drops the source's `legacyNames`**: a legacy
+name resolves to exactly one sketch (§3.7), so a copy carrying them would
+silently take over — or lose — the historical runs they decode. Saving refuses
+a name another saved task already uses (`TASK_INVALID`, case-insensitive): two
+tasks with one name share a sketch folder, so saving one would overwrite the
+other's firmware.
 
 > [!IMPORTANT]
 > **The Dashboard's HUD layout survives, and so does its point** (`dashboard.md`

@@ -138,14 +138,28 @@ export async function startAll(client: SidecarClient, sessionId: string): Promis
   return r.session;
 }
 
-export async function switchGroup(
+/**
+ * End the group on the rig and leave the session BETWEEN GROUPS
+ * (`dashboard.md` §5.2): still running, held, no boxes. The operator then picks
+ * the next group — any group — on the group step, or ends the session.
+ */
+export async function endGroup(client: SidecarClient, sessionId: string): Promise<Session> {
+  const r = (await client.call(CMD.SESSIONS_END_GROUP, { sessionId })) as {
+    session: Session;
+  };
+  return r.session;
+}
+
+/**
+ * Continue one of today's sessions with another group — one the app closed on
+ * between groups, or one ended too early. Never resumes a group mid-run.
+ */
+export async function resumeSession(
   client: SidecarClient,
   sessionId: string,
-): Promise<string | null> {
-  const r = (await client.call(CMD.SESSIONS_SWITCH_GROUP, { sessionId })) as {
-    nextGroupId: string | null;
-  };
-  return r.nextGroupId;
+): Promise<Session> {
+  const r = (await client.call(CMD.SESSIONS_RESUME, { sessionId })) as { session: Session };
+  return r.session;
 }
 
 export async function endSession(client: SidecarClient, sessionId: string): Promise<Session> {

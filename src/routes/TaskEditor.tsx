@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, CircleAlert, Workflow } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
@@ -76,9 +76,14 @@ export function TaskEditor() {
    *  if this were rebuilt inline. One trial row and one stage row, because a
    *  table with no rows has no Add button worth pointing at and an empty ramp
    *  is not "no ramp" — it is a task with no holds, which the firmware cannot
-   *  express. */
+   *  express.
+   *
+   *  Or a DUPLICATE, handed over in router state by the landing's Duplicate:
+   *  already renamed and stripped of legacy names there, and opened unsaved
+   *  exactly like a fresh task, so nothing is written until Save. */
+  const location = useLocation();
   const [seed] = useState<TaskDefinition | null>(() =>
-    taskId === undefined ? freshTask() : null,
+    taskId === undefined ? (seedFrom(location.state) ?? freshTask()) : null,
   );
 
   const session = useTask(taskId ?? null, seed);
@@ -759,3 +764,10 @@ function Header({
 /** Per machine, not per store: whether someone has been walked through this
  *  rig's task editor is a fact about the person at the bench. */
 const GUIDE_SEEN_KEY = "ephymeris:taskGuideSeen";
+
+/** A duplicated task handed over by the Task landing, if that is how we got here. */
+function seedFrom(state: unknown): TaskDefinition | null {
+  if (typeof state !== "object" || state === null || !("seed" in state)) return null;
+  const seed = (state as { seed: unknown }).seed;
+  return typeof seed === "object" && seed !== null ? (seed as TaskDefinition) : null;
+}

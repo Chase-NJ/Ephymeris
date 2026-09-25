@@ -12,7 +12,13 @@ import {
   useActiveSessions,
   useEndedCount,
 } from "@/lib/sessions/context";
-import { firstGroupToRun, type Session, type SessionSnapshot } from "@/lib/sessions/types";
+import {
+  isContinuable,
+  localToday,
+  sessionDoor,
+  type Session,
+  type SessionSnapshot,
+} from "@/lib/sessions/types";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -29,9 +35,11 @@ import { useSidecar } from "@/lib/ws/context";
  * whole story then — and nothing before `sessions.active` has answered, per
  * the Dashboard's no-spinner rule.
  *
- * Crash-orphaned sessions (`stale`) are shown read-only: their data is on disk
- * via the write-ahead `.tsv`, but resumption after a restart is out of scope
- * by decision — Close Out marks them completed, nothing offers to resume.
+ * Crash-orphaned sessions (`stale`) keep their data on disk via the write-ahead
+ * `.tsv`. Resuming a group mid-run after a restart is out of scope by decision,
+ * but a same-day one can be continued WITH ANOTHER GROUP — the usual story is
+ * the app closed between groups — through the group step (§7.6). Close Out
+ * marks one completed as it stands.
  */
 export function SessionDock() {
   const navigate = useNavigate();
@@ -70,20 +78,13 @@ export function SessionDock() {
     }
   }
 
-  /** Step 2 needs `?group=`; the session record doesn't carry it, so re-derive
-   *  the first runnable group the same way Step 1 would have. */
-  async function resumeSetup(session: Session) {
-    await run(async () => {
-      const cohort = await getCohort(client, session.cohortId);
-      const group = firstGroupToRun(cohort);
-      if (!group) {
-        throw new Error(
-          "This session's cohort no longer has a box-assigned group — discard the session instead.",
-        );
-      }
-      navigate(`/session/${session.id}/mapping?cohort=${session.cohortId}&group=${group.id}`);
-    });
+  /** Step 2 needs `?group=` and the record doesn't carry one, so the way back
+   *  in is the group step — the same choice Step 1 offered. */
+  function resumeSetup(session: Session) {
+    navigate(`/session/${session.id}/group?cohort=${session.cohortId}`);
   }
+
+  const today = localToday();
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-3">
@@ -101,9 +102,7 @@ export function SessionDock() {
         <RunningCard
           snapshot={running}
           busy={busy}
-          onOpen={() =>
-            navigate(`/session/${running.session.id}/control?cohort=${running.session.cohortId}`)
-          }
+          onOpen={() => navigate(sessionDoor(running))}
           onEnd={() => setConfirm({ kind: "end", session: running.session })}
         />
       )}
@@ -119,7 +118,7 @@ export function SessionDock() {
           <div className="mt-2 flex flex-col gap-2">
             {configuring.map((session) => (
               <SessionRow key={session.id} session={session}>
-                <Button disabled={busy || !connected} onClick={() => void resumeSetup(session)}>
+                <Button disabled={busy || !connected} onClick={() => resumeSetup(session)}>
                   Resume setup
                 </Button>
                 <Button
@@ -143,12 +142,23 @@ export function SessionDock() {
           >
             Ended unexpectedly
             <span className="ml-2 font-sans text-[11px] font-normal text-static">
-              recorded data is safe on disk; a session can&apos;t resume after a restart
+              recorded data is safe on disk; today&apos;s can continue with another group
             </span>
           </h2>
           <div className="mt-2 flex flex-col gap-2">
             {stale.map((session) => (
               <SessionRow key={session.id} session={session}>
+                {isContinuable(session, today) && (
+                  <Button
+                    variant="primary"
+                    disabled={busy || !connected}
+                    onClick={() =>
+                      navigate(`/session/${session.id}/group?cohort=${session.cohortId}`)
+                    }
+                  >
+                    Continue with another group
+                  </Button>
+                )}
                 <Button
                   disabled={busy || !connected}
                   onClick={() =>
@@ -267,7 +277,11 @@ function RunningCard({
   // The group's display name lives on the cohort; degrade to nothing if the
   // fetch fails — the raw id would only be noise to a lab user.
   useEffect(() => {
-    if (status !== "connected" || !groupId) return;
+    if (!groupId) {
+      setGroupName(null);
+      return;
+    }
+    if (status !== "connected") return;
     let alive = true;
     void getCohort(client, session.cohortId)
       .then((cohort) => {
@@ -295,8 +309,14 @@ function RunningCard({
           <h2 className="font-mono text-[14px] text-starlight">{sessionName(session)}</h2>
         </div>
         <p className="font-mono text-[11px] text-static">
-          {runningCount} of {boxes.length} boxes recording
-          {endedCount > 0 && ` · ${endedCount} finished`}
+          {groupId ? (
+            <>
+              {runningCount} of {boxes.length} boxes recording
+              {endedCount > 0 && ` · ${endedCount} finished`}
+            </>
+          ) : (
+            "between groups"
+          )}
         </p>
       </div>
       <p className="mt-1 font-mono text-[11px] text-static">
@@ -332,7 +352,7 @@ function RunningCard({
 
       <div className="mt-4 flex items-center gap-2">
         <Button variant="primary" disabled={busy} onClick={onOpen}>
-          Open Mission Control
+          {groupId ? "Open Mission Control" : "Choose next group"}
           <ArrowRight size={13} strokeWidth={2} />
         </Button>
         <Button variant="ghost" disabled={busy} onClick={onEnd}>

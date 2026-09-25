@@ -263,7 +263,7 @@ The reason to want it is concrete. Before this, the state of a board between ses
 | **On startup** | When the presence poll first reports the rig. The cold case: nothing is known about any board, so every bound box is a candidate |
 | **When a board appears** | Replugged, or newly bound on the Rig tab |
 | **When a port falls back to `IDLE`** | A run finishing, a console closing, an error acknowledged. Hooking the **transition** rather than each command means every path to idleness is covered by one rule, including ones added later — **which is also how it came to cover one it should not have**: a Debug Mode flash ends in `IDLE` too (§8.2, the pin) |
-| **When a session lets go** | `sessions.end`, `sessions.switchGroup`, or `sessions.abandon`. Switch Group restores *immediately* rather than waiting for the whole session, because the operator's very next act is walking the rig to swap animals — and that walk is what wants the lights |
+| **When a session lets go** | `sessions.end`, `sessions.endGroup`, or `sessions.abandon`. Switch Group (`endGroup`) restores *immediately* rather than waiting for the whole session, because the operator's very next act is walking the rig to swap animals — and that walk is what wants the lights |
 | **On demand** | The Rig tab's **Reflash boxes** button (the only path that passes `force`), the placement walk's request for its boxes, and Debug Mode's **Return to baseline**. Any `utility.ensure` arriving over the wire is a person asking, and is what releases a pin (§8.2) |
 
 Restores run **one box at a time, sequentially**, for the same reason the session flash sequence does.

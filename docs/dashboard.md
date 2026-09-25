@@ -189,7 +189,7 @@ Route `/`. Two columns of translucent HUD tiles docked over the full-bleed sky. 
 - **Page title**, with the rig's fact line under it in mono — `4/6 boxes on the bus · 3 cohorts · session running` — coloured by state only: the error tone the moment any bound box is in fault, Ion when every bound box is connected, quiet otherwise. The title keeps its grid (Debug's title crossfades onto the same line), which is why the line hangs under it rather than a chip sitting beside it.
 - **Hero CTA** — "Start a Session," primary `Pulsar`-filled, and the one deliberately **opaque** tile: the primary action doesn't dissolve into the sky. It navigates straight to its destination — `/session/new` normally, `/cohorts` when no cohort exists yet, Mission Control while a session runs ("Resume Session"). On hover the rocket lifts toward its heading and a looping booster trail streams behind it — fire drawn with **motion, not colour or glow**; the loop stands down under reduced motion.
 - **Start a Recording** — the second way in: the same session flow, creating a session that is also an Intan recording ([recording.md §4](recording.md#4-the-walkthrough)). A **`.hud` glass tile, not a second solid button** — the Pulsar tile above it is the primary action and the one opaque thing in the column on purpose, and two of them would be two primaries. It earns its place with what it knows: the line under the title is RHX's live state (`RHX 3.5.0 · 30 kS/s · synthetic`, or why not), so whether a recording *can* start is answered before the operator commits to the walkthrough. **A footer link to the Recording tab appears only while RHX is not connected** — exactly when the tile's own click cannot repair the situation, the Boxes readout's rule for a link — and it is a sibling of the button, not inside it. Hidden while a session runs — the tile above has become Resume, and a second door into a flow that is already open is only a way to get lost.
-- **Session dock** — everything `sessions.active` reports: the running session's card (live per-box liveness, Open Mission Control, End Session), `configuring` set-ups (Resume setup / Discard), and crash-orphaned `stale` rows shown **read-only** (View in Analytics / Close out — **never** Resume). Renders nothing when there is nothing to act on, and nothing before `sessions.active` has answered — the no-spinner rule.
+- **Session dock** — everything `sessions.active` reports: the running session's card (live per-box liveness, Open Mission Control, End Session), `configuring` set-ups (Resume setup / Discard), and crash-orphaned `stale` rows (View in Analytics / Close out, plus **Continue with another group** for a same-day one — never a mid-group resume, §7.6). Between groups the running card reads *between groups* and its door is **Choose next group**. Renders nothing when there is nothing to act on, and nothing before `sessions.active` has answered — the no-spinner rule.
 
 ### 3.2 The overview column (right)
 
@@ -414,7 +414,9 @@ flowchart LR
     C --> M["2 · Boxes<br/><code>/session/:id/mapping</code>"]
     M -->|"placement walk"| F["2b · Flash<br/><i>sequential</i>"]
     F --> R["3 · Run<br/><code>/session/:id/control</code>"]
-    R -->|"Switch Group"| M
+    R -->|"Switch Group"| G["Pick a group<br/><code>/session/:id/group</code>"]
+    G --> M
+    D -->|"Continue today's session"| G
     R -->|"End Session"| A["4 · Finish<br/><code>/analytics</code>"]
 ```
 
@@ -429,13 +431,16 @@ The hero CTA does an *existence* check only (`cohort count > 0`), deliberately �
 | Field | Behaviour |
 |---|---|
 | **Cohort** | The same card-grid pattern as the Cohorts tab, not a plain dropdown — the user is already familiar with picking a cohort that way |
+| **Group** | Which group goes on the rig first (`GroupPicker`): every group with a box-assigned animal, the first pre-selected |
 | **Prefix** | Dropdown over the global prefix list, with inline add/remove |
 | **Session number** | Text field pre-filled with a suggestion (highest existing numeric number for that prefix, +1), degrading to "no suggestion" for a prefix with no numeric history |
 | **Time limit** | Optional minutes. Empty = no limit |
 
 **A soft warning, not a block**, if the chosen `(prefix, sessionNumber)` already has data from earlier the same day: reusing it is legal but usually accidental.
 
-**Which group runs first is not a choice here.** The session begins with the cohort's lowest-`order` group that has at least one box-assigned animal — asking the user to also pick a starting group would be redundant with data they already set up.
+**Groups have no run order.** The operator picks the first group here and the next one at every switch (§7.6) — which group is ready is a fact about the room that morning (who is weighed, who is out of their cage), never about data set up weeks before. Cohorts used to carry a run order and Switch Group advanced through it; both went on 2026-09-25. `Group.order` survives only as the order the cards are displayed in.
+
+**Continue today.** A cohort with one of *today's* sessions that already ran a group — the app was closed between groups, or the session was ended too early — lists it under **Continue today**, and **Continue** opens the group step (§7.6) for it rather than creating a second record. The soft same-number warning points there too.
 
 > [!IMPORTANT]
 > **The time limit is per-box, measured from each box's own start** — not from Start All. Boxes are started individually (a box can be restarted mid-group, a straggler started late), and the point of a time limit is that every *animal* runs for the same duration. It is stored on the `Session` record, so every group in a multi-group session runs under the same limit and a reloaded window still knows it. **Enforcement is sidecar-side, never client-side:** a closed or crashed frontend changes nothing about when boxes stop.
@@ -470,7 +475,7 @@ Two shortcuts sit beside the walk, for the operator who has already loaded the r
 
 The lighting is `utility.identify`, which is why a box is lit **before** it is flashed: it is still carrying the utility sketch when the operator arrives at it, and that is the only firmware that can be asked to light one. Confirming the mapping — now the first thing the walk does — puts the baseline on hold; each box's light goes out through the same serial queue that lit it, and its flash waits behind that.
 
-**Leaving the step.** On first entry (session still `configuring`) Back returns to Step 1 and abandons the session record — marked `aborted` rather than left stranded. On re-entry via Switch Group the session already holds recorded group runs, so Back would be a lie; the step offers **End session** instead.
+**Leaving the step.** On first entry (session still `configuring`) Back returns to Step 1 and abandons the session record — marked `aborted` rather than left stranded. On re-entry from the group step the session already holds recorded group runs, so Back would be a lie; the step offers **Pick another group** (until the mapping is confirmed) and **End session** instead. A group's first per-box Start marks the session `running` exactly as Start All does, so a group started one box at a time is never mistaken for a discardable set-up.
 
 ### 7.4 Step 2b — the flash sequence
 
@@ -493,6 +498,18 @@ Only on a session created from **Start a Recording**, and only then does the rai
 
 It comes **after** the mapping because what it asks is which headstage port each *mapped* box is on, and it runs **once per group** for the reason the mapping does: different animals. Readiness, saving, thresholds and the per-box port / channel range / probe map are specified in [recording.md §4](recording.md#4-the-walkthrough). Whether a session is a recording is read from the sidecar's own snapshot (`useIsRecordingSession`), never from the URL — the flow is re-entered from the dock, a group switch and a reload, and a query flag would have to survive all three.
 
+### 7.6 The group step (`/session/:id/group`)
+
+Which group goes on the rig next — **any** group. Reached three ways:
+
+- **Switch Group** in Mission Control (and the group-swap prompt, and the wrap-up's *Run another group*): `sessions.endGroup` ends the group on the rig, closes its `groupRuns` entry, clears the runner and hands the rig back to the utility baseline. The session is then **between groups** — still `running` and held, no boxes, `groupId` null. The sidecar never picks the next group and never finalizes here.
+- **Continue today** on Step 1, or **Continue with another group** on a `stale` row in the Dashboard's dock.
+- **Choose next group** on the dock's running card, or a reload of Mission Control, while the session is between groups.
+
+`GroupPicker` offers every populated group; a group that already ran says when (*ran 10:42*). **Running a group again is allowed** — new timestamped files beside the old ones, nothing overwritten — and says so, so a repeat is a choice rather than an accident. **Run this group** goes to Step 2 for it; **End session** ends the session.
+
+**Continuing is not resumption.** A session reached from Step 1 or the dock is re-held (`sessions.resume`) only when the operator presses Run this group, so backing out changes nothing. The sidecar closes a group run a crash left open — that group is over, its `.tsv` files are the record — and never picks a group up mid-run ([data.md §5.3](data.md#53-what-is-and-isnt-guaranteed)). **Same day only:** the session folder is named for its date, and a run appended tomorrow would be filed under the wrong day.
+
 ---
 
 ## 8. Mission Control
@@ -508,7 +525,7 @@ Always visible: session name (`<prefix>_<sessionNumber>`), date, current time, a
 | Action | Behaviour |
 |---|---|
 | **Start All** | The per-box `IN_SESSION` entry sequence ([§10](#10-in_session-entry-and-exit)) for every box in the current group that isn't already running |
-| **Switch Group** | Only shown for a cohort with more than one populated group, and only once a group has run. Ends the current group's runs, then re-enters **Step 2** scoped to the next group by `order` — since different animals are physically going into the boxes, the mapping/sketch/config confirmation and flash sequence genuinely need to happen again |
+| **Switch Group** | Only shown for a cohort with more than one populated group, and only once a group has run. Ends the current group's runs (`sessions.endGroup`), then opens the **group step** (§7.6) — the operator picks any group, and Step 2 follows for it, since different animals are physically going into the boxes and the mapping/sketch/config confirmation and flash sequence genuinely need to happen again |
 | **End Session** | Gracefully stops every running box, waits for each to finalize, marks the record `completed`, and lands on Analytics. A session with no run is **abandoned** rather than ended |
 
 **A recording session adds a block to the rail and nothing else** (`RecordingRail`, whose body is `RecordingStatus`, shared with the Recording tab's Live tile; [recording.md §5](recording.md#5-start-and-end)): a `REC` / `ARMED` / `ENDING` chip in `StateChip`'s styling (Ion for recording — the app's "nominal" colour, no red, no glow) beside a flat status dot, the file RHX is writing, the elapsed clock, and a per-box **sync check** grid (box · DIN · matched · missed · stray) — which is the wiring check, since strobes arriving with no edge to match them mean a sync line that is not reaching its digital input. **Start All starts the recording first** and refuses, with no box started, if it cannot. **End Session and Switch Group end gracefully**: each box is allowed to finish the trial it is in (up to 45 s, against the behavior-only 100 ms) so its last outcome lands inside the recording; the block names who is still out and offers **End now**. Everything here renders nothing for a behavior-only session — a recording is an addition to Mission Control, not a mode of it.
@@ -536,15 +553,15 @@ Once time is up the clock stops counting and reads *"time up — stopping at the
 
 ### 8.5 The group-swap prompt
 
-When every box in the current group has finalized **and** another populated group is waiting, Mission Control prompts with the placement scene played backwards: the handler lifts the animal back out of the chamber and carries it home to its cage — literally the operator's next physical act — with a **Switch Group** button beneath it. Same scenery, same performers, mirrored choreography; the arrival flourish is omitted because leaving celebrates nothing.
+When every box in the current group has finalized **and** a populated group has not yet run in this session, Mission Control prompts with the placement scene played backwards: the handler lifts the animal back out of the chamber and carries it home to its cage — literally the operator's next physical act — with **Pick next group** (the group step, §7.6) and **End session** beneath it. Same scenery, same performers, mirrored choreography; the arrival flourish is omitted because leaving celebrates nothing.
 
 The prompt appears whether the group ended by time limit, operator stop, or every board's own end strobe — *"everyone is done and more animals are waiting"* is the trigger, not how it came to be true.
 
-Under the scene, a **return checklist** (`ReturnChecklist`): one row per box, ticked as each animal goes home, and **All animals are out** to answer the whole thing in one press. Switch Group waits on every row — the next group's animals go into these same chambers — and the shortcut is what makes that gate a courtesy rather than a chore. Removal is a checklist and not a walk because it has no silent failure: an animal carried to the wrong home cage is noticed at the cage, not in the data.
+Under the scene, a **return checklist** (`ReturnChecklist`): one row per box, ticked as each animal goes home, and **All animals are out** to answer the whole thing in one press. Both buttons wait on every row — the next group's animals go into these same chambers — and the shortcut is what makes that gate a courtesy rather than a chore. Removal is a checklist and not a walk because it has no silent failure: an animal carried to the wrong home cage is noticed at the cage, not in the data.
 
 ### 8.7 The wrap-up
 
-When the **last** populated group has finished — every box finalized, nothing left to run — Mission Control raises a pop-up rather than another centre-stage card (`SessionWrapUp`). This is the one moment in the flow that is genuinely over, and a prompt sharing the screen with six Start buttons reads as one option among seven. It takes the screen: *That's a wrap*, the session in one mono line (animals, groups, elapsed), the placement scene played backwards with every box in the loop, the same return checklist, and **End session** — enabled once every animal is ticked home — which ends the session and lands on Analytics with this run already open.
+When every populated group has run — every box finalized, no group still waiting — Mission Control raises a pop-up rather than another centre-stage card (`SessionWrapUp`). This is the one moment in the flow that is genuinely over, and a prompt sharing the screen with six Start buttons reads as one option among seven. It takes the screen: *That's a wrap*, the session in one mono line (animals, groups, elapsed), the placement scene played backwards with every box in the loop, the same return checklist, and **End session** — enabled once every animal is ticked home — which ends the session and lands on Analytics with this run already open. A multi-group cohort also gets **Run another group**: nothing forbids running a group twice, so "every group has run" is where the session naturally ends, not a wall.
 
 Still dismissable: **Not yet** puts the rails back for an operator who wants to restart a box or read a tile, and the left rail's End Session is the same action. The pop-up returns if a box restarts and finishes again. Its only flourish is three flat Ion rings breathing out from a check — the constellation's arrival rings on a surface, strokes and never blur, still under reduced motion.
 
@@ -552,7 +569,7 @@ Still dismissable: **Not yet** puts the rails back for an operator who wants to 
 
 **The journey rail** — a four-step indicator, **Configure → Boxes → Run → Finish**, rendered as constellation stars joined by a thin `Pulsar` path: completed stars filled, the current one pulsing in `Starlight` behind a flat expanding ring, upcoming ones `Halo` outlines. **No blur anywhere**, so the no-glow rule holds even on the pulsing element.
 
-Beneath it, a single crossfading hint line — the only text direction in the flow — always naming the next action, plus the running group's position (`group 2/3 · Group B`). Deliberately always on and deliberately subtle: the flow is run by lab members who may use it infrequently, so the next action should never have to be inferred, but it also can't compete with live data for attention.
+Beneath it, a single crossfading hint line — the only text direction in the flow — always naming the next action, plus the running group and how many of the cohort's groups have run (`Group B · 2/3 groups run`) — a count, not a position, since there is no run order. Deliberately always on and deliberately subtle: the flow is run by lab members who may use it infrequently, so the next action should never have to be inferred, but it also can't compete with live data for attention.
 
 **The placement banner** — the box-placement instruction drawn rather than written: a lab member lifts an animal from its home cage and places it through the front door of a chamber, with the chamber's number lighting `Ion` once the animal is inside. It shows the box the walk is currently pointing at, and it is rendered **only while a walk is running** — Step 2's guided walk (§7.3) and Mission Control's reverse walk between groups (§5.5). It is an instruction, not decoration: on the confirm-boxes step and after the walk finishes there is no animal to carry, and a loop playing over the per-box settings forms would only pull attention off them.
 

@@ -37,7 +37,7 @@ erDiagram
     GROUP {
         uuid id
         string name
-        int order "run order"
+        int order "display order"
     }
 ```
 
@@ -67,7 +67,7 @@ Animal {
 Group {
   id: uuid
   name: string                    // user-defined, or auto "Group 1" / "Group 2"
-  order: int                      // run order for consecutive execution
+  order: int                      // display order only — groups have no run order
 }
 ```
 
@@ -102,7 +102,7 @@ A cohort can be created with **zero animals** and populated over following days 
 
 **What groups are for.** Splitting a cohort larger than the available box count into consecutive runs — six rats, three working boxes, so two groups of three run back-to-back rather than simultaneously.
 
-**What `cage` is for.** Housing and run order are independent facts, so cagemates legitimately land in different run groups. `null` means "cage unknown," which is true of every animal entered before the field existed. The 3D constellation is the consumer: cagemates share one ship in orbit — so the field changes **what the sky draws, never what a session may do**.
+**What `cage` is for.** Housing and grouping are independent facts, so cagemates legitimately land in different run groups. `null` means "cage unknown," which is true of every animal entered before the field existed. The 3D constellation is the consumer: cagemates share one ship in orbit — so the field changes **what the sky draws, never what a session may do**.
 
 ---
 
@@ -218,7 +218,7 @@ The readiness strip doubles as the flow's spine. Its three checkpoints (*named* 
 | **Data folder** | Only asked for when no `dataDirectory` is configured; otherwise derived, and asking would be noise mid-flow |
 | **Animals** | Biographical data only — name, sex, ID number, notes |
 | **Cages & spaceships** | Every animal is a draggable crew chip, every cage a "spaceship" card, plus a dashed dock holding the unassigned |
-| **Groups & boxes** | One card per group: a run-order badge, a **rack of box slots**, and a bench for members without one. Chips drag between slots and between groups |
+| **Groups & boxes** | One card per group: its name, a **rack of box slots**, and a bench for members without one. Chips drag between slots and between groups. There is no run order to set: which group runs is picked when the session starts and at every switch (`dashboard.md` §7.2, §7.6) |
 
 **Bulk entry is the primary way into the roster.** One field takes a comma-, newline- or tab-separated list (a spreadsheet column pastes straight in) **or** a prefix and a count (`R- × 8` → `R-1`…`R-8`).
 
@@ -235,7 +235,7 @@ The readiness strip doubles as the flow's spine. Its three checkpoints (*named* 
 > [!IMPORTANT]
 > **Box assignment lives in the Groups panel, not the Animals list**, because uniqueness is scoped per group — it is a property of a *membership*, not of an animal, and only makes sense with the whole group visible at once.
 
-The panel is always present, since assignment has to happen somewhere regardless of group count; a single group hides its rename/reorder/remove chrome rather than exposing chrome nobody needs yet.
+The panel is always present, since assignment has to happen somewhere regardless of group count; a single group hides its rename/remove chrome rather than exposing chrome nobody needs yet.
 
 **Membership and box assignment are one gesture, and it is the same gesture as the cages panel above.** A group is a **rack** — one slot per box the rig offers — plus a **bench** for members that don't hold a box yet. Dragging a chip onto a slot assigns that box; dragging it into another card moves the animal between groups; dragging it to a bench takes its box away. Click-to-carry (click the chip, then its destination) is the trackpad-friendly fallback, identical to `CageAssignment`.
 

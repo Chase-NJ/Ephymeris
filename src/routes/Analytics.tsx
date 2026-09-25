@@ -5,6 +5,7 @@ import {
 } from "@/components/constellation3d/SkyBackdrop";
 import {
   ArchiveRestore,
+  Combine,
   ChartLine,
   CircleAlert,
   CircleCheck,
@@ -36,6 +37,7 @@ import { SessionRail } from "@/components/analytics/SessionRail";
 import { SessionStrategy } from "@/components/analytics/SessionStrategy";
 import { SessionSummary } from "@/components/analytics/SessionSummary";
 import { StrategySpace } from "@/components/analytics/StrategySpace";
+import { TidyRecords, describeTidy } from "@/components/analytics/TidyRecords";
 import { Button } from "@/components/common/controls";
 import { FolderButton } from "@/components/common/FolderButton";
 import { errorMessage, recover, rescan } from "@/lib/analytics/commands";
@@ -56,6 +58,7 @@ import type {
   AnalyticsSummary,
   DiskSession,
   RecoverResult,
+  TidyPlan,
   RescanPruned,
   RescanResult,
   RunSummary,
@@ -102,6 +105,7 @@ export function Analytics() {
 
   const [rescanning, setRescanning] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [tidyOpen, setTidyOpen] = useState(false);
   const [rescanNote, setRescanNote] = useState<string | null>(null);
   // Bumped whenever the data underneath changes identity — a cohort swap or a
   // rescan. Panels key their draw-on animations off it, so a reveal replays
@@ -322,6 +326,23 @@ export function Analytics() {
     }
   }
 
+  // Group names for the tidy preview's "ran Morning, Afternoon" lines.
+  const groupNames = useMemo(
+    () => new Map((summary?.groups ?? []).map((g) => [g.id, g.name])),
+    [summary],
+  );
+
+  /** The tidy is applied: the merged and removed sessions leave the rail. */
+  async function afterTidy(result: TidyPlan) {
+    setTidyOpen(false);
+    setRescanNote(describeTidy(result));
+    if (!cohortId) return;
+    // A selected session may just have been folded into another.
+    store.selectSession(ALL_SESSIONS);
+    setReveal((n) => n + 1);
+    await store.refresh(client, cohortId);
+  }
+
   /*
    * The picker is the landing state; a cohort is only chosen deliberately.
    *
@@ -479,6 +500,15 @@ export function Analytics() {
                 <ArchiveRestore size={13} strokeWidth={1.75} />
                 {recovering ? "Recovering…" : "Recover"}
               </Button>
+              <Button
+                variant="outline"
+                onClick={() => setTidyOpen(true)}
+                disabled={!connected || !cohortId || rescanning || recovering}
+                title="Merge one session's split records and remove empty ones — shows what it will do first"
+              >
+                <Combine size={13} strokeWidth={1.75} />
+                Tidy records
+              </Button>
               {/* One button, following the scope, rather than two side by side:
               which sheet you get is already answered by what you are looking
               at, and the label says so outright. */}
@@ -540,6 +570,15 @@ export function Analytics() {
             </Strip>
           )}
 
+          {cohortId && (
+            <TidyRecords
+              open={tidyOpen}
+              cohortId={cohortId}
+              groupNames={groupNames}
+              onClose={() => setTidyOpen(false)}
+              onDone={(result) => void afterTidy(result)}
+            />
+          )}
           {rescanNote && (
             <Strip tone="neutral" icon={Info} onDismiss={() => setRescanNote(null)}>
               {rescanNote}

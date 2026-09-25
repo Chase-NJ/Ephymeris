@@ -13,6 +13,7 @@ import { useIntanStatus } from "@/lib/intan/context";
 import { summarizeRecordingConfig } from "@/lib/intan/defaults";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useRunningSession } from "@/lib/sessions/context";
+import { sessionDoor } from "@/lib/sessions/types";
 import { useSettings } from "@/lib/settings/context";
 import { useRecordingDefaults } from "@/lib/settings/useRecordingDefaults";
 
@@ -115,9 +116,7 @@ export function Recording() {
                           variant="ghost"
                           className="w-full justify-between"
                           onClick={() =>
-                            navigate(
-                              `/session/${running.session.id}/control?cohort=${running.session.cohortId}`,
-                            )
+                            navigate(sessionDoor(running))
                           }
                         >
                           Open Mission Control

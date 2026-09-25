@@ -22,10 +22,12 @@ import { springPanel, springSnappy } from "@/lib/motion";
 export type JourneyStep = "configure" | "boxes" | "record" | "run" | "finish";
 
 export interface JourneyGroup {
-  /** 1-based position of the running group among populated groups. */
-  index: number;
-  count: number;
   name: string;
+  /** Populated groups that have run in this session, the current one
+   *  included — a count, not a position: groups run in whatever order the
+   *  operator picks. */
+  ran: number;
+  count: number;
 }
 
 const STEPS: { id: JourneyStep; label: string }[] = [
@@ -153,7 +155,7 @@ export function SessionJourney({
             className={`font-mono text-[10px] text-static/80 ${group ? "" : "invisible"}`}
           >
             {group
-              ? `group ${group.index}/${group.count} · ${group.name}`
+              ? `${group.name} · ${group.ran}/${group.count} groups run`
               : " "}
           </div>
           {/* Two lines' worth at 11px (2 × 16.5px). Every hint currently written

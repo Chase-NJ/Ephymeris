@@ -702,7 +702,8 @@ SHAPES = (
                 "running",
                 nullable(Ref("RunnerSession")),
                 doc="Keyed off the live runner, never a bare DB status query — a "
-                "'running' row with no live runner is a crash orphan, not resumable.",
+                "'running' row with no live runner is a crash orphan. A held session "
+                "with `groupId: null` and no boxes is BETWEEN GROUPS, awaiting a choice.",
             ),
             f(
                 "configuring",
@@ -712,8 +713,9 @@ SHAPES = (
             f(
                 "stale",
                 ListOf(Ref("Session")),
-                doc="DB says 'running' but no runner holds them — a crash happened. "
-                "Surfaced for honesty (the .tsv on disk is the record), never for resume.",
+                doc="DB says 'running' but no runner holds them — a crash or a closed "
+                "app. The .tsv on disk is the record; a same-day one can be continued "
+                "with another group (`sessions.resume`), never mid-group.",
             ),
         ),
         doc="Everything unfinished, discoverable with no prior knowledge of ids. "
@@ -739,6 +741,12 @@ SHAPES = (
                 'from sessionNumber, which is free text and would sort "10" before "9".',
             ),
             f("runCount", INT, optional=True),
+            f(
+                "groupRuns",
+                ListOf(Ref("GroupRun")),
+                doc="Which groups ran, so Step 1 can offer to continue one of "
+                "today's sessions with another group (`sessions.resume`).",
+            ),
         ),
         doc="One session, from sessions.list or inside a summary.",
     ),
@@ -1276,6 +1284,62 @@ SHAPES = (
             f("cohortId", STR),
             f("dataFolder", STR),
             f("folderMissing", BOOL, doc="Same distinction as RescanResult's: 'nothing there' vs 'nowhere to look'."),
+        ),
+    ),
+    Shape(
+        "TidySession",
+        obj(
+            f("sessionId", STR),
+            f("label", STR, doc="`<prefix>_<number>`, as the folder names it."),
+            f("date", STR),
+            f("status", Ref("SessionStatus")),
+            f("startedAt", STR),
+            f(
+                "runCount",
+                INT,
+                doc="Recorded runs plus recovered files attributed to it. On an "
+                "applied merge's `keep`, the merged day's total.",
+            ),
+            f("groupIds", ListOf(STR), doc="Its group runs, in order; a group may repeat."),
+        ),
+        doc="One session record as the tidy preview names it (data.md §8.8).",
+    ),
+    Shape(
+        "TidyMerge",
+        obj(
+            f("keep", Ref("TidySession"), doc="The earliest record holding data — the day's session."),
+            f("absorb", ListOf(Ref("TidySession")), doc="Folded into `keep`: runs re-parented, rows deleted."),
+        ),
+    ),
+    Shape(
+        "TidyEmpty",
+        obj(
+            f("session", Ref("TidySession")),
+            f(
+                "removesFolder",
+                BOOL,
+                doc="The folder exists and holds no file, so it is removed too. "
+                "A folder with any file in it is never touched.",
+            ),
+        ),
+    ),
+    Shape(
+        "TidySkipped",
+        obj(f("session", Ref("TidySession")), f("reason", STR)),
+    ),
+    Shape(
+        "TidyPlan",
+        obj(
+            f("cohortId", STR),
+            f("applied", BOOL, doc="False for a preview; true once the changes are made."),
+            f("merges", ListOf(Ref("TidyMerge"))),
+            f("empty", ListOf(Ref("TidyEmpty"))),
+            f(
+                "skipped",
+                ListOf(Ref("TidySkipped")),
+                doc="Records sharing a folder with the held session or a set-up "
+                "started today — left whole, and said so.",
+            ),
         ),
     ),
     # Event-only envelope payloads
@@ -1992,10 +2056,21 @@ COMMANDS = (
         doc="Enters IN_SESSION on every configured box not already running.",
     ),
     Command(
-        "sessions.switchGroup",
+        "sessions.endGroup",
         args=obj(f("sessionId", STR)),
-        result=obj(f("nextGroupId", nullable(STR))),
-        doc="Ends current runs, advances to the next populated group by order.",
+        result=_SESSION,
+        doc="Ends the current group's runs and leaves the session BETWEEN GROUPS: "
+        "still `running` and held, no boxes, `groupId` null. The operator then "
+        "picks any group (or ends the session) — the sidecar never chooses one.",
+    ),
+    Command(
+        "sessions.resume",
+        args=obj(f("sessionId", STR)),
+        result=_SESSION,
+        doc="Re-holds one of TODAY's sessions that already ran a group — a "
+        "crash-orphaned `running` one or a `completed` one ended too early — in "
+        "the between-groups state, so another group can run under it. Closes a "
+        "group run a crash left open. Never resumes a group mid-run.",
     ),
     Command("sessions.end", args=obj(f("sessionId", STR)), result=_SESSION),
     Command(
@@ -2098,6 +2173,20 @@ COMMANDS = (
         "explicit user action, never a side effect. Rejected while any box "
         "is running: a live run's .tsv has no .json yet and is not an orphan.",
         section="Crash recovery (data.md §12, §11)",
+    ),
+    Command(
+        "sessions.tidy",
+        args=obj(
+            f("cohortId", STR),
+            f("apply", BOOL, optional=True, doc="Default false: a preview that changes nothing."),
+        ),
+        result=Ref("TidyPlan"),
+        doc="Merges session records that share prefix, number and date — one "
+        "folder, split by a day that went wrong — into the earliest, and "
+        "deletes records with no run, recording or file behind them (data.md "
+        "§8.8). Database only, except an empty folder of a deleted record. "
+        "Never touches the session the runner holds, nor a set-up started "
+        "today. An explicit user action with a preview, like recover.",
     ),
     # ---------------------------------------------------------------- rig wiring
     #
@@ -2268,7 +2357,7 @@ EVENTS = (
         "session.lifecycle",
         Ref("ActiveSessions"),
         doc="Broadcast whenever session identity or status changes (create, "
-        "abandon, confirmMapping, startAll, switchGroup, end). A full snapshot, "
+        "abandon, confirmMapping, startAll, endGroup, resume, end). A full snapshot, "
         "not a delta — clients replace state wholesale. Per-box liveness is not "
         "re-broadcast here; port.state remains that channel.",
     ),
@@ -2369,7 +2458,8 @@ ERRORS = (
     ErrorCode(
         "TASK_INVALID",
         "The definition is not a definition — wrong shape, too large, an "
-        "unusable id or name, or a name that collides with a bundled sketch. "
+        "unusable id or name, or a name that collides with a bundled sketch "
+        "or another saved task. "
         "NOT the same as a task that will not run: a well-formed definition "
         "describing an impossible task is a successful reply carrying located "
         "diagnostics, exactly as a wiring document is.",

@@ -37,6 +37,7 @@ import { useIsRecordingSession, useSessionStore } from "@/lib/sessions/context";
 import {
   animalsInGroup,
   defaultConfig,
+  groupsRunCount,
   populatedGroups,
   sketchName,
   type BoxMapping,
@@ -162,7 +163,7 @@ export function SessionMapping() {
 
   // What "back" means depends on whether the session has run yet (§3): the
   // record's status distinguishes first entry (`configuring`) from re-entry
-  // via Switch Group (`running`).
+  // from the group step (`running` — between groups, or continued).
   useEffect(() => {
     if (!connected || !sessionId) return;
     let active = true;
@@ -219,8 +220,8 @@ export function SessionMapping() {
     };
   }, [client]);
 
-  // Re-entry via Switch Group: the previous groups already ran, so the only
-  // honest exits are onward (flash) or ending the session outright.
+  // Re-entry from the group step: earlier groups already ran, so the honest
+  // exits are onward (flash), back to the choice of group, or ending the session.
   async function endFromHere() {
     if (!sessionId) return;
     handledExit.current = true;
@@ -623,11 +624,10 @@ export function SessionMapping() {
   const groupInfo = useMemo(() => {
     if (!cohort) return null;
     const groups = populatedGroups(cohort);
-    const i = groups.findIndex((g) => g.id === groupId);
-    const found = groups[i];
+    const found = groups.find((g) => g.id === groupId);
     if (!found || groups.length < 2) return null;
-    return { index: i + 1, count: groups.length, name: found.name };
-  }, [cohort, groupId]);
+    return { name: found.name, ran: groupsRunCount(cohort, session), count: groups.length };
+  }, [cohort, groupId, session]);
 
   const hint = busy
     ? "Confirming the boxes…"
@@ -1133,13 +1133,28 @@ export function SessionMapping() {
 
             {phase !== "placing" &&
               (midSession ? (
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => void endFromHere()}
-                >
-                  End session
-                </Button>
+                <>
+                  {/* Before this page confirms, the session is between groups
+                      and the choice can still be changed. */}
+                  {phase === "review" && (
+                    <Button
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() =>
+                        navigate(`/session/${sessionId}/group?cohort=${cohortId}`)
+                      }
+                    >
+                      Pick another group
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => void endFromHere()}
+                  >
+                    End session
+                  </Button>
+                </>
               ) : (
                 <Button
                   variant="ghost"

@@ -284,6 +284,50 @@ export function pooledAxis(
 }
 
 /**
+ * One run's accuracy at one well, pooled over integers across every condition
+ * answered there — read off the run's OWN metrics (`answerSide`), so no profile
+ * group is needed and any task lands on the same two axes (§11.1).
+ *
+ * Left is left whatever the task: a side is a physical well, which is what
+ * makes runs of different tasks comparable on one plane when conditions are
+ * not. The same integer pooling as `pooledAxis`, for the same reason.
+ */
+export function sideAccuracy(
+  run: RunSummary,
+  side: "left" | "right",
+): { p: number | null; counted: number } {
+  let hits = 0;
+  let counted = 0;
+  for (const metric of run.metrics) {
+    if (metric.id === OVERALL_ID || metric.answerSide !== side) continue;
+    hits += metric.hits;
+    counted += metric.counted;
+  }
+  return { p: counted > 0 ? hits / counted : null, counted };
+}
+
+/** The strategy space's fixed axes: x = left well, y = right well. */
+export const SIDE_AXES: StrategyAxes = {
+  x: { side: "left", label: "left well", ids: [], conditions: [] },
+  y: { side: "right", label: "right well", ids: [], conditions: [] },
+};
+
+/**
+ * The cohort's `limit` most recent sessions that hold at least one scored run,
+ * oldest first. `summary.sessions` is already chronological (the sidecar orders
+ * it by date and start time — never by session number, which is free text).
+ */
+export function recentSessions(
+  summary: AnalyticsSummary,
+  limit: number,
+): AnalyticsSummary["sessions"] {
+  const scored = new Set(
+    summary.runs.filter((run) => run.status === "ok").map((run) => run.sessionId),
+  );
+  return summary.sessions.filter((session) => scored.has(session.id)).slice(-limit);
+}
+
+/**
  * Every task profile the cohort's data actually contains, most-run first, each
  * carrying whether it can put a point on the plane and why not when it cannot.
  *

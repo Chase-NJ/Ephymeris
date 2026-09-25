@@ -26,17 +26,19 @@ import {
   sessionStatus,
   startAll,
   startBox,
+  endGroup,
   stopBox,
-  switchGroup,
 } from "@/lib/sessions/commands";
 import {
+  useActiveSessions,
   useBoxEnded,
   useBoxTelemetry,
   useEndedCount,
   useSessionStore,
 } from "@/lib/sessions/context";
 import {
-  firstGroupToRun,
+  groupRunsFor,
+  groupsRunCount,
   populatedGroups,
   type SessionBox,
   type SessionSnapshot,
@@ -231,13 +233,33 @@ export function MissionControl() {
   const groupDone =
     boxes.length > 0 && runningCount === 0 && endedCount >= boxes.length;
 
+  // Which group is on the rig, and how many of the cohort's groups have run.
+  // Not a position: groups run in whatever order the operator picks (§5.2).
   const groupInfo = useMemo(() => {
     if (!cohort || !snapshot) return null;
     const groups = populatedGroups(cohort);
-    const i = groups.findIndex((g) => g.id === snapshot.groupId);
-    const found = groups[i];
+    const found = groups.find((g) => g.id === snapshot.groupId);
     if (!found || groups.length < 2) return null;
-    return { index: i + 1, count: groups.length, name: found.name };
+    return {
+      name: found.name,
+      ran: groupsRunCount(cohort, snapshot.session),
+      count: groups.length,
+    };
+  }, [cohort, snapshot]);
+
+  /*
+   * Whether any populated group has yet to run in this session, besides the one
+   * on the rig. The only thing "last group" can mean without a run order: with
+   * none left, a finished group is the natural end (the wrap-up), otherwise the
+   * natural next step is choosing another (the group-swap prompt). Either way
+   * both doors are offered — a group may be run again, and a session may end
+   * early.
+   */
+  const groupsWaiting = useMemo(() => {
+    if (!cohort || !snapshot) return 0;
+    return populatedGroups(cohort).filter(
+      (g) => g.id !== snapshot.groupId && groupRunsFor(snapshot.session, g.id).length === 0,
+    ).length;
   }, [cohort, snapshot]);
 
   /*
@@ -254,7 +276,7 @@ export function MissionControl() {
    */
   const hasRun = runningCount > 0 || endedCount > 0;
 
-  const lastGroup = groupInfo === null || groupInfo.index === groupInfo.count;
+  const lastGroup = groupsWaiting === 0;
   const journeyStep = groupDone && lastGroup ? ("finish" as const) : ("run" as const);
 
   /*
@@ -299,7 +321,7 @@ export function MissionControl() {
     : 0;
   const wrapFacts = [
     `${boxes.length} animal${boxes.length === 1 ? "" : "s"}`,
-    groupInfo ? `${groupInfo.count} groups` : "1 group",
+    groupInfo ? `${groupInfo.ran}/${groupInfo.count} groups` : "1 group",
     `${clockSpan(sessionSeconds)} elapsed`,
   ].join(" · ");
   const hint = !connected
@@ -314,7 +336,7 @@ export function MissionControl() {
         : groupDone
         ? lastGroup
           ? "All boxes finished — End Session saves and wraps up."
-          : "Group finished — Switch Group runs the next one."
+          : "Group finished — pick the next group, or end the session."
         : runningCount > 0
           ? "Recording — Stop takes effect at the next trial boundary."
           : endedCount === 0
@@ -344,18 +366,11 @@ export function MissionControl() {
     sessionStore.resetBox(box);
   }
 
-  // Back to Step 2 for a never-confirmed session — the same derivation the
-  // session dock's "Resume setup" uses, since the record doesn't carry a group.
+  // Back to a choice of group for a never-confirmed session: Step 2 needs a
+  // group, and the record doesn't carry one.
   function resumeSetup() {
     if (!cohort) return;
-    const group = firstGroupToRun(cohort);
-    if (!group) {
-      setError(
-        "This session's cohort no longer has a box-assigned group — end the session instead.",
-      );
-      return;
-    }
-    navigate(`/session/${sessionId}/mapping?cohort=${cohort.id}&group=${group.id}`);
+    navigate(`/session/${sessionId}/group?cohort=${cohort.id}`);
   }
 
   // Shared by the left rail's End Session and the wrap-up's (§8.7).
@@ -383,27 +398,31 @@ export function MissionControl() {
     });
   }
 
-  // Shared by the header button and the group-swap prompt (§5.5).
+  // Shared by the rail's button, the group-swap prompt (§5.5) and the wrap-up:
+  // end this group on the rig, then choose — any group, or end the session.
   function doSwitchGroup() {
     void run(async () => {
-      const next = await switchGroup(client, sessionId!);
-      // No group left to run means the session is over — land on
-      // Analytics, same as an explicit End Session.
-      if (next === null) {
-        // Carry the cohort and session so Analytics opens on the run
-        // just finished rather than an empty picker (§2.5).
-        navigate("/analytics", {
-          state: {
-            endedSession: sessionName,
-            cohortId: session?.cohortId,
-            sessionId,
-          },
-        });
-        return;
-      }
-      navigate(`/session/${sessionId}/mapping?cohort=${cohortId}&group=${next}`);
+      await endGroup(client, sessionId!);
+      navigate(`/session/${sessionId}/group?cohort=${cohortId}`);
     });
   }
+
+  /*
+   * Reloaded (or arrived from the dock) BETWEEN groups: the session is held but
+   * the rig carries no group, so there is nothing here to run. The group step
+   * is the next thing, not an empty cockpit.
+   */
+  const held = useActiveSessions()?.running ?? null;
+  const betweenGroups =
+    held !== null &&
+    held.session.id === sessionId &&
+    !held.groupId &&
+    held.session.status === "running";
+  useEffect(() => {
+    if (betweenGroups) {
+      navigate(`/session/${sessionId}/group?cohort=${cohortId}`, { replace: true });
+    }
+  }, [betweenGroups, navigate, sessionId, cohortId]);
 
   return (
     // No `overflow-hidden`: it would clip the shared canvas back out of the
@@ -548,7 +567,7 @@ export function MissionControl() {
               {multiGroup && hasRun && (
                 <Button
                   disabled={busy || !connected}
-                  title="Ends this group's runs, then returns to box confirmation for the next group"
+                  title="Ends this group's runs, then lets you pick which group runs next"
                   onClick={doSwitchGroup}
                 >
                   <Users size={13} strokeWidth={1.75} />
@@ -681,7 +700,7 @@ export function MissionControl() {
                 <RatPlacementBanner
                   mode="return"
                   boxes={boxes.map((b) => b.box)}
-                  caption="All boxes finished — return each animal to its home cage, then switch groups."
+                  caption="All boxes finished — return each animal to its home cage, then pick the next group."
                 />
                 {/* Ticked off per box, or all at once: the next group's
                     animals go into these same chambers, so "everyone is out"
@@ -695,7 +714,7 @@ export function MissionControl() {
                     disabled={busy || !connected}
                   />
                 </div>
-                <div className="mt-3 flex justify-center">
+                <div className="mt-3 flex justify-center gap-2">
                   <Button
                     variant="primary"
                     disabled={busy || !connected || !everyoneOut}
@@ -705,7 +724,14 @@ export function MissionControl() {
                       : { title: "Every animal needs to be out of its box first" })}
                   >
                     <Users size={13} strokeWidth={1.75} />
-                    Switch Group
+                    Pick next group
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={busy || !connected || !everyoneOut}
+                    onClick={doEndSession}
+                  >
+                    End session
                   </Button>
                 </div>
               </motion.div>
@@ -759,6 +785,7 @@ export function MissionControl() {
         onToggle={toggleReturned}
         onAll={allReturned}
         onEnd={doEndSession}
+        onAnotherGroup={multiGroup ? doSwitchGroup : undefined}
         onDismiss={() => setWrapDismissed(true)}
       />
     </div>

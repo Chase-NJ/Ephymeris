@@ -34,6 +34,7 @@ import { useActiveCohorts, useCohortsLoaded } from "@/lib/cohorts/context";
 import { RecordingTile } from "@/components/dashboard/RecordingTile";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useRunningSession } from "@/lib/sessions/context";
+import { sessionDoor } from "@/lib/sessions/types";
 import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 
@@ -184,9 +185,7 @@ export function Dashboard() {
               hasCohorts={hasCohorts}
               onClick={() => {
                 if (running) {
-                  navigate(
-                    `/session/${running.session.id}/control?cohort=${running.session.cohortId}`,
-                  );
+                  navigate(sessionDoor(running));
                 } else {
                   navigate(hasCohorts ? "/session/new" : "/cohorts");
                 }

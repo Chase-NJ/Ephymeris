@@ -212,7 +212,8 @@ class Application:
         self.server.register(Cmd.SESSIONS_CONFIRM_MAPPING, self._sessions_confirm_mapping)
         self.server.register(Cmd.SESSIONS_STATUS, self._sessions_status)
         self.server.register(Cmd.SESSIONS_START_ALL, self._sessions_start_all)
-        self.server.register(Cmd.SESSIONS_SWITCH_GROUP, self._sessions_switch_group)
+        self.server.register(Cmd.SESSIONS_END_GROUP, self._sessions_end_group)
+        self.server.register(Cmd.SESSIONS_RESUME, self._sessions_resume)
         self.server.register(Cmd.SESSIONS_END, self._sessions_end)
         self.server.register(Cmd.SESSIONS_ACTIVE, self._sessions_active)
         self.server.register(Cmd.PORT_START_SESSION, self._port_start_session)
@@ -225,6 +226,7 @@ class Application:
         self.server.register(Cmd.ANALYTICS_RESCAN, self._analytics_rescan)
         self.server.register(Cmd.ANALYTICS_RECENT_SESSIONS, self._analytics_recent_sessions)
         self.server.register(Cmd.SESSIONS_RECOVER, self._sessions_recover)
+        self.server.register(Cmd.SESSIONS_TIDY, self._sessions_tidy)
 
         self.server.register(Cmd.HARDWARE_GET, self._hardware_get)
         self.server.register(Cmd.HARDWARE_PREVIEW, self._hardware_preview)
@@ -1012,6 +1014,23 @@ class Application:
                 f"{definition.name!r}. Give this task another name.",
                 {"sketchPath": collision.path},
             )
+        # Two saved tasks sharing a name share a sketch folder: saving one
+        # overwrites the other's firmware and deleting either removes both.
+        # Duplicating a task makes this the easy mistake, so it is refused too.
+        # Case-folded because the lab machines' filesystem is case-insensitive.
+        twin = next(
+            (e for e in await asyncio.to_thread(self.task_store.list_entries)
+             if e["id"] != definition.id
+             and str(e["name"]).casefold() == definition.name.casefold()),
+            None,
+        )
+        if twin is not None:
+            raise CommandError(
+                ErrCode.TASK_INVALID,
+                f"Another task is already called {twin['name']!r}. "
+                "Give this task another name.",
+                {"taskId": twin["id"]},
+            )
 
         async with self._rig_gate:
             diagnostics = await asyncio.to_thread(self.task_store.save, definition)
@@ -1245,7 +1264,7 @@ class Application:
         # sessions so the Analytics selectors cover the whole archive. Both
         # sources are database reads — the no-filesystem rule holds.
         synthetic, synthetic_counts = await asyncio.to_thread(
-            self._require_analytics().adopted_session_entries, cohort_id
+            self._require_analytics().adopted_session_entries, cohort_id, sessions
         )
         merged = sorted(
             [*sessions, *synthetic], key=lambda s: (s.date, s.started_at, s.id)
@@ -1254,9 +1273,10 @@ class Application:
             "sessions": [
                 session.to_list_item(
                     index + 1,
-                    run_count=counts.get(
-                        session.id, synthetic_counts.get(session.id, 0)
-                    ),
+                    # Added, not either-or: a recorded session also counts
+                    # the recovered files attributed to it (data.md §8.8).
+                    run_count=counts.get(session.id, 0)
+                    + synthetic_counts.get(session.id, 0),
                 )
                 for index, session in enumerate(merged)
             ]
@@ -1294,6 +1314,29 @@ class Application:
                 )
             except AnalyticsBusy as exc:
                 raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
+
+    async def _sessions_tidy(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """Merge a day's split session records and drop empty ones (§8.8).
+
+        `apply` false (the default) is a preview. The held session is never
+        touched, whatever the plan says; everything else the planner decides.
+        """
+        cohort_id = _str_arg(args, "cohortId")
+        protect = {self._running_session_id} if self._running_session_id else set()
+        with _cohort_errors():
+            try:
+                result = await self._require_analytics().tidy(
+                    cohort_id,
+                    apply=args.get("apply") is True,
+                    protect=protect,
+                    today=datetime.now().date().isoformat(),
+                )
+            except AnalyticsBusy as exc:
+                raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
+        if result["applied"]:
+            # Stale and set-up rows may have gone from the Dashboard's dock.
+            await self._broadcast_lifecycle()
+        return result
 
     async def _analytics_recent_sessions(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         """Folder-name recency across every active cohort — cheap on purpose,
@@ -1542,35 +1585,105 @@ class Application:
         await self._broadcast_lifecycle()
         return {"session": session.to_json()}
 
-    async def _sessions_switch_group(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+    async def _sessions_end_group(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """End the group on the rig and wait BETWEEN GROUPS (`dashboard.md` §5.2).
+
+        The session stays `running` and held, with an empty runner: which group
+        runs next is the operator's choice, made on the group step, and a
+        session is only ever finished by an explicit `sessions.end`. The sidecar
+        used to pick the next group by cohort order and auto-complete after the
+        last one; both were retired with the order itself.
+        """
         session_id = _str_arg(args, "sessionId")
-        runner = self._require_runner()
         await self._end_all_boxes(session_id)
         session = await asyncio.to_thread(self._close_group_run, session_id)
-        cohort = await asyncio.to_thread(self.cohorts.get, session.cohort_id)
-        # Next populated group after those already run, by order (§5.2).
-        run_group_ids = {g.group_id for g in session.group_runs}
-        next_group = _next_populated_group(cohort, run_group_ids)
+        self._clear_runner()
         # The boxes are idle and the operator is about to walk the rig again for
         # the next group, so the baseline comes back now rather than after the
         # whole session — that walk is the one that needs the lights.
         await self._release_baseline()
-        if next_group is None:
-            # Every populated group has run — finalize exactly as sessions.end
-            # would, so no client has to follow up with a second command and
-            # the session can't linger as 'running' forever.
-            await asyncio.to_thread(self.sessions.set_status, session_id, "completed")
-            self._running_session_id = None
         await self._broadcast_lifecycle()
-        return {"nextGroupId": next_group}
+        return {"session": session.to_json()}
+
+    async def _sessions_resume(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """Continue one of today's sessions with another group.
+
+        Deliberately NOT session resumption (`data.md` §5.3): nothing is picked
+        up mid-group. A group that was running when the app died is closed as
+        it stands -- its animals' `.tsv` files are the record, and `sessions.recover`
+        backfills them -- and the session re-enters the between-groups state
+        `sessions.endGroup` leaves, as if the operator had pressed Switch Group.
+
+        Same day only: the session folder carries its date in its name, and a
+        run appended to it tomorrow would be filed under the wrong day.
+        """
+        session_id = _str_arg(args, "sessionId")
+        try:
+            session = await asyncio.to_thread(self.sessions.get_session, session_id)
+        except SessionNotFound as exc:
+            raise CommandError(ErrCode.SESSION_INVALID, str(exc)) from exc
+        if session.status not in ("running", "completed"):
+            raise CommandError(
+                ErrCode.SESSION_INVALID,
+                f"session is {session.status}; only one that ran a group can be continued",
+            )
+        if not session.group_runs:
+            raise CommandError(
+                ErrCode.SESSION_INVALID,
+                "this session never ran a group — start a new session instead",
+            )
+        if session.date != datetime.now().date().isoformat():
+            raise CommandError(
+                ErrCode.SESSION_INVALID,
+                "only today's sessions can be continued — its folder is named for "
+                f"{session.date}",
+            )
+        held = self._running_session_id
+        if held is not None and held != session_id:
+            raise CommandError(
+                ErrCode.SESSION_INVALID,
+                "another session is open — end it before continuing this one",
+            )
+        if held == session_id and self._require_runner().configured_boxes():
+            # Already held with a mapping loaded: nothing to resume.
+            return {"session": session.to_json()}
+        await asyncio.to_thread(self._close_group_run, session_id)
+        session = await asyncio.to_thread(self.sessions.set_status, session_id, "running")
+        self._clear_runner()
+        self._running_session_id = session_id
+        await self._broadcast_lifecycle()
+        return {"session": session.to_json()}
+
+    def _clear_runner(self) -> None:
+        """Drop the finished group's mapping so the runner holds no boxes.
+
+        Between groups the runner must not still describe the previous group:
+        a reload would otherwise offer Start All on animals already carried
+        home. `clear` refuses while a run is active, which after `end_all`
+        cannot be the case -- but a refusal is logged rather than raised,
+        because the group HAS ended and the session must not be stranded.
+        """
+        if self.runner is None:
+            return
+        try:
+            self.runner.clear()
+        except RuntimeError:
+            log.warning("runner still holds active runs after the group ended")
 
     async def _sessions_end(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         session_id = _str_arg(args, "sessionId")
-        await self._end_all_boxes(session_id)
+        held = self._running_session_id == session_id
+        # Close Out on a crash-orphaned session reaches here too, and must not
+        # stop whichever OTHER session the runner is holding.
+        if held or self._running_session_id is None:
+            await self._end_all_boxes(session_id)
         await asyncio.to_thread(self._close_group_run, session_id)
         session = await asyncio.to_thread(self.sessions.set_status, session_id, "completed")
-        self._running_session_id = None
-        await self._release_baseline()
+        if held:
+            self._clear_runner()
+            self._running_session_id = None
+        if held or self._running_session_id is None:
+            await self._release_baseline()
         await self._broadcast_lifecycle()
         return {"session": session.to_json()}
 
@@ -1648,11 +1761,17 @@ class Application:
     def _open_group_run(self, session_id: str, group_id: str) -> None:
         """Record that a group started running.
 
-        This is what stops Switch Group from cycling back to a group that has
-        already run — `_next_populated_group` skips whatever is recorded here.
+        What the group step reads to badge a group "ran 10:42", and what
+        `sessions.resume` requires before a session can be continued. Deduped
+        only against an OPEN run of the same group: running a group a second
+        time is allowed and appends a second entry, while Start All after a
+        per-box start (both in one group run) does not.
         """
         session = self.sessions.get_session(session_id)
-        if any(run.group_id == group_id for run in session.group_runs):
+        if any(
+            run.group_id == group_id and run.ended_at is None
+            for run in session.group_runs
+        ):
             return
         runs = [*session.group_runs, GroupRun(group_id=group_id, order=len(session.group_runs), started_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))]
         self.sessions.set_group_runs(session_id, runs)
@@ -1669,10 +1788,22 @@ class Application:
 
     async def _port_start_session(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         box = _box_arg(args)
-        if self._running_session_id is not None:
-            await self._begin_recording_if_any(self._running_session_id)
+        session_id = self._running_session_id
+        if session_id is not None:
+            await self._begin_recording_if_any(session_id)
+        runner = self._require_runner()
         with _session_errors(box):
-            self._require_runner().start_box(box)
+            runner.start_box(box)
+        if session_id is not None and runner.group_id:
+            # A group started one box at a time has run exactly as much as one
+            # started with Start All. Without this it was never recorded: the
+            # group step could not say it had run, and the session sat in
+            # `configuring`, where Back on the next mapping discarded it.
+            await asyncio.to_thread(self._open_group_run, session_id, runner.group_id)
+            session = await asyncio.to_thread(self.sessions.get_session, session_id)
+            if session.status != "running":
+                await asyncio.to_thread(self.sessions.set_status, session_id, "running")
+                await self._broadcast_lifecycle()
         return {"state": self._require_ports().handler(box).state.value}
 
     async def _port_stop_session(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -1857,20 +1988,6 @@ class Application:
 def _is_ready_to_run(cohort: Any) -> bool:
     """`dashboard.md` §7.1 — ready if any group holds a box-assigned animal."""
     return any(a.box_number is not None for a in cohort.animals)
-
-
-def _next_populated_group(cohort: Any, already_run: set[str]) -> str | None:
-    """The next group by `order` that has a box-assigned animal (§2.3, §5.2).
-
-    Groups with no box-assigned animal are skipped rather than blocking, per §1.
-    """
-    populated = {
-        a.group_id for a in cohort.animals if a.box_number is not None
-    }
-    for group in sorted(cohort.groups, key=lambda g: g.order):
-        if group.id in populated and group.id not in already_run:
-            return group.id
-    return None
 
 
 class _session_errors:

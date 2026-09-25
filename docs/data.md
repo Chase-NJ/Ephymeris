@@ -250,7 +250,9 @@ Finalization is **idempotent** (the first `stop_reason` wins, so a double-stop c
 
 ✅ **Guaranteed** — if the lab PC loses power mid-session, every strobe up through the last completed line is on disk in `.tsv`, immediately readable by a human, with at most the very last in-flight line at risk.
 
-❌ **Not in scope, by decision** — the app noticing on restart that a session was interrupted and automatically resuming it. That is a materially bigger feature (reconnecting boards, resuming trial state, deciding whether the animal even kept running during the outage). What *is* built is the backfill — see [§12](#12-crash-recovery).
+❌ **Not in scope, by decision** — the app noticing on restart that a session was interrupted and automatically resuming it **mid-group**. That is a materially bigger feature (reconnecting boards, resuming trial state, deciding whether the animal even kept running during the outage). What *is* built is the backfill — see [§12](#12-crash-recovery).
+
+✅ **Built: continuing between groups.** The common case is not a crash mid-run but the app closed (or the session ended) *between* groups, with another group still to go. One of today's sessions that already ran a group can be continued with any group (`sessions.resume`, [dashboard.md §7.6](dashboard.md#76-the-group-step-sessionidgroup)): the next group's files land in the same session folder beside the earlier ones, and a group run the crash left open is closed as it stands. Same day only, because the folder is named for its date.
 
 ---
 
@@ -560,6 +562,20 @@ A row adopted before schema v7 has no recorded stat and is therefore never fresh
 
 ---
 
+### 8.8 Tidying records — one session per folder, no empty rows
+
+A day that goes wrong leaves two kinds of leftover in the database, and **Tidy records** (Analytics header, beside Rescan and Recover) clears both. It is an explicit action with a preview (`sessions.tidy`, `apply: false`), and it acts only on confirmation — the apply re-plans from scratch rather than trusting the preview it sent.
+
+- **Split records are merged.** Before groups could be chosen on the fly (`dashboard.md` §7.6), closing the app between groups or ending a session too early left the operator starting a second session *under the same number* to finish the day. Both records write into one folder (`<prefix>_<number>_<date>`), and Analytics showed the day twice. Records sharing prefix, number and date (compared through `sanitize_name` and case-folded, exactly as the folder name is built) are folded into **the earliest one holding data**: runs re-parented to it, group runs and recording runs concatenated in start order, `started_at` the earliest, `ended_at` the latest, status `completed`. A same-day completed session can still be continued with another group.
+- **Empty records are deleted.** A record with no run, no recording run and no file in its folder — a set-up nobody started, a session closed out before a box ran, an aborted one — is removed, with its folder when that folder contains no file at all.
+
+> [!IMPORTANT]
+> **Only the database changes.** Records are merged only when they share a number, which is exactly when they share a folder, so no file ever ends up belonging to a session whose folder it is not in — and nothing is moved, renamed or rewritten. A merge re-parents run rows without changing their ids, so the analytics cache (keyed by run id) follows them untouched. A folder is removed bottom-up with `rmdir`, which the OS refuses for anything non-empty, and never with `rmtree`.
+
+**What is never touched.** The session the runner holds, and every record sharing its folder; a `configuring` record from today (Step 1 creates it before the mapping holds the rig, so it may be under an operator's hands); and any record whose folder is unreachable — an unmounted drive says nothing about what the folder holds (the same reachable-and-absent rule as §8.6). Records left alone for the first two reasons are listed in the preview, so a group that was not merged says why.
+
+**A recovered file counts under the session it came from.** A crash leaves a `.tsv` with no run record; `sessions.recover` rebuilds its `.json`, and the rescan adopts it under a synthetic `adopted:<prefix>_<number>_<date>` session (§8.1). When this database also recorded that session, the two are one — so the adopted run is attributed to the recorded session (the earliest, as a tidy would keep) in the summary and in `sessions.list`, rather than listed as a second session on the same day. This needs no tidy and writes nothing: it is decided at read time (`service._adoption_owners`), and a recovered file also counts as data, so it keeps its record from ever being judged empty.
+
 ## 9. Derived metrics
 
 Everything here is computed from `ts_data` — a flat `[[code, timestamp_ms], …]` list. **There are no trials, no accuracy, and no computed metrics on disk**; all of it is derived at read time from raw strobe codes plus the task profile that decodes them.
@@ -638,7 +654,7 @@ Wilson rather than the normal approximation because this data lives at small *n*
 
 | Case | Rule |
 |---|---|
-| **Zero counted trials** | Emit `null`, **never `0.0`**. Zero percent and "no trials" are opposite claims about an animal. The session summary dashes the cell; the strategy trail **skips** the session and draws a dashed gap rather than interpolating through a session that produced nothing |
+| **Zero counted trials** | Emit `null`, **never `0.0`**. Zero percent and "no trials" are opposite claims about an animal. The session summary dashes the cell; the strategy space places **no point** for that session rather than inventing one |
 | **Profile-less sketch** | Fully supported. Emit `no-metrics` and no metrics. **The run is still listed** — it has a real duration, event count, and stop reason. Do not invent a default metric |
 | **Utility-kind profile** | `kind` is a convention, not a gate. Compute and return the metrics, but mark the run excluded from cohort aggregates by default |
 | **Board disconnected mid-run** | A drop **does** finalize, with `stop_reason: "board disconnected"`. A complete-up-to-the-drop file exists. **Include it**, surface the reason, mark it truncated. A drop at trial 180 of 200 is good data. Distinct from a session with `status: "aborted"`, which never wrote anything |
@@ -745,7 +761,7 @@ The tallies above answer *how often*; the session summary's expanded tile answer
 **There is no task filter.** There used to be one, and it existed for a real reason — a real cohort runs shaping before discrimination, and the declared metrics are not comparable across profiles — but it solved the incomparability by hiding part of the archive, and a dashboard where "9 sessions on another task" are invisible looks complete when it isn't. The rule is now split by what actually varies across tasks:
 
 - **The outcome tallies and the engagement ladder are vocabulary-defined** (§9.8, §9.10), identical measurements on every task — so the panels built on them (the combined accuracy figure, effort, outcome mix, the rails) show **every run** and disclose the task instead: the task strip (§11.9), a dashed rule in each trend where the dominant task changes, and the task mix in every hover title. What changes across tasks is *difficulty*, and the disclosure is what keeps an accuracy cliff at a boundary reading as a task change rather than a cohort forgetting.
-- **The declared metrics remain incomparable**, so the panels that plot them — the two strategy planes — scope *themselves* to one two-condition profile (most-run first) and say what they left out; when the archive holds more than one two-condition task, the plane carries a panel-local switch. The learning-curves panel plots each run's pooled overall accuracy (§9.7) for the same reason: it is the one metric-derived number defined the same way on every profile.
+- **The declared metrics remain incomparable**, so the within-session strategy plane scopes *itself* to one profile (most-run first), says what it left out, and carries a panel-local switch. The **all-sessions** plane does not need to: it plots accuracy per **well**, which means the same thing on every task (§11.1). The learning-curves panel plots each run's pooled overall accuracy (§9.7) for the same reason: it is the one metric-derived number defined the same way on every profile.
 - The old metric selector is gone with it: the rails read pooled overall accuracy (the honest default, §9.7), and the per-condition numbers live where conditions are already side by side — the strategy planes, the session summary, and the per-session curve's own condition picker.
 
 **The header is the archive's fact line.** The breadcrumb carries the cohort's world at 16px — the same `PlanetDisc` the browser drew it with — and under it one mono line answers the page's first questions with numbers: sessions, animals, groups, when the last session ran (by `ordinal`, never by list position). It takes the warning tone while the cohort's folder is unreachable, because every figure below it is then the last successful read, and is quiet otherwise: a readable archive is the normal state. Every message the page can carry (a session safely ended, a load failure, a rescan report, an export note) is one `Strip` — icon, tone, line — rather than five shapes the reader had to learn.
@@ -756,14 +772,14 @@ The tallies above answer *how often*; the session summary's expanded tile answer
 
 This is the design thesis, and everything else follows from it.
 
-Selecting a session **narrows** every panel rather than swapping the view. Hovering an animal highlights its curve, its rail row, and its strategy trail *simultaneously*.
+Selecting a session **narrows** every panel rather than swapping the view. Hovering an animal highlights its curve, its rail row, and its strategy points *simultaneously*.
 
 That is what lets one route serve within-session, across-session, and per-cohort questions without tabs — and it is why per-animal identity colour is load-bearing rather than decorative.
 
 | Session selector | Learning curves show | Heatmap | Strategy space |
 |---|---|---|---|
-| `all` | P(correct) per session, across sessions | full | every session, trails drawn |
-| one session | rolling P(hit) per counted trial, within it | that column emphasised | that session's points enlarged, prior sessions faded to trail |
+| `all` | P(correct) per session, across sessions | full | the 30 most recent sessions, one point per animal per session |
+| one session | rolling P(hit) per counted trial, within it | that column emphasised | replaced by that session's within-session walk (§11.1) |
 
 ### 10.2 The session rail
 
@@ -870,17 +886,19 @@ One robustness note: `requestAnimationFrame` does not fire while the window is h
 
 The panel that separates *learning* from *being lucky*. An animal at 70% correct looks identical whether it is discriminating imperfectly or responding to one side on most trials and getting the easy half right. A learning curve cannot separate those two; this plot separates them by construction.
 
-Each session-animal pair becomes one point: **x** = fraction correct pooled over every condition answered at one well, **y** the same at the other.
+Each session-animal pair becomes one point: **x** = fraction correct pooled over every condition answered at the **left** well, **y** the same at the **right** well (`view.sideAccuracy`).
 
-**The plane scopes itself, and says what it is scoped to** (§10). A panel-local **profile picker** lists every task profile the cohort's data actually contains — most-run first, each with its run count and how many conditions fold onto the two axes — and the most-run plottable one is selected by default. A GRGL point and an EZ-variant point on shared axes remain a category error even when both fold to the same two sides, which is why the scope is one profile and not one *shape*.
+**Task-agnostic, and capped at the 30 most recent sessions** (2026-09-25). The across-session plane used to scope itself to one task profile behind a picker, on the argument that two tasks' conditions are not comparable, and it drew every session the cohort ever ran as per-animal trails. Both made it hard to read: the picker hid most of the archive behind a click, and a trail per animal from the cohort's first day crossed into a mat. The fix rests on one observation — **a side is a physical well, and "how often was this animal right when the answer was left" means the same thing on a shaping day and on a four-odor day.** Conditions are incomparable across tasks; sides are not. So:
 
-**The list is drawn from the runs, not from a list of tasks the app knows.** A cohort holds whatever it holds: sessions recorded on this rig, sessions copied from another and decoded from their own embedded snapshot ([§4.4](#44-task_profile--the-file-describes-itself)), and runs whose conditions were inferred from the strobes because no profile resolved ([§8.3](#83-which-profile-decodes-a-run)). All three are real profiles with real runs and all three are in the picker.
+- every scored run in the cohort's 30 most recent sessions (`view.recentSessions`: sessions with at least one `ok` run, by `ordinal`) is one point, whatever its task;
+- each run's side comes from **its own** metrics' `answerSide`, never from a profile group's axes — which also fixes the orientation: left is always x, whichever condition a profile happened to declare first;
+- **points only, no connecting lines.** Older points fade, the latest session is drawn larger, and hovering an animal lifts its points and dims the rest, so direction of travel still reads without a line to follow.
 
-**A profile that cannot be plotted is listed and disabled, with its reason** — never omitted. Hiding it answers *"where is my shaping task"* with an absence, which reads as a hole in the archive rather than as a property of the task. Runs on other profiles are counted below the frame for the same reason.
+A run with no answers at one of the wells (a one-sided shaping stage, a withhold-only session) has no position and is counted below the frame rather than placed.
 
-The within-session panel (§11.4, this plane's twin at trial resolution) picks the same way, over the profiles that session actually ran, ordered by how many of its runs each holds — the cohort's most-run task may not be in the session at all.
+The within-session panel (§11.4, this plane's twin at trial resolution) still **scopes itself to one profile**, with the picker, over the profiles that session actually ran — there, each point is a rolling window over one profile's declared conditions, and those are the thing that is incomparable.
 
-**The reading key is folded.** The region/axis prose (`StrategyNote`) sits behind a `how to read this` disclosure — the graph-tile motif shared with the learning curves — because a chart's key is useful once per reader and was standing taller than the plane. The fold is education only: data disclosures ("N runs on other tasks") stay outside it, and report sheets render the key open with the toggle hidden, since paper cannot be clicked.
+**The reading key is folded.** The region/axis prose (`StrategyNote`) sits behind a `how to read this` disclosure — the graph-tile motif shared with the learning curves — because a chart's key is useful once per reader and was standing taller than the plane. The fold is education only: data disclosures ("N runs had no answers at one of the wells") stay outside it, and report sheets render the key open with the toggle hidden, since paper cannot be clicked.
 
 | Position | Meaning |
 |---|---|
@@ -889,14 +907,14 @@ The within-session panel (§11.4, this plane's twin at trial resolution) picks t
 | Anti-diagonal, `x + y ≈ 1` | **Pure side bias** — same response regardless of stimulus |
 | Bottom-left `(0,0)` | Reversed contingency — also learning, just inverted |
 
-Distance from the anti-diagonal is discrimination strength; position along it is which side the animal favours. A **chronological trail** connects an animal's sessions, opacity ramping from dim (oldest) to full, latest drawn larger.
+Distance from the anti-diagonal is discrimination strength; position along it is which side the animal favours. Opacity ramps from dim (oldest of the 30 sessions) to full, latest drawn larger.
 
 > [!IMPORTANT]
 > **The axes are SIDES, not conditions** (`derive.strategy_axes`, `view.strategyAxes`). x is every condition answered at one well, y every condition answered at the other, pooled over integers — sum hits, sum counted — so a four-odor task reads on the same two axes a two-odor task does.
 >
 > This used to be `liveMetrics[0]` against `liveMetrics[1]`, which was fine while every task declared exactly two conditions and **silently blanked both strategy panels for every task that declared more**. A four-odor session got no plane at all, on precisely the plot that answers whether the animal is discriminating or picking a side.
 >
-> Which side is x is still decided by **authored metric order** — x takes the side of the first declared metric — so a two-condition profile keeps exactly the orientation it always had and no familiar plot transposes. Reordering a `task.json`'s metrics can still swap the axes, so authored order remains part of the profile's identity.
+> On the **within-session** plane, which side is x is still decided by **authored metric order** — x takes the side of the first declared metric — so a two-condition profile keeps exactly the orientation it always had. The **across-session** plane fixes x = left, y = right instead, because it mixes profiles and they must agree on which way is which.
 >
 > A condition whose answer the profile cannot prove has no axis and is left out; a **withhold** condition is never an axis, because it is the absence of an answer and has no opposing side. A profile that cannot be split into two opposing answers has no plane, and the panel says which of those cases it is.
 
@@ -915,12 +933,11 @@ Note that folding N conditions onto two sides does **not** reintroduce that infe
 
 **Rules:**
 
-- Applies **only to a two-metric profile**. With any other count the panel names the profile and its metric count rather than rendering an empty frame.
-- **All points on one plot must share a profile hash.** A GRGL point and an EZ-variant point on shared axes is a category error, even when both declare two metrics.
-- Both coordinates are `pSession`. A run where either metric has `counted == 0` produces **no point**.
-- Axis labels are the metrics' own `label` strings, so the plot reads correctly for any task without app-side knowledge.
+- Both coordinates are pooled over integers (sum hits, sum counted) across a run's conditions at that well. A run where either side has `counted == 0` produces **no point**.
+- A **withhold** and the pooled `__overall__` entry are never counted toward a side.
+- Points of different tasks share the across-session frame by design; the within-session walk stays one profile at a time.
 
-**The within-session walk.** The plane has a second occupant: the same axes, same reference lines, walked at trial resolution. **Across-session trails render only when the scope is all sessions**; selecting one session replaces them with that session's walks — two trail types in one frame would be four unlabelled meanings of a line.
+**The within-session walk.** The plane has a second occupant: the same reference lines, walked at trial resolution. **Across-session points render only when the scope is all sessions**; selecting one session replaces them with that session's walks — a point that is a session and a point that is a trial in one frame would be two unlabelled meanings of a dot.
 
 | | Across-session | Within-session |
 |---|---|---|

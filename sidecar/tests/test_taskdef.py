@@ -1006,3 +1006,37 @@ def test_a_rebuild_refuses_to_be_its_own_source(tmp_path):
 
     assert bundled.repin(inside, "Utility", out) is None
     assert (inside / "Probe.ino").is_file(), "it deleted the thing it refused to copy"
+
+
+async def test_saving_refuses_a_name_another_task_already_uses(tmp_path, library):
+    """Two saved tasks sharing a name share a sketch folder — saving one would
+    overwrite the other's firmware, and deleting either would remove both.
+    Duplicating a task makes that the easy mistake, so `tasks.save` refuses."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from ephymeris_sidecar.app import Application
+    from ephymeris_sidecar.server import CommandError
+
+    task_store = store.TaskStore(tmp_path, library_root=library)
+    task_store.save(presets.instantiate("grgl_2odor", "probe", "Probe Task"))
+
+    async def nothing() -> None:
+        return None
+
+    app = SimpleNamespace(
+        discovery=SimpleNamespace(sketches=[]),
+        task_store=task_store,
+        _rig_gate=asyncio.Lock(),
+        _rescan=nothing,
+        _broadcast_tasks=nothing,
+    )
+    app._definition_arg = Application._definition_arg.__get__(app)
+    copy = presets.instantiate("grgl_2odor", "probe_copy", "probe task")
+    with pytest.raises(CommandError, match="already called"):
+        await Application._tasks_save(app, None, None, {"definition": copy.to_json()}, None)
+
+    # Re-saving the task under its own name is, of course, fine.
+    same = presets.instantiate("grgl_2odor", "probe", "Probe Task")
+    reply = await Application._tasks_save(app, None, None, {"definition": same.to_json()}, None)
+    assert reply["entry"]["id"] == "probe"

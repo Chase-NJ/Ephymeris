@@ -394,6 +394,83 @@ class SessionRepository:
             ).fetchall()
         return {row["sid"]: row["n"] for row in rows}
 
+    # --- tidying (data.md §8.8) --------------------------------------------
+    #
+    # Both methods trust their caller about WHICH records: `sessions/tidy.py`
+    # plans, and the analytics service excludes the session the runner holds.
+    # What they guarantee is that each change lands whole — a merge that moved
+    # the runs but left the absorbed row behind would count the day twice in a
+    # different way.
+
+    def absorb_sessions(
+        self,
+        keep_id: str,
+        absorb_ids: list[str],
+        *,
+        group_runs: list[GroupRun],
+        recording: dict[str, Any] | None,
+        started_at: str,
+        ended_at: str | None,
+        status: SessionStatus,
+    ) -> Session:
+        """Fold `absorb_ids` into `keep_id` in one transaction.
+
+        Their runs are re-parented, not copied: a run id is the analytics
+        cache's key, so the cached summaries follow the run to its new session
+        untouched. Only the database changes — the files never knew which
+        session row owned them.
+        """
+        with self._db.lock:
+            conn = self._db.conn
+            try:
+                for chunk in _id_chunks(absorb_ids):
+                    marks = ",".join("?" * len(chunk))
+                    conn.execute(
+                        f"UPDATE session_animal_runs SET session_id = ?"
+                        f" WHERE session_id IN ({marks})",
+                        (keep_id, *chunk),
+                    )
+                    conn.execute(f"DELETE FROM sessions WHERE id IN ({marks})", tuple(chunk))
+                conn.execute(
+                    "UPDATE sessions SET group_runs = ?, recording_json = ?,"
+                    " started_at = ?, ended_at = ?, status = ? WHERE id = ?",
+                    (
+                        json.dumps([r.to_json() for r in group_runs]),
+                        json.dumps(recording) if recording is not None else None,
+                        started_at,
+                        ended_at,
+                        status,
+                        keep_id,
+                    ),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return self.get_session(keep_id)
+
+    def discard_sessions(self, session_ids: list[str]) -> int:
+        """Delete records the tidy found empty — whatever their status.
+
+        Unlike `delete_sessions` this does not refuse an open status: a
+        `running` row nobody holds is a crash orphan, and a `configuring` one
+        from an earlier day an abandoned set-up, and both are exactly what a
+        tidy clears. Refusing the one open session that matters — the one the
+        runner holds — is the caller's, which is the only place that knows it.
+        """
+        if not session_ids:
+            return 0
+        removed = 0
+        with self._db.lock:
+            for chunk in _id_chunks(session_ids):
+                marks = ",".join("?" * len(chunk))
+                cursor = self._db.conn.execute(
+                    f"DELETE FROM sessions WHERE id IN ({marks})", tuple(chunk)
+                )
+                removed += cursor.rowcount
+            self._db.conn.commit()
+        return removed
+
     # --- internals --------------------------------------------------------
 
     @staticmethod

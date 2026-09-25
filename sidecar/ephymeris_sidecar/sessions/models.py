@@ -104,6 +104,7 @@ class Session:
             "status": self.status,
             "folderPath": self.folder_path,
             "ordinal": ordinal,
+            "groupRuns": [g.to_json() for g in self.group_runs],
         }
         if run_count is not None:
             item["runCount"] = run_count

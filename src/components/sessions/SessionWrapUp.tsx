@@ -40,6 +40,7 @@ export function SessionWrapUp({
   onToggle,
   onAll,
   onEnd,
+  onAnotherGroup,
   onDismiss,
 }: {
   open: boolean;
@@ -52,6 +53,9 @@ export function SessionWrapUp({
   onToggle: (box: number) => void;
   onAll: () => void;
   onEnd: () => void;
+  /** Every group has run, but one may be run again — offered on a multi-group
+   *  cohort only, since groups no longer run in a fixed order to a fixed end. */
+  onAnotherGroup?: (() => void) | undefined;
   onDismiss: () => void;
 }) {
   useEffect(() => {
@@ -137,6 +141,11 @@ export function SessionWrapUp({
                 <span className="font-mono text-[10px] text-static/70">
                   {allOut ? "ready to close out" : "tick every animal first"}
                 </span>
+                {onAnotherGroup && (
+                  <Button disabled={busy || !allOut} onClick={onAnotherGroup}>
+                    Run another group
+                  </Button>
+                )}
                 <Button
                   variant="primary"
                   disabled={busy || !allOut}

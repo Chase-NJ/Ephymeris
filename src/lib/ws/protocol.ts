@@ -64,7 +64,8 @@ export const CMD = {
   SESSIONS_CONFIRM_MAPPING: "sessions.confirmMapping",
   SESSIONS_STATUS: "sessions.status",
   SESSIONS_START_ALL: "sessions.startAll",
-  SESSIONS_SWITCH_GROUP: "sessions.switchGroup",
+  SESSIONS_END_GROUP: "sessions.endGroup",
+  SESSIONS_RESUME: "sessions.resume",
   SESSIONS_END: "sessions.end",
   SESSIONS_ACTIVE: "sessions.active",
   PORT_START_SESSION: "port.startSession",
@@ -82,6 +83,7 @@ export const CMD = {
 
   // Crash recovery (data.md §12, §11)
   SESSIONS_RECOVER: "sessions.recover",
+  SESSIONS_TIDY: "sessions.tidy",
   HARDWARE_GET: "hardware.get",
   HARDWARE_PREVIEW: "hardware.preview",
   HARDWARE_SAVE: "hardware.save",
@@ -764,14 +766,16 @@ export interface RunnerSession {
 export interface ActiveSessions {
   /**
    * Keyed off the live runner, never a bare DB status query — a 'running' row with no live runner
-   * is a crash orphan, not resumable.
+   * is a crash orphan. A held session with `groupId: null` and no boxes is BETWEEN GROUPS,
+   * awaiting a choice.
    */
   running: RunnerSession | null;
   /** Setup never finished; legitimately resumable into the mapping flow. */
   configuring: Session[];
   /**
-   * DB says 'running' but no runner holds them — a crash happened. Surfaced for honesty (the .tsv
-   * on disk is the record), never for resume.
+   * DB says 'running' but no runner holds them — a crash or a closed app. The .tsv on disk is the
+   * record; a same-day one can be continued with another group (`sessions.resume`), never
+   * mid-group.
    */
   stale: Session[];
 }
@@ -793,6 +797,11 @@ export interface SessionListItem {
    */
   ordinal: number;
   runCount?: number;
+  /**
+   * Which groups ran, so Step 1 can offer to continue one of today's sessions with another group
+   * (`sessions.resume`).
+   */
+  groupRuns: GroupRun[];
 }
 
 /**
@@ -1253,6 +1262,57 @@ export interface RecoverResult {
   folderMissing: boolean;
 }
 
+/** One session record as the tidy preview names it (data.md §8.8). */
+export interface TidySession {
+  sessionId: string;
+  /** `<prefix>_<number>`, as the folder names it. */
+  label: string;
+  date: string;
+  status: SessionStatus;
+  startedAt: string;
+  /**
+   * Recorded runs plus recovered files attributed to it. On an applied merge's `keep`, the merged
+   * day's total.
+   */
+  runCount: number;
+  /** Its group runs, in order; a group may repeat. */
+  groupIds: string[];
+}
+
+export interface TidyMerge {
+  /** The earliest record holding data — the day's session. */
+  keep: TidySession;
+  /** Folded into `keep`: runs re-parented, rows deleted. */
+  absorb: TidySession[];
+}
+
+export interface TidyEmpty {
+  session: TidySession;
+  /**
+   * The folder exists and holds no file, so it is removed too. A folder with any file in it is
+   * never touched.
+   */
+  removesFolder: boolean;
+}
+
+export interface TidySkipped {
+  session: TidySession;
+  reason: string;
+}
+
+export interface TidyPlan {
+  cohortId: string;
+  /** False for a preview; true once the changes are made. */
+  applied: boolean;
+  merges: TidyMerge[];
+  empty: TidyEmpty[];
+  /**
+   * Records sharing a folder with the held session or a set-up started today — left whole, and
+   * said so.
+   */
+  skipped: TidySkipped[];
+}
+
 export interface ServerHello {
   protocolVersion: number;
   sidecarVersion: string;
@@ -1646,7 +1706,8 @@ export interface CommandArgsMap {
   "sessions.confirmMapping": { sessionId: string; groupId: string; boxes: SessionBoxMapping[] };
   "sessions.status": { sessionId: string };
   "sessions.startAll": { sessionId: string };
-  "sessions.switchGroup": { sessionId: string };
+  "sessions.endGroup": { sessionId: string };
+  "sessions.resume": { sessionId: string };
   "sessions.end": { sessionId: string };
   "sessions.active": Record<string, never>;
   "port.startSession": { box: number };
@@ -1658,6 +1719,7 @@ export interface CommandArgsMap {
   "analytics.rescan": { cohortId: string; adoptOrphans?: boolean };
   "analytics.recentSessions": { limit?: number };
   "sessions.recover": { cohortId: string };
+  "sessions.tidy": { cohortId: string; apply?: boolean };
   "hardware.get": Record<string, never>;
   "hardware.preview": { document: unknown };
   "hardware.save": { document: unknown; confirm: boolean };
@@ -1716,7 +1778,8 @@ export interface CommandResultMap {
   "sessions.confirmMapping": { ok: boolean };
   "sessions.status": { session: Session; groupId: string | null; boxes: SessionBox[] };
   "sessions.startAll": { session: Session };
-  "sessions.switchGroup": { nextGroupId: string | null };
+  "sessions.endGroup": { session: Session };
+  "sessions.resume": { session: Session };
   "sessions.end": { session: Session };
   "sessions.active": ActiveSessions;
   "port.startSession": { state: PortStateName };
@@ -1728,6 +1791,7 @@ export interface CommandResultMap {
   "analytics.rescan": RescanResult;
   "analytics.recentSessions": { sessions: DiskSession[] };
   "sessions.recover": RecoverResult;
+  "sessions.tidy": TidyPlan;
   "hardware.get": RigDocument;
   "hardware.preview": RigSaved;
   "hardware.save": RigSaved;

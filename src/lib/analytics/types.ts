@@ -35,6 +35,8 @@ export type {
   RescanResult,
   RecoveredTsv,
   RecoverResult,
+  TidySession,
+  TidyPlan,
   AnalyticsProgress,
 } from "@/lib/ws/protocol";
 

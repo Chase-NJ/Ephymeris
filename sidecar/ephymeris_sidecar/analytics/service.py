@@ -18,8 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from ..sessions import tidy as session_tidy
 from ..sessions.models import Session, SessionAnimalRun
 from ..sessions.paths import parse_name_date, parse_name_time, parse_session_folder
+from ..sessions.tidy import session_key
 from ..tasks import profile as task_profile
 from ..tasks.profile import TaskProfile
 from . import derive, infer, reader
@@ -111,14 +113,17 @@ class AnalyticsService:
         # Adopted orphans (§8.1) ride alongside recorded runs: payload-only
         # synthetic sessions grouped from folder names, never database rows.
         adopted = await asyncio.to_thread(self._repo.adopted_for_cohort, cohort_id)
-        synthetic, _ = _synthetic_sessions(adopted, cohort_id)
+        # A recovered file from a session this database recorded counts under
+        # that session rather than as a second one on the same day (§8.8).
+        owners = _adoption_owners(adopted, sessions)
+        synthetic, _ = _synthetic_sessions(adopted, cohort_id, owners)
         sessions = _merge_sessions(sessions, synthetic)
         if session_ids is not None:
             wanted = set(session_ids)
             sessions = [s for s in sessions if s.id in wanted]
 
         runs = await asyncio.to_thread(self._sessions.runs_for_cohort, cohort_id)
-        runs = runs + [_adopted_to_run(a) for a in adopted]
+        runs = runs + [_adopted_to_run(a, owners) for a in adopted]
         session_index = {s.id: index for index, s in enumerate(sessions)}
         runs = [r for r in runs if r.session_id in session_index]
         if animal_ids is not None:
@@ -549,6 +554,87 @@ class AnalyticsService:
             "adopted": adopted_count,
         }
 
+    # --- tidying records (§8.8) -------------------------------------------
+
+    async def tidy(
+        self, cohort_id: str, *, apply: bool, protect: set[str], today: str
+    ) -> dict[str, Any]:
+        """Merge a day's split records and drop empty ones — or say what would.
+
+        `apply=False` is the preview the operator confirms; `apply=True`
+        re-plans from scratch rather than trusting a plan the client holds,
+        because the whole point of the lock is that nothing moved in between.
+        Refused while a scan holds the lock, like a second rescan: both move
+        run records between the rows a summary reads.
+        """
+        if self._lock.locked():
+            raise AnalyticsBusy("an analytics scan is running — try again when it finishes")
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._tidy, cohort_id, apply, protect, today
+            )
+
+    def _tidy(
+        self, cohort_id: str, apply: bool, protect: set[str], today: str
+    ) -> dict[str, Any]:
+        self._cohorts.get(cohort_id)  # CohortNotFound for an unknown id
+        sessions = self._sessions.list_sessions(cohort_id, include_aborted=True)
+        counts = dict(self._sessions.run_counts_by_session(cohort_id))
+        # Recovered files a record owns are its data as much as its run rows.
+        adopted = self._repo.adopted_for_cohort(cohort_id)
+        _, adopted_counts = _synthetic_sessions(
+            adopted, cohort_id, _adoption_owners(adopted, sessions)
+        )
+        for session_id, n in adopted_counts.items():
+            if not session_id.startswith("adopted:"):
+                counts[session_id] = counts.get(session_id, 0) + n
+
+        planned = session_tidy.plan(
+            sessions,
+            run_counts=counts,
+            folder_state=_folder_state,
+            protect=protect,
+            today=today,
+        )
+        if not apply or planned.is_empty:
+            return session_tidy.plan_json(
+                planned, counts, cohort_id=cohort_id, applied=apply and planned.is_empty
+            )
+
+        # A merged record's count is its whole day, for the reply.
+        merged_counts = dict(counts)
+        for merge in planned.merges:
+            fields = session_tidy.merged_fields(merge)
+            self._sessions.absorb_sessions(
+                merge.keep.id, [s.id for s in merge.absorb], **fields
+            )
+            merged_counts[merge.keep.id] = sum(
+                counts.get(s.id, 0) for s in (merge.keep, *merge.absorb)
+            )
+        self._sessions.discard_sessions([e.session.id for e in planned.empty])
+
+        # Folders last, and only a folder no surviving record points at and
+        # that still holds no file — re-checked now, not trusted from the plan.
+        surviving = {
+            _normalize(s.folder_path)
+            for s in self._sessions.list_sessions(cohort_id, include_aborted=True)
+            if s.folder_path
+        }
+        for entry in planned.empty:
+            folder = entry.session.folder_path
+            if entry.removes_folder and _normalize(folder) not in surviving:
+                _remove_empty_tree(folder)
+
+        log.info(
+            "analytics: tidied cohort %s — %d merges, %d empty records removed",
+            cohort_id,
+            len(planned.merges),
+            len(planned.empty),
+        )
+        return session_tidy.plan_json(
+            planned, merged_counts, cohort_id=cohort_id, applied=True
+        )
+
     # --- carrying adoptions forward (§8.7) ---------------------------------
 
     def _carry_over(
@@ -924,13 +1010,17 @@ class AnalyticsService:
         return inferred, "inferred", digest
 
     def adopted_session_entries(
-        self, cohort_id: str
+        self, cohort_id: str, recorded: list[Session]
     ) -> tuple[list[Session], dict[str, int]]:
         """Synthetic session entries for a cohort's adopted orphans, plus a
         per-session run count. Reads the database only — `sessions.list`
-        merges these and must never touch the filesystem (§9)."""
+        merges these and must never touch the filesystem (§9).
+
+        An orphan from a folder a `recorded` session owns is counted under
+        that session instead (§8.8), so the counts can name a real session's
+        id: the caller ADDS them to its own."""
         adopted = self._repo.adopted_for_cohort(cohort_id)
-        return _synthetic_sessions(adopted, cohort_id)
+        return _synthetic_sessions(adopted, cohort_id, _adoption_owners(adopted, recorded))
 
     def _resolve_profile(
         self,
@@ -1221,6 +1311,42 @@ def _same_path(recorded: str, found: Path) -> bool:
     return _normalize(recorded) == _normalize(str(found))
 
 
+def _folder_state(path: str) -> bool | None:
+    """True if the folder holds any file, False if it demonstrably holds none
+    (or is gone), None if it cannot be seen — never read as empty (§8.8)."""
+    if not path:
+        return None
+    target = Path(path).expanduser()
+    try:
+        if target.is_dir():
+            return any(child.is_file() for child in target.rglob("*"))
+    except OSError:
+        return None
+    return False if _is_gone(path, kind="folder") else None
+
+
+def _remove_empty_tree(path: str) -> None:
+    """Remove a session folder that contains no file — directories only.
+
+    Bottom-up `rmdir`, which the OS refuses for anything non-empty, so a file
+    that appeared since the plan (or a check that was wrong) stops it cold
+    rather than being deleted. Never `rmtree`: the app deletes its own
+    records, never the user's data (`cohorts.md` §9).
+    """
+    import os
+
+    root = Path(path).expanduser()
+    if not root.is_dir():
+        return
+    try:
+        for current, _dirs, files in os.walk(root, topdown=False):
+            if files:
+                return
+            os.rmdir(current)
+    except OSError as exc:
+        log.info("tidy: left folder %s in place (%s)", path, exc)
+
+
 def _normalize(path: str) -> str:
     try:
         return str(Path(path).expanduser().resolve()).casefold()
@@ -1331,13 +1457,51 @@ def _synthetic_session_id(entry: AdoptedRun) -> str:
     return f"adopted:{entry.prefix_name}_{entry.session_number}_{entry.date or 'undated'}"
 
 
-def _adopted_to_run(entry: AdoptedRun) -> SessionAnimalRun:
+def _adoption_owners(adopted: list[AdoptedRun], recorded: list[Session]) -> dict[str, str]:
+    """Which recorded session each synthetic session actually is (§8.8).
+
+    An orphan is adopted under a synthetic session named from its folder —
+    `adopted:<prefix>_<number>_<date>`. When this database also RECORDED a
+    session with that prefix, number and date, the two are one session: the
+    same folder, the files a crash left without a run record. Listing them
+    separately showed a day that went wrong as two days' worth of sessions.
+
+    The earliest recorded match wins, the one a tidy would keep. Aborted
+    records are never owners (they wrote nothing); callers pass the default
+    `list_sessions`, which excludes them.
+    """
+    owner_of: dict[tuple[str, str, str], str] = {}
+    for session in sorted(recorded, key=lambda s: (s.date, s.started_at, s.id)):
+        if session.id.startswith("adopted:") or session.status == "aborted":
+            continue
+        owner_of.setdefault(
+            session_key(session.prefix_name, session.session_number, session.date),
+            session.id,
+        )
+    owners: dict[str, str] = {}
+    for entry in adopted:
+        synthetic = _synthetic_session_id(entry)
+        if synthetic in owners:
+            continue
+        owner = owner_of.get(
+            session_key(entry.prefix_name, entry.session_number, entry.date or "")
+        )
+        if owner is not None:
+            owners[synthetic] = owner
+    return owners
+
+
+def _adopted_to_run(
+    entry: AdoptedRun, owners: dict[str, str] | None = None
+) -> SessionAnimalRun:
     """An adopted orphan in `SessionAnimalRun` clothing, so the indexing,
     caching, and profile ladder treat it exactly like a recorded run. The box
     number is honestly unknown — a filename doesn't carry one."""
     run = SessionAnimalRun(
         id=entry.id,
-        session_id=_synthetic_session_id(entry),
+        session_id=(owners or {}).get(
+            _synthetic_session_id(entry), _synthetic_session_id(entry)
+        ),
         animal_id=entry.animal_id,
         box_number=None,  # type: ignore[arg-type]
         sketch_path=entry.sketch_path or "",
@@ -1353,12 +1517,17 @@ def _adopted_to_run(entry: AdoptedRun) -> SessionAnimalRun:
 
 
 def _synthetic_sessions(
-    adopted: list[AdoptedRun], cohort_id: str
+    adopted: list[AdoptedRun],
+    cohort_id: str,
+    owners: dict[str, str] | None = None,
 ) -> tuple[list[Session], dict[str, int]]:
     """Payload-only session entries grouped from adopted runs' folder names.
 
     Never database rows — a fabricated `sessions` row would corrupt
     session-number suggestion and the same-day reuse warning (§8.1).
+
+    A group `owners` maps to a recorded session gets no entry of its own; its
+    count is filed under the recorded session's id instead (§8.8).
     """
     groups: dict[str, list[AdoptedRun]] = {}
     for entry in adopted:
@@ -1367,6 +1536,10 @@ def _synthetic_sessions(
     sessions: list[Session] = []
     counts: dict[str, int] = {}
     for session_id, entries in groups.items():
+        owner = (owners or {}).get(session_id)
+        if owner is not None:
+            counts[owner] = counts.get(owner, 0) + len(entries)
+            continue
         first = min(entries, key=lambda e: e.started_at)
         sessions.append(
             Session(

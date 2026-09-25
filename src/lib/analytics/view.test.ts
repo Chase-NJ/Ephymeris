@@ -14,7 +14,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { AnalyticsSummary, ProfileGroup, RunSummary } from "./types";
-import { pooledAxis, strategyAxes, strategyProfiles } from "./view";
+import {
+  pooledAxis,
+  recentSessions,
+  sideAccuracy,
+  strategyAxes,
+  strategyProfiles,
+} from "./view";
 
 function metric(
   id: string,
@@ -193,5 +199,56 @@ describe("strategyProfiles", () => {
     } as unknown as AnalyticsSummary);
     expect(sameSide[0]!.reason).toMatch(/same place/);
     expect(sameSide[1]!.reason).toMatch(/doesn't record which well/);
+  });
+});
+
+describe("sideAccuracy", () => {
+  /*
+   * The all-sessions plane reads each run's OWN metrics, so runs of different
+   * tasks land on one frame. Left is x whatever a profile declared first.
+   */
+  const run = {
+    metrics: [
+      { ...OVERALL, answerSide: "left" },
+      metric("o1", "right", { hits: 18, counted: 20 }),
+      metric("o2", "right", { hits: 1, counted: 4 }),
+      metric("o3", "left", { hits: 10, counted: 20 }),
+      metric("o5", "withhold", { hits: 5, counted: 5 }),
+    ],
+  } as unknown as RunSummary;
+
+  it("pools every condition answered at that well, over integers", () => {
+    expect(sideAccuracy(run, "right")).toEqual({ p: 19 / 24, counted: 24 });
+  });
+
+  it("never counts the pooled entry or a withhold toward a side", () => {
+    expect(sideAccuracy(run, "left")).toEqual({ p: 10 / 20, counted: 20 });
+  });
+
+  it("is null when nothing was answered at that well", () => {
+    const oneSided = { metrics: [metric("o1", "right")] } as unknown as RunSummary;
+    expect(sideAccuracy(oneSided, "left")).toEqual({ p: null, counted: 0 });
+  });
+});
+
+describe("recentSessions", () => {
+  const session = (id: string) => ({ id }) as AnalyticsSummary["sessions"][number];
+  const summary = {
+    sessions: ["s1", "s2", "s3", "s4", "s5"].map(session),
+    runs: [
+      { sessionId: "s1", status: "ok" },
+      { sessionId: "s2", status: "ok" },
+      { sessionId: "s3", status: "error" },
+      { sessionId: "s4", status: "ok" },
+      { sessionId: "s5", status: "ok" },
+    ],
+  } as unknown as AnalyticsSummary;
+
+  it("keeps the most recent sessions, oldest first", () => {
+    expect(recentSessions(summary, 2).map((s) => s.id)).toEqual(["s4", "s5"]);
+  });
+
+  it("skips a session with no scored run rather than spending a slot on it", () => {
+    expect(recentSessions(summary, 3).map((s) => s.id)).toEqual(["s2", "s4", "s5"]);
   });
 });

@@ -7,13 +7,19 @@ import { Button } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { LibraryStatusNote } from "@/components/task/LibraryStatusNote";
-import { NewTaskTile } from "@/components/task/NewTaskTile";
+import { NewTaskRow } from "@/components/task/NewTaskRow";
 import { StrobeDoor } from "@/components/task/StrobeDoor";
-import { TaskCard } from "@/components/task/TaskCard";
+import { TaskRow } from "@/components/task/TaskRow";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { CASCADE, RISE, springPanel, springSnappy } from "@/lib/motion";
-import { deleteTask, listTasks } from "@/lib/taskdef/commands";
-import type { TaskEntry } from "@/lib/taskdef/types";
+import {
+  deleteTask,
+  getTask,
+  idFromName,
+  listTasks,
+  uniqueCopyName,
+} from "@/lib/taskdef/commands";
+import type { TaskDefinition, TaskEntry } from "@/lib/taskdef/types";
 import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
@@ -35,9 +41,18 @@ import { EVT } from "@/lib/ws/protocol";
  * literally the pair Rig used to carry, since the strobe vocabulary moved with
  * the subject it belongs to (`settings.md` §5.0).
  *
- * Colour does real work in the grid rather than decorating it: every dot on a
- * card's glyph is one condition, in the same six-colour ramp that identifies an
- * animal across Analytics (`TaskGlyph`).
+ * The saved tasks are a LIST, most recently edited first, not a grid of cards:
+ * a shelf of near-identical variants is compared column by column, and a grid
+ * scatters the one fact that differs across a different spot in each cell
+ * (`TaskRow`). Colour still does real work: every dot on a row's glyph is one
+ * condition, in the same six-colour ramp that identifies an animal across
+ * Analytics (`TaskGlyph`).
+ *
+ * **Duplicate** opens an unsaved copy in the editor, for the common case of a
+ * small variation on a task that already runs. Named clear of every existing
+ * task (`uniqueCopyName`) and WITHOUT the source's legacy names: a legacy name
+ * resolves to exactly one sketch (`tasks.md` §3.7), so a copy carrying them
+ * would silently take over — or lose — the historical runs they decode.
  */
 export function Task() {
   const navigate = useNavigate();
@@ -91,6 +106,36 @@ export function Task() {
       setListError(errorMessage(err));
     }
   }, [client, pendingDelete, refresh]);
+
+  const duplicate = useCallback(
+    async (task: TaskEntry) => {
+      try {
+        const reply = await getTask(client, task.id);
+        const source = reply.definition as TaskDefinition;
+        const name = uniqueCopyName(source.name, tasks.map((t) => t.name));
+        const seed: TaskDefinition = {
+          ...structuredClone(source),
+          // A fresh id from the start, never the source's: the editor would
+          // re-derive one, but not before a first preview went out under it.
+          id: idFromName(name, tasks.map((t) => t.id)),
+          name,
+          legacyNames: [],
+        };
+        navigate("/task/new", { state: { seed } });
+      } catch (err) {
+        setListError(errorMessage(err));
+      }
+    },
+    [client, navigate, tasks],
+  );
+
+  // Most recently edited first: the task being worked on this week is the one
+  // most likely wanted, and "never saved" (null) sinks to the bottom.
+  const ordered = useMemo(
+    () =>
+      [...tasks].sort((a, b) => (b.editedAt ?? "").localeCompare(a.editedAt ?? "")),
+    [tasks],
+  );
 
   const needingAttention = useMemo(
     () => tasks.reduce((n, t) => n + (t.problems > 0 ? 1 : 0), 0),
@@ -160,7 +205,7 @@ export function Task() {
             animate="shown"
             className="mt-6 flex flex-col gap-5"
           >
-            {/* Nothing at all until the list has answered. A lone dashed tile
+            {/* Nothing at all until the list has answered. A lone "new task" row
                 over "waiting for the backend" invites a click that cannot
                 work — a new task needs `tasks.preview` to compile anything. */}
             {!tasksLoaded ? null : empty ? (
@@ -170,14 +215,15 @@ export function Task() {
             ) : (
               <motion.div
                 variants={RISE}
-                className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
+                className="hud flex flex-col divide-y divide-halo overflow-hidden rounded-md"
               >
-                <NewTaskTile onClick={() => navigate("/task/new")} />
-                {tasks.map((task) => (
-                  <TaskCard
+                <NewTaskRow onClick={() => navigate("/task/new")} />
+                {ordered.map((task) => (
+                  <TaskRow
                     key={task.id}
                     task={task}
                     onOpen={() => navigate(`/task/${task.id}`)}
+                    onDuplicate={() => void duplicate(task)}
                     onDelete={() => setPendingDelete(task)}
                   />
                 ))}
@@ -228,12 +274,12 @@ export function Task() {
 }
 
 /**
- * The empty state — a hero, rather than a grid with one dashed tile in it.
+ * The empty state — a hero, rather than a list with one "new" row in it.
  *
  * A rig with no tasks is a rig that cannot run a session, so this is the most
  * important thing on the screen at that moment and it takes the page's one
- * primary control. `NewTaskTile` is the right size once there is something for
- * it to sit beside; alone in a four-column grid it reads as an afterthought.
+ * primary control. `NewTaskRow` is the right size once there is something for
+ * it to sit beside; alone in an empty list it reads as an afterthought.
  */
 function FirstTask({ onStart }: { onStart: () => void }) {
   return (

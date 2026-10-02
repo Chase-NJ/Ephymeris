@@ -70,6 +70,11 @@ class FakeRhx:
         self._clients: list[asyncio.StreamWriter] = []
         self._tasks: set[asyncio.Task] = set()
         self._deferred: list[tuple[asyncio.StreamWriter, list[str]]] = []
+        #: Set by `stop`. A connection's handler runs as its own task, so a
+        #: client that connected just before a crash can reach `_on_command`
+        #: AFTER `stop` has closed every writer it knew of -- and would then
+        #: be answered by a dead RHX. A stopped fake refuses such late arrivals.
+        self._stopped = False
 
     # --- lifecycle --------------------------------------------------------
 
@@ -84,6 +89,7 @@ class FakeRhx:
         return self
 
     async def stop(self) -> None:
+        self._stopped = True
         for task in list(self._tasks):
             task.cancel()
         for writer in [*self._clients, self._waveform, self._spike]:
@@ -91,6 +97,10 @@ class FakeRhx:
                 writer.close()
         for server in self._servers:
             server.close()
+            # 3.13+: also drop accepted connections whose handler has not run yet.
+            close_clients = getattr(server, "close_clients", None)
+            if close_clients is not None:
+                close_clients()
             try:
                 # Since 3.12 this waits for every connection to drop, and a
                 # client cancelled mid-connect can leave one the fake never
@@ -116,10 +126,19 @@ class FakeRhx:
     # --- data sockets -----------------------------------------------------
 
     async def _on_waveform(self, _reader, writer) -> None:
+        if self._refuse_if_stopped(writer):
+            return
         self._waveform = writer
 
     async def _on_spike(self, _reader, writer) -> None:
+        if self._refuse_if_stopped(writer):
+            return
         self._spike = writer
+
+    def _refuse_if_stopped(self, writer: asyncio.StreamWriter) -> bool:
+        if self._stopped:
+            writer.close()
+        return self._stopped
 
     async def push_waveform(self, data: bytes) -> None:
         assert self._waveform is not None, "nothing connected to the waveform port"
@@ -138,6 +157,8 @@ class FakeRhx:
     # --- command socket ---------------------------------------------------
 
     async def _on_command(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if self._refuse_if_stopped(writer):
+            return
         self._clients.append(writer)
         try:
             while data := await reader.read(65536):

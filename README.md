@@ -233,8 +233,6 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
 
 ### Known bugs
 
-- `sidecar/tests/test_intan_client.py::test_rhx_vanishing_is_unavailable_not_a_hang` fails: RHX
-  vanishing does not raise `RhxUnavailable`. It fails on `main` too.
 - `sessions.status` reports `groupId: ""` when no group is held, while `sessions.active` reports `null`
   for the same state (`app.py` applies `or None` in one place only). Pick one.
 

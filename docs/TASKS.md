@@ -1,0 +1,694 @@
+# Tasks
+
+Everything between "a box runs firmware that emits strobes" and "the app draws its trial flow, builds its `START` line, and scores it live". For maintainers and firmware authors. What the recorded values become on disk and in Analytics is [DATA.md](DATA.md); the session flow that sends the line is [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle).
+
+## Overview
+
+A **task** is a sketch plus an optional `task.json` sibling that describes it (its *profile*). The profile is what lets the app render a config form, draw the trial-flow diagram, build the `START` command and score live metrics for a sketch it has never seen. A sketch with no `task.json` is fully supported: it gets a bare `START`, no form, and a raw scrolling strobe log instead of charts.
+
+> [!IMPORTANT]
+> **No sketch is special-cased in app code.** Drive everything off the profile. If you are about to write `if (sketchName === "GRGL")`, the profile is missing a declaration.
+
+Operators do not write `task.json` by hand. They author a **task definition** on the Task tab and the app generates a sketch folder from it plus this rig's wiring ([Task definitions](#task-definitions)). A hand-written profile is for a firmware author adding a sketch of their own ([Writing a new sketch](#writing-a-new-sketch)).
+
+### Two places a value can come from
+
+Everything an experiment varies reaches the firmware one of two ways. Which way follows from what the firmware can accept, not from preference.
+
+| | Arrives at | Carries | Changing it costs |
+|---|---|---|---|
+| **Generated headers** (`TaskPins.h`, `TaskTrials.h`) | compile time | channel→pin map, strobe selection, the trial table, how many ramp stages and trial types exist, which selector runs | a rebuild and reflash |
+| **The `START` line** | run time | every timing, hold, window, penalty, per-condition reward volume (`RW<n>`), pool weight (`PW<n>`), anti-bias clamp and stage threshold | one serial line |
+
+The dividing line is [`START_LINE_MAX`](#the-length-cap): a trial table and a pin map do not fit on the line, and pins must be compile-time constants anyway. Everything that fits stays on the wire, which is what lets **one flashed binary serve six boxes tuned differently** — the per-box overrides at mapping would otherwise mean six compiles.
+
+### The three bundled sketches
+
+| Sketch | Folder | What it is |
+|---|---|---|
+| **GRGL** | `Olfactory Behavior/GRGL/` | The one behavioural sketch. Covers discrimination, shaping and eased variants of either; every generated task is a copy of it with new headers. Its shipped `TaskPins.h`/`TaskTrials.h` are defaults, so a bare checkout runs the lab's historical 2-odor task. |
+| **BOX_Utility** | `Utility/BOX_Utility/` | The resting baseline every idle box is returned to ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). |
+| **GRGL_Sim** | `Utility/GRGL_Sim/` | Drives a real box through a full session with no animal in it — valves, light, vacuum and fluid on this rig's pins. **Its fluid lines really open**: run it dry or with a catch vessel unless you mean to dispense. |
+
+## Firmware
+
+The firmware lives in the sibling repo `../Arduino` (override with `EPHYMERIS_FIRMWARE_REPO`). `scripts/stage-sketches.mjs` copies it into this repo's gitignored `sketches/` (`npm run stage:sketches`; `npm run predev` runs it too). **Edit firmware in the Arduino repo and commit it there** — an edit under `sketches/` is discarded at the next stage.
+
+All trial logic lives in `libraries/BehaviorBox/BehaviorBox.h`: the serial helpers (strobe emitter, `START` reader, `STOP` poll), `TaskParams` and the one declarative wire-key list `TASK_PARAM_LIST` the `START` parser is generated from, the trial primitives (`TrialType`, `generateTrials`), the selection policies, and one `runTrial()` loop. That shared loop is why the state machine can be [derived](#derived-state-machine) rather than declared. The pinout is in `BoxPins.h` and the strobe codes in `BoxStrobes.h`.
+
+`emitStrobe()` also pulses a sync pin for electrophysiology alignment; see [RECORDING.md](RECORDING.md#the-sync-line).
+
+### Guarded defaults
+
+Every definition in `BoxPins.h` and `BoxStrobes.h` is `#ifndef`-guarded. A sketch includes the generated headers around the library:
+
+```cpp
+#include "TaskPins.h"    // pure preprocessor: pins, strobes, counts, selection mode
+#include <BehaviorBox.h>
+#include "TaskTrials.h"  // constructs TrialType, so it must come after
+```
+
+Whatever `TaskPins.h` declares wins; everything else falls back to the box as built. `TaskPins.h` must stay pure preprocessor — it is read before `BehaviorBox.h` has defined any type.
+
+### Counts that move with their key lists
+
+Two counts size arrays that the `START` parser writes into, so each must move with its key list(s) or a token writes past the end of an array:
+
+| Count | Key list(s) |
+|---|---|
+| `NUM_STAGES` | `BOX_STAGE_KEY_LIST` |
+| `BOX_MAX_TRIAL_TYPES` | **both** `BOX_POOL_KEY_LIST` and `BOX_REWARD_KEY_LIST` |
+
+A key list shorter than its count only leaves slots unreachable; a longer one corrupts memory. The generator emits each count together with its list(s), which is the only reason the counts are safe to make variable. The unguarded defaults reproduce the historical line, so a sketch with no generated header parses exactly what it always did.
+
+### Reward volume on the trial type
+
+`TrialType::rewardTime` is the one non-const member. The compiled value is the profile's default, and `applyRewardTimes()` overwrites it from the `START` line (`RW<slot+1>`) before the first trial, so `deliverReward()` never consults `TaskParams` for it. The table is therefore `static TrialType kTrials[]`, not `const`.
+
+### Selection modes
+
+`BOX_SELECTION_MODE` picks one of three, all compile-time:
+
+| Mode | Behaviour |
+|---|---|
+| `BOX_SELECT_ANTIBIAS` | Draw a side against the animal's recent bias, then a type uniformly within the side. Weights are ignored. |
+| `BOX_SELECT_WEIGHTED` | The same side draw, then a type within the side by `poolWeights` (`WeightedAntiBiasSelector`; no virtuals, `TrialPolicy` still holds the base pointer). For showing a stimulus still being learned more often without giving up side balancing. |
+| `BOX_SELECT_POOL` | A block-shuffled sequence built from `poolWeights` at `START`. |
+
+The three values are themselves guarded in `BehaviorBox.h`. A header that once omitted them made `#if BOX_SELECTION_MODE == BOX_SELECT_POOL` evaluate as `0 == 0`.
+
+### Compiling and the host tests
+
+> [!CAUTION]
+> **`arduino-cli compile` will not tell you about a type error.** The AVR core builds with `-fpermissive -w`, so passing a `const TrialType*` where an `int` is expected is a warning the build then suppresses: you get a size report and exit 0 on wrong code. `GRGL_Sim` once compiled clean against a changed `AntiBiasSelector` signature while reading a truncated pointer as its trial count. After any shared-signature change, compile every sketch with `--warnings all` **and** run the host tests (`libraries/BehaviorBox/extras/host_test/run.sh` and `run_box.sh`), which build without `-fpermissive` and are the strictest check available.
+
+The host tests compile `BehaviorBox.h` off-target against a minimal `Arduino.h` shim. They do not replace a real AVR compile and flash.
+
+## Sketch library
+
+Sketches **ship with the app**. There is no configured sketch directory: the library is a fact about the build, so adding or changing a bundled sketch needs a new build. Owned by `discovery.py`.
+
+### Library roots
+
+The bundled root is resolved in this order (`discovery.library_root()`):
+
+| Priority | Source | Used by |
+|---|---|---|
+| 1 | `$EPHYMERIS_SKETCH_LIBRARY` | A developer pointing the sidecar elsewhere. An environment variable and **deliberately not a setting**, so a configurable directory cannot come back by the back door. Reported as `source: "override"`. |
+| 2 | `$EPHYMERIS_BUNDLED_SKETCHES` | An installed build; set by the Tauri shell from its resource dir. |
+| 3 | `<repo>/sketches` | A checkout, staged by `npm run predev`. The only way `tauri dev` has a library. |
+
+Two more roots are written by the app and scanned after the bundle. **Order is the whole algorithm** (`discovery.discover`):
+
+| Root | Holds | Effect |
+|---|---|---|
+| `<data_dir>/rig/sketches/` | Bundled sketches rebuilt against this rig's wiring ([Rebuilt bundled sketches](#rebuilt-bundled-sketches)) | **Replaces** the bundled entry with the same category and name, keeping `source: "bundled"`. A rebuild is the same sketch with the right pins; offering both would make flashing a coin flip. A folder matching nothing in the bundle is reported, not offered. |
+| `<data_dir>/tasks/` | Sketch folders generated from saved task definitions | **Appends**, as `source: "rig"`. A saved task *is* a discovered sketch, so `port.flash`, the session flow, `tasks.getProfile`, `settings.taskDefaults` and Analytics need no special case. A name colliding with a bundled sketch is reported and dropped (saving already refuses it). |
+
+### Folder rules
+
+```
+<library root>/
+├── Olfactory Behavior/GRGL/     category / sketch (GRGL.ino, TaskPins.h, TaskTrials.h, task.json)
+├── Utility/BOX_Utility/  Utility/GRGL_Sim/
+└── libraries/BehaviorBox/       reserved; the one path passed to arduino-cli --libraries
+```
+
+> [!WARNING]
+> **A folder is a sketch only if it holds a `.ino` whose name matches the folder's own** (`clean_flush/clean_flush.ino`, never `clean_flush/main.ino`). This is arduino-cli's rule, and the most common reason a sketch fails to appear. A folder that breaks it is **skipped and reported**, never silently dropped.
+
+- **Categories** are any top-level folder other than `libraries/` (matched case-insensitively). Names are not hardcoded. A sketch's category is the folder **directly** containing it.
+- **Sketches need a category.** A valid sketch at the root is reported as skipped.
+- **Sketch folders are terminal.** Their contents (`src/`, `extras/`) are not scanned.
+- **`libraries/` is reserved at every depth**, and only the root one goes to `arduino-cli`, so every sketch compiles against one collection. Put shared headers directly in it — plain folders of `.h`/`.cpp`, no `library.properties` needed, and no symlinks (fragile on the Windows lab machines).
+- **Hidden folders** (leading `.`) are ignored silently, so `.git/objects` does not bury real problems.
+
+### Discovery
+
+The sidecar rescans on every `settings.push` (connect and every change), on `sketches.refresh`, after `tasks.save`/`tasks.delete`, and after a wiring rebuild, then broadcasts `sketches.updated`. There is no filesystem watcher; the library changes when the app does. The scan descends at most `MAX_SCAN_DEPTH` levels, follows symlinks but records every resolved directory so a loop terminates, and treats a folder with no `.ino` at all as plain organisation (not reported).
+
+Skip reasons, each reported with its path:
+
+| Reason | Meaning |
+|---|---|
+| `no <name>.ino matching the folder name` | Holds some `.ino`, just not the one arduino-cli needs |
+| `sketch folders belong inside a category folder` | A valid sketch at the root |
+| `couldn't be read: <error>` | Permissions or I/O failure |
+| `a rebuilt copy of a sketch this version no longer ships` | A `rig/sketches/` leftover |
+| `a bundled sketch is already called …` | A generated task shadowing a bundled name |
+
+### Library states
+
+`SketchLibraryStatus.state`, carried on the `settings.push` reply and on `sketches.updated`. Every non-ok state means a **broken or partial install**, never a wrong setting, so the copy points at reinstalling.
+
+| State | Condition |
+|---|---|
+| `damaged` | Root missing, not a directory, or unreadable |
+| `empty` | Readable, but no valid **bundled** sketch. A saved task does not rescue it: with no bundled `GRGL` there is nothing to generate from |
+| `ok` | Sketches found. A non-zero `skippedCount` is a non-blocking "some items couldn't be read" note |
+
+`source` records whether the root was the bundle or the developer override, so a bug report can say which library was scanned. `LibraryStatusNote` shows the state on the Task landing.
+
+## Task profile
+
+`task.json` sits **beside the `.ino`** and is **per sketch, never shared**: one file serving two sketches drifts out of sync with one of them. The parser `tasks/profile.py` (`parse_profile`) is the only enforcement point; `load_profile` returns `None` for a missing file and raises `TaskProfileError` for a broken one.
+
+### Top level keys
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `taskName` | non-empty string | **required** | Display name |
+| `kind` | `"behavior"` \| `"utility"` | `"behavior"` | Anything else raises |
+| `config` | array | `[]` | Fields for the form, the `START` line and the session file |
+| `strobes` | object, integer-string keys → names | `{}` | Code→name map |
+| `liveMetrics` | array | `[]` | Rolling P metrics, and the gate on the diagram's condition rows |
+| `controls` | array | `[]` | Utility profiles: Debug Mode widgets |
+| `telemetry` | object | absent | Utility profiles: how to parse `STATUS` lines |
+| `identify` | `{on, off}` | absent | Commands that make a box point at itself |
+| `legacyNames` | array of strings | `[]` | Names older software wrote into a run's `sketch` field |
+
+Unknown top-level keys are ignored. `kind` is a convention, not a schema gate: every key is read from every profile, and a utility profile's `liveMetrics` is simply never scored.
+
+> [!CAUTION]
+> **There is no `states` or `graph` key, and none should be added.** It would change `profile_hash` and split the sketch's runs in Analytics; see [Derived state machine](#derived-state-machine).
+
+### Config fields
+
+Each `config` entry is a `ConfigField`:
+
+| Key | Required | Rules |
+|---|:---:|---|
+| `metadataKey` | yes | The key the form collects under, and the key written **flat** into the session `.json`/`.mat` |
+| `wireKey` | yes | The `START` token; must match what the firmware's `TASK_PARAM_LIST` parses |
+| `type` | yes | `int`, `float`, `bool` or `string` |
+| `label` | | Falls back to `metadataKey` |
+| `default` | | Type-checked (`bool` is guarded separately, being an `int` in Python). A `string` default may not contain whitespace — the grammar is space-separated |
+| `group` | | Section the field is filed under, the key the diagram's `governedBy` matches, and what `GROUP_ORDER` sorts |
+| `unit`, `help` | | Non-empty strings |
+| `min`, `max` | | Numbers, inclusive; the form **clamps, never rejects**. `min > max` raises |
+| `step` | | A number; presentation only |
+| `advanced` | | Strictly `true` collapses the field behind a disclosure |
+
+> [!CAUTION]
+> **Four silent-failure guards, enforced at parse time.** Each would otherwise yield wrong data, not an error:
+>
+> 1. **`wireKey` may not be `SEED`** — the host appends that token itself ([SEED](#seed)).
+> 2. **`metadataKey` may not collide with a core session-file field** (`CORE_METADATA_KEYS` in `tasks/profile.py`, which includes the `intan_*` fields). Config merges in flat, so a collision would overwrite the core field.
+> 3. **No duplicate `metadataKey`.**
+> 4. **No duplicate `wireKey`.**
+
+`to_json()` omits absent optional keys rather than emitting `null`, and emits `advanced` only when true. That keeps `profile_hash` stable for profiles that declare none of them.
+
+**Every operator-tunable parameter is a config field.** The lab's profiles expose every timing, hold, window, penalty, reward volume, pool weight and stage threshold.
+
+### Ramped values
+
+> [!CAUTION]
+> **A ramped value is declared per stage, never once.** The firmware rewrites `odorPokeHold`, `fluidWellHold`, `fluidWellPoll` and `odorPortTimeout` from `stage[]` on every completed trial. A single field for one of them would appear to work and then be **silently overwritten at the first stage boundary** (around trial 15–20 on the lab's schedules).
+
+Each ramp row is a group of ordinary `int` fields with wire keys `S<n>P` (odor-poke hold), `S<n>H` (well hold), `S<n>W` (response window), `S<n>O` (odor-port timeout) and, for rows after 0, `S<n>T` (the completed-trial count at which the row engages). Row 0 is live from trial 0 and has no `T` field. The generator names the groups `Stage 0` … `Stage N`, or `Holds & windows` when there is only one row. A task that does not ramp declares row 0 only.
+
+### Strobes
+
+`strobes` maps code → name. Keys are coerced with `int()` (a non-integer raises); values are taken verbatim. The end-of-session code is found by **name** — the first entry whose name contains `END_SESSION` — which is how the runner knows to finalize.
+
+> [!WARNING]
+> **Declare the whole shared `BF_*` vocabulary, not the subset this sketch happens to emit.** Three consumers key entirely off this map: Mission Control's strobe console decodes through it, `liveTrials.ts`'s `vocabFrom` builds its recogniser from it, and the [state machine](#derived-state-machine) is derived from it. A partial map degrades all three silently — the console shows `Strobe 233`, the diagram loses a state, the live token strands — and nothing errors. What a sketch *presents* is stated by `liveMetrics`, never by which codes it lists here, so declaring the full set costs nothing.
+
+### Live metric entries
+
+```jsonc
+{ "id": "p_r_odor1", "label": "P(R | Odor 1)",
+  "triggerCode": 101, "successCode": 249, "alternateCode": 248, "windowSize": 20 }
+```
+
+| Key | Required | Notes |
+|---|:---:|---|
+| `id` | yes | A stable identifier only. A generated profile numbers them (`p_correct_1`), which names no condition |
+| `triggerCode` | yes | Opens a trial for this metric |
+| `successCode` | yes | Scores a hit |
+| `alternateCode` | yes | Scores a miss (still in the denominator) |
+| `label` | | What every readout titles the metric with. Falls back to `id`; a generated profile builds it from the trial type's required name |
+| `windowSize` | | Default 20, matching the firmware's anti-bias `biasWindow` default |
+
+> [!IMPORTANT]
+> **`liveMetrics` order is load-bearing**, and the array does double duty: besides scoring, it is the gate that decides which declared odor codes become drawn conditions ([Gates](#gates)). One metric per condition actually presented.
+
+Scoring semantics are in [Live metrics](#live-metrics).
+
+### Utility controls and telemetry
+
+A `"kind": "utility"` profile makes a priming, cleaning or self-test sketch first-class in Debug Mode. Utility sketches run in `PASSTHROUGH`, so their controls and status ride the passthrough primitives: **no new wire commands, and nothing they emit is stored.**
+
+| Control `type` | Renders as | Sends | Requires |
+|---|---|---|---|
+| `button` | a button | its `command` | non-empty `command` |
+| `select` | a dropdown | the chosen option's `command` | non-empty `options[]`, each with a `command` |
+| `grid` | one row per channel with a state lamp | that row's `toggle` or `pulse` | non-empty `channels[]`; each needs a `label` and at least one of `toggle`/`pulse` |
+
+`grid` exists because "which solenoid is energized right now" on a fluid rig is a safety readout, not a convenience. A row with neither `toggle` nor `pulse` is rejected rather than rendered as inert decoration. A missing `state` leaves the lamp neutral rather than claiming "closed" — not reported and closed are different facts.
+
+`telemetry` is `{ match?: string (default "STATUS"), fields?: [{key, label?}] }`. The app finds the newest `port.output` line beginning with `match`, parses space-separated `key=value` pairs, and shows the declared fields. **`STATUS` values cannot contain spaces.** Prose belongs in ordinary `Serial.println` lines, which land in the console.
+
+### Identify
+
+```jsonc
+{ "identify": { "on": "ON LIGHT", "off": "OFF LIGHT" } }
+```
+
+The two commands that make a box announce itself, used by the utility baseline's `utility.identify` and the guided placement walk ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). Keeping them in the profile is what lets the walk work on a rig that signals with a buzzer, another LED, or not at all. **Both halves are required together** — a box that can be lit but not unlit would announce itself indefinitely. Omitting the block is normal: that box simply cannot be asked. `identify` is not the same as a `LIGHT` row in a `grid`: that is a manual control; this is a contract the app drives on its own.
+
+### Legacy names
+
+A finalized run records `sketch` as a name, and the archive walk resolves it to a profile ([DATA.md](DATA.md#reading-the-archive)). For anything this app wrote, the name is the folder's. Data from earlier software records labels like `"Shape - L"`; `legacyNames` maps them.
+
+> [!IMPORTANT]
+> **Declared, never inferred.** Matching `"Shape - L"` to a sketch by resemblance would decode real data with the wrong strobe map and produce confident wrong numbers. The mapping is a one-line assertion by someone who knows, reviewable in a diff.
+
+> [!CAUTION]
+> Removing a sketch from the bundle, or deleting a `legacyNames` entry, makes every archived run recorded under that name stop decoding against its profile — **with a warning, not an error**. `tests/test_bundled_library_covers_archives.py` pins the names the lab's real archives contain; keep it current when a new archive appears.
+
+The bundled `GRGL/task.json` declares the lab's historical names (`GRGL_2-Odor`, `GRGL_2-Odor_EZ`, `shaping_GR`, `shaping_GL`, `shaping_GR_EZ`, `shaping_GL_EZ`, `Shape - R`, `Shape - L`). A saved task can re-declare them in its Details card. Only the archive walk reads this key; an unresolvable name is not an error and falls through to inference.
+
+## Task definitions
+
+A **definition** is the operator's document, authored on the Task tab. The app generates the sketch and its `task.json` from it plus this rig's wiring (`sidecar/ephymeris_sidecar/taskdef/`). Wire commands: [PROTOCOL.md](PROTOCOL.md#task-profiles).
+
+```
+<data_dir>/tasks/
+    <id>.json                  the DEFINITION — the only thing worth preserving
+    <category>/<name>/         the GENERATED sketch folder, a build output
+        <name>.ino             the bundled GRGL root, copied verbatim
+        TaskPins.h             pins, strobes, counts, selection mode
+        TaskTrials.h           the trial table
+        task.json              an ordinary profile, read by ordinary code
+```
+
+The two halves are kept apart so "regenerate everything" can never mean "delete the operator's work". The generated folder is rewritten whole; nothing hand-edited there survives.
+
+### What a definition holds
+
+Four answers, nothing derivable (`taskdef/model.py`):
+
+| Field | Holds |
+|---|---|
+| `trials[]` | Each row names an **odor channel**, a **response channel**, a **reward channel** and an **onset strobe** (go rows; a no-go row has neither response nor reward), plus its own `rewardTime`, `weight` and required `label` |
+| `selectionMode` | `antibias`, `weighted` or `pool` ([Selection modes](#selection-modes)) |
+| `stages[]` | The ramp, at least one row |
+| `params{}` | Only what **diverges** from the field catalogue's default |
+
+Plus `id`, `name` (becomes the sketch folder and must be a legal folder name), `category`, `legacyNames` and `notes`.
+
+A definition stores **channel names and strobe code names, never pins or numbers.** That indirection makes "odor line 3 means go-left on this rig" an edit to one document rather than to firmware, and lets a rewiring be costed before it is written.
+
+> [!CAUTION]
+> **`params` holds only divergences**, for the same reason `settings.taskDefaults` does. Storing the merged set would mean a catalogue change — a corrected range, a better help string — could never reach a saved definition.
+
+**Reward volume and weight live on the row, never in `params`.** The generator reads `reward_time`/`weight` off each `TrialTypeDef` and emits `RW<i+1>`/`PW<i+1>` from the same loop that emits `kTrials[i]`, so a `params["reward_time_1"]` is accepted and ignored. A value on the row is a property of that condition: two conditions paying from one fluid line can pay differently, and deleting the row takes its volume with it.
+
+**There are no presets.** A task is built from scratch. What a preset would seed that matters most is a condition's *name*, which differs on every bench, and a guessed name is wrong for everyone but its author. The lab's real historical definitions survive as test data in `sidecar/tests/fixtures/task_definitions.py`, each transcribed from the sketch it replaced — a generator change that breaks one breaks something the lab actually ran.
+
+### The field catalogue
+
+`taskdef/fields.py` declares every scalar tunable once — wire key, label, unit, range, prose — and every generated profile is built from it, so two profiles differ in values and trial table, never in what a parameter means. Three count-dependent families are not in it, because only the definition knows how many exist: ramp rows, pool weights (one per trial type) and reward volumes (one per go trial type).
+
+> [!CAUTION]
+> **`fields.py` is a cross-repo mirror of `TASK_PARAM_LIST` and nothing enforces it at runtime.** A key it declares that the firmware does not parse is sent and **silently ignored**; the session runs on the compiled-in value with nothing reporting a problem.
+
+### Diagnostics
+
+`taskdef/validate.py` reports every problem, not the first. `tasks.preview` returns them as the operator types; `tasks.get` recomputes them, because most depend on the **wiring** and a task saved clean can be broken by a rewiring it never saw.
+
+| Code | Problem | Consequence without it |
+|---|---|---|
+| `TSK101` | A channel this rig does not have (or an unfinished row) | The pin never fires |
+| `TSK102` | A channel of the wrong kind | A valve driven as a sensor |
+| **`TSK103`** | **A reward line serving the other well** | The row reads "→ left", the animal answers left, water arrives on the right |
+| `TSK104` | A strobe code the vocabulary does not declare | An unlabelled number in the data |
+| **`TSK105`** | **Two trial types sharing an onset code** | Two conditions, one label, pooled by every analysis |
+| `TSK106` | A ramp not strictly ascending after row 0 | `liveStage()` scans down, so the row never engages |
+| `TSK107` | A `START` line over the cap | The firmware truncates in silence |
+| `TSK108` | No presentable trial | A session that runs nothing |
+| **`TSK109`** | **All pool weights zero** (pool and weighted modes) | `generateTrials()` falls back to equal weights: a uniform pool while the table says otherwise |
+| `TSK110` | A condition with no name | Every readout titles it after whichever channel carried it |
+| `TSK111` | Two conditions sharing a name (case- and whitespace-insensitive) | Two curves under one title |
+| `TSK112` | An onset code no live metric scores — **derived client-side** in `routes/TaskEditor.tsx` | The condition silently drops out of the diagram |
+| **`TSK113`** | **A go condition paying 0 ms** | A dry well every readout scores as rewarded |
+
+> [!CAUTION]
+> **`TSK103`, `TSK105`, `TSK109` and `TSK113` produce plausible wrong data rather than a failure.** Read them first.
+
+**Every trial type must be named.** The name is the one thing the trial table cannot derive, and the metric label built from it titles Mission Control's live sparkline, the learning curve and a strategy axis. Two kinds of name meet here and must stay apart: the **rig's channel label** ("sandalwood") belongs to the wiring and never enters the profile; the **row's name** ("Go right") is the condition and does.
+
+A definition with diagnostics **still saves, and still generates a flashable sketch**: a half-finished task must be savable. Nothing refuses to flash it either — the editor says "it will still flash" — so the diagnostics are the operator's warning, not a lock. The exception is `TSK107`, whose line the sidecar refuses to build at mapping ([The length cap](#the-length-cap)). `tasks.save` refuses only a name that collides with a bundled sketch or (case-insensitively) another saved task, because two tasks with one name share a sketch folder and saving one would overwrite the other's firmware.
+
+### Saving and regeneration
+
+A saved task's folder is regenerated on `tasks.save`, at **every sidecar start**, and on every `hardware.save`/`hardware.reset`.
+
+- **At start**, because a folder written by an older generator either stops compiling (loud — `TrialType` grew an argument) or sends keys the firmware no longer parses (silent).
+- **On a wiring change**, because pins are compiled into `TaskPins.h`.
+
+> [!CAUTION]
+> **A wiring change must rebuild every stored profile AND every bundled sketch, and the failure is invisible if it does not.** A stale folder still compiles and runs; the only symptom is a valve that never fires. Both rebuilds go through the one call site `Application._rebuild_for_wiring` (rebuild, then rescan), because splitting it into two calls is how one eventually gets forgotten.
+
+### Rebuilt bundled sketches
+
+The shipped sketches compile against `BoxPins.h`'s defaults — the box as built. On a rewired rig that is silently wrong: `utility.identify` lights whatever is on the old trial-light pin and `GRGL_Sim` opens whatever is on the old odor line. So `taskdef/bundled.py` rebuilds them into `<data_dir>/rig/sketches/<category>/<name>/` with a generated `TaskPins.h`, served in place of the original.
+
+| Rule | Why |
+|---|---|
+| **Opt in by `#include "TaskPins.h"`** in the `.ino` | Read from the source, so there is no manifest to drift. A test asserts every bundled sketch that drives a pin opts in. |
+| **Pins only** (`bundled_pins_h`) | No counts, trial table or strobe overrides — a bundled sketch only references codes its own `BoxStrobes.h` defines. |
+| **Always rebuilt from the bundle** | `repin` refuses a source inside the rebuild root, since it clears the target before copying. |
+| **On failure the bundled entry stands** | A rig that cannot flash at all is worse than one flashing a wrong pin, which is visible the moment someone watches the box. |
+
+### Order is meaning
+
+Two orderings carry meaning and both are emitted from a single pass so they cannot disagree:
+
+- **Odor index.** `Odors[i]` is odor line i+1, and the pins are not monotonic past line 6. Use `ChannelMap.declared_of_kind()`, never `of_kind()` (which sorts by pin) — the wrong one swaps lines, drives the wrong valve and announces it with the wrong onset code while every trial looks correct.
+- **Trial-table slot.** Slot i is `kTrials[i]`, is `poolWeights[i]` (wire `PW<i+1>`), and is `rewardTimes[i]` (wire `RW<i+1>`). Reordering the table re-weights a pool task and re-pays every condition, which is why the trial table has no drag handle.
+
+## Rig wiring
+
+The rig's description of itself lives in `sidecar/ephymeris_sidecar/rig/` and `hardware/`. Wire commands: [PROTOCOL.md](PROTOCOL.md#rig-wiring). Box↔board bindings are a different, runtime wiring ([ARCHITECTURE.md](ARCHITECTURE.md#boxes-and-boards)); this one is compile-time input to every generated sketch.
+
+### Three documents
+
+| File | Says | Owner |
+|---|---|---|
+| `rig/schema/channels.v1.json` | **What a channel means** — `kind`, `well`, `port_slot` | shipped |
+| `rig/hardware/<pinout>.json` (selected by `_default.json`; `$EPHYMERIS_PINOUT` for tests) | **Where it is** on this box generation — a literal transcription of the firmware pinout | shipped |
+| `<data_dir>/hardware/rig.json` | This rig's own wiring, written by the wiring editor | operator |
+
+A second box generation is a one-file pinout swap, *provided the channel names are the same* — which is what resolving by name buys. The operator's `rig.json` **replaces** the shipped pair rather than merging with it: a merge would bring back a channel someone deleted and could not describe a box that lacks one. Channel kinds are `engagement` (exactly one), `response`, `emitter`, `reward`, `cue`, `vacuum` and `sync` (at most one).
+
+### Registry rules
+
+`rig/registry.py` composes the pair into a `ChannelMap`. Three rules that are easy to break:
+
+- **`channels()` is `lru_cache`d and cleared only by `set_rig_source`**, which `Application` calls at construction and after a wiring write. Never hang invalidation off `settings.push`: it fires on every reconnect.
+- **`hardware/store.py`'s `default_document()` reads the shipped pair via `shipped_channels()`**, never the wiring in force — otherwise Reset resets to itself. It also keeps declaration order (sorting by pin once re-ordered the odor table on a rig's first save).
+- **`ChannelMap.content_hash()` covers only fields that can change a compiled byte** (name, kind, direction, pin, watch bit, well, port slot). A reworded rationale must not move it, or people learn to ignore it. A profile names channels, not pins, so a rewiring moves no `profile_hash`; this hash is what records which wiring a sketch was built against (it is stamped into each generated header).
+
+### The wiring page
+
+`/config/wiring` (`routes/RigWiring.tsx`) hosts `RigWiringEditor` and `PinTable` over one document: the page owns the `useRig` session and the selected channel, so clicking a table row and clicking its pin are the same gesture. The board map selects and moves, the inspector rail edits, and the pin table edits nothing.
+
+**Saving previews what it would break.** `hardware.preview` validates as the operator types and reports `breaks` — the saved tasks this wiring would *newly* break, computed by validating each definition under both wirings (`hardware/service.py`'s `impact_of`). `hardware.save` without `confirm` refuses such a change with `RIG_WOULD_BREAK_TASKS`; with `confirm: true` it writes anyway. Rewiring is the operator's call; the app only refuses to let it happen unnoticed. A document that fails validation is never written.
+
+### Wiring rules
+
+A well-formed document describing an impossible box is a successful reply carrying located problems; `RIG_INVALID` is reserved for a document that is not a document. Schema problems and these rules read as one list:
+
+| Code | Problem |
+|---|---|
+| `RIG101` | The meaning and the pinout halves describe different boxes |
+| `RIG102` | A pin the board does not have |
+| `RIG103` | Two channels on one pin |
+| `RIG104` | A response port with no strobe slot ([Port slots](#port-slots)) |
+| `RIG105` | More than one `sync` channel |
+
+### The sync channel
+
+`sync` is the seventh kind: one output that pulses on every strobe into a recording controller's digital input ([RECORDING.md](RECORDING.md#the-sync-line)). It is resolved by kind, so a rig may name it anything. `BOX_PIN_SYNC_OUT` is **the one pin always emitted** — `-1` when the rig declares no sync channel — because every other undeclared pin keeps `BoxPins.h`'s default, and here that default would pulse a pin the operator never declared while the app reports the box has no sync line. Since `rig.json` replaces the shipped pair, a rig document saved without a sync channel has none until one is added.
+
+## Strobe vocabulary
+
+`rig/schema/strobe_vocab.v1.json` is the registry of every `BF_*` code (`rig.strobes` over the wire), read by `registry.vocabulary()`. It is shown read-only at `/task/strobes`. The page lives on the Task tab rather than Rig because a code is what a *condition is named by* — the trial table's onset picker is its only consumer — while a pin is compile-time input that belongs to the box.
+
+### Append only
+
+> [!CAUTION]
+> **A code is never renumbered and never repurposed.** Tens of thousands of recorded events carry these numbers; reissuing one silently merges two unrelated event types in any analysis spanning the change.
+
+- New codes come from `free_ranges`.
+- A code whose emitter is gone but which a **real session** contains moves to `retired` and stays reserved forever. Retired is a third state — neither live nor free — and `Vocabulary.is_free()` consults all three.
+- **Deleting a code is possible exactly once, and the bar is not "unused".** It is "no recorded session has ever contained it", checked against the archive rather than assumed. A code emitted even once, to a file that still exists, can never be reclaimed; it goes to `retired`.
+
+Resolution is always **by name**: codes are non-contiguous (the odor onsets step over a retired block), so anything that computes a code rather than looking it up is wrong by construction. The viewer is read-only on purpose; the only safe future edit is *adding* a code from a free range.
+
+### Every declared code is emitted
+
+Every `BF_*` code the vocabulary declares is emitted somewhere in the firmware. If you add a code, emit it; a declared code that is never strobed is a bug, not a convention. The two deliberate non-emitters in `BehaviorBox.h` — `shutdownHardware()` (runs before the clock is stamped and in utility sketches) and `flashLight()` (one `LIGHTS_OFF` per blink would bury the real light edges) — carry comments saying why.
+
+`tests/test_taskdef.py` pins the vocabulary to `BoxStrobes.h` in **both directions**: a declared code the firmware cannot emit is a name in every picker that no session will contain, and an emitted code the vocabulary omits arrives in the data as an unlabelled number.
+
+### Port slots
+
+`port_slots` maps a slot number to the six codes a response port on it reports with (enter, error, break, exit, reward, reward-stop). There are **two** slots, pointing at the historical `_L`/`_R` names, because `checkResponse()` polls two ports. The vocabulary is the authority; `RIG104` reads it, so the channel schema deliberately does not cap `port_slot` as well. Nothing derives a code from a channel's *name*.
+
+## Live metrics
+
+> [!IMPORTANT]
+> This is scientific output, not a UI detail. Implemented in `tasks/metrics.py`; the analysis-side definitions built on it are in [DATA.md](DATA.md#derived-metrics).
+
+### The definition
+
+For each `triggerCode` in an animal's strobe stream, scan forward for the next `successCode` or `alternateCode`, stopping at the next trial-boundary code:
+
+| Found first | Counts as |
+|---|---|
+| `successCode` | **hit** — numerator and denominator |
+| `alternateCode` | **miss** — denominator only ("went to the other side", not "didn't respond") |
+| neither, before a boundary | **excluded** from both |
+
+The metric is response-conditional and reward-unconditional: the firmware strobes the well poke the instant it is detected, before any hold check. The rolling window is the last `windowSize` **counted** trials, so `n` legitimately lags the trial count (`n=14` after 20 triggers means six unanswered trials), and a success or alternate code with no trial open is ignored.
+
+### Boundary codes
+
+> [!CAUTION]
+> **Boundary codes are the easiest thing here to get silently wrong.** `MetricSet` passes every accumulator the **union of every metric's trigger code**, which is how an odor-3 onset closes an unresolved odor-1 trial. `compute_series(metric, stream, boundary_codes=None)` defaults to **only that metric's own trigger**. Pass the union when replaying a stream, or every unanswered trial stays open and is scored by whatever strobe happens to arrive next.
+
+### Runtime
+
+`sessions/runner.py` creates a `MetricSet(profile)` at box start and offers it every strobe, pushing all metric values in each `session.telemetry` event. Debug Mode's Send START scores through the **same** `MetricSet` (`debug_run.py`); don't write a second scorer. `hits_total`/`counted_total` give Analytics an exact integer ratio. A telemetry metric carries `id`, `value` and `n`, never its label: renderers resolve the label from the profile (`useTaskProfiles`, `metricLabels`), or a row reads `p_correct_2`.
+
+## The START line
+
+### Three layer merge
+
+| Layer | Lives in | Scope |
+|---|---|---|
+| Profile default | the sketch's `task.json` (for a saved task, its definition) | the task, everywhere |
+| Rig default | `settings.taskDefaults[sketchName]` | this machine |
+| Per-box override | the session's box mapping | this animal, this run |
+
+They merge in that order in exactly one place, `defaultConfig` in `src/lib/sessions/types.ts`. **It iterates the profile's fields, not the stored objects**, so a value for a field the sketch no longer declares cannot reach the wire. `taskDefaults` is keyed by sketch folder name (what the session file records as `sketch`) and stores only divergences; it has no editor, and entries keyed by a sketch that no longer exists are inert. The session file records the merged values flat, plus `config_json`/`params_hash` on the run — a reader never needs to know which layer a number came from.
+
+### Building the line
+
+`build_start_command(profile, config)` in `tasks/start_command.py`: `START <wireKey>=<value> <wireKey>=<value> …`, space-separated, order-independent, matching the firmware parser (unknown keys ignored, missing keys keep the compiled default).
+
+- `config` is keyed by `metadataKey`; tokens follow the profile's `config` order.
+- A missing key uses the field's default; an undeclared key is ignored, so stale UI state cannot leak.
+- An unrenderable value falls back to the default; if that fails too, the token is dropped.
+- `bool` → `1`/`0`; `int` → integer; `float` → trimmed; `string` → verbatim (whitespace raises).
+- No profile, or no config fields → bare `START`.
+
+It is built sidecar-side at `sessions.confirmMapping` (and by `port.sendStart` in Debug Mode, and by the validator for `TSK107`).
+
+### The length cap
+
+> [!CAUTION]
+> **The cap is checked rather than trusted, because the firmware cannot report the failure.** `readLineInto()` truncates an overlong line and drops the rest, so an over-declared profile would run on whichever values happened to fit. `build_start_command` raises instead, naming the length and the limit. `START_LINE_MAX` lives in **two repositories** — `tasks/start_command.py` and the Arduino repo's `BehaviorBox.h` — and they must be changed together.
+
+The budget reserves room for the `SEED` token (`_SEED_TOKEN_BUDGET`), because the config half of the line is built at mapping, minutes before the seed is drawn. A `TaskProfileError` here becomes `TASK_PROFILE_INVALID` with the box, and **the mapping is refused**. A profile that fails to *parse* at mapping is instead treated as profile-less (bare `START`).
+
+### SEED
+
+`SEED` is a reserved wire key no profile may claim.
+
+- **Host → board:** `with_trial_seed` appends `SEED=<n>` at the instant the operator starts **that box** (`tasks/seed.py`). Drawn per box at start, not at mapping, which would give every box in a group the same value and survive Stop → Start. A board that predates the convention ignores the unknown key and seeds itself.
+- **Board → host:** a `SEED\t<n>` line right after `START` is captured as `trial_seed`.
+
+The host draws it because the board cannot: opening the port pulls DTR and resets the Mega, so `micros()` at `START` measures only boot time plus a round-trip — a few hundred reachable seeds. The host uses the OS CSPRNG, held to `[1, 2^31 - 2]` (`randomSeed(0)` is a no-op; avr-libc's `random()` state space ends at `2^31 - 2`). Both values are recorded: `host_seed` is what was sent, `trial_seed` what the board reports running on. They differ only on a box still carrying a self-seeding sketch, and the sidecar warns when they do.
+
+## Profile and params hashes
+
+Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncated to 16 hex characters, in `tasks/profile.py`.
+
+| | `profile_hash` | `params_hash` |
+|---|---|---|
+| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `strobes`, `liveMetrics`, `controls`, `legacyNames`, and `telemetry`/`identify` when present | one run's merged parameter values, keyed by `metadataKey` |
+| `None` input | n/a | returns `None` — a run with no recorded parameters is not a run recorded with none |
+| Stored on | `task_profiles.hash` (content-addressed) | `session_animal_runs.params_hash`, beside `config_json` |
+
+> [!IMPORTANT]
+> **Comparability in Analytics is the pair `(profile_hash, params_hash)`.** A profile hash covers only the declaration and is identical across every run of a sketch however it was tuned, so grouping on it alone would pool a shaping run with a full-task run.
+
+What this rests on:
+
+- **Anything in `to_json` moves `profile_hash`**, and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter rail's tab fold is the app's rather than the profile's ([Parameter rail](#parameter-rail)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
+- **`to_json` must round-trip through `parse_profile` byte-for-byte.** A finalized session file embeds its profile ([DATA.md](DATA.md#per-animal-files)); if the round trip drifts, a copied run lands under a different hash than its origin.
+- **`intan_*` fields are core, not config** (`CORE_METADATA_KEYS`), so they stay out of `params_hash`: two runs of one tuning are comparable whether or not one was recorded.
+
+## Derived state machine
+
+The Task tab and Mission Control draw the trial's state machine. It is **computed from the profile** in `src/lib/tasks/topology.ts` (`taskGraph`) — pure, no React, store or fetch — and laid out by `src/lib/tasks/graphLayout.ts`. Both are pinned by `topology.test.ts` and `graphLayout.test.ts`.
+
+### Why derived
+
+Every behaviour sketch runs one shared `runTrial()`, so the topology is identical across them; what differs is which branches exist, and the declared strobe names say exactly that. Everything gates on **names**, never raw codes.
+
+> [!CAUTION]
+> **Never add a `states` or `graph` key to `task.json`.** It changes `profile_hash`, which Analytics groups runs by, and would split every sketch's historical runs from its future ones with nothing to recompute the old hashes.
+
+**Left to right is when the firmware strobes it.** The condition sits at odor delivery, because the odor-on code is strobed after `ODOR_POKE` and the pre-odor hold (the odor is primed earlier, silently). `LIGHTS_OFF` is its own state between withdrawal and answer: it separates presentation from response and is where a real trial rests for seconds.
+
+### The model
+
+`taskGraph(profile)` returns `{nodes, edges, conditions, congruent, usable}`. A node has a `kind` (`state`, `outcome` — coloured to match Analytics' outcome palette — or `abort`), authored `column`/`row` in a 100-wide frame, `governedBy` (config `group` names that tune it), `entryNames` (strobe names that put the live token there), optional `variants` (a collapsed node's conditions) and `settlesToIti`. Edges carry a `kind` and an optional `countKey` naming the `derive.py` count drawn on them.
+
+### Gates
+
+- **`usable`** = `LIGHTS_ON` and any of `WATER_POKE_L`/`_R`/`_NONE`. Otherwise no diagram (prose instead), though `conditions` is still returned.
+- **`conditionsOf` — the gate.** Odor names are those matching `ODOR_<n>_ON`. If any is the `triggerCode` of a `liveMetrics` entry, **only metric-named odors survive**; if none is, all declared odors survive unlabelled.
+- **`scoredNames`** — names any metric's trigger, success or alternate code resolves to. Gates the `withheld` outcome.
+
+> [!IMPORTANT]
+> **A declared code is not a presented condition.** A hand-written profile lists every odor code of the shared vocabulary, and every generated profile declares `WATER_POKE_NONE` because the runner can emit it, while a task presents a few odors and often no no-go trials. So conditions and the withhold arm are gated on a `liveMetrics` entry **scoring** them, not on the code existing. Any change to this derivation must keep handling that.
+
+### Nodes and outcomes
+
+| Node | Gate | Entry names |
+|---|---|---|
+| `start` "Light" → `await-poke` "Poke" | always | `LIGHTS_ON`, `ODOR_POKE` |
+| `lazy` "No poke" (abort) | `LAZY_RAT` | `LAZY_RAT` |
+| the odor node | conditions exist | every condition's onset name |
+| `abort-pre-odor` "Let go", `abort-sampling` "Left early" | `ODOR_UNPOKE_EARLY` (one code, two edges, told apart by whether an onset preceded) | none |
+| `sample` "Unpoke" | always | `ODOR_UNPOKE` |
+| `lights-off` "Light off" | `LIGHTS_OFF` (else the answer comes straight off `sample`) | `LIGHTS_OFF` |
+| `choice` "Answer" | always | `WATER_POKE_L`, `WATER_POKE_R` |
+| `iti` | always | `WATER_UNPOKE_L/R`, `END_CORRECT_ITI`, `END_INCORRECT_ITI` |
+| `repeat` (abort) | any abort exists | `INVALID_TRIAL` |
+
+Outcomes, best to worst, each with exactly one inbound edge (never a condition × outcome cross product):
+
+| Outcome | Gate | From | Note |
+|---|---|---|---|
+| Reward | `FLUID_L` or `FLUID_R` | answer | Settles to ITI on a timer **only** if `WATER_UNPOKE_L/R` are undeclared; otherwise the animal's withdrawal moves the token |
+| Withheld | `WATER_POKE_NONE` **and** scored | window | **No `countKey` on purpose**: `derive.py` has no no-go bucket, and borrowing `noResponse` would double-count |
+| No hold | `WATER_UNPOKE_EARLY_L/R` | answer | |
+| Wrong well | `WATER_POKE_ERROR_L/R` | answer | |
+| No answer | always | window | |
+
+With more than one condition on a fan, edge labels and counts are dropped: one figure drawn N times would read as each arm's own.
+
+### One condition node
+
+The conditions are **one node carrying `variants`**, drawn as a tick strip, not N nodes. The arms are congruent — same in-edge, same out-edges, same `governedBy`, same downstream, mutually exclusive — so a fan spent O(N) rows of the drawing's scarcest axis to encode a label, and collided with the abort band at four conditions. Height is now constant in the condition count. The node is labelled after its condition when there is one, and generically ("Odor") when it stands for several.
+
+**`armsCongruent` is the guard.** Differing correct wells are still congruent, but a **go/no-go mix is not**: a withhold arm never reaches the wells, so one node would assert a path that does not exist. That profile falls back to a fan (`lane: "fan"`).
+
+> [!CAUTION]
+> **`correctWellOf` reads `successCode` only and returns `null` whenever it cannot prove an answer.** Falling back to `alternateCode` prints a confident lie: a no-go type's alternate is "any port will do" (the generator's `_first_enter_code`, `infer.py`'s `slots[0]`), so the fallback renders "Odor 4 → left well" for a condition whose answer is to poke nothing. It is the only figure the diagram *adds* rather than rearranges, so it is the only one that can be false.
+
+**`liveConditionId`** walks the strobe tail newest-first and **stops at a trial boundary** (`LIGHTS_ON`, `INVALID_TRIAL`, the ITI and session codes), so a previous trial's odor never leaks into the current pre-odor phase. It returns a condition, **`unlisted`** (the box announced an odor the profile does not declare — almost always the `liveMetrics` gate having dropped a trial type), or `null` (no odor yet this trial). It **never falls back to `conditions[0]`**: a wrong condition looks exactly like a right one. `unlisted` exists because collapsing turned a missing arm (a visibly missing node) into a nameless absence; the Task tab makes the same finding at edit time as `TSK112`.
+
+### Live token
+
+`liveNodeId` walks the codes newest-first and returns the first node whose `entryNames` contains the code's name; `useLiveNode` scans the last `TAIL` strobes, and the condition lookup a wider `CONDITION_TAIL`, because a correction trial's repeated pokes can push the onset out of the short window. The newest-first walk is what disambiguates `LIGHTS_OFF`, which every path emits: each abort strobes its own code and then `INVALID_TRIAL` immediately after. On error paths the outcome strobe *is* the start of a long silent delay, so an outcome marked `settlesToIti` hands the token to `iti` after `OUTCOME_SETTLE_MS`.
+
+### Layout
+
+> [!CAUTION]
+> **Row placement is measured in the renderer, never multiplied in the model.** `graphLayout.ts` places the abort band at `max(authored depth, deepest measured content + gap)` — a lower bound, never a replacement, or the drawing's proportions would depend on how many groups a profile declares. `measureNode` must stay on the layout side: the chip count comes from the profile's declared groups, which `topology.ts` cannot see, and the live panel draws no chips at all. A model-side measurement would be right for one host and ~48px optimistic for the other, and the symptom is a band sitting inside a chip stack, not an error.
+
+## The Task tab
+
+The Task tab answers *what the animal does*; the Rig tab answers *what this box is*.
+
+### Landing
+
+`/task` (`routes/Task.tsx`) lists this rig's saved tasks (`TaskRow`), with open, **Duplicate**, delete and create; doors to the strobe vocabulary and the walkthrough; and `LibraryStatusNote`, since a damaged install is the one thing that stops a task existing at all. Duplicate opens an **unsaved** copy named clear of every saved task (`GRGL copy`, `GRGL copy 2`) and **drops `legacyNames`**: a legacy name resolves to one sketch, so a copy carrying it would silently take over or lose the historical runs it decodes.
+
+### Editor
+
+`/task/new` and `/task/:taskId` (`routes/TaskEditor.tsx`): `TaskDetails` (category, `legacyNames`, notes), the derived state machine (`SketchStateMachine`, with a `ConditionRail` of real buttons since the SVG is inaccessible), `TrialTypeTable`, `StageRamp`, and the `ParameterInspector` rail. The state machine and the problem list stay on screen beside what is being edited, because the diagram is the fastest check that an edit did what was meant. **Every redraw comes from `tasks.preview`**: the diagram is derived from the profile the *current* definition compiles to, and validation needs the wiring, which the frontend does not hold.
+
+### Trial table
+
+- Every cell is a **channel name or code name**, never a pin or index; the rig's wiring supplies the options.
+- Row order is the contract ([Order is meaning](#order-is-meaning)); there is no drag handle.
+- Each go row carries its **reward volume** (ms) and, under pool or weighted selection only, its **weight**. These columns are on the row, not the rail, so they cannot outlive the row they describe.
+- Each row is **named** (`TSK110`/`TSK111`) and shows a plain contingency sentence ("odor line 3 → left well, paid from fluid 2"), the one rendering that catches `TSK103` by eye.
+- The onset picker offers only **numbered** `*_<n>_ON` codes. A bare `_ON` suffix would offer `LIGHTS_ON`, which the runner emits every trial, and a task that picked it would pool two conditions silently.
+
+### Ramp and START meter
+
+`StageRamp` shows the whole schedule; row 0 has no "engages at"; a new row is seeded from the row before it, never from a defaults table, so no stage appears carrying numbers nobody chose. The header's **`START` meter** shows the built line's length against `START_LINE_MAX`. It is not decoration: that cap is the one budget an operator can exhaust without noticing, and each added stage costs five tokens.
+
+### Parameter rail
+
+**The rail's pills are tabs, not groups** (`topology.ts`'s `tabOf`). `Correction trials` and `Reward volume` fold under `Session`, and the rail then excludes `Reward volume` outright because the trial table owns it.
+
+> [!IMPORTANT]
+> **The fold is the app's, never the profile's.** `group` rides in `ConfigField.to_json` and therefore inside `profile_hash`, so re-filing a field in `fields.py` would give every regenerated `task.json` a new hash and split each task's runs. `QUICK_TUNE_GROUPS` (the groups the mapping step promotes) rests on the same reasoning, and both registries live in `topology.ts`. Anything comparing a rail tab against a node's `governedBy` folds through `tabOf` first (`nodesGovernedByTab`); the diagram's chips keep the real group names.
+
+`settings.taskDefaults` has no editor here or anywhere; a profile's own values are edited on this tab.
+
+### Walkthrough
+
+`TaskGuide` is a **coach over the real editor, not a wizard**: it spotlights the control the current step is about while the operator edits the real document, and a step ticks itself off when the *definition* satisfies it. A wizard would be a second form over the same document, and the copy used twice a year is the one that drifts. **Nothing is blocked**: only the step card takes clicks, every control stays live, and working ahead ticks the steps behind you. The spotlight rectangle is measured from the target element on scroll, resize and `ResizeObserver`, never remembered. It opens unasked once — `/task/new` on a rig with no saved tasks, unless `localStorage` has `ephymeris:taskGuideSeen` — and the landing's Walkthrough door (`/task/new?guide=1`) reopens it regardless.
+
+## Writing a new sketch
+
+For a firmware author adding a sketch to the bundle with its own hand-written `task.json`. Operators make tasks on the Task tab instead.
+
+### Authoring steps
+
+1. **Write the sketch in `../Arduino`**, inside a category folder, with `<Name>/<Name>.ino`. If it drives any pin, `#include "TaskPins.h"` before `<BehaviorBox.h>` (and ship a `TaskPins.h` that declares nothing) so the app rebuilds it against each rig's wiring. A name must not collide with a saved task.
+2. **Minimum profile:** `{ "taskName": "My Task" }`. This alone gives a bare `START`, no form, a raw log and no diagram.
+3. **Declare the whole `BF_*` vocabulary** in `strobes` ([Strobes](#strobes)). Which names you declare unlocks each part of the diagram ([Nodes and outcomes](#nodes-and-outcomes)); `END_SESSION` is what lets the runner finalize cleanly.
+4. **Declare every operator-tunable parameter** in `config`, with `wireKey`s that `TASK_PARAM_LIST` parses, a `metadataKey` you want in the data file, a `group` from `GROUP_ORDER` (unknown groups sort last), and ramped values **per stage**. Mind the [length cap](#the-length-cap).
+5. **Declare `liveMetrics`**, one per presented condition. A metric whose `triggerCode` is an `ODOR_<n>_ON` code is what draws that condition; one scoring `WATER_POKE_NONE` draws the withhold arm.
+6. **Optional:** `legacyNames`; `identify` (a baseline candidate); `kind: "utility"` with `controls` and `telemetry` for a Debug Mode tool.
+7. **Stage and rebuild:** `npm run stage:sketches`, restart the app (a bundled sketch change ships only with a new build).
+
+### Verify
+
+1. Pick the sketch on a session's mapping step. A malformed `task.json` surfaces its parse error there, naming the rule (Debug Mode silently treats a broken profile as profile-less).
+2. `cd sidecar && pytest tests/test_task_profiles.py tests/test_taskdef.py tests/test_discovery.py`.
+3. Compile with `--warnings all` and run the host tests ([Compiling and the host tests](#compiling-and-the-host-tests)).
+4. Flash a box (or run `GRGL_Sim` dry) and watch the live token; if it sticks, check that state's entry names are declared.
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| Sketch missing from the picker | `.ino` doesn't match the folder name, or the sketch sits at the root; check `skipped` |
+| No diagram, just prose | `usable` is false: `LIGHTS_ON` or all three water-poke codes undeclared |
+| A condition is missing | No `liveMetrics` entry has that odor's code as its `triggerCode` |
+| "Withheld" never appears | `WATER_POKE_NONE` declared but not scored by any metric |
+| Token sticks on Reward for the ITI | `WATER_UNPOKE_L`/`_R` undeclared |
+| Token jumps straight to Answer | `LIGHTS_OFF` undeclared |
+| Console shows `Strobe <n>` | That code isn't in `strobes` |
+| Mapping refused, `TASK_PROFILE_INVALID` | `START` line over the cap |
+| A value ignored by the board | `wireKey` not parsed by `TASK_PARAM_LIST` |
+| A value reverts mid-session | A ramped value declared once instead of per stage |
+| Analytics splits the sketch's history | Something in `to_json` changed ([hashes](#profile-and-params-hashes)) |
+| Valve never fires on a rewired rig | The sketch does not include `TaskPins.h`, so it keeps the shipped pins |
+
+### What raises
+
+All raise `TaskProfileError`, surfaced as `TASK_PROFILE_INVALID` ([PROTOCOL.md](PROTOCOL.md#error-codes)):
+
+- **Parse:** a non-object root; missing `taskName`; unknown `kind`; malformed `config` (missing keys, unknown type, reserved `SEED`, a core-field collision, duplicates, a default of the wrong type, whitespace in a string default, non-string `group`/`unit`/`help`, non-numeric `min`/`max`/`step`, `min > max`); non-object `strobes` or a non-integer key; a `liveMetrics` entry missing a required key; malformed `controls` or `telemetry`; `identify` missing a half; `legacyNames` not a list of strings.
+- **Load:** unreadable or invalid JSON (`couldn't read task.json: …`). A missing file is not an error.
+- **Build:** the `START` line plus the seed budget over `START_LINE_MAX`.
+
+`tasks.getProfile` returns the error with `sketchPath`. At `sessions.confirmMapping` and `port.sendStart` a profile that fails to parse is downgraded to profile-less (bare `START`); only the length case refuses. `build_legacy_name_index` skips a broken profile so it cannot hide every other sketch's legacy names.
+
+### What degrades silently
+
+| Situation | Result |
+|---|---|
+| Incomplete `strobes` | Lost diagram states, undecoded console lines, a stranded live token |
+| An odor code no metric scores | Dropped from the diagram (`TSK112` on a saved task; `unlisted` live) |
+| Unknown top-level keys or `group` names | Ignored; unknown groups sort last |
+| Out-of-range number in the form | Clamped, never rejected |
+| Half-typed number in the form | Kept as text with a warning that the box would run on the default |
+| A utility profile with `liveMetrics` | Accepted, never scored |
+| A `fields.py` key the firmware doesn't parse | Sent and ignored; the compiled value runs |

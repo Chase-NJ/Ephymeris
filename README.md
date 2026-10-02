@@ -1,225 +1,313 @@
 # Ephymeris
 
-![status](https://img.shields.io/badge/status-v1.0-8B7EC8?style=flat-square) ![platform](https://img.shields.io/badge/target-Windows_11-16151F?style=flat-square) ![boxes](https://img.shields.io/badge/boxes-6_×_Mega2560-2C2A3A?style=flat-square) ![tests](https://img.shields.io/badge/sidecar_tests-671-7CC98F?style=flat-square)
+Ephymeris is a desktop app for running rodent behaviour sessions on up to six Arduino Mega2560 R3
+boards, one per behaviour box. It flashes the task firmware to the boards, streams their serial output
+while animals run, writes every event to that animal's data file as it arrives, and keeps the
+bookkeeping around it: cohorts, animals, groups, session prefixes and session records. An Analytics view
+reads the recorded archive back and draws learning curves, per-condition accuracy and strategy plots.
+A session can also drive an Intan RHX electrophysiology recording alongside the behaviour.
 
-A lab desktop app for running rodent behavior sessions on up to six Arduino Mega2560 R3 boards ("boxes").
+It is built for the Hart Lab's two Windows 11 lab machines and developed on macOS. The people who run
+sessions are lab members, not programmers. They should read the [user guide](docs/USER-GUIDE.md).
+Maintainers should start with [Architecture](docs/ARCHITECTURE.md).
 
-Ephymeris covers the whole loop of a behavior session. It discovers your sketches and flashes them to the right boards, opens the serial ports and streams live data while animals run, parses the boards' strobe protocol into per-animal data files as trials arrive, and keeps the cohort, animal, group, and session bookkeeping that surrounds all of it. A built-in Analytics dashboard then reads the recorded archive back and derives learning curves, per-condition accuracy, and strategy plots.
+**Status.** The current version is in `package.json`. Cohorts, the Rig, Task and Recording tabs,
+Debug Mode, Settings, the full session flow and Analytics are built, and the core session flow has
+been run against real boxes; what has not is listed under [Open issues](#open-issues). Analytics
+decodes two of the lab's real archives end to end. **Recording with Intan has only been run end to end against a fake RHX** (a
+test double on real sockets). The command link has been probed against a real RHX in synthetic mode,
+but no real recording has gone through the app yet; see [Not yet verified](docs/RECORDING.md#not-yet-verified).
+The Windows installer builds, but it is unsigned and there is no CI.
 
-Three things shape how it works:
+## Documentation
 
-- **The backend owns the truth.** A Python sidecar owns serial I/O, `arduino-cli`, the SQLite database, and file writing. The UI renders what the sidecar reports and never predicts hardware state.
-- **Boxes are numbered, not addressed.** A box is 1–6, bound to a physical board by its USB hardware id — so a box keeps pointing at the same board after Windows renumbers COM ports.
-- **Data is written as it arrives.** Every parsed trial is flushed and `fsync`'d to that animal's `.tsv` immediately, so a crash mid-session costs nothing already recorded. The `.json`/`.mat` files are built at clean finalization.
+| Document | Read it if you… |
+|---|---|
+| [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | run sessions: setting up a cohort, running and watching a session, results, troubleshooting |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | maintain the app: processes, wire rules, settings, the port state machine, the utility baseline, the session lifecycle, frontend rules, theme, module map |
+| [docs/TASKS.md](docs/TASKS.md) | write firmware or define tasks: the sketch library, `task.json`, task definitions, rig wiring, strobe vocabulary, the `START` line, the derived state machine |
+| [docs/DATA.md](docs/DATA.md) | touch anything written to disk or analysed: file layout, crash safety and recovery, SQLite, backup, the archive walk, metric definitions |
+| [docs/RECORDING.md](docs/RECORDING.md) | work on the Intan RHX integration |
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | need the exact shape of a command, event or error code. **Generated** from `protocol/schema.py`; never edit it by hand |
+| [CLAUDE.md](CLAUDE.md) | are an AI coding agent: the load-bearing invariants in brief |
 
-**Sketches stay data-driven.** A sketch can ship a `task.json` describing its start-command fields, strobe vocabulary, and live metrics — and from that alone the app builds its configuration form, **derives and draws its trial-flow state machine**, builds its `START` line, and scores it live. No task is special-cased in app code. See [docs/tasks.md](docs/tasks.md), which includes a step-by-step guide to defining your own.
+## Installing on a lab machine
 
-Built for two Windows 11 lab machines; developed on macOS and Windows.
+The installer is self-contained. The machine needs no Python, Node, Arduino IDE or internet: the frozen
+backend, `arduino-cli` and the `arduino:avr` toolchain all ship inside it.
 
-**Status: v1.0.** Cohorts, Config, Task, Debug Mode, Settings, Backup Directory mirroring, and the complete session flow (config → mapping → flash → Mission Control → 3D constellation) are implemented, and everything but the mirroring is verified against real hardware. Analytics is built and decodes two of the lab's real archives end to end. A Windows installer builds via `npm run package`; macOS packaging and CI builds remain open. The open register is [docs/README.md §7](docs/README.md#7-open-issues).
+1. Copy `Ephymeris_<version>_x64-setup.exe` to the machine and run it. It installs per user, so no
+   administrator account is needed.
+2. The installer is not code-signed, so Windows shows **"Windows protected your PC"**. Click **More info**,
+   then **Run anyway**. This is expected.
+3. Launch Ephymeris from the Start menu. On first launch it copies its Arduino toolchain into a writable
+   folder, so boards can take a few extra seconds to appear that once.
+4. Set up the rig on the **Rig** tab:
+   - **Boxes**: click **Add box** once per behaviour box, give each a **Label**, and pick its board under
+     **Bound board** (boards are listed by USB serial number). **Test** opens the box's console and
+     waits for its firmware to announce itself.
+   - **Utility baseline**: choose the **Hardware utility sketch** (`BOX_Utility`). Idle boxes are kept on
+     it, which is what lets the app light a box during animal placement.
+   - **Hardware**: the **Default baud rate** (leave at 115200 unless the firmware changes) and an
+     optional **arduino-cli path override**.
+   - **Wiring** opens the channel-to-pin editor. A recording rig needs a sync channel added here.
+5. In **Settings → Storage**, choose the **Data directory** where session files go, and optionally a
+   **Backup directory** on another drive or share.
+6. Save at least one task on the **Task** tab and create a cohort on **Cohorts**. Then start from the
+   Dashboard's **Start a Session**.
 
----
+The app installs to `%LOCALAPPDATA%\Ephymeris`. Its own state (the cohort database, settings, the
+writable toolchain copy, saved tasks) lives in `%APPDATA%\edu.hartlab.ephymeris`. Session data goes
+wherever the Data directory points. Uninstalling removes the app but leaves both data locations alone.
+To update, run a newer installer over the old one.
 
-## Installing on a lab machine (Windows 11)
+## Developer setup
 
-This is the path for a machine that will *run* Ephymeris, not develop it. The installer is self-contained: the machine needs **no Python, no Node, no Arduino IDE, no internet** — the frozen backend, `arduino-cli`, and the full `arduino:avr` toolchain (compiler and uploader) all ship inside it.
+Ephymeris is three processes: a Rust/Tauri shell, a React webview and a Python sidecar that owns all
+hardware and data state ([Architecture](docs/ARCHITECTURE.md#overview)). Both platforms run the same
+arrangement; only the system toolchain and the venv path differ.
 
-1. Copy `Ephymeris_1.0.0_x64-setup.exe` to the machine (USB stick is fine) and run it. It installs per-user — no administrator account needed.
-2. The build is not code-signed, so the first run of the installer shows a **"Windows protected your PC"** SmartScreen dialog. Click **More info → Run anyway**. This is expected for unsigned software from a small lab, not a sign of a problem.
-3. Launch Ephymeris from the Start menu. On the very first launch the app copies its bundled Arduino toolchain into place; boards may take a few extra seconds to appear that one time.
-4. Do the first-launch setup, same as ever:
-   - **Config** opens the box-setup wizard — plug in the boards, bind each box 1–6 to its board, nickname them, pick a constellation.
-   - **Settings → Data directory** — where session files are written; optionally a **Backup directory** on another drive or share.
-5. Create or import cohorts under **Cohorts**, then start a run from the **Dashboard**.
+### Prerequisites
 
-Where things live on an installed machine: the app is in `%LOCALAPPDATA%\Ephymeris`, and its own state (cohort database, settings, the writable Arduino toolchain copy) is in `%APPDATA%\edu.hartlab.ephymeris`. Session data goes wherever the Data directory points. Uninstalling from Windows Settings removes the app but touches neither the app-data folder nor any session data.
-
-To update: run a newer installer over the old install. Cohorts, settings, and session data are untouched.
-
-## Building the installer
-
-Done from a development machine that already runs the app from source (next section). The bundled `arduino-cli` is taken from that machine's `PATH`, and the first build downloads the `arduino:avr` core, so it needs the network once. PyInstaller comes from the sidecar venv's `package` extra:
-
-```bash
-sidecar/.venv/Scripts/pip.exe install -e "sidecar[dev,package]"
-npm run package
-```
-
-That stages the bundle resources (freezes the sidecar with PyInstaller, copies `arduino-cli`, seeds the AVR core), then runs `tauri build`. The installer lands in `src-tauri/target/release/bundle/nsis/`. Staged resources are cached — delete `src-tauri/resources/` to force a re-seed.
-
-Only the Windows installer exists today. The staging script is written platform-neutrally, but a macOS build has never been run and the lab targets are Windows; treat macOS as run-from-source.
-
-## Getting it running from source
-
-This is the development setup. Both platforms run the same three-process arrangement, and the only real differences are the system toolchain and the path to the Python interpreter.
-
-### 1. Install the prerequisites
-
-Common to both platforms:
-
-| Tool | Version | Notes |
+| Tool | Version | Source of the requirement |
 |---|---|---|
-| Node.js | 20+ | |
-| Python | 3.12+ | |
-| Rust | stable | Install via [rustup](https://rustup.rs) |
-| `arduino-cli` | recent | Must be on your `PATH`, or set an explicit path in Config |
+| Node.js | 20.19+ or 22.12+ | Vite's `engines` field |
+| Python | 3.12+ | `requires-python` in `sidecar/pyproject.toml` |
+| Rust | stable (at least `rust-version` in `src-tauri/Cargo.toml`) | via [rustup](https://rustup.rs) |
+| `arduino-cli` | recent | on `PATH`, or set on the Rig tab |
 
-<details open>
-<summary><strong>Windows 11</strong></summary>
+**Windows 11.** Install Node.js, Python (tick **Add python.exe to PATH**) and rustup. Tauri also needs
+the Microsoft C++ Build Tools: in the Visual Studio Build Tools installer, select *Desktop development
+with C++*. WebView2 already ships with Windows 11. Then `winget install ArduinoSA.CLI`.
 
-Install [Node.js](https://nodejs.org), [Python](https://www.python.org/downloads/windows/) (tick **Add python.exe to PATH** in the installer), and [rustup](https://rustup.rs).
+**macOS.** `xcode-select --install`, then `brew install node python rustup arduino-cli` and `rustup-init`.
 
-Tauri also needs the **Microsoft C++ Build Tools**. Install them from the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) installer, selecting the *Desktop development with C++* workload. WebView2 is already part of Windows 11, so there is nothing to do there.
-
-Then `arduino-cli`, most easily via winget:
-
-```powershell
-winget install ArduinoSA.CLI
-```
-
-</details>
-
-<details open>
-<summary><strong>macOS</strong></summary>
-
-Xcode Command Line Tools provide the compiler and linker Tauri needs:
+On both, install the AVR core the Mega compiles against:
 
 ```bash
-xcode-select --install
+arduino-cli core update-index && arduino-cli core install arduino:avr
 ```
 
-The rest via [Homebrew](https://brew.sh):
-
-```bash
-brew install node python rustup arduino-cli
-rustup-init
-```
-
-</details>
-
-Finally, install the AVR core that the Mega2560 compiles against — same on both platforms:
-
-```bash
-arduino-cli core update-index
-arduino-cli core install arduino:avr
-```
-
-### 2. Get the code and install dependencies
+### Clone and install
 
 ```bash
 git clone https://github.com/Chase-NJ/Ephymeris.git
-cd Ephymeris
-npm install
+git clone https://github.com/Chase-NJ/Arduino.git   # the firmware, as a sibling: ../Arduino
+cd Ephymeris && npm install
 ```
 
-### 3. Create the sidecar virtual environment
+The firmware lives in its own repo. `npm run stage:sketches` copies it into this repo's gitignored
+`sketches/` (`predev` runs it for you). Edit firmware in `../Arduino` and commit it there: anything
+edited under `sketches/` is overwritten at the next stage. Set `EPHYMERIS_FIRMWARE_REPO` if the
+firmware repo lives elsewhere; `EPHYMERIS_SKETCH_LIBRARY` points a dev sidecar at another library.
 
-The Tauri shell looks for a Python interpreter at exactly `sidecar/.venv`. This is the one step whose command differs by platform.
+### Sidecar virtual environment
 
-**Windows 11 (PowerShell):**
+The shell looks for the interpreter at exactly `sidecar/.venv`. To keep it elsewhere, point
+`EPHYMERIS_SIDECAR_PYTHON` at the interpreter.
 
 ```powershell
-python -m venv sidecar\.venv
-sidecar\.venv\Scripts\pip.exe install -e "sidecar[dev]"
+# Windows (PowerShell)
+python -m venv sidecar\.venv; sidecar\.venv\Scripts\pip.exe install -e "sidecar[dev]"
 ```
-
-**macOS:**
 
 ```bash
-python3 -m venv sidecar/.venv
-sidecar/.venv/bin/pip install -e "sidecar[dev]"
+# macOS
+python3 -m venv sidecar/.venv && sidecar/.venv/bin/pip install -e "sidecar[dev]"
 ```
 
-If you keep the environment somewhere else, point `EPHYMERIS_SIDECAR_PYTHON` at the interpreter instead.
+The `dev` extra includes pytest, the gRPC code generator and PyInstaller, so the same venv can build
+the installer.
 
-### 4. Run it
+### Run it
 
 ```bash
 npm run tauri:dev
 ```
 
-That builds the Rust shell, starts the Vite dev server on port 1420, spawns the Python sidecar, and opens the app window. The first run compiles the Rust dependencies and takes a few minutes; later runs are fast.
+This regenerates the protocol mirrors, stages the sketches, starts Vite on port 1420, builds the shell,
+spawns the sidecar and opens the window. The first run compiles the Rust dependencies and takes a few
+minutes. On first launch, do steps 4 to 6 of [Installing on a lab machine](#installing-on-a-lab-machine).
 
-### 5. First-launch setup
+### Troubleshooting
 
-Point the app at your own folders and hardware (sketches are the one thing that ships with it):
-
-1. **Config** opens a five-step box setup wizard on first launch. Add a row per behavior box, bind each to a connected board (boards are listed by USB serial number), give them nicknames, optionally run the handshake test, and pick a constellation for the status display. You can skip it and do the same things from the Config screen directly.
-2. **Task** — the sketches ship with the app, so there is nothing to point at: the screen reports how many the build carries, and picking one draws its trial flow. Adding or changing a sketch needs a new build. (Developers: `EPHYMERIS_SKETCH_LIBRARY` points a dev sidecar at another library; a checkout stages `<repo>/sketches` via `npm run predev`.)
-3. **Settings → Data directory** — where session data is written. Optionally set a **Backup directory** too, on a different drive or share, to mirror session files and the cohort database.
-
-Then create a cohort under **Cohorts**, and start a run from the **Dashboard**.
-
-### If something doesn't work
-
-- **No boards detected.** Genuine Mega2560 R3 boards need no driver on either platform, but many clones use a CH340 USB-serial chip that does. Check the board appears as a serial device to the OS first; Ephymeris only lists what `arduino-cli board list` reports.
-- **"Sidecar interpreter not found".** The venv isn't at `sidecar/.venv`, or was created by a Python older than 3.12.
-- **Flashing fails on one box.** A failed flash leaves that port in `ERROR`, and `ERROR → FLASHING` is refused by design. Acknowledge the fault on the box's card (or in Debug Mode) before retrying.
-- **The app starts but nothing connects.** The sidecar exited. There is no automatic respawn on purpose — restart the app. Its stderr is forwarded into the Tauri log.
+| Symptom | Cause |
+|---|---|
+| `predev` fails: firmware repo not found | `../Arduino` is missing. Clone it, or set `EPHYMERIS_FIRMWARE_REPO` |
+| No boards detected | Genuine Mega2560 R3 boards need no driver, but CH340 clones do. Ephymeris lists only what `arduino-cli board list` reports |
+| "Sidecar interpreter not found" | No venv at `sidecar/.venv`, or one made with Python older than 3.12 |
+| `.venv/bin/pytest` fails with "No such file" | The repo moved after the venv was made, and its scripts point at the old path. Run `python -m pytest`, or recreate the venv |
+| A box will not flash after a failure | A failed flash leaves the port in `ERROR`, and `ERROR → FLASHING` is refused. Acknowledge the fault first |
+| The app opens but nothing connects | The sidecar exited. There is no automatic respawn by design; restart the app. Its stderr is in the Tauri log |
 
 ## Commands
 
-Run these from the repository root unless noted.
+Run from the repo root unless noted.
 
 | Command | What it does |
 |---|---|
-| `npm run tauri:dev` | The real app: shell + sidecar + webview |
-| `npm run dev` | Vite dev server alone, on the fixed port 1420 |
-| `npm run typecheck` | `tsc --noEmit` — the only automated frontend check |
-| `npm run build` | Typecheck, then a production Vite build |
-| `npm run gen:protocol` | Regenerate the two wire-protocol mirrors from `protocol/schema.py` |
-| `npm run package` | Stage bundle resources, then build the Windows installer |
-| `pytest` | Sidecar test suite (run from `sidecar/`, inside its venv) |
-| `cargo test` | Rust shell tests (run from `src-tauri/`) |
+| `npm run tauri:dev` | The full app: shell, sidecar and webview |
+| `npm run dev` | Vite alone on the fixed port 1420 (Tauri expects it). `predev` regenerates the protocol and stages sketches first |
+| `npm run build` | `tsc --noEmit`, then a production Vite build. `prebuild` regenerates the protocol |
+| `npm run preview` | Serve the production build |
+| `npm run typecheck` | `tsc --noEmit` only |
+| `npm run test` / `npm run test:watch` | Vitest over `src/lib/**`, once or watching |
+| `npm run check` | Protocol mirrors up to date, typecheck and unit tests; runs all three even after a failure |
+| `npm run gen:protocol` | Regenerate `sidecar/ephymeris_sidecar/protocol.py`, `src/lib/ws/protocol.ts` and `docs/PROTOCOL.md` from `protocol/schema.py` |
+| `npm run stage:sketches` | Copy `../Arduino` into `sketches/` |
+| `npm run package` | Stage installer resources, then build the Windows installer |
+| `pytest` (in `sidecar/`, inside the venv) | The sidecar suite |
+| `pytest tests/test_protocol_contract.py` (in `sidecar/`) | The mirror-drift guard; run it after any wire change |
+| `cargo test` (in `src-tauri/`) | Shell unit tests, such as the handshake parser |
+| `libraries/BehaviorBox/extras/host_test/run.sh` (in `../Arduino`) | Firmware host tests for the shared library; `run_box.sh` tests `BOX_Utility` |
 
-There is no frontend test runner or linter configured yet; `typecheck` is the whole automated frontend story.
+## Tests
 
-After changing anything on the wire, run the mirror-drift guard specifically:
+**Frontend: Vitest, `src/lib/**` only, and deliberately no DOM.** What is worth pinning there is the
+arithmetic and decoding that yield a drawing or readout that looks deliberate when it is wrong: the
+derived state machine (`tasks/topology.ts`), its layout (`tasks/graphLayout.ts`), the strategy plane's
+axes (`analytics/view.ts`), cohort appearance, the cohort sky layout and the scope maths. A component
+test would need a DOM, a settings context and a WebSocket client to assert what a screenshot shows
+better. There is no linter.
+
+**Sidecar: pytest, `sidecar/tests/`.** `conftest.py` sets `EPHYMERIS_WIRE_VALIDATE=1` for the whole suite,
+so every event and command reply is checked against `protocol/schema.py`; production leaves it off.
+The guards that matter most:
+
+- `test_protocol_contract.py`: the generated mirrors match the schema, and every wire name appears in
+  the protocol doc.
+- `test_wire_shapes.py`: the real `to_json` emitters conform to the schema. Extend it when you add an emitter.
+- `test_migrations.py`: pins old schemas as literal fixtures and upgrades them.
+- `test_analytics_infer.py`: inference from the strobe stream scores identically to the declared GRGL
+  profile. Extend it before touching either side.
+- `test_analytics_derive.py`: the metric definitions, and the payload's field names against `CODEC_VERSION`.
+- `test_taskdef.py`: the strobe vocabulary against the firmware's `BoxStrobes.h`, in both directions.
+- `test_debug_flash.py`: a Debug Mode flash survives the utility baseline, and Debug scoring matches a session's.
+- `test_writer.py`: kills a child mid-write to prove the `.tsv` crash guarantee.
+- `test_doc_links.py`: every `FILE.md#anchor` cited anywhere in the repo exists.
+
+Some tests need outside things and skip without them: `test_grpc_tool.py` drives a real `arduino-cli`
+daemon when one is installed, and `test_intan_real_rhx.py` runs only with `EPHYMERIS_REAL_RHX=1`
+against a live RHX. Everything else in the Intan suite runs against `tests/fake_rhx.py`.
+
+**Rust: `cargo test`** in `src-tauri/`, for the sidecar handshake parser and other shell units.
+
+**Firmware: host tests** in `../Arduino/libraries/BehaviorBox/extras/host_test/`. They compile the
+shared library without `-fpermissive`, which makes them the strictest type check the sketches get.
+
+> [!CAUTION]
+> `arduino-cli compile` hides type errors: the AVR core builds with `-fpermissive -w`, so a wrong
+> argument type is a suppressed warning and the compile exits 0. After any shared-signature change,
+> compile every sketch with `--warnings all` and run the host tests. See [Firmware](docs/TASKS.md#firmware).
+
+## Building the installer
+
+From a development machine that already runs the app from source:
 
 ```bash
-pytest tests/test_protocol_contract.py
+npm run package
 ```
 
-## How it fits together
+`scripts/package-resources.mjs` stages `src-tauri/resources/`: it freezes the sidecar with PyInstaller
+from `sidecar/.venv`, copies `arduino-cli` from this machine's `PATH`, seeds a clean `arduino:avr` core
+(this needs the network once), and stages the sketch library from `../Arduino`. Then `tauri build`
+merges `src-tauri/tauri.bundle.conf.json` and writes an NSIS installer to
+`src-tauri/target/release/bundle/nsis/`. Delete `src-tauri/resources/` to force a fresh stage.
 
-Three processes and one WebSocket:
+The installer is unsigned and built by hand; there is no CI build. Packaging has only been run on
+Windows. The script is written platform-neutrally, but a macOS package has never been built, so treat
+macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\` paths); see
+[Architecture](docs/ARCHITECTURE.md#process-lifecycle).
 
-```
-Tauri shell (Rust, src-tauri/)  ──spawns & supervises──►  Python sidecar (sidecar/)
-        │                                                          │
-        └── serves the webview (React/TS, src/) ──WebSocket────────┘
-```
+## Open issues
 
-The **Python sidecar** owns everything stateful: serial I/O, `arduino-cli` invocation, the SQLite database, and session file writing. It is the source of truth for hardware and data state.
+### Untested on real hardware
 
-The **React frontend** talks to the sidecar over the WebSocket only. It never touches serial ports or `arduino-cli`, and it never sets port state optimistically — it renders what the sidecar reports.
+- **Picking groups on the fly.** The bookkeeping is pinned by `test_session_groups.py`, but a full
+  two-group session on the rig (pick, map, flash, run, switch, pick, run, end), and quitting between
+  groups then continuing from the Dashboard, has not been run. This is the most valuable hardware test left.
+- **The utility baseline and the placement walk.** Watch three things. Cold start is six sequential
+  flashes, so the rig is busy for a minute or two after launch; if that annoys, defer the cold restore
+  rather than parallelise it. The identify confirmation waits for a `telemetry` line, so a utility
+  sketch without one is trusted on the send alone. And the session hold must be released on every exit
+  path, or the rig stops returning to baseline.
+- **Recording with Intan.** A full recording (configure, record, live windows, graceful end) has only
+  run against the fake RHX, and the sync line into a real digital input has not been scoped.
+  [Not yet verified](docs/RECORDING.md#not-yet-verified) lists the open questions. Every rig with a
+  saved wiring document has no sync channel until one is added on the wiring page.
+- **Backup mirroring** is built and tested, but has not been verified on the lab machines.
+- **Analytics at real-archive scale** renders the lab's archives without error, but nobody has yet
+  judged it as a scientist would. The session rail's length and the six-colour animal ramp repeating
+  past six animals are the known weak spots.
 
-The **Rust shell** is thin. It spawns the sidecar, owns settings persistence, and pushes settings over the wire. It holds no hardware or session logic.
+### Known bugs
 
-A fuller version of this, including a file-by-file module map, is in **[docs/README.md](docs/README.md)**.
+- `sidecar/tests/test_intan_client.py::test_rhx_vanishing_is_unavailable_not_a_hang` fails: RHX
+  vanishing does not raise `RhxUnavailable`. It fails on `main` too.
+- `sessions.status` reports `groupId: ""` when no group is held, while `sessions.active` reports `null`
+  for the same state (`app.py` applies `or None` in one place only). Pick one.
 
-## Documentation
+### Open decisions
 
-**Seven documents under `docs/`.** They are living specifications and are more authoritative than inferring behavior from code.
+- **Unused sidecar commands.** `cohorts.list`, `prefixes.list` and `cohorts.suggestGroups` have handlers
+  but no frontend caller; Auto-Balance runs client-side in `src/lib/cohorts/grouping.ts`. Remove them,
+  or route Auto-Balance through the sidecar.
+- **Frontend coverage beyond the pure layer.** Stores (`lib/sessions/store.ts`, `lib/hardware/store.ts`),
+  the session flow's step transitions and every component are untested, and there is no linter.
+- **A "flash all six" in Debug Mode**: whether to have one, whether it halts at the first failure as the
+  session sequence does, and whether it is one command or six.
+- **Settings schema.** The sidecar reads only the keys it needs and ignores the rest, so adding a key is
+  deliberately cheap; the set is not final. `settings.taskDefaults` has no editor, so stale entries
+  (inert, but present) cannot be cleared.
+- **Back-pressure on `port.output`.** Sends are unbounded, relying on the ring-buffer cap. No policy
+  exists for a frontend that cannot keep up; not yet seen as a problem.
+- **Board re-binding.** A swap is confirmed with the Rig tab's Test, but nothing yet says "a new board
+  appeared, bind it to box 3?".
+- **Archive has no confirmation**, on purpose: archiving is reversible and only permanent delete is
+  gated. Revisit if it proves too easy to trigger.
+- **Installer signing and a CI build.** Signing would remove the SmartScreen dialog; CI would make the
+  installer reproducible and untie it from one machine's `arduino-cli`.
+- **`kind` in a task profile is a convention**, not a schema gate: a `utility` profile carrying
+  `liveMetrics` is accepted and never scored. Enforce it only if it causes confusion.
 
-| Read | For |
+### Deferred by decision
+
+These were decided, not missed.
+
+| Item | Decision |
 |---|---|
-| **[docs/README.md](docs/README.md)** | **Start here.** Developer setup, architecture, the module map, the test map, and every open issue |
-| [docs/dashboard.md](docs/dashboard.md) | The theme, every screen, the port state machine, the session flow, the 3D constellation |
-| [docs/cohorts.md](docs/cohorts.md) | The Cohort/Animal/Group model, the cohort UI, Auto-Balance grouping |
-| [docs/tasks.md](docs/tasks.md) | The bundled sketch library, `task.json`, the derived trial-flow state machine, **and how to define your own task** |
-| [docs/data.md](docs/data.md) | On-disk layout, the SQLite schema, crash safety, backup, and the derived metrics behind Analytics |
-| [docs/settings.md](docs/settings.md) | Every settings key, box bindings, board discovery, the hardware utility baseline |
-| [docs/websocket-protocol.md](docs/websocket-protocol.md) | The exact shape of any command, event, payload, or error code |
-
-For the wire schema, `docs/websocket-protocol.md` carries the prose and `protocol/schema.py` is the machine-readable shape authority; the two code mirrors are generated from it.
+| Resuming a group mid-run after a restart | Out of scope. Continuing *between* groups is built; if the sidecar dies mid-group the run is over and the `.tsv` is the record |
+| Auto-respawn of a crashed sidecar | No. It would come back without the port ownership or session state it had |
+| Auto-recovery from a board drop mid-session | No. Always a hard stop into `ERROR`, cleared by hand; the write-ahead log means no data is lost |
+| Light mode | Not in v1, not even a placeholder toggle |
+| Sketches from outside the bundled library | No. One source keeps the empty and error states unambiguous; saved tasks extend it |
+| `scipy` for `.mat` files | No. A hand-written MAT v5 writer keeps the sidecar's dependencies minimal |
+| A `states`/`graph` key in `task.json` | No. It changes `profile_hash` and splits a sketch's runs in Analytics |
+| Uploaded cohort artwork | Deferred. A cohort's world is procedural and tunable with four fields |
+| A live filesystem watcher on the sketch library | Not needed. The library only changes when the app does |
 
 ## Contributing
 
-Read [CLAUDE.md](CLAUDE.md) first — it captures the invariants that are load-bearing and shouldn't be relitigated without reading the relevant spec.
+Work on a branch off `main` and open a pull request. Commit messages are a short imperative summary
+("Echo the flash command from the arguments actually sent"), with detail in the body when it helps.
+Read [CLAUDE.md](CLAUDE.md) before a non-trivial change: it lists the invariants that bite.
 
-The three that bite hardest:
+Three rules cover most of the risk:
 
-1. **The wire protocol mirrors are generated — never edit them by hand.** Update `protocol/schema.py` and `docs/websocket-protocol.md` together, run `npm run gen:protocol`, commit the regenerated mirrors, and run the contract test.
+1. **The wire mirrors are generated.** Edit `protocol/schema.py`, run `npm run gen:protocol`, commit the
+   regenerated files, and run the contract test. See [Wire protocol](docs/ARCHITECTURE.md#wire-protocol).
 2. **Box number 1–6 is the key everywhere**, never a COM port address.
-3. **The sidecar enforces state transitions**, not the UI. Disabled buttons are a courtesy.
+3. **The sidecar enforces state transitions**, not the UI. A disabled button is a courtesy.
+
+### Documentation rules
+
+- **One home per fact.** Each fact lives in one document; others link to it.
+- **Current behaviour only.** No history ("used to", "was replaced by"); git has it. A past mistake stays
+  only as a rule with its reason, when someone is likely to repeat it.
+- **Cite docs from code as `FILE.md#anchor`**, for example `DATA.md#crash-safety`. Never cite a section
+  number: numbers go stale silently. `sidecar/tests/test_doc_links.py` checks that every cited anchor
+  exists and that no code cites a section number.
+- **Update the doc in the same commit as the behaviour.**
+- **`docs/PROTOCOL.md` is generated** from `protocol/schema.py`. Edit the schema, never the doc.
+- **Keep every `> [!CAUTION]`.** It marks a place where getting it wrong yields plausible but wrong data
+  rather than an error.

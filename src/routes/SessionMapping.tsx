@@ -639,10 +639,10 @@ export function SessionMapping() {
           : flashPending
             ? `Every animal is placed. Flashing ${flashedCount + 1} of ${mappings.length} — keep the boards plugged in.`
             : "A box didn't flash. Acknowledge it and retry, or walk the boxes again."
-        : // Before "pick a sketch": with an unset or moved Arduino Directory
-          // there are none to pick, and the picker alone cannot say so.
+        : // Before "pick a sketch": with the bundled library missing there are
+          // none to pick, and the picker alone cannot say so.
           sketches.length === 0
-          ? "No sketches found — set the Arduino Directory on the Task tab."
+          ? "No sketches found — the app's bundled sketch library is missing. Reinstall Ephymeris."
           : erroredBoxes.length > 0
             ? `Box ${erroredBoxes.join(", ")} needs acknowledging before it can flash.`
             : duplicateBox !== null

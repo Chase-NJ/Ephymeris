@@ -415,7 +415,7 @@ export function CohortEditor() {
                 <div className="shrink-0">
                   <Button onClick={() => navigate("/config")}>
                     <Radio size={13} strokeWidth={1.75} />
-                    Open Config
+                    Open Rig
                   </Button>
                 </div>
               </div>

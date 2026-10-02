@@ -56,6 +56,9 @@ CORE_METADATA_KEYS = frozenset(
         "ts_data",
         "trial_seed",
         "host_seed",
+        # The run's own profile snapshot, written after the task fields — a
+        # field of this name would be silently replaced by it.
+        "task_profile",
         # `recording.md` §6 -- written beside the core fields when a run is
         # inside an Intan recording.
         "intan_recording",

@@ -637,14 +637,13 @@ class Application:
         box = _box_arg(args)
         path = args.get("sketchPath")
 
-        # The configured Arduino Directory is the only source of flashable
-        # sketches (`tasks.md` §2.3) — enforced here, not just by the
-        # picker only listing discovered sketches.
+        # Only a discovered sketch is flashable (`TASKS.md#sketch-library`) —
+        # enforced here, not just by the picker only listing discovered sketches.
         sketch = next((s for s in self.discovery.sketches if s.path == path), None)
         if sketch is None:
             raise CommandError(
                 ErrCode.SKETCH_UNKNOWN,
-                "That sketch isn't in the configured Arduino Directory — "
+                "That sketch isn't in the sketch library — "
                 "refresh the list and pick again.",
                 {"sketchPath": path},
             )

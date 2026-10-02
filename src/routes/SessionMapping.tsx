@@ -35,6 +35,11 @@ import {
 } from "@/lib/sessions/commands";
 import { useIsRecordingSession, useSessionStore } from "@/lib/sessions/context";
 import {
+  clearSetupResume,
+  getSetupDraft,
+  setSetupDraft,
+} from "@/lib/sessions/setupResume";
+import {
   animalsInGroup,
   defaultConfig,
   groupsRunCount,
@@ -103,6 +108,12 @@ export function SessionMapping() {
   const { discovery, settings } = useSettings();
   const sessionStore = useSessionStore();
 
+  // What the operator had chosen here before visiting another tab
+  // (`setupResume.ts`) — keyed by session AND group, so one group's sketches
+  // can never seed another's.
+  const draftKey = `boxes:${sessionId ?? ""}:${groupId}`;
+  const [draft] = useState(() => getSetupDraft<BoxMapping[]>(draftKey));
+
   const [cohort, setCohort] = useState<Cohort | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [mappings, setMappings] = useState<BoxMapping[]>([]);
@@ -145,8 +156,29 @@ export function SessionMapping() {
         const loaded = await getCohort(client, cohortId);
         if (!active) return;
         setCohort(loaded);
+        // A draft is only trusted while it still describes this group: an
+        // animal moved or removed in Cohorts meanwhile starts the step over.
+        const animals = animalsInGroup(loaded, groupId);
+        const sameAnimals =
+          draft !== undefined &&
+          draft.length === animals.length &&
+          draft.every((m) => animals.some((a) => a.id === m.animalId));
+        if (sameAnimals) {
+          setMappings(draft);
+          // The chosen sketches' profiles, for their config forms — fetched
+          // without re-seeding, which would undo the operator's edits.
+          const paths = [...new Set(draft.flatMap((m) => (m.sketchPath ? [m.sketchPath] : [])))];
+          for (const path of paths) {
+            void getTaskProfile(client, path)
+              .catch(() => null)
+              .then((profile) => {
+                if (active) setProfiles((prev) => ({ ...prev, [path]: profile }));
+              });
+          }
+          return;
+        }
         setMappings(
-          animalsInGroup(loaded, groupId).map((a) => ({
+          animals.map((a) => ({
             box: a.boxNumber as number,
             animalId: a.id,
             sketchPath: null,
@@ -160,7 +192,14 @@ export function SessionMapping() {
     return () => {
       active = false;
     };
+    // The draft is read once, at mount, as a starting point.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, connected, cohortId, groupId]);
+
+  // Kept current, so a sidebar click at any moment leaves nothing behind.
+  useEffect(() => {
+    if (mappings.length > 0) setSetupDraft(draftKey, mappings);
+  }, [draftKey, mappings]);
 
   // What "back" means depends on whether the session has run yet (`ARCHITECTURE.md#mapping-and-the-placement-walk`): the
   // record's status distinguishes first entry (`configuring`) from re-entry
@@ -182,54 +221,30 @@ export function SessionMapping() {
   // `configuring`. Best-effort — a failed abandon is no worse than the
   // orphan it replaces, so it never blocks leaving the step.
   async function backToConfig() {
-    handledExit.current = true;
     if (sessionId)
       await abandonSession(client, sessionId).catch(() => undefined);
     navigate("/session/new");
   }
 
   /*
-   * **Leaving by any other door abandons the record too.**
-   *
-   * `/session/new` creates the session server-side *before* navigating here, so
-   * until this step confirms a mapping the record exists in `configuring` with
-   * nothing behind it. Back handles that above — but a sidebar click doesn't,
-   * and the orphan is permanent: it reappears under "Set-up in progress" on the
-   * Dashboard forever, and every Continue-then-leave cycle adds another.
-   *
-   * Deliberately narrow. It abandons only a record we *positively know* is
-   * still `configuring` and that this component never confirmed — never on a
-   * failed status fetch, where `session` is null and the truth is unknown, and
-   * never once `confirmMapping` has succeeded, because the fetched status is
-   * from mount and would still read `configuring` for a session that now holds
-   * the rig. Guessing in either direction ends a session someone is running.
+   * **Leaving by any other door keeps the record.** A sidebar click, or the
+   * Open Task / Open Rig doors below, is a visit — the operator checking
+   * something mid-setup — and the Dashboard tab brings them back here
+   * (`setupResume.ts`). This step used to abandon the `configuring` record on
+   * unmount, to stop Continue-then-leave cycles stranding orphans; a record
+   * left now is one the sidebar offers to resume, and the Dashboard dock lists
+   * it with Discard, so it is never stranded out of sight.
    */
-  const handledExit = useRef(false);
-  const abandonOnExit = useRef<{ id: string | null; abandonable: boolean }>({
-    id: null,
-    abandonable: false,
-  });
-  abandonOnExit.current = {
-    id: sessionId ?? null,
-    abandonable: session?.status === "configuring",
-  };
-  useEffect(() => {
-    return () => {
-      const { id, abandonable } = abandonOnExit.current;
-      if (handledExit.current || !id || !abandonable) return;
-      void abandonSession(client, id).catch(() => undefined);
-    };
-  }, [client]);
 
   // Re-entry from the group step: earlier groups already ran, so the honest
   // exits are onward (flash), back to the choice of group, or ending the session.
   async function endFromHere() {
     if (!sessionId) return;
-    handledExit.current = true;
     setBusy(true);
     setError(null);
     try {
       const ended = await endSession(client, sessionId);
+      clearSetupResume();
       navigate("/analytics", {
         state: { endedSession: `${ended.prefixName}_${ended.sessionNumber}` },
       });
@@ -523,9 +538,6 @@ export function SessionMapping() {
           .catch(() => undefined);
       }
       await confirmMapping(client, sessionId, groupId, mappings);
-      // Past this point the record is no longer an abandonable orphan: it
-      // holds the rig. The unmount cleanup must not touch it.
-      handledExit.current = true;
       // A confirmed mapping begins a fresh group run — drop the previous
       // group's telemetry and finished-run messages so Mission Control
       // doesn't show them against the new animals.

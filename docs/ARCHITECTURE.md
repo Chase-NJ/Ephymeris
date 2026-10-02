@@ -683,8 +683,29 @@ number is the instruction and the light only corroborates it.
 > them from box 5 to box 2 and back is how an animal ends up in the wrong chamber. **A mis-placed animal
 > produces a complete, plausible, silently mislabelled data file, and nothing downstream can detect it.**
 
-Backing out of a first-entry mapping abandons the session (`sessions.abandon`). Re-entered from the group
-step, the session already has group runs, so the step offers another group or ending instead.
+Backing out of a first-entry mapping abandons the session (`sessions.abandon`). **Any other exit keeps
+it** — a sidebar tab, Open Task, Open Rig — because that is a visit, not a cancellation (next section).
+Re-entered from the group step, the session already has group runs, so the step offers another group or
+ending instead.
+
+### Leaving set-up
+
+Every set-up step — Configure, the group step, Boxes, Record — can be left for any tab and resumed where it
+was. `lib/sessions/setupResume.ts` remembers two things:
+
+- **the step** — the last set-up URL, pathname *and* search, since Boxes carries its cohort and group there.
+  While one is held, the sidebar's Dashboard row opens it instead of `/` and reads *Resume · <step>* (with a
+  waveform mark for a recording). From inside the flow the row still goes to `/`, which is the way to the
+  Dashboard itself while a set-up is pending.
+- **drafts** — each step's form, keyed by step and (past Configure) session and group, so a draft can never
+  seed another session's form. A Boxes draft is dropped if the group's animals changed meanwhile; a walk left
+  mid-placement comes back to the review with the mapping re-confirmable (the confirm is idempotent, and the
+  boxes re-flash).
+
+The memory is dropped on reaching Mission Control and by a deliberate Cancel or End session, and the offer is
+withheld whenever `sessions.active` no longer reports the session, because the sidecar is the authority on
+whether it still exists. It is **memory only**: after a restart, the dock's *Set-up in progress* rows are the
+way back in, and the dock's own Resume uses the remembered step when it is this session's.
 
 ### Flash sequence
 

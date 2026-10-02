@@ -294,6 +294,14 @@ You can also click **End Session** in Mission Control at any time. If no box eve
 > short.** If you want every trial complete, click **Stop** on each box and wait for **Finished** before
 > ending. (Recording sessions are different: they wait for each box to finish its trial.)
 
+### Leaving set-up and coming back
+
+You can leave any set-up step — to check the **Rig** or a **Task**, say — and nothing is lost. While a set-up
+is unfinished, the sidebar's **Dashboard** row reads **Resume ·** and the step's name; click it to return to
+exactly where you were, with everything you had filled in. **Back** on the Boxes step the first time, or
+**Cancel**, is what throws a set-up away. If the app was closed, the Dashboard dock lists the set-up under
+**Set-up in progress** instead.
+
 ### Continue a session from earlier today
 
 If the app was closed between groups, or a session was ended too early, you can run another group under

@@ -3,8 +3,8 @@
 A session can also be an electrophysiology recording: Ephymeris drives a locally running **Intan RHX**
 over its TCP protocol. The code is `sidecar/ephymeris_sidecar/intan/` (stdlib only), the wire is
 [PROTOCOL.md](PROTOCOL.md#intan-recording), and the operator's steps are in
-[USER-GUIDE.md](USER-GUIDE.md#recording-with-intan). The protocol layer has been probed against a real
-RHX; a full recording through the app has only run against the fake ([Not yet verified](#not-yet-verified)).
+[USER-GUIDE.md](USER-GUIDE.md#recording-with-intan). Recording has been run through the app against a
+real RHX and real boxes; a full-length recording from a real animal has not ([Not yet verified](#not-yet-verified)).
 
 ## The rule
 
@@ -397,7 +397,11 @@ shared arithmetic is pure and tested in `lib/intan/scopeMath.ts`.
 
 ## Not yet verified
 
-Everything is tested against the **fake RHX** (`sidecar/tests/fake_rhx.py`: the three servers on real
+Recording has been run end to end on real hardware — configure, record, the live windows, the sync line
+into a real digital input, and the graceful end — against a real RHX. **What has not been done is a
+full-length recording from a real animal.**
+
+The automated suite runs against the **fake RHX** (`sidecar/tests/fake_rhx.py`: the three servers on real
 sockets, each survivable behaviour switchable). `sidecar/tests/test_intan_real_rhx.py` is the probe for a
 real one: opt-in (`EPHYMERIS_REAL_RHX=1`), polite (refuses if RHX is running, only ever enters `run`, never
 `record`, and restores every value it touches), and **one connection for every check**, because RHX's
@@ -419,12 +423,10 @@ Run against RHX 3.5.0, `ControllerRecordUSB3`, synthetic:
 | Does RHX keep case? | Paths, base filenames, enums: yes. Notes and custom channel names: lowercased |
 | Are all of `intan.configure`'s parameter names real? | Yes |
 
-### Still open
+### To watch on the first full-length recording
 
 | Question | If the answer is the bad one |
 |---|---|
 | Does the RMS-relative threshold need the board to have run first? | Thresholds land wrong. Fix: a short `run` before `SetSpikeDetectionThresholds` |
-| Digital-input naming on the USB Interface Board (zero-based) | Handled in `digital_in_name`; untested on that board |
-| A real sync line into a real DIN | The firmware compiles and passes host tests; the electrical link has not been scoped |
-| A full recording through the app | Configure → record → live windows → graceful end has only run against the fake. The live windows have been driven against RHX's synthetic demo |
 | Where a channel swap lands in the stream | The marker is read after RHX acknowledged the swap, assuming RHX's TCP output lags acquisition. If its output thread can run ahead of the clock read, a snippet or two lands on the wrong channel once, then corrects |
+| Digital-input naming on the USB Interface Board (zero-based) | Handled in `digital_in_name`; only matters on a rig using that board |

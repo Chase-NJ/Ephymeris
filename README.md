@@ -11,13 +11,12 @@ It is built for the Hart Lab's two Windows 11 lab machines and developed on macO
 sessions are lab members, not programmers. They should read the [user guide](docs/USER-GUIDE.md).
 Maintainers should start with [Architecture](docs/ARCHITECTURE.md).
 
-**Status.** The current version is in `package.json`. Cohorts, the Rig, Task and Recording tabs,
-Debug Mode, Settings, the full session flow and Analytics are built, and the core session flow has
-been run against real boxes; what has not is listed under [Open issues](#open-issues). Analytics
-decodes two of the lab's real archives end to end. **Recording with Intan has only been run end to end against a fake RHX** (a
-test double on real sockets). The command link has been probed against a real RHX in synthetic mode,
-but no real recording has gone through the app yet; see [Not yet verified](docs/RECORDING.md#not-yet-verified).
-The Windows installer builds, but it is unsigned and there is no CI.
+**Status.** The current version is in `package.json`. Every feature — cohorts, the Rig, Task and
+Recording tabs, Debug Mode, Settings, the full session flow, backup mirroring, Analytics and recording
+with Intan RHX — has been tested and run on real hardware. The one thing not yet done is a
+full-length recording from a real animal ([Not yet verified](docs/RECORDING.md#not-yet-verified)).
+Analytics decodes two of the lab's real archives end to end. The Windows installer builds, but it is
+unsigned and there is no CI.
 
 ## Documentation
 
@@ -221,24 +220,12 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
 
 ## Open issues
 
-### Untested on real hardware
+### Not yet done
 
-- **Picking groups on the fly.** The bookkeeping is pinned by `test_session_groups.py`, but a full
-  two-group session on the rig (pick, map, flash, run, switch, pick, run, end), and quitting between
-  groups then continuing from the Dashboard, has not been run. This is the most valuable hardware test left.
-- **The utility baseline and the placement walk.** Watch three things. Cold start is six sequential
-  flashes, so the rig is busy for a minute or two after launch; if that annoys, defer the cold restore
-  rather than parallelise it. The identify confirmation waits for a `telemetry` line, so a utility
-  sketch without one is trusted on the send alone. And the session hold must be released on every exit
-  path, or the rig stops returning to baseline.
-- **Recording with Intan.** A full recording (configure, record, live windows, graceful end) has only
-  run against the fake RHX, and the sync line into a real digital input has not been scoped.
-  [Not yet verified](docs/RECORDING.md#not-yet-verified) lists the open questions. Every rig with a
-  saved wiring document has no sync channel until one is added on the wiring page.
-- **Backup mirroring** is built and tested, but has not been verified on the lab machines.
-- **Analytics at real-archive scale** renders the lab's archives without error, but nobody has yet
-  judged it as a scientist would. The session rail's length and the six-colour animal ramp repeating
-  past six animals are the known weak spots.
+- **A full-length recording from a real animal.** Recording has been run through the app against a
+  real RHX and real boxes; a complete recording session with an animal has not.
+  [Not yet verified](docs/RECORDING.md#not-yet-verified) lists what to watch for on the first one.
+  Every rig with a saved wiring document has no sync channel until one is added on the wiring page.
 
 ### Known bugs
 
@@ -249,6 +236,8 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
 
 ### Open decisions
 
+- **Analytics with large cohorts.** The session rail grows long over many sessions, and the six-colour
+  animal ramp repeats past six animals.
 - **Unused sidecar commands.** `cohorts.list`, `prefixes.list` and `cohorts.suggestGroups` have handlers
   but no frontend caller; Auto-Balance runs client-side in `src/lib/cohorts/grouping.ts`. Remove them,
   or route Auto-Balance through the sidecar.

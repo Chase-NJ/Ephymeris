@@ -463,9 +463,6 @@ class PortHandler:
     def scrollback(self) -> list[OutputLine]:
         return list(self._ring)
 
-    def clear_scrollback(self) -> None:
-        self._ring.clear()
-
     # --- teardown ---------------------------------------------------------
 
     def _teardown_serial(self) -> None:

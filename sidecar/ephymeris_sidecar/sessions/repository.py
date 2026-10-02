@@ -336,7 +336,7 @@ class SessionRepository:
 
         One join rather than a query per session: the whole cohort table is a
         single `analytics.summary` payload, and per-session calls would mean a
-        round trip per heatmap column.
+        round trip per session.
         """
         with self._db.lock:
             rows = self._db.conn.execute(
@@ -359,8 +359,8 @@ class SessionRepository:
         free text (§10) and would sort "10" before "9".
 
         Aborted sessions are excluded by default: one never wrote data, so
-        including it produces an empty heatmap column that reads as a session
-        where every animal failed.
+        including it produces an empty session that reads as one where every
+        animal failed.
         """
         clause = "" if include_aborted else " AND status != 'aborted'"
         with self._db.lock:

@@ -10,7 +10,7 @@
  */
 
 import type { SidecarClient } from "../ws/client";
-import { CMD, EVT, type PortTelemetry } from "../ws/protocol";
+import { CMD, EVT, type PortTelemetry, type SidecarErrorData } from "../ws/protocol";
 import type {
   ActiveSessions,
   AnimalEnded,
@@ -46,7 +46,6 @@ export interface StrobeEvent {
 
 export class SessionStore {
   private prefixes: Prefix[] = NO_PREFIXES;
-  private prefixesLoaded = false;
   /** Latest rolling metrics per box. */
   private telemetry = new Map<number, TelemetryMetric[]>();
   /**
@@ -58,6 +57,13 @@ export class SessionStore {
   private history = new Map<number, Map<string, number[]>>();
   /** Finished runs this session, per box. */
   private ended = new Map<number, AnimalEnded>();
+  /**
+   * The latest failure to write a box's session files (`sidecar.error` with a
+   * `detail.box`) — a file that would not open, or a strobe that could not be
+   * appended. The box may keep running, so this is the only place the operator
+   * learns its data is not reaching disk.
+   */
+  private writeErrors = new Map<number, string>();
   /**
    * Boxes running a task started by hand from Debug Mode, on the sidecar's
    * word (`port.telemetry`). Never set from a click: the task ends when the
@@ -115,7 +121,6 @@ export class SessionStore {
       client.on(EVT.PREFIXES_UPDATED, (data) => {
         const payload = data as { prefixes?: Prefix[] } | null;
         this.prefixes = payload?.prefixes ?? NO_PREFIXES;
-        this.prefixesLoaded = true;
         this.notify("prefixes");
       }),
 
@@ -165,6 +170,14 @@ export class SessionStore {
         this.notify("strobes");
       }),
 
+      client.on(EVT.SIDECAR_ERROR, (data) => {
+        const d = data as SidecarErrorData | null;
+        const box = (d?.detail as { box?: unknown } | null)?.box;
+        if (typeof box !== "number" || typeof d?.message !== "string") return;
+        this.writeErrors.set(box, d.message);
+        this.notify(`writeError:${box}`);
+      }),
+
       client.on(EVT.SESSION_ANIMAL_ENDED, (data) => {
         const d = data as AnimalEnded;
         if (typeof d?.box !== "number") return;
@@ -195,10 +208,6 @@ export class SessionStore {
     return this.prefixes;
   }
 
-  prefixesAreLoaded(): boolean {
-    return this.prefixesLoaded;
-  }
-
   // --- live session -----------------------------------------------------
 
   isDebugRunning(box: number): boolean {
@@ -211,6 +220,10 @@ export class SessionStore {
 
   getEnded(box: number): AnimalEnded | null {
     return this.ended.get(box) ?? null;
+  }
+
+  getWriteError(box: number): string | null {
+    return this.writeErrors.get(box) ?? null;
   }
 
   /** How many boxes have finished their run this group. */
@@ -260,11 +273,14 @@ export class SessionStore {
     this.telemetry.clear();
     this.history.clear();
     this.ended.clear();
+    this.writeErrors.clear();
     this.strobes.clear();
     this.strobeVersion += 1;
     this.notify("strobes");
     for (const key of this.subs.keys()) {
-      if (key.startsWith("telemetry:") || key.startsWith("ended")) this.notify(key);
+      if (key.startsWith("telemetry:") || key.startsWith("ended") || key.startsWith("writeError:")) {
+        this.notify(key);
+      }
     }
   }
 
@@ -273,12 +289,14 @@ export class SessionStore {
     this.telemetry.delete(box);
     this.history.delete(box);
     this.ended.delete(box);
+    this.writeErrors.delete(box);
     this.strobes.delete(box);
     this.strobeVersion += 1;
     this.notify(`strobes:${box}`);
     this.notify("strobes");
     this.notify(`telemetry:${box}`);
     this.notify(`ended:${box}`);
+    this.notify(`writeError:${box}`);
     this.notify("ended");
   }
 

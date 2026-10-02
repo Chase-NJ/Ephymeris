@@ -49,12 +49,7 @@ export default function App() {
         <Route path="/task/:taskId" element={<TaskEditor />} />
         {/* Rig wiring is a subpage of the Rig screen — box↔board and
             channel↔pin are different wirings but one subject, so the editor
-            lives at `/config/wiring` behind the landing's Wiring door. Old
-            addresses redirect rather than fall to the catch-all: a stale link
-            landing on the Dashboard reads as the page having been deleted. */}
-        <Route path="/task/hardware" element={<Navigate to="/config/wiring" replace />} />
-        <Route path="/task/sketches" element={<Navigate to="/task" replace />} />
-        <Route path="/sketches" element={<Navigate to="/task" replace />} />
+            lives at `/config/wiring` behind the landing's Wiring door. */}
         <Route path="/analytics" element={<Analytics />} />
         {/* The route spelling stays `/config` while the tab reads **Rig**. The
             name is the user's word for the screen; the path is an internal
@@ -63,13 +58,9 @@ export default function App() {
             desktop app never shows its URL. `routes/Config.tsx` likewise. */}
         <Route path="/config" element={<Config />} />
         <Route path="/config/wiring" element={<RigWiring />} />
-        <Route path="/config/strobes" element={<Navigate to="/task/strobes" replace />} />
         {/* Recording: the link to Intan RHX, the box->digital-input bindings
-            and the recording defaults, gathered from the Rig tab where the
-            first two used to live. `/config/recording` never existed as a
-            page, but it is the address a bookmark or a doc would guess. */}
+            and the recording defaults. */}
         <Route path="/recording" element={<Recording />} />
-        <Route path="/config/recording" element={<Navigate to="/recording" replace />} />
         <Route path="/settings" element={<Settings />} />
         {/* Two-step session setup (`dashboard.md` §7.2–§4); the runner
             takes over at /session/:id/control. */}

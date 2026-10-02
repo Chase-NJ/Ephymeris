@@ -1008,25 +1008,8 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
 }
 
 /**
- * The states one config group's parameters govern.
- *
- * One implementation for both halves of the tile↔graph link — the tile's own
- * subtitle and the set of nodes its hover lights. Two would drift, and the
- * drift would be invisible: a tile claiming to govern a state the graph doesn't
- * light looks like a highlighting bug rather than a disagreement.
- */
-export function nodesGovernedBy(model: TaskGraphModel, group: string | null): TaskNode[] {
-  if (!group) return [];
-  return model.nodes.filter((node) => node.governedBy.includes(group));
-}
-
-/**
- * The same, for a rail TAB rather than a declared group.
- *
- * Separate from `nodesGovernedBy` on purpose: the explain tile asks about one
- * FIELD, and a correction field does not govern the states that `num_trials`
- * does. Widening the exact function would have made that tile quietly
- * over-claim on every folded field rather than fail.
+ * The states a rail TAB's parameters govern — every group the tab folds in
+ * (`tabOf`), not only the one it is named after.
  */
 export function nodesGovernedByTab(model: TaskGraphModel, tab: string | null): TaskNode[] {
   if (!tab) return [];

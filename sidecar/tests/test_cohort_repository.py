@@ -339,7 +339,7 @@ def test_summary_carries_counts_without_animal_detail(repo) -> None:
     assert "animals" not in summary
 
 
-def test_groups_are_returned_in_run_order(repo) -> None:
+def test_groups_are_returned_in_display_order(repo) -> None:
     cohort = repo.create("Batch A", "/tmp/a")
     repo.update(
         cohort.id,

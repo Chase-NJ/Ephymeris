@@ -32,8 +32,7 @@ export function AnimalRail({
    * `auto`, so a two-animal cohort gets a compact card rather than a tall
    * empty one.
    *
-   * A report sheet passes `false`, for the reason `CohortHeatmap`'s `scroll`
-   * prop documents: a rasterizer captures a scroll container as whatever was
+   * A report sheet passes `false`: a rasterizer captures a scroll container as whatever was
    * in view, so a long roster would lose animals off the bottom of the PNG
    * with nothing to show it had happened.
    *

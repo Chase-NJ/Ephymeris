@@ -78,14 +78,3 @@ export function planetSlots(count: number): PlanetPlacement[] {
     };
   });
 }
-
-/**
- * Orbit reach, in multiples of the planet's radius, for `index` ships.
- *
- * Not exported for the ships themselves — `Orbiters` seeds its own — but the
- * browser needs to know how far the fleet extends so the layout can keep two
- * worlds' fleets from interleaving. `Orbiters.tsx` uses `2.6 + index * 0.7`.
- */
-export function fleetReach(shipCount: number): number {
-  return 2.6 + Math.max(0, shipCount - 1) * 0.7;
-}

@@ -29,7 +29,6 @@ PROTOCOL_VERSION: Final = 1
 class Cmd:
     # Connection & hardware
     AUTH: Final = "auth"
-    PING: Final = "ping"
     SETTINGS_PUSH: Final = "settings.push"
     SKETCHES_REFRESH: Final = "sketches.refresh"
     PORT_PASSTHROUGH_OPEN: Final = "port.passthrough.open"
@@ -39,9 +38,6 @@ class Cmd:
     PORT_FLASH: Final = "port.flash"
     PORT_RESET: Final = "port.reset"
     PORT_ERROR_ACK: Final = "port.error.ack"
-
-    # Hardware utility baseline (settings.md §8)
-    UTILITY_STATUS: Final = "utility.status"
     UTILITY_ENSURE: Final = "utility.ensure"
     UTILITY_IDENTIFY: Final = "utility.identify"
 
@@ -317,7 +313,6 @@ SHAPES: Final[dict[str, Any]] = {
 
 COMMAND_ARGS: Final[dict[str, Any]] = {
     "auth": ('obj', (('token', 'str', False),)),
-    "ping": ('obj', ()),
     "settings.push": ('obj', (('settings', ('ref', 'EphymerisSettings'), False),)),
     "sketches.refresh": ('obj', ()),
     "port.passthrough.open": ('obj', (('box', 'int', False), ('baud', 'int', True))),
@@ -327,7 +322,6 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "port.flash": ('obj', (('box', 'int', False), ('sketchPath', 'str', False), ('suppressPassthroughResume', 'bool', True))),
     "port.reset": ('obj', (('box', 'int', False),)),
     "port.error.ack": ('obj', (('box', 'int', False),)),
-    "utility.status": ('obj', ()),
     "utility.ensure": ('obj', (('boxes', ('list', 'int'), True), ('force', 'bool', True))),
     "utility.identify": ('obj', (('box', 'int', False), ('on', 'bool', False))),
     "cohorts.list": ('obj', ()),
@@ -388,7 +382,6 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
 
 COMMAND_RESULTS: Final[dict[str, Any]] = {
     "auth": ('obj', (('authenticated', 'bool', False),)),
-    "ping": ('obj', (('pong', 'bool', False), ('sidecarVersion', 'str', False))),
     "settings.push": ('obj', (('library', ('ref', 'SketchLibraryStatus'), False),)),
     "sketches.refresh": ('ref', 'SketchDiscovery'),
     "port.passthrough.open": ('obj', (('state', ('ref', 'PortStateName'), False),)),
@@ -398,7 +391,6 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "port.flash": ('obj', (('state', ('ref', 'PortStateName'), False), ('resumedPassthrough', 'bool', False))),
     "port.reset": ('obj', (('state', ('ref', 'PortStateName'), False), ('resumedPassthrough', 'bool', False))),
     "port.error.ack": ('obj', (('state', ('ref', 'PortStateName'), False),)),
-    "utility.status": ('ref', 'UtilityStatus'),
     "utility.ensure": ('ref', 'UtilityStatus'),
     "utility.identify": ('obj', (('delivered', 'bool', False), ('state', ('ref', 'UtilityBoxState'), False))),
     "cohorts.list": ('obj', (('cohorts', ('list', ('ref', 'CohortSummary')), False),)),

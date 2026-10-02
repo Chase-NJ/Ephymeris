@@ -199,7 +199,6 @@ def test_utility_baseline_payloads_match_schema() -> None:
         "message": None,
         "boxes": [box.to_json()],
     }
-    assert validate_command_result("utility.status", status) == []
     assert validate_command_result("utility.ensure", status) == []
     assert validate_event_data("utility.updated", status) == []
 

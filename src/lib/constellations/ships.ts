@@ -47,12 +47,6 @@ export interface ShipMember {
   lastRunBox?: number | null;
 }
 
-/** A ship plus the box whose star it orbits. */
-export interface Ship {
-  box: number;
-  orbiter: SceneOrbiter;
-}
-
 /** Latest recorded run per animal, from an `AnalyticsSummary`'s flat run list.
  *  Only runs that know their box can anchor a ship, so runs without one
  *  (adopted orphans — a filename carries no box) are skipped rather than

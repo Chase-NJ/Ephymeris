@@ -173,11 +173,6 @@ export function taskLabels(summary: AnalyticsSummary): Map<string, string> {
   return out;
 }
 
-/** The task label a run displays under, unprofiled runs included. */
-export function taskLabelOf(labels: Map<string, string>, run: RunSummary): string {
-  return labels.get(run.profileHash ?? "") ?? programOf(run);
-}
-
 /**
  * The program a run says it ran — the Program column, the card chip, and
  * every task label above.
@@ -421,14 +416,6 @@ export function taskChanges(
  */
 export function declaredMetrics(group: ProfileGroup | null) {
   return group ? group.metrics.filter((metric) => metric.id !== OVERALL_ID) : [];
-}
-
-export function runsInProfile(
-  runs: RunSummary[],
-  group: ProfileGroup | null,
-): RunSummary[] {
-  if (!group) return [];
-  return runs.filter((run) => run.profileHash === group.hash && run.status === "ok");
 }
 
 // --- trial outcomes (§3.8) -------------------------------------------------

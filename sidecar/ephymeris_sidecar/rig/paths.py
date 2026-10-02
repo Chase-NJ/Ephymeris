@@ -22,5 +22,3 @@ SCHEMA_DIR = PACKAGE_DIR / "schema"
 HARDWARE_DIR = PACKAGE_DIR / "hardware"
 
 RIG_SCHEMA = SCHEMA_DIR / "rig_hardware.v1.json"
-CHANNELS_REGISTRY = SCHEMA_DIR / "channels.v1.json"
-STROBE_VOCAB = SCHEMA_DIR / "strobe_vocab.v1.json"

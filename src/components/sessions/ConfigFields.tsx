@@ -3,7 +3,6 @@ import { ChevronRight, RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { FieldRow } from "@/components/common/FieldRow";
-import { useSketchExplain } from "@/components/task/SketchExplain";
 import { springSnappy } from "@/lib/motion";
 import type { ConfigField, TaskProfile } from "@/lib/sessions/types";
 
@@ -24,13 +23,10 @@ import type { ConfigField, TaskProfile } from "@/lib/sessions/types";
  * before any of this existed. There is no second code path for "simple"
  * profiles to fall out of sync with.
  *
- * The LEAF lives in `common/FieldRow.tsx` (the removed spec editor shared it,
- * and its successor should again). That split is deliberate and has a
- * boundary: forms over different document shapes — a flat `config[]` keyed by
- * `metadataKey` here, a nested spec document there — must not converge above
- * the leaf, or this file's grouping/reset/advanced logic grows a second mode.
- * What IS shared is exactly the behaviour that must never diverge:
- * clamp-never-reject, and the mid-typing "not a number" escape hatch.
+ * The LEAF lives in `common/FieldRow.tsx`, so any other form over a different
+ * document shape can share exactly the behaviour that must never diverge —
+ * clamp-never-reject, and the mid-typing "not a number" escape hatch — without
+ * this file's grouping/reset/advanced logic growing a second mode.
  */
 export function ConfigFields({
   profile,
@@ -72,12 +68,9 @@ export function ConfigFields({
    */
   exclude?: readonly string[];
   /**
-   * Drop the inline help captions — for the Sketches page, where the explain
-   * tile carries the prose and forty captioned rows were the wall this form
-   * used to be. The label keeps its `title` tooltip, and the same
-   * hover/focus that would read a caption populates the tile instead. The
-   * mapping step stays captioned: it has no tile, and a form that only
-   * speaks on hover would be worse for keyboard use there.
+   * Drop the inline help captions — for the Task tab's parameter inspector,
+   * where forty captioned rows would be a wall. The label keeps its `title`
+   * tooltip. The mapping step stays captioned.
    */
   quiet?: boolean;
 }) {
@@ -203,7 +196,7 @@ export function ConfigFields({
                           field={field}
                           value={config[field.metadataKey] ?? field.default}
                           baseline={baseline[field.metadataKey]}
-                          quiet={quiet}
+                                    quiet={quiet}
                           onChange={(v) => set(field.metadataKey, v)}
                         />
                       ))}
@@ -232,29 +225,18 @@ function Field({
   quiet: boolean;
   onChange: (next: unknown) => void;
 }) {
-  // The one dispatcher every profile field goes through, so reporting from
-  // here covers this rig's defaults form in one place (`SketchExplain`). The
-  // context's default `report` is a no-op, which is what keeps the mapping
-  // step — same form, no provider — untouched. `onFocusCapture` rather than
-  // `onFocus` because the focusable element is the input inside the row, and
-  // blur deliberately does not clear: a definition that vanishes as the
-  // pointer moves toward it is unreadable, and the next focus replaces it.
-  const { report } = useSketchExplain();
-  const announce = () => report({ field, value });
   return (
-    <div onFocusCapture={announce} onMouseEnter={announce}>
-      <FieldRow
-        label={field.label}
-        help={quiet ? undefined : field.help}
-        unit={field.unit}
-        type={field.type}
-        value={value}
-        fallback={field.default}
-        baseline={baseline}
-        min={field.min}
-        max={field.max}
-        onChange={onChange}
-      />
-    </div>
+    <FieldRow
+      label={field.label}
+      help={quiet ? undefined : field.help}
+      unit={field.unit}
+      type={field.type}
+      value={value}
+      fallback={field.default}
+      baseline={baseline}
+      min={field.min}
+      max={field.max}
+      onChange={onChange}
+    />
   );
 }

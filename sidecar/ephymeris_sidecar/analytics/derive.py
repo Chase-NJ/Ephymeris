@@ -329,7 +329,7 @@ class RunSummary:
     status: str  # 'ok' | 'no-metrics' | 'missing' | 'unreadable'
     metrics: list[MetricSummary] = field(default_factory=list)
     #: Accuracy pooled across every metric — see `_overall`. The honest single
-    #: number for a run, and the heatmap's default.
+    #: number for a run, and every per-run readout's default.
     overall: MetricSummary | None = None
     #: None when the profile doesn't declare the outcome vocabulary (§3.8) —
     #: absent rather than zeroed, because "this task has no notion of a reward
@@ -908,10 +908,10 @@ class _Scored:
 def _overall(scored: list[_Scored], min_counted: int) -> MetricSummary | None:
     """Accuracy pooled across every metric — correct trials over scored trials.
 
-    Why this exists, and why it is the heatmap's default: **a single metric
-    cannot show a side bias.** An animal that pokes right on every trial scores
-    ~1.0 on "P(R | Odor 1)" and ~0.0 on "P(L | Odor 3)", so a heatmap keyed on
-    the first metric alone paints a completely bias-locked animal as one of the
+    Why this exists, and why it is every per-run readout's default: **a single
+    metric cannot show a side bias.** An animal that pokes right on every trial
+    scores ~1.0 on "P(R | Odor 1)" and ~0.0 on "P(L | Odor 3)", so a readout
+    keyed on the first metric alone paints a completely bias-locked animal as one of the
     best in the cohort. Pooling puts it at chance, which is the truth.
 
     Pooled by summing hits and trials rather than averaging the two

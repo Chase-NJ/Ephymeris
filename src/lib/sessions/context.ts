@@ -23,12 +23,6 @@ export function usePrefixes(): Prefix[] {
   return useSyncExternalStore(subscribe, () => store.getPrefixes());
 }
 
-export function usePrefixesLoaded(): boolean {
-  const store = useSessionStore();
-  const subscribe = useCallback((cb: () => void) => store.subscribe("prefixes", cb), [store]);
-  return useSyncExternalStore(subscribe, () => store.prefixesAreLoaded());
-}
-
 /** The global "what is running?" answer — null until the first load. */
 export function useActiveSessions(): ActiveSessions | null {
   const store = useSessionStore();
@@ -110,4 +104,14 @@ export function useBoxEnded(box: number): AnimalEnded | null {
     [store, box],
   );
   return useSyncExternalStore(subscribe, () => store.getEnded(box));
+}
+
+/** The latest session-file write failure for one box, or null. */
+export function useBoxWriteError(box: number): string | null {
+  const store = useSessionStore();
+  const subscribe = useCallback(
+    (cb: () => void) => store.subscribe(`writeError:${box}`, cb),
+    [store, box],
+  );
+  return useSyncExternalStore(subscribe, () => store.getWriteError(box));
 }

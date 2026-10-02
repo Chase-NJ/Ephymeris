@@ -6,18 +6,12 @@
 import type { SidecarClient } from "../ws/client";
 import { CMD } from "../ws/protocol";
 import type {
-  ActiveSessions,
   BoxMapping,
   Prefix,
   Session,
   SessionSnapshot,
   TaskProfile,
 } from "./types";
-
-export async function listPrefixes(client: SidecarClient): Promise<Prefix[]> {
-  const r = (await client.call(CMD.PREFIXES_LIST)) as { prefixes: Prefix[] };
-  return r.prefixes;
-}
 
 export async function createPrefix(client: SidecarClient, name: string): Promise<Prefix> {
   const r = (await client.call(CMD.PREFIXES_CREATE, { name })) as { prefix: Prefix };
@@ -119,16 +113,6 @@ export async function sessionStatus(
   sessionId: string,
 ): Promise<SessionSnapshot> {
   return (await client.call(CMD.SESSIONS_STATUS, { sessionId })) as SessionSnapshot;
-}
-
-/**
- * The global "what is running?" query — no arguments, so a client with no
- * prior knowledge of ids (the Launch page, a reconnect) can discover the
- * running session. The store calls this on every connect; `session.lifecycle`
- * keeps the answer current thereafter.
- */
-export async function activeSessions(client: SidecarClient): Promise<ActiveSessions> {
-  return (await client.call(CMD.SESSIONS_ACTIVE)) as ActiveSessions;
 }
 
 export async function startAll(client: SidecarClient, sessionId: string): Promise<Session> {

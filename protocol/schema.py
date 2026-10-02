@@ -1729,11 +1729,6 @@ COMMANDS = (
         section="Connection & hardware",
     ),
     Command(
-        "ping",
-        result=obj(f("pong", BOOL), f("sidecarVersion", STR)),
-        doc="Liveness probe for the connection indicator.",
-    ),
-    Command(
         "settings.push",
         args=obj(f("settings", Ref("EphymerisSettings"))),
         result=obj(f("library", Ref("SketchLibraryStatus"))),
@@ -1804,13 +1799,6 @@ COMMANDS = (
         args=obj(f("box", INT)),
         result=_STATE,
         doc="ERROR → IDLE (`dashboard.md` §5.2).",
-    ),
-    Command(
-        "utility.status",
-        result=Ref("UtilityStatus"),
-        doc="The baseline picture on demand — the same snapshot `utility.updated` "
-        "pushes, for a client that just mounted.",
-        section="Hardware utility baseline (settings.md §8)",
     ),
     Command(
         "utility.ensure",

@@ -171,19 +171,6 @@ export function sketchName(sketchPath: string | null): string {
   return parts[parts.length - 1] ?? "";
 }
 
-/** Which fields differ from what the rig would have supplied on its own. */
-export function overriddenKeys(
-  profile: TaskProfile | null,
-  rigDefaults: Record<string, unknown>,
-  config: Record<string, unknown>,
-): string[] {
-  if (!profile) return [];
-  const base = defaultConfig(profile, rigDefaults);
-  return profile.config
-    .map((f) => f.metadataKey)
-    .filter((key) => key in config && !Object.is(config[key], base[key]));
-}
-
 /** One row of a `grid` control — re-exported beside `Control` so Debug Mode's
  *  channel grid and Prime read the same shape from the same place. */
 export type { ControlChannel } from "@/lib/ws/protocol";

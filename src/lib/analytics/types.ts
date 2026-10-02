@@ -7,8 +7,6 @@
  * the schema and arrives here by regeneration, never by hand-copying.
  */
 
-import type { ProfileGroup, ProfileSource } from "@/lib/ws/protocol";
-
 export type {
   SessionListItem,
   DiskSession,
@@ -39,13 +37,3 @@ export type {
   TidyPlan,
   AnalyticsProgress,
 } from "@/lib/ws/protocol";
-
-/** The strategy space needs exactly two metrics to have two axes (§4.3). */
-export function isTwoMetricProfile(group: ProfileGroup | null): boolean {
-  return group !== null && group.metrics.length === 2;
-}
-
-/** Whether a run's decoding is trustworthy, or merely current (§8.2). */
-export function isProvenance(source: ProfileSource): source is "snapshot" {
-  return source === "snapshot";
-}

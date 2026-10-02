@@ -16,7 +16,6 @@ export const PROTOCOL_VERSION = 1;
 export const CMD = {
   // Connection & hardware
   AUTH: "auth",
-  PING: "ping",
   SETTINGS_PUSH: "settings.push",
   SKETCHES_REFRESH: "sketches.refresh",
   PORT_PASSTHROUGH_OPEN: "port.passthrough.open",
@@ -26,9 +25,6 @@ export const CMD = {
   PORT_FLASH: "port.flash",
   PORT_RESET: "port.reset",
   PORT_ERROR_ACK: "port.error.ack",
-
-  // Hardware utility baseline (settings.md §8)
-  UTILITY_STATUS: "utility.status",
   UTILITY_ENSURE: "utility.ensure",
   UTILITY_IDENTIFY: "utility.identify",
 
@@ -1668,7 +1664,6 @@ export interface ScopeData {
 /** Args each command takes; `Record<string, never>` = none. */
 export interface CommandArgsMap {
   "auth": { token: string };
-  "ping": Record<string, never>;
   "settings.push": { settings: EphymerisSettings };
   "sketches.refresh": Record<string, never>;
   "port.passthrough.open": { box: number; baud?: number };
@@ -1678,7 +1673,6 @@ export interface CommandArgsMap {
   "port.flash": { box: number; sketchPath: string; suppressPassthroughResume?: boolean };
   "port.reset": { box: number };
   "port.error.ack": { box: number };
-  "utility.status": Record<string, never>;
   "utility.ensure": { boxes?: number[]; force?: boolean };
   "utility.identify": { box: number; on: boolean };
   "cohorts.list": Record<string, never>;
@@ -1740,7 +1734,6 @@ export interface CommandArgsMap {
 /** The `result` field of each command's ok-reply. */
 export interface CommandResultMap {
   "auth": { authenticated: boolean };
-  "ping": { pong: boolean; sidecarVersion: string };
   "settings.push": { library: SketchLibraryStatus };
   "sketches.refresh": SketchDiscovery;
   "port.passthrough.open": { state: PortStateName };
@@ -1750,7 +1743,6 @@ export interface CommandResultMap {
   "port.flash": { state: PortStateName; resumedPassthrough: boolean };
   "port.reset": { state: PortStateName; resumedPassthrough: boolean };
   "port.error.ack": { state: PortStateName };
-  "utility.status": UtilityStatus;
   "utility.ensure": UtilityStatus;
   "utility.identify": { delivered: boolean; state: UtilityBoxState };
   "cohorts.list": { cohorts: CohortSummary[] };

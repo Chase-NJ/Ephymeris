@@ -154,16 +154,3 @@ def _page(element: ET.Element, top: dict[str, str], index: int, name: str) -> di
         "texts": texts,
         "ports": ports,
     }
-
-
-def channels_of(probe_map: dict[str, Any], port: str | None = None) -> list[str]:
-    """Every native channel the map places, optionally for one port."""
-    return sorted(
-        {
-            site["channel"]
-            for page in probe_map["pages"]
-            for entry in page["ports"]
-            if port is None or entry["port"] == port.upper()
-            for site in entry["sites"]
-        }
-    )

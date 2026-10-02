@@ -38,8 +38,7 @@ export type { RecordingDefaults } from "@/lib/intan/defaults";
 export const BOX_COUNT = 6;
 /**
  * Every bundled sketch opens at 115200 — each declares its own `baudRate` and
- * they all agree, matching the interpreter firmware's `TG_BAUD_RATE`. The
- * sidecar declares the same number in Python (`settings.py`); nothing keeps the
+ * they all agree. The sidecar declares the same number in Python (`settings.py`); nothing keeps the
  * two in step, so they must be changed together.
  *
  * **This is only the default for a fresh install.** `defaultBaud` is persisted,

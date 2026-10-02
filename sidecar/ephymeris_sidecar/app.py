@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import __version__, discovery
+from . import discovery
 from .analytics import AnalyticsBusy, AnalyticsService
 from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager, BackupNotConfigured
@@ -172,7 +172,6 @@ class Application:
     # --- lifecycle --------------------------------------------------------
 
     def register(self) -> None:
-        self.server.register(Cmd.PING, self._ping)
         self.server.register(Cmd.SETTINGS_PUSH, self._settings_push)
         self.server.register(Cmd.SKETCHES_REFRESH, self._sketches_refresh)
         self.server.register(Cmd.PORT_PASSTHROUGH_OPEN, self._passthrough_open)
@@ -182,7 +181,6 @@ class Application:
         self.server.register(Cmd.PORT_FLASH, self._port_flash)
         self.server.register(Cmd.PORT_RESET, self._port_reset)
         self.server.register(Cmd.PORT_ERROR_ACK, self._port_error_ack)
-        self.server.register(Cmd.UTILITY_STATUS, self._utility_status)
         self.server.register(Cmd.UTILITY_ENSURE, self._utility_ensure)
         self.server.register(Cmd.UTILITY_IDENTIFY, self._utility_identify)
 
@@ -517,9 +515,6 @@ class Application:
 
     # --- handlers ---------------------------------------------------------
 
-    async def _ping(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        return {"pong": True, "sidecarVersion": __version__}
-
     async def _settings_push(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         """Accept the shell's settings and answer with the library's state.
 
@@ -716,9 +711,6 @@ class Application:
         if self.utility is None:
             raise CommandError(ErrCode.INTERNAL, "hardware layer isn't running")
         return self.utility
-
-    async def _utility_status(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        return self._require_utility().status()
 
     async def _utility_ensure(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         """Schedule a baseline restore and return the picture as it stands.

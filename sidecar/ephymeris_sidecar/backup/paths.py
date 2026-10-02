@@ -116,12 +116,3 @@ class MirrorLayout:
                 continue
             return self._backup_root / segment / relative
         return None
-
-
-def resolve_mirror_path(
-    source: str | Path,
-    roots: Iterable[str | Path],
-    backup_root: str | Path,
-) -> Path | None:
-    """One-shot convenience wrapper over `MirrorLayout`."""
-    return MirrorLayout(roots, backup_root).resolve(source)

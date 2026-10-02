@@ -19,14 +19,13 @@ import { springPanel } from "@/lib/motion";
  * scrolling form it fought four neighbours for width and attention. Behind the
  * landing's Wiring door it gets the room, and the landing reads as the HUD of
  * tiles it is. The route nests under `/config` because the subject is the
- * rig's (`App.tsx`); the old `/task/hardware` address redirects here.
+ * rig's (`App.tsx`).
  *
  * THE PAGE OWNS THE SESSION AND THE SELECTION, the editor and the table rent
  * them: both surfaces must read one document and agree about the selected
  * channel, or clicking a table row and clicking its pin would become two
- * different gestures. The editor keeps every editing rule it has carried since
- * `/task/hardware` — the map selects and moves, the rail edits, and the save
- * previews what it would break and asks (`RigWiringEditor`).
+ * different gestures. The editor's own rules: the map selects and moves, the
+ * rail edits, and the save previews what it would break and asks (`RigWiringEditor`).
  */
 export function RigWiring() {
   const navigate = useNavigate();

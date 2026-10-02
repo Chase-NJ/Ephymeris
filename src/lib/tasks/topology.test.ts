@@ -16,7 +16,6 @@ import {
   correctWellOf,
   groupsOfTab,
   liveConditionId,
-  nodesGovernedBy,
   nodesGovernedByTab,
   orderGroups,
   tabOf,
@@ -391,20 +390,20 @@ describe("parameter tabs", () => {
   });
 
   it("lights a folded tab from any of the groups it swallowed", () => {
-    // The machine→rail half of the highlight link. `nodesGovernedBy` stays
-    // EXACT — the explain tile asks about one field, and a correction field does
-    // not govern what `num_trials` governs — so the widening is its own
-    // function rather than a looser comparison inside that one.
+    // The machine→rail half of the highlight link: a tab lights every state
+    // governed by any group folded into it, which is more than its own group.
     const model = taskGraph(profile(2));
+    const exact = (group: string) =>
+      model.nodes.filter((n) => n.governedBy.includes(group)).map((n) => n.id);
     const byTab = nodesGovernedByTab(model, "Session").map((n) => n.id);
-    const correction = nodesGovernedBy(model, "Correction trials").map((n) => n.id);
-    const session = nodesGovernedBy(model, "Session").map((n) => n.id);
+    const correction = exact("Correction trials");
+    const session = exact("Session");
 
     expect(correction.length).toBeGreaterThan(0);
     expect(session.length).toBeGreaterThan(0);
     for (const id of [...correction, ...session]) expect(byTab).toContain(id);
-    // And the exact function has not quietly become the folded one: at least
-    // one correction-governed state is NOT a Session-governed state.
+    // And the fold adds something: at least one correction-governed state is
+    // NOT a Session-governed state.
     expect(correction.some((id) => !session.includes(id))).toBe(true);
     expect(byTab.length).toBeGreaterThan(session.length);
   });

@@ -1,5 +1,4 @@
 import { CMD } from "@/lib/ws/protocol";
-import type { CommandResultMap } from "@/lib/ws/protocol";
 import type { SidecarClient } from "@/lib/ws/client";
 
 import type { RigDocument } from "./types";
@@ -32,6 +31,3 @@ export async function saveRig(
 export async function resetRig(client: SidecarClient) {
   return client.call(CMD.HARDWARE_RESET, {});
 }
-
-export type RigReply = CommandResultMap["hardware.get"];
-export type RigSaved = CommandResultMap["hardware.preview"];

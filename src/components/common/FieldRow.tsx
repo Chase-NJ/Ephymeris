@@ -3,10 +3,9 @@ import { useRowDensity } from "@/components/common/rowDensity";
 
 /**
  * One labelled value row: label + help + changed-dot on the left, the input and
- * unit suffix on the right. Extracted from `ConfigFields`' leaf so the task
- * profile form and the spec editor share the invariants that matter —
- * clamp-never-reject on numbers, and the mid-typing escape hatch that keeps a
- * half-typed value visible instead of silently substituting a default.
+ * unit suffix on the right. Its invariants are the ones every value form must
+ * share — clamp-never-reject on numbers, and the mid-typing escape hatch that
+ * keeps a half-typed value visible instead of silently substituting a default.
  *
  * Deliberately data-only: no `ConfigField`, no `TaskProfile`, no spec types.
  * The two forms serve different document shapes (a flat `config[]` vs a nested

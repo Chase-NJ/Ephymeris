@@ -56,7 +56,7 @@ const PREVIEW_DEBOUNCE_MS = 250;
 
 export function useTask(
   taskId: string | null,
-  /** A definition to open unsaved — what `tasks.fromPreset` returns. */
+  /** A definition to open unsaved — a duplicate of an existing task. */
   seed?: TaskDefinition | null,
 ): TaskSession {
   const { client, status: link } = useSidecar();
@@ -75,8 +75,8 @@ export function useTask(
 
   useEffect(() => {
     if (!connected) return;
-    // A seeded definition is UNSAVED by construction (`tasks.fromPreset` writes
-    // nothing), so its baseline is null: everything about it is dirty, and
+    // A seeded definition is UNSAVED by construction (nothing has written it
+    // yet), so its baseline is null: everything about it is dirty, and
     // "revert" has nothing to go back to.
     if (seed) {
       setState(seed);

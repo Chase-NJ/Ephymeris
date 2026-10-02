@@ -33,6 +33,7 @@ import {
   useActiveSessions,
   useBoxEnded,
   useBoxTelemetry,
+  useBoxWriteError,
   useEndedCount,
   useSessionStore,
 } from "@/lib/sessions/context";
@@ -915,6 +916,7 @@ function BoxCard({
   const port = usePortStatus(box.box);
   const metrics = useBoxTelemetry(box.box);
   const ended = useBoxEnded(box.box);
+  const writeError = useBoxWriteError(box.box);
   const live = port.state === "IN_SESSION";
 
   return (
@@ -958,6 +960,15 @@ function BoxCard({
         </Button>
       </div>
 
+      {writeError && (
+        <p
+          className="mt-3 text-[11px]"
+          style={{ color: "var(--color-status-error)" }}
+          role="alert"
+        >
+          {writeError}
+        </p>
+      )}
       {ended ? (
         <p className="mt-3 text-[11px] text-static">
           Finished — <span className="text-starlight">{ended.stopReason}</span>

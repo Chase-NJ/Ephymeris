@@ -33,7 +33,3 @@ export function useActiveCohorts(): CohortSummary[] {
   const cohorts = useCohorts();
   return useMemo(() => cohorts.filter((c) => !c.archived), [cohorts]);
 }
-
-export function useCohortCount(): number {
-  return useActiveCohorts().length;
-}

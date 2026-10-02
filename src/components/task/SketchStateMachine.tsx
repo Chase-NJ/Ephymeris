@@ -41,13 +41,11 @@ import { useElementWidth } from "@/lib/useElementWidth";
 /**
  * The sketch's state machine, as the page's centrepiece tile.
  *
- * This replaced `TaskGraph` + `TaskRail` on the sketch viewer, and the same
- * drawing now serves Mission Control's live panel as `LiveStateMachine` below
- * — one style for the machine everywhere it appears. What changed is not the
- * model — the nodes and edges still come verbatim from `taskGraph()`, the
- * derived-never-declared machine (`tasks.md` §4) — but what the drawing is
- * *for*: the old diagram showed the trial and mentioned parameters; this one
- * is built around the mapping between them.
+ * The same drawing serves Mission Control's live panel as `LiveStateMachine`
+ * below — one style for the machine everywhere it appears. The nodes and edges
+ * come verbatim from `taskGraph()`, the derived-never-declared machine
+ * (`tasks.md` §4); the drawing is built around the mapping between the trial
+ * and the parameters that govern it.
  *
  * **Every tunable group is pinned to the state it governs.** Each node carries
  * subtle mono chips naming the parameter groups that tune it (`governedBy`,
@@ -77,9 +75,7 @@ import { useElementWidth } from "@/lib/useElementWidth";
  */
 
 /** Node fill by kind, with outcomes borrowing the analytics palette so the
- *  machine and `OutcomeMix` never disagree about what "rewarded" looks like.
- *  (Moved here from the retired `TaskGraph`, which drew the same model in a
- *  scaled viewBox.) */
+ *  machine and `OutcomeMix` never disagree about what "rewarded" looks like. */
 export function fillFor(node: TaskNode): string {
   if (node.kind === "abort") return "var(--color-halo)";
   if (node.kind !== "outcome") return NODE_PRIMARY;
@@ -697,8 +693,8 @@ function pathFor(edge: TaskEdge, model: TaskGraphModel, frame: Frame): string {
   return `M ${x1 + R} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2 - R} ${y2}`;
 }
 
-/** Same tints the live panel uses (`TaskGraph.strokeFor`), so the two
- *  drawings — and `OutcomeMix` — agree about what an outcome looks like. */
+/** One set of tints for every drawing of the machine, so they — and
+ *  `OutcomeMix` — agree about what an outcome looks like. */
 function edgeStroke(edge: TaskEdge): string {
   switch (edge.kind) {
     case "reward":

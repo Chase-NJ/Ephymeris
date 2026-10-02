@@ -180,44 +180,6 @@ export function ribbon(points: BandPoint[], height: number): string {
  * was skipped — so a session that scored nothing shows as a discontinuity
  * rather than a line interpolated through nothing (`data.md` §9.6).
  */
-export interface Edge {
-  from: Point;
-  to: Point;
-  /** Bridges a gap — drawn dashed, exactly as `segmentsWithGaps` would. */
-  dashed: boolean;
-  /** Where `to` sat in the original list. The ordinal, not the edge count, so
-   *  a delay computed from it tracks the session a node belongs to even when
-   *  earlier ones are missing. */
-  index: number;
-}
-
-/**
- * The same split as `segmentsWithGaps`, but one edge at a time.
- *
- * A polyline is the right shape for drawing a trail and the wrong one for
- * *walking* it: revealing a trail node by node needs each hop to be its own
- * element with its own delay. Same gap rules, so the two cannot disagree about
- * where a discontinuity is.
- */
-export function edgesWithGaps(points: Array<Point | null>): Edge[] {
-  const edges: Edge[] = [];
-  let previous: Point | null = null;
-  let gapPending = false;
-
-  points.forEach((point, index) => {
-    if (point === null) {
-      if (previous !== null) gapPending = true;
-      return;
-    }
-    if (previous !== null) {
-      edges.push({ from: previous, to: point, dashed: gapPending, index });
-    }
-    gapPending = false;
-    previous = point;
-  });
-  return edges;
-}
-
 export function segmentsWithGaps(points: Array<Point | null>): Segment[] {
   const segments: Segment[] = [];
   let current: Point[] = [];

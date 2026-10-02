@@ -10,8 +10,6 @@
  * transmitted.
  */
 
-import type { Cohort, CohortSummary } from "@/lib/ws/protocol";
-
 export type {
   Sex,
   Group,
@@ -28,7 +26,3 @@ export const MIN_BOX = 1;
 export const MAX_BOX = 6;
 /** §7.2 — box numbers only span 1–6, so a larger group can't be assigned. */
 export const MAX_GROUP_SIZE = MAX_BOX;
-
-export function isArchived(cohort: CohortSummary | Cohort): boolean {
-  return "archived" in cohort ? cohort.archived : cohort.archivedAt !== null;
-}

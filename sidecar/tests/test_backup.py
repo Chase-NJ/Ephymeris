@@ -28,11 +28,15 @@ from ephymeris_sidecar.backup.manager import (
     BackupNotConfigured,
     copy_if_stale,
 )
-from ephymeris_sidecar.backup.paths import mirror_segments, resolve_mirror_path
+from ephymeris_sidecar.backup.paths import MirrorLayout, mirror_segments
 from ephymeris_sidecar.cohorts.db import Database
 
 
 # --- §8 mirror layout ------------------------------------------------------
+
+
+def resolve_mirror_path(source: Path, roots: list[Path], backup_root: Path) -> Path | None:
+    return MirrorLayout(roots, backup_root).resolve(source)
 
 
 def test_a_file_mirrors_under_its_cohort_folder_basename(tmp_path: Path) -> None:

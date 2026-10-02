@@ -199,12 +199,3 @@ POOL_WIRE_KEY = "PW"
 
 #: Reserved by the protocol, claimable by no profile (`tasks.md` §6.4).
 RESERVED_WIRE_KEYS = frozenset({"SEED"})
-
-
-def scalar_defaults() -> dict[str, Any]:
-    """`metadataKey -> default` for the fields that exist on every profile."""
-    return {f["metadataKey"]: f["default"] for f in SCALAR_FIELDS}
-
-
-def by_metadata_key() -> dict[str, dict[str, Any]]:
-    return {f["metadataKey"]: f for f in SCALAR_FIELDS}

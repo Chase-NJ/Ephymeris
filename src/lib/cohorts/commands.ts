@@ -13,15 +13,8 @@ import type {
   Animal,
   Cohort,
   CohortPatch,
-  CohortSummary,
   Group,
-  GroupProposal,
 } from "./types";
-
-export async function listCohorts(client: SidecarClient): Promise<CohortSummary[]> {
-  const result = (await client.call(CMD.COHORTS_LIST)) as { cohorts: CohortSummary[] };
-  return result.cohorts;
-}
 
 export async function getCohort(client: SidecarClient, id: string): Promise<Cohort> {
   const result = (await client.call(CMD.COHORTS_GET, { id })) as { cohort: Cohort };
@@ -93,18 +86,6 @@ export async function setDataFolder(
     moveExisting,
   })) as { cohort: Cohort };
   return result.cohort;
-}
-
-/** §7 preview — computes only; the caller applies via `updateCohort`. */
-export async function suggestGroups(
-  client: SidecarClient,
-  id: string,
-  options: { groupCount?: number; maxGroupSize?: number; balanceBySex?: boolean },
-): Promise<GroupProposal> {
-  return (await client.call(CMD.COHORTS_SUGGEST_GROUPS, {
-    id,
-    ...options,
-  })) as GroupProposal;
 }
 
 /**

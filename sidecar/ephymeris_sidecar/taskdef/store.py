@@ -36,9 +36,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..rig import registry
 from . import generate
-from .model import ID_RE, TaskDefinition, TaskDefinitionError
+from .model import TaskDefinition, TaskDefinitionError
 from .validate import validate
 
 log = logging.getLogger(__name__)
@@ -310,12 +309,3 @@ class TaskStore:
                 folder.rmdir()
         except OSError:
             pass
-
-
-def is_usable_id(task_id: Any) -> bool:
-    return isinstance(task_id, str) and bool(ID_RE.match(task_id))
-
-
-def wiring_stamp() -> str:
-    """The wiring every stored sketch was last generated against."""
-    return registry.channels().content_hash()

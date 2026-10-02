@@ -8,6 +8,19 @@ import pytest
 
 from ephymeris_sidecar.intan import probemap
 
+
+def channels_of(probe_map: dict, port: str | None = None) -> list[str]:
+    """Every native channel the map places, optionally for one port."""
+    return sorted(
+        {
+            site["channel"]
+            for page in probe_map["pages"]
+            for entry in page["ports"]
+            if port is None or entry["port"] == port.upper()
+            for site in entry["sites"]
+        }
+    )
+
 MAP = """<?xml version="1.0"?>
 <IntanRHX version="3.0.0" type="ControllerRecordUSB3" sampleRate="30 kHz">
  <ProbeMapSettings backgroundColor="Black" siteOutlineColor="White" siteWidth="9">
@@ -57,8 +70,8 @@ def test_coordinates_pass_through_unflipped():
 
 def test_channels_are_native_names_by_port():
     parsed = probemap.parse(MAP)
-    assert probemap.channels_of(parsed) == ["A-003", "A-016", "B-000"]
-    assert probemap.channels_of(parsed, "a") == ["A-003", "A-016"]
+    assert channels_of(parsed) == ["A-003", "A-016", "B-000"]
+    assert channels_of(parsed, "a") == ["A-003", "A-016"]
 
 
 @pytest.mark.parametrize(
@@ -90,4 +103,4 @@ def test_the_lab_s_own_maps_and_intan_s_examples_all_parse():
         assert parsed["siteCount"] > 0, path.name
     poly2 = probemap.parse_file(LAB_MAPS / "NeuroNexus" / "A1x32_POLY2.xml")
     assert poly2["siteCount"] == 32
-    assert len(probemap.channels_of(poly2, "A")) == 32
+    assert len(channels_of(poly2, "A")) == 32

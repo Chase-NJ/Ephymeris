@@ -16,12 +16,10 @@ import type { RigSession } from "@/lib/hardware/useRig";
 /**
  * The channel→pin editor — the working half of the wiring page.
  *
- * This was the whole of `/task/hardware`, then a section of the Rig screen,
- * and is now the centrepiece of `/config/wiring` (`routes/RigWiring.tsx`),
- * behind the Wiring door on the Rig landing. Through every move it has bound a
- * CHANNEL to a PIN: compiler input, baked into every table, and wrong
- * silently — which is why the preview round trip, the problems list, and the
- * would-break-tasks gate survive each move intact (`useRig`).
+ * The centrepiece of `/config/wiring` (`routes/RigWiring.tsx`), behind the
+ * Wiring door on the Rig landing. It binds a CHANNEL to a PIN: compiler input,
+ * baked into every table, and wrong silently — which is why the preview round
+ * trip, the problems list, and the would-break-tasks gate exist (`useRig`).
  *
  * THE SESSION AND THE SELECTION ARE THE PAGE'S, NOT THIS COMPONENT'S. The
  * wiring page also renders the pin table, and the two surfaces must read one

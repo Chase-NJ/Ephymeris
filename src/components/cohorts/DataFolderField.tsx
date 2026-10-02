@@ -6,7 +6,7 @@ import { Button, Toggle } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
 
 /**
- * Data folder display and relocation — `cohorts.md` §8.
+ * Data folder display and relocation — `DATA.md#data-folder`.
  *
  * The real path is shown plainly at all times so there's never ambiguity about
  * where data actually lives — which matters precisely because renaming the

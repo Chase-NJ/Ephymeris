@@ -1,5 +1,5 @@
 /**
- * Typed wrappers over the analytics commands (`websocket-protocol.md` §3.4).
+ * Typed wrappers over the analytics commands (`PROTOCOL.md#analytics`).
  *
  * Same pattern as `cohorts/commands.ts`: command names and payload shapes in
  * one place rather than scattered through components.
@@ -35,7 +35,7 @@ export async function listSessions(
 
 /**
  * The whole cohort table in one call. Every session and animal selection
- * filters this client-side rather than re-querying (§9).
+ * filters this client-side rather than re-querying.
  */
 export async function getSummary(
   client: SidecarClient,
@@ -79,10 +79,10 @@ export async function rescan(
 }
 
 /**
- * The crash-recovery backfill (`data.md` §12): rebuild `.json`/`.mat`
- * from orphaned write-ahead `.tsv` files. Same explicit-action discipline as
- * the rescan — and its natural follow-up, since a recovered file is an orphan
- * the rescan can then adopt.
+ * The crash-recovery backfill (`DATA.md#crash-recovery`): rebuild
+ * `.json`/`.mat` from orphaned write-ahead `.tsv` files. Same explicit-action
+ * discipline as the rescan — and its natural follow-up, since a recovered file
+ * is an orphan the rescan can then adopt.
  */
 export async function recover(
   client: SidecarClient,
@@ -92,9 +92,9 @@ export async function recover(
 }
 
 /**
- * Merge a day's split session records and drop empty ones (`data.md` §8.8).
- * `apply: false` is the preview; the sidecar re-plans on apply rather than
- * trusting the preview it sent.
+ * Merge a day's split session records and drop empty ones
+ * (`DATA.md#tidy-records`). `apply: false` is the preview; the sidecar re-plans
+ * on apply rather than trusting the preview it sent.
  */
 export async function tidyRecords(
   client: SidecarClient,

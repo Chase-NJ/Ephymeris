@@ -39,7 +39,7 @@ import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Dashboard / landing view (dashboard.md §3).
+ * Dashboard / landing view (`USER-GUIDE.md#a-tour-of-the-app`).
  *
  * The rig's constellation is the page — the same 3D browser Debug flies, same
  * shared camera and selection (`viewMemory.ts`), so moving between the two
@@ -80,7 +80,7 @@ export function Dashboard() {
     (b) => (health[b.box] ?? "absent") !== "absent",
   ).length;
 
-  // §4.1: starting a session requires an existing cohort — still only an
+  // Starting a session requires an existing cohort — still only an
   // *existence* check; Step 1 (`/session/new`) owns per-cohort readiness.
   const hasCohorts = cohortCount > 0;
 
@@ -386,7 +386,7 @@ export function Dashboard() {
                   key={cohort.id}
                   // A row names something specific, so clicking it opens that
                   // thing — the same arrival Analytics already handles when a
-                  // session ends (§2.5), rather than the picker the reader has
+                  // session ends (`DATA.md#session-order`), rather than the picker the reader has
                   // just answered by clicking.
                   onClick={() => navigate("/analytics", { state: { cohortId: cohort.id } })}
                 >
@@ -552,7 +552,7 @@ const HEALTH_LABEL: Record<BoxHealth, string> = {
  * Per-cohort reward accuracy across sessions, for the Analytics tile's
  * sparklines. One point per session in date order: rewarded over administered
  * trials pooled across that session's runs — **the earned-drop rate, not
- * choice accuracy** (`data.md` §9.8): a correct choice that failed the
+ * choice accuracy** (`DATA.md#rewarded-and-response-accuracy`): a correct choice that failed the
  * hold counts against it, which is what makes it the number the lab pays out
  * on. Sessions whose task has no reward vocabulary contribute nothing.
  *
@@ -704,7 +704,7 @@ function Sparkline({ values, title }: { values: number[]; title: string }) {
  * The booster plume: exhaust particles thrown down-left, opposite the
  * Rocket glyph's 45° heading, from just behind its nozzle. Void-on-Pulsar
  * like the icon itself — the palette is matte, so the fire is drawn with
- * motion, not colour or glow (§2.2).
+ * motion, not colour or glow (`ARCHITECTURE.md#theme`).
  */
 const EXHAUST: ReadonlyArray<{
   x: number;
@@ -720,7 +720,7 @@ const EXHAUST: ReadonlyArray<{
 ];
 
 /**
- * The hero CTA — still the page's single most prominent element (§3.3), now
+ * The hero CTA — still the page's single most prominent element, now
  * the head of the command column at the column's shared width. Hovering lifts
  * the rocket toward its heading and lights the booster trail; the trail loop
  * stands down under reduced motion. Deliberately opaque: the one solid tile,

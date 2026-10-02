@@ -9,7 +9,7 @@ import { mulberry32, hashString } from "@/lib/prng";
 import type { CohortAppearance } from "@/lib/ws/protocol";
 
 /**
- * A cohort's world at icon scale — `cohorts.md` §5.
+ * A cohort's world at icon scale — `ARCHITECTURE.md#cohort-browser`.
  *
  * It replaced `CohortIcon`, the seeded constellation, when the browser became a
  * sky of planets. The reason is continuity and nothing else: a cohort that is a
@@ -17,12 +17,12 @@ import type { CohortAppearance } from "@/lib/ws/protocol";
  * session picker has two identities, and neither reminds you of the other.
  * Same appearance record, same seeding contract, same five sizes.
  *
- * **Flat, and deliberately.** The 3D planet is a bounded exception to §2.2's
- * no-gradients rule, earned by carrying readings at full size. A 32px disc
- * carries none of them, so it gets no exception: this is banded fills, a hard
- * terminator and a hairline ring. What survives the shrink is the thing the
- * icon exists for — hue, banding and silhouette, enough to recognise a world
- * you have seen at full size.
+ * **Flat, and deliberately.** The 3D planet is a bounded exception to the
+ * theme's no-gradients rule (`ARCHITECTURE.md#shaders-and-lights`), earned by
+ * carrying readings at full size. A 32px disc carries none of them, so it gets
+ * no exception: this is banded fills, a hard terminator and a hairline ring.
+ * What survives the shrink is the thing the icon exists for — hue, banding and
+ * silhouette, enough to recognise a world you have seen at full size.
  *
  * No canvas and no WebGL. A second GL context per list row would be absurd, and
  * this has to render in the archived list, the session picker and the analytics
@@ -70,7 +70,7 @@ export function PlanetDisc({
             shading on a sphere looks like. The first version drew the whole
             far half instead and read as a bisected pie rather than a lit
             world. Still hard-edged: a soft gradient is the one thing this file
-            is not allowed to draw (§2.2). */}
+            is not allowed to draw (`ARCHITECTURE.md#theme`). */}
         <mask id={night} maskUnits="userSpaceOnUse">
           <circle cx={50} cy={50} r={DISC} fill="white" />
           <circle

@@ -53,17 +53,18 @@ import {
 
 /**
  * Step 2 — animal→box mapping confirmation, the guided placement walk, then
- * the flash sequence (`dashboard.md` §7.3–§4).
+ * the flash sequence (`ARCHITECTURE.md#mapping-and-the-placement-walk`,
+ * `ARCHITECTURE.md#flash-sequence`).
  *
  * Edits here are **session-local**: they never write back to the cohort's
- * stored mapping (§3). Permanent changes go through Cohort management.
+ * stored mapping. Permanent changes go through Cohort management.
  *
  * The three phases are one screen rather than three, because they are three
  * views of the same six rows: choose (which sketch, which box), place (one
- * animal at a time, with that box lit — §3.5), then flash. Splitting them into
+ * animal at a time, with that box lit), then flash. Splitting them into
  * routes would mean re-establishing which row you were on twice.
  *
- * **The flash rides the walk** (§7.4). The mapping is confirmed the moment the
+ * **The flash rides the walk** (`ARCHITECTURE.md#flash-sequence`). The mapping is confirmed the moment the
  * walk starts, and each box is flashed the moment its enclosure is closed —
  * while the operator is already carrying the next animal. A six-box group used
  * to be placed and *then* flashed six times in a row, with the operator
@@ -161,7 +162,7 @@ export function SessionMapping() {
     };
   }, [client, connected, cohortId, groupId]);
 
-  // What "back" means depends on whether the session has run yet (§3): the
+  // What "back" means depends on whether the session has run yet (`ARCHITECTURE.md#mapping-and-the-placement-walk`): the
   // record's status distinguishes first entry (`configuring`) from re-entry
   // from the group step (`running` — between groups, or continued).
   useEffect(() => {
@@ -240,7 +241,7 @@ export function SessionMapping() {
   }
 
   /**
-   * This rig's saved defaults for a sketch (`tasks.md` §6.1) — the layer
+   * This rig's saved defaults for a sketch (`TASKS.md#three-layer-merge`) — the layer
    * a box starts on, and what its overrides are measured against.
    */
   const rigDefaults = useCallback(
@@ -250,7 +251,7 @@ export function SessionMapping() {
   );
 
   // Load each chosen sketch's Task Profile and seed its config from the merged
-  // defaults (§6.9: profile, then rig). Rows are identified by animal, not by
+  // defaults (`TASKS.md#three-layer-merge`: profile, then rig). Rows are identified by animal, not by
   // box — box numbers are editable here and may collide mid-edit.
   const loadProfile = useCallback(
     async (animalId: string, sketchPath: string | null) => {
@@ -306,7 +307,7 @@ export function SessionMapping() {
     duplicateBox === null;
 
   // A failed flash leaves its box in `ERROR`, and `ERROR → FLASHING` is
-  // refused (`dashboard.md` §5) — so without an ack here, the most
+  // refused (`ARCHITECTURE.md#transitions`) — so without an ack here, the most
   // likely place to *hit* a flash failure was also the one place you couldn't
   // recover from it without a detour through Debug Mode.
   const erroredBoxes = useMemo(
@@ -319,7 +320,7 @@ export function SessionMapping() {
 
   /**
    * Mapped boxes with no board behind them. Flashing one is a guaranteed
-   * failure, and because §4 flashes in sequence the failure lands *after*
+   * failure, and because boxes flash in sequence the failure lands *after*
    * earlier boxes are already reflashed — so it is worth saying before the
    * button is pressed rather than discovering it halfway through the rig.
    */
@@ -409,7 +410,7 @@ export function SessionMapping() {
    * --- the flash queue -----------------------------------------------------
    *
    * One box at a time, in the order their enclosures were closed, never in
-   * parallel (§7.4 — two `arduino-cli` builds at once on the lab machines is
+   * parallel (two `arduino-cli` builds at once on the lab machines is
    * slower than one after the other, and a half-flashed pair is worse than a
    * whole one). The queue and the worker live in refs because they outlive any
    * one render: a flash takes a minute, and the operator is three boxes down
@@ -421,7 +422,7 @@ export function SessionMapping() {
    * behind it rather than racing it; and the port has to be free — a baseline
    * restore queued the instant the walk began may still be flashing that very
    * box. `PASSTHROUGH` counts as free: entering `FLASHING` force-releases a
-   * console (`dashboard.md` §5.2), and a light whose console was just taken
+   * console (`ARCHITECTURE.md#flashing`), and a light whose console was just taken
    * goes out with the reset that follows anyway.
    */
   const portStatesRef = useRef(portStates);
@@ -506,7 +507,7 @@ export function SessionMapping() {
    * Confirming *first* is what lets the boxes be flashed as the walk goes:
    * the confirmed mapping puts the utility baseline on hold, and without that
    * a box falling idle after its task flash would be quietly restored to the
-   * utility sketch before the session ever started (`settings.md` §8.2). The
+   * utility sketch before the session ever started (`ARCHITECTURE.md#three-rules-it-never-breaks`). The
    * baseline nudge goes out just before, for a box still carrying last
    * session's sketch; the hold that follows drops whatever of it hasn't
    * started, and a restore already in flight is what `waitForPort` is for.
@@ -986,7 +987,7 @@ export function SessionMapping() {
                     any — an unchosen tile never expands. The form itself is
                     collapsed within that: it holds forty-odd fields now, and
                     six of those open at once would bury this screen's actual
-                    job (§6.9). */}
+                    job. */}
                     <AnimatePresence initial={false}>
                       {profile && profile.config.length > 0 && (
                         <motion.div
@@ -1037,7 +1038,7 @@ export function SessionMapping() {
           <div className="mt-6 flex items-center gap-2">
             {/* Placement sits between confirming the mapping and flashing on
             purpose: the boxes are still carrying the utility sketch, which is
-            the only firmware that can be asked to light one (§3.5). Flashing
+            the only firmware that can be asked to light one. Flashing
             first would put the tasks on and the lights out of reach. */}
             {phase === "review" && (
               <>
@@ -1196,7 +1197,7 @@ function lightHint(light: Light | null, canLight: boolean): string {
  *
  * A fault that happened in this window carries the real cause ("flash failed:
  * …"). One inherited from before a reload carries only the replay placeholder
- * (`websocket-protocol.md` §1.2 sends `reason: "initial state"`), which
+ * (`ARCHITECTURE.md#replay-on-connect` sends `reason: "initial state"`), which
  * explains nothing — so that case gets a sentence instead of a shrug.
  */
 function faultReason(reason: string | undefined): string {
@@ -1271,7 +1272,7 @@ function FlashLine({
 }
 
 /**
- * §4 — a box mid-flash shows its star "flaring" rather than a generic spinner,
+ * A box mid-flash shows its star "flaring" rather than a generic spinner,
  * keeping the visual language consistent with the rest of the app. A queued
  * box holds a steady half-light: claimed, not yet burning.
  */

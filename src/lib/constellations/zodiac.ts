@@ -1,6 +1,6 @@
 /**
  * The zodiac catalogue — hand-authored, simplified asterisms for the
- * box-status constellation (dashboard.md §1.7, §4.6).
+ * box-status constellation (`ARCHITECTURE.md#status-constellation`).
  *
  * Data, not code, on purpose: unlike the per-cohort icons (seeded PRNG in
  * `components/cohorts/PlanetDisc.tsx`), these must be *recognizable* — Scorpius

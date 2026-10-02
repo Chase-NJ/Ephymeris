@@ -21,11 +21,11 @@ import type { TaskEntry } from "@/lib/taskdef/types";
  * shaped pool task.
  *
  * THE SERIES RAMP, NOT NEW COLOURS. `colorForIndex` is already the app's
- * per-item identity ramp (`data.md` §7.1) — it colours an animal across the
- * heatmap, its curve and its trail. A condition is the same kind of thing, so
- * it borrows the same six rather than introducing a seventh idea of "colourful".
- * Emitted as `var(--…)` strings and never as templated Tailwind classes, which
- * the v4 scanner cannot see (`analytics/view.ts`).
+ * per-item identity ramp (`DATA.md#colour-palette`) — it colours an animal
+ * across its card, its curve and its trail. A condition is the same kind of
+ * thing, so it borrows the same six rather than introducing a seventh idea of
+ * "colourful". Emitted as `var(--…)` strings and never as templated Tailwind
+ * classes, which the v4 scanner cannot see (`analytics/view.ts`).
  *
  * The seed's whole job is JITTER — a few degrees of rotation and a little
  * radial wobble, so two tasks with the same shape are still telling apart. It

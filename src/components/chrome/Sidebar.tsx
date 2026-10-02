@@ -13,9 +13,9 @@ import { useUnsaved } from "@/lib/nav/unsavedGuard";
 import { useRunningSession } from "@/lib/sessions/context";
 
 /**
- * Persistent sidebar (dashboard.md §2.2).
+ * Persistent sidebar.
  *
- * Translucent `Nebula` (§1.4 vibrancy — one of only two places it's allowed;
+ * Translucent `Nebula` (vibrancy — one of only two places it's allowed;
  * `.vibrancy-sky`, the tint-only variant, since its backdrop is the sky rather
  * than content and a blur only erases a starfield). Positioned as an overlay
  * rather than a flex sibling, because the sky runs full-bleed underneath it
@@ -28,7 +28,7 @@ import { useRunningSession } from "@/lib/sessions/context";
  * Dashboard's Rig tile links straight to it. The
  * Dashboard owns the primary
  * action *and* the way back to a running session — the Launch nav item is
- * retired (§3.2): its content docks beside the Dashboard's hero CTA, so the
+ * retired: its content docks beside the Dashboard's hero CTA, so the
  * Dashboard row's active state deliberately covers the whole /session/*
  * flow, and a matte status-ok dot marks it while a session is running. The
  * constellation widget stays at the very bottom so box connectivity is never
@@ -98,8 +98,8 @@ function NavList({
             : pathname.startsWith(item.to);
         return (
           <li key={item.to} className="relative">
-            {/* Pulsar-tinted rounded-rect selection, macOS sidebar convention
-                (§3.2). Spring-animated between items via layoutId (§2.5) —
+            {/* Pulsar-tinted rounded-rect selection, macOS sidebar convention.
+                Spring-animated between items via layoutId —
                 one shared id, so the highlight glides between the two groups
                 as readily as within one. */}
             {active && (

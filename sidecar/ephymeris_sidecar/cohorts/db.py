@@ -1,4 +1,4 @@
-"""SQLite connection and schema — `cohorts.md` §3.
+"""SQLite connection and schema — `DATA.md#sqlite-database`.
 
 One connection guarded by a lock rather than a pool: the write volume here is a
 handful of statements per user action, and a single serialized connection is far
@@ -36,24 +36,28 @@ DB_FILENAME = "ephymeris.db"
 #: Bumped when the schema changes. `PRAGMA user_version` records what a given
 #: file is at, and `connect` reads it before touching anything so migrations
 #: have something to branch on.
-#: v2 added prefixes / sessions / session_animal_runs (data.md §3.1–4).
+#: v2 added prefixes / sessions / session_animal_runs (DATA.md#sessions-and-runs).
 #: v3 added task_profiles / run_metrics_cache and session_animal_runs.profile_hash
-#: (data.md §6.1) — the first change to need a real migration.
-#: v4 added sessions.duration_minutes (`dashboard.md` §7.2) — the
+#: (DATA.md#tables) — the first change to need a real migration.
+#: v4 added sessions.duration_minutes (`ARCHITECTURE.md#configuration`) — the
 #: optional per-box time limit.
-#: v5 added animals.cage (`cohorts.md` §1) — the home-cage grouping label.
-#: v6 added session_animal_runs.config_json / params_hash (`tasks.md` §6.1)
+#: v5 added animals.cage (`DATA.md#data-model`) — the home-cage grouping label.
+#: v6 added session_animal_runs.config_json / params_hash (`TASKS.md#three-layer-merge`)
 #: — the task parameters a run actually used, now that they are operator-set.
-#: v7 added adopted_runs.file_mtime_ns / file_size (`data.md` §8.7) — the stat
+#: v7 added adopted_runs.file_mtime_ns / file_size
+#: (`DATA.md#carrying-adoptions-forward`) — the stat
 #: an adoption was taken from, so a rescan can skip a file it has already read.
 #: v8 added run_metrics_cache.params_hash and .scored_profile_hash
-#: (`data.md` §4.4, §8.3) — the parameters a run recorded in its own file, and
+#: (`DATA.md#the-embedded-task-profile`, `DATA.md#which-profile-decodes-a-run`)
+#: — the parameters a run recorded in its own file, and
 #: the profile it was actually scored with when that came from the file rather
 #: than from resolution.
-#: (`cohorts.md` §5) — the operator's tuning of a cohort's world. NULL on every
+#: (`ARCHITECTURE.md#cohort-browser`) — the operator's tuning of a cohort's
+#: world. NULL on every
 #: cohort that has never been tuned, which is the normal state: the whole record
 #: is derived from a hash of the cohort's `id` when absent.
-#: v10 added sessions.recording_json (`recording.md` §6) -- whether a session is
+#: v10 added sessions.recording_json (`RECORDING.md#what-is-written`) --
+#: whether a session is
 #: also an electrophysiology recording, and what each group run's recording was.
 #: NULL on every behavior-only session, which is every session before this.
 SCHEMA_VERSION = 10
@@ -88,7 +92,7 @@ CREATE TABLE IF NOT EXISTS animals (
     notes       TEXT
 );
 
--- Session prefixes (data.md §3.1): global, shared across all cohorts.
+-- Session prefixes (DATA.md#prefixes): global, shared across all cohorts.
 -- Delete is non-destructive on disk — it only removes the dropdown entry — so
 -- there's no soft-delete column, just a hard row delete.
 CREATE TABLE IF NOT EXISTS prefixes (
@@ -96,11 +100,12 @@ CREATE TABLE IF NOT EXISTS prefixes (
     name  TEXT NOT NULL UNIQUE COLLATE NOCASE
 );
 
--- One Starting-a-Session invocation (data.md §3.2).
+-- One Starting-a-Session invocation (DATA.md#session-records).
 CREATE TABLE IF NOT EXISTS sessions (
     id             TEXT PRIMARY KEY,
     cohort_id      TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
-    -- Prefix is kept even if the prefix row is later deleted (§3), so this
+    -- Prefix is kept even if the prefix row is later deleted
+    -- (DATA.md#prefixes), so this
     -- reference is intentionally *not* enforced with a foreign key.
     prefix_id      TEXT NOT NULL,
     prefix_name    TEXT NOT NULL,
@@ -111,17 +116,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     status         TEXT NOT NULL,
     folder_path    TEXT NOT NULL,
     group_runs     TEXT NOT NULL DEFAULT '[]',  -- JSON array, small and read whole
-    -- Optional per-box time limit (dashboard.md §7.2). NULL = no
+    -- Optional per-box time limit (ARCHITECTURE.md#configuration). NULL = no
     -- limit; the runner STOPs each box this many minutes after ITS OWN start.
     duration_minutes INTEGER,
-    -- Set when the session is also an Intan recording (recording.md §6): a JSON
+    -- Set when the session is also an Intan recording
+    -- (RECORDING.md#what-is-written): a JSON
     -- object holding one entry per group run -- where RHX saved it, under what
     -- name, at what sample rate, and which digital input and headstage port
     -- each box was on. NULL = behavior only.
     recording_json TEXT
 );
 
--- One animal's run within a session (data.md §3.2). Forward-looking
+-- One animal's run within a session (DATA.md#run-records). Forward-looking
 -- infrastructure for Analytics; written at finalization.
 CREATE TABLE IF NOT EXISTS session_animal_runs (
     id          TEXT PRIMARY KEY,
@@ -133,12 +139,13 @@ CREATE TABLE IF NOT EXISTS session_animal_runs (
     started_at  TEXT NOT NULL,
     ended_at    TEXT,
     stop_reason TEXT,
-    -- Which Task Profile actually decoded this run (data.md §8.3). NULL
+    -- Which Task Profile actually decoded this run
+    -- (DATA.md#which-profile-decodes-a-run). NULL
     -- means the run predates snapshotting and must fall back to whatever
     -- task.json currently sits at its sketch_path — which may have changed.
     profile_hash TEXT,
     -- The task parameters this run actually ran on, as authored JSON
-    -- (tasks.md §6.1), plus a hash of them for indexed comparison.
+    -- (TASKS.md#three-layer-merge), plus a hash of them for indexed comparison.
     --
     -- profile_hash alone stopped being enough to say two runs are comparable
     -- once parameters became operator-set: the profile is the DECLARATION, so
@@ -150,7 +157,8 @@ CREATE TABLE IF NOT EXISTS session_animal_runs (
     params_hash TEXT
 );
 
--- Content-addressed Task Profile snapshots (data.md §8.3, §10.2). Keyed by
+-- Content-addressed Task Profile snapshots
+-- (DATA.md#which-profile-decodes-a-run). Keyed by
 -- a hash of the canonical JSON, so identical profiles across hundreds of runs
 -- store once and comparability is an indexed equality test rather than a blob
 -- comparison.
@@ -162,9 +170,10 @@ CREATE TABLE IF NOT EXISTS task_profiles (
     first_seen_at TEXT NOT NULL
 );
 
--- Derived per-run metrics (data.md §8.4). Pure cache: every row can be
+-- Derived per-run metrics (DATA.md#caching). Pure cache: every row can be
 -- recomputed from the .json on disk, so losing it costs time and nothing else.
--- Deliberately NO foreign key on run_id — adopted orphans (§8.1) have no
+-- Deliberately NO foreign key on run_id — adopted orphans
+-- (DATA.md#orphan-adoption) have no
 -- session_animal_runs row and carry a synthetic id instead.
 CREATE TABLE IF NOT EXISTS run_metrics_cache (
     run_id         TEXT PRIMARY KEY,
@@ -182,7 +191,8 @@ CREATE TABLE IF NOT EXISTS run_metrics_cache (
     -- computed it and NULL on every cached pass after -- so it silently left
     -- its own profile group the moment the cache warmed.
     scored_profile_hash TEXT,
-    -- The parameters the FILE recorded, hashed (data.md §4.4). Only ever read
+    -- The parameters the FILE recorded, hashed
+    -- (DATA.md#the-embedded-task-profile). Only ever read
     -- for a run with no session_animal_runs row of its own -- an adopted
     -- orphan, which is what a session copied from another rig arrives as.
     -- NULL for a run whose file carries no profile snapshot to name them.
@@ -194,7 +204,7 @@ CREATE TABLE IF NOT EXISTS run_metrics_cache (
     summary_json   TEXT NOT NULL
 );
 
--- Orphans adopted by the archive walk (data.md §8.1) — files no
+-- Orphans adopted by the archive walk (DATA.md#orphan-adoption) — files no
 -- session_animal_runs row points at, matched to an animal by the document's
 -- `rat` name. Deliberately NOT a sessions or session_animal_runs row: a
 -- fabricated session row would corrupt session-number suggestion and the
@@ -213,10 +223,11 @@ CREATE TABLE IF NOT EXISTS adopted_runs (
     date           TEXT,            -- ISO; NULL when the folder name carries none
     started_at     TEXT NOT NULL,
     sketch_name    TEXT,            -- the document's `sketch` field, verbatim
-    sketch_path    TEXT,            -- that name resolved against the Arduino Directory at adoption
+    sketch_path    TEXT,            -- that name resolved against the sketch library at adoption
     adopted_at     TEXT NOT NULL,
     -- The stat this row was adopted from, so the next rescan can tell an
-    -- already-adopted file from one it still has to read (`data.md` §8.7).
+    -- already-adopted file from one it still has to read
+    -- (`DATA.md#carrying-adoptions-forward`).
     -- Same freshness key `run_metrics_cache` uses, for the same reason: it is
     -- answerable without opening the file. NULL on rows adopted before v7,
     -- which simply re-read once and then carry a stat like everything else.
@@ -233,21 +244,22 @@ CREATE TABLE IF NOT EXISTS adopted_runs (
 INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_groups_cohort  ON groups(cohort_id);
 CREATE INDEX IF NOT EXISTS idx_animals_cohort ON animals(cohort_id);
--- Name uniqueness applies to active cohorts only (§2): archived ones release
+-- Name uniqueness applies to active cohorts only (DATA.md#validation):
+-- archived ones release
 -- their name. A partial index expresses that directly, so the database enforces
 -- the rule rather than trusting every code path to remember it.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cohorts_active_name
     ON cohorts(name COLLATE NOCASE) WHERE archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_cohort ON sessions(cohort_id);
 CREATE INDEX IF NOT EXISTS idx_runs_session    ON session_animal_runs(session_id);
--- Per-animal cross-session history was a full scan before this (data.md
--- §10.2). An index, never a foreign key: `cohorts.update` deletes and
+-- Per-animal cross-session history was a full scan before this
+-- (DATA.md#indexes). An index, never a foreign key: `cohorts.update` deletes and
 -- re-inserts the whole animal set on every roster edit, so ON DELETE CASCADE
 -- would destroy every historical run on a single rename.
 CREATE INDEX IF NOT EXISTS idx_runs_animal     ON session_animal_runs(animal_id);
 CREATE INDEX IF NOT EXISTS idx_runs_profile    ON session_animal_runs(profile_hash);
 -- Comparability is (profile_hash, params_hash) now, so the pair is what gets
--- looked up (data.md §8.3).
+-- looked up (DATA.md#indexes).
 CREATE INDEX IF NOT EXISTS idx_runs_params     ON session_animal_runs(profile_hash, params_hash);
 -- The chronological session axis, index-ordered rather than sorted per read.
 CREATE INDEX IF NOT EXISTS idx_sessions_cohort_dt ON sessions(cohort_id, date);
@@ -280,7 +292,7 @@ def add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> 
 
 
 def _to_v3(conn: sqlite3.Connection) -> None:
-    """v2 → v3: the Task Profile snapshot link (`data.md` §8.3).
+    """v2 → v3: the Task Profile snapshot link (`DATA.md#which-profile-decodes-a-run`).
 
     `task_profiles` and `run_metrics_cache` are new *tables*, so `SCHEMA`'s
     `CREATE TABLE IF NOT EXISTS` already made them — only the column needs
@@ -290,7 +302,7 @@ def _to_v3(conn: sqlite3.Connection) -> None:
 
 
 def _to_v4(conn: sqlite3.Connection) -> None:
-    """v3 → v4: the per-box session time limit (`dashboard.md` §7.2).
+    """v3 → v4: the per-box session time limit (`ARCHITECTURE.md#configuration`).
 
     NULL on every pre-existing session is exactly right — they ran without one.
     """
@@ -298,7 +310,7 @@ def _to_v4(conn: sqlite3.Connection) -> None:
 
 
 def _to_v6(conn: sqlite3.Connection) -> None:
-    """v5 → v6: the task parameters a run used (`tasks.md` §6.1).
+    """v5 → v6: the task parameters a run used (`TASKS.md#three-layer-merge`).
 
     NULL on every pre-existing run and correct that way: those runs took their
     parameters from firmware constants, so there is nothing per-run to record.
@@ -308,7 +320,8 @@ def _to_v6(conn: sqlite3.Connection) -> None:
 
 
 def _to_v7(conn: sqlite3.Connection) -> None:
-    """v6 → v7: the stat an adoption was taken from (`data.md` §8.7).
+    """v6 → v7: the stat an adoption was taken from
+    (`DATA.md#carrying-adoptions-forward`).
 
     NULL on every pre-existing adoption, and that is the safe direction: a row
     with no recorded stat is never treated as fresh, so the first rescan after
@@ -320,7 +333,8 @@ def _to_v7(conn: sqlite3.Connection) -> None:
 
 
 def _to_v8(conn: sqlite3.Connection) -> None:
-    """v7 → v8: what a run's own file records (`data.md` §4.4, §8.3).
+    """v7 → v8: what a run's own file records
+    (`DATA.md#the-embedded-task-profile`, `DATA.md#which-profile-decodes-a-run`).
 
     Two columns on the derived cache. `params_hash` is pure gain and NULL costs
     nothing — it fills in on the next pass that recomputes a row.
@@ -342,7 +356,7 @@ def _to_v8(conn: sqlite3.Connection) -> None:
 
 
 def _to_v9(conn: sqlite3.Connection) -> None:
-    """v8 → v9: the cohort's world (`cohorts.md` §5).
+    """v8 → v9: the cohort's world (`ARCHITECTURE.md#cohort-browser`).
 
     NULL on every existing cohort and correct that way. An absent appearance is
     not a missing value to be backfilled — it means "derive it from the id",
@@ -355,7 +369,7 @@ def _to_v9(conn: sqlite3.Connection) -> None:
 
 
 def _to_v5(conn: sqlite3.Connection) -> None:
-    """v4 → v5: the home-cage grouping label (`cohorts.md` §1).
+    """v4 → v5: the home-cage grouping label (`DATA.md#data-model`).
 
     NULL means "cage unknown", which is true of every animal entered before
     the field existed.
@@ -364,7 +378,7 @@ def _to_v5(conn: sqlite3.Connection) -> None:
 
 
 def _to_v10(conn: sqlite3.Connection) -> None:
-    """v9 → v10: the session's recording record (`recording.md` §6).
+    """v9 → v10: the session's recording record (`RECORDING.md#what-is-written`).
 
     NULL is "behavior only", which is true of every session recorded before
     this column existed, so there is nothing to backfill.
@@ -397,7 +411,7 @@ class _TrackedConnection(sqlite3.Connection):
     """A connection that reports every successful commit.
 
     Backup triggering hangs off this rather than off a call in each repository
-    method (`data.md` §7). Two reasons: there is no write path that can
+    method (`DATA.md#the-database-copy`). Two reasons: there is no write path that can
     forget to announce itself, and the trigger is genuinely "the database
     changed" rather than the narrower "a cohort changed" — `session_animal_runs`
     is written at finalization during an unattended overnight run, and is not a
@@ -492,7 +506,7 @@ class Database:
         conn.executescript(INDEXES)
 
         # One commit for the whole of startup. Each `commit()` marks the
-        # database dirty for backup (`data.md` §7.3), so a migration
+        # database dirty for backup (`DATA.md#the-database-copy`), so a migration
         # committing per step would trigger repeated whole-file copies to a
         # possibly-networked target before the app has even finished starting.
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

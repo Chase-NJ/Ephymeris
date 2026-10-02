@@ -8,14 +8,14 @@ import type { Animal } from "@/lib/cohorts/types";
 import { springSnappy } from "@/lib/motion";
 
 /**
- * The editable animal roster — `cohorts.md` §6.
+ * The editable animal roster — `DATA.md#data-model`.
  *
  * Biographical data only: name, sex, ID number, notes. Group membership and
  * box number are deliberately not here — box uniqueness is scoped *per group*
- * (§2), so it isn't a property of an animal in isolation, it's a property of
- * an animal's membership in a particular group. Both live in `GroupsPanel`
- * instead, where an animal's whole group is visible at once and a duplicate
- * box is obvious on sight.
+ * (`DATA.md#validation`), so it isn't a property of an animal in isolation,
+ * it's a property of an animal's membership in a particular group. Both live in
+ * `GroupsPanel` instead, where an animal's whole group is visible at once and a
+ * duplicate box is obvious on sight.
  *
  * **Bulk entry is the primary way in.** A roster already exists somewhere —
  * a spreadsheet column, a naming scheme — and retyping it one blank row at a
@@ -23,7 +23,8 @@ import { springSnappy } from "@/lib/motion";
  * stays for the afterthought animal.
  *
  * Validation errors arrive keyed `animal:<id>` from the sidecar and render
- * inline against the offending row, not as a toast after the fact (§6).
+ * inline against the offending row, not as a toast after the fact
+ * (`DATA.md#validation`).
  */
 
 const SEX_OPTIONS = [

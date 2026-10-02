@@ -8,10 +8,10 @@ import { springSnappy } from "@/lib/motion";
 /**
  * Opens a folder the app already knows in the OS file manager — the cohort's
  * data folder from the Analytics header, a session's folder from its summary
- * panel (`data.md` §10.1).
+ * panel.
  *
- * Shell-side via the opener plugin, like the dialog and debug-log saves
- * (`settings.md` §4): showing a directory is the OS's job, and nothing about
+ * Shell-side via the opener plugin, like the dialog and debug-log saves:
+ * showing a directory is the OS's job, and nothing about
  * it belongs on the wire. The capability grants `open-path` only — the app
  * never opens URLs.
  *
@@ -20,7 +20,7 @@ import { springSnappy } from "@/lib/motion";
  * `controls.tsx`, so it degrades with them: a rig with no pointer hover simply
  * shows the resting state. Framer carries only the lift, which is decoration.
  * Colour stays within the outline-button vocabulary — border and text
- * brighten, no Pulsar fill, and per §1.2 no glow.
+ * brighten, no Pulsar fill, and per `ARCHITECTURE.md#theme` no glow.
  */
 export function FolderButton({
   path,

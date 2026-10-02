@@ -24,14 +24,14 @@ export default function App() {
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<Dashboard />} />
-        {/* /launch is retired (dashboard.md §2.2) — the Dashboard's hero
+        {/* /launch is retired (`ARCHITECTURE.md#routes`) — the Dashboard's hero
             and session dock absorbed it, and old paths fall through to `*`. */}
         <Route path="/cohorts" element={<Cohorts />} />
         <Route path="/cohorts/new" element={<CohortEditor />} />
         <Route path="/cohorts/:id" element={<CohortEditor />} />
         <Route path="/debug" element={<DebugMode />} />
         {/* Task is a landing over an editor. `/task` lists this rig's saved
-            profiles; the editor (`tasks.md` §11 — the trial table, the ramp,
+            profiles; the editor (`TASKS.md#editor` — the trial table, the ramp,
             the parameters) opens on one of them, or on nothing at `/task/new`.
             Saving generates a sketch that discovery finds, so `port.flash`
             takes it like any other.
@@ -62,7 +62,7 @@ export default function App() {
             and the recording defaults. */}
         <Route path="/recording" element={<Recording />} />
         <Route path="/settings" element={<Settings />} />
-        {/* Two-step session setup (`dashboard.md` §7.2–§4); the runner
+        {/* Two-step session setup (`ARCHITECTURE.md#the-flow`); the runner
             takes over at /session/:id/control. */}
         <Route path="/session/new" element={<SessionConfig />} />
         <Route path="/session/:id/group" element={<SessionGroup />} />

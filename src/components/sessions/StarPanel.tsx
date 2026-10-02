@@ -19,11 +19,11 @@ import { taskGraph } from "@/lib/tasks/topology";
 import { useLiveNode } from "@/lib/tasks/useLiveNode";
 
 /**
- * The zoomed-in star view (`dashboard.md` §9.4).
+ * The zoomed-in star view (`ARCHITECTURE.md#live-session-views`).
  *
  * Docked and translucent over the still-rendering scene rather than replacing
  * it — arrival means the camera is close to that star with an instrument panel
- * open, not a cut to a different screen (§6.3).
+ * open, not a cut to a different screen.
  *
  * The panel is a wide HUD now, sized so **everything is on screen at once** on
  * the lab machines: a header band (who this is, its clock, its controls, its
@@ -171,7 +171,7 @@ export function StarPanel({
           )}
         </div>
 
-        {/* §5.3 — Stop is a request the firmware honours at a trial boundary,
+        {/* Stop is a request the firmware honours at a trial boundary,
             so it stays available while the box is live. */}
         <div className="flex items-center gap-2">
           <Button variant="primary" disabled={busy || live} onClick={onStart}>
@@ -244,9 +244,9 @@ export function StarPanel({
         </div>
 
         <div className="flex flex-col gap-3">
-          {/* The sidecar-computed rolling metrics (`tasks.md` §5) — the same
-              strip the collapsed tile shows, so focusing a star never costs
-              the readout it was showing. */}
+          {/* The sidecar-computed rolling metrics (`TASKS.md#live-metrics`) —
+              the same strip the collapsed tile shows, so focusing a star never
+              costs the readout it was showing. */}
           <HudSection title="Live metrics">
             <div className="px-3 py-2.5">
               <MetricStrip box={box.box} metrics={metrics} labels={labels} bare />
@@ -277,7 +277,7 @@ function rowOpacity(slot: number): number {
 
 /**
  * The most recent strobes from this box, newest first, decoded to the
- * profile's human names (`tasks.md` §6.4); a sketch with no profile
+ * profile's human names (`TASKS.md#strobes`); a sketch with no profile
  * gets the raw code labeled as such. Rows arrive from the top with the
  * app's snappy spring and dim as they age down the frame.
  */

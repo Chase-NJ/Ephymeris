@@ -36,7 +36,7 @@ import { CMD, EVT } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Rig — everything about this rig's hardware, on one screen (settings.md §5).
+ * Rig — everything about this rig's hardware, on one screen (`ARCHITECTURE.md#where-each-setting-is-edited`).
  *
  * **The screen is called Rig; the route and this file are still `config`.** The
  * name is the operator's word for the subject; the path is an internal address
@@ -56,25 +56,20 @@ import { useSidecar } from "@/lib/ws/context";
  * channel→pin editor lives at `/config/wiring` behind it, `RigWiring.tsx`),
  * then the two knobs that rarely move (baud, `arduino-cli`).
  *
- * Two things used to live here and moved out, in opposite directions:
+ * What is NOT here, and why:
  *
- * - **The constellation board and picker are on Settings now.** They style the
- *   status display — which star a box sits on — and never touch the hardware,
- *   so they were interface filed under wiring. `onBoxesChange` still
- *   reconciles the slot map, because *this* screen is where boxes appear and
- *   disappear, and the slot map has to follow whether or not anyone visits
- *   Settings.
- * - **The setup wizard is gone entirely.** It was five linear steps over the
- *   same four surfaces this page now shows at once; with the page itself
- *   reading in setup order, a second, modal way through it was a maintenance
- *   cost with no second story to tell. First run simply lands here with an
- *   empty Boxes table and its own "add one for each box" prompt.
- *
- * **Wiring joined it from Task and then earned its own room.** Binding a box
- * to a board and binding a channel to a pin are different wirings — runtime vs
- * compile-time — but one subject, so the door is here; the editor is a
- * workbench that fought this page's forms for width, so the room is its own
- * route. The Task landing keeps a door to the flow that consumes the map.
+ * - **The constellation board and picker are on Settings.** They style the
+ *   status display — which star a box sits on — and never touch the hardware.
+ *   `onBoxesChange` still reconciles the slot map, because *this* screen is
+ *   where boxes appear and disappear, and the slot map has to follow whether
+ *   or not anyone visits Settings.
+ * - **There is no setup wizard.** The page itself reads in setup order; first
+ *   run lands here with an empty Boxes table and its own "add one for each
+ *   box" prompt.
+ * - **The wiring editor has its own route.** Binding a box to a board and a
+ *   channel to a pin are different wirings — runtime vs compile-time — but one
+ *   subject, so the door is here; the editor is a workbench that needs the
+ *   width, so the room is `/config/wiring`.
  */
 export function Config() {
   const navigate = useNavigate();
@@ -228,8 +223,8 @@ export function Config() {
               {/* The one reference door this page keeps: the channel→pin map.
                   The strobe vocabulary used to sit beside it at half width, on
                   the argument that a code and a pin are the same kind of fact.
-                  It reads codes as a fact about the TASK now (`settings.md`
-                  §5.0) and lives on the Task tab; what is left is a single
+                  It reads codes as a fact about the TASK now
+                  (`TASKS.md#strobe-vocabulary`) and lives on the Task tab; what is left is a single
                   door, which is the width `WiringDoor` was drawn at. */}
               <motion.div variants={RISE}>
                 {/* The editor kept its own save discipline through every move —
@@ -353,7 +348,7 @@ function BoxesFact({
  * be a second, read-only rendering of a document whose whole page exists one
  * click away. On hover the tile lifts, the rule brightens, and the motif runs
  * a trace — one channel being wired, the gesture the room behind the door
- * exists for. Matte throughout: movement and a single accent, no glow (§1.2).
+ * exists for. Matte throughout: movement and a single accent, no glow (`ARCHITECTURE.md#theme`).
  */
 function WiringDoor({
   summary,

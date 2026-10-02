@@ -14,7 +14,7 @@ import {
 /**
  * Owns settings state and the one-directional Tauri → sidecar sync.
  *
- * Per settings.md §3 the shell is the source of truth and pushes the
+ * Per `ARCHITECTURE.md#persistence-and-push` the shell is the source of truth and pushes the
  * full payload **on every connect/reconnect and on every change**. The failure
  * mode is deliberately mild: worst case the sidecar runs briefly on stale
  * values until the next push, rather than being unreachable.

@@ -8,7 +8,7 @@ import { ReportSheet, type ReportInput } from "./ReportSheet";
 
 /**
  * Mount a report sheet, rasterize it, save it, take it back down
- * (`data.md` §10.6).
+ * (`DATA.md#exporting-a-sheet`).
  *
  * Returns the portal to render and a `run` to call. The caller renders
  * `portal` unconditionally; it is `null` except during an export.

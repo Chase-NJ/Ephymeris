@@ -1,12 +1,11 @@
 """Minimal MATLAB Level-5 MAT-file writer — pure Python, no numpy/scipy.
 
-`data.md` §4.3 names `scipy.io.savemat`, but scipy pulls in numpy and is
+The obvious tool is `scipy.io.savemat`, but scipy pulls in numpy and is
 the single heaviest dependency the sidecar would carry — a real setup-error risk
 for a non-technical lab and a burden on the eventual Windows packaging. Since the
 session file needs only a handful of value shapes (an `N×2` double array plus
 scalar strings / bools / ints), a small hand-written serializer covers it with
-zero runtime dependencies. This deviation from §5.1 is recorded in that doc's
-§11.
+zero runtime dependencies. The choice is recorded in `DATA.md#the-mat-mirror`.
 
 Format reference: the MAT-File Format spec (Level 5). Everything is written
 little-endian; MATLAB and scipy both read that via the header's endian
@@ -123,7 +122,7 @@ def _field(name: str, value: Any) -> bytes:
         return _double_matrix_2col(name, pairs)
     if isinstance(value, dict):
         # The one nested value a session document carries is the task profile
-        # snapshot (`data.md` §4.4). MAT-5 has a struct class, but a profile is
+        # snapshot (`DATA.md#the-embedded-task-profile`). MAT-5 has a struct class, but a profile is
         # a deep, ragged tree — arrays of objects with optional keys — and
         # nothing in the lab's MATLAB reads it as a struct anyway. Written as
         # JSON text, which `jsondecode(...)` gives straight back.

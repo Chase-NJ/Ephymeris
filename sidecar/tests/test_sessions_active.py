@@ -3,7 +3,7 @@
 The running slot is keyed off the runner-held id, never bare DB status: a
 runner-held session can still read `configuring` (post-confirmMapping,
 pre-startAll) and belongs in `running`, while a `running` DB row nobody holds
-is a crash orphan and lands in `stale` (websocket-protocol.md §3.2).
+is a crash orphan and lands in `stale` (`PROTOCOL.md#cmd-sessions.active`).
 """
 
 from __future__ import annotations

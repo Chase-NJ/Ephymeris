@@ -1,4 +1,4 @@
-"""`IN_SESSION` entry/exit and strobe parsing — `dashboard.md` §10, §10.
+"""`IN_SESSION` entry/exit and strobe parsing — `ARCHITECTURE.md#entering-in_session`, `ARCHITECTURE.md#clean-exit`.
 
 Driven through a scripted fake serial port, so the handshake sequence and the
 `^\\d{1,3}\\t\\d+$` line-recognition rule are exercised without hardware.
@@ -119,11 +119,11 @@ def drain_loop() -> None:
     _loop.run_until_complete(asyncio.sleep(0))
 
 
-# --- §7 entry sequence ----------------------------------------------------
+# --- entry sequence (`ARCHITECTURE.md#entering-in_session`) ---------------
 
 
 def test_entry_requires_idle() -> None:
-    """§7 step 1 — refused if not IDLE, same rule as every other transition."""
+    """`ARCHITECTURE.md#entering-in_session` step 1 — refused if not IDLE, same rule as every other transition."""
     handler, _ = make_handler()
     handler._state = PortState.PASSTHROUGH
     with pytest.raises(IllegalTransition):
@@ -131,7 +131,7 @@ def test_entry_requires_idle() -> None:
 
 
 def test_start_is_sent_only_after_ready(fake_serial) -> None:
-    """§7 steps 3–4 — the sidecar waits for READY before sending START."""
+    """`ARCHITECTURE.md#entering-in_session` steps 3–4 — the sidecar waits for READY before sending START."""
     handler, _ = make_handler()
     ready_seeds: list = []
     handler.start_session(
@@ -149,7 +149,7 @@ def test_start_is_sent_only_after_ready(fake_serial) -> None:
 
 
 def test_seed_line_is_captured_when_present(fake_serial) -> None:
-    """§7 step 5 / §6.4 — `SEED\\t<int>` right after START becomes trial_seed."""
+    """`ARCHITECTURE.md#entering-in_session` step 5 / `TASKS.md#seed` — `SEED\\t<int>` right after START becomes trial_seed."""
     handler, _ = make_handler()
     seeds: list = []
     handler.start_session("/dev/fake", 115200, "START", seeds.append, lambda c, t: None)
@@ -197,7 +197,7 @@ def test_never_seeing_ready_lands_in_error(fake_serial) -> None:
     assert wait_for(lambda: handler.state is PortState.ERROR, timeout=4.0)
 
 
-# --- §7 step 6: strobe parsing -------------------------------------------
+# --- step 6: strobe parsing (`ARCHITECTURE.md#entering-in_session`) ------
 
 
 def test_strobe_lines_parse_into_code_and_timestamp(fake_serial) -> None:
@@ -216,7 +216,7 @@ def test_strobe_lines_parse_into_code_and_timestamp(fake_serial) -> None:
 
 
 def test_non_strobe_lines_are_logged_but_not_data(fake_serial) -> None:
-    """§7 step 6 — stricter than PASSTHROUGH's opaque text handling."""
+    """`ARCHITECTURE.md#entering-in_session` step 6 — stricter than PASSTHROUGH's opaque text handling."""
     handler, _ = make_handler()
     strobes: list = []
     handler.start_session(
@@ -236,7 +236,7 @@ def test_non_strobe_lines_are_logged_but_not_data(fake_serial) -> None:
     assert "1234\t5" in text
 
 
-# --- §5.3 stop / §7 exit --------------------------------------------------
+# --- stop / exit (`ARCHITECTURE.md#clean-exit`) ---------------------------
 
 
 def test_stop_writes_the_literal_stop_line(fake_serial) -> None:
@@ -248,7 +248,7 @@ def test_stop_writes_the_literal_stop_line(fake_serial) -> None:
 
     handler.send_session_line("STOP")
     assert b"STOP\n" in bytes(port.written)
-    # Sending STOP does not itself end the session (§5.3).
+    # Sending STOP does not itself end the session (`ARCHITECTURE.md#clean-exit`).
     assert handler.state is PortState.IN_SESSION
 
 
@@ -270,11 +270,11 @@ def test_clean_end_returns_to_idle(fake_serial) -> None:
     assert port.closed is True
 
 
-# --- §10 board drop = hard stop ------------------------------------------
+# --- board drop = hard stop (`ARCHITECTURE.md#board-drop`) ---------------
 
 
 def test_a_board_drop_mid_session_goes_to_error(fake_serial) -> None:
-    """§10 — always a hard stop, reusing the existing ERROR state."""
+    """`ARCHITECTURE.md#board-drop` — always a hard stop, reusing the existing ERROR state."""
     handler, changes = make_handler()
     handler.start_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
     port = ScriptedSerial.instances[0]
@@ -291,7 +291,7 @@ def test_a_board_drop_mid_session_goes_to_error(fake_serial) -> None:
 
 
 def test_error_clears_through_the_existing_ack(fake_serial) -> None:
-    """§10 — no new recovery logic; the ordinary port.error.ack path clears it."""
+    """`ARCHITECTURE.md#board-drop` — no new recovery logic; the ordinary port.error.ack path clears it."""
     handler, _ = make_handler()
     handler.start_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
     port = ScriptedSerial.instances[0]

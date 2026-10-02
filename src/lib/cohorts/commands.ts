@@ -1,5 +1,5 @@
 /**
- * Typed wrappers over the cohort commands (`websocket-protocol.md` §3.1).
+ * Typed wrappers over the cohort commands (`PROTOCOL.md#cohorts`).
  *
  * Keeps command names and payload shapes in one place rather than scattered
  * through components, and gives every caller the same typed result. Mutations
@@ -68,12 +68,12 @@ export async function restoreCohort(client: SidecarClient, id: string): Promise<
   return result.cohort;
 }
 
-/** §9 — rejected by the sidecar unless the cohort is already archived. */
+/** Rejected by the sidecar (`DATA.md#archive-and-delete`) unless the cohort is already archived. */
 export async function deleteCohort(client: SidecarClient, id: string): Promise<void> {
   await client.call(CMD.COHORTS_DELETE, { id, confirm: true });
 }
 
-/** §8's explicit relocate — never triggered by a rename. */
+/** The explicit relocate (`DATA.md#data-folder`) — never triggered by a rename. */
 export async function setDataFolder(
   client: SidecarClient,
   id: string,
@@ -91,7 +91,7 @@ export async function setDataFolder(
 /**
  * Per-field validation errors from a `COHORT_INVALID` rejection, so the editor
  * can render them against the offending row rather than as a detached toast
- * (§6). Any other failure returns null and should surface as a general message.
+ * (`DATA.md#validation`). Any other failure returns null and should surface as a general message.
  */
 export function fieldErrors(err: unknown): Record<string, string> | null {
   if (!(err instanceof SidecarCommandError)) return null;

@@ -27,7 +27,7 @@ import { GL } from "@/components/chrome/constellationStyle";
  * physical model was contributing.
  *
  * Fenced the way `starSurface.ts` and `planetSurface.ts` are, and still nothing
- * here lands on Pulsar (`dashboard.md` §2.2).
+ * here lands on Pulsar (`ARCHITECTURE.md#theme`).
  */
 
 export const HULL_VERTEX = /* glsl */ `

@@ -1,12 +1,12 @@
 /**
  * Shared visual language for constellation-style graphics.
  *
- * `cohorts.md` §5 requires the generated cohort icon to reuse "the exact line
- * treatment already established for the hardware constellation status widget",
- * so the two read as one visual family. Both import these rather than each
- * carrying its own literals, which is the only way that stays true over time.
+ * Every constellation-style graphic — the status widget, the Settings picker,
+ * the 3D scenes — reuses one line treatment, so they read as one visual
+ * family. All of them import these rather than each carrying its own
+ * literals, which is the only way that stays true over time.
  *
- * Flat, matte fills only — no glow, no gradients (`dashboard.md` §1.2).
+ * Flat, matte fills only — no glow, no gradients (`ARCHITECTURE.md#theme`).
  */
 
 /** Links between nodes are always Pulsar, only their opacity varies. */
@@ -26,8 +26,7 @@ export const NODE_RADIUS = 3;
 
 /**
  * The single accent permitted alongside Pulsar. In the status widget this means
- * "connected and nominal"; in a cohort icon it's the seeded hero star (§5.5).
- * Either way it stays inside the six-token palette.
+ * "connected and nominal". It stays inside the six-token palette.
  */
 export const NODE_ACCENT = "var(--color-ion)";
 
@@ -38,9 +37,10 @@ export const NODE_PRIMARY = "var(--color-pulsar)";
  * Literal values of the same tokens, for WebGL.
  *
  * three.js materials take colors, not CSS custom properties, so the 3D
- * constellation (`dashboard.md` §9) can't read the variables above.
+ * constellation (`ARCHITECTURE.md#one-sky`) can't read the variables above.
  * These are declared here, beside them, so the duplication is visible and the
- * two can't quietly diverge — they must match `styles/index.css` §2.2.
+ * two can't quietly diverge — they must match the `@theme` block in
+ * `styles/index.css`.
  */
 export const GL = {
   void: "#0b0b10",
@@ -54,7 +54,7 @@ export const GL = {
  * Box health as a WebGL colour — the 3D counterpart of `NODE_FILL`.
  *
  * Debug's constellation now shares Mission Control's temperature ramp for the
- * star surfaces themselves (revised 2026-07-29, `dashboard.md` §4), so
+ * star surfaces themselves (`ARCHITECTURE.md#one-sky`), so
  * of these only `fault` still reaches the 3D scene — the error ring around a
  * faulted box's star, the one status that must keep its colour.
  *
@@ -68,17 +68,18 @@ export const GL_HEALTH = {
 } as const;
 
 /**
- * Navigation lights on a cage-ship's hull (`dashboard.md` §9.5) — port red,
- * starboard green, the aviation convention that is the entire reason a lit
- * hull reads as a *craft* rather than a glowing dot.
+ * Navigation lights on a cage-ship's hull
+ * (`ARCHITECTURE.md#shaders-and-lights`) — port red, starboard green, the
+ * aviation convention that is the entire reason a lit hull reads as a *craft*
+ * rather than a glowing dot.
  *
  * **This is a deliberate, bounded exception to "status colours are state only,
- * never decorative" (§1.2).** Red earns its keep here only because it arrives
- * as half of a red/green *pair*, on a hull, at annotation scale — and a fault
- * is a ring around a *star*. The two cannot be read for one another, and a lone
- * red never appears on a ship. Reusing the existing literals rather than
- * inventing two more reds is the lesser of the two evils; a second, nearly
- * identical red in the palette would be the worse one.
+ * never decorative" (`ARCHITECTURE.md#theme`).** Red earns its keep here only
+ * because it arrives as half of a red/green *pair*, on a hull, at annotation
+ * scale — and a fault is a ring around a *star*. The two cannot be read for one
+ * another, and a lone red never appears on a ship. Reusing the existing
+ * literals rather than inventing two more reds is the lesser of the two evils;
+ * a second, nearly identical red in the palette would be the worse one.
  *
  * Do not extend this to a third colour, and do not use these anywhere but a
  * ship hull.

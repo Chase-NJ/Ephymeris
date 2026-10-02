@@ -25,10 +25,10 @@ import { springPanel, springSnappy } from "@/lib/motion";
 import { AnimalDetail } from "./AnimalDetail";
 
 /**
- * One animal's card (`data.md` §11.4). A separate component per animal because
- * that is what the cross-panel highlight scheme requires (`context.ts`'s
- * `useIsHighlighted` invariant) — a single component looping over animals
- * would silently lose it.
+ * One animal's card (`DATA.md#pooling-across-tasks`). A separate component per
+ * animal because that is what the cross-panel highlight scheme requires
+ * (`context.ts`'s `useIsHighlighted` invariant) — a single component looping
+ * over animals would silently lose it.
  *
  * The card reads top to bottom as: who and on what program, the effort, then
  * each declared condition's administered/rewarded counts with **how those
@@ -168,9 +168,10 @@ export function AnimalCard({
           <Unscored run={run} reason={reason} />
         ) : (
           <>
-            {/* Per condition (§3.9, §9.8): how many trials of this kind were
-                administered, how many paid out, and — the classification the
-                whole card is for — how the administered ones resolved. */}
+            {/* Per condition (`DATA.md#per-condition-tally`): how many trials
+                of this kind were administered, how many paid out, and — the
+                classification the whole card is for — how the administered ones
+                resolved. */}
             <div
               className={`mt-2 grid ${CONDITION_GRID} items-center gap-x-2 border-b border-halo pb-1 font-mono text-[9px] text-static/70`}
             >
@@ -235,7 +236,8 @@ export function AnimalCard({
 /**
  * The card of a run that can't be scored — muted, with the reason, never a
  * row of zeroes. "This animal earned nothing" and "we cannot say" are
- * different claims, and a zeroed card asserts the first (§9.8's rule).
+ * different claims, and a zeroed card asserts the first
+ * (`DATA.md#pooling-across-tasks`).
  */
 function Unscored({ run, reason }: { run: RunSummary; reason: string }) {
   const end = runEnd(run);
@@ -253,8 +255,8 @@ function Unscored({ run, reason }: { run: RunSummary; reason: string }) {
  * Offered, trials, administered — the header every rate below is a fraction
  * of. All three are shown because they are different facts: 200 trials with 90
  * administered is a very different session from 200 with 195 at identical
- * accuracy (§3.8), and 300 *offered* with 200 reaching odor is different
- * again (§3.10).
+ * accuracy (`DATA.md#trial-counts`), and 300 *offered* with 200 reaching odor
+ * is different again (`DATA.md#engagement-ladder`).
  */
 function Effort({
   outcomes,
@@ -283,8 +285,9 @@ function Effort({
   );
 }
 
-/** The engagement ladder spelled out (§9.10) — the two gaps are different
- *  behaviours, and the header line only has room for their endpoints. */
+/** The engagement ladder spelled out (`DATA.md#engagement-ladder`) — the two
+ *  gaps are different behaviours, and the header line only has room for their
+ *  endpoints. */
 function describeEngagement(engagement: TrialEngagement): string {
   const rate =
     engagement.pEngaged === null ? "—" : `${Math.round(engagement.pEngaged * 100)}%`;
@@ -309,10 +312,10 @@ const CONDITION_GRID =
  * the card.
  *
  * When the profile declares no reward vocabulary there is no per-condition
- * tally to show (§9.9), so the row falls back to the metric's own
- * scored-trial count and says nothing about outcomes — a dash rather than a
- * zero, because "this task has no notion of a reward" is not "none was
- * earned".
+ * tally to show (`DATA.md#per-condition-tally`), so the row falls back to the
+ * metric's own scored-trial count and says nothing about outcomes — a dash
+ * rather than a zero, because "this task has no notion of a reward" is not
+ * "none was earned".
  */
 function ConditionRow({
   label,

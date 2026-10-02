@@ -1,13 +1,12 @@
 /**
- * Settings schema (settings.md §2).
+ * Settings schema (`ARCHITECTURE.md#settings-keys`).
  *
  * The shell owns settings and is the source of truth; the sidecar receives a
  * push and reads only the keys it needs. The wire shapes themselves live in
  * the generated protocol module (`protocol/schema.py` is their authority) and
- * are re-exported here so callers keep one import site. The full schema is
- * still an open item in §6, so `normalizeSettings` is written to tolerate both
- * older stored shapes and unknown extra keys rather than assuming whatever is
- * on disk matches the schema exactly.
+ * are re-exported here so callers keep one import site. `normalizeSettings` is
+ * written to tolerate both older stored shapes and unknown extra keys rather
+ * than assuming whatever is on disk matches the schema exactly.
  */
 
 import { zodiacById } from "@/lib/constellations/zodiac";
@@ -34,7 +33,7 @@ export type {
 } from "@/lib/ws/protocol";
 export type { RecordingDefaults } from "@/lib/intan/defaults";
 
-/** Hardware ceiling: six Mega2560s (`dashboard.md` §5). */
+/** Hardware ceiling: six Mega2560s (`ARCHITECTURE.md#box-bindings`). */
 export const BOX_COUNT = 6;
 /**
  * Every bundled sketch opens at 115200 — each declares its own `baudRate` and
@@ -49,20 +48,20 @@ export const BOX_COUNT = 6;
  */
 export const DEFAULT_BAUD = 115200;
 
-/** Offered in the picker; Debug Mode also allows a per-box override (§6.4). */
+/** Offered in the picker; Debug Mode also allows a per-box override (`ARCHITECTURE.md#baud`). */
 export const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 250000] as const;
 
 /**
  * Boxes are user-managed: the rig might run two boxes or six, so Settings
  * starts empty and the user adds rows. Box *numbers* remain 1–6 and stay the
- * stable key everywhere else (protocol §5.1) — only which of them exist is
+ * stable key everywhere else (`ARCHITECTURE.md#invariants`) — only which of them exist is
  * configurable.
  */
 export function newBinding(box: number): BoxBinding {
   return { box, hardwareId: null, label: `Box ${box}`, intanDigitalIn: null };
 }
 
-/** The recording controller has sixteen digital inputs (`recording.md` §3). */
+/** The recording controller has sixteen digital inputs (`RECORDING.md#wiring-and-binding`). */
 export const INTAN_DIGITAL_INPUTS = 16;
 
 /** Intan RHX's own defaults (Network → Remote TCP Control). */
@@ -85,8 +84,8 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
   dataDirectory: null,
   backupDirectory: null,
   arduinoCliPath: null,
-  // No baseline until the user names a utility sketch (`dashboard.md`
-  // §8) — there is no safe sketch to guess, and guessing would flash the rig.
+  // No baseline until the user names a utility sketch
+  // (`ARCHITECTURE.md#hardware-utility-baseline`) — there is no safe sketch to guess, and guessing would flash the rig.
   utilitySketchName: null,
   defaultBaud: DEFAULT_BAUD,
   // No boxes until the user adds them.
@@ -96,11 +95,11 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
   // sidecar never reads it, so the wire carries it as a loose record.
   recordingDefaults: { ...DEFAULT_RECORDING_DEFAULTS },
   reducedMotion: false,
-  // Null = the legacy fixed layout, until the user picks a zodiac (§4.6).
+  // Null = the legacy fixed layout, until the user picks a zodiac (`ARCHITECTURE.md#status-constellation`).
   constellation: null,
   constellationSlots: {},
-  // No rig defaults until someone sets one on Config; every sketch starts on
-  // the values its own task.json declares (`tasks.md` §6.1).
+  // No rig defaults (this layer has no editor); every sketch starts on
+  // the values its own task.json declares (`TASKS.md#three-layer-merge`).
   taskDefaults: {},
 };
 
@@ -201,7 +200,7 @@ function normalizeSlots(value: unknown): Record<string, number> {
 
 /**
  * `{sketchName: {metadataKey: value}}` — this rig's saved task parameters
- * (`tasks.md` §6.1).
+ * (`TASKS.md#three-layer-merge`).
  *
  * Values are carried through unexamined on purpose: what a key means is the
  * sketch's `task.json` to say, and this file has never seen one. A stored key
@@ -230,7 +229,7 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
     dataDirectory: optString(value["dataDirectory"]),
     backupDirectory: optString(value["backupDirectory"]),
     // `arduinoDirectory` was retired when sketches began shipping with the app
-    // (tasks.md §2). A stored value is dropped here — silently on purpose: the
+    // (`TASKS.md#sketch-library`). A stored value is dropped here — silently on purpose: the
     // key configured a directory that nothing reads any more, so there is
     // nothing to migrate it INTO. Don't reintroduce it.
     arduinoCliPath: optString(value["arduinoCliPath"]),

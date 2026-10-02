@@ -1,5 +1,5 @@
 /**
- * Self-hosted faces, per dashboard.md §1.3.
+ * Self-hosted faces, per `ARCHITECTURE.md#theme`.
  *
  * Bundled rather than fetched from a CDN: lab PCs are expected to run without
  * internet, and a font that silently falls back would take the theme's

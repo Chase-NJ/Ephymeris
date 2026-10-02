@@ -1,6 +1,6 @@
 /**
- * Star placement for the 3D constellation views (`dashboard.md` §9.1,
- * `dashboard.md` §4).
+ * Star placement for the 3D constellation views
+ * (`ARCHITECTURE.md#one-sky`).
  *
  * **A star is a box. That is the whole model, and there is exactly one of it.**
  * The scene is the rig's asterism, lifted out of the 2D widget's 100×54 frame

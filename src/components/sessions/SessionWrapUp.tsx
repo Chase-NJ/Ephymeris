@@ -12,23 +12,23 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
 /**
  * The end of the line — the last group has run, every box has finished, and
  * the operator's next act is to carry the animals home and close the session
- * (`dashboard.md` §8.7).
+ * (`USER-GUIDE.md#ending-the-session`).
  *
  * A pop-up rather than another centre-stage card, because this is the one
  * moment in the flow that is genuinely *over*: nothing on the rails is the
  * next step any more, and a prompt that shares the screen with six Start
  * buttons reads as one option among seven. It takes the screen, says what
  * happened, shows the placement scene played backwards (the same drawing the
- * group swap uses, §8.5), keeps count of the animals going home, and ends the
+ * group swap uses), keeps count of the animals going home, and ends the
  * session — landing on Analytics with this run already open.
  *
  * Still dismissable. "Not yet" puts the rails back for the operator who wants
  * to restart a box or read a tile before closing out; the End Session button
  * in the left rail is the same action and stays where it was.
  *
- * Matte throughout (§1.2): the flourish is three flat rings expanding from the
- * Ion check — the constellation's arrival rings, on a surface instead of a
- * star — and it stands still under reduced motion.
+ * Matte throughout (`ARCHITECTURE.md#theme`): the flourish is three flat rings
+ * expanding from the Ion check — the constellation's arrival rings, on a
+ * surface instead of a star — and it stands still under reduced motion.
  */
 export function SessionWrapUp({
   open,

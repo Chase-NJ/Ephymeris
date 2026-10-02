@@ -1,4 +1,4 @@
-"""Prefix and session persistence — `data.md` §3.1–§4.
+"""Prefix and session persistence — `DATA.md#sessions-and-runs`.
 
 Synchronous; callers wrap in `asyncio.to_thread`. Shares the cohort database
 and its lock, so a session write is atomic against a concurrent cohort edit.
@@ -46,7 +46,7 @@ def _hydrate_run(row: sqlite3.Row) -> SessionAnimalRun:
 
 
 def _load_config(raw: str | None) -> dict[str, Any] | None:
-    """Decode a run's stored task parameters (§6.9).
+    """Decode a run's stored task parameters (`DATA.md#run-records`).
 
     A row written before v6, or by a build that stored something unreadable,
     reads back as `None` rather than raising: this is a record of what a run
@@ -107,7 +107,7 @@ class SessionRepository:
         return prefix
 
     def delete_prefix(self, prefix_id: str) -> None:
-        """Non-destructive on disk — only removes the dropdown entry (§3)."""
+        """Non-destructive on disk — only removes the dropdown entry (`DATA.md#prefixes`)."""
         with self._db.lock:
             self._db.conn.execute("DELETE FROM prefixes WHERE id = ?", (prefix_id,))
             self._db.conn.commit()
@@ -120,11 +120,12 @@ class SessionRepository:
         return None if row is None else Prefix(id=row["id"], name=row["name"])
 
     def suggest_session_number(self, prefix_id: str) -> str | None:
-        """Highest existing numeric session number for this prefix, +1 (§2.2).
+        """Highest existing numeric session number for this prefix, +1
+        (`PROTOCOL.md#cmd-sessions.suggestnumber`).
 
         Degrades to `None` for a prefix with no numeric history yet — the UI
         shows no suggestion rather than a wrong one. Session numbers are free
-        text (§10), so non-numeric values are simply ignored here. Aborted
+        text (`DATA.md#session-records`), so non-numeric values are simply ignored here. Aborted
         sessions never wrote data, so they don't claim their number.
         """
         with self._db.lock:
@@ -142,10 +143,10 @@ class SessionRepository:
         return None if highest is None else str(highest + 1)
 
     def session_numbers_on(self, prefix_id: str, date: str) -> list[str]:
-        """Session numbers already used for this prefix on `date` (§2.2).
+        """Session numbers already used for this prefix on `date` (`ARCHITECTURE.md#configuration`).
 
         Feeds the *soft* same-day warning only. Reusing a number is legal
-        (`data.md` §1) — appending to an existing folder is a supported
+        (`DATA.md#layout`) — appending to an existing folder is a supported
         way to resume an interrupted run — so this never blocks. Aborted
         sessions are excluded: they wrote nothing, so there is no folder the
         warning could truthfully be about.
@@ -274,7 +275,7 @@ class SessionRepository:
             )
             self._db.conn.commit()
 
-    # --- pruning (data.md §8.6) -------------------------------------------
+    # --- pruning (DATA.md#pruning) -------------------------------------------
     #
     # The only deletions in this repository, and they exist for one caller:
     # `analytics.rescan`'s reconciliation. A run record outlives its file
@@ -283,7 +284,7 @@ class SessionRepository:
     # operator deleted from disk goes on charting.
     #
     # This removes **bookkeeping only**, the same line the cohort delete draws
-    # (`cohorts.md` §9): the app deletes its own records, never the user's data.
+    # (`DATA.md#archive-and-delete`): the app deletes its own records, never the user's data.
     # Here that is inverted and holds all the same — the data is already gone,
     # and the record is what's left over.
 
@@ -332,7 +333,7 @@ class SessionRepository:
         return [_hydrate_run(r) for r in rows]
 
     def runs_for_cohort(self, cohort_id: str) -> list[SessionAnimalRun]:
-        """Every run across every session of one cohort (`websocket-protocol.md` §3.4).
+        """Every run across every session of one cohort (`PROTOCOL.md#analytics`).
 
         One join rather than a query per session: the whole cohort table is a
         single `analytics.summary` payload, and per-session calls would mean a
@@ -348,7 +349,7 @@ class SessionRepository:
             ).fetchall()
         return [_hydrate_run(r) for r in rows]
 
-    # --- listing (websocket-protocol.md §3.4) ----------------------------------------
+    # --- listing (PROTOCOL.md#cmd-sessions.list) ----------------------------------------
 
     def list_sessions(
         self, cohort_id: str, *, include_aborted: bool = False
@@ -356,7 +357,7 @@ class SessionRepository:
         """A cohort's sessions, oldest first. **Never touches the filesystem.**
 
         Ordering is `(date, started_at)` — never `session_number`, which is
-        free text (§10) and would sort "10" before "9".
+        free text (`DATA.md#session-records`) and would sort "10" before "9".
 
         Aborted sessions are excluded by default: one never wrote data, so
         including it produces an empty session that reads as one where every
@@ -394,7 +395,7 @@ class SessionRepository:
             ).fetchall()
         return {row["sid"]: row["n"] for row in rows}
 
-    # --- tidying (data.md §8.8) --------------------------------------------
+    # --- tidying (DATA.md#tidy-records) --------------------------------------------
     #
     # Both methods trust their caller about WHICH records: `sessions/tidy.py`
     # plans, and the analytics service excludes the session the runner holds.

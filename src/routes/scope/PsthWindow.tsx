@@ -24,7 +24,7 @@ import { monoFont, palette, useCanvas } from "./useCanvas";
  * triggers on a digital input's edge — and here every event a box emits pulses
  * the SAME input, so RHX would align to "anything happened". The sidecar knows
  * which event each edge was (it matches the edges to the box's serial strobes,
- * `recording.md` §3), so the trigger here is a NAMED event: odor onset, a poke,
+ * `RECORDING.md#edge-matcher`), so the trigger here is a NAMED event: odor onset, a poke,
  * a reward. The alignment is still the electrical edge on the recording's own
  * clock; only the choice of which edges comes from the strobe stream.
  */

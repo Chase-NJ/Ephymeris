@@ -16,7 +16,7 @@ import { SessionReport } from "./SessionReport";
 
 /**
  * A composed, printable page of the panels the dashboard is already showing
- * (`data.md` §10.6).
+ * (`DATA.md#exporting-a-sheet`).
  *
  * The sheet never re-implements a chart. It mounts the same components the
  * route mounts, with the same props, and only decides how they sit together —
@@ -190,7 +190,7 @@ function Masthead({ input }: { input: ReportInput }) {
     const dates = [...summary.sessions]
       // `ordinal` is the sidecar's chronological rank from (date, startedAt).
       // Sorting the dates as strings would be wrong for the legacy `MM_DD_YY`
-      // names the archive still holds (`data.md` §8.1).
+      // names the archive still holds (`DATA.md#session-order`).
       .sort((a, b) => a.ordinal - b.ordinal)
       .map((s) => s.date);
     if (dates.length === 0) return null;

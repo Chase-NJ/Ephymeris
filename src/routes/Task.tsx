@@ -39,7 +39,7 @@ import { EVT } from "@/lib/ws/protocol";
  * column of tiles over the sky. Both pages answer "what is set up here, and
  * where do I go to change it" — and the two doors at the foot of this one are
  * literally the pair Rig used to carry, since the strobe vocabulary moved with
- * the subject it belongs to (`settings.md` §5.0).
+ * the subject it belongs to (`TASKS.md#strobe-vocabulary`).
  *
  * The saved tasks are a LIST, most recently edited first, not a grid of cards:
  * a shelf of near-identical variants is compared column by column, and a grid
@@ -51,7 +51,7 @@ import { EVT } from "@/lib/ws/protocol";
  * **Duplicate** opens an unsaved copy in the editor, for the common case of a
  * small variation on a task that already runs. Named clear of every existing
  * task (`uniqueCopyName`) and WITHOUT the source's legacy names: a legacy name
- * resolves to exactly one sketch (`tasks.md` §3.7), so a copy carrying them
+ * resolves to exactly one sketch (`TASKS.md#legacy-names`), so a copy carrying them
  * would silently take over — or lose — the historical runs they decode.
  */
 export function Task() {

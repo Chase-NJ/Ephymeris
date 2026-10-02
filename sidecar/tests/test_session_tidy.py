@@ -1,4 +1,4 @@
-"""Tidying a cohort's session records — `data.md` §8.8.
+"""Tidying a cohort's session records — `DATA.md#tidy-records`.
 
 A day that goes wrong leaves two shapes behind: the same session split across
 two records that write into one folder, and records with nothing behind them.
@@ -168,7 +168,7 @@ async def test_a_folder_with_any_file_is_data_and_is_never_removed(rig: Rig) -> 
 
 
 async def test_an_unreachable_folder_is_never_read_as_empty(rig: Rig, monkeypatch) -> None:
-    """An unmounted drive says nothing about what the folder holds (§8.3's
+    """An unmounted drive says nothing about what the folder holds (`DATA.md#pruning`'s
     reachable-and-absent rule, the prune's own)."""
     from ephymeris_sidecar.analytics import service
 

@@ -23,7 +23,7 @@ import { useSidecar } from "@/lib/ws/context";
 
 /**
  * The session dock — everything `sessions.active` reports, docked beside the
- * Dashboard's hero CTA (dashboard.md §3). This is the former Launch
+ * Dashboard's hero CTA. This is the former Launch
  * page's content in panel form: the running session with its way back into
  * Mission Control, set-ups still in `configuring` with Resume/Discard, and
  * crash-orphaned `stale` rows shown read-only. The dock renders whatever the
@@ -38,8 +38,8 @@ import { useSidecar } from "@/lib/ws/context";
  * Crash-orphaned sessions (`stale`) keep their data on disk via the write-ahead
  * `.tsv`. Resuming a group mid-run after a restart is out of scope by decision,
  * but a same-day one can be continued WITH ANOTHER GROUP — the usual story is
- * the app closed between groups — through the group step (§7.6). Close Out
- * marks one completed as it stands.
+ * the app closed between groups — through the group step
+ * (`ARCHITECTURE.md#group-step`). Close Out marks one completed as it stands.
  */
 export function SessionDock() {
   const navigate = useNavigate();

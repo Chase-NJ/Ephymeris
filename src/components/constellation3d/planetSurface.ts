@@ -1,13 +1,15 @@
 import { GLSL_NOISE } from "./starSurface";
 
 /**
- * The planet-surface material for the cohort browser (`cohorts.md` §5).
+ * The planet-surface material for the cohort browser
+ * (`ARCHITECTURE.md#cohort-browser`).
  *
  * A sibling of `starSurface.ts`, written the same way and under the same
- * licence: `dashboard.md` §2.2 forbids gradients and glow, and this is the
- * **second** bounded exception to it. The first was the star, allowed because
- * its colour is its temperature is an animal's pooled accuracy. A planet earns
- * it the same way — three of its four dimensions are readings, not decoration:
+ * licence (`ARCHITECTURE.md#shaders-and-lights`): the theme forbids gradients
+ * and glow, and this is the **second** bounded exception to it. The first was
+ * the star, allowed because its colour is its temperature is an animal's pooled
+ * accuracy. A planet earns it the same way — three of its four dimensions are
+ * readings, not decoration:
  *
  *   size            the cohort's roster
  *   spin + daylight  how recently anyone worked on it

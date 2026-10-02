@@ -5,7 +5,8 @@ import { domToBlob } from "modern-screenshot";
 import { REPORT_FONT_CSS } from "./fonts";
 
 /**
- * Rasterize a report sheet and write it where the user asks (`data.md` §10.6).
+ * Rasterize a report sheet and write it where the user asks
+ * (`DATA.md#exporting-a-sheet`).
  *
  * Shell-side rather than a sidecar command, for the same reasons the debug-log
  * save is (`debug/NodeDetail.tsx`): the dialog plugin adds the chosen path to
@@ -21,9 +22,9 @@ import { REPORT_FONT_CSS } from "./fonts";
  * Every chart in this app strokes with `vector-effect="non-scaling-stroke"`,
  * which resolves line weight in screen space rather than user space. Scaling
  * the raster is exactly the operation that makes screen space and user space
- * disagree, and `data.md` §10.5 already records what that does to these charts.
- * A 1280-wide sheet is several thousand pixels tall, which is plenty for a
- * slide or a notebook, so there is nothing to buy by risking it.
+ * disagree, and `DATA.md#drawing-lines` already records what that does to these
+ * charts. A 1280-wide sheet is several thousand pixels tall, which is plenty
+ * for a slide or a notebook, so there is nothing to buy by risking it.
  */
 const SCALE = 1;
 
@@ -48,8 +49,6 @@ export async function captureSheet(node: HTMLElement): Promise<Blob> {
   // The sheet is ours alone and not yet visible to anyone, so widening it here
   // is cheaper and less brittle than teaching the layout to predict a panel's
   // arithmetic. `scrollWidth` omits the trailing padding, hence the gutter.
-  // (This was written for the cohort heatmap, which is gone; the mechanism is
-  // not heatmap-specific and the case it covers is still live.)
   if (node.scrollWidth > node.clientWidth) {
     node.style.width = `${node.scrollWidth + GUTTER}px`;
     await nextFrame();

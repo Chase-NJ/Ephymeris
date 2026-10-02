@@ -4,11 +4,11 @@
  * Holds per-box port state, console scrollback, and board presence, fed by the
  * three hardware events (`port.state`, `port.output`, `boards.presence`) plus
  * the on-connect replay. Subscriptions are keyed per box on purpose: output
- * arrives at up to 20Hz per box (`dashboard.md` §6.3), and a chatty
+ * arrives at up to 20Hz per box (`ARCHITECTURE.md#passthrough-read`), and a chatty
  * box should re-render its own panel, not all six.
  *
  * The sidecar remains authoritative throughout — nothing in here ever *sets* a
- * port state; it only records what the sidecar reported (§3.3 / protocol §5.2).
+ * port state; it only records what the sidecar reported (`ARCHITECTURE.md#invariants`).
  */
 
 import type { SidecarClient } from "../ws/client";
@@ -79,7 +79,7 @@ export class HardwareStore {
    *  load for utility controls/telemetry. Not sidecar state; client-tracked
    *  from the flash the user performed. */
   private flashed = new Map<number, FlashedSketch | null>(BOX_IDS.map((b) => [b, null]));
-  /** The hardware utility baseline, as last reported (`settings.md` §8). */
+  /** The hardware utility baseline, as last reported (`ARCHITECTURE.md#hardware-utility-baseline`). */
   private utility: UtilityStatus = NO_UTILITY;
   private subs = new Map<string, Set<() => void>>();
   private seq = 0;

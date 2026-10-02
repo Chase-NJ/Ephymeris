@@ -58,15 +58,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         // Present only for saving debug logs: the dialog plugin adds the
         // user-chosen path to the fs scope at runtime, so the webview can
-        // write exactly the file the user picked and nothing else
-        // (dashboard.md §6.3).
+        // write exactly the file the user picked and nothing else.
         .plugin(tauri_plugin_fs::init())
-        // Present only for the open-folder buttons in Analytics (`data.md`
-        // §10.1): hands a directory the app already knows to the OS file
-        // manager. The capability grants `open-path` alone — no URL opening —
-        // because a data folder can live anywhere the operator pointed a
-        // cohort (other drives, network shares), so the path scope is broad
-        // and the verb is kept narrow instead.
+        // Present only for the open-folder buttons in Analytics
+        // (`DATA.md#analytics-views`): hands a directory the app already
+        // knows to the OS file manager. The capability grants `open-path`
+        // alone — no URL opening — because a data folder can live anywhere
+        // the operator pointed a cohort (other drives, network shares), so
+        // the path scope is broad and the verb is kept narrow instead.
         .plugin(tauri_plugin_opener::init())
         .manage(sidecar::SidecarState::default())
         .invoke_handler(tauri::generate_handler![sidecar::sidecar_endpoint])
@@ -80,7 +79,7 @@ pub fn run() {
                 }
                 let _ = window.show();
 
-                // The recording pop-ups (`scope-*`, `recording.md` §7) are
+                // The recording pop-ups (`scope-*`, `RECORDING.md#live-windows`) are
                 // windows of THIS app, not of the main window, so closing main
                 // would otherwise leave them open over a shell that is on its
                 // way out — and the app would not exit until each was closed

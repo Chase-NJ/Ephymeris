@@ -19,7 +19,7 @@ import { useRecordingDefaults } from "@/lib/settings/useRecordingDefaults";
 
 /**
  * Recording — everything about the link to Intan RHX, on one screen
- * (`settings.md` §1, `recording.md` §4.0).
+ * (`ARCHITECTURE.md#where-each-setting-is-edited`, `RECORDING.md#recording-tab`).
  *
  * The same column of HUD tiles as Rig and Settings, in the order a recording
  * comes up in: **Connection** (is RHX reachable, and the one click in RHX

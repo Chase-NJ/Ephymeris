@@ -1,5 +1,5 @@
 /**
- * A cohort's world — `cohorts.md` §5.
+ * A cohort's world — `ARCHITECTURE.md#cohort-browser`.
  *
  * Everything here fails QUIETLY without a check, which is why it is pure and
  * why this file exists. A drifted seed does not throw: it silently gives every

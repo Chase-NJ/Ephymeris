@@ -15,5 +15,5 @@ the session flow, `tasks.getProfile` and Analytics need no special case at all.
 The split that matters: what fits on a `START` line stays on the wire, so one
 flashed binary serves six boxes tuned differently; everything else — the trial
 table, the pins, the stage COUNT — is compiled in, because it cannot fit and
-because pins have to be constants. See `docs/tasks.md` §1.1.
+because pins have to be constants. See `TASKS.md#two-places-a-value-can-come-from`.
 """

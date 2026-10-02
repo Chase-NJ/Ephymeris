@@ -27,14 +27,14 @@ import { springPanel } from "@/lib/motion";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Cohort browser — `cohorts.md` §4.
+ * Cohort browser — `ARCHITECTURE.md#cohort-browser`.
  *
  * **A sky of worlds, not a card grid.** The grid was a fine list and an inert
  * one; this view is for *visually scanning and selecting*, and the app already
  * owned a constellation stage that every route but the rig views mounted as
  * dead wallpaper. Each cohort is a planet whose size is its roster, whose spin
  * and daylight are how recently anyone worked on it, and whose home cages orbit
- * it as ships — with type, hue and ring the operator's own (`cohorts.md` §5).
+ * it as ships — with type, hue and ring the operator's own.
  *
  * **The browser IS this route's constellation.** It mounts `CohortSky` instead
  * of `SkyBackdrop`, the way the Dashboard mounts `DebugConstellation`, which
@@ -50,7 +50,7 @@ import { useSidecar } from "@/lib/ws/context";
  *
  * Archived cohorts stay behind a toggle and stay a list: that is a recovery
  * surface rather than a browsing one, and permanent delete is only reachable
- * there (§9's two-step guard).
+ * there (the two-step guard, `DATA.md#archive-and-delete`).
  */
 
 type SortKey = "recent" | "name";
@@ -431,7 +431,7 @@ function Notice({ children }: { children: ReactNode }) {
 
 /**
  * Archived cohorts get a list rather than the sky: this is a recovery surface,
- * not a browsing one, and permanent delete is only reachable here (§9's
+ * not a browsing one, and permanent delete is only reachable here (the
  * two-step guard). The disc still appears, so a cohort is recognisable here as
  * the world it is everywhere else.
  */
@@ -496,7 +496,7 @@ function DeleteConfirm({
             <span className="text-starlight">{cohort.name}</span> will be removed
             from Ephymeris for good, along with its animals and groups.
           </p>
-          {/* §9 — the app removes its own bookkeeping, never the user's data. */}
+          {/* `DATA.md#archive-and-delete` — the app removes its own bookkeeping, never the user's data. */}
           <p className="rounded-sm border border-halo bg-void/40 px-3 py-2 text-[12px] leading-relaxed text-static">
             Its data folder on disk is <span className="text-starlight">not</span>{" "}
             touched — recorded session files stay exactly where they are.

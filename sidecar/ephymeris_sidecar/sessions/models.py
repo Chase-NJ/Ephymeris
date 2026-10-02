@@ -1,7 +1,7 @@
-"""Session data model — `data.md` §3.1–§4.
+"""Session data model — `DATA.md#sessions-and-runs`.
 
 `to_json` produces exactly the payload shapes documented in
-`websocket-protocol.md` §4 (Session & prefix payload shapes).
+`PROTOCOL.md#shape-session` and `PROTOCOL.md#shape-prefix`.
 """
 
 from __future__ import annotations
@@ -59,10 +59,10 @@ class Session:
     folder_path: str
     ended_at: str | None = None
     group_runs: list[GroupRun] = field(default_factory=list)
-    #: Per-box time limit in whole minutes (`dashboard.md` §7.2);
+    #: Per-box time limit in whole minutes (`ARCHITECTURE.md#configuration`);
     #: None means the session runs until stopped by the operator or board.
     duration_minutes: int | None = None
-    #: Set when the session is also an Intan recording (`recording.md` §6):
+    #: Set when the session is also an Intan recording (`RECORDING.md#what-is-written`):
     #: `{"runs": [...]}`, one entry per group run. None = behavior only. Kept as
     #: the JSON it is stored as -- nothing in the sidecar branches on its
     #: contents, only on its presence.
@@ -122,12 +122,12 @@ class SessionAnimalRun:
     file_path: str | None = None
     ended_at: str | None = None
     stop_reason: str | None = None
-    #: The Task Profile this run actually used (`data.md` §8.3). `None`
+    #: The Task Profile this run actually used (`DATA.md#run-records`). `None`
     #: for runs recorded before snapshotting existed — which is exactly the
     #: flag Analytics needs to mark them decoded with a possibly-changed
     #: profile, so it is meaningful rather than merely absent.
     profile_hash: str | None = None
-    #: The task parameters this run actually ran on (`tasks.md` §6.1),
+    #: The task parameters this run actually ran on (`TASKS.md#profile-and-params-hashes`),
     #: keyed by `metadataKey`, and a hash of them. `profile_hash` covers the
     #: profile DECLARATION only, so two runs of one sketch on wildly different
     #: parameters hash identically — which stopped being a safe assumption the

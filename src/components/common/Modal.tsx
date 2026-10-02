@@ -6,9 +6,8 @@ import { createPortal } from "react-dom";
 import { springModal } from "@/lib/motion";
 
 /**
- * Transient overlay surface. One of exactly two places vibrancy is permitted
- * (dashboard.md §1.4): persistent chrome (the sidebar) and this. Content
- * cards stay opaque.
+ * Transient overlay surface. One of exactly two places vibrancy is permitted:
+ * persistent chrome (the sidebar) and this. Content cards stay opaque.
  */
 /** `md` is the historical width and stays the default, so every existing call
  * site is unchanged; wider sizes exist for content that is a grid rather than

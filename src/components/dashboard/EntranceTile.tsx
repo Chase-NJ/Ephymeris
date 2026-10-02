@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { springSnappy } from "@/lib/motion";
 
 /**
- * A door, in the Dashboard's HUD vocabulary (`dashboard.md` §3.4).
+ * A door, in the Dashboard's HUD vocabulary.
  *
  * The overview column is three `SummaryCard` readouts — *how is the rig, how
  * are the cohorts, how is the learning going*. Two of the app's tabs answer a
@@ -18,15 +18,15 @@ import { springSnappy } from "@/lib/motion";
  *
  * So the shape is different on purpose — squarer, paired, a motif instead of
  * rows — while the material is the same `.hud` glass every tile on this page
- * floats in (§1.4), because they sit in the same column over the same sky.
+ * floats in, because they sit in the same column over the same sky.
  *
  * Three things happen on hover, on one spring: the tile lifts, its rule
  * brightens, and the **motif animates**. The motif is where the visual interest
  * lives and it earns its place by being about the destination — the rig's is a
  * pin header with a trace being run, the task's is a trial advancing through a
  * four-node flow. Nothing glows and nothing gradients: the palette is matte and
- * Pulsar in particular is protected from both (§1.2), so movement and a single
- * accent stroke are the whole vocabulary.
+ * Pulsar in particular is protected from both (`ARCHITECTURE.md#theme`), so
+ * movement and a single accent stroke are the whole vocabulary.
  *
  * `footer` is a sibling of the main button rather than a child, and that is
  * structural rather than stylistic: a button inside a button is invalid, and
@@ -182,8 +182,8 @@ export function RigMotif() {
 /**
  * The task's motif: one trial advancing through a four-node flow.
  *
- * Four nodes and three edges is the compiler's own shape — the four epochs a
- * trial passes through (`TaskGraph.md`) — so the glyph is a diagram of the
+ * Four nodes and three edges are the four epochs a trial passes through
+ * (`TASKS.md#derived-state-machine`) — so the glyph is a diagram of the
  * thing behind the tile rather than an arbitrary decoration. On hover the edges
  * draw left to right and the last node lights: a trial completing.
  */

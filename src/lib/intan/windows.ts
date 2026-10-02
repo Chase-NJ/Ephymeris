@@ -3,7 +3,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { ScopeKind } from "./types";
 
 /**
- * Open one recording pop-up as its own OS window (`recording.md` §7).
+ * Open one recording pop-up as its own OS window (`RECORDING.md#live-windows`).
  *
  * Real windows rather than panels inside Mission Control, because that is how
  * they are used: dragged to a second monitor beside RHX and left open across

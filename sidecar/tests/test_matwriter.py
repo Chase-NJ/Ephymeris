@@ -1,4 +1,4 @@
-"""Pure-Python MAT-5 writer — `data.md` §4.3 (scipy-free deviation).
+"""Pure-Python MAT-5 writer — `DATA.md#the-mat-mirror` (scipy-free deviation).
 
 No scipy at runtime, so these assert the file's own structural invariants: a
 valid 128-byte header, 8-byte-aligned elements, and correct dimensions/values
@@ -100,7 +100,7 @@ def _char_payload(body: bytes) -> str:
 
 
 def test_a_nested_field_is_written_as_json_text() -> None:
-    """The task profile snapshot (`data.md` §4.4) is the one nested value a
+    """The task profile snapshot (`DATA.md#the-embedded-task-profile`) is the one nested value a
     session document carries. It used to fall through to `str(dict)`, a Python
     repr with single quotes and bare `True` — not JSON, so nothing on the other
     end could decode it. `jsondecode` in MATLAB has to work."""

@@ -1,4 +1,4 @@
-"""Flash and reset orchestration — `dashboard.md` §6.1, §5, §3.3."""
+"""Flash and reset orchestration — `ARCHITECTURE.md#flashing`, `ARCHITECTURE.md#reset`, `ARCHITECTURE.md#exclusivity`."""
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ async def test_flash_from_idle_returns_to_idle() -> None:
 
 
 async def test_flash_from_passthrough_auto_resumes_at_prior_baud(fake_serial) -> None:
-    """§3.3 — the user sees the new sketch's output without an extra click."""
+    """`ARCHITECTURE.md#exclusivity` — the user sees the new sketch's output without an extra click."""
     manager, _tool, _, progress = make_manager()
     manager.open_passthrough(1, baud=9600)
 
@@ -152,7 +152,7 @@ async def test_flash_from_passthrough_auto_resumes_at_prior_baud(fake_serial) ->
 
 
 async def test_suppress_passthrough_resume_forces_idle(fake_serial) -> None:
-    """`dashboard.md` §7.4 — the session flash sequence needs IDLE.
+    """`ARCHITECTURE.md#flash-sequence` — the session flash sequence needs IDLE.
 
     Without this the port would auto-resume PASSTHROUGH and the runner could
     never claim it, since IN_SESSION entry requires IDLE.
@@ -172,7 +172,7 @@ async def test_suppress_passthrough_resume_forces_idle(fake_serial) -> None:
 
 
 async def test_compile_failure_lands_in_error_and_never_uploads() -> None:
-    """§4 — ERROR with the parsed message, no silent fall back to IDLE."""
+    """`ARCHITECTURE.md#flashing` — ERROR with the parsed message, no silent fall back to IDLE."""
     manager, tool, _, _ = make_manager()
     tool.fail_compile = FlashFailed("compile", "clean.ino:3: error: expected ';'")
 
@@ -237,7 +237,7 @@ async def test_reset_from_idle_pulses_dtr_and_returns_to_idle(fake_serial) -> No
     assert resumed is False
     pulse_port = fake_serial.instances[-1]
     assert pulse_port.port == ADDRESS
-    # §5: dtr False → delay → dtr True (initial True assert precedes open()).
+    # `ARCHITECTURE.md#reset`: dtr False → delay → dtr True (initial True assert precedes open()).
     assert pulse_port.dtr_history == [True, False, True]
     assert pulse_port.closed is True
 

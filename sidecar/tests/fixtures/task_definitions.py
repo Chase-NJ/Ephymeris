@@ -3,7 +3,7 @@
 **Not shipped, and not reachable from the app.** These were `taskdef/presets.py`
 until the preset path was retired: a task is now built from scratch and the one
 thing a preset seeded that nothing else can — `legacyNames` — is typed by the
-operator on the Task tab (`tasks.md` §11.4, which lists these names verbatim for
+operator on the Task tab (`TASKS.md#legacy-names`, which lists these names verbatim for
 exactly that reason).
 
 They stay here because they are the only five REAL task definitions in

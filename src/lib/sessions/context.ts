@@ -38,7 +38,7 @@ export function useActiveLoaded(): boolean {
 }
 
 /**
- * Whether this session is also an Intan recording (`recording.md`).
+ * Whether this session is also an Intan recording (`ARCHITECTURE.md#recording-step`).
  *
  * Read from the sidecar's own snapshot rather than carried in the URL: the
  * flow is re-entered from the session dock, from a group switch and from a

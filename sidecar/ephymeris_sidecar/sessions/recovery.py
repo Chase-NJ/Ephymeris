@@ -1,20 +1,20 @@
-"""Crash-recovery backfill — `data.md` §12, §11.
+"""Crash-recovery backfill — `DATA.md#crash-recovery`.
 
 If the machine loses power mid-session, every strobe up to that moment is
 durably on disk in the write-ahead `.tsv` — but `.json`/`.mat` are built only
-at clean finalization (§7.2), so they were never produced. This module reads
+at clean finalization (`DATA.md#built-once-at-the-end`), so they were never produced. This module reads
 an orphaned `.tsv` back and rebuilds both structured formats from it.
 
-This is **not** session resumption (out of scope by decision, §7.3): nothing
+This is **not** session resumption (out of scope by decision, `DATA.md#what-is-guaranteed`): nothing
 here talks to a board or reopens a run. It is a pure file transformation, the
 inverse of `writer.AnimalWriter` — parse the `# key: value` header, the
-`<code>\t<timestamp>` lines, and the optional footer; emit the same §5
-document `finalize` would have.
+`<code>\t<timestamp>` lines, and the optional footer; emit the same
+document `finalize` would have (`DATA.md#the-json-document`).
 
 Two honesty rules:
 
 * **A footer wins.** A `.tsv` that carries `# stop_reason` finalized cleanly
-  and only the best-effort `.json` write failed (disk full — §7.2 logs and
+  and only the best-effort `.json` write failed (disk full — finalization logs and
   moves on). Its recorded reason is the truth; stamping it "recovered after
   crash" would erase why the run actually ended. Only a footer-less log —
   a genuine crash — gets the marker.
@@ -22,9 +22,9 @@ Two honesty rules:
   lines actually read, never copied from a footer, so the document can't
   claim more events than it holds.
 
-Discovery reuses the same archive walker as `data.md` §8.1's orphan
-adoption (`reader.walk_orphaned_tsvs`) — both must see every legacy layout a
-real archive has, so they are one traversal by decision (§11).
+Discovery reuses the same archive walker as orphan adoption
+(`DATA.md#orphan-adoption`, `reader.walk_orphaned_tsvs`) — both must see every legacy layout a
+real archive has, so they are one traversal by decision (`DATA.md#crash-recovery`).
 """
 
 from __future__ import annotations
@@ -42,15 +42,15 @@ from . import matwriter
 
 log = logging.getLogger(__name__)
 
-#: The stop reason a footer-less (crashed) recovery records (§11).
+#: The stop reason a footer-less (crashed) recovery records (`DATA.md#crash-recovery`).
 RECOVERED_STOP_REASON = "recovered after crash"
 
 #: The board's exact line format — the same strict rule the live session
-#: parser applies (`dashboard.md` §10), so recovery can't admit a
+#: parser applies (`ARCHITECTURE.md#entering-in_session`), so recovery can't admit a
 #: line the session wouldn't have.
 _STROBE = re.compile(r"^(\d{1,3})\t(\d+)$")
 
-#: §5 core fields that are always strings, exempt from value coercion — an
+#: Core fields (`DATA.md#the-json-document`) that are always strings, exempt from value coercion — an
 #: animal named "123" must not come back as an integer.
 _STRING_FIELDS = frozenset(
     {
@@ -60,11 +60,11 @@ _STRING_FIELDS = frozenset(
     }
 )
 
-#: Footer keys `finalize` appends after the data (§7.1) — never header fields.
+#: Footer keys `finalize` appends after the data (`DATA.md#the-tsv-log`) — never header fields.
 _FOOTER_KEYS = frozenset({"stop_reason", "n_events"})
 
 #: Header fields whose value is a JSON document rather than a rendered scalar
-#: (§4.4). Read back as the object they are, so a recovered `.json` is as
+#: (`DATA.md#the-embedded-task-profile`). Read back as the object they are, so a recovered `.json` is as
 #: self-describing as a finalized one — which is the whole point of the
 #: snapshot: the recovered file is exactly the one likely to be carried to
 #: another machine to find out what happened.
@@ -86,8 +86,8 @@ def parse_tsv(path: Path) -> ParsedTsv:
     """Read a `.tsv` back into header, events, and optional footer.
 
     Tolerant exactly where a crash makes tolerance necessary: a torn final
-    line (power died mid-write, §7.3) matches neither rule and contributes
-    nothing, costing at most the one strobe §7.3 already declares at risk.
+    line (power died mid-write, `DATA.md#what-is-guaranteed`) matches neither rule and contributes
+    nothing, costing at most the one strobe the guarantee already declares at risk.
     Everything else is strict — a line is a `# key: value` comment or a
     board-format strobe, and anything unrecognized is skipped, not guessed at.
     """
@@ -109,7 +109,7 @@ def parse_tsv(path: Path) -> ParsedTsv:
                     # A header line torn by the crash that stopped the session
                     # is the realistic way to get here, and half a snapshot
                     # that every reader has to defend against is worse than
-                    # none: the ladder below it (§8.3) still scores the run.
+                    # none: the ladder below it (`DATA.md#which-profile-decodes-a-run`) still scores the run.
                     decoded = _decode_json(value)
                     if decoded is not None:
                         metadata[key] = decoded
@@ -124,11 +124,11 @@ def parse_tsv(path: Path) -> ParsedTsv:
 
 
 def recover_file(tsv_path: Path) -> dict[str, Any]:
-    """Backfill one orphaned `.tsv`'s `.json` and `.mat` (§11).
+    """Backfill one orphaned `.tsv`'s `.json` and `.mat` (`DATA.md#crash-recovery`).
 
     Returns one wire-shaped `RecoveredTsv` entry. The `.json` is the recovery
     — a failure writing it fails the entry. The `.mat` stays best-effort,
-    mirroring `finalize` (§7.2): by then the recovered document is durably on
+    mirroring `finalize` (`DATA.md#built-once-at-the-end`): by then the recovered document is durably on
     disk twice over.
     """
     entry: dict[str, Any] = {
@@ -219,7 +219,7 @@ def _coerce(key: str, value: str) -> Any:
 
     The header renders every value as text, so types must be read back out:
     lowercase booleans exactly as `_render` spells them, then numbers, then
-    the string itself. §5 core fields skip all of it — they are defined as
+    the string itself. Core fields (`_STRING_FIELDS`) skip all of it — they are defined as
     strings whatever they look like.
     """
     if key in _STRING_FIELDS:

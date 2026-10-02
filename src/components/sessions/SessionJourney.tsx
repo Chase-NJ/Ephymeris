@@ -42,7 +42,7 @@ const STEPS: { id: JourneyStep; label: string }[] = [
  *
  * After Boxes, not before, because the recording step assigns a headstage port
  * to each MAPPED box — it has nothing to ask until the mapping exists
- * (`recording.md` §4).
+ * (`ARCHITECTURE.md#recording-step`).
  */
 const RECORDING_STEPS: { id: JourneyStep; label: string }[] = STEPS.flatMap((s) =>
   s.id === "run" ? [{ id: "record" as const, label: "Record" }, s] : [s],

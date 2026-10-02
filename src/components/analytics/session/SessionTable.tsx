@@ -15,8 +15,8 @@ import { binFor, labelColor } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
 
 /**
- * The session at a glance, one row per animal (`data.md` §11.4) — the
- * comparison the cards cannot give without reading six of them.
+ * The session at a glance, one row per animal (`DATA.md#pooling-across-tasks`)
+ * — the comparison the cards cannot give without reading six of them.
  *
  * **Read as groups of two, not as a strip of numbers.** Every tally on the row
  * is one of a pair — how many trials this animal sampled, and what fraction of
@@ -33,14 +33,15 @@ import { springSnappy } from "@/lib/motion";
  * conditions than the window is wide.
  *
  * **`rewarded` is `pRewarded` — reward delivered, the animal held.** That is
- * deliberately stricter than the app's response accuracy (`pSide`, §9.8),
+ * deliberately stricter than the app's response accuracy (`pSide`,
+ * `DATA.md#rewarded-and-response-accuracy`),
  * which credits a correct well whether or not the hold cleared. The legend
  * says so, because the two look interchangeable and are not.
  *
  * **Colour carries the rate and nothing else.** The rate cells use the
- * heatmap's own diverging ramp (§11.8) — the same bins, centred on chance —
- * so a rate means the same colour here as it does in the cohort heatmap, and
- * a row of four conditions can be read as a pattern before it is read as
+ * dashboard's diverging ramp (`DATA.md#colour-palette`) — the same bins,
+ * centred on chance — so a rate means the same colour here as everywhere else,
+ * and a row of four conditions can be read as a pattern before it is read as
  * numbers. Everything structural stays in the neutral stack; the only other
  * colour on the row is the animal's identity dot.
  */
@@ -373,17 +374,18 @@ function Pair({
 }
 
 /**
- * The rewarded share, as a chip on the heatmap's own diverging ramp (§11.8).
+ * The rewarded share, as a chip on the diverging ramp
+ * (`DATA.md#colour-palette`).
  *
  * A bar was here before, which encoded the same number twice and still needed
  * the reader to compare lengths across a row; the ramp is quantized around
  * chance, so "at chance", "learning" and "solid" are three colours rather than
- * three lengths — and it is the colour language the cohort heatmap already
- * taught. Below `minCounted` sampled trials the chip drops to an outline:
- * flagged, never suppressed (§9.5). It used to print its n in parentheses too,
- * which is what the flag meant in the old flat table — in a paired layout the
- * `sampled` cell immediately to its left **is** that n, so the number was on
- * the row twice and only the wrapping was new.
+ * three lengths — and it is the colour language the rest of Analytics already
+ * uses. Below `minCounted` sampled trials the chip drops to an outline:
+ * flagged, never suppressed (`DATA.md#uncertainty`). It used to print its n in
+ * parentheses too, which is what the flag meant in the old flat table — in a
+ * paired layout the `sampled` cell immediately to its left **is** that n, so
+ * the number was on the row twice and only the wrapping was new.
  */
 function RateCell({
   outcomes,
@@ -440,7 +442,7 @@ function RateCell({
  * a task profile this install has never seen, and it still says what it ran.
  * What that costs is fidelity of *decoding*, not of identity, so the provenance
  * mark carries it: an inferred run was scored from its own strobes rather than
- * from the task's declaration (`data.md` §8.2).
+ * from the task's declaration (`DATA.md#which-profile-decodes-a-run`).
  */
 function Program({ run, reason }: { run: RunSummary; reason: string | null }) {
   const mark = PROVENANCE[run.profileSource];
@@ -469,7 +471,8 @@ function Program({ run, reason }: { run: RunSummary; reason: string | null }) {
 }
 
 /**
- * How the run was decoded, as one character (§8.2).
+ * How the run was decoded, as one character
+ * (`DATA.md#which-profile-decodes-a-run`).
  *
  * A snapshot is the good case and carries no mark — a glyph on every row would
  * say nothing. The other two are worth a mark precisely because they look

@@ -1,4 +1,4 @@
-"""The questions only a REAL Intan RHX can answer (`recording.md` §8).
+"""The questions only a REAL Intan RHX can answer (`RECORDING.md#not-yet-verified`).
 
 Opt-in, and doubly so: it needs `EPHYMERIS_REAL_RHX=1` AND RHX's command server
 free on 127.0.0.1:5000. RHX accepts ONE command client, so Ephymeris itself

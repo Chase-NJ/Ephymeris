@@ -195,7 +195,7 @@ if (existsSync(join(dataDir, "packages", "arduino"))) {
 }
 
 // --- 4. bundle the sketch library ------------------------------------------
-// Sketches ship with the app (`docs/tasks.md` §2). stage-sketches.mjs owns the
+// Sketches ship with the app (`TASKS.md#sketch-library`). stage-sketches.mjs owns the
 // merge of the two source repos; this just re-runs it fresh and copies the
 // result into the installer payload. Never reuses a stale staging, unlike the
 // arduino data seed — sketches are small and edited often, and a stale copy in

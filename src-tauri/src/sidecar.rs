@@ -214,7 +214,7 @@ pub fn spawn<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
 
     // The cohort database belongs in the app's own data directory, beside
     // `settings.json` — not in the user's configured `dataDirectory`, which is
-    // for browsable session output (`cohorts.md` §3). Resolved here so the
+    // for browsable session output (`DATA.md#layout`). Resolved here so the
     // shell and the sidecar can't disagree about where that is.
     let data_dir = app
         .path()

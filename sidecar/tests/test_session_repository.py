@@ -1,4 +1,4 @@
-"""Prefix / session persistence — `data.md` §3.1–§4."""
+"""Prefix / session persistence — `DATA.md#sessions-and-runs`."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def repo(db: Database) -> SessionRepository:
     return SessionRepository(db)
 
 
-# --- §3 prefixes ----------------------------------------------------------
+# --- prefixes (`DATA.md#prefixes`) ----------------------------------------
 
 
 def test_prefixes_are_created_and_listed(repo) -> None:
@@ -66,7 +66,7 @@ def test_deleting_a_prefix_frees_the_name(repo) -> None:
     assert repo.create_prefix("2O-Bdisc").name == "2O-Bdisc"
 
 
-# --- §2.2 session number suggestion --------------------------------------
+# --- session number suggestion (`ARCHITECTURE.md#configuration`) ---------
 
 
 def test_no_history_yields_no_suggestion(repo) -> None:
@@ -110,7 +110,7 @@ def test_same_day_numbers_are_scoped_to_prefix_and_date(db, repo) -> None:
     assert repo.session_numbers_on(p.id, "2026-07-22") == ["25"]
 
 
-# --- §4 sessions ----------------------------------------------------------
+# --- sessions (`DATA.md#session-records`) ---------------------------------
 
 
 def test_a_new_session_starts_configuring(db, repo) -> None:
@@ -122,7 +122,7 @@ def test_a_new_session_starts_configuring(db, repo) -> None:
 
 
 def test_a_session_duration_round_trips(db, repo) -> None:
-    """The per-box time limit (§2.3) survives the write and read back."""
+    """The per-box time limit (`ARCHITECTURE.md#configuration`) survives the write and read back."""
     cohort = CohortRepository(db).create("C", "/tmp/c")
     p = repo.create_prefix("2O-Bdisc")
     session = repo.create_session(
@@ -160,7 +160,7 @@ def test_group_runs_round_trip_as_json(db, repo) -> None:
 
 
 def test_a_prefix_can_be_deleted_without_touching_its_sessions(db, repo) -> None:
-    """§3 — removing a prefix doesn't destroy history, just the dropdown entry."""
+    """`DATA.md#prefixes` — removing a prefix doesn't destroy history, just the dropdown entry."""
     cohort = CohortRepository(db).create("C", "/tmp/c")
     p = repo.create_prefix("2O-Bdisc")
     session = repo.create_session(cohort.id, p, "25", "2026-07-22", "/tmp/f")
@@ -230,7 +230,7 @@ def test_deleting_a_cohort_cascades_to_its_sessions(db, repo) -> None:
         repo.get_session(session.id)
 
 
-# --- §1–§2 naming ---------------------------------------------------------
+# --- naming (`DATA.md#names`) ---------------------------------------------
 
 
 def test_session_folder_name_matches_the_convention() -> None:
@@ -258,7 +258,7 @@ def test_animal_files_share_a_timestamped_basename() -> None:
     assert files.basename == "remy1_2O-Bdisc_25_2026-07-22_113123"
 
 
-# --- §2 the ISO date change and its legacy compatibility ------------------
+# --- the ISO date change and its legacy compatibility (`DATA.md#why-the-date-is-hyphenated`) ---
 
 
 def test_session_folders_sort_chronologically_across_a_year_boundary() -> None:

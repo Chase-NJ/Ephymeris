@@ -4,7 +4,7 @@
  * Owns endpoint discovery (via the Tauri shell), authentication, request/reply
  * correlation, event fan-out, and reconnection with backoff. Consumers observe
  * `onStatus` and react to `connected` — that is the hook the settings push
- * required by `settings.md` §4 hangs off.
+ * required by `ARCHITECTURE.md#persistence-and-push` hangs off.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -67,12 +67,12 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   // A first sync can be an entire archive copied to a network share.
   [CMD.BACKUP_SYNC_NOW]: 600_000,
   // A cold first index reads every historical session file, and every one of
-  // them takes the slow fallback-decode path (`websocket-protocol.md` §3.4).
+  // them takes the slow fallback-decode path (`PROTOCOL.md#cmd-analytics.summary`).
   [CMD.ANALYTICS_SUMMARY]: 120_000,
   [CMD.ANALYTICS_RESCAN]: 300_000,
   // Same walk as the rescan, plus a .json/.mat write per orphan found.
   [CMD.SESSIONS_RECOVER]: 300_000,
-  // A RECORDING session ends gracefully (`recording.md` §5): every box is
+  // A RECORDING session ends gracefully (`RECORDING.md#graceful-end`): every box is
   // allowed to finish the trial it is in — up to 45 s — before RHX is stopped.
   // A behavior-only session still answers in well under a second.
   [CMD.SESSIONS_END]: 90_000,

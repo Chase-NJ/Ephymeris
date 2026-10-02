@@ -1,7 +1,7 @@
-"""Mirror path resolution — `data.md` §7.
+"""Mirror path resolution — `DATA.md#mirror-layout`.
 
 A cohort's data folder can be relocated anywhere via `cohorts.setDataFolder`
-(`cohorts.md` §8), so a mirror path **cannot** be derived by subtracting
+(`DATA.md#data-folder`), so a mirror path **cannot** be derived by subtracting
 `Settings.dataDirectory` from a source path — the source may not live under it.
 Every mirrored file is anchored on the cohort folder that contains it instead:
 

@@ -1,4 +1,4 @@
-"""Reading finalized session files back off disk — `data.md` §8.
+"""Reading finalized session files back off disk — `DATA.md#reading-the-archive`.
 
 The sidecar has never done this before: `writer.finalize` returns its document
 in memory precisely so callers *don't* re-read it. Analytics is the first
@@ -7,7 +7,7 @@ caller.
 
 **A bad file is data, not an error.** Every failure below becomes a status and
 a message on the run, never a raised exception — one unreadable `.json` must
-not blank a year of history (§9).
+not blank a year of history (`DATA.md#caching`).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 #: Sibling format folders, so a missing `.json` can be checked against the
-#: write-ahead log that may still hold the data (`data.md` §1).
+#: write-ahead log that may still hold the data (`DATA.md#layout`).
 TSV_DIR = "behavior.tsv"
 JSON_DIR = "behavior.json"
 
@@ -75,7 +75,7 @@ class StatResult:
 
     Split out from `ReadResult` because the cache key is answerable without
     opening the file, and the indexing path asks that question about every run
-    on every dashboard open (§8.3).
+    on every dashboard open (`DATA.md#caching`).
     """
 
     status: str  # 'ok' | 'missing' | 'unreadable'
@@ -135,7 +135,7 @@ def is_sidecar_file(path: Path) -> bool:
 def run_identity(path: Path) -> str:
     """What makes two files the same run, regardless of where they sit.
 
-    The per-animal filename (`data.md` §2) is
+    The per-animal filename (`DATA.md#names`) is
     `<animal>_<prefix>_<number>_<date>_<HHMMSS>` — animal plus session plus
     start time. That is precisely a run's identity, which is what makes the
     stem usable as one. Two copies of a run in different folders are one run;
@@ -169,7 +169,9 @@ def stat_run(path: str | Path) -> StatResult:
     Two of `read_run`'s three outcomes are decided here:
 
     * **missing** — nothing at that path. When the sibling `.tsv` *is* there,
-      say so: that is the disk-full-at-finalization case (`data.md` §5.2 writes `.json` best-effort and only logs an `OSError`), the data is
+      say so: that is the disk-full-at-finalization case
+      (`DATA.md#built-once-at-the-end`: the writer writes `.json` best-effort
+      and only logs an `OSError`), the data is
       not lost, and the crash-recovery utility is what fixes it.
     * **unreadable** — the path itself can't be interrogated.
     * **ok** — with the stat the cache key is built from.
@@ -239,7 +241,8 @@ def read_run(path: str | Path) -> ReadResult:
 
 
 def walk_session_files(cohort_folder: str | Path) -> list[Path]:
-    """Every per-animal `.json` under one cohort's data folder (§8.1).
+    """Every per-animal `.json` under one cohort's data folder
+    (`DATA.md#database-first`).
 
     Only used by the explicit rescan — the normal path reads what run records
     point at. Two rules do all the work here, and both are stated positively so
@@ -260,7 +263,8 @@ def walk_session_files(cohort_folder: str | Path) -> list[Path]:
     from being mistaken for a session.
 
     A directory that can't be read costs a warning and its own contents, never
-    the cohort: **a bad directory is data too**, the same call §8.3 makes for a
+    the cohort: **a bad directory is data too**, the same call
+    `DATA.md#caching` makes for a
     bad file. That is why this returns a list and not an error.
     """
     found: list[Path] = []
@@ -277,11 +281,12 @@ def walk_session_files(cohort_folder: str | Path) -> list[Path]:
 def walk_orphaned_tsvs(cohort_folder: str | Path) -> list[Path]:
     """Every `.tsv` under one cohort's data folder with no `.json` sibling.
 
-    The crash-recovery backfill's discovery pass (`data.md` §12, §11)
+    The crash-recovery backfill's discovery pass (`DATA.md#crash-recovery`)
     — the same traversal as `walk_session_files`, looking at the *other*
     format folders. A `.tsv` whose structured copy never got written is
     precisely a run that ended in a crash (no finalization at all) or in a
-    failed best-effort `.json` write (§7.2) — either way, the write-ahead log
+    failed best-effort `.json` write (`DATA.md#built-once-at-the-end`) — either
+    way, the write-ahead log
     is the surviving authority and the file is worth offering for recovery.
 
     A sibling that can't even be `stat`ed is treated as present: recovery
@@ -307,7 +312,7 @@ def walk_session_dirs(cohort_folder: str | Path) -> list[Path]:
     """Every distinct session folder under one cohort's data folder.
 
     A session folder is defined the same way `session_folder_of` defines it —
-    the *parent* of a format folder — so this is the §8.1 traversal reporting
+    the *parent* of a format folder — so this is the archive walk's traversal reporting
     directories instead of files. Names only, nothing opened: what
     `analytics.recentSessions` needs, and all it is allowed to cost, since it
     runs from the Dashboard where the rescan deliberately does not.
@@ -326,8 +331,9 @@ def walk_session_dirs(cohort_folder: str | Path) -> list[Path]:
 def _walk_format_dirs(cohort_folder: str | Path):
     """Yield every format folder under a cohort folder as `(path, filenames)`.
 
-    The one traversal both walks share — `data.md` §8.1's adoption and the
-    crash-recovery backfill of `data.md` §12. Format folders are matched **by
+    The one traversal both walks share — orphan adoption
+    (`DATA.md#orphan-adoption`) and the crash-recovery backfill
+    (`DATA.md#crash-recovery`). Format folders are matched **by
     name at any depth**, pruned at the format folder, dotted/`__MACOSX` folders
     skipped, depth floored at `MAX_FORMAT_DEPTH`. A directory that can't be read
     costs a warning and its own contents, never the cohort.

@@ -1,9 +1,9 @@
 /**
  * Document-level SVG defs, mounted once by the app shell.
  *
- * Holds the continuous-corner (squircle) clip path referenced by `.squircle`
- * (dashboard.md §1.4). Declared in `objectBoundingBox` units so a single
- * definition scales to whatever size the mark is drawn at.
+ * Holds the continuous-corner (squircle) clip path referenced by `.squircle`.
+ * Declared in `objectBoundingBox` units so a single definition scales to
+ * whatever size the mark is drawn at.
  */
 export function SvgDefs() {
   return (

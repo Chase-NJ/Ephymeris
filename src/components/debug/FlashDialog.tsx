@@ -9,14 +9,14 @@ import { useSidecar } from "@/lib/ws/context";
 import { CMD, EVT } from "@/lib/ws/protocol";
 
 /**
- * The flashing flow (`dashboard.md` §6.1): pick a sketch from the
- * categorized list discovered in the configured Arduino Directory, then watch
+ * The flashing flow (`ARCHITECTURE.md#flashing`): pick a sketch from the
+ * categorized list discovered in the sketch library, then watch
  * compile/upload progress stream in — not a spinner-until-done.
  *
- * The list is the only path to a flashable sketch (`tasks.md` §2.3),
- * and all four directory states from §6 render distinctly here. The sidecar
- * enforces list membership too; this UI is the convenient face of that rule,
- * not the rule itself.
+ * The list is the only path to a flashable sketch (`TASKS.md#discovery`),
+ * and every library state (`TASKS.md#library-states`) renders distinctly here.
+ * The sidecar enforces list membership too; this UI is the convenient face of
+ * that rule, not the rule itself.
  */
 
 interface ProgressEntry {
@@ -98,15 +98,16 @@ export function FlashDialog({
       /*
        * **A flash from Debug Mode ends with a console, whichever state it
        * started in.** The sidecar resumes passthrough only when one was open
-       * before the flash (`dashboard.md` §5.3), so a flash from `IDLE` — the
-       * resting state of every box, and so the usual case — used to land in
-       * `IDLE` with the send box disabled and nothing on screen to say why.
-       * Someone who has just put a sketch on a board wants to talk to it.
+       * before the flash (`ARCHITECTURE.md#exclusivity`), so a flash from
+       * `IDLE` — the resting state of every box, and so the usual case — used
+       * to land in `IDLE` with the send box disabled and nothing on screen to
+       * say why. Someone who has just put a sketch on a board wants to talk to
+       * it.
        *
-       * Opened here rather than by the sidecar so §5.3 stays true as written
-       * and the session sequence's `IDLE` landing is untouched. The open also
-       * toggles DTR, which reboots the Mega: a behaviour sketch prints `READY`
-       * into the console and waits there for `START`.
+       * Opened here rather than by the sidecar so that rule stays true as
+       * written and the session sequence's `IDLE` landing is untouched. The
+       * open also toggles DTR, which reboots the Mega: a behaviour sketch
+       * prints `READY` into the console and waits there for `START`.
        *
        * Best-effort. The flash succeeded either way, and the Open button is
        * still there; a failed open only changes what the message says.

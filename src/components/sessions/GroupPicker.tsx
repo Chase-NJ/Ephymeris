@@ -11,7 +11,7 @@ import {
 } from "@/lib/sessions/types";
 
 /**
- * Which group goes on the rig next (`dashboard.md` §5.2, §7.6).
+ * Which group goes on the rig next (`ARCHITECTURE.md#group-step`).
  *
  * There is no run order: the operator picks, at setup and at every switch, from
  * every group that has a box-assigned animal. A group that already ran in this

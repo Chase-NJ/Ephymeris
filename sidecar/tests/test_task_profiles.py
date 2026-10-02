@@ -1,4 +1,4 @@
-"""Task Profiles — `tasks.md` §3."""
+"""Task Profiles — `TASKS.md#task-profile`."""
 
 from __future__ import annotations
 
@@ -32,11 +32,11 @@ GRGL = {
 }
 
 
-# --- §6.1 discovery -------------------------------------------------------
+# --- discovery (`TASKS.md#task-profile`) ----------------------------------
 
 
 def test_a_sketch_without_a_task_json_is_profile_less(tmp_path: Path) -> None:
-    """§6.1 — fully supported, not an error."""
+    """`TASKS.md#task-profile` — fully supported, not an error."""
     (tmp_path / "clean_flush.ino").write_text("void setup(){}", encoding="utf-8")
     assert load_profile(tmp_path) is None
 
@@ -57,7 +57,7 @@ def test_a_malformed_task_json_raises_rather_than_silently_dropping(tmp_path: Pa
         load_profile(tmp_path)
 
 
-# --- §6.2 parsing ---------------------------------------------------------
+# --- parsing (`TASKS.md#task-profile`) ------------------------------------
 
 
 def test_the_supplied_grgl_profile_round_trips_to_json() -> None:
@@ -70,7 +70,7 @@ def test_the_supplied_grgl_profile_round_trips_to_json() -> None:
 
 
 def test_every_shipped_profile_keeps_its_hash_through_a_round_trip() -> None:
-    """THE IDENTITY A COPIED SESSION FILE DEPENDS ON (`data.md` §4.4).
+    """THE IDENTITY A COPIED SESSION FILE DEPENDS ON (`DATA.md#the-embedded-task-profile`).
 
     A run's file carries its profile as JSON; the machine that reads it parses
     that back and re-serializes to hash it. If the pair is not exactly
@@ -143,7 +143,7 @@ def test_empty_sections_default_cleanly() -> None:
     assert profile.strobes == {}
 
 
-# --- §6.6 utility profiles (kind + controls + telemetry) -----------------
+# --- utility profiles: kind + controls + telemetry (`TASKS.md#utility-controls-and-telemetry`) ---
 
 # The exact task.json the user supplied for PRIME_Lines.
 PRIME_LINES = {
@@ -216,7 +216,7 @@ def test_select_control_requires_non_empty_options() -> None:
                        "controls": [{"id": "g", "type": "select", "options": []}]})
 
 
-# --- grid controls (§6.6) --------------------------------------------------
+# --- grid controls (`TASKS.md#utility-controls-and-telemetry`) -------------
 
 GRID_PROFILE = {
     "taskName": "Box Utility",
@@ -296,7 +296,7 @@ def test_a_utility_profile_gets_a_bare_start_command() -> None:
     assert build_start_command(parse_profile(PRIME_LINES), {}) == "START"
 
 
-# --- §6.3 START command builder ------------------------------------------
+# --- START command builder (`TASKS.md#building-the-line`) ----------------
 
 
 def test_start_command_uses_wire_keys_and_defaults() -> None:
@@ -319,7 +319,7 @@ def test_bools_render_as_one_and_zero_not_true_false() -> None:
 
 
 def test_unknown_config_keys_are_ignored() -> None:
-    """§6.3 — stale UI state can't leak unknown tokens onto the wire."""
+    """`TASKS.md#building-the-line` — stale UI state can't leak unknown tokens onto the wire."""
     profile = parse_profile(GRGL)
     cmd = build_start_command(profile, {"correction_left": 3, "not_a_field": 99})
     assert "not_a_field" not in cmd
@@ -331,7 +331,7 @@ def test_a_profile_less_sketch_gets_bare_start() -> None:
     assert build_start_command(parse_profile({"taskName": "Utility"}), {}) == "START"
 
 
-# --- §6.5 live metric computation (the scientific output) ----------------
+# --- live metric computation, the scientific output (`TASKS.md#live-metrics`) ---
 
 # GRGL codes: 101 = Odor 1 on, 103 = Odor 3 on, 249 = water poke R, 248 = water poke L.
 # Metric p_r_odor1: trigger 101, success 249 (went right), alternate 248 (went left).
@@ -400,7 +400,7 @@ def test_two_metrics_score_independently_from_one_stream() -> None:
 
 
 def test_an_odor3_onset_ends_an_unresolved_odor1_trial() -> None:
-    """The union of trigger codes forms the trial boundary set (§6.5)."""
+    """The union of trigger codes forms the trial boundary set (`TASKS.md#boundary-codes`)."""
     m = metric()  # p_r_odor1, boundaries = {101, 103}
     boundaries = frozenset({101, 103})
     # 101 (odor1) then 103 (odor3) with no water poke → odor1 trial excluded
@@ -413,7 +413,7 @@ def test_a_profile_less_metric_set_is_empty() -> None:
     assert metric_set.offer(101) == []
 
 
-# --- §6.7 the legacyNames index -------------------------------------------
+# --- the legacyNames index (`TASKS.md#legacy-names`) ----------------------
 
 
 class _Sketch:
@@ -465,7 +465,7 @@ def test_one_broken_task_json_does_not_hide_the_others() -> None:
     assert index == {"Shape - R": "good"}
 
 
-# --- §6.2 presentation metadata ------------------------------------------
+# --- presentation metadata (`TASKS.md#config-fields`) --------------------
 
 
 def _field(**overrides: object) -> dict:
@@ -475,7 +475,7 @@ def _field(**overrides: object) -> dict:
 
 
 def test_presentation_metadata_round_trips() -> None:
-    """§6.2 — group/unit/min/max/step/help/advanced ride through to the wire."""
+    """`TASKS.md#config-fields` — group/unit/min/max/step/help/advanced ride through to the wire."""
     profile = parse_profile({"taskName": "T", "config": [_field(
         group="Stage 0", unit="ms", min=0, max=5000, step=10,
         help="Hold required before odor delivery.", advanced=True)]})
@@ -507,11 +507,11 @@ def test_min_above_max_is_rejected() -> None:
         parse_profile({"taskName": "T", "config": [_field(min=500, max=10)]})
 
 
-# --- §6.2 the four silent-failure guards ----------------------------------
+# --- the four silent-failure guards (`TASKS.md#what-raises`) --------------
 
 
 def test_a_profile_cannot_claim_the_reserved_seed_key() -> None:
-    """§6.4 — the app appends SEED itself, so a profile claiming it would put
+    """`TASKS.md#seed` — the app appends SEED itself, so a profile claiming it would put
     two SEED tokens on one line and the firmware would keep whichever parsed
     last. Nothing downstream would report the lost value."""
     with pytest.raises(TaskProfileError, match="reserved wire key"):
@@ -520,7 +520,7 @@ def test_a_profile_cannot_claim_the_reserved_seed_key() -> None:
 
 @pytest.mark.parametrize("core", ["rat", "sketch", "session_id", "trial_seed", "n_events"])
 def test_a_metadata_key_cannot_collide_with_a_core_field(core: str) -> None:
-    """§5 — config is merged into the session file FLAT at the top level, so a
+    """`DATA.md#the-json-document` — config is merged into the session file FLAT at the top level, so a
     collision overwrites the core field instead of sitting beside it. A run
     whose `rat` field held a poke-hold duration would be unrecoverable."""
     with pytest.raises(TaskProfileError, match="collides with a core"):
@@ -561,7 +561,7 @@ def test_a_string_default_cannot_contain_whitespace() -> None:
         parse_profile({"taskName": "T", "config": [_field(type="string", default="two words")]})
 
 
-# --- §6.3 the START line length cap ---------------------------------------
+# --- the START line length cap (`TASKS.md#the-length-cap`) ----------------
 
 
 def _wide_profile(n: int) -> dict:

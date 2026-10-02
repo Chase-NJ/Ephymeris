@@ -20,7 +20,7 @@ import {
 export const STRATEGY_SESSIONS = 30;
 
 /**
- * Discrimination versus bias, **across sessions** (`data.md` §11.1).
+ * Discrimination versus bias, **across sessions** (`DATA.md#strategy-plane`).
  *
  * One point per animal per session, for the cohort's 30 most recent sessions:
  * x is the fraction correct at the LEFT well, y at the RIGHT well, each pooled
@@ -105,7 +105,7 @@ export function StrategySpace({
         >
           <PlaneReferences />
           {/* One component per animal — this is what keeps a hover from
-              re-rendering every point in the panel (§2.1). */}
+              re-rendering every point in the panel. */}
           {plot.animals.map((animal) => (
             <AnimalPoints
               key={animal.animalId}
@@ -215,7 +215,7 @@ function buildPoints(summary: AnalyticsSummary): {
     const x = sideAccuracy(run, "left").p;
     const y = sideAccuracy(run, "right").p;
     // A run that answered nothing at one well has no position on this plane,
-    // and one is not invented for it (§3.6).
+    // and one is not invented for it (`DATA.md#edge-cases`).
     if (x === null || y === null) {
       skipped += 1;
       continue;

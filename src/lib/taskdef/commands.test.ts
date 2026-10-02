@@ -1,5 +1,5 @@
 /**
- * Naming a duplicated task — `tasks.md` §10.
+ * Naming a duplicated task — `TASKS.md#landing`.
  *
  * Two saved tasks sharing a name share a sketch folder, so saving one would
  * overwrite the other's firmware. The sidecar refuses that; this is what keeps

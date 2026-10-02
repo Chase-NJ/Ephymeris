@@ -1,5 +1,5 @@
 /**
- * Where the nodes land — `docs/tasks.md` §4.11.
+ * Where the nodes land — `TASKS.md#layout`.
  *
  * The defect these exist to prevent shipped for months and was invisible in
  * review: the abort band sat at constant rows while the condition fan grew from

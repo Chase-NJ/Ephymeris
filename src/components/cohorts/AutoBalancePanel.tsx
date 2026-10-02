@@ -7,7 +7,7 @@ import { suggestGroupsLocal } from "@/lib/cohorts/grouping";
 import { MAX_GROUP_SIZE, type Animal, type Group, type GroupProposal } from "@/lib/cohorts/types";
 
 /**
- * Auto-Balance — `cohorts.md` §7.
+ * Auto-Balance — `DATA.md#auto-balance`.
  *
  * A **suggestion the user reviews**, never a silent bulk mutation. Computed
  * entirely client-side (`lib/cohorts/grouping.ts`, mirroring the sidecar's
@@ -15,7 +15,7 @@ import { MAX_GROUP_SIZE, type Animal, type Group, type GroupProposal } from "@/l
  * works identically whether the cohort has been saved yet or not, rather than
  * needing a real `cohortId` to round-trip through the sidecar. This renders
  * the proposal as a preview; Apply hands it to the caller, which folds it into
- * local state the same way any other edit here does (§7.4) — there's no
+ * local state the same way any other edit here does — there's no
  * separate write route to reason about.
  *
  * Always a full re-proposal from the complete roster; it never merges with
@@ -47,7 +47,7 @@ export function AutoBalancePanel({
   const { offers } = useBoxAvailability();
 
   const [mode, setMode] = useState<Mode>("count");
-  // §7.1 — a courtesy default from the rig, editable and never enforced. Drawn
+  // A courtesy default from the rig, editable and never enforced. Drawn
   // from *bound* boxes rather than detected ones, matching what the box
   // selectors offer: a box that's merely unplugged is still one this cohort
   // can be planned around.
@@ -58,7 +58,7 @@ export function AutoBalancePanel({
   const [balanceBySex, setBalanceBySex] = useState(false);
   const [proposal, setProposal] = useState<GroupProposal | null>(null);
 
-  // §7.1 — the checkbox is only meaningful when there's sex data to balance.
+  // The checkbox is only meaningful when there's sex data to balance.
   const canBalanceBySex = useMemo(
     () => animals.some((a) => a.sex === "M" || a.sex === "F"),
     [animals],

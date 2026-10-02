@@ -4,7 +4,7 @@ import { useRef } from "react";
 import { useIsReport } from "@/components/analytics/report/context";
 
 /**
- * Arms a panel's draw-on reveal by visibility (`data.md` §10.5).
+ * Arms a panel's draw-on reveal by visibility (`DATA.md#drawing-lines`).
  *
  * The reveal exists to be watched — a line that draws itself below the fold
  * plays to nobody, and the reader scrolls down to an already-finished chart.
@@ -12,7 +12,7 @@ import { useIsReport } from "@/components/analytics/report/context";
  * screen, then plays once.
  *
  * The observation is one-shot: scrolling away and back must not replay a
- * reveal, only new data may (§2.7). Call sites get that by keying the
+ * reveal, only new data may. Call sites get that by keying the
  * component that owns this hook on their `revealKey` — a cohort swap or a
  * rescan remounts it, and the fresh gate again waits to be seen.
  *
@@ -21,9 +21,9 @@ import { useIsReport } from "@/components/analytics/report/context";
  * worse outcome than a chart that simply appears without drawing itself. With
  * no `IntersectionObserver` to ask, the answer is therefore "shown".
  *
- * That is also why a report sheet forces it (`data.md` §10.6). The sheet is
- * laid out off-screen so a capture doesn't depend on where the reader had
- * scrolled to, and an honest `useInView` there answers "no" forever — which
+ * That is also why a report sheet forces it (`DATA.md#exporting-a-sheet`). The
+ * sheet is laid out off-screen so a capture doesn't depend on where the reader
+ * had scrolled to, and an honest `useInView` there answers "no" forever — which
  * would export a page of empty panels rather than an unanimated one. Note this
  * fixes the animation *target* only; the sheet still needs
  * `MotionConfig skipAnimations` to collapse the durations and staggers.

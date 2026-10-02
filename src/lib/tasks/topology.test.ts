@@ -1,5 +1,5 @@
 /**
- * The derived state machine's decoding — `docs/tasks.md` §4.10.
+ * The derived state machine's decoding — `TASKS.md#one-condition-node`.
  *
  * Everything here fails QUIETLY without a check, which is the whole reason
  * these functions are pure and this file exists. A wrong condition looks

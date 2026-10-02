@@ -222,7 +222,7 @@ function ColumnHead({ label }: { label: string }) {
  * The session as a strip: one segment per stage, width proportional to how
  * long it holds, tint deepening as the ramp tightens. The last stage has no
  * end, so it takes a fixed tail. Tints are stepped per segment — data
- * encoding, not a gradient (§1.2 keeps Pulsar matte).
+ * encoding, not a gradient (`ARCHITECTURE.md#theme` keeps Pulsar matte).
  */
 function Timeline({
   stages,

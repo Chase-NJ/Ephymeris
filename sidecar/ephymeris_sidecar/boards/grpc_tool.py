@@ -1,4 +1,4 @@
-"""`arduino-cli` gRPC daemon backend — `README.md` §4.1.
+"""`arduino-cli` gRPC daemon backend — `ARCHITECTURE.md#flashing`.
 
 One long-lived `arduino-cli daemon` child replaces the per-call subprocess:
 board presence stops paying a process spawn per poll, and compile/upload
@@ -147,7 +147,7 @@ class GrpcBoardTool(BoardTool):
             instance=daemon.instance,
             fqbn=fqbn,
             sketch_path=sketch_dir,
-            # One shared libraries folder for every sketch (tasks.md §2.3).
+            # One shared libraries folder for every sketch (TASKS.md#folder-rules).
             libraries=[libraries_path] if libraries_path else [],
         )
         # Echoed from the request itself, and deliberately NOT dressed up as a
@@ -398,7 +398,7 @@ def _boards_from_response(response: Any) -> list[DetectedBoard]:
     Serial protocol only, a non-blank hardware id (falling back to the
     `serialNumber` property), a truthy vendor id, a non-empty address — and
     deliberately no allow-list of Arduino vendor ids, so CH340/FTDI clones
-    still appear (`settings.md` §7).
+    still appear (`ARCHITECTURE.md#board-discovery`).
     """
     boards: list[DetectedBoard] = []
     for detected in response.ports:

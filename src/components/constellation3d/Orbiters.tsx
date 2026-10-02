@@ -24,7 +24,8 @@ import { SHIP_GEOMETRY, createHullMaterial } from "./shipSurface";
  * mere presence is part of every program's cache key and one per belt made the
  * whole scene relink whenever a fleet appeared or left (see that module). The
  * ion engine adds a small green exhaust flicker while under way. None of it
- * lands on Pulsar, whose matte flatness §2.2 protects.
+ * lands on Pulsar, whose matte flatness the theme protects
+ * (`ARCHITECTURE.md#theme`).
  *
  * **Every ship orbits, always.** The craft used to park when its crew wasn't
  * running, on the app's "stillness is the status" grammar, but the fleet is not

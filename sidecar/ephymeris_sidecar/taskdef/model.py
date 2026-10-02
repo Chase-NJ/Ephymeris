@@ -160,7 +160,7 @@ class TaskDefinition:
     #: `metadataKey -> value`, and ONLY where it diverges from `fields.py`'s
     #: default. Storing the full merged set would mean a catalogue change could
     #: not reach a saved profile, which is the same reasoning `taskDefaults`
-    #: rests on (`tasks.md` §6.1).
+    #: rests on (`TASKS.md#three-layer-merge`).
     params: dict[str, Any] = field(default_factory=dict)
     #: Names the lab's archives record for runs this profile now covers. Without
     #: them those runs stop decoding in Analytics — silently, because a missing

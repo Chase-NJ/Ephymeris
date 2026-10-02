@@ -1,4 +1,4 @@
-"""Metrics derived from a recorded session — `data.md` §9.
+"""Metrics derived from a recorded session — `DATA.md#derived-metrics`.
 
 **Pure.** No I/O, no database, no clock. `(document, profile)` in, summary or
 series out — which is what makes it assertable against the live path over a
@@ -25,24 +25,28 @@ from ..tasks.profile import LiveMetric, TaskProfile
 #: Bumped whenever the maths below changes. Cached summaries carry the version
 #: they were computed under and are recomputed when it moves — without this, a
 #: fixed bug would keep serving numbers from the old definition forever, with
-#: no symptom anywhere (`data.md` §8.4).
-#: v3 added the trial-outcome tally (§3.8) — rewarded vs side accuracy.
-#: v4 split that tally per declared condition (§3.9), so "how many go-right
+#: no symptom anywhere (`DATA.md#caching`).
+#: v3 added the trial-outcome tally (`DATA.md#rewarded-and-response-accuracy`).
+#: v4 split that tally per declared condition (`DATA.md#per-condition-tally`),
+#: so "how many go-right
 #: trials were administered, and how many of those paid out" is answerable
 #: without re-reading the file.
 #: v5 fixed the pooled figure's trial counts: `triggered`/`excluded` now span
 #: every declared condition rather than only the ones that scored, so a
 #: condition the animal never answered stops vanishing from the denominator it
 #: was excluded from.
-#: v6 added the engagement ladder (§3.10), delimited on the trial light rather
+#: v6 added the engagement ladder (`DATA.md#engagement-ladder`), delimited on
+#: the trial light rather
 #: than on odor onset — the layer above every other count here, and the one
 #: that says how many trials the box offered at all.
-#: v7 added the inference rung (§8.3, `infer.py`): a run that resolves no
+#: v7 added the inference rung (`infer.py`,
+#: `DATA.md#which-profile-decodes-a-run`): a run that resolves no
 #: profile is scored from the stream itself. The maths here didn't move, but
 #: every cached "no-metrics" row predates the rung and must be re-read — which
 #: is exactly what this constant exists to force.
 #: v8 added `hits` and `answerSide` to every metric summary, for the strategy
-#: plane's fold onto two sides (§11.1). **The maths did not move here either,
+#: plane's fold onto two sides (`DATA.md#strategy-plane`). **The maths did not
+#: move here either,
 #: and that is the trap**: a cached row is served verbatim, so every run indexed
 #: before this shipped kept answering with a payload that had no `answerSide` at
 #: all — and a panel reading "no condition says which well it rewards" concluded
@@ -52,7 +56,8 @@ CODEC_VERSION = 8
 
 #: z for a 95% interval. Wilson rather than the normal approximation because
 #: this data lives at small n *and* at p near 1 — a trained animal sits around
-#: 0.95 — which is exactly where the normal approximation runs past 1.0 (§3.5).
+#: 0.95 — which is exactly where the normal approximation runs past 1.0
+#: (`DATA.md#uncertainty`).
 Z_95 = 1.959964
 
 
@@ -89,7 +94,8 @@ def wilson_interval(hits: int, n: int, z: float = Z_95) -> tuple[float, float] |
 
 @dataclass(frozen=True)
 class MetricSummary:
-    """One metric's whole-session result (§3.2, §3.3, §3.5)."""
+    """One metric's whole-session result (`DATA.md#two-probabilities-per-metric`,
+    `DATA.md#trial-counts`, `DATA.md#uncertainty`)."""
 
     id: str
     label: str
@@ -112,7 +118,8 @@ class MetricSummary:
     wilson_low: float | None
     wilson_high: float | None
     low_confidence: bool
-    #: Which answer this condition rewards (§4.10), or None when the profile
+    #: Which answer this condition rewards (`DATA.md#strategy-plane`), or None
+    #: when the profile
     #: cannot prove one. What lets the strategy plane fold N conditions onto two
     #: axes without knowing anything about odors.
     answer_side: str | None = None
@@ -137,7 +144,7 @@ class MetricSummary:
 
 @dataclass(frozen=True)
 class TrialOutcomes:
-    """What actually happened on each trial (§3.8).
+    """What actually happened on each trial (`DATA.md#rewarded-and-response-accuracy`).
 
     The declared metrics are **reward-unconditional**: `tasks/metrics.py` scores
     a `WATER_POKE_L/R` the instant the poke is detected, so an animal that
@@ -221,7 +228,8 @@ class TrialOutcomes:
 
 @dataclass(frozen=True)
 class TrialEngagement:
-    """How far each *offered* trial got before the animal dropped out (§3.10).
+    """How far each *offered* trial got before the animal dropped out
+    (`DATA.md#engagement-ladder`).
 
     `TrialOutcomes` and every accuracy above it are delimited on **odor onset**,
     and the firmware only reaches its odor-on strobe after the animal has poked
@@ -294,7 +302,7 @@ class TrialEngagement:
 @dataclass(frozen=True)
 class ConditionOutcomes:
     """The same tally as `TrialOutcomes`, restricted to one declared condition
-    (§3.9).
+    (`DATA.md#per-condition-tally`).
 
     A condition is a declared `liveMetrics` entry, identified by the trigger
     code that opens its trials — for GRGL that is odor 1 (answer right) and
@@ -331,15 +339,18 @@ class RunSummary:
     #: Accuracy pooled across every metric — see `_overall`. The honest single
     #: number for a run, and every per-run readout's default.
     overall: MetricSummary | None = None
-    #: None when the profile doesn't declare the outcome vocabulary (§3.8) —
+    #: None when the profile doesn't declare the outcome vocabulary
+    #: (`DATA.md#rewarded-and-response-accuracy`) —
     #: absent rather than zeroed, because "this task has no notion of a reward
     #: delivery" and "this animal earned nothing" are different claims.
     outcomes: TrialOutcomes | None = None
-    #: The same tally split per declared condition (§3.9). Empty — not None —
+    #: The same tally split per declared condition
+    #: (`DATA.md#per-condition-tally`). Empty — not None —
     #: when `outcomes` is None: there is no separate claim to make about a task
     #: whose vocabulary can't express an outcome at all.
     conditions: list[ConditionOutcomes] = field(default_factory=list)
-    #: How many trials the box *offered*, and how far each got (§3.10). None on
+    #: How many trials the box *offered*, and how far each got
+    #: (`DATA.md#engagement-ladder`). None on
     #: a profile that declares no trial light — same rule as `outcomes`, and for
     #: the same reason: a zeroed ladder would read as an animal that never
     #: engaged rather than as a task that can't say.
@@ -351,7 +362,7 @@ class RunSummary:
     seed: int | None = None
     detail: str | None = None
     #: A `kind: "utility"` profile is scored if it declares metrics, but left
-    #: out of cohort aggregates unless asked for (§3.6).
+    #: out of cohort aggregates unless asked for (`DATA.md#edge-cases`).
     excluded_by_default: bool = False
 
     def to_json(self) -> dict[str, Any]:
@@ -395,7 +406,7 @@ class MetricSeries:
 
 @dataclass(frozen=True)
 class StrategyPoint:
-    """One sample of the within-session strategy walk (§4.4)."""
+    """One sample of the within-session strategy walk (`DATA.md#strategy-plane`)."""
 
     #: Counted trials resolved across **both** conditions at this sample — the
     #: only shared clock the two metrics have. Not a wall time, and not either
@@ -412,7 +423,8 @@ class StrategyPoint:
 
 @dataclass(frozen=True)
 class TrialRecord:
-    """One classified trial (§9.11) — the tape the tallies are summed from."""
+    """One classified trial (`DATA.md#per-trial-tape`) — the tape the tallies
+    are summed from."""
 
     #: 0-based position in the stream's trial order.
     index: int
@@ -454,14 +466,15 @@ CLEAN_STOP_REASON = "BF_END_SESSION received"
 
 #: Below this many counted trials a value is flagged rather than trusted. The
 #: sidecar never suppresses — it reports the number, the count, the interval
-#: and this flag, and presentation decides what to do (§3.5).
+#: and this flag, and presentation decides what to do
+#: (`DATA.md#uncertainty`).
 DEFAULT_MIN_COUNTED = 10
 
 
 def codes_of(document: dict[str, Any]) -> list[int]:
     """The strobe codes out of `ts_data`, skipping malformed rows.
 
-    `ts_data` is `[[code, timestamp], …]` (`data.md` §4), but a
+    `ts_data` is `[[code, timestamp], …]` (`DATA.md#the-json-document`), but a
     hand-edited or recovery-produced file can hold anything, and an
     `IndexError` escaping from a worker thread would take out an indexing pass
     over an entire cohort.
@@ -532,10 +545,10 @@ def _timestamps(document: dict[str, Any]) -> list[int]:
     return out
 
 
-# --- trial outcomes (§3.8) --------------------------------------------------
+# --- trial outcomes (DATA.md#rewarded-and-response-accuracy) ----------------
 #
 # Recognised by **name** out of the profile's `strobes` map, not by hard-coded
-# codes: `tasks.md` §3 makes that map the sketch's own declaration of its
+# codes: `TASKS.md#strobes` makes that map the sketch's own declaration of its
 # vocabulary, and a code number means nothing without it. A task that doesn't
 # declare these names simply reports no outcomes — which is why every pattern
 # below is anchored rather than a loose substring.
@@ -551,7 +564,8 @@ _WRONG_WELL = re.compile(r"^WATER_POKE_ERROR(_|$)", re.IGNORECASE)
 _SAMPLED = re.compile(r"^ODOR_UNPOKE$", re.IGNORECASE)
 
 #: The trial light going on: the top of a presentation, before the animal has
-#: had any chance to act (§3.10). Exact, so `LIGHTS_OFF` — the same word, the
+#: had any chance to act (`DATA.md#engagement-ladder`). Exact, so `LIGHTS_OFF`
+#: — the same word, the
 #: opposite edge — can never open a presentation window.
 _PRESENTED = re.compile(r"^LIGHTS_ON$", re.IGNORECASE)
 #: The animal poked the odor port. Exact for the same reason `_SAMPLED` is:
@@ -592,7 +606,8 @@ def _vocabulary(profile: TaskProfile) -> _Vocabulary:
 def engagement_of(
     codes: list[int], profile: TaskProfile | None
 ) -> TrialEngagement | None:
-    """Walk the presentations and count how far each one got (§3.10).
+    """Walk the presentations and count how far each one got
+    (`DATA.md#engagement-ladder`).
 
     One pass, one open window at a time, and each stage latched rather than
     counted per occurrence — a presentation contributes at most one to each
@@ -665,10 +680,12 @@ def _classify_trials(
     whichever trial answers next.
 
     The opening code rides along so a caller can split the tally per condition
-    (§3.9) without a second, separately-drifting pass over the stream. The two
+    (`DATA.md#per-condition-tally`) without a second, separately-drifting pass
+    over the stream. The two
     indices — positions into `codes`, the settle index `None` for a trial
     nothing settled — ride along for the same reason: the per-trial tape
-    (§9.11) must come from *this* loop, because a second classifier would
+    (`DATA.md#per-trial-tape`) must come from *this* loop, because a second
+    classifier would
     drift from the first and the tape would stop agreeing with the tallies
     printed beside it.
     """
@@ -744,11 +761,12 @@ def outcomes_of(codes: list[int], profile: TaskProfile | None) -> TrialOutcomes 
 def conditions_of(
     codes: list[int], profile: TaskProfile | None
 ) -> list[ConditionOutcomes]:
-    """The same tally, split per declared condition (§3.9).
+    """The same tally, split per declared condition (`DATA.md#per-condition-tally`).
 
     Empty whenever `outcomes_of` is None, and in the same authored order as
     `liveMetrics` — the order the strategy space already treats as load-bearing
-    (§4.2), so a reader comparing the two panels is looking at the same axes in
+    (`DATA.md#strategy-plane`), so a reader comparing the two panels is looking
+    at the same axes in
     the same order.
     """
     classified = _classified_trials(codes, profile)
@@ -787,7 +805,8 @@ def _classified_trials(
 
 
 def trials_of(document: dict[str, Any], profile: TaskProfile | None) -> list[TrialRecord]:
-    """The per-trial tape (§9.11), or `[]` when the profile can't express one.
+    """The per-trial tape (`DATA.md#per-trial-tape`), or `[]` when the profile
+    can't express one.
 
     The same `_classify_trials` pass `outcomes_of`/`conditions_of` sum over,
     kept as a sequence — so tallying this list by class reproduces the run's
@@ -844,7 +863,7 @@ def summarize(
     *,
     min_counted: int = DEFAULT_MIN_COUNTED,
 ) -> RunSummary:
-    """Score one recorded run (§3)."""
+    """Score one recorded run (`DATA.md#derived-metrics`)."""
     codes = codes_of(document)
     stop_reason = document.get("stop_reason")
     stop_reason = stop_reason if isinstance(stop_reason, str) else None
@@ -861,7 +880,7 @@ def summarize(
         "seed": seed,
     }
 
-    # A sketch with no Task Profile is fully supported (`tasks.md` §3)
+    # A sketch with no Task Profile is fully supported (`DATA.md#edge-cases`)
     # and still worth listing — it has a real duration, event count and stop
     # reason. Inventing a default metric for it would be worse than saying so.
     if profile is None or not profile.live_metrics:
@@ -1017,7 +1036,8 @@ def series(
     mode: str = "rolling",
     metric_ids: Iterable[str] | None = None,
 ) -> list[MetricSeries]:
-    """The within-session trajectory, one entry per counted trial (§5).
+    """The within-session trajectory, one entry per counted trial
+    (`DATA.md#learning-curves`).
 
     `mode="cumulative"` widens the window to the whole session, so the curve
     is the running whole-session average rather than the rolling one. Unlike
@@ -1091,7 +1111,8 @@ def answer_side_of(profile: TaskProfile | None, metric: LiveMetric) -> str | Non
 
 @dataclass(frozen=True)
 class StrategyAxes:
-    """How this profile's conditions fold onto the plane's two axes (§4.4).
+    """How this profile's conditions fold onto the plane's two axes
+    (`DATA.md#strategy-plane`).
 
     The plane's whole meaning is that **an animal answering the same way
     regardless of stimulus sits on `x + y = 1`**, so its two axes have to be
@@ -1102,7 +1123,7 @@ class StrategyAxes:
 
     So the axes are **sides**, not metrics, and any number of conditions folds
     onto them: x is every condition answered at one well, y every condition
-    answered at the other. Pooled over integers (§`MetricSummary.hits`), so a
+    answered at the other. Pooled over integers (see `MetricSummary.hits`), so a
     condition with 200 trials counts for ten of a condition with 20.
 
     x takes the side of the FIRST declared metric, deliberately: on the
@@ -1163,9 +1184,9 @@ def strategy_trail(
     *,
     min_window: int = DEFAULT_MIN_COUNTED,
 ) -> list[StrategyPoint]:
-    """The within-session walk through the strategy space (§4.4).
+    """The within-session walk through the strategy space (`DATA.md#strategy-plane`).
 
-    The cross-session strategy space (§4) plots one point per session, so a
+    The cross-session strategy space plots one point per session, so a
     session is an endpoint there and its shape is invisible: an animal that
     spent the first eighty trials answering one port and then started
     discriminating lands in exactly the same place as one that was steady
@@ -1194,7 +1215,8 @@ def strategy_trail(
     thrashes between the edges for its first few trials — an artefact of the
     estimator that reads as a behaviour, which is the worst kind of wrong here.
     `DEFAULT_MIN_COUNTED` is reused rather than a fresh constant invented: it is
-    already the app's answer to "too few trials to read firmly" (§3.5). A window
+    already the app's answer to "too few trials to read firmly"
+    (`DATA.md#uncertainty`). A window
     authored shorter than that caps the requirement at its own size, so a
     small-window profile still gets a walk instead of silently getting none.
     """

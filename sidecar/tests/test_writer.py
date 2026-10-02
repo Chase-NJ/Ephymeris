@@ -1,6 +1,6 @@
-"""Per-animal session writer — `data.md` §4, §7.
+"""Per-animal session writer — `DATA.md#per-animal-files`, `DATA.md#crash-safety`.
 
-Includes the crash-durability kill test §7.3 asks for: hard-kill a live writer
+Includes the crash-durability kill test (`DATA.md#what-is-guaranteed`): hard-kill a live writer
 mid-session and prove the `.tsv` is intact up to the last flushed line.
 """
 
@@ -51,7 +51,7 @@ def make_writer(tmp_path: Path, *, profile: dict | None = PROFILE) -> AnimalWrit
     )
 
 
-# --- §7.1 the .tsv header and live lines ----------------------------------
+# --- the .tsv header and live lines (`DATA.md#written-live`) --------------
 
 
 def test_the_header_is_written_before_any_strobe(tmp_path: Path) -> None:
@@ -79,7 +79,7 @@ def test_strobes_append_in_the_boards_exact_format(tmp_path: Path) -> None:
     assert data_lines == ["221\t0", "222\t1000"]
 
 
-# --- §7.1/§7.2 finalization -----------------------------------------------
+# --- finalization (`DATA.md#built-once-at-the-end`) -----------------------
 
 
 def test_finalize_writes_the_footer_and_builds_json_and_mat(tmp_path: Path) -> None:
@@ -93,7 +93,7 @@ def test_finalize_writes_the_footer_and_builds_json_and_mat(tmp_path: Path) -> N
     assert "# stop_reason: BF_END_SESSION received" in tsv
     assert "# n_events: 2" in tsv
 
-    # §5 — core + flat config + data, in one document, matching the sample shape.
+    # `DATA.md#the-json-document` — core + flat config + data, in one document, matching the sample shape.
     assert document["rat"] == "remy1"
     assert document["correction_left"] == 0
     assert document["lazy_escalation"] is True
@@ -111,7 +111,7 @@ def test_finalize_writes_the_footer_and_builds_json_and_mat(tmp_path: Path) -> N
 
 
 def test_config_fields_are_flat_at_the_top_level_not_nested(tmp_path: Path) -> None:
-    """§5 — matches the sample exactly: no `config` wrapper key."""
+    """`DATA.md#the-json-document` — matches the sample exactly: no `config` wrapper key."""
     writer = make_writer(tmp_path)
     writer.open_files()
     document = writer.finalize("operator stop")
@@ -120,7 +120,7 @@ def test_config_fields_are_flat_at_the_top_level_not_nested(tmp_path: Path) -> N
 
 
 def test_the_document_carries_its_task_profile(tmp_path: Path) -> None:
-    """§4.4 — the file is self-describing, which is what lets a copy of it
+    """`DATA.md#the-embedded-task-profile` — the file is self-describing, which is what lets a copy of it
     decode on a machine that has never seen the sketch."""
     import json
 
@@ -159,7 +159,7 @@ def test_the_tsv_header_carries_the_snapshot_on_one_line(tmp_path: Path) -> None
 
 
 def test_a_profile_less_sketch_writes_no_snapshot(tmp_path: Path) -> None:
-    """Running a bare `START` is supported (`tasks.md` §3), and a document that
+    """Running a bare `START` is supported (`TASKS.md#task-profile`), and a document that
     carried an empty snapshot would claim a declaration that never existed."""
     from ephymeris_sidecar.tasks.profile import SNAPSHOT_KEY
 
@@ -193,7 +193,7 @@ def test_records_after_finalize_are_ignored(tmp_path: Path) -> None:
 
 
 def test_an_existing_tsv_is_refused_not_overwritten(tmp_path: Path) -> None:
-    """§7.1 — the durable file is opened exclusively.
+    """`DATA.md#written-live` — the durable file is opened exclusively.
 
     The `HHMMSS` in the filename makes this practically unreachable, but this
     is the one file carrying the durability guarantee: refusing to start beats
@@ -230,13 +230,13 @@ def test_a_write_to_a_bad_path_raises_writeerror(tmp_path: Path) -> None:
         writer.open_files()
 
 
-# --- §7.3 crash durability: the kill test ---------------------------------
+# --- crash durability: the kill test (`DATA.md#what-is-guaranteed`) -------
 
 
 def test_tsv_survives_a_mid_session_hard_kill(tmp_path: Path) -> None:
     """Hard-kill a live writer; the .tsv must hold every flushed line, no footer.
 
-    This is the guarantee `data.md` §5 exists to make real: if the lab PC
+    This is the guarantee `DATA.md#crash-safety` exists to make real: if the lab PC
     loses power mid-session, everything up through the last completed line is
     already on disk.
 

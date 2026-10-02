@@ -1,4 +1,4 @@
-"""The per-run trial seed — `tasks.md` §6.4.
+"""The per-run trial seed — `TASKS.md#seed`.
 
 A behaviour session's trial sequence must not be reproducible between runs. Two
 animals drawing the same odor order, or one animal drawing the same order on

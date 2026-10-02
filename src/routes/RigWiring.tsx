@@ -12,7 +12,7 @@ import { useRig } from "@/lib/hardware/useRig";
 import { springPanel } from "@/lib/motion";
 
 /**
- * Rig wiring — the channel→pin map, on its own page (`settings.md` §5.1).
+ * Rig wiring — the channel→pin map, on its own page (`TASKS.md#the-wiring-page`).
  *
  * A subpage of Rig rather than a group on it: the editor is a workbench —
  * board map, inspector rail, problems, break preview — and as one section of a

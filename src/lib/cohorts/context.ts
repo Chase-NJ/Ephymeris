@@ -26,7 +26,7 @@ export function useCohortsLoaded(): boolean {
 }
 
 /**
- * Active (non-archived) cohorts — what the grid shows by default (§4) and what
+ * Active (non-archived) cohorts — what the browser shows by default (`ARCHITECTURE.md#cohort-browser`) and what
  * the dashboard counts.
  */
 export function useActiveCohorts(): CohortSummary[] {

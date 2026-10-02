@@ -61,7 +61,7 @@ const NO_SELECTION = (): void => {};
 /**
  * How far the sky is turned down behind a screen that is mostly data.
  *
- * `dashboard.md` §2.5: ambient motion must never compete with live data
+ * Ambient motion must never compete with live data
  * collection. A drifting nebula behind a learning curve is exactly that, so
  * Analytics and the cohort editor keep the sky as texture rather than as
  * subject — present enough that the app is one continuous scene, faint enough

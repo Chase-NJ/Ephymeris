@@ -19,7 +19,8 @@ export interface Dot {
   x: number;
   /** 0–1, bottom to top — flipped here, like `unitY`. */
   y: number;
-  /** Drawn as a ring: the value is real but rests on too little data (§3.5). */
+  /** Drawn as a ring: the value is real but rests on too little data
+   * (`DATA.md#uncertainty`). */
   hollow?: boolean;
 }
 
@@ -27,7 +28,7 @@ export function ChartDots({
   dots,
   color,
   size = 6,
-  /** When false the dots hold at zero opacity, waiting to be seen (§2.7). */
+  /** When false the dots hold at zero opacity, waiting to be seen. */
   seen = true,
   /** Seconds from the first dot to the last, so they surface in step with a
    *  line drawing itself left to right. */

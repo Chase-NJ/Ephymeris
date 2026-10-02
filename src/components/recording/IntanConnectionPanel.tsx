@@ -11,9 +11,9 @@ import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 
 /**
- * The Recording tab's Connection tile body (`recording.md` §2): the link to
- * Intan RHX, the one click in RHX that opens it, and where its three TCP
- * servers listen.
+ * The Recording tab's Connection tile body (`RECORDING.md#talking-to-rhx`): the
+ * link to Intan RHX, the one click in RHX that opens it, and where its three
+ * TCP servers listen.
  *
  * On the RECORDING tab, beside the box→input bindings and the recording
  * defaults, because the person setting it up is setting up a recording — the

@@ -29,10 +29,10 @@ import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Settings (settings.md §4) — storage and interface.
+ * Settings (`ARCHITECTURE.md#where-each-setting-is-edited`) — storage and interface.
  *
  * Everything hardware-shaped (boxes, baud, arduino-cli, wiring)
- * lives on the Rig tab (§4.6); this screen is what's left. Deliberately usable
+ * lives on the Rig tab; this screen is what's left. Deliberately usable
  * while the sidecar is down — that's the whole reason settings are
  * shell-owned. Nothing here is gated on the WebSocket; only the backup
  * readout goes quiet.
@@ -304,7 +304,7 @@ export function Settings() {
  *
  * Ordered by what would hurt most. No data directory means nothing is being
  * written anywhere and takes the error tone outright; a failing mirror is the
- * next worst thing (`data.md` §7 — a backup that silently stopped is a promise
+ * next worst thing (`DATA.md#backup-mirroring` — a backup that silently stopped is a promise
  * the app isn't keeping); a live mirror earns Ion; no mirror at all is quiet
  * static, because it is a choice rather than a fault. Same tones
  * `BackupStatusNote` uses in the row below, so the corner and the row can

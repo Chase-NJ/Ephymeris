@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the session summary panel (`data.md` §11.4).
+ * Pure helpers for the session summary panel (`DATA.md#pooling-across-tasks`).
  *
  * Kept free of React and of the store, like `view.ts`, and kept separate from
  * it because these answer a different question: `view.ts` serves the
@@ -155,11 +155,12 @@ export interface RunClock {
  * When this animal's run ended.
  *
  * An adopted archive run carries no `endedAt` — the folder name records when
- * a session started and nothing records when it stopped (§8.1). But the file
- * itself does: `durationMs` is the span of the recorded stream, so start plus
- * span *is* the end of recording. Derived rather than dashed, and marked `~`
- * with the reason on hover, because "the archive predates end times" is a
- * fact about the record and an empty column is not the honest way to say it.
+ * a session started and nothing records when it stopped
+ * (`DATA.md#orphan-adoption`). But the file itself does: `durationMs` is the
+ * span of the recorded stream, so start plus span *is* the end of recording.
+ * Derived rather than dashed, and marked `~` with the reason on hover, because
+ * "the archive predates end times" is a fact about the record and an empty
+ * column is not the honest way to say it.
  */
 export function runEnd(run: RunSummary): RunClock {
   if (run.endedAt) {
@@ -177,7 +178,8 @@ export function runEnd(run: RunSummary): RunClock {
   return { text: "—", derived: false, title: "no end time recorded" };
 }
 
-/** One stacked-bar segment, in the fixed §9.8 order. */
+/** One stacked-bar segment, in the fixed order of
+ *  `DATA.md#rewarded-and-response-accuracy`. */
 export interface OutcomePart {
   key: OutcomeKey;
   value: number;

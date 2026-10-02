@@ -14,15 +14,16 @@ import { CMD } from "@/lib/ws/protocol";
 import { PrimeControls } from "./PrimeControls";
 
 /**
- * Debug-Mode controls + live status for a **utility** sketch (`data.md`
- * §6.6). Driven entirely by the sketch's Task Profile:
+ * Debug-Mode controls + live status for a **utility** sketch
+ * (`TASKS.md#utility-controls-and-telemetry`). Driven entirely by the sketch's
+ * Task Profile:
  *
  *  - `controls` render as buttons / selects / channel grids; each sends its
  *    serial command over the existing `port.send` primitive (no new wire
  *    command). Enabled only in `PASSTHROUGH`, matching the console's send gate.
  *  - `telemetry` parses the sketch's non-persisted `STATUS` lines out of
  *    `port.output` into a labelled strip. Nothing here is stored — it's live
- *    display only (`websocket-protocol.md` §5.4).
+ *    display only (`ARCHITECTURE.md#invariants`).
  *  - **Prime** (`PrimeControls`) is the one composed control: it is built from
  *    the fluid grid's own `pulse` commands and the profile's pulse-width verb,
  *    and is offered whenever a grid of fluid lines is declared.

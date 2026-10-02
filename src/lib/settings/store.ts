@@ -1,6 +1,6 @@
 /**
  * Persistence for settings — `tauri-plugin-store`, JSON on disk in the app data
- * dir (settings.md §3).
+ * dir (`ARCHITECTURE.md#persistence-and-push`).
  *
  * Shell-owned rather than sidecar-owned on purpose: the fields most likely to
  * be *wrong* when something is misconfigured (save paths, `arduino-cli` path)

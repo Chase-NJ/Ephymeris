@@ -7,7 +7,7 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
  * The Dashboard's second way in: a session that is also an Intan recording
- * (`recording.md` §4).
+ * (`RECORDING.md#recording-walkthrough`).
  *
  * A `.hud` tile, NOT a second solid button. The solid Pulsar tile above it is
  * the primary action and the one opaque thing in the column on purpose
@@ -18,7 +18,7 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  *
  * The footer link to the Recording tab appears only while RHX is NOT
  * connected — exactly when the tile's own click cannot repair the situation,
- * and the Boxes readout's rule for a link (`dashboard.md` §3.2). A sibling of
+ * and the Boxes readout's rule for a link. A sibling of
  * the button rather than inside it: a link in a button is invalid HTML.
  *
  * Hidden while a session runs — the tile above has become Resume, and a second

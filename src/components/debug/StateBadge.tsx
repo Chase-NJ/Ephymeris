@@ -4,14 +4,15 @@ import { springSnappy } from "@/lib/motion";
 import type { PortStateName } from "@/lib/hardware/store";
 
 /**
- * Per-box state badge (`dashboard.md` §4.1).
+ * Per-box state badge (`ARCHITECTURE.md#states`).
  *
  * Driven by two independent inputs: the port's own state-machine state and the
- * out-of-band presence check (§7) — hence `detected` arriving separately, so
- * the same badge can express "connected, idle" vs "not detected". Colours are
- * the §2.2 semantic set: Ion strictly for connected/nominal, matte amber for
- * transitional work, matte red for faults. Transitions animate rather than
- * snap, to reinforce that a port is mid-operation.
+ * out-of-band presence check (`ARCHITECTURE.md#board-discovery`) — hence
+ * `detected` arriving separately, so the same badge can express "connected,
+ * idle" vs "not detected". Colours are the theme's semantic set: Ion strictly
+ * for connected/nominal, matte amber for transitional work, matte red for
+ * faults. Transitions animate rather than snap, to reinforce that a port is
+ * mid-operation.
  */
 
 const META: Record<PortStateName, { label: string; color: string; busy?: boolean }> = {
@@ -31,7 +32,8 @@ export function StateBadge({
   detected: boolean;
 }) {
   // A box whose board isn't present and isn't mid-anything reads as absent,
-  // not "idle" — presence and port state are separate facts (§7).
+  // not "idle" — presence and port state are separate facts
+  // (`ARCHITECTURE.md#board-discovery`).
   const absent = !detected && state === "IDLE";
   const meta = META[state];
   const color = absent ? "var(--color-halo)" : meta.color;
@@ -43,7 +45,7 @@ export function StateBadge({
         className="size-1.5 rounded-full"
         animate={{
           backgroundColor: color,
-          // The §3.4 "spinner": busy states pulse rather than sit solid.
+          // The "spinner": busy states pulse rather than sit solid.
           opacity: meta.busy ? [1, 0.25, 1] : 1,
         }}
         transition={

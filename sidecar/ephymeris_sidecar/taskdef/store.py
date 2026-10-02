@@ -20,10 +20,10 @@ work".
 WHY THE SKETCH FOLDER IS SHAPED LIKE THE BUNDLE'S. Because `discovery.py` scans
 this root as a second library, a saved profile *is* a discovered sketch — so
 `port.flash`, the session flow, `tasks.getProfile`, `settings.taskDefaults` and
-Analytics all work on it with no special case anywhere. `docs/tasks.md` §2.1
-names this as the sanctioned walk-back from a single bundled library: "a hidden
+Analytics all work on it with no special case anywhere. `TASKS.md#library-roots`
+sanctions this as the walk-back from a single bundled library: a hidden
 additional library that APPENDS to the bundle, never a return of the configured
-root".
+root.
 """
 
 from __future__ import annotations

@@ -42,10 +42,10 @@ const ARRIVAL_DISTANCE = 3.6;
  * where the star should sit in px (`SceneIntent.frameShift`); on a window
  * narrow enough that the panel covers most of it, the px request would push the
  * star under the sidebar's glass — the clamp keeps it on screen instead
- * (`dashboard.md` §9.2).
+ * (`ARCHITECTURE.md#one-sky`).
  */
 const STAR_FRAME_BIAS_MAX = 0.6;
-/** §6.3 — the fly takes this long; short enough not to feel like waiting. */
+/** The fly takes this long; short enough not to feel like waiting. */
 const FLIGHT_SECONDS = 1.5;
 /** Longest `delta` any time-integrated animation will honour — see the frame
  *  callback in `CameraRig`. Two frames at 60fps. */
@@ -65,7 +65,7 @@ interface FlightMove {
 /**
  * The one camera, mounted for the app's lifetime (`SharedCanvas.tsx`).
  *
- * §6.3 — the eased cinematic move, and the one acknowledged exception to the
+ * The eased cinematic move, and the one acknowledged exception to the
  * app's spring-physics convention: a camera flythrough reads as cinematic
  * rather than mechanical, and a spring would fight that.
  *

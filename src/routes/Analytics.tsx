@@ -78,12 +78,12 @@ import { useSidecar } from "@/lib/ws/context";
 const NO_RUNS: RunSummary[] = [];
 
 /**
- * The Analytics dashboard — the "Observatory" (`data.md` §10).
+ * The Analytics dashboard — the "Observatory" (`DATA.md#analytics-views`).
  *
  * One route, no tabs. Cohort, session and animal are persistent selectors, and
  * **selection is a filter, not navigation**: picking a session narrows every
  * panel rather than swapping the view, and hovering an animal highlights its
- * curve, its heatmap row and its strategy trail at once.
+ * curve, its table row and its strategy trail at once.
  */
 export function Analytics() {
   const { client, status } = useSidecar();
@@ -112,7 +112,7 @@ export function Analytics() {
   // for genuinely new data and not for a hover.
   const [reveal, setReveal] = useState(0);
 
-  // §2.5 — ending a session lands here with that cohort and session already
+  // Ending a session lands here with that cohort and session already
   // selected, so the guided flow's last step is a payoff rather than an
   // acknowledgement. A Dashboard row arrives the same way, naming a session by
   // its folder rather than its id (`sessionFolder`) because the rows it comes
@@ -131,7 +131,7 @@ export function Analytics() {
   const connected = status === "connected";
 
   // Arriving from a session that just ended goes straight to that cohort —
-  // the guided flow's last step is a payoff, not another picker (§2.5).
+  // the guided flow's last step is a payoff, not another picker (`DATA.md#session-order`).
   // Arriving cold shows the picker instead: auto-selecting the most recent
   // cohort answers a question the reader hasn't asked yet.
   //
@@ -139,7 +139,7 @@ export function Analytics() {
   // The arrival has to win even when some *other* cohort is already selected,
   // or the banner announces one session above another cohort's panels. And the
   // fetch has to be forced: a cohort looked at earlier this run is cached, and
-  // the run that just finished is precisely what the cache predates. §2.4 —
+  // the run that just finished is precisely what the cache predates, so
   // the reload shows the reading notice rather than the old numbers.
   const handledArrival = useRef<string | null>(null);
   // A folder is parked here by the arrival and resolved to a session id below,
@@ -205,7 +205,7 @@ export function Analytics() {
     void store.load(client, cohortId);
   }, [client, connected, cohortId, store, version]);
 
-  // §4.3, inverted: there is no dashboard-wide task filter. The outcome
+  // There is no dashboard-wide task filter (`DATA.md#pooling-across-tasks`). The outcome
   // panels pool every run and disclose the task mix (the strip and the
   // dashed change rules); the panels whose metrics genuinely cannot cross
   // tasks — the strategy planes — scope themselves and offer a panel-local
@@ -245,10 +245,10 @@ export function Analytics() {
   );
   const sessionSeries = useRunSeries(client, sessionAllRuns);
 
-  // §10.6 — the export composes the very panels above out of these same props,
+  // The export (`DATA.md#exporting-a-sheet`) composes the very panels above out of these same props,
   // which is what keeps the PNG and the screen from drifting apart. The scope
   // decides which sheet: exporting is a picture of what you are looking at, in
-  // the same spirit as §10.1's "selection is a filter, not navigation".
+  // the same spirit as the header's "selection is a filter, not navigation".
   const exporter = useExportReport();
   const reportInput = useMemo<ReportInput | null>(
     () =>
@@ -351,7 +351,7 @@ export function Analytics() {
    * chose a cohort in near-identical ways is exactly what this replaced, and
    * rebuilding one of them as a quieter variant would have recreated the split.
    *
-   * The dim-sky rule (`dashboard.md` §2.5) still stands and is not being
+   * The dim-sky rule still stands and is not being
    * relaxed: it protects a *chart* from competing motion, and there is no chart
    * on this branch. The moment one appears, the branch below drops back to
    * `SkyBackdrop` at `DENSE_SKY_OPACITY`.
@@ -413,7 +413,7 @@ export function Analytics() {
 
   return (
     // Every route sits on the rig's sky, dimmed here so a drifting nebula never
-    // competes with a learning curve (`SkyBackdrop`, `dashboard.md` §2.5). It is
+    // competes with a learning curve (`SkyBackdrop`). It is
     // mounted rather than omitted because a route with no constellation is the
     // one thing that releases the shared canvas.
     <div className="relative h-full">
@@ -469,12 +469,12 @@ export function Analytics() {
             </div>
             {/* No Task or Metric selector. The panels below show the whole
                 archive and scope themselves where a task boundary is real
-                (§4.3) — the reader never has to maintain a filter to be sure
+                (`DATA.md#pooling-across-tasks`) — the reader never has to maintain a filter to be sure
                 they are seeing everything. */}
             <div className="flex items-center gap-2">
               {/* First in the row: the only button here about *where the data
                   lives* rather than about maintaining the index. The path
-                  rides the summary (§9) — the same string the folder-missing
+                  rides the summary — the same string the folder-missing
                   warning names. */}
               {summary && (
                 <FolderButton
@@ -697,7 +697,7 @@ export function Analytics() {
                   opening one's "how to read this" would stretch the other's
                   chart, since its plots fill their tile. Each takes its own
                   height and the charts keep a fixed plot budget instead. */}
-                  {/* §4.4 — the two strategy panels share one plane and swap,
+                  {/* The two strategy panels (`DATA.md#strategy-plane`) share one plane and swap,
                   never coexist: a line in one spans weeks and a line in the
                   other spans an hour, and the frame cannot tell them apart. */}
                   {selectedSession ? (
@@ -785,7 +785,7 @@ function describeRescan(result: RescanResult): string {
 }
 
 /**
- * The prune clause of the rescan note (`data.md` §8.6), or null when nothing
+ * The prune clause of the rescan note (`DATA.md#pruning`), or null when nothing
  * was removed — which is the overwhelmingly common case and doesn't deserve a
  * sentence.
  *
@@ -852,7 +852,7 @@ function Notice({ children }: { children: ReactNode }) {
  *
  * Coloured by whether the numbers can be trusted, not by how good they are: the
  * warning tone while the cohort's folder is out of reach, because every figure
- * under it is then the last successful read (§9); quiet otherwise. Not Ion
+ * under it is then the last successful read (`DATA.md#caching`); quiet otherwise. Not Ion
  * when healthy — a readable archive is the normal state, and status colour is
  * for the exceptions.
  */

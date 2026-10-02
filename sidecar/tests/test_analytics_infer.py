@@ -1,4 +1,4 @@
-"""The inference rung — `analytics/infer.py`, `data.md` §8.3.
+"""The inference rung — `analytics/infer.py`, `DATA.md#which-profile-decodes-a-run`.
 
 The claim under test: a run that resolves NO profile scores the same trials,
 the same way, as it would have under the task's own declaration — because the

@@ -1,4 +1,4 @@
-"""Cohort persistence and validation — `cohorts.md` §1, §2, §9."""
+"""Cohort persistence and validation — `DATA.md#data-model`, `DATA.md#validation`, `DATA.md#archive-and-delete`."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def animal(name: str, group_id: str, **kwargs) -> dict:
 
 
 def test_a_new_cohort_gets_an_implicit_default_group(repo) -> None:
-    """§2 — groups always exist, keeping grouped/ungrouped one code path."""
+    """`DATA.md#data-model` — groups always exist, keeping grouped/ungrouped one code path."""
     cohort = repo.create("Batch A", "/tmp/batch-a")
     assert len(cohort.groups) == 1
     assert cohort.animals == []
@@ -95,7 +95,7 @@ def test_summary_reports_the_boxes_in_use(repo) -> None:
 
 
 def test_summary_boxes_are_deduplicated_across_groups(repo) -> None:
-    """Box numbers legitimately repeat between groups (§2) — the grid cares
+    """Box numbers legitimately repeat between groups (`DATA.md#validation`) — the grid cares
     which boxes are needed, not how many animals want each one."""
     cohort = repo.create("Batch A", "/tmp/batch-a")
     first = cohort.groups[0].id
@@ -113,7 +113,7 @@ def test_summary_boxes_are_deduplicated_across_groups(repo) -> None:
 
 
 def test_a_cohort_can_start_empty(repo) -> None:
-    """§1 — real lab setup is rarely a single sitting."""
+    """`DATA.md#data-model` — real lab setup is rarely a single sitting."""
     cohort = repo.create("Batch A", "/tmp/a")
     assert repo.get(cohort.id).animals == []
 
@@ -123,7 +123,7 @@ def test_a_blank_name_is_rejected(repo) -> None:
         repo.create("   ", "/tmp/a")
 
 
-# --- §2 name uniqueness ---------------------------------------------------
+# --- name uniqueness (`DATA.md#validation`) -------------------------------
 
 
 def test_active_names_must_be_unique(repo) -> None:
@@ -139,7 +139,7 @@ def test_name_uniqueness_ignores_case(repo) -> None:
 
 
 def test_archiving_frees_the_name_for_reuse(repo) -> None:
-    """§2 — archived cohorts don't block name reuse."""
+    """`DATA.md#validation` — archived cohorts don't block name reuse."""
     first = repo.create("Batch A", "/tmp/a")
     repo.archive(first.id)
     reused = repo.create("Batch A", "/tmp/b")
@@ -166,7 +166,7 @@ def test_a_cohort_can_keep_its_own_name_on_update(repo) -> None:
     assert repo.update(cohort.id, {"name": "Batch A"}).name == "Batch A"
 
 
-# --- §2 animal validation -------------------------------------------------
+# --- animal validation (`DATA.md#validation`) -----------------------------
 
 
 def test_animal_names_are_unique_within_a_cohort(repo) -> None:
@@ -178,7 +178,7 @@ def test_animal_names_are_unique_within_a_cohort(repo) -> None:
 
 
 def test_the_same_animal_name_may_exist_in_another_cohort(repo) -> None:
-    """§2 — uniqueness is per cohort, not global."""
+    """`DATA.md#validation` — uniqueness is per cohort, not global."""
     a = repo.create("A", "/tmp/a")
     b = repo.create("B", "/tmp/b")
     repo.update(a.id, {"animals": [animal("R1", a.groups[0].id)]})
@@ -197,7 +197,7 @@ def test_box_numbers_are_unique_within_a_group(repo) -> None:
 
 
 def test_box_numbers_may_repeat_across_groups(repo) -> None:
-    """§2 — groups run consecutively, so the slot is legitimately reused."""
+    """`DATA.md#validation` — groups run consecutively, so the slot is legitimately reused."""
     cohort = repo.create("Batch A", "/tmp/a")
     groups = [
         {"id": "g1", "name": "Group 1", "order": 0},
@@ -238,7 +238,7 @@ def test_an_animal_must_belong_to_one_of_the_cohorts_groups(repo) -> None:
 
 
 def test_extended_animal_metadata_round_trips(repo) -> None:
-    """§1/§11 — sex, idNumber and notes."""
+    """`DATA.md#data-model` — sex, idNumber and notes."""
     cohort = repo.create("Batch A", "/tmp/a")
     gid = cohort.groups[0].id
     saved = repo.update(
@@ -261,7 +261,7 @@ def test_an_unrecognised_sex_value_is_discarded_rather_than_stored(repo) -> None
     assert saved.animals[0].sex is None
 
 
-# --- §9 archive / delete --------------------------------------------------
+# --- archive / delete (`DATA.md#archive-and-delete`) ----------------------
 
 
 def test_archive_is_reversible(repo) -> None:
@@ -271,7 +271,7 @@ def test_archive_is_reversible(repo) -> None:
 
 
 def test_permanent_delete_requires_archiving_first(repo) -> None:
-    """§9 — the deliberate two-step guard."""
+    """`DATA.md#archive-and-delete` — the deliberate two-step guard."""
     cohort = repo.create("Batch A", "/tmp/a")
     with pytest.raises(NotArchived):
         repo.delete(cohort.id)
@@ -306,11 +306,11 @@ def test_missing_cohorts_raise_rather_than_returning_none(repo) -> None:
             call("nope")
 
 
-# --- §8 data folder decoupling -------------------------------------------
+# --- data folder decoupling (`DATA.md#data-folder`) ----------------------
 
 
 def test_renaming_does_not_change_the_data_folder(repo) -> None:
-    """§8 — name and dataFolder are deliberately decoupled after creation."""
+    """`DATA.md#data-folder` — name and dataFolder are deliberately decoupled after creation."""
     cohort = repo.create("Batch A", "/tmp/batch-a")
     renamed = repo.update(cohort.id, {"name": "Renamed Entirely"})
     assert renamed.data_folder == "/tmp/batch-a"
@@ -353,7 +353,7 @@ def test_groups_are_returned_in_display_order(repo) -> None:
     assert [g.name for g in repo.get(cohort.id).groups] == ["First", "Second"]
 
 
-# --- the cohort's world (§5) ----------------------------------------------
+# --- the cohort's world (`ARCHITECTURE.md#cohort-browser`) ----------------
 
 
 def test_a_new_cohort_stores_no_appearance(repo) -> None:

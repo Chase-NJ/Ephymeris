@@ -31,7 +31,7 @@ import type { UtilityBaselineState } from "@/lib/ws/protocol";
 import { defaultConfig, sketchName, type TaskProfile } from "@/lib/sessions/types";
 
 /**
- * One box, up close (dashboard.md §4).
+ * One box, up close (`USER-GUIDE.md#checking-a-box`).
  *
  * Docked and translucent over the still-rendering constellation rather than
  * replacing it, exactly as Mission Control's `StarPanel` is: arrival means the
@@ -53,7 +53,7 @@ import { defaultConfig, sketchName, type TaskProfile } from "@/lib/sessions/type
  *
  * The UI disables what the current state forbids, but that's a courtesy — the
  * sidecar enforces the rules, and any rejection it returns is surfaced in the
- * Connection group rather than swallowed (§6.3).
+ * Connection group rather than swallowed.
  *
  * **Two columns, sized so nothing needs scrolling.** Identity, Connection and
  * the console stack in a fixed-width left column — the console takes whatever
@@ -119,7 +119,8 @@ export function NodeDetail({
   // own END_SESSION strobe arrives, or the console stops being a console.
   const running = useDebugRunning(box);
 
-  // What the board is actually carrying (`settings.md` §8): the
+  // What the board is actually carrying
+  // (`ARCHITECTURE.md#hardware-utility-baseline`): the
   // baseline keeps every idle bound box on the configured utility sketch, so
   // a box the sidecar reports `ready` has that sketch on it *now* — no manual
   // flash needed for its controls and telemetry to be live. The sidecar's
@@ -134,7 +135,8 @@ export function NodeDetail({
     ? { path: utility.sketchPath!, name: utility.sketchName ?? "utility sketch" }
     : flashed;
   // A sketch the operator flashed here by hand, which the baseline is leaving
-  // alone until they say otherwise (`settings.md` §8.2). Sidecar-reported, so
+  // alone until they say otherwise
+  // (`ARCHITECTURE.md#three-rules-it-never-breaks`). Sidecar-reported, so
   // it survives a reload that forgets the client-tracked `flashed`.
   const pinned = utilityBox?.state === "pinned";
 
@@ -221,7 +223,7 @@ export function NodeDetail({
    * new garbage. That inverts the one diagnosis this console exists to make: a
    * mismatched baud reads as *working* for as long as the stale lines are the
    * ones on screen, and mute-reads-as-dead is already the failure mode
-   * `dashboard.md` §6.4 warns about.
+   * `ARCHITECTURE.md#baud` warns about.
    *
    * Only the explicit user-initiated open clears. A passthrough that resumes on
    * its own — after a flash, or after a bench upload — must keep what is
@@ -321,7 +323,8 @@ export function NodeDetail({
 
   /*
    * **Return to baseline** — the one thing that releases a pinned box. The
-   * sidecar never takes a port from a console (§8.2), so an open one is closed
+   * sidecar never takes a port from a console
+   * (`ARCHITECTURE.md#three-rules-it-never-breaks`), so an open one is closed
    * first; asking comes first all the same, because the ask is what unpins, and
    * the close's own `IDLE` transition then performs the restore.
    */
@@ -355,7 +358,7 @@ export function NodeDetail({
     });
   }
 
-  /** Saves the visible tab to a file the user picks (§6.5's "save debug log").
+  /** Saves the visible tab to a file the user picks ("save debug log").
    *
    * Deliberately shell-side, not a sidecar command: the dialog plugin adds the
    * chosen path to the fs scope at runtime, and the export keeps working when
@@ -381,8 +384,9 @@ export function NodeDetail({
 
   const canOpen = connected && port.state === "IDLE" && board !== null;
   const canSend = connected && port.state === "PASSTHROUGH";
-  // Flash/reset are legal from IDLE and PASSTHROUGH — §3.3's auto-release
-  // covers the passthrough case, so the UI shouldn't force a manual close.
+  // Flash/reset are legal from IDLE and PASSTHROUGH — the force-release
+  // (`ARCHITECTURE.md#exclusivity`) covers the passthrough case, so the UI
+  // shouldn't force a manual close.
   const canOperate =
     connected && board !== null && (port.state === "IDLE" || port.state === "PASSTHROUGH");
   // Anything that isn't a utility sketch waits for START — a profile-less one

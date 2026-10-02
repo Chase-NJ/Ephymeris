@@ -11,7 +11,7 @@ from .tool import BoardTool
 log = logging.getLogger(__name__)
 
 #: Escape hatch for lab troubleshooting: force the subprocess backend even
-#: when grpcio imports fine. Documented in `README.md` §4.1.
+#: when grpcio imports fine. Documented in `ARCHITECTURE.md#flashing`.
 NO_DAEMON_ENV = "EPHYMERIS_NO_GRPC_DAEMON"
 
 

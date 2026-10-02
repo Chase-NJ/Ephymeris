@@ -5,7 +5,7 @@ import { buildSky, type Sky, type SkyOccupant } from "@/lib/sessions/stars";
 import { useBoundBoxes, useSettings } from "@/lib/settings/context";
 
 /**
- * The rig's sky, built the one way (`dashboard.md` §9.1).
+ * The rig's sky, built the one way (`ARCHITECTURE.md#one-sky`).
  *
  * **Every 3D view of the constellation goes through here**, and that is the
  * whole point of the hook rather than three callers assembling the same

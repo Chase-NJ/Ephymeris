@@ -169,8 +169,7 @@ export const NEW_COHORT_ID = "__new_cohort__";
 /**
  * The unformed world — "+ New Cohort", as a protoplanetary disc.
  *
- * `cohorts.md` §4 already reached for this metaphor when the create affordance
- * was a dashed tile: *a nebula that hasn't collapsed into a star system yet*.
+ * The metaphor is *a nebula that hasn't collapsed into a star system yet*.
  * In a sky of finished worlds it can finally be drawn rather than described.
  *
  * Deliberately NOT a planet: no surface, no atmosphere, no terminator. A dust

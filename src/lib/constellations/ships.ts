@@ -3,7 +3,7 @@ import type { SceneOrbiter } from "@/components/constellation3d/Orbiters";
 /**
  * Cage → spaceship assignment for the 3D constellation.
  *
- * Cagemates share one satellite (`cohorts.md` §2): the crew of animals housed
+ * Cagemates share one satellite (`DATA.md#data-model`): the crew of animals housed
  * together rides a single craft, and that craft orbits exactly one star at a
  * time. Which star is a two-step rule, shared by Mission Control and the rig
  * view so the same cage never appears in two places:

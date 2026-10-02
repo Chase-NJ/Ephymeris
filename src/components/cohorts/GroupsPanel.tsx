@@ -20,14 +20,15 @@ import { MAX_BOX, MAX_GROUP_SIZE, MIN_BOX, type Animal, type Group } from "@/lib
 import { springSnappy } from "@/lib/motion";
 
 /**
- * Group management, membership, and box assignment — `cohorts.md` §6, §7.
+ * Group management, membership, and box assignment —
+ * `DATA.md#cohorts-animals-and-groups`.
  *
  * This is the *only* place box numbers get set. Box uniqueness is scoped per
- * group (§2, an animal can legitimately share a box number with an animal in a
- * different group, since groups run consecutively), so assigning boxes only
- * makes sense with a group's full membership visible at once — which is exactly
- * what each card below shows. `AnimalTable` stays pure biographical data for
- * that reason.
+ * group (`DATA.md#validation`: an animal can legitimately share a box number
+ * with an animal in a different group, since groups run consecutively), so
+ * assigning boxes only makes sense with a group's full membership visible at
+ * once — which is exactly what each card below shows. `AnimalTable` stays pure
+ * biographical data for that reason.
  *
  * ## Why this is a board and not a list of dropdowns
  *
@@ -152,11 +153,11 @@ export function GroupsPanel({
     if (ordered.length <= 1) return;
     const remaining = renumber(ordered.filter((g) => g.id !== id));
     const fallback = remaining[0]!;
-    // Every animal belongs to exactly one group (§1), so orphans are rehomed
-    // into the first remaining group rather than left dangling. They arrive
-    // without a box: the box that was theirs belonged to the group that just
-    // went away, and silently carrying the number over could collide with
-    // whoever already holds it in the group they land in.
+    // Every animal belongs to exactly one group (`DATA.md#data-model`), so
+    // orphans are rehomed into the first remaining group rather than left
+    // dangling. They arrive without a box: the box that was theirs belonged to
+    // the group that just went away, and silently carrying the number over
+    // could collide with whoever already holds it in the group they land in.
     const rehomed = animals.map((a) =>
       a.groupId === id ? { ...a, groupId: fallback.id, boxNumber: null } : a,
     );

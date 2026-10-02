@@ -1,4 +1,4 @@
-"""Cohort data folder resolution — `cohorts.md` §8.
+"""Cohort data folder resolution — `DATA.md#data-folder`.
 
 Two rules here are deliberate design calls, not conveniences:
 
@@ -80,7 +80,7 @@ def _is_empty(path: Path) -> bool:
 
 
 def relocate(current: str | Path, destination: str | Path, move_existing: bool) -> Path:
-    """The explicit "Change data folder…" action (§8).
+    """The explicit "Change data folder…" action (`DATA.md#data-folder`).
 
     Two different intents share this one command, and they have opposite
     requirements for the destination:
@@ -91,7 +91,7 @@ def relocate(current: str | Path, destination: str | Path, move_existing: bool) 
     * **Point this cohort at data that is already there** (`move_existing=False`)
       — the destination is *expected* to be full. This is how a cohort attaches
       to an archive written before this app existed, which is the entire reason
-      orphan adoption exists (`data.md` §8.1).
+      orphan adoption exists (`DATA.md#orphan-adoption`).
 
     Refusing a non-empty destination in both cases made the second intent
     impossible to express: the only control for it rejected exactly the folders

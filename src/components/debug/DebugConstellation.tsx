@@ -22,7 +22,7 @@ import { useBoundBoxes, useSettings } from "@/lib/settings/context";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * The Debug landing constellation (`dashboard.md` §4).
+ * The Debug landing constellation (`ARCHITECTURE.md#one-sky`).
  *
  * The same 3D browser as Mission Control — same camera, same orbit/pan/zoom,
  * same hover reticle, nameplates and arrival flight, all from
@@ -45,7 +45,7 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  *    the bus); an undetected box's surface is frozen — stillness is the
  *    status, carried into the star itself;
  *  - an *open* box (passthrough / in session) adds the slow dashed instrument
- *    ring — the instrument-HUD read, never a glow (§2.2);
+ *    ring — the instrument-HUD read, never a glow (`ARCHITECTURE.md#theme`);
  *  - a *faulted* box wears a thin steady ring in Error red — the one place
  *    status still owns a colour, because a fault must not be mistakable for a
  *    cool star.

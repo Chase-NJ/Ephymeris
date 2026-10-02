@@ -1,4 +1,4 @@
-"""Derived metrics — `data.md` §9.
+"""Derived metrics — `DATA.md#derived-metrics`.
 
 These numbers are the scientific output, so the tests are written against the
 definition rather than against the implementation. The most important one is
@@ -80,7 +80,7 @@ def document(codes: list[int], **extra) -> dict:
 
 
 # The full GRGL vocabulary, as a real task.json declares it — the outcome
-# tally (§3.8) reads these by name, so the names matter as much as the codes.
+# tally (`DATA.md#rewarded-and-response-accuracy`) reads these by name, so the names matter as much as the codes.
 GRGL_FULL = {
     **GRGL,
     "strobes": {
@@ -115,7 +115,7 @@ NO_RESPONSE_1 = [101, 226]
 #: Odor 1, the animal left the odor port early — never administered.
 ABORTED_1 = [101, 225]
 
-# The presentation layer above all of those (§3.10). The firmware strobes the
+# The presentation layer above all of those (`DATA.md#engagement-ladder`). The firmware strobes the
 # trial light first and unconditionally, then the odor poke, and only reaches an
 # odor-on code once the pre-odor hold has cleared — so these prefix the trial
 # fixtures above rather than replacing them.
@@ -128,7 +128,7 @@ LAZY = [222, 223, 234]
 POKE_BAIL = [222, 224, 225, 234]
 
 
-# --- §3.8 trial outcomes: rewarded vs side accuracy ------------------------
+# --- trial outcomes: rewarded vs side accuracy (`DATA.md#rewarded-and-response-accuracy`) ---
 
 
 def test_each_outcome_lands_in_its_own_bucket() -> None:
@@ -144,7 +144,7 @@ def test_each_outcome_lands_in_its_own_bucket() -> None:
 
 
 def test_side_accuracy_credits_a_hold_failure_and_rewarded_accuracy_does_not() -> None:
-    """The whole point of §3.8: the animal chose right, and earned nothing."""
+    """The whole point of rewarded vs response accuracy: the animal chose right, and earned nothing."""
     out = derive.outcomes_of(REWARDED_1 + HOLD_FAIL_1, FULL_PROFILE)
     assert out is not None
     assert out.p_rewarded == 0.5, "a hold failure is not a reward"
@@ -227,7 +227,7 @@ def test_rewarded_accuracy_is_independent_of_the_declared_metrics() -> None:
     assert summary2.outcomes.p_side == 0.5
 
 
-# --- §3.10 the engagement ladder -------------------------------------------
+# --- the engagement ladder (`DATA.md#engagement-ladder`) -------------------
 
 
 def test_the_ladder_counts_each_stage_a_presentation_reached() -> None:
@@ -368,7 +368,7 @@ def test_a_run_that_offered_nothing_reports_null_rates_not_zero() -> None:
     assert ladder.p_engaged is None and ladder.p_delivered is None
 
 
-# --- §3.9 the same tally, per condition ------------------------------------
+# --- the same tally, per condition (`DATA.md#per-condition-tally`) ---------
 
 #: Odor 3's mirror of the odor-1 fixtures above — left is the correct well.
 REWARDED_3 = [103, 226, 248, 252, 369]
@@ -441,7 +441,7 @@ def test_conditions_ride_along_on_the_summary() -> None:
     assert derive.summarize(document(HIT_1), PROFILE).to_json()["conditions"] == []
 
 
-# --- §9.11 the per-trial tape ----------------------------------------------
+# --- the per-trial tape (`DATA.md#per-trial-tape`) -------------------------
 
 
 def test_the_tape_tallied_reproduces_the_outcome_tally() -> None:
@@ -517,7 +517,7 @@ def test_the_wire_spelling_is_hyphenated() -> None:
     assert [t.to_json()["outcome"] for t in tape] == ["hold-failed", "no-response"]
 
 
-# --- §4.4 the within-session strategy walk ---------------------------------
+# --- the within-session strategy walk (`DATA.md#strategy-plane`) -----------
 
 
 def test_the_trail_pairs_both_conditions_on_one_clock() -> None:
@@ -689,7 +689,7 @@ def test_a_window_shorter_than_the_floor_still_produces_a_walk() -> None:
     assert trail and all(point.n == 4 for point in trail)
 
 
-# --- §3.1 the boundary-code trap ------------------------------------------
+# --- the boundary-code trap (`DATA.md#boundary-codes`) --------------------
 
 
 def test_boundaries_are_the_union_of_every_trigger() -> None:
@@ -733,7 +733,7 @@ def test_offline_scoring_equals_the_live_run() -> None:
         assert metric.counted == live_n, f"{metric.id} counted trials drifted from live"
 
 
-# --- §3.2 two probabilities, never one ------------------------------------
+# --- two probabilities, never one (`DATA.md#two-probabilities-per-metric`) ---
 
 
 def test_p_session_and_p_window_differ_when_the_window_is_short() -> None:
@@ -767,8 +767,8 @@ def test_a_side_biased_animal_scores_at_chance_overall() -> None:
     An animal that pokes right on every trial is correct on every odor-1 trial
     and wrong on every odor-3 trial. Read on either metric alone it looks like
     one of the best or one of the worst animals in the cohort; pooled, it sits
-    at chance — which is the truth, and what a heatmap asking "who is stuck"
-    has to show.
+    at chance — which is the truth, and what any readout asking "who is
+    stuck" has to show.
     """
     always_right = ([101, 249] + [103, 249]) * 20
     summary = derive.summarize(document(always_right), PROFILE)
@@ -840,7 +840,7 @@ def test_a_profile_less_run_has_no_overall() -> None:
     assert derive.summarize(document([221, 222]), None).overall is None
 
 
-# --- §3.3 trial counts -----------------------------------------------------
+# --- trial counts (`DATA.md#trial-counts`) ---------------------------------
 
 
 def test_excluded_counts_the_unanswered_trials() -> None:
@@ -851,7 +851,7 @@ def test_excluded_counts_the_unanswered_trials() -> None:
     assert metric.excluded == 1
 
 
-# --- §3.5 uncertainty ------------------------------------------------------
+# --- uncertainty (`DATA.md#uncertainty`) -----------------------------------
 
 
 def test_a_wilson_interval_never_leaves_the_unit_range() -> None:
@@ -876,14 +876,14 @@ def test_no_interval_without_trials() -> None:
 
 
 def test_low_confidence_is_flagged_but_the_value_is_still_reported() -> None:
-    """The sidecar never suppresses — presentation decides (§3.5)."""
+    """The sidecar never suppresses — presentation decides (`DATA.md#uncertainty`)."""
     metric = derive.summarize(document(HIT_1 * 3), PROFILE, min_counted=10).metrics[0]
     assert metric.low_confidence is True
     assert metric.p_session == 1.0, "the value is reported regardless"
     assert metric.counted == 3
 
 
-# --- §3.6 edge cases -------------------------------------------------------
+# --- edge cases (`DATA.md#edge-cases`) -------------------------------------
 
 
 def test_zero_counted_trials_is_null_never_zero() -> None:
@@ -959,7 +959,7 @@ def test_the_seed_is_carried_when_present() -> None:
     assert derive.summarize(document(HIT_1), PROFILE).seed is None
 
 
-# --- §5 the within-session series -----------------------------------------
+# --- the within-session series --------------------------------------------
 
 
 def test_the_series_has_one_point_per_counted_trial() -> None:

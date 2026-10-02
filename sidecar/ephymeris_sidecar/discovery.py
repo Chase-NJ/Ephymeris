@@ -1,9 +1,9 @@
 """The bundled sketch library, and discovery within it.
 
-Implements `tasks.md` §2. Owned by the sidecar because filesystem work and
+Implements `TASKS.md#sketch-library`. Owned by the sidecar because filesystem work and
 `arduino-cli` interaction already live here.
 
-SKETCHES SHIP WITH THE APP. There is no configured Arduino Directory: the
+SKETCHES SHIP WITH THE APP. There is no configured sketch directory: the
 library is staged into the installer by `scripts/stage-sketches.mjs` and located
 here by `library_root()`. That makes the failure modes structural rather than
 user-authored — a library can be missing or partial, but it can no longer be
@@ -18,9 +18,9 @@ TWO MORE ROOTS, AND THEY DO DIFFERENT THINGS.
 `<data_dir>/tasks/` holds the sketch folders the app GENERATES from this rig's
 task profiles. They are scanned exactly like bundled ones and marked
 `source: "rig"`, and they APPEND — a name that collides with a bundled sketch is
-reported and dropped. This is the walk-back `tasks.md` §2.1 names: "a hidden
-additional library that appends to the bundle, never a return of the configured
-root". It is what makes a saved profile an ordinary discovered sketch, so
+reported and dropped. This is the walk-back `TASKS.md#library-roots` allows: a
+hidden additional library that appends to the bundle, never a return of the
+configured root. It is what makes a saved profile an ordinary discovered sketch, so
 `port.flash`, the session flow and Analytics need no special case for one.
 
 `<data_dir>/rig/sketches/` holds rebuilds of the BUNDLED sketches against this
@@ -36,13 +36,13 @@ them, the app scans them.
 The two rules most worth preserving:
 
 * A folder is a valid sketch only if it contains a `.ino` whose base name
-  matches the folder's own name (§3). This is arduino-cli's own requirement and
+  matches the folder's own name (`TASKS.md#folder-rules`). This is arduino-cli's own requirement and
   the single most common reason a sketch silently fails to appear.
-* Folders that fail that rule are **skipped but reported** (§4 step 4), never
+* Folders that fail that rule are **skipped but reported** (`TASKS.md#discovery`), never
   silently dropped — otherwise a misnamed sketch is invisible rather than
   merely broken.
 
-Category folders may nest (§3): real lab directories group sketches by
+Category folders may nest (`TASKS.md#folder-rules`): real lab directories group sketches by
 paradigm *and* stage, so the scan descends until it finds sketches rather than
 assuming a fixed two-level shape. A sketch's category is the folder that
 directly contains it.
@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 #: Reserved folder name, matched case-insensitively because both target
-#: filesystems are case-insensitive by default (§3). Reserved at *every* depth
+#: filesystems are case-insensitive by default (`TASKS.md#folder-rules`). Reserved at *every* depth
 #: so a nested `libraries/` is never mistaken for a category — only the root
 #: one is passed to `arduino-cli --libraries`.
 LIBRARIES_DIRNAME = "libraries"
@@ -70,7 +70,7 @@ LibraryState = Literal["ok", "empty", "damaged"]
 LibrarySource = Literal["bundled", "override"]
 
 #: Points the sidecar at a sketch library other than the bundled one. A developer
-#: facility, documented in README.md §2 — deliberately an environment variable and
+#: facility, documented in `TASKS.md#library-roots` — deliberately an environment variable and
 #: NOT a setting, so it cannot come back as a configurable directory by the back
 #: door, and so `not_configured` cannot come back as a state.
 LIBRARY_ENV = "EPHYMERIS_SKETCH_LIBRARY"
@@ -288,7 +288,7 @@ def library_status() -> SketchLibraryStatus:
 
 
 def _is_valid_sketch(folder: Path) -> bool:
-    """The folder-name-matches-`.ino` rule from §3."""
+    """The folder-name-matches-`.ino` rule (`TASKS.md#folder-rules`)."""
     return (folder / f"{folder.name}.ino").is_file()
 
 
@@ -426,8 +426,8 @@ def discover(
         if entry.name.startswith("."):
             continue
 
-        # A sketch sitting at the root has no category to belong to; §3 puts
-        # sketches inside a category folder. Report rather than ignore.
+        # A sketch sitting at the root has no category to belong to; sketches
+        # belong inside a category folder (`TASKS.md#folder-rules`). Report rather than ignore.
         if _is_valid_sketch(entry):
             skipped.append(
                 SkippedEntry(str(entry), "sketch folders belong inside a category folder")

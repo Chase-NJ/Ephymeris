@@ -22,13 +22,13 @@ import type { AnalyticsSummary, RunSeries, RunSummary } from "@/lib/analytics/ty
 import { chronological, pickMetric } from "@/lib/analytics/view";
 
 /**
- * P(correct) over time (`data.md` §11.2).
+ * P(correct) over time (`DATA.md#learning-curves`).
  *
  * Two resolutions, chosen by the session selector — and two different
  * scopings, each decided by the panel rather than by a filter:
  *
  * - **Across sessions**: one chart, each animal's whole history at its
- *   pooled overall accuracy (§3.7) — every run, whatever task it was on,
+ *   pooled overall accuracy (`DATA.md#pooled-accuracy`) — every run, whatever task it was on,
  *   because "how is this animal doing" is a question about the animal, not
  *   about one task. Per-condition histories are the strategy space's job;
  *   here they would be one chart per task per condition, unreadable at
@@ -46,7 +46,7 @@ import { chronological, pickMetric } from "@/lib/analytics/view";
  *
  * Each animal's band and curve draw in a per-animal `<CurveLayer>` inside the
  * chart rather than through `UnitChart`'s `series` prop, because the layer is
- * where the shared highlight lands (§2.1): the highlighted animal gains
+ * where the shared highlight lands: the highlighted animal gains
  * stroke weight, the rest drop to a dim opacity, and only these small layers
  * re-render on hover.
  */
@@ -246,7 +246,7 @@ export function LearningCurves({
         <p>
           One line per animal, one point per run, at the run&rsquo;s accuracy
           pooled across every condition — the only single number that can tell
-          learning from a side bias (§9.7). Each run is scored at whatever task
+          learning from a side bias. Each run is scored at whatever task
           it ran that day; the task strip below marks where that changed.
         </p>
         <p className="mt-1">
@@ -271,8 +271,8 @@ interface CurveLayerData {
 
 /**
  * One animal's ribbon and curve. One component instance per animal, so a
- * hover re-renders these layers and never the chart around them (§2.1).
- * Weight, not colour alone, marks the highlight (§7.1).
+ * hover re-renders these layers and never the chart around them.
+ * Weight, not colour alone, marks the highlight (`DATA.md#colour-palette`).
  *
  * Picking an animal also re-lays its curve down in order — left to right,
  * which on both of this panel's x axes is chronological. The `key` is what
@@ -289,7 +289,7 @@ function CurveLayer({ layer, height }: { layer: CurveLayerData; height: number }
       {/* Band before curve: SVG paints in document order, and the ribbon
           belongs behind its own line. Wide where n is small, so uncertainty
           is drawn rather than thresholded away — kept faint so six
-          overlapping bands stay readable (§3.5). */}
+          overlapping bands stay readable (`DATA.md#uncertainty`). */}
       {layer.band && layer.band.length >= 2 && (
         <polygon
           points={ribbon(layer.band, height)}
@@ -359,7 +359,7 @@ function withinSessionLayers(
   });
 }
 
-/** Every run, pooled overall per run (§3.7) — `pickMetric(run, null)`. */
+/** Every run, pooled overall per run (`DATA.md#pooled-accuracy`) — `pickMetric(run, null)`. */
 function acrossSessionLayers(
   summary: AnalyticsSummary,
   colors: Map<string, string>,

@@ -13,7 +13,7 @@ import type { SessionBox, TaskProfile } from "./types";
 
 /**
  * Pooled rolling accuracy per animal, for the constellation's star
- * temperatures (`dashboard.md` §9.2).
+ * temperatures (`ARCHITECTURE.md#live-session-views`).
  *
  * Derives every box in one pass rather than mounting a hook per box: React
  * forbids hooks in a loop, and a probe component per box to work around that

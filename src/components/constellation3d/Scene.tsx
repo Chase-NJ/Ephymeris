@@ -28,7 +28,7 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
  * The shared 3D constellation browser — camera, controls, and the animation
- * grammar (`dashboard.md` §9.2–§6.3, `dashboard.md` §4).
+ * grammar (`ARCHITECTURE.md#one-sky`).
  *
  * Two views use it and they are deliberately the *same instrument*: Mission
  * Control browses a cohort's animals, Debug Mode browses the rig's boxes. Both
@@ -204,7 +204,7 @@ export function ConstellationScene({
 }
 
 /**
- * On-screen pan controls (§6.2).
+ * On-screen pan controls.
  *
  * The mouse bindings alone would not do: this app is run by lab members who
  * use it infrequently, and right-drag-to-pan is not something an infrequent
@@ -397,7 +397,7 @@ function StarNode({
       {/* A wider invisible hit area — a 0.2-unit sphere is a hard click target
           at overview distance. All interaction lives here, and it only exists
           for an active star, so an inert one is inert by construction rather
-          than by a disabled handler (§6.2). */}
+          than by a disabled handler. */}
       {active && (
         <mesh
           visible={false}
@@ -502,7 +502,7 @@ function HoverReticle({ radius, active }: { radius: number; active: boolean }) {
  * its star with a short leader.
  *
  * Rendered as DOM rather than in-scene text, so it stays crisp and uses the
- * app's own type (JetBrains Mono — this is an identifier, §2.3). No
+ * app's own type (JetBrains Mono — this is an identifier). No
  * `distanceFactor`: a plate that grew as the camera closed in would be
  * enormous on arrival at a star. Constant screen size is also what makes it a
  * HUD annotation rather than a floating object in the scene.
@@ -561,9 +561,9 @@ function Nameplate({
 }
 
 /**
- * §6.3's arrival treatment — thin concentric rings that animate outward and
+ * The arrival treatment — thin concentric rings that animate outward and
  * settle into a slowly rotating decorative ring. An instrument/HUD read rather
- * than a glow, which §2.2 forbids outright.
+ * than a glow, which the theme forbids outright.
  */
 function ArrivalRings({ radius }: { radius: number }) {
   const group = useRef<THREE.Group>(null);

@@ -1,4 +1,4 @@
-"""Backup Directory mirroring — `data.md` §7.
+"""Backup Directory mirroring — `DATA.md#backup-mirroring`.
 
 Two things are worth stating about what these tests are for, because the
 mechanism is easy to test shallowly:
@@ -32,7 +32,7 @@ from ephymeris_sidecar.backup.paths import MirrorLayout, mirror_segments
 from ephymeris_sidecar.cohorts.db import Database
 
 
-# --- §8 mirror layout ------------------------------------------------------
+# --- mirror layout (`DATA.md#mirror-layout`) -------------------------------
 
 
 def resolve_mirror_path(source: Path, roots: list[Path], backup_root: Path) -> Path | None:
@@ -54,7 +54,7 @@ def test_a_relocated_cohort_folder_still_resolves(tmp_path: Path) -> None:
 
     `cohorts.setDataFolder` can put a cohort anywhere, including somewhere with
     no relationship to `Settings.dataDirectory` — so subtracting the data
-    directory from the source path is not an option (§8).
+    directory from the source path is not an option (`DATA.md#mirror-layout`).
     """
     root = tmp_path / "somewhere" / "else" / "Batch A"
     source = root / "prefix" / "file.tsv"
@@ -119,7 +119,7 @@ def test_a_growing_tsv_is_re_copied_whole(tmp_path: Path) -> None:
 
     A partial append to a slow or networked target could leave the mirrored
     write-ahead log torn; copying whole makes that impossible, and the files
-    are tens of kilobytes (§8).
+    are tens of kilobytes (`DATA.md#session-files`).
     """
     source = tmp_path / "a.tsv"
     source.write_text("221\t0\n", encoding="utf-8")
@@ -132,7 +132,7 @@ def test_a_growing_tsv_is_re_copied_whole(tmp_path: Path) -> None:
 
 
 def test_a_vanished_source_is_not_an_error(tmp_path: Path) -> None:
-    """The mirror preserves what it has; it doesn't chase deletions (§8)."""
+    """The mirror preserves what it has; it doesn't chase deletions (`DATA.md#mirror-layout`)."""
     assert copy_if_stale(tmp_path / "gone.tsv", tmp_path / "mirror" / "gone.tsv") is False
 
 
@@ -238,7 +238,7 @@ async def test_a_tracked_file_is_mirrored_on_every_pass(
 async def test_an_unwritable_target_reports_failed_and_keeps_the_queue(
     db: Database, tmp_path: Path
 ) -> None:
-    """A dead backup share must be visible, and must not lose the file (§8)."""
+    """A dead backup share must be visible, and must not lose the file (`DATA.md#failures`)."""
     root = tmp_path / "Batch A"
     root.mkdir()
     (root / "a.json").write_text("{}", encoding="utf-8")
@@ -280,7 +280,7 @@ async def test_a_recovered_target_clears_the_failure(db: Database, tmp_path: Pat
     assert status["lastError"] is None
 
 
-# --- §8 the database backup ------------------------------------------------
+# --- the database backup (`DATA.md#the-database-copy`) ---------------------
 
 
 @pytest.mark.asyncio
@@ -309,7 +309,7 @@ async def test_the_database_is_backed_up_and_is_a_readable_copy(
 
 @pytest.mark.asyncio
 async def test_every_commit_marks_the_database_dirty(db: Database, tmp_path: Path) -> None:
-    """The trigger is "the database changed", not "a cohort changed" (§8).
+    """The trigger is "the database changed", not "a cohort changed" (`DATA.md#the-database-copy`).
 
     `session_animal_runs` is written at finalization during an unattended
     overnight run and is not a cohort edit by any reading — hooking commit
@@ -349,7 +349,7 @@ async def test_the_database_backup_is_debounced(db: Database, tmp_path: Path) ->
 async def test_a_dated_snapshot_is_kept_alongside_the_live_mirror(
     db: Database, tmp_path: Path
 ) -> None:
-    """The live mirror alone would reproduce an accidental deletion (§8)."""
+    """The live mirror alone would reproduce an accidental deletion (`DATA.md#the-database-copy`)."""
     backup = tmp_path / "mirror"
     manager = make_manager(db, [], db_debounce=0.0)
     await manager.configure(str(backup))
@@ -402,7 +402,7 @@ async def test_old_snapshots_are_pruned_to_the_retention_window(
     assert not (folder / "ephymeris_2026-06-01.db").exists()
 
 
-# --- §8 explicit sync ------------------------------------------------------
+# --- explicit sync (`DATA.md#no-automatic-backfill`) -----------------------
 
 
 @pytest.mark.asyncio

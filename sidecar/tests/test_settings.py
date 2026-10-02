@@ -1,4 +1,4 @@
-"""Settings payload parsing — `settings.md` §4."""
+"""Settings payload parsing — `ARCHITECTURE.md#settings-keys`."""
 
 from __future__ import annotations
 

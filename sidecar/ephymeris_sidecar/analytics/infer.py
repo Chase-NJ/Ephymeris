@@ -1,11 +1,12 @@
-"""A scoring profile inferred from the stream itself — `data.md` §8.3's last rung.
+"""A scoring profile inferred from the stream itself — the last rung of
+`DATA.md#which-profile-decodes-a-run`.
 
 Every behaviour task this rig has ever run shares one firmware lineage and one
 **append-only strobe registry**: a code has meant the same thing in every file
 since the day it was issued, which is precisely what the registry's
 never-renumber rule bought. So a run that resolves no profile — a legacy
-archive from before `task.json` existed, a sketch folder long deleted, an
-Arduino Directory re-pointed — is not undecodable. The stream itself says which
+archive from before `task.json` existed, a sketch folder long deleted, a
+sketch dropped from the bundle — is not undecodable. The stream itself says which
 conditions ran and how each was answered, in a vocabulary this module can read
 without any per-task declaration.
 
@@ -20,7 +21,8 @@ What a profile normally supplies, and where inference gets it instead:
   only at the wrong one, so any settled trial names the side. Majority across
   the session's trials, because a hand-edited file can hold anything.
 * **the outcome vocabulary** — the registry itself, in-use and retired names
-  alike, so the §3.8 tallies and the engagement ladder read the same names a
+  alike, so the outcome tallies (`DATA.md#rewarded-and-response-accuracy`) and
+  the engagement ladder read the same names a
   declared profile would have carried.
 
 THE DECLARED PATH ALWAYS WINS. A configured task's `task.json` carries its

@@ -18,7 +18,7 @@ const container = document.getElementById("root");
 if (!container) throw new Error("#root is missing from index.html");
 
 /**
- * A recording pop-up (`recording.md` §7) is this same bundle in a second OS
+ * A recording pop-up (`ARCHITECTURE.md#scope-windows`) is this same bundle in a second OS
  * window, opened at `#/scope/<kind>`. It gets a SLIM tree, and what is left out
  * matters more than what is in:
  *

@@ -17,12 +17,12 @@ import type { TaskDefinition } from "@/lib/taskdef/types";
  *
  * `legacyNames` IS THE ONE THAT MATTERS, and it is the least obvious. A
  * pre-Ephymeris archive records `sketch` as a human label — `Shape - R`,
- * `GRGL_2-Odor` — and the archive walk (`data.md` §8.1) resolves that to a task
- * by matching this list. A name typed here is what makes those runs decode
- * against the profile that actually ran them instead of falling through to
- * inference. Declared rather than guessed on purpose: matching "Shape - L" to a
- * task by resemblance is a guess, and a wrong guess decodes real data with the
- * wrong strobe map.
+ * `GRGL_2-Odor` — and the archive walk (`DATA.md#which-profile-decodes-a-run`)
+ * resolves that to a task by matching this list. A name typed here is what
+ * makes those runs decode against the profile that actually ran them instead of
+ * falling through to inference. Declared rather than guessed on purpose:
+ * matching "Shape - L" to a task by resemblance is a guess, and a wrong guess
+ * decodes real data with the wrong strobe map.
  *
  * Collapsed by default on a saved task, open on a new one: on a task that
  * exists these are set-once fields and the trial table is what someone came

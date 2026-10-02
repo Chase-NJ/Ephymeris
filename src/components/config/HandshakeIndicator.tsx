@@ -5,11 +5,11 @@ import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * The animated handshake status dot (settings.md §5).
+ * The animated handshake status dot (`ARCHITECTURE.md#handshake-test`).
  *
- * Flat matte fills only — no glow, no gradient (§2.2). While a test runs the
- * dot breathes on a mirrored spring (springs-only rule, §2.5); results settle
- * with a snap. Reduced motion renders a static dot.
+ * Flat matte fills only — no glow, no gradient (`ARCHITECTURE.md#theme`).
+ * While a test runs the dot breathes on a mirrored spring (springs-only rule);
+ * results settle with a snap. Reduced motion renders a static dot.
  */
 
 const TIER_FILL: Record<HandshakeTier, string> = {

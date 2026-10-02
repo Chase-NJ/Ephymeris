@@ -1,4 +1,4 @@
-"""Live metric computation — `tasks.md` §5.
+"""Live metric computation — `TASKS.md#live-metrics`.
 
 This is the actual scientific output, not a UI detail, so the definition is
 followed to the letter:
@@ -20,7 +20,7 @@ last `windowSize` **counted** (hit-or-miss) trials, not the last `windowSize`
 strobe events.
 
 The accumulator is incremental so the live runner feeds it one strobe at a time
-(`dashboard.md` §10 step 7); `compute_series` replays a whole stream for
+(`ARCHITECTURE.md#entering-in_session` step 7); `compute_series` replays a whole stream for
 testing and for building the final file's metric view.
 """
 
@@ -47,9 +47,9 @@ class MetricAccumulator:
     """Rolling P(hit) for one `liveMetrics` entry.
 
     `boundary_codes` are the trial-start markers whose arrival mid-scan means the
-    current trial ended without a scored response. §6.5 phrases this as "the next
-    occurrence of `triggerCode` (or any other recognized trial-boundary code)";
-    in practice every metric's `triggerCode` (each odor onset) is a boundary, so
+    current trial ended without a scored response — the next
+    occurrence of `triggerCode` or any other recognized trial-boundary code
+    (`TASKS.md#boundary-codes`); in practice every metric's `triggerCode` (each odor onset) is a boundary, so
     the runner passes the union of all trigger codes in the profile.
     """
 

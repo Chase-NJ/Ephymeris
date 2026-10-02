@@ -1,4 +1,4 @@
-"""Build the `START` command from a Task Profile — `tasks.md` §6.2.
+"""Build the `START` command from a Task Profile — `TASKS.md#building-the-line`.
 
 Generic across any profile: `START <wireKey>=<value> <wireKey>=<value> …`,
 space-separated and order-independent, matching the firmware's
@@ -12,7 +12,7 @@ from typing import Any
 
 from .profile import ConfigField, TaskProfile, TaskProfileError
 
-#: The wire key carrying the host-drawn trial seed (`tasks.md` §6.4).
+#: The wire key carrying the host-drawn trial seed (`TASKS.md#seed`).
 #: Reserved across every profile rather than declared by any one of them: a
 #: profile that named `SEED` in its own `config` would collide with this and
 #: silently lose one of the two values.
@@ -76,7 +76,7 @@ def build_start_command(profile: TaskProfile | None, config: dict[str, Any]) -> 
     """Assemble the `START …` line.
 
     `config` is keyed by `metadataKey` (what the pre-flight form collects and
-    what lands in the session file, §5); the profile maps each to its `wireKey`.
+    what lands in the session file, `DATA.md#the-json-document`); the profile maps each to its `wireKey`.
     A field absent from `config` falls back to the profile's declared default;
     a field the profile doesn't declare is ignored, so stale UI state can't leak
     unknown tokens onto the wire.

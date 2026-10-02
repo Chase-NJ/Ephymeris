@@ -313,8 +313,8 @@ export function RigWiringEditor({
           {/* The inspector column. `lg:sticky` so a long problems list scrolls
               under a rail that keeps the selected channel's fields in reach.
               `surface-inset`, not `.hud`: the editor sits inside a frosted tile
-              now, and frosting inside frosting reads muddier than a flat lift
-              (`index.css` §2.4). */}
+              now, and frosting inside frosting reads muddier than a flat lift.
+              */}
           <div className="surface-inset rounded-sm px-3 py-1 lg:sticky lg:top-4">
             <RowDensityContext.Provider value="stacked">
               <ChannelInspector

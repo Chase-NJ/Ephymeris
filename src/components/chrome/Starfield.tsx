@@ -4,7 +4,7 @@ import { mulberry32 } from "@/lib/prng";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * Ambient drifting starfield (dashboard.md §1.5).
+ * Ambient drifting starfield (`ARCHITECTURE.md#theme`).
  *
  * Deliberately constrained: a very slow loop at very low opacity, sitting
  * behind content. Two rules from the spec are load-bearing rather than polish —
@@ -12,8 +12,8 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * focus**, because this app is watched during live data collection and ambient
  * effects must never compete for attention.
  *
- * Plain CSS rather than Framer Motion: the spring physics in §2.5 govern UI
- * transitions, whereas this is a continuous linear drift, and a 90s CSS
+ * Plain CSS rather than Framer Motion: the spring physics of the theme govern
+ * UI transitions, whereas this is a continuous linear drift, and a 90s CSS
  * animation costs nothing per frame in JS.
  */
 

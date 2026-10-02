@@ -34,15 +34,15 @@ import {
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Step 1 — Configuration (`dashboard.md` §7.2).
+ * Step 1 — Configuration (`ARCHITECTURE.md#configuration`).
  *
- * Cohort is picked from the same card grid as the Cohorts tab (§2.1) rather
- * than a dropdown, since that's how the user already knows to pick one, and the
+ * Cohort is picked from a card grid, each card carrying the cohort's world
+ * (`PlanetDisc`) as it appears on the Cohorts tab, rather than a dropdown; the
  * group to run first is picked right under it — there is no run order.
  *
  * A cohort with one of TODAY's sessions that already ran a group (the app was
  * closed between groups, or the session was ended too early) offers to continue
- * that session with another group instead (`sessions.resume`, §7.6).
+ * that session with another group instead (`sessions.resume`, `ARCHITECTURE.md#group-step`).
  */
 export function SessionConfig() {
   const navigate = useNavigate();
@@ -70,7 +70,7 @@ export function SessionConfig() {
 
   const connected = status === "connected";
 
-  // Full cohort detail is needed for the §1 readiness check.
+  // Full cohort detail is needed for the readiness check (`ARCHITECTURE.md#configuration`).
   useEffect(() => {
     if (!cohortId || !connected) return;
     let active = true;
@@ -117,7 +117,7 @@ export function SessionConfig() {
     if (!prefixId && prefixes[0]) setPrefixId(prefixes[0].id);
   }, [prefixes, prefixId]);
 
-  // §2.2 — pre-fill the next number for the chosen prefix, and learn which
+  // Pre-fill the next number for the chosen prefix, and learn which
   // numbers it already used today so reuse can be warned about softly.
   useEffect(() => {
     if (!prefixId || !connected) return;
@@ -282,7 +282,7 @@ export function SessionConfig() {
                 </div>
               )}
 
-              {/* §1 readiness, checked before the user can go further. */}
+              {/* Readiness, checked before the user can go further. */}
               {cohort && !ready && (
                 <p
                   className="mt-3 text-[12px] leading-relaxed"
@@ -484,8 +484,8 @@ export function SessionConfig() {
               </div>
             )}
 
-            {/* §2.2 — soft warning only. Reusing a number is legal (data.md §1): it appends into the same folder, which is how an interrupted
-            run is resumed. It's just usually accidental. */}
+            {/* Soft warning only (`ARCHITECTURE.md#configuration`). Reusing a number is legal: it appends into the same folder.
+            It's just usually accidental. */}
             {sameDayReuse && (
               <div className="px-4 pb-3.5">
                 <p

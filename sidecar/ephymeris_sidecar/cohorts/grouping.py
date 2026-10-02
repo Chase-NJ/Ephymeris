@@ -1,4 +1,4 @@
-"""Auto-Balance grouping — `cohorts.md` §7.
+"""Auto-Balance grouping — `DATA.md#auto-balance`.
 
 A balanced round-robin, deliberately *not* an optimisation search: simple,
 deterministic, and easy to explain when a user asks why an animal landed where
@@ -14,7 +14,7 @@ from typing import Any, Iterable
 
 from .models import MAX_GROUP_SIZE, Animal
 
-#: §7.3 step 1 — buckets are walked in this order so the result is stable.
+#: Buckets are walked in this order so the result is stable.
 SEX_BUCKETS = ("M", "F", None)
 
 
@@ -54,7 +54,7 @@ class GroupProposal:
 
 
 def minimum_group_count(animal_count: int) -> int:
-    """§7.2 — the fewest groups that can hold this roster."""
+    """The hard constraint — the fewest groups that can hold this roster."""
     return max(1, math.ceil(animal_count / MAX_GROUP_SIZE))
 
 
@@ -63,7 +63,7 @@ def resolve_group_count(
     group_count: int | None,
     max_group_size: int | None,
 ) -> int:
-    """§7.1 — the user gives one of the two; the other is derived."""
+    """The inputs — the user gives one of the two; the other is derived."""
     if group_count is not None and group_count > 0:
         return group_count
     if max_group_size is not None and max_group_size > 0:
@@ -83,16 +83,17 @@ def suggest_groups(
     max_group_size: int | None = None,
     balance_by_sex: bool = False,
 ) -> GroupProposal:
-    """Propose a complete grouping (§7.3).
+    """Propose a complete grouping (`DATA.md#auto-balance`).
 
     Always a **full re-proposal** — it considers the entire roster and ignores
-    whatever grouping already exists (§7.4). Nothing is written; the caller
+    whatever grouping already exists. Nothing is written; the caller
     previews this and commits via `cohorts.update`.
     """
     roster = list(animals)
     target = resolve_group_count(len(roster), group_count, max_group_size)
 
-    # §7.2 — reject rather than silently producing an unassignable group.
+    # The hard constraint — reject rather than silently producing an
+    # unassignable group.
     minimum = minimum_group_count(len(roster))
     if roster and target < minimum:
         return GroupProposal(
@@ -115,7 +116,7 @@ def suggest_groups(
 
     assigned: list[list[Animal]] = [[] for _ in range(target)]
 
-    # §7.3 step 2: walk each bucket in turn, cycling group index. Continuing the
+    # Walk each bucket in turn, cycling group index. Continuing the
     # cursor *across* buckets rather than restarting at 0 is what keeps overall
     # group sizes within one of each other — restarting would pile every
     # bucket's first few animals onto the low-numbered groups.
@@ -132,7 +133,7 @@ def suggest_groups(
                 name=f"Group {index + 1}",
                 order=index,
                 animals=[
-                    # §7.3 step 4 — boxes number sequentially in landing order,
+                    # Boxes number sequentially in landing order,
                     # making the tedious part a byproduct of grouping.
                     ProposedAnimal(animal_id=a.id, box_number=slot + 1)
                     for slot, a in enumerate(members)

@@ -7,14 +7,15 @@ import { springSnappy } from "@/lib/motion";
  * The Strobes door, on the Task landing.
  *
  * It was the Rig landing's second door until the vocabulary moved
- * (`settings.md` §5.0). The tile is unchanged, and deliberately: an operator
- * who learned this motif on the other page should recognise the same door in
- * its new room rather than hunt for a redesigned one.
+ * (`TASKS.md#strobe-vocabulary`). The tile is unchanged, and deliberately: an
+ * operator who learned this motif on the other page should recognise the same
+ * door in its new room rather than hunt for a redesigned one.
  *
  * The destination is a reference table rather than a workbench, so the fact
  * line stays off — but it carries a motif for parity with its neighbour: a
  * strobe train, one pulse picking up the accent on hover. Matte, single accent,
- * movement only (§1.2), same as everything else on the glass.
+ * movement only (`ARCHITECTURE.md#theme`), same as everything else on the
+ * glass.
  */
 export function StrobeDoor({ onOpen }: { onOpen: () => void }) {
   return (

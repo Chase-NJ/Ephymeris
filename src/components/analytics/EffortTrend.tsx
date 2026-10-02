@@ -16,13 +16,13 @@ import {
 } from "@/lib/analytics/view";
 
 /**
- * Cohort effort across sessions (`data.md` §11.6) — how many trials each
+ * Cohort effort across sessions (`DATA.md#pooling-across-tasks`) — how many trials each
  * session offered, and how many the animals actually engaged with.
  *
  * Every accuracy above this panel divides by `administered`, so a flat
  * rewarded line over collapsing trial counts is a very different cohort from
- * the same line over steady ones (§3.8) — this is the panel that tells those
- * apart. Each session is one bar: total height is `presented` (§3.10), the
+ * the same line over steady ones (`DATA.md#rewarded-and-response-accuracy`) — this is the panel that tells those
+ * apart. Each session is one bar: total height is `presented` (`DATA.md#engagement-ladder`), the
  * filled span is `administered`, and the outlined remainder is everything in
  * between — drawn as an absence rather than as another solid category that
  * could be misread as an outcome.
@@ -49,7 +49,7 @@ const PLOT_PX = 132;
 export function EffortTrend(props: {
   summary: AnalyticsSummary;
   /** Changes when the data does — remounts the body, so the reveal re-arms
-   *  and again waits to be seen (§2.7). */
+   *  and again waits to be seen. */
   revealKey: string;
 }) {
   return <EffortBody key={props.revealKey} {...props} />;
@@ -112,7 +112,7 @@ function EffortBody({ summary }: { summary: AnalyticsSummary }) {
                 seen={seen}
                 labels={labels}
                 // Bars surface in the order the sessions happened, so the
-                // reveal reads as history being laid down (§2.7).
+                // reveal reads as history being laid down.
                 delay={sessionSlot(index, points.length) * 0.5}
               />
             ))}
@@ -179,7 +179,7 @@ function EffortBar({
 }
 
 /**
- * The bar's total: trials the boxes offered (§3.10).
+ * The bar's total: trials the boxes offered (`DATA.md#engagement-ladder`).
  *
  * Falls back to `trials` — odor onsets — for a profile that declares no trial
  * light. That undercounts, and knowingly: it is the largest number such a

@@ -34,7 +34,7 @@ import {
 
 /**
  * Cohort accuracy across sessions — **both strictnesses on one plot**
- * (`data.md` §11.5).
+ * (`DATA.md#pooling-across-tasks`).
  *
  * The two figures are the same question asked of the *choice* and of the
  * *drop*: response accuracy counts a trial where the animal answered the
@@ -50,13 +50,13 @@ import {
  * rewarded is `OUTCOME_STYLE.rewarded` and response is Starlight — exactly
  * the pair the session summary header prints those two figures in.
  *
- * Pooled across **every task** (§10); the task strip above shares these x
+ * Pooled across **every task** (`DATA.md#pooling-across-tasks`); the task strip above shares these x
  * slots and each dashed rule here marks where the dominant task changed.
  * Hovering an animal fades the cohort figure back and overlays that animal's
  * own pair of lines.
  */
 
-/** Below this many administered trials the point is drawn hollow (§3.5). */
+/** Below this many administered trials the point is drawn hollow (`DATA.md#uncertainty`). */
 const THIN = 30;
 
 /** The viewBox's y extent — a coordinate space, not a size. */
@@ -66,7 +66,7 @@ const HEIGHT = 54;
  *  page's headline figure and it carries two lines and a band. */
 const PLOT_PX = 172;
 
-/** Seconds the pooled figures take to lay their history down (§2.7). */
+/** Seconds the pooled figures take to lay their history down. */
 const DRAW = 0.9;
 
 const RESPONSE_COLOR = "var(--color-starlight)";
@@ -77,7 +77,7 @@ export function AccuracyTrend(props: {
   summary: AnalyticsSummary;
   colors: Map<string, string>;
   /** Changes when the data does — remounts the body, so the reveal re-arms
-   *  and again waits to be seen (§2.7). */
+   *  and again waits to be seen. */
   revealKey: string;
 }) {
   return <TrendBody key={props.revealKey} {...props} />;
@@ -106,7 +106,7 @@ function TrendBody({
       <Panel>
         <p className="text-[12px] leading-relaxed text-static">
           No accuracy data yet. A run only reports it if its task&rsquo;s
-          profile declares the reward vocabulary (§3.8).
+          profile declares the reward vocabulary.
         </p>
       </Panel>
     );
@@ -146,7 +146,7 @@ function TrendBody({
   );
   // The band between the two lines — the hold-failure rate, drawn as area so
   // it reads as a quantity rather than as a distance to be estimated. Split
-  // wherever either figure is missing, like the lines themselves (§3.6).
+  // wherever either figure is missing, like the lines themselves (`DATA.md#edge-cases`).
   const gapBands = holdGapBands(points);
 
   const overall = poolOutcomes(summary.runs);
@@ -256,8 +256,8 @@ function TrendBody({
                 }
               />
             ))}
-            {/* Invisible per-session hit targets, one column each — the same
-                idiom as the heatmap cells' native titles. */}
+            {/* Invisible per-session hit targets, one column each, carrying
+                native titles. */}
             <svg
               viewBox={`0 0 100 ${HEIGHT}`}
               preserveAspectRatio="none"
@@ -368,7 +368,7 @@ function holdGapBands(
  * Fades the pooled figure back while any animal is highlighted. A wrapper
  * component rather than a hook in the panel, so a hover re-renders this
  * `<div>` and the overlay layers — never the chart or the reveal animation
- * behind them (§2.1).
+ * behind them.
  */
 function PooledLayer({ children }: { children: ReactNode }) {
   const dimmed = useHasHighlight();

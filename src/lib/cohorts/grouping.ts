@@ -1,5 +1,5 @@
 /**
- * Auto-Balance grouping — `cohorts.md` §7.
+ * Auto-Balance grouping — `DATA.md#auto-balance`.
  *
  * A client-side mirror of `sidecar/ephymeris_sidecar/cohorts/grouping.py`, so
  * the suggest-a-grouping tool can run against an in-memory, not-yet-saved
@@ -16,15 +16,15 @@
 
 import { MAX_GROUP_SIZE, type Animal, type GroupProposal } from "./types";
 
-/** §7.3 step 1 — buckets are walked in this order so the result is stable. */
+/** Algorithm step 1 — buckets are walked in this order so the result is stable. */
 const SEX_BUCKETS: Array<"M" | "F" | null> = ["M", "F", null];
 
-/** §7.2 — the fewest groups that can hold this roster. */
+/** The hard constraint — the fewest groups that can hold this roster. */
 export function minimumGroupCount(animalCount: number): number {
   return Math.max(1, Math.ceil(animalCount / MAX_GROUP_SIZE));
 }
 
-/** §7.1 — the user gives one of the two; the other is derived. */
+/** Inputs — the user gives one of the two; the other is derived. */
 export function resolveGroupCount(
   animalCount: number,
   groupCount: number | null | undefined,
@@ -44,10 +44,10 @@ function bucketOf(animal: Animal): "M" | "F" | null {
 }
 
 /**
- * Propose a complete grouping (§7.3).
+ * Propose a complete grouping.
  *
  * Always a **full re-proposal** — it considers the entire roster and ignores
- * whatever grouping already exists (§7.4). Nothing is written; the caller
+ * whatever grouping already exists. Nothing is written; the caller
  * previews this and applies it into local state.
  */
 export function suggestGroupsLocal(
@@ -57,7 +57,7 @@ export function suggestGroupsLocal(
   const roster = animals;
   const target = resolveGroupCount(roster.length, options.groupCount, options.maxGroupSize);
 
-  // §7.2 — reject rather than silently producing an unassignable group.
+  // The hard constraint — reject rather than silently producing an unassignable group.
   const minimum = minimumGroupCount(roster.length);
   if (roster.length > 0 && target < minimum) {
     return {
@@ -82,7 +82,7 @@ export function suggestGroupsLocal(
 
   const assigned: Animal[][] = Array.from({ length: target }, () => []);
 
-  // §7.3 step 2: walk each bucket in turn, cycling group index. Continuing the
+  // Algorithm step 2: walk each bucket in turn, cycling group index. Continuing the
   // cursor *across* buckets rather than restarting at 0 is what keeps overall
   // group sizes within one of each other — restarting would pile every
   // bucket's first few animals onto the low-numbered groups.
@@ -98,7 +98,7 @@ export function suggestGroupsLocal(
     groups: assigned.map((members, index) => ({
       name: `Group ${index + 1}`,
       order: index,
-      // §7.3 step 4 — boxes number sequentially in landing order, making the
+      // Algorithm step 3 — boxes number sequentially in landing order, making the
       // tedious part a byproduct of grouping.
       animals: members.map((a, slot) => ({ animalId: a.id, boxNumber: slot + 1 })),
     })),

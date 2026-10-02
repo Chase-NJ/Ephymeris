@@ -1,4 +1,4 @@
-"""The per-run trial seed — `tasks.md` §6.4.
+"""The per-run trial seed — `TASKS.md#seed`.
 
 The property under test is a negative one: **no two runs draw the same trial
 sequence**. That can't be proven by a test, but the three ways it has actually
@@ -71,7 +71,7 @@ def test_the_seed_rides_on_the_start_line_beside_the_config() -> None:
 
 
 def test_a_profile_less_sketch_still_gets_a_seed() -> None:
-    """A bare `START` is the profile-less case (§6.1), not a case where trial
+    """A bare `START` is the profile-less case (`TASKS.md#task-profile`), not a case where trial
     order stops mattering — the shaping sketches declare no config at all and
     are the ones that were running a fixed sequence."""
     assert with_trial_seed(build_start_command(None, {}), 7) == "START SEED=7"

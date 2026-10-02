@@ -1,8 +1,8 @@
 /**
  * Stage the bundled sketch library into `<repo>/sketches/`.
  *
- * Sketches ship WITH the app — there is no user-configured Arduino Directory
- * (`docs/tasks.md` §2). This script is what makes "ship with the app" true, and
+ * Sketches ship WITH the app — there is no user-configured sketch folder
+ * (`TASKS.md#sketch-library`). This script is what makes "ship with the app" true, and
  * it runs in two places: `npm run predev`, so a dev build has a library without
  * staging installer resources, and `scripts/package-resources.mjs`, which copies
  * the result into `src-tauri/resources/sketches`.

@@ -52,13 +52,13 @@ import { useSettings } from "@/lib/settings/context";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useSidecar } from "@/lib/ws/context";
 
-/** Seeds the one group every cohort has, even before its first save (§2). */
+/** Seeds the one group every cohort has, even before its first save (`DATA.md#data-model`). */
 function newLocalGroupId(): string {
   return `group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 /**
- * Create / edit / manage — `cohorts.md` §6.
+ * Create / edit / manage — `USER-GUIDE.md#setting-up-a-cohort`.
  *
  * A full route rather than a modal: the roster, groups panel and Auto-Balance
  * preview together are more than a dialog can hold comfortably. The cohort's
@@ -196,7 +196,7 @@ export function CohortEditor() {
 
   async function save() {
     if (isNew) {
-      // §8 — the folder is resolved once at creation. With a configured data
+      // The folder is resolved once at creation (`DATA.md#data-folder`). With a configured data
       // directory the sidecar derives and collision-suffixes it; without one
       // there's no basis for a default, so an explicit choice is required
       // rather than guessed at.
@@ -329,7 +329,7 @@ export function CohortEditor() {
 
             {isNew ? (
               // Only a rig with no configured data directory has a decision to make
-              // here — otherwise §8 derives the folder and asking would be noise in
+              // here — otherwise the sidecar derives the folder and asking would be noise in
               // the middle of the flow.
               <Reveal
                 open={stage >= 1 && settings.dataDirectory === null}
@@ -450,7 +450,7 @@ export function CohortEditor() {
               </Button>
             </div>
 
-            {/* §9 — archive is the everyday action; permanent delete lives only in
+            {/* Archive is the everyday action (`DATA.md#archive-and-delete`); permanent delete lives only in
             the archived view, never on a live cohort. */}
             {cohort &&
               (cohort.archivedAt ? (
@@ -525,9 +525,9 @@ function Reveal({
 
 /**
  * Lightweight coaching, not a gate — three quiet checkpoints against what a
- * cohort actually needs before it can start a session (`dashboard.md §7`
- * §1: at least one group with at least one box-assigned animal). A cohort can
- * still be saved and left incomplete at any point (`cohorts.md` §1 — real lab
+ * cohort actually needs before it can start a session (`ARCHITECTURE.md#configuration`:
+ * at least one group with at least one box-assigned animal). A cohort can
+ * still be saved and left incomplete at any point (`DATA.md#data-model` — real lab
  * setup rarely happens in one sitting); this just orients the user on what's
  * left without blocking anything.
  *
@@ -604,7 +604,7 @@ function ReadinessStrip({
 }
 
 /**
- * §8's creation-time folder. Required rather than optional: with no configured
+ * The creation-time data folder (`DATA.md#data-folder`). Required rather than optional: with no configured
  * `dataDirectory` there's nothing to derive a default from, so the user picks
  * explicitly and the value is never null.
  */
@@ -677,7 +677,7 @@ function NewCohortFolder({
  * Tones follow the app's convention: **error** is something that failed or
  * will fail on save, **warning** is a precondition the user can still choose
  * to live with, **info** is confirmation. Colour lands on the text; the border
- * stays Halo so a banner never reads as a differently-shaped surface (§2.2).
+ * stays Halo so a banner never reads as a differently-shaped surface (`ARCHITECTURE.md#theme`).
  */
 const BANNER_TONE: Record<"error" | "warning" | "info", string> = {
   error: "var(--color-status-error)",

@@ -2,9 +2,10 @@ import * as THREE from "three";
 
 /**
  * The stellar-surface material for Mission Control's constellation
- * (`dashboard.md` §9.2).
+ * (`ARCHITECTURE.md#one-sky`).
  *
- * A deliberate, bounded exception to §2.2's flat-matte rule: these are stars
+ * A deliberate, bounded exception to the theme's flat-matte rule
+ * (`ARCHITECTURE.md#shaders-and-lights`): these are stars
  * standing in for animals, and a star that looks like a star carries real
  * information here — its **colour is its temperature, and its temperature is
  * that animal's pooled rolling accuracy**. Glancing at the constellation tells

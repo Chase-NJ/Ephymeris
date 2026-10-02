@@ -44,8 +44,8 @@ import { useElementWidth } from "@/lib/useElementWidth";
  * The same drawing serves Mission Control's live panel as `LiveStateMachine`
  * below — one style for the machine everywhere it appears. The nodes and edges
  * come verbatim from `taskGraph()`, the derived-never-declared machine
- * (`tasks.md` §4); the drawing is built around the mapping between the trial
- * and the parameters that govern it.
+ * (`TASKS.md#derived-state-machine`); the drawing is built around the mapping
+ * between the trial and the parameters that govern it.
  *
  * **Every tunable group is pinned to the state it governs.** Each node carries
  * subtle mono chips naming the parameter groups that tune it (`governedBy`,
@@ -342,7 +342,8 @@ function ConditionRail({
 }
 
 /**
- * The same machine, live — Mission Control's panel (`dashboard.md` §9.4).
+ * The same machine, live — Mission Control's panel
+ * (`ARCHITECTURE.md#live-session-views`).
  *
  * One drawing, two homes: this is `SketchStateMachine`'s geometry, glyphs and
  * palette with the parameter apparatus stripped away and a token added — the
@@ -875,8 +876,8 @@ function NodeGlyph({
 
       {/* The live token: `SessionJourney`'s StepStar grammar at this drawing's
           scale — a pulsing flat ring around the occupied state, no blur, no
-          glow (§2.2). The steady inner ring keeps the state marked between
-          pulses and under reduced motion. */}
+          glow (`ARCHITECTURE.md#theme`). The steady inner ring keeps the state
+          marked between pulses and under reduced motion. */}
       {live && !reduceMotion && (
         <motion.circle
           cx={x}

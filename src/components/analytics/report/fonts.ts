@@ -1,5 +1,5 @@
 /**
- * The report sheet's fonts, inlined as data URLs (`data.md` §10.6).
+ * The report sheet's fonts, inlined as data URLs (`DATA.md#exporting-a-sheet`).
  *
  * A rasterizer serializes the sheet into an SVG `<foreignObject>` and loads it
  * as an image, which is a separate document that may not load external

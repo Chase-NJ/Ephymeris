@@ -2,7 +2,7 @@
  * Client-side mirror of the sidecar's cohort list.
  *
  * Holds only `CohortSummary` — the grid and the dashboard tile need nothing
- * more, and full detail is fetched per-cohort when a card is opened (§10).
+ * more, and full detail is fetched per-cohort when one is opened.
  * Fed by `cohorts.updated`, which the sidecar pushes on every mutation and
  * replays on connect, so nothing here polls.
  *

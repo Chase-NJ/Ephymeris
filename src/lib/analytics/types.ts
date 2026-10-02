@@ -1,5 +1,5 @@
 /**
- * Analytics wire shapes (`websocket-protocol.md` §3.4, `websocket-protocol.md` §3.4).
+ * Analytics wire shapes (`PROTOCOL.md#analytics`).
  *
  * These are the largest payloads in the protocol. They are generated from
  * `protocol/schema.py` into the protocol module and re-exported here so

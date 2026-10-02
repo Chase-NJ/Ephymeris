@@ -9,7 +9,7 @@ import { useSettings } from "@/lib/settings/context";
 import { INTAN_DIGITAL_INPUTS } from "@/lib/settings/schema";
 
 /**
- * Box → recording-controller digital input (`recording.md` §3).
+ * Box → recording-controller digital input (`RECORDING.md#wiring-and-binding`).
  *
  * A box has a USB lead to this machine and, if it records, a sync line to one
  * of the controller's sixteen digital inputs. Both are bindings between two

@@ -3,18 +3,18 @@ import type { ReactNode } from "react";
 import type { StrategyAxes } from "@/lib/analytics/view";
 
 /**
- * The plane both strategy panels draw in (`data.md` §11.1).
+ * The plane both strategy panels draw in (`DATA.md#strategy-plane`).
  *
- * Two panels occupy it — one point per *session* across a cohort (§4.1), one
- * point per *trial* within a single session (§4.4) — and they must agree on
+ * Two panels occupy it — one point per *session* across a cohort, one point
+ * per *trial* within a single session — and they must agree on
  * every reference mark, or the same position would mean two things depending
  * on the selector. So the axes, the bias diagonal, the chance mark, the region
  * captions and the prose note all live here and neither panel owns them.
  *
- * Both axes are "fraction correct for this condition", plotted **as authored**:
- * x is `liveMetrics[0]`, y is `liveMetrics[1]` (§4.2's invariant). Nothing here
- * knows what an odor or a well is — the captions read correctly for GRGL
- * because they are built from the profile's own metric labels.
+ * Both axes are "fraction correct at this well": x and y are the two sides
+ * `strategyAxes` found, each pooling every condition answered there
+ * (`DATA.md#strategy-plane`). Nothing here knows what an odor or a well is —
+ * the captions are built from the axes' own labels.
  */
 
 export const SIZE = 100;
@@ -189,8 +189,8 @@ export function StrategyPanel({ children }: { children: ReactNode }) {
  * The shared "this profile has no plane" state.
  *
  * Names the profile and its metric count rather than rendering an empty frame
- * (§4.3): "this task declares three conditions" is actionable, an empty box is
- * not.
+ * (`DATA.md#strategy-plane`): "this task declares three conditions" is
+ * actionable, an empty box is not.
  */
 export function NoPlane({
   hasRuns,

@@ -6,7 +6,7 @@ import type { ConnectionStatus } from "@/lib/ws/client";
 /**
  * Sidecar connection readout.
  *
- * Uses the semantic status colours from dashboard.md §1.2, which are
+ * Uses the semantic status colours from `ARCHITECTURE.md#theme`, which are
  * reserved for state and never used decoratively. `Ion` in particular is spent
  * only on "connected / nominal".
  */

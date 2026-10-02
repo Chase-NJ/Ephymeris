@@ -1,10 +1,10 @@
-"""Session directory and file naming — `data.md` §1–§2.
+"""Session directory and file naming — `DATA.md#directory-layout-and-naming`.
 
 Pure string/path construction, no I/O, so the naming scheme is testable on its
 own. The scheme itself does the collision-avoidance work: the per-animal
-filename's `HHMMSS` suffix means same-day reruns never collide (§1) — though
+filename's `HHMMSS` suffix means same-day reruns never collide (`DATA.md#layout`) — though
 the writer no longer *relies* on that, opening its `.tsv` exclusively so an
-unreachable collision fails loudly instead of overwriting (§7.1).
+unreachable collision fails loudly instead of overwriting (`DATA.md#written-live`).
 
 **Dates are ISO `YYYY-MM-DD`.** This replaced the lab's original `MM_DD_YY`,
 which sorted wrongly across a year boundary (`12_31_26` before `01_01_27`).
@@ -29,12 +29,12 @@ from pathlib import Path
 
 from ..cohorts.folders import sanitize_name
 
-#: The three sibling format folders inside a session folder (§1).
+#: The three sibling format folders inside a session folder (`DATA.md#layout`).
 TSV_DIR = "behavior.tsv"
 JSON_DIR = "behavior.json"
 MAT_DIR = "behavior.mat"
 
-#: Current naming (§2). Sorts chronologically as a plain string, which is what
+#: Current naming (`DATA.md#names`). Sorts chronologically as a plain string, which is what
 #: `MM_DD_YY` could not do.
 DATE_FORMAT = "%Y-%m-%d"
 #: The pre-ISO format. Read-only — never written, only parsed out of folders
@@ -58,12 +58,12 @@ _LEADING_NUMBER = re.compile(r"^(\d+(?:[-_]\d+)*)(?=[-_]|$)")
 
 
 def date_stamp(when: datetime) -> str:
-    """`YYYY-MM-DD` (§2)."""
+    """`YYYY-MM-DD` (`DATA.md#names`)."""
     return when.strftime(DATE_FORMAT)
 
 
 def time_stamp(when: datetime) -> str:
-    """`HHMMSS`, 24-hour (§2)."""
+    """`HHMMSS`, 24-hour (`DATA.md#names`)."""
     return when.strftime("%H%M%S")
 
 
@@ -100,7 +100,7 @@ def parse_name_date(name: str) -> date | None:
 
 @dataclass(frozen=True)
 class ParsedSessionFolder:
-    """What a session folder's *name* alone can tell you (§2).
+    """What a session folder's *name* alone can tell you (`DATA.md#names`).
 
     The archive walk is the only consumer — everything the app recorded itself
     is answered by the database, which also knows things a name cannot carry
@@ -166,7 +166,7 @@ def _split_head(head: str) -> tuple[str, str]:
 def parse_name_time(name: str) -> str | None:
     """The `HHMMSS` tail of a per-animal file stem, as `HH:MM:SS` — or None.
 
-    Session folders don't carry one; per-animal files do (§2). Same
+    Session folders don't carry one; per-animal files do (`DATA.md#names`). Same
     anchored-tail discipline as `parse_name_date`.
     """
     stem = Path(name).stem if Path(name).suffix else name
@@ -183,17 +183,17 @@ def parse_name_time(name: str) -> str | None:
 
 
 def session_folder_name(prefix: str, session_number: str, when: datetime) -> str:
-    """`<prefix>_<sessionNumber>_<YYYY-MM-DD>` (§2)."""
+    """`<prefix>_<sessionNumber>_<YYYY-MM-DD>` (`DATA.md#names`)."""
     return f"{sanitize_name(prefix)}_{sanitize_name(session_number)}_{date_stamp(when)}"
 
 
 def resolve_session_folder(
     cohort_data_folder: str, prefix: str, session_number: str, when: datetime
 ) -> Path:
-    """`<cohort.dataFolder>/<prefix>/<prefix>_<num>_<date>/` (§1).
+    """`<cohort.dataFolder>/<prefix>/<prefix>_<num>_<date>/` (`DATA.md#layout`).
 
     The cohort's own `dataFolder` already resolves to
-    `<Settings.dataDirectory>/<cohort name>` (`cohorts.md` §8), so this only
+    `<Settings.dataDirectory>/<cohort name>` (`DATA.md#data-folder`), so this only
     appends the prefix and session-folder segments.
     """
     return (
@@ -223,7 +223,7 @@ def resolve_animal_files(
     session_number: str,
     when: datetime,
 ) -> AnimalFilePaths:
-    """`<animal>_<prefix>_<num>_<YYYY-MM-DD>_<HHMMSS>.<ext>` (§2).
+    """`<animal>_<prefix>_<num>_<YYYY-MM-DD>_<HHMMSS>.<ext>` (`DATA.md#names`).
 
     Timestamped at the moment the animal's run actually starts, not at
     session-config time, so animals starting minutes apart get honest,

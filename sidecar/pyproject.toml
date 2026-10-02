@@ -6,9 +6,9 @@ requires-python = ">=3.12"
 dependencies = [
     "pyserial>=3.5",
     "websockets>=14",
-    # The arduino-cli gRPC daemon client (hardware-interaction.md §2). A
-    # deliberate exception to the two-dependency rule — see reference.md's
-    # dependency policy: the subprocess backend remains as a fallback, so a
+    # The arduino-cli gRPC daemon client (ARCHITECTURE.md#flashing). A
+    # deliberate exception to the two-dependency rule — see
+    # ARCHITECTURE.md#dependency-policy: the subprocess backend remains as a fallback, so a
     # failed grpcio install degrades flashing to the old path, never breaks it.
     "grpcio>=1.60",
     "protobuf>=5",

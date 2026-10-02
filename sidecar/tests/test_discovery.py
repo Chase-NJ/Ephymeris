@@ -1,4 +1,4 @@
-"""Bundled sketch library discovery — `tasks.md` §2.
+"""Bundled sketch library discovery — `TASKS.md#sketch-library`.
 
 The scan itself is unchanged from the configured-directory era; what changed is
 where the root comes from (`library_root()`, not a setting) and what a non-ok
@@ -37,7 +37,7 @@ def make_sketch(root: Path, category: str, name: str, ino_name: str | None = Non
     return folder
 
 
-# --- §2.4 library states ---------------------------------------------------
+# --- library states (`TASKS.md#library-states`) ----------------------------
 
 
 def test_the_resolution_order_is_override_then_bundled_then_repo(
@@ -114,7 +114,7 @@ def test_a_populated_library_is_ok(tmp_path: Path) -> None:
     assert result.to_json()["skippedCount"] == 0
 
 
-# --- §3 sketch validity ---------------------------------------------------
+# --- sketch validity (`TASKS.md#folder-rules`) ----------------------------
 
 
 def test_folder_name_must_match_the_ino_name(tmp_path: Path) -> None:
@@ -129,7 +129,7 @@ def test_folder_name_must_match_the_ino_name(tmp_path: Path) -> None:
 
 
 def test_skipped_folders_are_reported_not_silently_dropped(tmp_path: Path) -> None:
-    """§4 step 4 — a misnamed sketch must be discoverable, not just missing."""
+    """`TASKS.md#folder-rules` — a misnamed sketch must be discoverable, not just missing."""
     make_sketch(tmp_path, "shaping", "fr1_shaping")
     make_sketch(tmp_path, "shaping", "typo_sketch", ino_name="typo_sketchh")
 
@@ -146,7 +146,7 @@ def test_a_sketchless_folder_with_skips_is_still_empty(tmp_path: Path) -> None:
     assert len(result.skipped) == 1
 
 
-# --- §3 categories and libraries -----------------------------------------
+# --- categories and libraries (`TASKS.md#folder-rules`) ------------------
 
 
 def test_categories_are_not_a_fixed_enum(tmp_path: Path) -> None:
@@ -160,7 +160,7 @@ def test_categories_are_not_a_fixed_enum(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("dirname", ["libraries", "Libraries", "LIBRARIES"])
 def test_libraries_is_reserved_case_insensitively(tmp_path: Path, dirname: str) -> None:
-    """Both target filesystems are case-insensitive by default (§3)."""
+    """Both target filesystems are case-insensitive by default (`TASKS.md#folder-rules`)."""
     make_sketch(tmp_path, "utility", "clean_flush")
     (tmp_path / dirname / "EphymerisStrobe").mkdir(parents=True)
 
@@ -189,7 +189,7 @@ def test_loose_files_at_the_root_are_ignored(tmp_path: Path) -> None:
     assert result.skipped == []
 
 
-# --- §3 nested categories -------------------------------------------------
+# --- nested categories (`TASKS.md#folder-rules`) --------------------------
 
 
 def test_sketches_nested_below_a_subcategory_are_found(tmp_path: Path) -> None:

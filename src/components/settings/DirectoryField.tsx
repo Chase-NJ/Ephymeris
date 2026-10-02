@@ -6,7 +6,7 @@ import { Button } from "@/components/common/controls";
 /**
  * Native OS directory picker, provided by the shell — one of the reasons
  * settings live on the Tauri side rather than in the sidecar
- * (settings.md §4).
+ * (`ARCHITECTURE.md#who-owns-settings`).
  */
 export function DirectoryField({
   value,

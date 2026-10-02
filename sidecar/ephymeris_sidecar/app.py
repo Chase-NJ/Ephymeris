@@ -146,7 +146,7 @@ class Application:
         self.runner: SessionRunner | None = None
         self.backup: BackupManager | None = None
         self.analytics: AnalyticsService | None = None
-        #: The Intan RHX recording subsystem (`recording.md`). Never on the
+        #: The Intan RHX recording subsystem (`RECORDING.md`). Never on the
         #: session path except at `start_recording`.
         self.intan: IntanService | None = None
         self.profiles = AnalyticsRepository(self.db)
@@ -279,7 +279,7 @@ class Application:
         )
         # Every commit marks the database for backup — no write path can forget
         # to, and `session_animal_runs` written overnight counts just as much as
-        # a cohort edit (`data.md` §7).
+        # a cohort edit (`DATA.md#the-database-copy`).
         self.db.on_commit(self.backup.mark_db_dirty)
         self.backup.start()
         self.analytics = AnalyticsService(
@@ -325,7 +325,7 @@ class Application:
 
     async def stop(self) -> None:
         # First, and it only closes OUR sockets: a recording in progress belongs
-        # to RHX and outlives the sidecar (`recording.md` §5).
+        # to RHX and outlives the sidecar (`RECORDING.md#when-rhx-goes-away`).
         if self.intan is not None:
             await self.intan.stop()
         # Before the ports go: a lit box has a console open that must be closed
@@ -398,7 +398,8 @@ class Application:
         log.info("wiring: %s, %s", wiring, channels().content_hash())
 
     def _cohort_roots(self) -> list[str]:
-        """Every cohort's data folder — the anchors for mirror paths (§8).
+        """Every cohort's data folder — the anchors for mirror paths
+        (`DATA.md#mirror-layout`).
 
         Archived cohorts are included deliberately: archival is a bookkeeping
         state, and their data is exactly as worth protecting as anyone else's.
@@ -467,7 +468,8 @@ class Application:
                 )
             )
         )
-        # §7/§10 hard stop: a box dropping out of IN_SESSION into ERROR means the
+        # Hard stop (`ARCHITECTURE.md#board-drop`): a box dropping out of
+        # IN_SESSION into ERROR means the
         # board vanished mid-run. Finalize whatever the write-ahead log durably
         # captured, with stop_reason "board disconnected". The ERROR itself
         # clears the normal way, via port.error.ack.
@@ -477,7 +479,8 @@ class Application:
             and self.runner is not None
         ):
             self.runner.board_dropped(box)
-        # §8: a box that has just become nobody's is a box that should go back
+        # `ARCHITECTURE.md#when-a-restore-happens`: a box that has just become
+        # nobody's is a box that should go back
         # to baseline. Driving this off the transition rather than off each
         # command means every way a port can fall idle — a run ending, a
         # console closing, an error acknowledged — is covered by one hook.
@@ -506,7 +509,8 @@ class Application:
         await self.server.broadcast(event(Evt.BOARDS_PRESENCE, {"boards": boards}))
         if self.utility is not None:
             # This is also the startup path: the first poll that finds the rig
-            # is what triggers the first baseline restore (§8.1).
+            # is what triggers the first baseline restore
+            # (`ARCHITECTURE.md#when-a-restore-happens`).
             self.utility.note_presence(
                 str(b.get("hardwareId")) for b in boards if b.get("hardwareId")
             )
@@ -661,7 +665,8 @@ class Application:
                 )
             )
 
-        # §4: the session flash sequence needs every box to land in IDLE so the
+        # `ARCHITECTURE.md#exclusivity`: the session flash sequence needs every
+        # box to land in IDLE so the
         # runner can claim it, overriding the usual passthrough auto-resume.
         suppress = args.get("suppressPassthroughResume") is True
 
@@ -704,7 +709,7 @@ class Application:
             state = self._require_ports().acknowledge_error(box)
         return {"state": state.value}
 
-    # --- utility baseline (settings.md §8) --------------------
+    # --- utility baseline (ARCHITECTURE.md#hardware-utility-baseline) ---
 
     def _require_utility(self) -> UtilityBaseline:
         if self.utility is None:
@@ -741,7 +746,7 @@ class Application:
             raise CommandError(ErrCode.UTILITY_UNAVAILABLE, str(exc), {"box": box}) from exc
         return {"delivered": delivered, "state": state}
 
-    # --- cohorts (cohorts.md) ---------------------------------------------
+    # --- cohorts (DATA.md#cohorts-animals-and-groups) --------------------
 
     async def _cohorts_list(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
         return {"cohorts": await self._cohort_summaries()}
@@ -757,7 +762,8 @@ class Application:
         override = args.get("dataFolder")
 
         with _cohort_errors():
-            # §8: an explicit folder wins; otherwise derive one from the
+            # `DATA.md#data-folder`: an explicit folder wins; otherwise derive
+            # one from the
             # configured data directory, suffixing until the path is unused.
             # Resolving is side-effect free — nothing is created yet.
             if isinstance(override, str) and override.strip():
@@ -817,7 +823,8 @@ class Application:
         return {"cohort": cohort.to_json()}
 
     async def _cohorts_delete(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        """Permanent delete — §9. Removes bookkeeping only, never data files."""
+        """Permanent delete (`DATA.md#archive-and-delete`). Removes bookkeeping
+        only, never data files."""
         cohort_id = _str_arg(args, "id")
         if args.get("confirm") is not True:
             raise CommandError(
@@ -846,7 +853,8 @@ class Application:
         return {"cohort": cohort.to_json()}
 
     async def _cohorts_suggest_groups(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        """§7 preview. Computes only — the client applies via `cohorts.update`."""
+        """Auto-Balance preview (`DATA.md#auto-balance`). Computes only — the
+        client applies via `cohorts.update`."""
         cohort_id = _str_arg(args, "id")
         with _cohort_errors():
             cohort = await asyncio.to_thread(self.cohorts.get, cohort_id)
@@ -868,7 +876,7 @@ class Application:
             event(Evt.COHORTS_UPDATED, {"cohorts": await self._cohort_summaries()})
         )
 
-    # --- prefixes (data.md §3.1) -------------------------------------
+    # --- prefixes (DATA.md#prefixes) ----------------------------------
 
     async def _prefixes_list(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
         return {"prefixes": await self._prefix_list()}
@@ -901,7 +909,7 @@ class Application:
             event(Evt.PREFIXES_UPDATED, {"prefixes": await self._prefix_list()})
         )
 
-    # --- task profiles (tasks.md §3) --------------------------------
+    # --- task profiles (TASKS.md#task-profile) -----------------------
 
     async def _tasks_get_profile(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         sketch_path = _str_arg(args, "sketchPath")
@@ -1185,7 +1193,7 @@ class Application:
         """
         await self.server.broadcast(event(Evt.HARDWARE_UPDATED, status))
 
-    # --- backup (data.md §7) ---------------------------------------
+    # --- backup (DATA.md#backup-mirroring) --------------------------
 
     async def _backup_sync_now(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
         """Copy anything the mirror is missing, on demand.
@@ -1202,7 +1210,7 @@ class Application:
         except BackupNotConfigured as exc:
             raise CommandError(ErrCode.BACKUP_UNAVAILABLE, str(exc)) from exc
 
-    # --- analytics (websocket-protocol.md §3.4) --------------------------------------
+    # --- analytics (PROTOCOL.md#analytics) ---------------------------------
 
     def _require_analytics(self) -> AnalyticsService:
         if self.analytics is None:
@@ -1210,13 +1218,13 @@ class Application:
         return self.analytics
 
     def _sketch_path_for_name(self, name: str) -> str | None:
-        """A document's `sketch` field resolved against the current Arduino
-        Directory — how an adopted orphan finds a `task.json` to decode with
-        (`data.md` §8.1). Name collisions across categories are possible
+        """A document's `sketch` field resolved against the sketch library —
+        how an adopted orphan finds a `task.json` to decode with
+        (`DATA.md#orphan-adoption`). Name collisions across categories are possible
         in principle; first discovery-order match wins, same as the picker.
 
         Falls back to profiles that *declare* the name in `legacyNames`
-        (`tasks.md` §3.7), which is how a run recorded by older software
+        (`TASKS.md#legacy-names`), which is how a run recorded by older software
         under a human label ("Shape - L") reaches the sketch that can decode it.
         Declared, never inferred: resemblance is not evidence, and decoding
         real data with the wrong strobe map is worse than not decoding it.
@@ -1251,7 +1259,7 @@ class Application:
             self.sessions.list_sessions, cohort_id, include_aborted=include_aborted
         )
         counts = await asyncio.to_thread(self.sessions.run_counts_by_session, cohort_id)
-        # Adopted orphans (data.md §8.1) appear as payload-only synthetic
+        # Adopted orphans (DATA.md#orphan-adoption) appear as payload-only synthetic
         # sessions so the Analytics selectors cover the whole archive. Both
         # sources are database reads — the no-filesystem rule holds.
         synthetic, synthetic_counts = await asyncio.to_thread(
@@ -1265,7 +1273,7 @@ class Application:
                 session.to_list_item(
                     index + 1,
                     # Added, not either-or: a recorded session also counts
-                    # the recovered files attributed to it (data.md §8.8).
+                    # the recovered files attributed to it (DATA.md#tidy-records).
                     run_count=counts.get(session.id, 0)
                     + synthetic_counts.get(session.id, 0),
                 )
@@ -1296,7 +1304,8 @@ class Application:
             raise CommandError(ErrCode.BAD_MESSAGE, str(exc)) from exc
 
     async def _analytics_rescan(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        """The explicit archive walk (§8.1) — never a side effect of opening a view."""
+        """The explicit archive walk (`DATA.md#database-first`) — never a side
+        effect of opening a view."""
         cohort_id = _str_arg(args, "cohortId")
         with _cohort_errors():
             try:
@@ -1307,7 +1316,8 @@ class Application:
                 raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
 
     async def _sessions_tidy(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        """Merge a day's split session records and drop empty ones (§8.8).
+        """Merge a day's split session records and drop empty ones
+        (`DATA.md#tidy-records`).
 
         `apply` false (the default) is a preview. The held session is never
         touched, whatever the plan says; everything else the planner decides.
@@ -1335,7 +1345,7 @@ class Application:
         return await self._require_analytics().recent_sessions(_opt_int(args.get("limit")))
 
     async def _sessions_recover(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        """The crash-recovery backfill (`data.md` §12, §11).
+        """The crash-recovery backfill (`DATA.md#crash-recovery`).
 
         Guarded against a running session: a live box's `.tsv` legitimately
         has no `.json` yet, and "recovering" it would mint a half-session
@@ -1354,7 +1364,7 @@ class Application:
         result = await asyncio.to_thread(recovery.recover_cohort, cohort.data_folder)
         return {**result, "cohortId": cohort_id}
 
-    # --- sessions (websocket-protocol.md §3) ------------------------------
+    # --- sessions (PROTOCOL.md#prefixes-and-sessions) ---------------------
 
     def _require_runner(self) -> SessionRunner:
         if self.runner is None:
@@ -1391,7 +1401,8 @@ class Application:
         except CohortNotFound as exc:
             raise CommandError(ErrCode.SESSION_INVALID, "That cohort no longer exists.") from exc
 
-        # §1 readiness: at least one group with a box-assigned animal.
+        # Readiness (`ARCHITECTURE.md#configuration`): at least one group with
+        # a box-assigned animal.
         if not _is_ready_to_run(cohort):
             raise CommandError(
                 ErrCode.SESSION_NOT_READY,
@@ -1525,7 +1536,9 @@ class Application:
         # From here until the session ends the boxes belong to the runner: they
         # will carry task sketches and fall idle between flashes, and a
         # baseline restore landing in that window would erase the very sketch
-        # this mapping just chose (§8.2). Also extinguishes the placement walk's
+        # this mapping just chose
+        # (`ARCHITECTURE.md#three-rules-it-never-breaks`). Also extinguishes
+        # the placement walk's
         # lights, in case the client didn't.
         if self.utility is not None:
             self.utility.hold()
@@ -1568,7 +1581,8 @@ class Application:
         runner = self._require_runner()
         await self._begin_recording_if_any(session_id)
         for box in runner.configured_boxes():
-            # `start_box` is a no-op for a box already running (§5.2).
+            # `start_box` is a no-op for a box already running
+            # (`ARCHITECTURE.md#running-boxes`).
             with _session_errors(box):
                 runner.start_box(box)
         await asyncio.to_thread(self._open_group_run, session_id, runner.group_id)
@@ -1577,7 +1591,8 @@ class Application:
         return {"session": session.to_json()}
 
     async def _sessions_end_group(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        """End the group on the rig and wait BETWEEN GROUPS (`dashboard.md` §5.2).
+        """End the group on the rig and wait BETWEEN GROUPS
+        (`ARCHITECTURE.md#group-step`).
 
         The session stays `running` and held, with an empty runner: which group
         runs next is the operator's choice, made on the group step, and a
@@ -1599,7 +1614,8 @@ class Application:
     async def _sessions_resume(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         """Continue one of today's sessions with another group.
 
-        Deliberately NOT session resumption (`data.md` §5.3): nothing is picked
+        Deliberately NOT session resumption
+        (`DATA.md#continuing-between-groups`): nothing is picked
         up mid-group. A group that was running when the app died is closed as
         it stands -- its animals' `.tsv` files are the record, and `sessions.recover`
         backfills them -- and the session re-enters the between-groups state
@@ -1678,7 +1694,7 @@ class Application:
         await self._broadcast_lifecycle()
         return {"session": session.to_json()}
 
-    # --- recording (recording.md §5) --------------------------------------
+    # --- recording (RECORDING.md#start-and-end) ---------------------------
 
     #: How long a recording waits for each box to finish the trial it is in
     #: after STOP. Longer than any trial the lab runs -- a 20 s error delay plus
@@ -1806,7 +1822,8 @@ class Application:
     async def _on_animal_ended(self, run: ActiveRun, reason: str) -> None:
         """Record the run and tell the frontend (`session.animalEnded`)."""
         if self._running_session_id is not None:
-            # Snapshot the profile that actually decoded this run (§8.2). A
+            # Snapshot the profile that actually decoded this run
+            # (`DATA.md#which-profile-decodes-a-run`). A
             # `task.json` lives beside its sketch and can be edited or deleted
             # long after a session, so without this the run would silently be
             # re-interpreted years later with whatever codes are current.
@@ -1818,7 +1835,8 @@ class Application:
                     )
                 except Exception:  # noqa: BLE001 - never fail a finalization over this
                     log.exception("couldn't snapshot the task profile for box %d", run.box)
-            # The parameters this run actually ran on (§6.9). They already reach
+            # The parameters this run actually ran on (`TASKS.md#three-layer-merge`).
+            # They already reach
             # the session file; recording them here is what makes them
             # queryable, and what lets Analytics tell two differently-tuned runs
             # of the same sketch apart — `profile_hash` cannot, it covers only
@@ -1855,7 +1873,7 @@ class Application:
             )
         )
 
-    # --- Intan recording (recording.md) -----------------------------------
+    # --- Intan recording (RECORDING.md) -----------------------------------
 
     def _require_intan(self) -> IntanService:
         if self.intan is None:
@@ -1977,7 +1995,8 @@ class Application:
 
 
 def _is_ready_to_run(cohort: Any) -> bool:
-    """`dashboard.md` §7.1 — ready if any group holds a box-assigned animal."""
+    """`ARCHITECTURE.md#configuration` — ready if any group holds a
+    box-assigned animal."""
     return any(a.box_number is not None for a in cohort.animals)
 
 
@@ -2113,7 +2132,7 @@ class _mapped_errors:
     """Translate hardware-layer exceptions into typed protocol errors.
 
     The frontend renders whatever comes back here; it never decides for itself
-    whether an operation was legal (`dashboard.md` §5.3).
+    whether an operation was legal (`ARCHITECTURE.md#port-state-machine`).
     """
 
     def __init__(self, box: int) -> None:

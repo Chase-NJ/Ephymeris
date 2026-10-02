@@ -14,15 +14,15 @@ import { OUTCOME_STYLE, colorForIndex, type OutcomeKey } from "@/lib/analytics/v
 import { springSnappy } from "@/lib/motion";
 
 /**
- * The inside of one animal's run (`data.md` §11.4) — the views a card-sized
- * tile cannot carry, behind one segmented selector so only one is on screen
- * at a time.
+ * The inside of one animal's run (`DATA.md#pooling-across-tasks`) — the views a
+ * card-sized tile cannot carry, behind one segmented selector so only one is on
+ * screen at a time.
  *
- * The tape is the reason the per-trial wire field exists (§9.11): streaks,
- * side-bias episodes and the moment an animal stopped working are invisible
- * in any aggregate. The other three are the card's own numbers at full size —
- * the trajectory the sparkline compresses, the per-odor composition, and the
- * engagement ladder as a funnel.
+ * The tape is the reason the per-trial wire field exists
+ * (`DATA.md#per-trial-tape`): streaks, side-bias episodes and the moment an
+ * animal stopped working are invisible in any aggregate. The other three are
+ * the card's own numbers at full size — the trajectory the sparkline
+ * compresses, the per-odor composition, and the engagement ladder as a funnel.
  */
 export function AnimalDetail({
   run,
@@ -293,7 +293,8 @@ function TrajectoryView({ series }: { series: RunSeries | null }) {
       </svg>
     </ChartFrame>
     {/* These are the task's own declared metrics, which score the **choice**
-        — the correct well was answered, hold or not (§9.8). They are not the
+        — the correct well was answered, hold or not
+        (`DATA.md#rewarded-and-response-accuracy`). They are not the
         reward rate printed on the card, and on an animal that discriminates
         well but doesn't hold the two are far apart, which is exactly when
         someone is most likely to read this line as the wrong quantity. */}
@@ -395,10 +396,11 @@ function OdorRow({
 }
 
 /**
- * The engagement ladder as a funnel (§9.10) — the one view that says whether
- * a low accuracy is a discrimination problem or an animal that never came to
- * the port. Each rung's bar is its count against `presented`, and the gap to
- * the rung above is named, because the two gaps are different behaviours.
+ * The engagement ladder as a funnel (`DATA.md#engagement-ladder`) — the one
+ * view that says whether a low accuracy is a discrimination problem or an
+ * animal that never came to the port. Each rung's bar is its count against
+ * `presented`, and the gap to the rung above is named, because the two gaps are
+ * different behaviours.
  */
 function EngagementView({
   run,

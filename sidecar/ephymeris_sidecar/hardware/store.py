@@ -27,7 +27,7 @@ resolves them package-relative) and are read-only in a PyInstaller build, which
 is exactly why the user document lives here instead.
 
 NOTE `jsonschema` is imported inside the function that needs it, never at module
-scope: it is the one sidecar dependency the README §6.4 fence allows to be
+scope: it is the one sidecar dependency the `ARCHITECTURE.md#dependency-policy` fence allows to be
 missing, and a failed wheel must disable the rig editor rather than take down the
 process that owns six serial ports.
 """

@@ -4,7 +4,7 @@ import { CMD, EVT, type BackupState, type BackupStatus, type SyncResult } from "
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Live Backup Directory mirroring state (`data.md` §7).
+ * Live Backup Directory mirroring state (`DATA.md#backup-mirroring`).
  *
  * A hook rather than a provider: unlike hardware state, nothing needs this on
  * every screen or needs it to accumulate while unmounted. The sidecar replays

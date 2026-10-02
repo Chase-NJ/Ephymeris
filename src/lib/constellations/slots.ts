@@ -1,5 +1,5 @@
 /**
- * Slot logic — which box sits on which star (settings.md §5).
+ * Slot logic — which box sits on which star (`ARCHITECTURE.md#status-constellation`).
  *
  * Pure functions, no React. `reconcileSlots` is the single authority for slot
  * hygiene; everything that mutates boxes or switches constellations funnels

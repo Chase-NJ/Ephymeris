@@ -36,7 +36,7 @@ export function SettingGroup({
    * the guided session steps. An opaque card there punches a hole in the
    * constellation behind it; `.hud` is 55% Nebula over a 20px backdrop blur, so
    * the sky reads through the glass. Same distinction `BoxCard` and `StarPanel`
-   * make (`index.css` §2.4).
+   * make.
    */
   variant?: "surface" | "hud";
 }) {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 /**
  * "This screen has unsaved work" — registered by an editor, read by the
- * sidebar (`cohorts.md` §6).
+ * sidebar (`USER-GUIDE.md#setting-up-a-cohort`).
  *
  * The cohort editor holds an entire roster in local component state and only
  * persists on Save. Every sidebar click is an unconditional immediate unmount,

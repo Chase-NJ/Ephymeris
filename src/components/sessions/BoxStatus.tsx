@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
  */
 
 /**
- * One box's run clock (`dashboard.md` §5.4): elapsed since *this box's* start,
+ * One box's run clock: elapsed since *this box's* start,
  * against the session's optional time limit. Driven by the snapshot's
  * `startedAt` rather than a client-side stopwatch, so a reloaded window
  * resumes mid-count. Once time is up the sidecar has already sent STOP — the

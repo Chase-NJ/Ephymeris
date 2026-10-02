@@ -11,7 +11,7 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * inside.
  *
  * `mode="return"` plays the same scene backwards — the group-swap prompt in
- * Mission Control (§5.5): the animal is lifted back *out* of the chamber and
+ * Mission Control: the animal is lifted back *out* of the chamber and
  * carried home to its cage, because that is literally the operator's next
  * physical act before the next group runs. Same scenery, same performers;
  * only the choreography and which lid opens are mirrored.
@@ -23,7 +23,7 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * fill still comes from the six tokens (white rat = Starlight, gloves =
  * Pulsar, equipment = Nebula/Halo, depth = Void, success = Ion) and stays
  * flat and matte — depth comes from face shading and a travelling ground
- * shadow, never from gradients or glow (`dashboard.md` §1.2).
+ * shadow, never from gradients or glow (`ARCHITECTURE.md#theme`).
  *
  * Under reduced motion the scene is a still of the finished move — placed in
  * the chamber, or home in the cage, by mode.

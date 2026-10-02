@@ -20,7 +20,8 @@ import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * The large, interactive constellation (settings.md §5).
+ * The large, interactive constellation
+ * (`ARCHITECTURE.md#status-constellation`).
  *
  * Same layout, health semantics, and style tokens as the sidebar widget —
  * bigger, labelled, and editable. Dragging a box node snaps it to another

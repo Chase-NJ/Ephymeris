@@ -11,12 +11,12 @@ import { useRigSky } from "@/components/constellation3d/useRigSky";
 import { assignShips } from "@/lib/constellations/ships";
 
 /**
- * The 3D constellation (`dashboard.md` §9).
+ * The 3D constellation (`ARCHITECTURE.md#one-sky`).
  *
  * **The scene is the rig's own asterism** — the very same one the Dashboard and
  * Debug Mode draw, resolved through the very same `useRigSky`. Whatever zodiac
- * Box Setup chose, and whichever star each box was slotted onto, is exactly what
- * gets drawn here (§6.1); an install that never ran Box Setup gets
+ * Settings chose, and whichever star each box was slotted onto, is exactly what
+ * gets drawn here; an install that never chose one gets
  * `legacyLayout`, which pins a position per box number. There is no second
  * placement mode and no second sky — see the caution in `stars.ts`.
  *
@@ -28,7 +28,7 @@ import { assignShips } from "@/lib/constellations/ships";
  * Camera, controls and the whole animation grammar live in
  * `constellation3d/Scene` and are shared with Debug Mode. What this file owns
  * is what a star *says*: stars whose box is `IN_SESSION` are lit and clickable,
- * everyone else is present but dim and inert (§6.2), and **a lit star's
+ * everyone else is present but dim and inert, and **a lit star's
  * temperature is that animal's pooled rolling accuracy** (`starSurface.ts`) —
  * red at chance through orange and yellow to blue-white as it works, so the
  * overview answers "who is doing well" without opening a panel.
@@ -140,8 +140,8 @@ export function Constellation3D({
        * there, so navigating between them changed what the star *was*, which no
        * amount of easing the camera can smooth over.
        *
-       * So it takes Debug's treatment for a box that is bound but not on the bus
-       * (§4.1): **burned down and frozen**. Stillness and dimness are the status,
+       * So it takes Debug's treatment for a box that is bound but not on the
+       * bus: **burned down and frozen**. Stillness and dimness are the status,
        * and neither is a colour — the temperature it earned still reads, which a
        * dot could not show at all. The `dim` scale rides the existing colour
        * lerp, so starting a box fades it up rather than popping it.

@@ -373,7 +373,7 @@ function declaredNames(profile: TaskProfile | null): Set<string> {
  * The odor conditions the task presents, in authored order.
  *
  * `liveMetrics` is the only ordered structure in a profile and its order is
- * already load-bearing elsewhere (`data.md` §11.1), so it names the
+ * already load-bearing elsewhere (`DATA.md#strategy-plane`), so it names the
  * conditions when present. A profile with strobes but no metrics still draws
  * its odor rows, just labelled by strobe name.
  */

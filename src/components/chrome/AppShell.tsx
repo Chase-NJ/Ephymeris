@@ -11,11 +11,11 @@ import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
- * Two-region layout per dashboard.md §2.1: custom titlebar across the top,
- * persistent sidebar on the left, content on the right.
+ * Two-region layout: custom titlebar across the top, persistent sidebar on
+ * the left, content on the right.
  *
  * **The sidebar floats over the content region rather than sitting beside it.**
- * Its glass is thin enough to read the sky through (§2.4), which is only worth
+ * Its glass is thin enough to read the sky through, which is only worth
  * anything if there is sky behind it — so the content region spans the full
  * width and the sidebar is an overlay on top of it. `main` carries a matching
  * left padding, so every ordinary in-flow route clears the sidebar without
@@ -82,7 +82,7 @@ export function AppShell() {
 
 /**
  * The guided flow's steps are a sequence, so moving between them travels
- * (`dashboard.md` §8.6): a step slides in from the side it came from
+ * (`ARCHITECTURE.md#the-flow`): a step slides in from the side it came from
  * and leaves toward the side you're going, which makes Back read as going
  * back rather than as another arrival. Everything outside the flow crossfades
  * instead — a lateral slide between unrelated destinations would imply an
@@ -159,18 +159,18 @@ const TRAVEL = 26;
 
 /**
  * Where a path sits in the guided sequence, or null if it isn't part of it.
- * Analytics is the flow's last step (§2.5's landing), so ending a session
+ * Analytics is the flow's last step, so ending a session
  * travels forward into it rather than cutting.
  */
 function flowStep(pathname: string): number | null {
-  // The Dashboard is the flow's start now that /launch is retired (§3.2) —
+  // The Dashboard is the flow's start now that /launch is retired —
   // its hero CTA and session dock are where every session journey begins.
   if (pathname === "/") return 0;
   if (pathname === "/session/new") return 1;
   if (/^\/session\/[^/]+\/mapping$/.test(pathname)) return 2;
-  // A recording session's extra step (`recording.md` §4). Fractional so the
-  // steps either side keep their numbers — what matters is only the ORDER,
-  // which decides which way a transition travels.
+  // A recording session's extra step (`RECORDING.md#record-step`). Fractional
+  // so the steps either side keep their numbers — what matters is only the
+  // ORDER, which decides which way a transition travels.
   if (/^\/session\/[^/]+\/recording$/.test(pathname)) return 2.5;
   if (/^\/session\/[^/]+\/control$/.test(pathname)) return 3;
   if (pathname === "/analytics") return 4;

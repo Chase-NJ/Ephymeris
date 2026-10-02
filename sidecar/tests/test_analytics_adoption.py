@@ -1,4 +1,4 @@
-"""Orphan adoption against a legacy, hand-managed archive — `data.md` §8.1.
+"""Orphan adoption against a legacy, hand-managed archive — `DATA.md#orphan-adoption`.
 
 Models the lab's real pre-Ephymeris layout, which differs from the current
 writer's in every way that matters: format folders named `behavior_json` /
@@ -154,10 +154,10 @@ class LegacyRig:
         if sketch is not None:
             document["sketch"] = sketch
         if params is not None:
-            # Flat at the top level, exactly as `finalize` writes them (§5).
+            # Flat at the top level, exactly as `finalize` writes them (`DATA.md#the-json-document`).
             document.update(params)
         if profile is not None:
-            # The snapshot a modern file carries with it (§4.4).
+            # The snapshot a modern file carries with it (`DATA.md#the-embedded-task-profile`).
             document["task_profile"] = profile
         path.write_text(json.dumps(document), encoding="utf-8")
         if with_tsv:
@@ -239,7 +239,7 @@ def test_walk_finds_both_layouts(rig: LegacyRig) -> None:
 
 
 def test_walk_still_ignores_a_stray_json(rig: LegacyRig) -> None:
-    """Scoping to format folders is what keeps an unrelated file out (§8.1)."""
+    """Scoping to format folders is what keeps an unrelated file out (`DATA.md#database-first`)."""
     rig.add_legacy_run("remy1", HIT_1 * 5)
     (rig.root / "2O-Bdisc" / "notes.json").write_text("{}", encoding="utf-8")
     assert len(reader.walk_session_files(rig.root)) == 1
@@ -299,7 +299,8 @@ def test_the_walk_stops_at_the_depth_cap(rig: LegacyRig) -> None:
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads anything")
 def test_an_unreadable_directory_does_not_blank_the_cohort(rig: LegacyRig) -> None:
-    """A bad directory is data too (§8.3, one level up). Losing a year of
+    """A bad directory is data too (`DATA.md#caching`'s corrupt-file rule, one
+    level up). Losing a year of
     history to one bad permission bit is the failure worth ruling out."""
     run = rig.add_legacy_run("remy1", HIT_1 * 5)
     walled = rig.root / "locked"
@@ -352,7 +353,7 @@ async def test_adopted_runs_reach_the_summary_and_are_scored(rig: LegacyRig) -> 
     assert run["animalId"] == "a1"
     assert run["metrics"][0]["pSession"] == 0.75
     # Decoded with today's task.json, which is exactly as trustworthy as that
-    # sounds — never reported as a snapshot (§8.2).
+    # sounds — never reported as a snapshot (`DATA.md#which-profile-decodes-a-run`).
     assert run["profileSource"] == "sketch-current"
     assert run["boxNumber"] is None, "a filename carries no box number"
     assert validate_command_result("analytics.summary", payload) == []
@@ -387,7 +388,7 @@ async def test_a_run_from_another_rig_still_names_its_program(
 async def test_a_file_that_carries_its_profile_decodes_as_a_snapshot(
     rig: LegacyRig,
 ) -> None:
-    """THE POINT OF §4.4, end to end.
+    """THE POINT OF THE EMBEDDED SNAPSHOT (`DATA.md#the-embedded-task-profile`), end to end.
 
     A session recorded on the Windows rig and copied here: this install has no
     run record for it and no sketch by that name, so every rung of the ladder
@@ -439,7 +440,7 @@ async def test_the_files_own_profile_outranks_a_same_named_sketch_here(
 async def test_a_copied_run_reports_the_parameters_its_file_records(
     rig: LegacyRig,
 ) -> None:
-    """Comparability is the PAIR (§8.3). An adopted run has no row here to
+    """Comparability is the PAIR (`DATA.md#which-profile-decodes-a-run`). An adopted run has no row here to
     carry `paramsHash`, so without the snapshot naming which of the document's
     fields are parameters, two differently-tuned runs of one task pool
     silently."""
@@ -708,7 +709,7 @@ async def test_rescan_is_idempotent(rig: LegacyRig) -> None:
 async def test_a_second_rescan_does_not_read_the_files_again(
     rig: LegacyRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§8.7. Adoption used to be redone in full on every click — every file
+    """`DATA.md#carrying-adoptions-forward`. Adoption used to be redone in full on every click — every file
     opened, parsed and written back — to recompute the first scan's answer from
     the same inputs. On the machine whose archive is a network share that was
     the whole archive pulled over the wire per click."""
@@ -731,7 +732,7 @@ async def test_a_second_rescan_does_not_read_the_files_again(
 
 
 async def test_a_carried_row_is_not_rewritten(rig: LegacyRig) -> None:
-    """Every commit marks the database dirty for backup (§7.3), so rewriting an
+    """Every commit marks the database dirty for backup (`DATA.md#the-database-copy`), so rewriting an
     archive's worth of identical rows is a whole-file copy to a possibly
     networked target per click."""
     rig.add_legacy_run("remy1", HIT_1 * 5)
@@ -813,7 +814,7 @@ async def test_a_carried_row_still_beats_a_poorer_duplicate(rig: LegacyRig) -> N
 async def test_an_adoption_yields_to_a_run_record_that_claims_its_file(
     rig: LegacyRig,
 ) -> None:
-    """Database-first (§8.1), enforced in both directions.
+    """Database-first (`DATA.md#database-first`), enforced in both directions.
 
     The walk skips a path a run record claims, so an adoption made *before*
     that record existed was never revisited — and the file then reached the
@@ -847,7 +848,7 @@ async def test_an_adoption_yields_to_a_run_record_that_claims_its_file(
 
 
 async def test_an_adoption_is_dropped_when_its_file_goes(rig: LegacyRig) -> None:
-    """The prune (§8.6) reaches adoptions too, and this is the easy half: an
+    """The prune (`DATA.md#pruning`) reaches adoptions too, and this is the easy half: an
     adopted row holds nothing that isn't re-derivable from the file it names,
     so a row deleted in error costs exactly one rescan."""
     kept = rig.add_legacy_run("remy1", HIT_1 * 5, number="01")
@@ -1029,7 +1030,7 @@ async def test_an_unresolvable_sketch_with_nothing_to_infer_says_why(
 ) -> None:
     """When the stream ALSO presents no recognisable condition, the run must
     name the sketch it wanted — that is the one thing the operator can act on
-    (§8.3), and "no metrics" alone offers nothing to fix."""
+    (`DATA.md#which-profile-decodes-a-run`), and "no metrics" alone offers nothing to fix."""
     rig.add_legacy_run("remy1", [222, 224, 226, 233], sketch="Shape - L")
 
     await rig.service.rescan(rig.cohort.id)
@@ -1046,7 +1047,7 @@ async def test_a_declared_legacy_name_makes_an_old_run_scorable(
     rig: LegacyRig, tmp_path: Path
 ) -> None:
     """`legacyNames` is the declared bridge from an old human label to the
-    sketch that can decode it (`tasks.md` §3.7) — the lab's shaping
+    sketch that can decode it (`TASKS.md#legacy-names`) — the lab's shaping
     archive is recorded as "Shape - L", not `shaping_GL`."""
     shaping = tmp_path / "sketches" / "shaping_GL"
     shaping.mkdir(parents=True, exist_ok=True)
@@ -1096,7 +1097,7 @@ async def test_fallback_decoded_runs_still_label_their_profile_group(
     """A comparability group needs a `taskName` to label itself with, and an
     archive that predates snapshots has *only* fallback decodes — so the
     fallback profile is stored too. Storing it must not promote the run's
-    trust level (§8.2)."""
+    trust level (`DATA.md#which-profile-decodes-a-run`)."""
     rig.add_legacy_run("remy1", HIT_1 * 5)
     await rig.service.rescan(rig.cohort.id)
 
@@ -1120,7 +1121,7 @@ async def test_a_cache_hit_pass_leaves_no_open_transaction(rig: LegacyRig) -> No
     assert not rig.db.conn.in_transaction
 
 
-# --- a real archive's shape (see docs/data.md §8.1) -------------------
+# --- a real archive's shape (see DATA.md#orphan-adoption) -------------------
 
 
 def test_applesingle_sidecars_are_not_data(rig: LegacyRig) -> None:
@@ -1141,7 +1142,7 @@ async def test_a_consolidated_copy_does_not_double_every_run(
 ) -> None:
     """The real archive keeps an `ALL/` copy of every session beside the
     per-prefix originals. Adopting both would double every animal in the
-    heatmap and put two points per session on every curve — silently."""
+    analytics views and put two points per session on every curve — silently."""
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5, group="01_2O-Bdisc")
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5, group="ALL")
 

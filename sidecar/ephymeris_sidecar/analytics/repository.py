@@ -1,4 +1,5 @@
-"""Profile snapshots and the derived-metrics cache — `data.md` §8.3, §8.3.
+"""Profile snapshots and the derived-metrics cache —
+`DATA.md#which-profile-decodes-a-run`, `DATA.md#caching`.
 
 Synchronous, like every other repository here; callers wrap in
 `asyncio.to_thread`. Shares the cohort database and its lock.
@@ -31,7 +32,7 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CacheKey:
-    """What makes a cached summary still valid (§8.3)."""
+    """What makes a cached summary still valid (`DATA.md#caching`)."""
 
     file_path: str
     mtime_ns: int | None
@@ -47,10 +48,12 @@ class CachedRun:
     detail: str | None
     #: The profile this run was SCORED with — not necessarily the one
     #: resolution reached (`key.profile_hash`), which is NULL whenever the
-    #: scoring profile came out of the file itself or its strobes (§8.3).
+    #: scoring profile came out of the file itself or its strobes
+    #: (`DATA.md#which-profile-decodes-a-run`).
     profile_hash: str | None
     profile_source: str
-    #: The parameters the run's own FILE records (`data.md` §4.4), hashed.
+    #: The parameters the run's own FILE records
+    #: (`DATA.md#the-embedded-task-profile`), hashed.
     #: Read only for a run with no `session_animal_runs` row of its own, whose
     #: parameters this database therefore never recorded — which is what a
     #: session copied from another rig arrives as. `None` when the file carries
@@ -73,7 +76,8 @@ class AnalyticsRepository:
         """Store a profile if unseen, and return its hash.
 
         Content-addressed, so the hundredth run of the same task adds nothing.
-        Does **not** commit — the caller batches (§8.4).
+        Does **not** commit — the caller batches
+        (`DATA.md#never-at-the-expense-of-a-session`).
         """
         digest = profile_hash(profile)
         with self._db.lock:
@@ -95,7 +99,8 @@ class AnalyticsRepository:
         """Commit whatever `remember_profile` left pending.
 
         `remember_profile` deliberately doesn't commit so an indexing pass
-        commits once (§8.4). When that pass turns out to be all cache hits
+        commits once (`DATA.md#never-at-the-expense-of-a-session`). When that
+        pass turns out to be all cache hits
         there is no `store` to ride along with, and the inserts would sit in an
         open transaction until the connection closed — holding a write lock and
         then discarding work that would just be redone next pass.
@@ -175,7 +180,7 @@ class AnalyticsRepository:
                 )
         return out
 
-    # --- adopted orphans (data.md §8.1) --------------------------------
+    # --- adopted orphans (DATA.md#orphan-adoption) ----------------------
 
     def store_adopted(self, entries: list["AdoptedRun"]) -> None:
         """Record adoptions in one transaction — same commit discipline as
@@ -221,7 +226,7 @@ class AnalyticsRepository:
         return [_hydrate_adopted(row) for row in rows]
 
     def delete_adopted(self, ids: list[str]) -> int:
-        """Drop adoptions whose files the disk no longer has (`data.md` §8.6).
+        """Drop adoptions whose files the disk no longer has (`DATA.md#pruning`).
 
         Safe in a way pruning a *recorded* run is not: an adopted row holds
         nothing that isn't re-derivable from the file it names, so a row deleted
@@ -245,7 +250,8 @@ class AnalyticsRepository:
         """Drop cached summaries for runs that no longer exist.
 
         The cache is what actually *serves* a deleted session's numbers: a
-        missing file keeps its last good summary on purpose (§8.3), so a run
+        missing file keeps its last good summary on purpose
+        (`DATA.md#caching`), so a run
         whose record is being pruned would otherwise leave its scores behind in
         a row nothing points at.
         """
@@ -271,7 +277,7 @@ class AnalyticsRepository:
         """Write cache rows in **one transaction**.
 
         Every commit marks the whole database dirty for backup
-        (`data.md` §7.3), so committing per row would trigger repeated
+        (`DATA.md#the-database-copy`), so committing per row would trigger repeated
         whole-file copies to a possibly-networked target during a single
         indexing pass.
         """
@@ -308,7 +314,7 @@ class AnalyticsRepository:
 
 @dataclass(frozen=True)
 class AdoptedRun:
-    """A file the archive walk matched to an animal (`data.md` §8.1).
+    """A file the archive walk matched to an animal (`DATA.md#orphan-adoption`).
 
     Deliberately not a `sessions` or `session_animal_runs` row — a fabricated
     session row would corrupt session-number suggestion and the same-day
@@ -326,7 +332,8 @@ class AdoptedRun:
     started_at: str
     sketch_name: str | None
     sketch_path: str | None
-    #: The stat the adoption was taken from (`data.md` §8.7). Its only job is to
+    #: The stat the adoption was taken from
+    #: (`DATA.md#carrying-adoptions-forward`). Its only job is to
     #: let the next rescan recognise a file it has already read — the same
     #: mtime+size key `CacheKey` uses, and answerable without opening anything.
     #: `None` on a row written before v7, which is read as "unknown, so re-read".

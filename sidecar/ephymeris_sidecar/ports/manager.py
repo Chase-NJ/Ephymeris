@@ -2,10 +2,10 @@
 
 Two loops run here:
 
-* **Presence poll** (`settings.md` §7) — out-of-band, never opens a
+* **Presence poll** (`ARCHITECTURE.md#board-discovery`) — out-of-band, never opens a
   port, so it takes no part in the per-port state machine and can run
   regardless of what any port is doing.
-* **Output flush** (§6.2) — batches accumulated lines and pushes them at a
+* **Output flush** (`ARCHITECTURE.md#passthrough-read`) — batches accumulated lines and pushes them at a
   fixed 20Hz rather than one message per line, which six chatty boxes would
   otherwise turn into a flood.
 
@@ -29,15 +29,15 @@ from .states import PortState
 
 log = logging.getLogger(__name__)
 
-#: `README.md` §4.1 — all six boxes are Mega2560 R3s.
+#: All six boxes are Mega2560 R3s (`ARCHITECTURE.md#flashing`).
 FQBN = "arduino:avr:mega"
 
 #: Progress callback for flash/reset: (phase, stream, text).
 PhaseProgress = Callable[[str, str, str], None]
 
-#: §7 specifies a short continuous interval of roughly 1–2s.
+#: A short continuous interval of roughly 1–2s (`ARCHITECTURE.md#board-discovery`).
 POLL_INTERVAL_S = 1.5
-#: §6.2 — batch and flush on a fixed tick.
+#: Batch and flush on a fixed tick (`ARCHITECTURE.md#passthrough-read`).
 FLUSH_INTERVAL_S = 0.05
 #: Don't re-log an unreachable arduino-cli on every single poll.
 FAILURE_LOG_EVERY = 40
@@ -112,7 +112,7 @@ class PortManager:
         """box → hardware_id → current port address.
 
         The indirection is the point: box number is the stable key, the address
-        is whatever the OS happens to be calling that board right now (§5.1).
+        is whatever the OS happens to be calling that board right now (`ARCHITECTURE.md#box-bindings`).
         """
         hardware_id = self._settings.hardware_id_for(box)
         if not hardware_id:
@@ -163,16 +163,16 @@ class PortManager:
         on_progress: PhaseProgress,
         suppress_passthrough_resume: bool = False,
     ) -> tuple[PortState, bool]:
-        """Compile + upload (`dashboard.md` §6.1).
+        """Compile + upload (`ARCHITECTURE.md#flashing`).
 
         Entering FLASHING force-releases PASSTHROUGH first, and on success the
         prior passthrough is auto-resumed at its old baud so the user sees the
-        new sketch's output without an extra click (§3.3). Failures land in
+        new sketch's output without an extra click (`ARCHITECTURE.md#exclusivity`). Failures land in
         ERROR with the parsed message — never a silent fall back to IDLE.
 
         `suppress_passthrough_resume` forces the port to IDLE afterward instead,
         so the session flash sequence can claim it for `IN_SESSION`
-        (`dashboard.md` §7.4).
+        (`ARCHITECTURE.md#flash-sequence`).
         """
         address = self.resolve_address(box)
         handler = self.handler(box)
@@ -180,7 +180,7 @@ class PortManager:
         was_passthrough = handler.release_for(
             PortState.FLASHING, f"flashing {sketch_name}"
         )
-        # §4: the session flow wants IDLE regardless of the pre-flash state.
+        # The session flow wants IDLE regardless of the pre-flash state.
         resume = was_passthrough and not suppress_passthrough_resume
 
         try:
@@ -207,10 +207,10 @@ class PortManager:
                               f"flashed {sketch_name}")
 
     async def reset(self, box: int) -> tuple[PortState, bool]:
-        """DTR-toggle reset (`dashboard.md` §6.2).
+        """DTR-toggle reset (`ARCHITECTURE.md#reset`).
 
         A serial-layer operation, deliberately not routed through arduino-cli.
-        Auto-resumes passthrough afterward if that was the prior state (§3.3).
+        Auto-resumes passthrough afterward if that was the prior state (`ARCHITECTURE.md#exclusivity`).
         """
         address = self.resolve_address(box)
         handler = self.handler(box)
@@ -233,7 +233,7 @@ class PortManager:
         on_ready: "Callable[[int | None], None]",
         on_strobe: "Callable[[int, int], None]",
     ) -> PortState:
-        """Enter `IN_SESSION` on one box (`dashboard.md` §10).
+        """Enter `IN_SESSION` on one box (`ARCHITECTURE.md#entering-in_session`).
 
         The box must be `IDLE` (the flash sequence leaves it there via
         `suppressPassthroughResume`). Baud is the session default.
@@ -318,7 +318,7 @@ class PortManager:
 
 
 def _dtr_pulse(address: str) -> None:
-    """The §5 reset sequence: dtr low → ~100ms → dtr high.
+    """The reset sequence (`ARCHITECTURE.md#reset`): dtr low → ~100ms → dtr high.
 
     The Mega2560 R3's auto-reset circuit fires on the DTR edge. Runs in a
     worker thread; the port is opened fresh and closed again, the state

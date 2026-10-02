@@ -6,7 +6,8 @@ import type { Animal } from "@/lib/cohorts/types";
 import { springSnappy } from "@/lib/motion";
 
 /**
- * Cage assignment as a boarding scene — `cohorts.md` §2's `cage` field.
+ * Cage assignment as a boarding scene — the `cage` field of
+ * `DATA.md#data-model`.
  *
  * Every animal is a crew chip; every cage is a spaceship. Drag a chip aboard
  * the ship its animal is housed in (or click the chip, then the ship — a

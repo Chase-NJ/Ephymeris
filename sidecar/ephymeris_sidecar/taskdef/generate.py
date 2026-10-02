@@ -1,7 +1,7 @@
 """A task definition + this rig's wiring -> a compilable sketch folder.
 
 Four files, and which of them a value lands in is decided by whether it fits on
-a `START` line (`tasks.md` §1.1):
+a `START` line (`TASKS.md#two-places-a-value-can-come-from`):
 
     <name>.ino      the root GRGL sketch, copied verbatim from the bundle
     TaskPins.h      pins, strobe codes, counts, selection mode  (preprocessor)

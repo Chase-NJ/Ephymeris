@@ -1,10 +1,10 @@
-"""Backup Directory mirroring — `data.md` §7.
+"""Backup Directory mirroring — `DATA.md#backup-mirroring`.
 
 Two guarantees protect two different failures, and conflating them is the
 mistake this module exists to avoid:
 
-* The `.tsv` write-ahead log (§7) protects against the app or the power dying
-  mid-session, on the **same** disk. It is already built, and per-line
+* The `.tsv` write-ahead log (`DATA.md#crash-safety`) protects against the app
+  or the power dying mid-session, on the **same** disk. It is already built, and per-line
   `fsync` is what makes it real.
 * This module protects against losing that disk entirely — drive failure or
   accidental deletion — by mirroring to a **different** location.
@@ -14,7 +14,8 @@ backup target may be a slow or networked volume, and no failure of it may ever
 slow, stall, or fail a session:
 
 * The strobe thread never touches this module beyond a lock-free `track()`.
-* Session finalization *queues* files; it never waits for a copy (§8).
+* Session finalization *queues* files; it never waits for a copy
+  (`DATA.md#session-files`).
 * `.tsv` mirroring is periodic (every ~10s), not per-line, and the interval is
   measured from the end of the previous pass — a slow target stretches the
   cadence instead of queuing overlapping passes.
@@ -44,7 +45,7 @@ from .paths import MirrorLayout
 log = logging.getLogger(__name__)
 
 #: Seconds between `.tsv` mirror passes, measured from the end of the previous
-#: pass (`data.md` §7). At the real session rate of well under one event
+#: pass (`DATA.md#session-files`). At the real session rate of well under one event
 #: per second this leaves at most ~10 strobes unmirrored, against a local file
 #: that is already `fsync`'d per line.
 MIRROR_INTERVAL_S = 10.0
@@ -128,9 +129,10 @@ class BackupManager:
         """Point the mirror at a new directory (or nowhere), from a settings push.
 
         Re-pointing deliberately does **not** backfill: the user chooses when to
-        copy an existing archive across, via `backup.syncNow` (§8). What it does
-        do is back the database up promptly, which is what satisfies §8's "on
-        every app start" — settings arrive immediately after the sidecar comes
+        copy an existing archive across, via `backup.syncNow`
+        (`DATA.md#no-automatic-backfill`). What it does do is back the
+        database up promptly, which is what gives a backup "on every app
+        start" — settings arrive immediately after the sidecar comes
         up, so a fresh launch always produces one.
         """
         target = Path(directory).expanduser() if directory else None
@@ -180,7 +182,7 @@ class BackupManager:
     # --- status -----------------------------------------------------------
 
     def status(self) -> dict[str, Any]:
-        """The `backup.status` payload (`websocket-protocol.md` §4)."""
+        """The `backup.status` payload (`PROTOCOL.md#evt-backup.status`)."""
         with self._lock:
             target = self._target
             pending = len(self._queue)
@@ -328,7 +330,8 @@ class BackupManager:
                 log.debug("couldn't remove temporary db snapshot %s", local)
 
     def _write_daily_snapshot(self, target: Path, local: Path) -> None:
-        """One dated copy per day, kept `DB_SNAPSHOT_KEEP` deep (§8).
+        """One dated copy per day, kept `DB_SNAPSHOT_KEEP` deep
+        (`DATA.md#the-database-copy`).
 
         First backup of the day wins — later ones would only overwrite the
         snapshot with the very state a user might be trying to undo.
@@ -351,7 +354,8 @@ class BackupManager:
     # --- explicit sync ----------------------------------------------------
 
     async def sync_now(self) -> dict[str, Any]:
-        """Copy anything missing from the mirror — the Settings "Sync now" (§8).
+        """Copy anything missing from the mirror — the Settings "Sync now"
+        (`DATA.md#no-automatic-backfill`).
 
         Setting a backup directory deliberately doesn't backfill on its own: it
         could mean an unannounced multi-gigabyte copy to a network share the

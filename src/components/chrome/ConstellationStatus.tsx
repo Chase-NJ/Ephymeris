@@ -19,19 +19,19 @@ import { useSidecar } from "@/lib/ws/context";
 import { BOX_IDS, type PortStateName } from "@/lib/hardware/store";
 
 /**
- * The signature element (dashboard.md §1.7).
+ * The signature element (`ARCHITECTURE.md#status-constellation`).
  *
  * Box-status nodes joined by thin Pulsar lines. The layout is the user's
- * chosen zodiac constellation (§4.6) — boxes occupy stars, unoccupied stars
+ * chosen zodiac constellation — boxes occupy stars, unoccupied stars
  * render as faint markers — or the legacy fixed six-node shape until one is
  * chosen. A line dims when either endpoint is not connected-and-nominal; a
  * node goes Error red on fault. This is the at-a-glance system-health readout,
  * not decoration — which is why it lives at the bottom of the sidebar and is
- * visible from every section (§3.2).
+ * visible from every section.
  *
  * `<LiveConstellation>` below feeds it from the same two independent inputs
- * that drive the §3.4 badges: the out-of-band presence poll and the per-port
- * state machine.
+ * that drive the per-box state badges: the out-of-band presence poll and the
+ * per-port state machine.
  */
 
 export type BoxHealth = "nominal" | "idle" | "absent" | "fault";
@@ -250,7 +250,8 @@ export function ConstellationStatus({
         })}
 
         {/* Unoccupied stars: faint markers, distinct from an `absent` box
-            (which keeps full radius). No stroke, no glow (§2.2). */}
+            (which keeps full radius). No stroke, no glow
+            (`ARCHITECTURE.md#theme`). */}
         {emptyStars.map((s) => (
           <circle
             key={`empty-${s.star}`}

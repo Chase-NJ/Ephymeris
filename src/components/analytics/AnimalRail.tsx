@@ -8,7 +8,7 @@ import type { AnalyticsSummary } from "@/lib/analytics/types";
 import { chronological, pickMetric } from "@/lib/analytics/view";
 
 /**
- * The roster, grouped, with each animal's trend (`data.md` §10.3).
+ * The roster, grouped, with each animal's trend (`DATA.md#analytics-views`).
  *
  * Doubles as the highlight selector — hover previews, click pins — and every
  * row carries that animal's identity colour, which is the same colour its
@@ -207,7 +207,7 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "bas
 
 /**
  * Every animal's whole history — all tasks, each run at its pooled overall
- * accuracy (§3.7). The sparkline answers "which way is this going", and a
+ * accuracy (`DATA.md#pooled-accuracy`). The sparkline answers "which way is this going", and a
  * history that silently skipped every session on another task would answer it
  * about a different animal than the one in the room.
  */

@@ -8,7 +8,7 @@ import type { UtilityStatus } from "@/lib/ws/protocol";
 
 /**
  * The hardware utility sketch and what the baseline is currently doing
- * (`settings.md` §8).
+ * (`ARCHITECTURE.md#hardware-utility-baseline`).
  *
  * The restores themselves are silent by design — this panel exists so that
  * "silent" never means "unaccountable". It answers the two questions a silent
@@ -27,7 +27,8 @@ export function UtilitySketchPanel({
 }: {
   sketches: SketchEntry[];
   boxes: BoxBinding[];
-  /** The sketch's folder NAME — the settings key (`settings.md` §8). */
+  /** The sketch's folder NAME — the settings key
+   *  (`ARCHITECTURE.md#hardware-utility-baseline`). */
   value: string | null;
   status: UtilityStatus;
   busy: boolean;

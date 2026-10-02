@@ -8,7 +8,7 @@ import type { TidyPlan, TidySession } from "@/lib/analytics/types";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * The preview-and-confirm for `sessions.tidy` (`data.md` §8.8).
+ * The preview-and-confirm for `sessions.tidy` (`DATA.md#tidy-records`).
  *
  * Opens on a preview the sidecar computed and changed nothing to produce, and
  * acts only on **Tidy**. It says what happens in the terms that matter to an

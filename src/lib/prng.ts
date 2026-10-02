@@ -1,7 +1,7 @@
 /**
  * Deterministic pseudo-randomness for generated visuals.
  *
- * Extracted from the starfield so the cohort icon (`cohorts.md` §5) seeds from
+ * Extracted from the starfield so a cohort's world (`ARCHITECTURE.md#cohort-browser`) seeds from
  * the same generator rather than growing a second one. Both need the same
  * property: identical output for identical input, forever — a cohort's icon is
  * its identity, so it must not drift between renders, sessions, or machines.
@@ -22,8 +22,8 @@ export function mulberry32(seed: number): () => number {
 /**
  * Hash a string into a 32-bit seed (FNV-1a).
  *
- * Lets a uuid seed the generator directly, which is what §5 means by "the icon
- * is derived from the cohort id itself, nothing extra stored".
+ * Lets a uuid seed the generator directly, so a cohort's world is derived from
+ * its id itself, with nothing extra stored.
  */
 export function hashString(value: string): number {
   let hash = 0x811c9dc5;

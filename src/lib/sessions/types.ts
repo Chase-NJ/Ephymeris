@@ -1,5 +1,5 @@
 /**
- * Session and prefix types — `data.md` §3.1–§6.
+ * Session and prefix types — `DATA.md#sessions-and-runs`.
  *
  * The wire shapes live in the generated protocol module (`protocol/schema.py`
  * is their authority) and are re-exported here so callers keep one import
@@ -43,7 +43,7 @@ export type ActiveSessions = CommandResultMap["sessions.active"];
 
 // --- Configuration flow ---------------------------------------------------
 
-/** One box's session-local mapping + task config (`dashboard.md` §7.3). */
+/** One box's session-local mapping + task config (`ARCHITECTURE.md#mapping-and-the-placement-walk`). */
 export interface BoxMapping {
   box: number;
   animalId: string;
@@ -53,9 +53,9 @@ export interface BoxMapping {
 }
 
 /**
- * §1 — a cohort is ready to run if it has at least one group with at least one
+ * A cohort is ready to run (`ARCHITECTURE.md#configuration`) if it has at least one group with at least one
  * animal that has a `boxNumber` assigned. A group with none is skipped rather
- * than blocking the cohort (§2.3).
+ * than blocking the cohort.
  */
 export function isReadyToRun(cohort: Cohort): boolean {
   return cohort.animals.some((a) => a.boxNumber !== null);
@@ -64,7 +64,7 @@ export function isReadyToRun(cohort: Cohort): boolean {
 /**
  * Groups that hold at least one box-assigned animal, in the cohort's display
  * order. Not a run order — there is none: the operator picks which group runs,
- * at setup and at every switch (`dashboard.md` §5.2).
+ * at setup and at every switch (`ARCHITECTURE.md#configuration`).
  */
 export function populatedGroups(cohort: Cohort): Group[] {
   const populated = new Set(
@@ -112,8 +112,8 @@ export function isContinuable(
 
 /**
  * Where the way back into a held session leads: Mission Control while a group
- * is on the rig, the group step while it is between groups (`dashboard.md`
- * §7.6) — an empty cockpit is not the next step there.
+ * is on the rig, the group step while it is between groups
+ * (`ARCHITECTURE.md#group-step`) — an empty cockpit is not the next step there.
  */
 export function sessionDoor(running: SessionSnapshot): string {
   const { id, cohortId } = running.session;
@@ -137,7 +137,7 @@ export function animalsInGroup(cohort: Cohort, groupId: string): Animal[] {
 
 /**
  * The values a box starts on, merged across the three layers of
- * `tasks.md` §6.1: the profile's own defaults, then this rig's saved
+ * `TASKS.md#three-layer-merge`: the profile's own defaults, then this rig's saved
  * defaults for the sketch, then anything already set on the box.
  *
  * The rig layer is filtered through the profile rather than spread over it, so

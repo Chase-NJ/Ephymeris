@@ -1,7 +1,7 @@
 """PortHandler — line splitting, ring buffer, batching, and send guards.
 
 Exercises the handler against a fake serial port so the parsing and buffering
-rules from `dashboard.md` §6.3 can be checked without hardware.
+rules from `ARCHITECTURE.md#passthrough-read` can be checked without hardware.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ def _shut_down_handlers():
         _created.pop().shutdown()
 
 
-# --- line splitting (§6.2) -----------------------------------------------
+# --- line splitting (`ARCHITECTURE.md#passthrough-read`) -----------------
 
 
 @pytest.mark.parametrize(
@@ -164,7 +164,7 @@ def test_a_split_crlf_is_not_treated_as_two_breaks() -> None:
 
 
 def test_undecodable_bytes_are_replaced_not_raised() -> None:
-    """§6.2 — opaque text, decoded with error-replacement."""
+    """`ARCHITECTURE.md#passthrough-read` — opaque text, decoded with error-replacement."""
     handler, _ = make_handler()
     handler._ingest(b"good \xff\xfe bytes\n")
     (line,) = handler.drain()
@@ -223,7 +223,7 @@ def test_open_moves_to_passthrough_and_close_returns_to_idle(fake_port) -> None:
 
 
 def test_a_failed_open_lands_in_error_not_idle(monkeypatch: pytest.MonkeyPatch) -> None:
-    """§4 — failures surface as ERROR, never a silent fall back to IDLE."""
+    """`ARCHITECTURE.md#states` — failures surface as ERROR, never a silent fall back to IDLE."""
 
     def explode(*_args, **_kwargs):
         raise serial.SerialException("port busy")
@@ -246,7 +246,7 @@ def test_line_ending_is_appended_to_sent_text(fake_port, name: str, suffix: str)
 
 
 def test_sent_commands_are_echoed_into_scrollback(fake_port) -> None:
-    """§6.3 — sent and received history interleave and stay reviewable."""
+    """`ARCHITECTURE.md#passthrough-send` — sent and received history interleave and stay reviewable."""
     handler, _ = make_handler()
     handler.open_passthrough("/dev/fake", 115200)
     handler._ingest(b"from board\n")
@@ -269,7 +269,7 @@ def test_the_echo_records_the_text_without_the_line_ending(fake_port) -> None:
     "state", [PortState.IDLE, PortState.FLASHING, PortState.RESETTING, PortState.IN_SESSION]
 )
 def test_send_is_refused_outside_passthrough(state: PortState) -> None:
-    """§6.3 — enforced in the sidecar, not just by disabling the UI input."""
+    """`ARCHITECTURE.md#passthrough-send` — enforced in the sidecar, not just by disabling the UI input."""
     handler, _ = make_handler()
     handler._state = state
 
@@ -285,7 +285,7 @@ def test_opening_while_in_session_is_an_illegal_transition() -> None:
         handler.open_passthrough("/dev/fake", 115200)
 
 
-# --- §3.3 release / auto-resume ------------------------------------------
+# --- release / auto-resume (`ARCHITECTURE.md#exclusivity`) ---------------
 
 
 def test_release_from_passthrough_reports_that_it_should_resume(fake_port) -> None:

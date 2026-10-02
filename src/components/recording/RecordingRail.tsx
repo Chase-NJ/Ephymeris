@@ -8,9 +8,9 @@ import { openScopeWindow, type ScopeTrigger } from "@/lib/intan/windows";
 import { RecordingStatus } from "./RecordingStatus";
 
 /**
- * Mission Control's recording surfaces (`recording.md` §7): the rail block that
- * says what RHX is doing, and the row of buttons on each recorded box that
- * opens its live views.
+ * Mission Control's recording surfaces (`RECORDING.md#live-windows`): the rail
+ * block that says what RHX is doing, and the row of buttons on each recorded
+ * box that opens its live views.
  *
  * Both render NOTHING for a behavior-only session — a recording is an addition
  * to Mission Control, not a mode of it. The block's body is `RecordingStatus`,

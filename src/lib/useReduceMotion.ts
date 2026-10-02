@@ -4,7 +4,7 @@ import { useSettings } from "./settings/context";
 
 /**
  * Combines the OS `prefers-reduced-motion` signal with the app's own toggle
- * (dashboard.md §1.5, §4.5).
+ * (`ARCHITECTURE.md#theme`).
  *
  * The system preference is always honoured; the setting can only add to it,
  * never override it back on. Someone who has asked their OS for reduced motion

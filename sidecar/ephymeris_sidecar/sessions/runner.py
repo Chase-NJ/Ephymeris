@@ -1,5 +1,5 @@
 """Live session runner — ties `IN_SESSION` serial I/O to file writing and
-telemetry (`dashboard.md` §10, `data.md` §5).
+telemetry (`ARCHITECTURE.md#entering-in_session`, `DATA.md#crash-safety`).
 
 Owns the per-box run state that the port handler doesn't: which animal is in
 each box, its writer, its rolling metrics, and its `SessionAnimalRun` record.
@@ -32,7 +32,7 @@ from .writer import AnimalWriter
 
 log = logging.getLogger(__name__)
 
-#: The clean-end reason string, matching the real sample file exactly (§8).
+#: The clean-end reason string, matching the real sample file exactly (`ARCHITECTURE.md#stop-reasons`).
 CLEAN_STOP_REASON = "BF_END_SESSION received"
 
 
@@ -72,7 +72,7 @@ class ActiveRun:
     #: different number, and that difference is the only signal a box is still
     #: carrying an old sketch.
     host_seed: int | None = None
-    #: The scheduled auto-STOP when the session has a time limit (§2.4);
+    #: The scheduled auto-STOP when the session has a time limit (`ARCHITECTURE.md#configuration`);
     #: cancelled on finalize so a box stopped early never gets a ghost STOP.
     deadline: asyncio.TimerHandle | None = None
     #: Guards writer.record against finalize running concurrently.
@@ -80,7 +80,7 @@ class ActiveRun:
 
     @property
     def file_json(self) -> str | None:
-        """The finalized `.json` path recorded on `SessionAnimalRun` (§4)."""
+        """The finalized `.json` path recorded on `SessionAnimalRun` (`DATA.md#run-records`)."""
         return str(self.files.json) if self.files is not None else None
 
 
@@ -134,7 +134,8 @@ class SessionRunner:
         box_configs: list[BoxConfig],
         duration_s: float | None = None,
     ) -> None:
-        """Store the confirmed mapping for the group about to run (§3).
+        """Store the confirmed mapping for the group about to run
+        (`ARCHITECTURE.md#mapping-and-the-placement-walk`).
 
         `duration_s` is the optional per-box time limit: each box gets an
         auto-STOP scheduled from *its own* start, not from Start All — boxes
@@ -159,7 +160,7 @@ class SessionRunner:
 
     @property
     def group_id(self) -> str:
-        """The group whose mapping is currently loaded (§5.2)."""
+        """The group whose mapping is currently loaded (`ARCHITECTURE.md#group-step`)."""
         return self._group_id
 
     def snapshot(self) -> list[dict[str, Any]]:
@@ -194,7 +195,7 @@ class SessionRunner:
     # --- start ------------------------------------------------------------
 
     def start_box(self, box: int) -> None:
-        """Begin one box's `IN_SESSION` run (§7). Idempotent per box."""
+        """Begin one box's `IN_SESSION` run (`ARCHITECTURE.md#entering-in_session`). Idempotent per box."""
         if box in self._active:
             return
         config = self._configs.get(box)
@@ -218,7 +219,7 @@ class SessionRunner:
             host_seed=host_seed,
         )
         self._active[box] = run
-        # The time limit counts from this box's own start (§2.4). STOP is
+        # The time limit counts from this box's own start (`ARCHITECTURE.md#configuration`). STOP is
         # still only a request the firmware honours at a trial boundary, so
         # the deadline sends it and the board's end strobe does the ending.
         if self._duration_s is not None:
@@ -236,7 +237,7 @@ class SessionRunner:
     # --- session-thread callbacks (off the event loop) --------------------
 
     def _on_ready(self, box: int, seed: int | None) -> None:
-        """Handshake resolved — open the file and write its header (§7.1)."""
+        """Handshake resolved — open the file and write its header (`DATA.md#the-tsv-log`)."""
         run = self._active.get(box)
         if run is None or self._session_folder is None:
             return
@@ -251,7 +252,7 @@ class SessionRunner:
         )
         run.files = files
 
-        # §5 core fields, then flat task-profile config, then the seeds.
+        # Core fields (`DATA.md#the-json-document`), then flat task-profile config, then the seeds.
         core = {
             "rat": run.config.animal_name,
             "serial_port": run.address,
@@ -260,7 +261,7 @@ class SessionRunner:
         }
         if self.recording_fields is not None:
             # Which recording this run is inside, and which digital input and
-            # headstage port carry it (`recording.md` §6). Core rather than
+            # headstage port carry it (`RECORDING.md#what-is-written`). Core rather than
             # config: they describe the rig, not the task, and must stay out of
             # `params_hash` -- two runs of one tuning are comparable whether or
             # not one of them was recorded.
@@ -270,7 +271,7 @@ class SessionRunner:
                 log.exception("box %d: couldn't describe its recording", box)
         config_meta = dict(run.config.config_metadata)
         if seed is not None:
-            # §6.4: what the firmware reports it is *running on*. Recorded
+            # `TASKS.md#seed`: what the firmware reports it is *running on*. Recorded
             # unchanged even when it disagrees with what we sent — the point of
             # this field is to describe the session that happened.
             config_meta["trial_seed"] = seed
@@ -298,7 +299,7 @@ class SessionRunner:
             core,
             config_meta,
             # The declaration this run was configured from, travelling with the
-            # data (`data.md` §4.4). The database snapshot records the same
+            # data (`DATA.md#the-embedded-task-profile`). The database snapshot records the same
             # thing, but it stays on this machine — and cross-machine analysis
             # is the normal case here, not the exception.
             profile_snapshot=(
@@ -311,7 +312,7 @@ class SessionRunner:
             # Carry the real cause into both the operator-facing error and the
             # recorded stop reason. A bare "sidecar error" would leave someone
             # staring at a box that refused to start with nothing to act on —
-            # and the most likely cause here (§7.1's exclusive open) names the
+            # and the most likely cause here (the exclusive open, `DATA.md#written-live`) names the
             # exact file standing in the way.
             log.error("box %d: couldn't open session files: %s", box, exc)
             self._schedule(self._emit_write_error(box, str(exc)))
@@ -320,7 +321,7 @@ class SessionRunner:
         run.writer = writer
         run.metrics = MetricSet(run.config.profile)
         # From here the `.tsv` grows on every strobe; the mirror picks it up on
-        # its own cadence and never on this thread (`data.md` §7).
+        # its own cadence and never on this thread (`DATA.md#backup-mirroring`).
         if self._backup is not None:
             self._backup.track(files.tsv)
         if self.on_box_started is not None:
@@ -360,13 +361,13 @@ class SessionRunner:
             self._schedule(self._push_telemetry(payload))
 
         if run.end_code is not None and code == run.end_code:
-            # Clean firmware-reported end (§7 exit, §8).
+            # Clean firmware-reported end (`ARCHITECTURE.md#clean-exit`).
             self._schedule_finalize(box, CLEAN_STOP_REASON, clean=True)
 
     # --- stop / end -------------------------------------------------------
 
     def stop_box(self, box: int) -> None:
-        """Send `STOP`; the board's own end strobe ends the run (§5.3)."""
+        """Send `STOP`; the board's own end strobe ends the run (`ARCHITECTURE.md#clean-exit`)."""
         if box in self._active:
             self._ports.stop_session(box)
 
@@ -404,7 +405,7 @@ class SessionRunner:
             await asyncio.to_thread(run.writer.finalize, reason)
         # Hand the finished trio to the mirror and stop tracking the .tsv. This
         # only *queues* the copy — ending a session must never wait on a slow
-        # or dead backup target (§8).
+        # or dead backup target (`DATA.md#backup-mirroring`).
         if self._backup is not None and run.files is not None:
             self._backup.untrack(run.files.tsv)
             self._backup.enqueue(run.files.tsv, run.files.json, run.files.mat)
@@ -417,7 +418,7 @@ class SessionRunner:
         await self._on_animal_ended(run, reason)
 
     def board_dropped(self, box: int) -> None:
-        """Called when a box drops to ERROR mid-session (hook from app §7/§10)."""
+        """Called when a box drops to ERROR mid-session (hook from app, `ARCHITECTURE.md#board-drop`)."""
         if box in self._active:
             self._schedule_finalize(box, "board disconnected", clean=False)
 
@@ -436,7 +437,7 @@ class SessionRunner:
         100 ms is the behavior-only contract and is unchanged: the operator
         pressed End, and the trial in flight is cut.
 
-        A RECORDING passes a real timeout (`recording.md` §5). Cutting a trial
+        A RECORDING passes a real timeout (`RECORDING.md#graceful-end`). Cutting a trial
         there leaves electrophysiology with no behavioral outcome to align to,
         so the session waits for each box to finish the trial it is in. `force`
         lets the operator stop waiting; `on_waiting` reports who is still out.
@@ -462,7 +463,7 @@ class SessionRunner:
         # be mid-write. Wait them out: `sessions.end` clears the running
         # session id as soon as this returns, and a finalization landing on
         # the wrong side of that clear would write its files with no
-        # `session_animal_runs` row — the self-inflicted §8.1 orphan.
+        # `session_animal_runs` row — the self-inflicted orphan (`DATA.md#orphan-adoption`).
         while self._finalizations:
             await asyncio.gather(*list(self._finalizations), return_exceptions=True)
 

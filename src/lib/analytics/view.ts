@@ -1,6 +1,6 @@
 /**
- * Pure view helpers for Analytics — colour identity, the heatmap ramp, the
- * date scale, and the run pivot (`data.md` §9.6, §6, §7).
+ * Pure view helpers for Analytics — colour identity, the diverging ramp, the
+ * date scale, and the run pivot (`DATA.md#analytics-views`).
  *
  * Kept free of React and of the store so each piece is obvious in isolation:
  * these are the parts where a quiet mistake shows up as a wrong-looking chart
@@ -17,7 +17,7 @@ import type {
   SessionListItem,
 } from "./types";
 
-// --- per-animal identity colour (§7.1) -------------------------------------
+// --- per-animal identity colour (`DATA.md#colour-palette`) ------------------
 
 /**
  * Emitted as `var(--…)` strings for direct SVG `fill`/`stroke` use, exactly
@@ -34,15 +34,15 @@ export const SERIES_VARS = [
   "var(--color-series-6)",
 ] as const;
 
-/** Beyond six the ramp repeats — panels with row labels disambiguate (§12). */
+/** Beyond six the ramp repeats — panels with row labels disambiguate. */
 export function colorForIndex(index: number): string {
   return SERIES_VARS[index % SERIES_VARS.length]!;
 }
 
 /**
  * Stable per animal by roster position, so one animal keeps one colour across
- * the heatmap, its curve and its trail — which is what makes cross-filtering
- * readable without a legend lookup (§2.1).
+ * its card, its curve and its trail — which is what makes cross-filtering
+ * readable without a legend lookup.
  */
 export function buildAnimalColors(
   animals: Array<{ id: string }>,
@@ -50,7 +50,7 @@ export function buildAnimalColors(
   return new Map(animals.map((animal, index) => [animal.id, colorForIndex(index)]));
 }
 
-// --- the diverging heatmap ramp (§7.2) -------------------------------------
+// --- the diverging ramp (`DATA.md#colour-palette`) --------------------------
 
 export interface HeatBin {
   /** Exclusive upper bound. */
@@ -80,12 +80,9 @@ export function labelColor(bin: HeatBin): string {
 }
 
 /*
- * The PIVOT lived here — `(animalId, sessionId) → Cell`, with its `scored` /
- * `tooFew` / `absent` trichotomy and the most-counted duplicate rule. It served
- * exactly one panel, the cohort heatmap, and went with it. What it decided is
- * still decided, in the places that still ask: `SessionTable` flags a thin cell
- * against `minCountedTrials`, and `SessionRail` colours a session mark through
- * the same `binFor` ramp.
+ * Thin and absent cells are decided where they are drawn: `SessionTable` flags
+ * a thin cell against `minCountedTrials`, and `SessionRail` colours a session
+ * mark through the `binFor` ramp.
  */
 
 /** The pooled figure the sidecar computes alongside the declared metrics. */
@@ -101,7 +98,7 @@ export function pickMetric(run: RunSummary, metricId: string | null) {
   return run.metrics.find((m) => m.id === metricId) ?? null;
 }
 
-// --- the date scale (§2.2) -------------------------------------------------
+// --- the date scale (`DATA.md#session-order`) -------------------------------
 
 /**
  * Whole calendar days between two ISO dates.
@@ -133,10 +130,10 @@ function parseIsoDate(value: string): number | null {
  * above is the part that was genuinely shared.
  */
 
-// --- task scoping (§4.3) ---------------------------------------------------
+// --- task scoping (`DATA.md#pooling-across-tasks`) --------------------------
 //
-// There is no global task filter. The outcome tallies (§9.8) and the
-// engagement ladder (§9.10) are defined by the shared strobe vocabulary, not
+// There is no global task filter. The outcome tallies and the engagement
+// ladder are defined by the shared strobe vocabulary, not
 // by any task's declared metrics, so the panels built on them show **every
 // run** and disclose the task mix instead of hiding part of the archive. The
 // declared metrics remain incomparable across tasks — the panels that plot
@@ -149,7 +146,7 @@ function parseIsoDate(value: string): number | null {
  *
  * From the runs rather than `ProfileGroup.taskName`: the authored task name
  * ("GRGL 2-Odor Discrimination") is prose, and these labels annotate axes and
- * heatmap headers where a chip-length name is the difference between a label
+ * column headers where a chip-length name is the difference between a label
  * and an overlap. Keyed `hash ?? ""` so unprofiled runs get a label too.
  */
 export function taskLabels(summary: AnalyticsSummary): Map<string, string> {
@@ -182,9 +179,9 @@ export function taskLabels(summary: AnalyticsSummary): Map<string, string> {
  * decode with, which is empty for a session recorded on the other rig and
  * copied into the cohort folder: the archive walk adopts the file, the name it
  * records matches no sketch in this install, and the run scores by inference
- * (`data.md` §8.2). Reading the path alone displayed every such run as
- * "unknown sketch" — a claim that the record is silent, when the file says
- * exactly what it ran.
+ * (`DATA.md#which-profile-decodes-a-run`). Reading the path alone displayed
+ * every such run as "unknown sketch" — a claim that the record is silent, when
+ * the file says exactly what it ran.
  */
 export function programOf(run: RunSummary): string {
   return run.sketchName || sketchName(run.sketchPath) || "unknown program";
@@ -262,7 +259,8 @@ export function strategyAxes(group: ProfileGroup | null): StrategyAxes | null {
  * Summing hits and counted answers "how often was this animal right on either
  * of these conditions". Averaging the two proportions instead would let a
  * condition the animal barely met pull the axis as hard as one it met
- * constantly — the same mistake `_overall` exists to avoid (§3.7).
+ * constantly — the same mistake `_overall` exists to avoid
+ * (`DATA.md#pooled-accuracy`).
  */
 export function pooledAxis(
   run: RunSummary,
@@ -281,7 +279,8 @@ export function pooledAxis(
 /**
  * One run's accuracy at one well, pooled over integers across every condition
  * answered there — read off the run's OWN metrics (`answerSide`), so no profile
- * group is needed and any task lands on the same two axes (§11.1).
+ * group is needed and any task lands on the same two axes
+ * (`DATA.md#strategy-plane`).
  *
  * Left is left whatever the task: a side is a physical well, which is what
  * makes runs of different tasks comparable on one plane when conditions are
@@ -328,11 +327,11 @@ export function recentSessions(
  *
  * **Drawn from the runs, not from a list of known tasks.** A cohort holds
  * whatever it holds: sessions recorded on this rig, sessions copied from
- * another and decoded from their own embedded snapshot (`data.md` §4.4), and
- * runs whose conditions were inferred from the strobes because no profile
- * resolved at all. All three are real profiles with real runs and all three
- * belong in the picker — what separates them is provenance, which the runs
- * carry, not membership.
+ * another and decoded from their own embedded snapshot
+ * (`DATA.md#the-embedded-task-profile`), and runs whose conditions were
+ * inferred from the strobes because no profile resolved at all. All three are
+ * real profiles with real runs and all three belong in the picker — what
+ * separates them is provenance, which the runs carry, not membership.
  */
 export interface StrategyProfile {
   group: ProfileGroup;
@@ -418,13 +417,13 @@ export function declaredMetrics(group: ProfileGroup | null) {
   return group ? group.metrics.filter((metric) => metric.id !== OVERALL_ID) : [];
 }
 
-// --- trial outcomes (§3.8) -------------------------------------------------
+// --- trial outcomes (`DATA.md#rewarded-and-response-accuracy`) --------------
 
 /**
  * The trial-outcome palette — status colours plus Halo, so nothing new enters
- * the theme for the outcome panels. Shared by the session cards (§6.3) and the
- * outcome-mix trend (§6.7) so the same behaviour is the same colour wherever
- * it appears.
+ * the theme for the outcome panels. Shared by the session cards and the
+ * outcome-mix trend so the same behaviour is the same colour wherever it
+ * appears.
  */
 export const OUTCOME_STYLE = {
   rewarded: { fill: "var(--color-status-ok)", label: "rewarded" },
@@ -437,7 +436,8 @@ export type OutcomeKey = keyof typeof OUTCOME_STYLE;
 
 /** A pooled outcome tally — one session's, one animal's, or a whole cohort's. */
 export interface PooledOutcomes {
-  /** Every trial boundary seen — administered or not (§3.8). */
+  /** Every trial boundary seen — administered or not
+   *  (`DATA.md#rewarded-and-response-accuracy`). */
   trials: number;
   administered: number;
   rewarded: number;
@@ -504,8 +504,8 @@ export function wilsonInterval(hits: number, n: number): [number, number] | null
  * Pool the outcome tallies of several runs.
  *
  * Pooled by summing trials rather than averaging each run's proportion, for
- * the same reason `_overall` does (§3.7): a session where one animal ran 200
- * trials and another ran 20 is not two equal votes.
+ * the same reason `_overall` does (`DATA.md#pooled-accuracy`): a session where
+ * one animal ran 200 trials and another ran 20 is not two equal votes.
  */
 export function poolOutcomes(runs: RunSummary[]): PooledOutcomes {
   const total = { ...NO_OUTCOMES };
@@ -537,7 +537,7 @@ export function poolOutcomes(runs: RunSummary[]): PooledOutcomes {
 }
 
 /**
- * A pooled engagement ladder (`data.md` §9.10) — the layer above
+ * A pooled engagement ladder (`DATA.md#engagement-ladder`) — the layer above
  * `PooledOutcomes`, counting the trials the boxes *offered*.
  *
  * Monotone like the per-run ladder it sums: `presented ≥ poked ≥ odorDelivered`
@@ -568,7 +568,7 @@ export const NO_ENGAGEMENT: PooledEngagement = {
 };
 
 /** Pool several runs' engagement ladders — summed trials, not averaged rates,
- *  for the same reason `poolOutcomes` sums (§3.7). */
+ *  for the same reason `poolOutcomes` sums (`DATA.md#pooled-accuracy`). */
 export function poolEngagement(runs: RunSummary[]): PooledEngagement {
   const total = { ...NO_ENGAGEMENT };
   for (const run of runs) {
@@ -593,9 +593,10 @@ export function poolEngagement(runs: RunSummary[]): PooledEngagement {
 export interface SessionOutcomePoint {
   session: SessionListItem;
   outcomes: PooledOutcomes;
-  /** The presentation layer above `outcomes` (§3.10) — how many trials the
-   *  boxes offered, which is the denominator the outcome counts are silently
-   *  conditioned on. `known: false` for a task that declares no trial light. */
+  /** The presentation layer above `outcomes` (`DATA.md#engagement-ladder`) —
+   *  how many trials the boxes offered, which is the denominator the outcome
+   *  counts are silently conditioned on. `known: false` for a task that
+   *  declares no trial light. */
   engagement: PooledEngagement;
   /** The runs pooled into this point, kept for per-animal overlays. */
   runs: RunSummary[];
@@ -607,24 +608,24 @@ export interface SessionOutcomePoint {
 /**
  * One point per session with at least one run that carries an outcome tally —
  * **every** such session, whatever tasks it ran. The outcome tally is defined
- * by the shared strobe vocabulary (§9.8), not by any task's metrics, so
- * "fluid delivered / administered" is the same measurement on a shaping day
- * and a discrimination day. What differs is difficulty — which is why each
- * point carries its task mix and the panels draw the task changes, instead of
- * hiding every session that wasn't on one task.
+ * by the shared strobe vocabulary (`DATA.md#pooling-across-tasks`), not by any
+ * task's metrics, so "fluid delivered / administered" is the same measurement
+ * on a shaping day and a discrimination day. What differs is difficulty — which
+ * is why each point carries its task mix and the panels draw the task changes,
+ * instead of hiding every session that wasn't on one task.
  *
- * Every across-session outcome panel — rewarded accuracy (§6.4), response
- * accuracy (§6.5), effort (§6.6), outcome mix (§6.7) — builds from this one
- * list, so their x slots are identical and a session sits above itself in all
- * of them. The rewarded and response panels depend on that especially: the
- * gap between their curves only means anything if a session is at the same x
- * in both.
+ * Every across-session outcome panel — rewarded accuracy, response accuracy,
+ * effort, outcome mix — builds from this one list, so their x slots are
+ * identical and a session sits above itself in all of them. The rewarded and
+ * response panels depend on that especially: the gap between their curves only
+ * means anything if a session is at the same x in both.
  *
  * A session whose runs all report `outcomes: null` contributes nothing: no
  * task in it has a reward vocabulary, which is not a session that earned
- * nothing (§3.8). But a session whose administered count is zero *stays* —
- * "ran and aborted everything" is data, and the panels that can't plot it
- * show a gap rather than pretending the session never happened (§3.6).
+ * nothing (`DATA.md#rewarded-and-response-accuracy`). But a session whose
+ * administered count is zero *stays* — "ran and aborted everything" is data,
+ * and the panels that can't plot it show a gap rather than pretending the
+ * session never happened (`DATA.md#edge-cases`).
  */
 export function sessionOutcomePoints(summary: AnalyticsSummary): SessionOutcomePoint[] {
   const bySession = new Map<string, RunSummary[]>();
@@ -671,8 +672,9 @@ export function sessionSlot(index: number, total: number): number {
  *
  * The pair is deliberately symmetric — same x slots, same denominator, same
  * hollow-mark rule — because the whole point of showing both is that the
- * **vertical gap between them is the hold-failure rate** (`data.md`
- * §3.8). A reader can only read that gap if nothing else differs.
+ * **vertical gap between them is the hold-failure rate**
+ * (`DATA.md#rewarded-and-response-accuracy`). A reader can only read that gap
+ * if nothing else differs.
  */
 export interface AccuracyReading {
   value: (outcomes: PooledOutcomes) => number | null;
@@ -690,7 +692,8 @@ export const REWARDED_ACCURACY: AccuracyReading = {
 /**
  * The correct well was answered, whether or not the hold earned the drop —
  * the choice rather than the consummatory act. Always ≥ rewarded accuracy,
- * and the figure the declared metrics themselves score (§3.8).
+ * and the figure the declared metrics themselves score
+ * (`DATA.md#rewarded-and-response-accuracy`).
  */
 export const RESPONSE_ACCURACY: AccuracyReading = {
   value: (o) => o.pSide,
@@ -729,7 +732,8 @@ export function accuracyBand(
 export interface AnimalAccuracyPoint {
   x: number;
   y: number;
-  /** Too few administered trials to read firmly — drawn hollow (§3.5). */
+  /** Too few administered trials to read firmly — drawn hollow
+   * (`DATA.md#uncertainty`). */
   thin: boolean;
 }
 
@@ -737,7 +741,8 @@ export interface AnimalAccuracyPoint {
  * Each animal's own line at the pooled line's x slots, so the two are directly
  * comparable. A slot where the animal administered nothing stays `null`, so
  * its line shows the gap rather than interpolating through a session it sat
- * out (§3.6). Animals that ran nothing at all are dropped entirely.
+ * out (`DATA.md#edge-cases`). Animals that ran nothing at all are dropped
+ * entirely.
  */
 export function animalAccuracyLines(
   summary: AnalyticsSummary,

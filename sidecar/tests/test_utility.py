@@ -1,4 +1,4 @@
-"""The hardware utility baseline — `settings.md` §8.
+"""The hardware utility baseline — `ARCHITECTURE.md#hardware-utility-baseline`.
 
 Exercised against the real `PortManager` and a fake board tool, because the
 rules that matter here are all about the port state machine: which states a
@@ -223,7 +223,7 @@ async def test_force_reflashes_a_ready_box() -> None:
 
 
 async def test_never_takes_a_port_someone_else_owns() -> None:
-    """§8.2 — a console the user opened is not a restore opportunity."""
+    """`ARCHITECTURE.md#three-rules-it-never-breaks` — a console the user opened is not a restore opportunity."""
     baseline, manager, tool, _ = make_baseline()
     manager.open_passthrough(1)
 

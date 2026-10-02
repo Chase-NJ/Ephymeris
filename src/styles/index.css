@@ -1,13 +1,13 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   Theme tokens — ephymeris_v1.0.md §2.
+   Theme tokens — see `ARCHITECTURE.md#theme`.
    Values here are deliberate design calls, not defaults. In particular the
    palette is MATTE: no gradients on Pulsar, no glow, saturation held around
-   30–35% so the purple reads as a material rather than a light source (§2.2).
+   30–35% so the purple reads as a material rather than a light source.
    --------------------------------------------------------------------------- */
 @theme {
-  /* §2.2 Color palette */
+  /* Color palette */
   --color-void: #0b0b10; /* base app background */
   --color-nebula: #16151f; /* elevated surfaces: cards, sidebar, panels */
   --color-halo: #2c2a3a; /* hairline borders, dividers, idle indicators */
@@ -16,18 +16,18 @@
   --color-starlight: #edebf6; /* primary text */
   --color-static: #948fa8; /* secondary / muted text */
 
-  /* §2.2 Semantic status — state only, never decorative */
+  /* Semantic status — state only, never decorative */
   --color-status-ok: #7cc98f;
   --color-status-warning: #d9a15c;
   --color-status-error: #c96c6c;
 
-  /* §2.3 Typography — three roles, kept strictly separate.
+  /* Typography — three roles, kept strictly separate.
      Space Grotesk never leaves headers or it dilutes into "just another sans". */
   --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
 
-  /* §2.2.1 Data-visualization ramps — analytics.md §7. Added for Analytics;
+  /* Data-visualization ramps — see `DATA.md#colour-palette`. Added for Analytics;
      nothing above changes. Pulsar is still the primary accent and the
      no-gradient/no-glow rule still holds.
 
@@ -44,7 +44,7 @@
   --color-series-5: #cba23e; /* oklch(0.731 0.125  85.8) */
   --color-series-6: #be7031; /* oklch(0.619 0.125  56.0) */
 
-  /* Diverging heatmap ramp, centred on chance so below-chance reads as a
+  /* Diverging accuracy ramp, centred on chance so below-chance reads as a
      different *kind* of result rather than a smaller one. Quantized into seven
      bins, not continuous: a continuous ramp passes through a mid-lightness
      band where an in-cell label fails contrast against both Starlight and
@@ -58,13 +58,13 @@
   --color-heat-6: #447250; /* 0.65–85  oklch(0.510 0.075 151.0) */
   --color-heat-7: #7cc98f; /* ≥ 0.85   oklch(0.770 0.113 151.0) — Ion */
 
-  /* §2.4 Radius scale — sm/md/lg/xl. No ad hoc radii anywhere. */
+  /* Radius scale — sm/md/lg/xl. No ad hoc radii anywhere. */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
   --radius-xl: 24px;
 
-  /* §2.2 The sidebar's width, as a spacing token rather than a literal.
+  /* The sidebar's width, as a spacing token rather than a literal.
      The sidebar floats *over* the content region so the constellation runs
      full-bleed beneath its glass, which means three places have to agree on
      this number: the sidebar's own width, the left padding that keeps
@@ -131,7 +131,7 @@
     letter-spacing: -0.015em;
   }
 
-  /* §2.2 Pulsar is the focus ring colour. */
+  /* Pulsar is the focus ring colour. */
   :focus-visible {
     outline: 2px solid var(--color-pulsar);
     outline-offset: 2px;
@@ -154,7 +154,7 @@
 }
 
 @layer components {
-  /* §2.4 Elevation: 1px Halo hairline + a subtle shadow. Flat and matte beats
+  /* Elevation: 1px Halo hairline + a subtle shadow. Flat and matte beats
      skeuomorphic depth for this theme.
 
      **Frosted, because there is no longer any page without sky behind it.** This
@@ -191,10 +191,10 @@
     box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
   }
 
-  /* §2.4 Vibrancy: translucent Nebula + backdrop blur. Persistent chrome
+  /* Vibrancy: translucent Nebula + backdrop blur. Persistent chrome
      (sidebar) and transient overlays (modals) ONLY — never primary content
      cards. Applying this to cards is the failure mode to guard against. */
-  /* §1.4 Frosted chrome, for a backdrop of *content* — i.e. modals, which float
+  /* Frosted chrome, for a backdrop of *content* — i.e. modals, which float
      over dense tables and forms and need the blur to stay readable. */
   .vibrancy {
     background-color: color-mix(in srgb, var(--color-nebula) 72%, transparent);
@@ -216,7 +216,7 @@
     background-color: color-mix(in srgb, var(--color-nebula) 52%, transparent);
   }
 
-  /* §2.4 The squircle nod, spent exactly once: the app mark. Not buttons,
+  /* The squircle nod, spent exactly once: the app mark. Not buttons,
      not cards. Referenced as an objectBoundingBox clipPath (see <SvgDefs>) so
      the shape scales with the element instead of being pinned to one pixel
      size the way an inline `path()` would be. */
@@ -225,7 +225,7 @@
   }
 
   /* Draws the eye to the one control a guided flow is waiting on. A border
-     colour swell only — stays matte, no glow (§2.2). */
+     colour swell only — stays matte, no glow. */
   .attention-border {
     animation: attention-border 1.8s ease-in-out infinite;
   }
@@ -287,7 +287,7 @@
     background: var(--color-halo);
   }
 
-  /* §2.4 HUD panels docked over a live 3D scene — the Dashboard's tile column,
+  /* HUD panels docked over a live 3D scene — the Dashboard's tile column,
      following the treatment NodeDetail and StarPanel established. Translucent
      so the sky reads through, blurred so the panel's own text stays legible.
      Distinct from .vibrancy (persistent chrome + modals) and .surface (opaque
@@ -310,7 +310,7 @@
   }
 }
 
-/* §2.5 Ambient motion must never compete with live data collection. */
+/* Ambient motion must never compete with live data collection. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

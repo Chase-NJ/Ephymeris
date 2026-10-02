@@ -3,9 +3,9 @@ import { useEffect, useRef } from "react";
 import type { ConsoleLine } from "@/lib/hardware/store";
 
 /**
- * The console scrollback (`dashboard.md` §6.3): batched output with
- * sent commands interleaved, pinned to the bottom only while the user is at
- * the bottom — scrolling up to read must not be fought by the autoscroll.
+ * The console scrollback (`ARCHITECTURE.md#passthrough-read`): batched output
+ * with sent commands interleaved, pinned to the bottom only while the user is
+ * at the bottom — scrolling up to read must not be fought by the autoscroll.
  *
  * Extracted from the old ConsolePanel so the node detail view could reorganize
  * the console without duplicating the pinning logic.
@@ -15,8 +15,9 @@ import type { ConsoleLine } from "@/lib/hardware/store";
 const PIN_THRESHOLD_PX = 24;
 
 /**
- * A sketch's live telemetry lines (`tasks.md` §3.5): received lines
- * beginning with the profile's `telemetry.match`, conventionally `STATUS`.
+ * A sketch's live telemetry lines (`TASKS.md#utility-controls-and-telemetry`):
+ * received lines beginning with the profile's `telemetry.match`, conventionally
+ * `STATUS`.
  *
  * These are emitted on every state change *plus* a ~1 s heartbeat, so on a
  * chatty utility sketch they outnumber everything else several-to-one. That is

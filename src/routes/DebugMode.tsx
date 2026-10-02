@@ -12,11 +12,11 @@ import { useBoundBoxes, useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Debug (`dashboard.md` §4.2, dashboard.md §4).
+ * Debug (`USER-GUIDE.md#checking-a-box`).
  *
  * One continuous scene, not two views — and **not a destination of its own**:
  * there is no nav entry, and the only way in is to select a box on the
- * Dashboard's sky (§3.2). This route is that same sky with the camera flown in
+ * Dashboard's sky. This route is that same sky with the camera flown in
  * and the box's utilities docked over it. Escape, Back, or clicking empty space
  * flies the camera back out, which means going back to the Dashboard: an
  * unselected Debug has none of the chrome the Dashboard puts around the sky,
@@ -27,11 +27,11 @@ import { useSidecar } from "@/lib/ws/context";
  * selected. Memory is per-sitting, so a reload arrives with nothing selected —
  * and lands on the Dashboard, which is the right recovery.
  *
- * **The layout is the Dashboard's, deliberately** (§3.3): full-bleed sky with
+ * **The layout is the Dashboard's, deliberately**: full-bleed sky with
  * the chrome floating over it. That is what makes the handoff between the two
  * seamless — see the scaffold note on the returned markup.
  *
- * Mounting triggers a sketch rescan per `tasks.md` §2.3, so newly
+ * Mounting triggers a sketch rescan per `TASKS.md#discovery`, so newly
  * added sketches show up without an explicit refresh.
  */
 
@@ -74,7 +74,7 @@ export function DebugMode() {
 
   /*
    * **With no box selected, this route is the Dashboard.** Debug has no nav
-   * entry (§3.2) — it is the Dashboard's own sky with the camera flown in, and
+   * entry (`ARCHITECTURE.md#routes`) — it is the Dashboard's own sky with the camera flown in, and
    * the only way in is to select a box. So an unselected Debug is a page nobody
    * can mean to be on: it has a title and a hint and none of the things the
    * Dashboard puts around the same sky. Backing out used to land there, which

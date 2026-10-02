@@ -1,4 +1,4 @@
-"""Crash-recovery backfill — `data.md` §12, §11.
+"""Crash-recovery backfill — `DATA.md#crash-recovery`.
 
 The invariant these protect: recovery is the inverse of `writer.AnimalWriter`.
 A `.json` backfilled from an orphaned `.tsv` must match what `finalize` would
@@ -28,7 +28,7 @@ CORE = {
 CONFIG = {"correction_left": 0, "lazy_escalation": True, "trial_seed": 288577176}
 STROBES = [(101, 0), (249, 500), (103, 900), (248, 1400)]
 
-#: The snapshot a live run carries (`data.md` §4.4) — real enough to parse,
+#: The snapshot a live run carries (`DATA.md#the-embedded-task-profile`) — real enough to parse,
 #: since the point of recovering it is that the other end can.
 PROFILE = {
     "taskName": "GRGL 2-Odor",
@@ -86,7 +86,7 @@ def test_recovery_rebuilds_exactly_what_finalize_would_have(tmp_path: Path) -> N
 
 
 def test_a_footer_carrying_tsv_keeps_its_recorded_stop_reason(tmp_path: Path) -> None:
-    """§7.2's disk-full case: `finalize` ran (footer written) but the
+    """The disk-full case (`DATA.md#crash-recovery`): `finalize` ran (footer written) but the
     best-effort `.json` write failed. The recorded reason is the truth —
     stamping it 'recovered after crash' would erase why the run ended."""
     tsv = crash_a_run(tmp_path)
@@ -102,7 +102,7 @@ def test_a_footer_carrying_tsv_keeps_its_recorded_stop_reason(tmp_path: Path) ->
 
 
 def test_a_torn_final_line_costs_only_itself(tmp_path: Path) -> None:
-    """§7.3 — power died mid-write. The partial line matches neither rule and
+    """`DATA.md#crash-recovery` — power died mid-write. The partial line matches neither rule and
     contributes nothing; every complete line before it survives."""
     tsv = crash_a_run(tmp_path)
     with open(tsv, "a", encoding="utf-8", newline="\n") as fh:
@@ -156,7 +156,7 @@ def test_the_walk_finds_only_tsvs_with_no_json_sibling(tmp_path: Path) -> None:
     orphan = crash_a_run(session_a, animal="remy2")
 
     # A legacy-layout orphan, sitting straight under the cohort root with the
-    # underscored folder names — the depth and spelling §8.1's walk must read.
+    # underscored folder names — the depth and spelling the archive walk (`DATA.md#orphan-adoption`) must read.
     legacy_dir = tmp_path / "gr_01_07_22_26" / "recovery_tsv"
     legacy_dir.mkdir(parents=True)
     legacy = legacy_dir / "remy3_gr_01_07_22_26_090000.tsv"
@@ -217,7 +217,7 @@ def test_recover_cohort_says_nowhere_to_look(tmp_path: Path) -> None:
 
 
 def test_a_recovered_orphan_is_adoptable_by_the_rescan_walk(tmp_path: Path) -> None:
-    """The end-to-end handoff (§11 ↔ data.md §8.1): recovery writes the
+    """The end-to-end handoff (`DATA.md#crash-recovery` ↔ `DATA.md#orphan-adoption`): recovery writes the
     `.json`, and the adoption walk — the same traversal — then finds it."""
     session = tmp_path / "2O-Bdisc" / "2O-Bdisc_25_2026-07-22"
     tsv = crash_a_run(session)
@@ -228,7 +228,7 @@ def test_a_recovered_orphan_is_adoptable_by_the_rescan_walk(tmp_path: Path) -> N
 
 
 def test_a_recovered_file_is_still_self_describing(tmp_path: Path) -> None:
-    """§4.4 — the recovered `.json` is exactly the file somebody carries to
+    """`DATA.md#the-embedded-task-profile` — the recovered `.json` is exactly the file somebody carries to
     another machine to find out what happened, so it has to keep the
     declaration that decodes it."""
     from ephymeris_sidecar.tasks.profile import embedded_profile
@@ -247,7 +247,7 @@ def test_a_snapshot_torn_by_the_crash_is_dropped_not_kept_as_text(
 ) -> None:
     """Half a snapshot is worse than none: every reader downstream would have
     to defend against a `task_profile` that is a string. The ladder below it
-    (§8.3) still scores the run, so dropping loses nothing but the shortcut."""
+    (`DATA.md#which-profile-decodes-a-run`) still scores the run, so dropping loses nothing but the shortcut."""
     tsv = crash_a_run(tmp_path)
     lines = tsv.read_text(encoding="utf-8").splitlines()
     torn = [

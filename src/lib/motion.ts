@@ -1,7 +1,7 @@
 /**
  * Shared motion constants.
  *
- * dashboard.md §1.5 specifies Framer Motion **spring physics**, not
+ * `ARCHITECTURE.md#theme` specifies Framer Motion **spring physics**, not
  * duration/easing curves, for nav selection, panel transitions, and modal
  * open/close — the closest web equivalent to UIKit/SwiftUI transitions. Import
  * these rather than hand-tuning a transition at the call site, so the app keeps

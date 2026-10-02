@@ -16,7 +16,7 @@ matters as much as what it is:
   as one of the two being wrong without saying which. Same class, same
   boundary-code union, fed the same way.
 * **It records nothing.** No writer, no `.tsv`, no run row, no `SEED`. A Debug
-  run is not data (`dashboard.md` §6.4: passthrough output is never persisted),
+  run is not data (`ARCHITECTURE.md#invariants`: passthrough output is never persisted),
   and nothing here can make it look like data later.
 * **It is armed only by `port.sendStart`**, because that is the one moment the
   sidecar knows which sketch — and so which Task Profile — is on the board. A

@@ -21,12 +21,12 @@ import {
 } from "@/lib/analytics/view";
 
 /**
- * How each session's administered trials resolved (`data.md` §11.7).
+ * How each session's administered trials resolved (`DATA.md#pooling-across-tasks`).
  *
  * The rewarded line above answers "how often was fluid earned"; this panel
  * answers "and what happened instead" — whether the misses were hold
  * failures, wrong wells, or silence, in the same outcome colours the session
- * cards use (§6.3), so the same behaviour is the same colour in both places.
+ * cards use, so the same behaviour is the same colour in both places.
  * A cohort drifting from wrong-well to hold-failure errors is *learning the
  * discrimination* while the rewarded line barely moves, and this is the panel
  * where that shows.
@@ -35,12 +35,12 @@ import {
  * administered count — composition, deliberately not effort, because the
  * effort panel beside it already shows the counts and folding both into one
  * bar would hide each behind the other. A session that administered nothing
- * leaves its slot empty rather than inventing a composition (§3.6).
+ * leaves its slot empty rather than inventing a composition (`DATA.md#pooling-across-tasks`).
  */
 
 const HEIGHT = 54;
 
-/** Fixed rather than aspect-driven, matching the panels above (§6.4–§6.6). */
+/** Fixed rather than aspect-driven, matching the panels above. */
 const PLOT_PX = 132;
 
 /** Stack order, bottom to top — rewarded sits on the baseline so its share
@@ -50,7 +50,7 @@ const STACK: readonly OutcomeKey[] = ["rewarded", "holdFailed", "wrongWell", "no
 export function OutcomeMix(props: {
   summary: AnalyticsSummary;
   /** Changes when the data does — remounts the body, so the reveal re-arms
-   *  and again waits to be seen (§2.7). */
+   *  and again waits to be seen. */
   revealKey: string;
 }) {
   return <MixBody key={props.revealKey} {...props} />;
@@ -105,8 +105,7 @@ function MixBody({ summary }: { summary: AnalyticsSummary }) {
                   width={width}
                   seen={seen}
                   labels={labels}
-                  // Bars surface in session order, like the effort panel and
-                  // the heatmap columns (§2.7).
+                  // Bars surface in session order, like the effort panel.
                   delay={sessionSlot(index, points.length) * 0.5}
                 />
               ),

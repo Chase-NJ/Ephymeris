@@ -25,7 +25,7 @@ const PATH_SEP = "\u0000";
  * of the box carrying it.
  *
  * `null` is a real value here and means "this sketch has no profile", which is
- * fully supported (`tasks.md` §3) — bare `START`, raw strobe log, no charts.
+ * fully supported (`TASKS.md#task-profile`) — bare `START`, raw strobe log, no charts.
  * `undefined` is the different thing: not fetched yet.
  */
 export function useTaskProfiles(

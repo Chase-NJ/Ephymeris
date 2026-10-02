@@ -1,6 +1,6 @@
 """Session runner integration — strobes → `.tsv` + metrics + telemetry.
 
-Ties `dashboard.md` §10 step 7 to `data.md` §5: each parsed
+Ties step 7 of `ARCHITECTURE.md#entering-in_session` to `DATA.md#crash-safety`: each parsed
 strobe must land durably in the write-ahead log *and* update the rolling live
 metric pushed to the frontend.
 """
@@ -123,7 +123,8 @@ async def test_a_run_writes_its_tsv_with_the_seed_captured(tmp_path: Path) -> No
 
     tsv = next((tmp_path / "behavior.tsv").glob("*.tsv"))
     text = tsv.read_text(encoding="utf-8")
-    # §5 core fields + flat config + the recognized trial_seed convention (§6.4)
+    # Core fields (`DATA.md#the-tsv-log`) + flat config + the recognized
+    # trial_seed convention (`TASKS.md#seed`)
     assert "# rat: remy1" in text
     assert "# serial_port: /dev/fake1" in text
     assert "# session_id: 2O-Bdisc_25" in text
@@ -205,7 +206,7 @@ async def test_the_end_code_finalizes_the_run_cleanly(tmp_path: Path) -> None:
     assert reason == CLEAN_STOP_REASON
     assert ports.ended == [(1, CLEAN_STOP_REASON)]
 
-    # §7.2 — .json and .mat built once at the end, from the same in-memory list.
+    # `DATA.md#built-once-at-the-end` — .json and .mat built once at the end, from the same in-memory list.
     doc = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
     assert doc["rat"] == "remy1"
     assert doc["stop_reason"] == CLEAN_STOP_REASON
@@ -215,7 +216,7 @@ async def test_the_end_code_finalizes_the_run_cleanly(tmp_path: Path) -> None:
 
 
 async def test_the_time_limit_sends_stop_and_the_board_ends_the_run(tmp_path: Path) -> None:
-    """§2.3 — at the deadline the runner sends the same STOP an operator
+    """`ARCHITECTURE.md#configuration` — at the deadline the runner sends the same STOP an operator
     would; the board's own end strobe still does the ending."""
     runner, ports, _events, ended = make_runner(tmp_path, duration_s=0.05)
     runner.start_box(1)
@@ -271,7 +272,7 @@ async def test_snapshot_carries_started_at_only_while_running(tmp_path: Path) ->
 
 
 async def test_a_board_drop_finalizes_with_whatever_was_captured(tmp_path: Path) -> None:
-    """§10 — the hard stop costs no data; the WAL already has it."""
+    """`ARCHITECTURE.md#board-drop` — the hard stop costs no data; the WAL already has it."""
     runner, ports, _events, ended = make_runner(tmp_path)
     runner.start_box(1)
     ports.on_ready(None)
@@ -299,7 +300,7 @@ async def test_stop_sends_stop_without_ending_the_run(tmp_path: Path) -> None:
 
     runner.stop_box(1)
     assert ports.stopped == [1]
-    # The board's own end strobe ends it, not the STOP itself (§5.3).
+    # The board's own end strobe ends it, not the STOP itself (`ARCHITECTURE.md#clean-exit`).
     assert ended == []
 
 
@@ -324,7 +325,8 @@ async def test_starting_an_unconfigured_box_raises(tmp_path: Path) -> None:
 
 
 async def test_the_snapshot_reports_the_mapping_and_what_is_live(tmp_path: Path) -> None:
-    """`sessions.status` is built from this — §5's per-box cards."""
+    """`sessions.status` is built from this — Mission Control's per-box tiles
+    (`USER-GUIDE.md#reading-a-box-tile`)."""
     runner, ports, _events, _ended = make_runner(tmp_path)
     assert runner.group_id == "g1"
     assert runner.snapshot() == [
@@ -348,7 +350,7 @@ async def test_the_snapshot_reports_the_mapping_and_what_is_live(tmp_path: Path)
     assert runner.snapshot()[0]["running"] is False
 
 
-# --- graceful end, and the recording's taps (recording.md §5) ---------------
+# --- graceful end, and the recording's taps (`RECORDING.md#start-and-end`) ---
 
 
 async def test_a_graceful_end_waits_for_the_board_to_close_its_own_trial(tmp_path: Path) -> None:

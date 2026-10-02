@@ -6,8 +6,8 @@ import { springPanel } from "@/lib/motion";
 import type { SketchDiscovery } from "@/lib/settings/schema";
 
 /**
- * The bundled sketch library's state (`tasks.md` §2.4) — three states, each with
- * its own treatment rather than one generic "error".
+ * The bundled sketch library's state (`TASKS.md#library-states`) — three
+ * states, each with its own treatment rather than one generic "error".
  *
  * Every non-ok state means a broken or partial install, never a wrong setting:
  * sketches ship with the app, so there is no picker to send anyone to and no

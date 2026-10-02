@@ -10,14 +10,14 @@ import {
 
 /**
  * Which task the cohort was on, session by session — the strip that makes the
- * unfiltered trends below readable (`data.md` §11.9).
+ * unfiltered trends below readable (`DATA.md#pooling-across-tasks`).
  *
  * The trends pool every run because their measurements are vocabulary-defined
- * and identical across tasks (§9.8); what changes across tasks is
- * *difficulty*. This strip is that disclosure: an accuracy cliff that lines
- * up with a boundary here is a task change, not a cohort forgetting. It
- * shares the trends' session slots, so a boundary sits exactly above the
- * dashed rule the charts draw at the same x.
+ * and identical across tasks (`DATA.md#rewarded-and-response-accuracy`); what
+ * changes across tasks is *difficulty*. This strip is that disclosure: an
+ * accuracy cliff that lines up with a boundary here is a task change, not a
+ * cohort forgetting. It shares the trends' session slots, so a boundary sits
+ * exactly above the dashed rule the charts draw at the same x.
  *
  * Segments are the **dominant** task per session (chips borrowed from the
  * session summary); a session that mixed tasks says so on hover, and the

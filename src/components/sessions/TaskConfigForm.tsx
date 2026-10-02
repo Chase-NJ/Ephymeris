@@ -9,18 +9,20 @@ import type { TaskProfile } from "@/lib/sessions/types";
 import { QUICK_TUNE_GROUPS } from "@/lib/tasks/topology";
 
 /**
- * Per-box pre-flight config form (`dashboard.md` §7.3).
+ * Per-box pre-flight config form
+ * (`ARCHITECTURE.md#mapping-and-the-placement-walk`).
  *
  * Fields, labels and defaults come straight from the sketch's Task Profile
- * `config` array (`tasks.md` §3.2) — the app knows nothing task-specific.
- * A sketch with no profile renders nothing at all, and gets a bare `START`.
+ * `config` array (`TASKS.md#config-fields`) — the app knows nothing
+ * task-specific. A sketch with no profile renders nothing at all, and gets a
+ * bare `START`.
  *
  * Collapsed by default, and that is the point: this is the *override* layer
- * (§6.9). A behaviour sketch now declares forty-odd fields, and six of those
- * expanded inline would bury the mapping step's actual job — choosing a sketch
- * per animal — under two hundred inputs. The summary line says how many values
- * differ from the rig's defaults for this animal, which is the only thing an
- * operator needs to see at a glance.
+ * (`TASKS.md#three-layer-merge`). A behaviour sketch now declares forty-odd
+ * fields, and six of those expanded inline would bury the mapping step's actual
+ * job — choosing a sketch per animal — under two hundred inputs. The summary
+ * line says how many values differ from the rig's defaults for this animal,
+ * which is the only thing an operator needs to see at a glance.
  *
  * Opened, the pane leads with **Quick tune** — the `QUICK_TUNE_GROUPS`
  * registry's groups (correction budgets, the lazy-penalty escalation),
@@ -167,7 +169,7 @@ export function TaskConfigForm({
 }
 
 /**
- * Sketch picker scoped to one box (§3) — the themed `Dropdown`, so the list
+ * Sketch picker scoped to one box — the themed `Dropdown`, so the list
  * renders on the app's own glass rather than as an OS-white popup. The name
  * carries the row and the category rides the `detail` slot, which reads
  * better than the old `category / name` prefix repeated down the list.

@@ -1,4 +1,5 @@
-"""Choosing groups on the fly, and continuing between groups — `dashboard.md` §5.2.
+"""Choosing groups on the fly, and continuing between groups — `ARCHITECTURE.md#group-step`,
+`DATA.md#continuing-between-groups`.
 
 Drives the real `Application` handlers over a real `SessionRepository`, on a
 stand-in for the rest of the app (the `test_debug_flash.py` pattern):

@@ -52,7 +52,7 @@ export const KINDS = [
  * One colour per kind, so a glance at the board says what a pin does.
  *
  * Drawn from the chart series rather than invented, which keeps the palette to
- * the six tokens `docs/dashboard.md` §1.2 fixes. `engagement` takes pulsar and
+ * the six tokens `ARCHITECTURE.md#theme` fixes. `engagement` takes pulsar and
  * `response` takes ion because those two are what an animal touches — the
  * accent and the success colour, used for the thing the task is actually about.
  * `sync` takes series-2, the one series colour the six behavioural kinds left

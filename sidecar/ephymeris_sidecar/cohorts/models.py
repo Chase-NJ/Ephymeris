@@ -1,7 +1,7 @@
-"""Cohort/Animal/Group data model — `cohorts.md` §1.
+"""Cohort/Animal/Group data model — `DATA.md#data-model`.
 
 `to_json` produces exactly the payload shapes documented in
-`websocket-protocol.md` §4, so the wire format is defined in one place rather
+`PROTOCOL.md#payload-shapes`, so the wire format is defined in one place rather
 than assembled ad hoc at each call site.
 """
 
@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 Sex = Literal["M", "F", "unknown"]
 
-#: The surfaces the planet shader can draw (`cohorts.md` §5). Validated here so
+#: The surfaces the planet shader can draw (`ARCHITECTURE.md#cohort-browser`). Validated here so
 #: a value the renderer cannot draw never reaches the store; anything else is
 #: refused rather than silently coerced, because a cohort saved with a typo
 #: would come back looking like a different world.
@@ -22,14 +22,14 @@ PLANET_TYPES = ("rocky", "gas", "ice", "ocean", "lava")
 MIN_BOX = 1
 MAX_BOX = 6
 
-#: §7.2 — no group may exceed this, since a larger one could never be uniquely
+#: No group may exceed this (`DATA.md#auto-balance`), since a larger one could never be uniquely
 #: box-assigned within itself.
 MAX_GROUP_SIZE = MAX_BOX
 
 
 @dataclass
 class Appearance:
-    """How a cohort's world looks — the operator's four choices (§5).
+    """How a cohort's world looks — the operator's four choices (`ARCHITECTURE.md#cohort-browser`).
 
     **Absent is the normal state and is not a gap.** A cohort with no
     appearance derives all four from a hash of its `id`, exactly as the icon it
@@ -148,12 +148,12 @@ class Cohort:
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
             # Null on almost every cohort, and that is the answer rather than a
-            # missing one: the client derives the world from `id` (§5).
+            # missing one: the client derives the world from `id` (`ARCHITECTURE.md#cohort-browser`).
             "appearance": self.appearance.to_json() if self.appearance else None,
         }
 
     def to_summary(self) -> dict[str, Any]:
-        """The grid/dashboard shape — no animal or group detail (§10).
+        """The grid/dashboard shape — no animal or group detail (`PROTOCOL.md#shape-cohortsummary`).
 
         `assignedBoxes` and `cageCount` are the two exceptions to "no animal
         detail", and both earn it the same way — the browser needs the answer
@@ -180,10 +180,10 @@ class Cohort:
 
 
 class ValidationError(Exception):
-    """One or more §2 rules were broken.
+    """One or more validation rules (`DATA.md#validation`) were broken.
 
     Carries per-field detail so the editor can render errors inline against the
-    offending row rather than as a detached toast (§6).
+    offending row rather than as a detached toast.
     """
 
     def __init__(self, errors: dict[str, str]) -> None:
@@ -196,8 +196,8 @@ class CohortNotFound(Exception):
 
 
 class NameTaken(Exception):
-    """Name already belongs to an *active* cohort (§2)."""
+    """Name already belongs to an *active* cohort (`DATA.md#validation`)."""
 
 
 class NotArchived(Exception):
-    """Permanent delete attempted before archiving (§9's two-step guard)."""
+    """Permanent delete attempted before archiving (the two-step guard, `DATA.md#archive-and-delete`)."""

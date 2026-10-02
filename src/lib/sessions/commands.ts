@@ -1,6 +1,6 @@
 /**
  * Typed wrappers over the session and prefix commands
- * (`websocket-protocol.md` §3.2).
+ * (`PROTOCOL.md#prefixes-and-sessions`).
  */
 
 import type { SidecarClient } from "../ws/client";
@@ -24,7 +24,7 @@ export async function deletePrefix(client: SidecarClient, id: string): Promise<v
 
 /**
  * A sketch's Task Profile, or null when it has none — which is fully supported
- * (`tasks.md` §3): bare `START`, raw strobe log instead of charts.
+ * (`TASKS.md#task-profile`): bare `START`, raw strobe log instead of charts.
  */
 export async function getTaskProfile(
   client: SidecarClient,
@@ -37,7 +37,7 @@ export async function getTaskProfile(
 }
 
 /**
- * Step 1's pre-fill (§2.2): the next numeric session number for this prefix,
+ * Step 1's pre-fill (`ARCHITECTURE.md#configuration`): the next numeric session number for this prefix,
  * plus the numbers already used today — the latter drives a *soft* warning,
  * never a block.
  */
@@ -66,7 +66,7 @@ export async function createSession(
     sessionNumber,
     // Optional on the wire — omitted entirely means "no time limit".
     ...(durationMinutes !== undefined ? { durationMinutes } : {}),
-    // Also an Intan recording (`recording.md`). Omitted = behavior only.
+    // Also an Intan recording (`RECORDING.md`). Omitted = behavior only.
     ...(recording ? { recording: true } : {}),
   })) as { session: Session };
   return r.session;
@@ -124,7 +124,7 @@ export async function startAll(client: SidecarClient, sessionId: string): Promis
 
 /**
  * End the group on the rig and leave the session BETWEEN GROUPS
- * (`dashboard.md` §5.2): still running, held, no boxes. The operator then picks
+ * (`ARCHITECTURE.md#group-step`): still running, held, no boxes. The operator then picks
  * the next group — any group — on the group step, or ends the session.
  */
 export async function endGroup(client: SidecarClient, sessionId: string): Promise<Session> {
@@ -156,13 +156,13 @@ export async function startBox(client: SidecarClient, box: number): Promise<void
   await client.call(CMD.PORT_START_SESSION, { box });
 }
 
-/** Per-box Stop — sends `STOP`; the board's end strobe ends the run (§5.3). */
+/** Per-box Stop — sends `STOP`; the board's end strobe ends the run (`ARCHITECTURE.md#running-boxes`). */
 export async function stopBox(client: SidecarClient, box: number): Promise<void> {
   await client.call(CMD.PORT_STOP_SESSION, { box });
 }
 
 /**
- * Flash one box as part of the session sequence (§4).
+ * Flash one box as part of the session sequence (`ARCHITECTURE.md#flash-sequence`).
  *
  * `suppressPassthroughResume` is what makes the box land in `IDLE` so the
  * runner can claim it — the opposite of Debug Mode's auto-resume.

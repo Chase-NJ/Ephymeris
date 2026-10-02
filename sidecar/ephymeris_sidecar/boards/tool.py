@@ -1,9 +1,8 @@
 """Board tooling interface.
 
-`README.md` §4.1 specifies `arduino-cli` in gRPC daemon mode. v1
-ships the subprocess backend behind this interface and swaps the daemon in
-later without the callers noticing — see §8 for why that migration is deferred
-rather than abandoned.
+Two backends sit behind this interface — the `arduino-cli` gRPC daemon and the
+subprocess fallback (`ARCHITECTURE.md#flashing`) — and the callers never know
+which one is running.
 
 Everything above this line works in terms of `DetectedBoard`, never in terms of
 `arduino-cli` output.
@@ -24,7 +23,7 @@ class FlashFailed(Exception):
 
     Carries which phase failed and the tool output that explains why, so the
     frontend gets a parsed message rather than a bare exit code
-    (`dashboard.md` §6.1).
+    (`ARCHITECTURE.md#flashing`).
     """
 
     def __init__(self, phase: str, message: str, detail: str | None = None) -> None:
@@ -64,7 +63,8 @@ class BoardTool(ABC):
     async def list_boards(self) -> list[DetectedBoard]:
         """Enumerate connected boards without opening any port.
 
-        Must never open a serial port: §7 makes presence polling out-of-band
+        Must never open a serial port: presence polling is out-of-band
+        (`ARCHITECTURE.md#board-discovery`)
         precisely so it never contends with the per-port state machine for
         ownership.
         """
@@ -94,7 +94,7 @@ class BoardTool(ABC):
         """Upload a compiled sketch to `address`, streaming progress.
 
         The caller owns the state machine and must have released the port
-        (`dashboard.md` §5.3) before calling. Raises `FlashFailed`
+        (`ARCHITECTURE.md#exclusivity`) before calling. Raises `FlashFailed`
         on error.
         """
 

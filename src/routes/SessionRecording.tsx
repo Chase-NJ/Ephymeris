@@ -36,7 +36,7 @@ import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
 
 /**
- * The recording step (`recording.md` §4) — between Boxes and Run, on a session
+ * The recording step (`RECORDING.md#record-step`) — between Boxes and Run, on a session
  * created from the Dashboard's Start Recording tile.
  *
  * AFTER the mapping on purpose: what this screen asks is which headstage port

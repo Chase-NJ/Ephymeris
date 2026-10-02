@@ -16,7 +16,7 @@ import {
 } from "@/lib/settings/schema";
 
 /**
- * Box → board bindings (README.md §1).
+ * Box → board bindings (`ARCHITECTURE.md#box-bindings`).
  *
  * Bound by `hardware_id` — the board's USB serial number — rather than port
  * address, because Windows renumbers COM ports across reboots and
@@ -37,11 +37,12 @@ import {
  *
  * THE ROW'S SECOND CABLE IS EDITED ELSEWHERE. A box has a USB lead to this
  * machine and, if it records, a sync line to one of the recording controller's
- * digital inputs (`recording.md` §3). Both are bindings between two instruments
- * rather than facts about the box, and both live in `settings.boxes` — but the
- * sync line's editor is the Recording tab's Sync inputs table, because its far
- * end is the recording controller and the person plugging it in is setting up
- * a recording, not the rig. One store, two doors; the two cannot drift.
+ * digital inputs (`RECORDING.md#wiring-and-binding`). Both are bindings between
+ * two instruments rather than facts about the box, and both live in
+ * `settings.boxes` — but the sync line's editor is the Recording tab's Sync
+ * inputs table, because its far end is the recording controller and the person
+ * plugging it in is setting up a recording, not the rig. One store, two doors;
+ * the two cannot drift.
  */
 export function BoxBindingsTable({
   boxes,

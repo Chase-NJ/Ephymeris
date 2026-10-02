@@ -7,11 +7,11 @@ import { springSnappy } from "@/lib/motion";
 import type { ConfigField, TaskProfile } from "@/lib/sessions/types";
 
 /**
- * The one renderer for a Task Profile's `config` array (`tasks.md` §3.2),
- * shared by this rig's per-sketch defaults on the Task tab and the per-box
- * override on the mapping step — the middle and outer layers of the three-layer
- * merge, rendered by the same component so they cannot disagree about what a
- * field is.
+ * The one renderer for a Task Profile's `config` array
+ * (`TASKS.md#config-fields`), shared by this rig's per-sketch defaults on the
+ * Task tab and the per-box override on the mapping step — the middle and outer
+ * layers of the three-layer merge, rendered by the same component so they
+ * cannot disagree about what a field is.
  *
  * It exists because a profile is no longer three fields. The lab's behaviour
  * sketches declare forty-odd — every timing, hold, window, penalty, reward
@@ -77,8 +77,8 @@ export function ConfigFields({
   const [openAdvanced, setOpenAdvanced] = useState<Record<string, boolean>>({});
 
   // Sections in first-declared order. The profile's authored order is
-  // load-bearing elsewhere (`data.md` §11.8) and there is no reason for the
-  // form to disagree with it.
+  // load-bearing elsewhere and there is no reason for the form to disagree
+  // with it.
   /** `only` as a list, whatever it arrived as. Undefined stays undefined —
    *  "every group" is not the same request as "these zero groups". */
   const wanted = useMemo(

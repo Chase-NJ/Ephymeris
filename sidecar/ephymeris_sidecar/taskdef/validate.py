@@ -329,7 +329,7 @@ def _line_problems(definition: TaskDefinition) -> list[Diagnostic]:
     `readLineInto()` truncates an overlong line and drops the rest, and the
     board cannot report that — the session runs on whichever values happened to
     fit. So the generator refuses instead, which is the same discipline
-    `build_start_command` already applies (`tasks.md` §6.3).
+    `build_start_command` already applies (`TASKS.md#the-length-cap`).
     """
     from .generate import build_profile  # local: generate imports this module
 

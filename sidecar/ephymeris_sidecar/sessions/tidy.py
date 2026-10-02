@@ -1,4 +1,4 @@
-"""Tidying a cohort's session records — `data.md` §8.8.
+"""Tidying a cohort's session records — `DATA.md#tidy-records`.
 
 Two kinds of leftover pile up when a day goes wrong:
 

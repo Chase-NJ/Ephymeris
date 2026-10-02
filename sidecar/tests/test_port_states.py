@@ -1,8 +1,8 @@
-"""Per-port state machine — `dashboard.md` §5.
+"""Per-port state machine — `ARCHITECTURE.md#port-state-machine`.
 
-The table is transcribed from the §3.2 diagram, so these tests assert the
-diagram rather than the implementation: every legal edge is spelled out
-explicitly here, and everything else is required to be rejected.
+The table is transcribed from `ARCHITECTURE.md#transitions`, so these tests
+assert the documented table rather than the implementation: every legal edge
+is spelled out explicitly here, and everything else is required to be rejected.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from ephymeris_sidecar.ports.states import (
 
 S = PortState
 
-#: The §3.2 diagram, written out independently of `states.TRANSITIONS`.
+#: The documented table (`ARCHITECTURE.md#transitions`), written out independently of `states.TRANSITIONS`.
 LEGAL_EDGES = {
     (S.IDLE, S.PASSTHROUGH),
     (S.IDLE, S.FLASHING),
@@ -60,7 +60,7 @@ def test_every_undocumented_edge_is_rejected(edge: tuple[PortState, PortState]) 
 
 
 def test_in_session_is_exclusive_with_every_other_operation() -> None:
-    """§3.3 — nothing may flash, reset, or open passthrough mid-session."""
+    """`ARCHITECTURE.md#exclusivity` — nothing may flash, reset, or open passthrough mid-session."""
     for target in (S.PASSTHROUGH, S.FLASHING, S.RESETTING):
         assert not can_transition(S.IN_SESSION, target)
 
@@ -77,7 +77,7 @@ def test_error_recovers_only_to_idle() -> None:
 
 
 def test_flashing_and_resetting_can_auto_resume_passthrough() -> None:
-    """§3.3 — the auto-resume path back to PASSTHROUGH must exist."""
+    """`ARCHITECTURE.md#exclusivity` — the auto-resume path back to PASSTHROUGH must exist."""
     assert can_transition(S.FLASHING, S.PASSTHROUGH)
     assert can_transition(S.RESETTING, S.PASSTHROUGH)
 

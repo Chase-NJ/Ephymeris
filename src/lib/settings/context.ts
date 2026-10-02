@@ -8,7 +8,7 @@ export interface SettingsContextValue {
   update: (patch: Partial<EphymerisSettings>) => Promise<void>;
   /** Latest bundled-library scan, from sketches.updated or a refresh. */
   discovery: SketchDiscovery;
-  /** Re-run discovery on demand (`tasks.md` §2.3). */
+  /** Re-run discovery on demand (`TASKS.md#discovery`). */
   refreshSketches: () => Promise<void>;
   loaded: boolean;
   saveError: string | null;

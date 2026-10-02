@@ -1,4 +1,4 @@
-"""Data folder resolution — `cohorts.md` §8."""
+"""Data folder resolution — `DATA.md#data-folder`."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def test_ensure_folder_rejects_a_file(tmp_path: Path) -> None:
         ensure_folder(victim)
 
 
-# --- §8 relocate ----------------------------------------------------------
+# --- relocate (`DATA.md#data-folder`) -------------------------------------
 
 
 def test_relocate_moves_contents_when_asked(tmp_path: Path) -> None:
@@ -104,7 +104,7 @@ def test_relocate_without_moving_just_creates_the_destination(tmp_path: Path) ->
 
 
 def test_relocate_refuses_a_non_empty_destination(tmp_path: Path) -> None:
-    """§8 — fails safely rather than merging into or overwriting."""
+    """`DATA.md#data-folder` — fails safely rather than merging into or overwriting."""
     source = tmp_path / "old"
     source.mkdir()
     (source / "a.txt").write_text("source", encoding="utf-8")
@@ -121,10 +121,10 @@ def test_relocate_refuses_a_non_empty_destination(tmp_path: Path) -> None:
 
 
 def test_relocate_attaches_to_an_archive_that_is_already_full(tmp_path: Path) -> None:
-    """§8 — the *other* intent: point a cohort at data that is already there.
+    """`DATA.md#data-folder` — the *other* intent: point a cohort at data that is already there.
 
     This is how a cohort adopts an archive written before this app existed
-    (`data.md` §8.1), so the destination is *expected* to be full.
+    (`DATA.md#orphan-adoption`), so the destination is *expected* to be full.
     Refusing a non-empty destination here made that impossible to express: the
     only control for it rejected exactly the folders it was meant to accept.
     """

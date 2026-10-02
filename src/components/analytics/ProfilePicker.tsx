@@ -6,7 +6,7 @@ import type { StrategyProfile } from "@/lib/analytics/view";
  *
  * **The list is what the cohort's data actually contains**, not a list of tasks
  * the app knows about: sessions recorded on this rig, sessions copied from
- * another and decoded from their own embedded snapshot (`data.md` §4.4), and
+ * another and decoded from their own embedded snapshot (`DATA.md#the-embedded-task-profile`), and
  * runs whose conditions were inferred from the strobes because no profile
  * resolved. All three are real profiles with real runs, so all three are here.
  *
@@ -31,7 +31,7 @@ export function ProfilePicker({
   value: string;
   onChange: (hash: string) => void;
   /** Profile hash → program name (`taskLabels`), which now prefers the name a
-   *  run RECORDED over the path this machine resolved (`data.md` §8.3). */
+   *  run RECORDED over the path this machine resolved (`DATA.md#which-profile-decodes-a-run`). */
   labels: Map<string, string>;
 }) {
   if (profiles.length <= 1) return null;

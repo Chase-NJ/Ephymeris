@@ -24,7 +24,7 @@ import {
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * The group step (`dashboard.md` §7.6) — which group goes on the rig next.
+ * The group step (`ARCHITECTURE.md#group-step`) — which group goes on the rig next.
  *
  * Reached from Mission Control after a group ends (`sessions.endGroup`), and
  * from the Dashboard or Step 1 to continue one of today's sessions that the app

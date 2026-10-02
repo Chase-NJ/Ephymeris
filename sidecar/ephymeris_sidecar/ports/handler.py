@@ -1,7 +1,7 @@
 """Per-port handler: state machine, reader thread, ring buffer, write path.
 
 One instance per box. Deliberately a *single* object owning both the read loop
-and `write()` — `dashboard.md` §6.4 requires that reads and writes
+and `write()` — `ARCHITECTURE.md#passthrough-send` requires that reads and writes
 are never split across separate objects for the same port, so state transitions
 can't race a queued write.
 """
@@ -23,7 +23,7 @@ from .states import IllegalTransition, PortState, assert_transition
 
 log = logging.getLogger(__name__)
 
-#: `IN_SESSION` line recognition (`dashboard.md` §10 step 6). Stricter
+#: `IN_SESSION` line recognition (`ARCHITECTURE.md#entering-in_session` step 6). Stricter
 #: than PASSTHROUGH's opaque text: a data line is exactly `<code>\t<timestamp>`,
 #: code 1–3 digits. Anything else is logged but not treated as data.
 STROBE_RE = re.compile(r"^(\d{1,3})\t(\d+)$")
@@ -33,10 +33,11 @@ READY_TOKEN = "READY"
 #: How long to wait for the board's `READY` after opening (it reboots via the
 #: DTR auto-reset first, so this must cover `setup()`).
 SESSION_READY_TIMEOUT_S = 10.0
-#: Brief window after `START` to catch an optional `SEED` line (§7 step 5).
+#: Brief window after `START` to catch an optional `SEED` line
+#: (`ARCHITECTURE.md#entering-in_session` step 5).
 SESSION_SEED_WINDOW_S = 1.5
 
-#: Passthrough scrollback is debug output, not data to retain (§6.2).
+#: Passthrough scrollback is debug output, not data to retain (`ARCHITECTURE.md#passthrough-read`).
 RING_CAPACITY = 2000
 
 #: Flush a partial line anyway past this many bytes, so a sketch that never
@@ -114,7 +115,7 @@ class PortHandler:
         return self._baud
 
     def _set_state(self, to: PortState, reason: str) -> None:
-        """Move state, enforcing the §3.2 table. Caller must hold the lock."""
+        """Move state, enforcing the transition table (`ARCHITECTURE.md#transitions`). Caller must hold the lock."""
         previous = self._state
         if previous == to:
             return
@@ -135,7 +136,7 @@ class PortHandler:
             self._set_state(PortState.ERROR, reason)
 
     def acknowledge_error(self) -> PortState:
-        """ERROR → IDLE on user acknowledgement (§3.2)."""
+        """ERROR → IDLE on user acknowledgement (`ARCHITECTURE.md#transitions`)."""
         with self._lock:
             self._set_state(PortState.IDLE, "error acknowledged")
             return self._state
@@ -186,7 +187,7 @@ class PortHandler:
     def release_for(self, next_state: PortState, reason: str) -> bool:
         """Hand the port to a flash or reset, returning whether to auto-resume.
 
-        §3.3: entering `FLASHING`/`RESETTING` forces a clean release of
+        `ARCHITECTURE.md#exclusivity`: entering `FLASHING`/`RESETTING` forces a clean release of
         `PASSTHROUGH` first, and if passthrough *was* the prior state the caller
         should resume it afterward so the user sees the new sketch's output
         without an extra click.
@@ -199,7 +200,7 @@ class PortHandler:
             self._set_state(next_state, reason)
             return was_passthrough
 
-    # --- session (dashboard.md §10) -------------------------------
+    # --- session (ARCHITECTURE.md#entering-in_session) -------------------------------
 
     def start_session(
         self,
@@ -217,7 +218,7 @@ class PortHandler:
 
         `on_ready(seed)` fires once the handshake resolves, *before* the first
         strobe, so the caller can open the session file and write its header
-        (`data.md` §5.1). `on_strobe(code, ts)` fires for each parsed
+        (`DATA.md#written-live`). `on_strobe(code, ts)` fires for each parsed
         strobe. Both run on the session thread, so the caller's file I/O stays
         off the event loop.
         """
@@ -239,7 +240,7 @@ class PortHandler:
         """Write a raw line to the board mid-session (e.g. `STOP`).
 
         Doesn't force a transition — the board's own end-of-session strobe does
-        (`dashboard.md` §8.3). Permitted only in `IN_SESSION`.
+        (`ARCHITECTURE.md#clean-exit`). Permitted only in `IN_SESSION`.
         """
         with self._lock:
             if self._state != PortState.IN_SESSION or self._serial is None:
@@ -265,7 +266,7 @@ class PortHandler:
     ) -> None:
         try:
             # Opening the port toggles DTR, which the Mega's auto-reset circuit
-            # interprets as a reset — the same mechanism as §5's reset, reused.
+            # interprets as a reset — the same mechanism as a DTR reset (`ARCHITECTURE.md#reset`), reused.
             port = serial.Serial(
                 port=address,
                 baudrate=baud,
@@ -294,7 +295,7 @@ class PortHandler:
                 chunk = port.read(waiting if waiting else 1)
             except Exception as exc:  # noqa: BLE001 - board yanked mid-session
                 if not stop.is_set():
-                    # §10 hard stop: a drop is exactly what ERROR exists for.
+                    # Hard stop (`ARCHITECTURE.md#board-drop`): a drop is exactly what ERROR exists for.
                     self.force_error(f"board disconnected or unreadable: {exc}")
                 return
 
@@ -330,7 +331,7 @@ class PortHandler:
         """Handle one complete line according to the handshake phase."""
         text = line.strip()
         # Everything is mirrored into scrollback so a raw session log exists for
-        # a profile-less sketch and for debugging (§6.1 fallback).
+        # a profile-less sketch and for debugging (`TASKS.md#overview`).
         self._emit(OutputLine("rx", text, time.time()))
 
         if phase == "ready":
@@ -374,7 +375,7 @@ class PortHandler:
     # --- write ------------------------------------------------------------
 
     def write(self, text: str, line_ending: str = DEFAULT_LINE_ENDING) -> int:
-        """Send to the board. Permitted only in `PASSTHROUGH` (§6.3).
+        """Send to the board. Permitted only in `PASSTHROUGH` (`ARCHITECTURE.md#passthrough-send`).
 
         Enforced here rather than only in the UI, which guards against a queued
         send firing during a mid-flight state transition.
@@ -388,7 +389,7 @@ class PortHandler:
             payload = (text + suffix).encode("utf-8", errors="replace")
             written = self._serial.write(payload) or 0
 
-        # Echo into scrollback so sent and received history interleave (§6.3).
+        # Echo into scrollback so sent and received history interleave (`ARCHITECTURE.md#passthrough-send`).
         self._emit(OutputLine("tx", text, time.time()))
         return written
 
@@ -408,7 +409,7 @@ class PortHandler:
                 self._ingest(chunk)
 
     def _ingest(self, chunk: bytes) -> None:
-        """Split into lines and emit. Opaque text, error-replaced (§6.2)."""
+        """Split into lines and emit. Opaque text, error-replaced (`ARCHITECTURE.md#passthrough-read`)."""
         self._buf.extend(chunk)
         self._ingest_seq += 1
 
@@ -452,7 +453,7 @@ class PortHandler:
         self._emit(OutputLine("rx", line, time.time()))
 
     def drain(self) -> list[OutputLine]:
-        """Take everything accumulated since the last tick (§6.2 batching)."""
+        """Take everything accumulated since the last tick (`ARCHITECTURE.md#passthrough-read`)."""
         with self._pending_lock:
             if not self._pending:
                 return []

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <!--
-    Ephymeris app icon — themed to the v1.0 palette (docs/ephymeris_v1.0.md §2.2)
+    Ephymeris app icon — themed to the v1.0 palette (ARCHITECTURE.md#theme)
 
     Tokens used directly:
       Void      #0B0B10  all outlines

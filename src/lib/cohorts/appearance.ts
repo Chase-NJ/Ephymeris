@@ -6,7 +6,7 @@ import type { CohortAppearance } from "@/lib/ws/protocol";
 export type { CohortAppearance };
 
 /**
- * How a cohort's world looks — `cohorts.md` §5.
+ * How a cohort's world looks — `ARCHITECTURE.md#cohort-browser`.
  *
  * **Derived unless the operator says otherwise.** A cohort with no stored
  * appearance gets all four fields from a hash of its `id`, which is the same
@@ -109,7 +109,7 @@ function mod360(value: number): number {
  * **Saturation and lightness are the type's, not the hue's.** That is what
  * keeps an ice world pale and a lava world dark at every hue, so the type
  * survives being recoloured — and it is what keeps these inside the matte
- * palette's register (`dashboard.md` §1.2) instead of drifting toward the
+ * palette's register (`ARCHITECTURE.md#theme`) instead of drifting toward the
  * saturated primaries a free-for-all HSL picker would reach.
  *
  * **Four stops of ground, not two.** The first cut had `edge` and `core` and
@@ -249,7 +249,7 @@ export function typeIndex(type: PlanetType): number {
   return Math.max(0, PLANET_TYPES.indexOf(type));
 }
 
-// --- the readings a planet carries (§1) -----------------------------------
+// --- the readings a planet carries (`ARCHITECTURE.md#shaders-and-lights`) ---
 
 /**
  * Roster size → world size.

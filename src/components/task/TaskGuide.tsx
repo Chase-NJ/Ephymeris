@@ -13,7 +13,7 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * the same document: two places that both have to agree about what a trial type
  * is, what clamps, and which values are legal — and the one that is used twice
  * a year is the one that drifts. It is also the shape this app already retired
- * once, when the five-step rig setup went (`settings.md` §1). So the overlay
+ * once, when the five-step rig setup went. So the overlay
  * never collects anything. It dims the page, cuts a hole around the thing the
  * current step is about, and says what to do there; the operator edits the real
  * table underneath and the step ticks itself off when the document satisfies it.

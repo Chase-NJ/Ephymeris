@@ -41,7 +41,8 @@ export function DrawOn({
 }: {
   /** The host SVG's viewBox, as `[minX, minY, width, height]`. */
   viewBox: [number, number, number, number];
-  /** When false the wipe holds closed, waiting to be seen (`data.md` §10.5). */
+  /** When false the wipe holds closed, waiting to be seen
+   * (`DATA.md#drawing-lines`). */
   seen?: boolean;
   duration?: number;
   delay?: number;

@@ -2,7 +2,7 @@ import { useCallback, useSyncExternalStore } from "react";
 
 /**
  * What the rig has selected, shared across the views that browse it
- * (`dashboard.md` §3, §4.3).
+ * (`ARCHITECTURE.md#one-sky`).
  *
  * > [!NOTE]
  * > **This used to hold the camera pose as well**, keyed by what the scene was

@@ -3,7 +3,7 @@ import { useRef, useState, type ReactNode } from "react";
 
 import { springSnappy } from "@/lib/motion";
 
-/** Shared form primitives, so every control picks up the §2 tokens and radii. */
+/** Shared form primitives, so every control gets the theme tokens and radii. */
 
 export function Button({
   children,
@@ -164,7 +164,7 @@ export function Select<T extends string | number>({
   attention?: boolean;
   /**
    * Tints the selected value when the *current* choice is the problem — a box
-   * whose board is gone, say. Colour lands on the text only, per §2.2; the
+   * whose board is gone, say. Colour lands on the text only; the
    * border stays Halo like every other control so a warning row doesn't read
    * as a different kind of surface.
    */

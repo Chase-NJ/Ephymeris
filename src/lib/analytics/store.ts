@@ -1,5 +1,5 @@
 /**
- * Client-side analytics cache and selection state (`data.md` §10.1).
+ * Client-side analytics cache and selection state (`DATA.md#analytics-views`).
  *
  * Unlike the other slices this is request/response rather than event-mirrored,
  * but the *consumption* problem is identical — five panels, one shared cache,
@@ -141,7 +141,7 @@ export class AnalyticsStore {
     return this.pinnedAnimal;
   }
 
-  /** Hover previews, click pins — hover wins while it lasts (§2.3). */
+  /** Hover previews, click pins — hover wins while it lasts. */
   getHighlightedAnimal(): string | null {
     return this.hoveredAnimal ?? this.pinnedAnimal;
   }
@@ -176,7 +176,7 @@ export class AnalyticsStore {
    * Fetch a cohort's sessions and summary, once.
    *
    * The summary object is then treated as frozen: every session and animal
-   * selection filters it client-side (§9). That reference stability is what
+   * selection filters it client-side. That reference stability is what
    * lets each panel's `useMemo` depend on `[summary, selection]` and stay
    * cheap.
    */
@@ -267,8 +267,8 @@ export class AnalyticsStore {
    *
    * Dropping *before* fetching is the point, not tidiness: the route renders
    * its panels behind `summary &&`, so clearing first shows the reading
-   * notice instead of last time's numbers. §2.4 — when data can't be trusted,
-   * show nothing rather than something stale.
+   * notice instead of last time's numbers. When data can't be trusted, show
+   * nothing rather than something stale.
    */
   async refresh(client: SidecarClient, cohortId: string): Promise<void> {
     this.invalidate(cohortId);

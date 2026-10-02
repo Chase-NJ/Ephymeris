@@ -1,4 +1,5 @@
-"""Cohort persistence and validation — `cohorts.md` §1, §2, §9.
+"""Cohort persistence and validation — `DATA.md#data-model`, `DATA.md#validation`,
+`DATA.md#archive-and-delete`.
 
 Synchronous by design; callers wrap these in `asyncio.to_thread`. Every method
 takes the database lock, so a single mutation is atomic with respect to any
@@ -100,7 +101,7 @@ class CohortRepository:
                     " VALUES (?, ?, ?, ?, ?)",
                     (cohort_id, clean, data_folder, now, now),
                 )
-                # §2 — groups always exist, even implicitly, so "grouped" and
+                # Groups always exist (`DATA.md#data-model`), even implicitly, so "grouped" and
                 # "ungrouped" cohorts stay one code path.
                 for group in parsed_groups:
                     conn.execute(
@@ -137,7 +138,7 @@ class CohortRepository:
         """Apply a name/animals/groups patch.
 
         Animals and groups are replaced wholesale when present, which is what
-        the editor sends and what Auto-Balance's apply step needs (§7.4).
+        the editor sends and what Auto-Balance's apply step needs (`DATA.md#auto-balance`).
         """
         with self._db.lock:
             conn = self._db.conn
@@ -239,13 +240,13 @@ class CohortRepository:
             existing = self._load_one(conn, cohort_id)
             if existing is None:
                 raise CohortNotFound(cohort_id)
-            # An archived name is free for reuse (§2), so the original may have
+            # An archived name is free for reuse (`DATA.md#validation`), so the original may have
             # been claimed while this one was away.
             self._assert_name_free(conn, existing.name, exclude_id=cohort_id)
         return self._set_archived(cohort_id, None)
 
     def purge(self, cohort_id: str) -> None:
-        """Remove a record without the §9 archive guard.
+        """Remove a record without the archive-first guard (`DATA.md#archive-and-delete`).
 
         Rollback only: used when the cohort row was written but a subsequent
         step of the same operation failed. Never reachable from the wire.
@@ -255,7 +256,7 @@ class CohortRepository:
             self._db.conn.commit()
 
     def delete(self, cohort_id: str) -> None:
-        """Permanent delete — §9's two-step guard.
+        """Permanent delete — the two-step guard (`DATA.md#archive-and-delete`).
 
         Removes only the app's own bookkeeping. The cohort's `dataFolder` on
         disk is never touched.
@@ -364,7 +365,7 @@ def _parse_appearance_column(raw: Any) -> Appearance | None:
 
 def _parse_groups(raw: Any) -> list[Group]:
     if not isinstance(raw, list) or not raw:
-        # §2 — a cohort always has at least one group.
+        # A cohort always has at least one group (`DATA.md#data-model`).
         return [Group(id=_new_id(), name=DEFAULT_GROUP_NAME, order=0)]
     groups: list[Group] = []
     for index, item in enumerate(raw):
@@ -414,13 +415,13 @@ def _opt_text(value: Any) -> str | None:
 
 
 def _validate(animals: list[Animal], groups: list[Group]) -> None:
-    """The §2 rules, reported per-field so the editor can show them inline."""
+    """The validation rules (`DATA.md#validation`), reported per-field so the editor can show them inline."""
     errors: dict[str, str] = {}
     group_ids = {g.id for g in groups}
 
     seen_names: dict[str, str] = {}
     # box uniqueness is scoped to the *group*, not the cohort: groups run
-    # consecutively, so the same physical slot is legitimately reused (§2).
+    # consecutively, so the same physical slot is legitimately reused (`DATA.md#validation`).
     seen_boxes: dict[tuple[str, int], str] = {}
 
     for animal in animals:

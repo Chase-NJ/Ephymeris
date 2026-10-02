@@ -6,9 +6,8 @@ import type { LucideIcon } from "lucide-react";
  * One HUD tile: a header (icon, label, live status) over that subject's
  * at-a-glance rows.
  *
- * HUD-styled — translucent over the scene, per the docked-panel treatment
- * (dashboard.md §2.4) — because every page that uses one floats it on the
- * constellation.
+ * HUD-styled — translucent over the scene, per the docked-panel treatment —
+ * because every page that uses one floats it on the constellation.
  *
  * **`onOpen` is optional, and its absence is a statement.** A card with one is
  * a destination: the header is a button and carries the arrow. A card without

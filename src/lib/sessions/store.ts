@@ -5,7 +5,7 @@
  * `HardwareStore`: the prefix list (fed by `prefixes.updated`, replayed on
  * connect), per-box live telemetry (fed by `session.telemetry`, which is
  * pushed per metric update rather than batched — far lower frequency than raw
- * strobes, per `websocket-protocol.md` §4), and the active-session answer
+ * strobes, per `PROTOCOL.md#evt-session.telemetry`), and the active-session answer
  * (queried via `sessions.active` on connect, kept live by `session.lifecycle`).
  */
 
@@ -85,7 +85,7 @@ export class SessionStore {
   private strobeVersion = 0;
   /**
    * The global "what is running?" answer — queried on every connect (the
-   * §1.2 ask-don't-replay pattern) and replaced wholesale by each
+   * ask-don't-replay pattern, `ARCHITECTURE.md#replay-on-connect`) and replaced wholesale by each
    * `session.lifecycle` broadcast. Note `running.boxes[].running` inside it
    * is point-in-time; live per-box state comes from `port.state`.
    */

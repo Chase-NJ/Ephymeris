@@ -16,7 +16,8 @@ import { OUTCOME_STYLE, poolOutcomes } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
 
 /**
- * One session, per animal (`data.md` §11.4, §9.8, §6.3).
+ * One session, per animal (`DATA.md#pooling-across-tasks`,
+ * `DATA.md#rewarded-and-response-accuracy`).
  *
  * The panel answers "what happened in this session" at a glance, which the
  * cohort-scale views deliberately cannot: they compare sessions, this one
@@ -56,7 +57,8 @@ export function SessionSummary({
    * `"auto"` is the dashboard's `xl:` breakpoint, which is a **viewport**
    * query — fine on screen, wrong for a report sheet, whose own width has
    * nothing to do with the window's. Left on auto, an export taken from a
-   * narrow window would silently come out one card wide (`data.md` §10.6).
+   * narrow window would silently come out one card wide
+   * (`DATA.md#exporting-a-sheet`).
    */
   columns?: 1 | 2 | "auto";
   /** False renders everything inert — the export sheet cannot be clicked. */
@@ -143,7 +145,7 @@ export function SessionSummary({
             <span className="ml-2 text-static/70">{session.date}</span>
           </span>
           {/* Gated on `interactive`: this panel is also the export sheet
-              (`data.md` §10.6), and a button in a PNG is a lie. */}
+              (`DATA.md#exporting-a-sheet`), and a button in a PNG is a lie. */}
           {interactive && session.folderPath && (
             <FolderButton
               path={session.folderPath}

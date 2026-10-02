@@ -1,9 +1,11 @@
-"""Analytics orchestration — `data.md` §8, §9.
+"""Analytics orchestration — `DATA.md#reading-the-archive`,
+`DATA.md#analytics-views`.
 
 What the four commands actually call. Owns the indexing lock, the profile
 resolution ladder, the cache, and the explicit archive walk.
 
-> **No analytics operation may slow, stall, or fail a session** (§8.4). Six
+> **No analytics operation may slow, stall, or fail a session**
+> (`DATA.md#never-at-the-expense-of-a-session`). Six
 > boxes may be `fsync`ing per strobe while this runs. So: one indexing job at
 > a time behind a lock, reads sequential in a single worker thread rather than
 > a pool, and one transaction per pass.
@@ -52,7 +54,8 @@ class AnalyticsBusy(Exception):
 
 @dataclass
 class _Resolved:
-    """A profile plus how much it can be trusted (§8.2)."""
+    """A profile plus how much it can be trusted
+    (`DATA.md#which-profile-decodes-a-run`)."""
 
     profile: TaskProfile | None
     source: str  # 'snapshot' | 'sketch-current' | 'unavailable'
@@ -86,9 +89,11 @@ class AnalyticsService:
         self._broadcast = broadcast
         self._repo = AnalyticsRepository(db)
         self._min_counted = min_counted
-        #: Resolve a document's `sketch` *name* to a current Arduino Directory
-        #: path, for adopted orphans whose run record never existed (§8.1). The
-        #: honest analog of the §8.2 `sketch-current` fallback — and exactly as
+        #: Resolve a document's `sketch` *name* to a sketch in this install's
+        #: library, for adopted orphans whose run record never existed
+        #: (`DATA.md#orphan-adoption`). The honest analog of the
+        #: `sketch-current` fallback (`DATA.md#which-profile-decodes-a-run`) —
+        #: and exactly as
         #: trustworthy, which is to say: marked as such, never as a snapshot.
         self._sketch_lookup = sketch_lookup
         # One job at a time: `server.py` runs every command as its own task, so
@@ -105,16 +110,19 @@ class AnalyticsService:
         animal_ids: list[str] | None = None,
         min_counted: int | None = None,
     ) -> dict[str, Any]:
-        """The whole cohort table — every panel's data in one call (§9)."""
+        """The whole cohort table — every panel's data in one call
+        (`DATA.md#analytics-views`)."""
         threshold = min_counted if min_counted is not None else self._min_counted
         cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
         sessions = await asyncio.to_thread(self._sessions.list_sessions, cohort_id)
 
-        # Adopted orphans (§8.1) ride alongside recorded runs: payload-only
+        # Adopted orphans (`DATA.md#orphan-adoption`) ride alongside recorded
+        # runs: payload-only
         # synthetic sessions grouped from folder names, never database rows.
         adopted = await asyncio.to_thread(self._repo.adopted_for_cohort, cohort_id)
         # A recovered file from a session this database recorded counts under
-        # that session rather than as a second one on the same day (§8.8).
+        # that session rather than as a second one on the same day
+        # (`DATA.md#tidy-records`).
         owners = _adoption_owners(adopted, sessions)
         synthetic, _ = _synthetic_sessions(adopted, cohort_id, owners)
         sessions = _merge_sessions(sessions, synthetic)
@@ -164,7 +172,8 @@ class AnalyticsService:
                     "sketchName": _program_name(run),
                     "profileHash": entry.profile_hash,
                     # The row's own record wins; the file's copy answers for a
-                    # run this machine never recorded (§4.4). Comparability is
+                    # run this machine never recorded
+                    # (`DATA.md#the-embedded-task-profile`). Comparability is
                     # the pair, and an adopted run used to be able to offer only
                     # half of it.
                     "paramsHash": run.params_hash or entry.params_hash,
@@ -229,11 +238,12 @@ class AnalyticsService:
         mode: str = "rolling",
         metric_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Within-session trajectories for the named runs (§5).
+        """Within-session trajectories for the named runs
+        (`DATA.md#learning-curves`).
 
         Not cached: a full archive of series is megabytes of floats inside a
         database that gets copied wholesale to the backup target, for data
-        nobody views more than a handful of runs at a time (§8.3).
+        nobody views more than a handful of runs at a time (`DATA.md#caching`).
         """
         if len(run_ids) > MAX_SERIES_RUNS:
             raise ValueError(
@@ -289,7 +299,8 @@ class AnalyticsService:
     # --- recent sessions ----------------------------------------------------
 
     async def recent_sessions(self, limit: int | None = None) -> dict[str, Any]:
-        """The N most recent session folders across every active cohort (§9).
+        """The N most recent session folders across every active cohort
+        (`PROTOCOL.md#cmd-analytics.recentsessions`).
 
         Folder names only — `reader.walk_session_dirs` never opens a file — so
         this is cheap enough for the Dashboard, where the rescan deliberately
@@ -316,7 +327,8 @@ class AnalyticsService:
                 if s.folder_path
             }
             # Adopted folders are indexed too. Adoption deliberately writes no
-            # `sessions` row (§8.1), so without this a folder adopted via
+            # `sessions` row (`DATA.md#database-first`), so without this a
+            # folder adopted via
             # rescan reported `recorded: false` forever — and the Dashboard
             # badge told the user to run the rescan they had already run. The
             # synthetic sessions carry the same folder the walk yields
@@ -351,7 +363,8 @@ class AnalyticsService:
     # --- rescan ------------------------------------------------------------
 
     async def rescan(self, cohort_id: str, *, adopt_orphans: bool = True) -> dict[str, Any]:
-        """Reconcile a cohort's records against its archive, both ways (§8.1, §8.6).
+        """Reconcile a cohort's records against its archive, both ways
+        (`DATA.md#orphan-adoption`, `DATA.md#pruning`).
 
         The database-first path covers everything this app recorded. The walk
         covers what it didn't: runs finalized with no active session, a crash
@@ -360,8 +373,9 @@ class AnalyticsService:
 
         And the **prune** covers the other direction, which nothing else in the
         app does: records whose files the disk no longer has. A deleted session
-        leaves its rows behind forever otherwise, and §8.3's deliberate "a
-        missing file keeps its last good summary" rule then keeps charting it —
+        leaves its rows behind forever otherwise, and the deliberate "a
+        missing file keeps its last good summary" rule (`DATA.md#caching`)
+        then keeps charting it —
         correct for an unplugged drive, wrong for a session the operator threw
         away. Rescan is where that gets resolved because it is the one moment
         the operator has explicitly said *the disk is the truth now*.
@@ -390,8 +404,9 @@ class AnalyticsService:
             found = await asyncio.to_thread(reader.walk_session_files, cohort.data_folder)
 
             # Which of those files this cohort has already adopted, unchanged
-            # since (§8.7). One thread hop and one stat per file, against a walk
-            # that would otherwise open and parse every one of them again.
+            # since (`DATA.md#carrying-adoptions-forward`). One thread hop and
+            # one stat per file, against a walk that would otherwise open and
+            # parse every one of them again.
             carried = (
                 await asyncio.to_thread(self._carry_over, found, known, cohort_id)
                 if adopt_orphans
@@ -402,7 +417,7 @@ class AnalyticsService:
             # Keyed by run identity, not path: a hand-managed archive often
             # holds a consolidated copy of every session beside the per-prefix
             # originals, and adopting both would silently double every animal
-            # in the heatmap and put two points per session on every curve.
+            # in every view and put two points per session on every curve.
             best: dict[str, AdoptedRun] = {}
             duplicates = 0
             for path in found:
@@ -439,8 +454,9 @@ class AnalyticsService:
 
             # Only what this scan actually decided. A row carried over unchanged
             # is left alone rather than rewritten with identical values: every
-            # commit marks the whole database dirty for backup (§7.3), so
-            # rewriting an archive's worth of rows per click is a whole-file
+            # commit marks the whole database dirty for backup
+            # (`DATA.md#the-database-copy`),
+            # so rewriting an archive's worth of rows per click is a whole-file
             # copy to a possibly-networked target per click. `is not` rather
             # than equality — a carried row that a duplicate copy beat is a
             # genuine change and must be written.
@@ -478,7 +494,7 @@ class AnalyticsService:
             "folderMissing": not folder_exists,
         }
 
-    # --- pruning (§8.6) ----------------------------------------------------
+    # --- pruning (DATA.md#pruning) -----------------------------------------
 
     def _prune(self, cohort_id: str) -> dict[str, int]:
         """Drop records for files the disk demonstrably no longer has.
@@ -506,7 +522,7 @@ class AnalyticsService:
         # that record existed is never revisited and quietly doubles the run in
         # every panel — the one failure the whole deduplication exists to
         # prevent, arriving from the side it doesn't watch. Database-first
-        # (§8.1) decides it: the record wins and the adoption goes.
+        # (`DATA.md#database-first`) decides it: the record wins and the adoption goes.
         claimed = {
             _normalize(run.file_path)
             for run in self._sessions.runs_for_cohort(cohort_id)
@@ -554,7 +570,7 @@ class AnalyticsService:
             "adopted": adopted_count,
         }
 
-    # --- tidying records (§8.8) -------------------------------------------
+    # --- tidying records (DATA.md#tidy-records) ----------------------------
 
     async def tidy(
         self, cohort_id: str, *, apply: bool, protect: set[str], today: str
@@ -635,7 +651,7 @@ class AnalyticsService:
             planned, merged_counts, cohort_id=cohort_id, applied=True
         )
 
-    # --- carrying adoptions forward (§8.7) ---------------------------------
+    # --- carrying adoptions forward (DATA.md#carrying-adoptions-forward) --
 
     def _carry_over(
         self, found: list[Path], known: set[str], cohort_id: str
@@ -658,7 +674,7 @@ class AnalyticsService:
            copy of a duplicated run won is a content decision (`_prefer`), so a
            second copy has to be read and judged, never assumed.
         3. The file's **mtime and size** match what the row was adopted from —
-           the same freshness key `run_metrics_cache` uses (§8.4), and the
+           the same freshness key `run_metrics_cache` uses (`DATA.md#caching`), and the
            reason this is a cache rather than a "do it once" flag. Edit the
            document, or let recovery rewrite it, and the next rescan reads it
            again and refreshes the row.
@@ -692,7 +708,8 @@ class AnalyticsService:
     def _describe_orphan(
         self, path: Path, cohort: Any, cohort_id: str
     ) -> tuple[dict[str, Any], AdoptedRun | None]:
-        """Match a stray file to an animal by name, and never guess (§8.1).
+        """Match a stray file to an animal by name, and never guess
+        (`DATA.md#orphan-adoption`).
 
         The document's `rat` field is a *name*, so this is permanently broken
         by a rename — which is exactly why the database-first path is primary
@@ -765,7 +782,8 @@ class AnalyticsService:
             sketch_path=sketch_path,
             # Free: `read_run` stats before it parses and hands both back, so
             # recording what this adoption was taken from costs nothing here and
-            # is what lets the next rescan skip the file entirely (§8.7).
+            # is what lets the next rescan skip the file entirely
+            # (`DATA.md#carrying-adoptions-forward`).
             file_mtime_ns=result.mtime_ns,
             file_size=result.size,
         )
@@ -779,7 +797,7 @@ class AnalyticsService:
 
         Reads are sequential in a worker thread, not a pool: the live `.tsv`
         write path is the priority and a pool would multiply disk contention
-        against it (§8.4).
+        against it (`DATA.md#never-at-the-expense-of-a-session`).
         """
         cached = await asyncio.to_thread(self._repo.load_cached, [r.id for r in runs])
         out: list[CachedRun] = []
@@ -829,7 +847,8 @@ class AnalyticsService:
 
         Chunking does not add concurrency — the runs inside a chunk are still
         read one after another on one thread, and the whole pass is still
-        behind the service lock (§8.4). It only stops the loop paying a thread
+        behind the service lock (`DATA.md#never-at-the-expense-of-a-session`).
+        It only stops the loop paying a thread
         hop per run, which at archive scale costs more than the reads do once
         the cache is warm.
         """
@@ -859,12 +878,13 @@ class AnalyticsService:
         # Stat, not read. The cache key is answerable from the stat alone, so a
         # hit costs one syscall and opens nothing — which is the difference
         # between a warm dashboard open reading a whole archive off a network
-        # share and reading none of it (§8.3).
+        # share and reading none of it (`DATA.md#caching`).
         stat = reader.stat_run(run.file_path)
 
         if stat.status == "missing":
             # Keep the last good summary rather than dropping it — a briefly
-            # unreachable share must not erase history from the heatmap (§8.3).
+            # unreachable share must not erase history from the charts
+            # (`DATA.md#caching`).
             # This stays *before* the key comparison: a vanished file has no
             # stat to build a key from.
             if cached is not None and cached.status == "ok":
@@ -929,7 +949,8 @@ class AnalyticsService:
             profile_hash=digest,
             profile_source=source,
             # What the FILE says it ran on. Only ever read for a run this
-            # database has no row for (§4.4) — the row's own `params_hash` wins
+            # database has no row for (`DATA.md#the-embedded-task-profile`)
+            # — the row's own `params_hash` wins
             # where there is one — so this costs a dictionary comprehension on
             # the runs that would otherwise report no parameters at all.
             params_hash=task_profile.params_hash(
@@ -954,7 +975,8 @@ class AnalyticsService:
 
         1. the database snapshot, resolved already — the profile this rig
            recorded the run with;
-        2. **the file's own snapshot** (§4.4), which is the same claim made by
+        2. **the file's own snapshot** (`DATA.md#the-embedded-task-profile`),
+           which is the same claim made by
            the file instead of by this machine's database, and is what lets a
            session recorded on another rig decode exactly as it does at home;
         3. today's `task.json` at the recorded sketch path — resolved already,
@@ -1014,10 +1036,12 @@ class AnalyticsService:
     ) -> tuple[list[Session], dict[str, int]]:
         """Synthetic session entries for a cohort's adopted orphans, plus a
         per-session run count. Reads the database only — `sessions.list`
-        merges these and must never touch the filesystem (§9).
+        merges these and must never touch the filesystem
+        (`PROTOCOL.md#cmd-sessions.list`).
 
         An orphan from a folder a `recorded` session owns is counted under
-        that session instead (§8.8), so the counts can name a real session's
+        that session instead (`DATA.md#tidy-records`), so the counts can name
+        a real session's
         id: the caller ADDS them to its own."""
         adopted = self._repo.adopted_for_cohort(cohort_id)
         return _synthetic_sessions(adopted, cohort_id, _adoption_owners(adopted, recorded))
@@ -1027,19 +1051,21 @@ class AnalyticsService:
         run: SessionAnimalRun,
         memo: _ProfileMemo | None = None,
     ) -> _Resolved:
-        """Snapshot, then today's `task.json`, then nothing (§8.2).
+        """Snapshot, then today's `task.json`, then nothing
+        (`DATA.md#which-profile-decodes-a-run`).
 
         Three states, not two: the fallback itself can fail, because the
-        recorded `sketch_path` may have been renamed, moved, or the Arduino
-        Directory re-pointed since the run.
+        recorded `sketch_path` may have been renamed, moved, or dropped from
+        the sketch library since the run.
 
         `memo` collapses the repeated work of one indexing pass — a whole
         archive is usually one or two sketches, and without it every run pays
         its own `task.json` read, sha256, and `INSERT OR IGNORE`.
 
         **It is scoped to the pass and must stay that way.** Resolution happens
-        at read time on purpose (§8.1): a corrected Arduino Directory, or an
-        edited `task.json`, takes effect on the very next summary. A memo that
+        at read time on purpose (`DATA.md#which-profile-decodes-a-run`): a
+        newly saved task,
+        or an edited `task.json`, takes effect on the very next summary. A memo that
         outlived the pass would freeze exactly what that rule exists to keep
         thawed. Promoting this to a field would look like an obvious win and
         would be a regression.
@@ -1052,7 +1078,8 @@ class AnalyticsService:
         if memo is not None and key in memo:
             resolved, sketch_path = memo[key]
             # Replay the path the first run of this key resolved to. It is not
-            # bookkeeping: `summary` reports `sketchPath` per run (§9), so
+            # bookkeeping: `summary` reports `sketchPath` per run
+            # (`DATA.md#which-profile-decodes-a-run`), so
             # skipping this would leave one run of a group naming its sketch
             # and the rest naming nothing.
             run.sketch_path = sketch_path
@@ -1074,18 +1101,18 @@ class AnalyticsService:
 
         named = getattr(run, "sketch_name", None)
         if not run.sketch_path and named and self._sketch_lookup is not None:
-            # Resolve against the Arduino Directory *now* rather than trusting
-            # what adoption recorded. A run adopted while the directory was
-            # unset or unreachable would otherwise stay permanently
+            # Resolve against the sketch library *now* rather than trusting
+            # what adoption recorded. A run adopted while its sketch was
+            # missing would otherwise stay permanently
             # undecodable, needing a second rescan to un-stick — and the
             # recorded path is only ever a cache of this same lookup.
             run.sketch_path = self._sketch_lookup(named) or ""
 
         if not run.sketch_path:
             # An adopted orphan whose sketch name matched nothing in the
-            # current Arduino Directory has no task.json to fall back to. Name
-            # the sketch it wanted: that is the one thing the operator can act
-            # on, by renaming a folder or re-pointing the directory.
+            # current sketch library has no task.json to fall back to. Name the
+            # sketch it wanted: that is the one thing the operator can act on,
+            # by declaring it as a saved task's `legacyNames`.
             # Only surfaced when inference ALSO found nothing in the stream —
             # a run this reason reaches carries no recognisable condition at
             # all, so the sketch name is still the one actionable fact.
@@ -1153,7 +1180,8 @@ class AnalyticsService:
 def _profile_groups(
     runs: list[dict[str, Any]], meta: dict[str, dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Comparability sets. Two runs share axes only if they share a hash (§4.3)."""
+    """Comparability sets. Two runs share axes only if they share a hash
+    (`DATA.md#which-profile-decodes-a-run`)."""
     counts: dict[str, int] = {}
     metrics: dict[str, list[dict[str, Any]]] = {}
     for run in runs:
@@ -1205,10 +1233,12 @@ def _profile_groups(
 def _parameter_mismatches(
     runs: list[dict[str, Any]], meta: dict[str, dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Warn where one comparability set holds differently-tuned runs (§8.2).
+    """Warn where one comparability set holds differently-tuned runs
+    (`DATA.md#which-profile-decodes-a-run`).
 
     A profile hash covers the profile *declaration*, which is identical across
-    every run of a sketch. Once the timings became operator-set (§6.9), that
+    every run of a sketch. Once the timings became operator-set
+    (`TASKS.md#three-layer-merge`), that
     stopped being enough to call two runs comparable: a rat run at a 10 ms poke
     hold and one run at 500 ms share a hash and would be plotted on one axis as
     though the task had not changed underneath them.
@@ -1218,7 +1248,7 @@ def _parameter_mismatches(
     don't invalidate a comparison -- but the reader is the one who can judge
     that, and silence denies them the chance.
 
-    Runs with no recorded parameters (pre-§6.9) are ignored rather than counted
+    Runs with no recorded parameters are ignored rather than counted
     as a distinct set: they ran on firmware constants, so an unknown is not
     evidence of a difference.
     """
@@ -1249,8 +1279,9 @@ def _is_gone(path: str | None, *, kind: str = "run-file") -> bool:
     cosmetic. `exists() is False` answers two completely different questions
     with one word: *the operator deleted this* and *this volume isn't mounted
     right now*. Acting on the second would let one rescan with a drive
-    unplugged erase a cohort's history, which is the exact failure §8.3's
-    keep-the-last-good-summary rule exists to prevent — so it must not be
+    unplugged erase a cohort's history, which is the exact failure the
+    keep-the-last-good-summary rule (`DATA.md#caching`) exists to prevent — so
+    it must not be
     reintroduced by the mechanism that finally clears genuinely dead records.
 
     So absence only counts when the storage is demonstrably there: some
@@ -1266,7 +1297,7 @@ def _is_gone(path: str | None, *, kind: str = "run-file") -> bool:
       there** — a permission error is not a deletion.
     * **A `.json` whose write-ahead `.tsv` is still on disk** — that run's data
       is intact and `sessions.recover` will rebuild the document from it
-      (`data.md` §12). Pruning it would throw away the `animal_id`,
+      (`DATA.md#crash-recovery`). Pruning it would throw away the `animal_id`,
       `profile_hash` and `config_json` that make the recovered file worth more
       than the orphan adoption could ever reconstruct from a filename.
     """
@@ -1313,7 +1344,8 @@ def _same_path(recorded: str, found: Path) -> bool:
 
 def _folder_state(path: str) -> bool | None:
     """True if the folder holds any file, False if it demonstrably holds none
-    (or is gone), None if it cannot be seen — never read as empty (§8.8)."""
+    (or is gone), None if it cannot be seen — never read as empty
+    (`DATA.md#tidy-records`)."""
     if not path:
         return None
     target = Path(path).expanduser()
@@ -1331,7 +1363,7 @@ def _remove_empty_tree(path: str) -> None:
     Bottom-up `rmdir`, which the OS refuses for anything non-empty, so a file
     that appeared since the plan (or a check that was wrong) stops it cold
     rather than being deleted. Never `rmtree`: the app deletes its own
-    records, never the user's data (`cohorts.md` §9).
+    records, never the user's data (`DATA.md#archive-and-delete`).
     """
     import os
 
@@ -1360,7 +1392,8 @@ def _program_name(run: SessionAnimalRun) -> str:
     `sketch_path` answers a different question — *where a `task.json` was
     resolved* — and it is legitimately empty for a file recorded on another
     rig: the archive walk adopts the file, the name lookup finds no sketch by
-    that name in this install's library, and the run scores by inference (§8.2)
+    that name in this install's library, and the run scores by inference
+    (`DATA.md#which-profile-decodes-a-run`)
     with nothing left to name it. Read off the path alone, every such run
     displays as "unknown", which reads as *the record is silent* when in fact
     the file says exactly what it ran.
@@ -1380,7 +1413,7 @@ def _iso_or_none(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-# --- adopted orphans (§8.1) -------------------------------------------------
+# --- adopted orphans (DATA.md#orphan-adoption) -----------------------------
 
 
 def _prefer(candidate: AdoptedRun, incumbent: AdoptedRun) -> bool:
@@ -1414,9 +1447,10 @@ def _animal_from_filename(
     animal didn't run that day rather than like a mistyped field. A hole that
     looks like data is the worst of the available failures.
 
-    This is not the guessing §8.1 rules out. The filename and the `rat` field
+    This is not the guessing `DATA.md#orphan-adoption` rules out. The
+    filename and the `rat` field
     are two independent recordings of the same fact by the same program at the
-    same moment, and the stem has to be *exactly* what `data.md` §2
+    same moment, and the stem has to be *exactly* what `DATA.md#names`
     prescribes — `<animal>_<the session folder this file is actually sitting
     in>_<HHMMSS>` — checked against the folder on disk rather than assumed. A
     file that doesn't follow the convention contributes nothing. The token that
@@ -1440,7 +1474,7 @@ def _orphan_run_id(path: Path) -> str:
 
     Keyed on the **run identity** (the file stem), not the path. A duplicated
     run has two paths, and which copy `_prefer` picks can legitimately change
-    between scans — when the Arduino Directory comes back, say, and one copy
+    between scans — when a sketch reappears in the library, say, and one copy
     suddenly resolves a profile. A path-keyed id would then mint a *second*
     row for a run that already had one, leaving both in place: precisely the
     double-counting the deduplication exists to prevent. Keyed on identity,
@@ -1458,7 +1492,8 @@ def _synthetic_session_id(entry: AdoptedRun) -> str:
 
 
 def _adoption_owners(adopted: list[AdoptedRun], recorded: list[Session]) -> dict[str, str]:
-    """Which recorded session each synthetic session actually is (§8.8).
+    """Which recorded session each synthetic session actually is
+    (`DATA.md#tidy-records`).
 
     An orphan is adopted under a synthetic session named from its folder —
     `adopted:<prefix>_<number>_<date>`. When this database also RECORDED a
@@ -1524,10 +1559,10 @@ def _synthetic_sessions(
     """Payload-only session entries grouped from adopted runs' folder names.
 
     Never database rows — a fabricated `sessions` row would corrupt
-    session-number suggestion and the same-day reuse warning (§8.1).
+    session-number suggestion and the same-day reuse warning (`DATA.md#database-first`).
 
     A group `owners` maps to a recorded session gets no entry of its own; its
-    count is filed under the recorded session's id instead (§8.8).
+    count is filed under the recorded session's id instead (`DATA.md#tidy-records`).
     """
     groups: dict[str, list[AdoptedRun]] = {}
     for entry in adopted:

@@ -1,4 +1,4 @@
-"""Analytics orchestration — `data.md` §8, §9.
+"""Analytics orchestration — `DATA.md#reading-the-archive`, `DATA.md#derived-metrics`.
 
 Where `test_analytics_derive.py` covers the maths, this covers everything
 around it: which profile decodes a run, what happens when a file is missing or
@@ -166,7 +166,7 @@ MISS_1 = [101, 248]
 HIT_3 = [103, 248]
 
 
-# --- §9 the summary --------------------------------------------------------
+# --- the summary (`DATA.md#derived-metrics`) -------------------------------
 
 
 async def test_summary_scores_every_run(rig: Rig) -> None:
@@ -214,7 +214,7 @@ async def test_profile_groups_report_comparability(rig: Rig) -> None:
     assert group["runCount"] == 2
     assert group["taskName"] == "GRGL 2-Odor Discrimination"
     # The pooled figure is offered first, ahead of the declared metrics — it is
-    # the only one that can tell learning from a side bias (§6).
+    # the only one that can tell learning from a side bias (`DATA.md#pooled-accuracy`).
     assert [m["id"] for m in group["metrics"]] == [
         "__overall__",
         "p_r_odor1",
@@ -233,7 +233,7 @@ async def test_summary_can_be_filtered_to_one_session(rig: Rig) -> None:
     assert {r["sessionId"] for r in payload["runs"]} == {second}
 
 
-# --- §8.2 which profile decodes a run --------------------------------------
+# --- which profile decodes a run (`DATA.md#which-profile-decodes-a-run`) ---
 
 
 async def test_a_snapshotted_run_decodes_from_the_snapshot(rig: Rig) -> None:
@@ -264,7 +264,7 @@ async def test_a_legacy_run_falls_back_to_the_current_sketch_and_says_so(rig: Ri
 
 
 async def test_a_run_with_no_declaration_left_is_scored_from_its_strobes(rig: Rig) -> None:
-    """The ladder's last rung (§8.3): a deleted `task.json` used to strand a
+    """The ladder's last rung (`DATA.md#which-profile-decodes-a-run`): a deleted `task.json` used to strand a
     run at "no-metrics"; the stream itself now scores it, flagged `inferred`
     so the reader knows no declaration survives."""
     session = rig.add_session("1", "2026-07-22")
@@ -281,7 +281,7 @@ async def test_a_run_with_no_declaration_left_is_scored_from_its_strobes(rig: Ri
 async def test_a_stream_with_no_conditions_is_honestly_unavailable(rig: Rig) -> None:
     """Inference is a rung, not a promise — a stream presenting no recognisable
     condition (a utility sketch's log) still ends at `unavailable`, because
-    inventing a condition would be worse than saying nothing (§8.3)."""
+    inventing a condition would be worse than saying nothing (`DATA.md#which-profile-decodes-a-run`)."""
     session = rig.add_session("1", "2026-07-22")
     rig.add_run(session, "a1", [222, 224, 226, 233], snapshot=False)
     (rig.sketch / "task.json").unlink()
@@ -316,7 +316,7 @@ def test_a_snapshotted_profile_round_trips(rig: Rig) -> None:
     assert restored.to_json() == PROFILE.to_json()
 
 
-# --- §8.3 damaged data is data, not an error -------------------------------
+# --- damaged data is data, not an error (`DATA.md#caching`) ----------------
 
 
 async def test_a_missing_file_is_reported_not_raised(rig: Rig) -> None:
@@ -344,7 +344,7 @@ async def test_one_bad_file_does_not_blank_the_others(rig: Rig) -> None:
 
 
 async def test_a_vanished_file_keeps_its_last_good_summary_as_stale(rig: Rig) -> None:
-    """A briefly unreachable share must not erase history from the heatmap."""
+    """A briefly unreachable share must not erase history from Analytics."""
     session = rig.add_session("1", "2026-07-22")
     rig.add_run(session, "a1", HIT_1 * 5)
     first = await rig.service.summary(rig.cohort.id)
@@ -384,7 +384,7 @@ async def test_a_missing_json_with_a_surviving_tsv_says_so(rig: Rig) -> None:
     assert "recoverable" in (payload["warnings"][0]["message"] or "")
 
 
-# --- §8.3 caching ----------------------------------------------------------
+# --- caching (`DATA.md#caching`) -------------------------------------------
 
 
 async def test_a_second_summary_reuses_the_cache(rig: Rig) -> None:
@@ -439,7 +439,7 @@ async def test_a_cache_hit_never_reopens_the_file(
 
 async def test_a_vanished_file_still_goes_stale_without_being_parsed(rig: Rig) -> None:
     """The missing branch has to stay ahead of the key comparison: there is no
-    stat to build a key from, and §8.3 keeps the last good summary either way."""
+    stat to build a key from, and the cache (`DATA.md#caching`) keeps the last good summary either way."""
     session = rig.add_session("1", "2026-07-22")
     rig.add_run(session, "a1", HIT_1 * 5)
     good = await rig.service.summary(rig.cohort.id)
@@ -472,8 +472,8 @@ async def test_the_profile_is_resolved_once_per_pass(
     assert reads == 1
 
     # ...and the memo does not survive the pass. Profiles resolve at read time
-    # on purpose (§8.1) — a memo that outlived one indexing job would freeze an
-    # edited task.json and a re-pointed Arduino Directory alike.
+    # on purpose (`DATA.md#caching`) — a memo that outlived one indexing job
+    # would freeze an edited task.json.
     reads = 0
     await rig.service.summary(rig.cohort.id)
     assert reads == 1
@@ -489,7 +489,7 @@ async def test_progress_is_published_while_indexing(rig: Rig) -> None:
     assert progress[-1]["data"]["done"] == progress[-1]["data"]["total"]
 
 
-# --- §5 the series command -------------------------------------------------
+# --- the series command (`PROTOCOL.md#cmd-analytics.series`) ---------------
 
 
 async def test_series_returns_a_trajectory_per_run(rig: Rig) -> None:
@@ -536,7 +536,7 @@ async def test_series_reports_a_missing_run_rather_than_failing(rig: Rig) -> Non
     assert result["warnings"][0]["runId"] == "nope"
 
 
-# --- §8.1 the archive walk -------------------------------------------------
+# --- the archive walk (`DATA.md#orphan-adoption`) --------------------------
 
 
 async def test_rescan_finds_a_file_no_run_record_points_at(rig: Rig) -> None:
@@ -557,7 +557,7 @@ async def test_rescan_finds_a_file_no_run_record_points_at(rig: Rig) -> None:
 
 
 async def test_rescan_keeps_an_unmatched_file_rather_than_guessing(rig: Rig) -> None:
-    """A rename permanently breaks name matching — so never guess (§8.1)."""
+    """A rename permanently breaks name matching — so never guess (`DATA.md#orphan-adoption`)."""
     session = rig.add_session("1", "2026-07-22")
     folder = Path(rig.sessions.get_session(session).folder_path) / "behavior.json"
     folder.mkdir(parents=True, exist_ok=True)
@@ -574,7 +574,7 @@ async def test_rescan_keeps_an_unmatched_file_rather_than_guessing(rig: Rig) -> 
 
 
 async def test_rescan_does_not_fabricate_session_rows(rig: Rig) -> None:
-    """Inventing sessions would corrupt session-number suggestion (§8.1)."""
+    """Inventing sessions would corrupt session-number suggestion (`DATA.md#orphan-adoption`)."""
     session = rig.add_session("1", "2026-07-22")
     folder = Path(rig.sessions.get_session(session).folder_path) / "behavior.json"
     folder.mkdir(parents=True, exist_ok=True)
@@ -597,11 +597,11 @@ async def test_rescan_ignores_files_outside_a_behavior_json_folder(rig: Rig) -> 
     assert result["scanned"] == 0
 
 
-# --- §8.6 pruning: records the disk no longer has ---------------------------
+# --- pruning: records the disk no longer has (`DATA.md#pruning`) ------------
 #
 # The mirror image of adoption, and the one direction nothing else in the app
 # covers. Deleting a session's folder used to leave its rows behind forever,
-# and §8.3's keep-the-last-good-summary rule then went on charting it — which
+# and the cache's keep-the-last-good-summary rule (`DATA.md#caching`) then went on charting it — which
 # is what these protect against, in both directions.
 
 
@@ -623,7 +623,7 @@ async def test_a_deleted_session_stops_appearing_after_a_rescan(rig: Rig) -> Non
 
 
 async def test_pruning_clears_the_cached_summary_too(rig: Rig) -> None:
-    """The cache is what was actually still serving the numbers (§8.4), so a
+    """The cache is what was actually still serving the numbers (`DATA.md#caching`), so a
     surviving cache row would leave a deleted run's scores in the database
     under an id nothing points at."""
     session = rig.add_session("1", "2026-07-22")
@@ -689,7 +689,7 @@ async def test_an_open_session_is_never_pruned(rig: Rig) -> None:
 
 
 async def test_a_recoverable_run_is_not_pruned(rig: Rig) -> None:
-    """A `.json` whose write-ahead `.tsv` survives is the crash case (§12), and
+    """A `.json` whose write-ahead `.tsv` survives is the crash case (`DATA.md#crash-recovery`), and
     its record carries the animal, profile and parameters that make recovery
     worth more than re-adopting the file from its filename."""
     session = rig.add_session("1", "2026-07-22")
@@ -756,7 +756,7 @@ async def test_a_record_on_an_unmounted_volume_is_left_alone(rig: Rig) -> None:
     """A record pointing *outside* the cohort folder can't lean on
     `folderMissing`, so absence there has to prove the storage is reachable.
     An unplugged or re-lettered volume leaves no readable ancestor at all —
-    which is the lab machines' version of this failure (§8.6)."""
+    which is the lab machines' version of this failure (`DATA.md#pruning`)."""
     letter = next(
         (c for c in "ZYXWVU" if not Path(f"{c}:\\").exists()), None
     )
@@ -828,7 +828,7 @@ async def test_recent_sessions_sees_unrecorded_archive_folders(rig: Rig) -> None
 
 
 async def test_recent_sessions_marks_adopted_folders_recorded(rig: Rig) -> None:
-    """Adoption writes `adopted_runs`, never a `sessions` row (§8.1) — but an
+    """Adoption writes `adopted_runs`, never a `sessions` row (`DATA.md#orphan-adoption`) — but an
     adopted folder is indexed on this machine, and reporting it `recorded:
     False` forever told the user to run the rescan they had already run."""
     foreign = rig.root / "2O-Bdisc" / "2O-Bdisc_2_2026-07-28" / "behavior.json"

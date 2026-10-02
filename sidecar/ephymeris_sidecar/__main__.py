@@ -32,7 +32,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--data-dir",
         default=None,
         help=(
-            "app data directory holding ephymeris.db (cohorts.md §3). The Tauri "
+            "app data directory holding ephymeris.db (DATA.md#sqlite-database). The Tauri "
             "shell passes its own app_data_dir; a platform default is used when "
             "running standalone."
         ),

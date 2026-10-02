@@ -10,8 +10,8 @@ import { springSnappy } from "@/lib/motion";
 import { binFor, daysBetween } from "@/lib/analytics/view";
 
 /**
- * The session browser, and a visualization in its own right (`data.md`
- * §2.2).
+ * The session browser, and a visualization in its own right
+ * (`DATA.md#session-order`).
  *
  * Marks are placed by **real calendar date**, not evenly by index, so a
  * five-day break in training renders as five days of empty axis — which is

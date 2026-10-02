@@ -1,4 +1,4 @@
-"""Auto-Balance grouping — `cohorts.md` §7."""
+"""Auto-Balance grouping — `DATA.md#auto-balance`."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def sizes(proposal) -> list[int]:  # noqa: ANN001
     return [len(g.animals) for g in proposal.groups]
 
 
-# --- §7.1 inputs ----------------------------------------------------------
+# --- inputs (`DATA.md#auto-balance`) --------------------------------------
 
 
 def test_group_count_and_max_size_are_interchangeable() -> None:
@@ -41,7 +41,7 @@ def test_neither_input_falls_back_to_the_minimum_viable_split() -> None:
     assert resolve_group_count(10, None, None) == 2
 
 
-# --- §7.2 hard constraint -------------------------------------------------
+# --- hard constraint (`DATA.md#auto-balance`) -----------------------------
 
 
 def test_no_group_may_exceed_six() -> None:
@@ -65,7 +65,7 @@ def test_a_request_at_exactly_the_limit_is_allowed() -> None:
     assert sizes(proposal) == [6, 6]
 
 
-# --- §7.3 round-robin -----------------------------------------------------
+# --- round-robin (`DATA.md#auto-balance`) ---------------------------------
 
 
 def test_group_sizes_stay_within_one_of_each_other() -> None:
@@ -84,7 +84,7 @@ def test_sex_balance_spreads_each_bucket_across_groups() -> None:
 
 
 def test_unknown_sex_animals_do_not_skew_the_balance() -> None:
-    """§7.3 step 3 — they fill in size-wise after the known buckets."""
+    """`DATA.md#auto-balance` — they fill in size-wise after the known buckets."""
     animals = make_animals("MMFFuu")
     proposal = suggest_groups(animals, group_count=2, balance_by_sex=True)
     lookup = {a.id: a.sex for a in animals}
@@ -107,7 +107,7 @@ def test_is_deterministic() -> None:
     assert first == second
 
 
-# --- §7.3 step 4: box numbering ------------------------------------------
+# --- box numbering (`DATA.md#auto-balance`) ------------------------------
 
 
 def test_boxes_number_sequentially_within_each_group() -> None:
@@ -118,7 +118,7 @@ def test_boxes_number_sequentially_within_each_group() -> None:
 
 
 def test_box_numbers_repeat_across_groups() -> None:
-    """§2 — groups run consecutively, so the same slot is reused."""
+    """`DATA.md#validation` — groups run consecutively, so the same slot is reused."""
     proposal = suggest_groups(make_animals("M" * 4), group_count=2)
     assert [a.box_number for a in proposal.groups[0].animals] == [1, 2]
     assert [a.box_number for a in proposal.groups[1].animals] == [1, 2]

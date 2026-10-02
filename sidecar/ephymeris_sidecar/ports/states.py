@@ -1,10 +1,10 @@
-"""Per-port state machine — `dashboard.md` §5.
+"""Per-port state machine — `ARCHITECTURE.md#port-state-machine`.
 
 Each of the six ports has its own independent state machine, and a port can
 only be in one state at a time. That single-owner invariant is the core of the
 whole hardware layer, because a serial port can only have one owner.
 
-The transition table here is the authority. §3.3 is explicit that enforcement
+The transition table here is the authority. `ARCHITECTURE.md#port-state-machine` is explicit that enforcement
 lives in the sidecar and that the GUI disabling buttons is a UX nicety, never
 the source of truth — so every state change goes through `assert_transition`.
 """
@@ -29,12 +29,12 @@ class PortState(str, Enum):
     ERROR = "ERROR"
 
 
-#: Legal transitions, transcribed from the §3.2 diagram.
+#: Legal transitions, transcribed from `ARCHITECTURE.md#transitions`.
 #:
 #: Note what is deliberately absent: nothing enters `IN_SESSION` except from
 #: `IDLE`, and `IN_SESSION` leads only to `IDLE` or `ERROR` — it is exclusive
-#: with every other operation (§3.3). `FLASHING`/`RESETTING` may return to
-#: `PASSTHROUGH` rather than `IDLE`, which is the §3.3 auto-resume.
+#: with every other operation (`ARCHITECTURE.md#exclusivity`). `FLASHING`/`RESETTING` may return to
+#: `PASSTHROUGH` rather than `IDLE`, which is the auto-resume (`ARCHITECTURE.md#exclusivity`).
 TRANSITIONS: dict[PortState, frozenset[PortState]] = {
     PortState.IDLE: frozenset(
         {
@@ -48,7 +48,7 @@ TRANSITIONS: dict[PortState, frozenset[PortState]] = {
     PortState.PASSTHROUGH: frozenset(
         {
             PortState.IDLE,
-            # Both auto-release the port before taking ownership (§3.3).
+            # Both auto-release the port before taking ownership (`ARCHITECTURE.md#exclusivity`).
             PortState.FLASHING,
             PortState.RESETTING,
             PortState.ERROR,

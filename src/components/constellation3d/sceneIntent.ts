@@ -192,7 +192,7 @@ export function useFlying(): boolean {
 export interface ViewApi {
   /** Pan by a fraction of the visible frame; +x right, +y up. */
   pan: (dx: number, dy: number) => void;
-  /** Return to the pulled-back overview, on the same eased move as §6.3. */
+  /** Return to the pulled-back overview on the same eased move as a focus. */
   recenter: () => void;
 }
 

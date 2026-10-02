@@ -51,21 +51,21 @@ import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
- * Mission Control (`dashboard.md` §8–§6).
+ * Mission Control (`ARCHITECTURE.md#running-boxes`).
  *
- * The 3D constellation is the centerpiece (§6), so it is the whole view: a
+ * The 3D constellation is the centerpiece (`ARCHITECTURE.md#one-sky`), so it is the whole view: a
  * full-bleed sky with the chrome in two HUD rails over it, the same stage the
- * Dashboard is (`dashboard.md` §2.1). The cards used to sit in a grid
+ * Dashboard is. The cards used to sit in a grid
  * *below* the sky, which meant six boxes pushed the constellation off the top of
  * the screen — the one thing this view exists to show, scrolled away by the
  * boxes it is showing. Now nothing scrolls but the rails themselves.
  *
  * Left rail: what this session is, and the three things you can do to it whole.
  * Right rail: one tile per box, which the focused star's panel swaps in for.
- * The tiles still exist alongside the stars because §6.2 makes an unlit star
+ * The tiles still exist alongside the stars because an unlit star is
  * deliberately inert — Start for a box that isn't running has to be reachable
- * somewhere — and §6.4 describes the panel's controls as the same actions "just
- * reachable from here too".
+ * somewhere — and the panel's controls are the same actions, just reachable
+ * from the panel too.
  */
 
 /** Trials the star temperatures average over — matches `StarPanel`'s readout
@@ -128,7 +128,7 @@ export function MissionControl() {
     };
   }, [client, connected, cohortId]);
 
-  // §5.2 — Switch Group is only meaningful with more than one populated group.
+  // Switch Group (`ARCHITECTURE.md#group-step`) is only meaningful with more than one populated group.
   const multiGroup = useMemo(
     () => (cohort ? populatedGroups(cohort).length > 1 : false),
     [cohort],
@@ -136,7 +136,7 @@ export function MissionControl() {
 
   const session = snapshot?.session ?? null;
   const boxes = useMemo(() => snapshot?.boxes ?? [], [snapshot]);
-  // Also an Intan recording (`recording.md`). Everything it adds to this screen
+  // Also an Intan recording (`RECORDING.md`). Everything it adds to this screen
   // is an ADDITION — the rail block and each box's scope buttons — and renders
   // nothing for a behavior-only session.
   const isRecording = session?.recording != null;
@@ -153,12 +153,12 @@ export function MissionControl() {
    */
   const configuring = session?.status === "configuring";
 
-  // §6.2 — every animal in the cohort gets a star; only those whose box is
+  // Every animal in the cohort gets a star; only those whose box is
   // actually IN_SESSION are lit and interactive. An animal in a group that
   // isn't running, or with no box at all, is present but inert.
   const portStates = useAllPortStatuses();
   // A lit star's colour is its temperature, and its temperature is this
-  // animal's pooled rolling accuracy (§6.2) — so the overview answers "who is
+  // animal's pooled rolling accuracy (`ARCHITECTURE.md#live-session-views`) — so the overview answers "who is
   // doing well" without opening a panel.
   // One fetch per distinct sketch, read by two things that must agree: the
   // star temperatures below, and the titles on every box's metric strip.
@@ -235,7 +235,7 @@ export function MissionControl() {
     boxes.length > 0 && runningCount === 0 && endedCount >= boxes.length;
 
   // Which group is on the rig, and how many of the cohort's groups have run.
-  // Not a position: groups run in whatever order the operator picks (§5.2).
+  // Not a position: groups run in whatever order the operator picks (`ARCHITECTURE.md#configuration`).
   const groupInfo = useMemo(() => {
     if (!cohort || !snapshot) return null;
     const groups = populatedGroups(cohort);
@@ -281,7 +281,7 @@ export function MissionControl() {
   const journeyStep = groupDone && lastGroup ? ("finish" as const) : ("run" as const);
 
   /*
-   * The way back out (§8.5, §8.7): which boxes have had their animal carried
+   * The way back out (`USER-GUIDE.md#switching-groups`): which boxes have had their animal carried
    * home, ticked by the operator. Kept per group — a new group's animals are
    * new animals — and "All animals are out" is the one-press answer for the
    * operator who emptied the rig before looking at the screen.
@@ -374,7 +374,7 @@ export function MissionControl() {
     navigate(`/session/${sessionId}/group?cohort=${cohort.id}`);
   }
 
-  // Shared by the left rail's End Session and the wrap-up's (§8.7).
+  // Shared by the left rail's End Session and the wrap-up's (`USER-GUIDE.md#ending-the-session`).
   function doEndSession() {
     void run(async () => {
       // A session that never recorded anything is discarded, not "ended":
@@ -399,7 +399,7 @@ export function MissionControl() {
     });
   }
 
-  // Shared by the rail's button, the group-swap prompt (§5.5) and the wrap-up:
+  // Shared by the rail's button, the group-swap prompt (`USER-GUIDE.md#switching-groups`) and the wrap-up:
   // end this group on the rig, then choose — any group, or end the session.
   function doSwitchGroup() {
     void run(async () => {
@@ -465,7 +465,7 @@ export function MissionControl() {
         )}
       </div>
 
-      {/* The chrome, over the sky in two rails (`dashboard.md` §2.1, the
+      {/* The chrome, over the sky in two rails (the
           Dashboard's layout). Both rails ignore the pointer so the sky between
           the tiles still orbits; the tiles themselves take it back. */}
       <motion.div
@@ -686,7 +686,7 @@ export function MissionControl() {
         >
           <AnimatePresence mode="popLayout">
             {groupDone && !lastGroup ? (
-              /* §5.5 — the group-swap prompt: every box in this group has
+              /* The group-swap prompt (`USER-GUIDE.md#switching-groups`): every box in this group has
                  finished and another group is waiting, so the operator's next
                  physical act is returning animals to their cages. The placement
                  scene walked backwards says so better than a sentence would. */
@@ -774,7 +774,7 @@ export function MissionControl() {
         </motion.div>
       </motion.div>
 
-      {/* §8.7 — the last group has run and every box has finished: the
+      {/* The wrap-up (`USER-GUIDE.md#ending-the-session`): the last group has run and every box has finished: the
           session is over in every sense but the record, and this says so. */}
       <SessionWrapUp
         open={wrapOpen}
@@ -793,7 +793,7 @@ export function MissionControl() {
   );
 }
 
-/** §5.1 — everything 24-hour, including the clock that keeps ticking. */
+/** Everything 24-hour, including the clock that keeps ticking. */
 function Header({
   name,
   date,
@@ -845,7 +845,7 @@ function Header({
 }
 
 /**
- * Mirroring state, mid-run (`data.md` §7).
+ * Mirroring state, mid-run (`DATA.md#backup-mirroring`).
  *
  * Deliberately near-silent when healthy — a session screen shouldn't spend
  * attention on something that's working. But a backup target dying during an
@@ -882,7 +882,7 @@ function clock24(when: Date): string {
  * One box, as a tile in the right rail.
  *
  * `.hud` rather than `.surface`: these sit over the sky now, and an opaque card
- * there would punch a hole in it (`dashboard.md` §1.4). Clicking the tile
+ * there would punch a hole in it (`ARCHITECTURE.md#theme`). Clicking the tile
  * flies to that box's star and opens its panel — the rail swaps to it, so the
  * tile and the panel are one object at two sizes rather than two places the
  * same controls live.
@@ -943,7 +943,7 @@ function BoxCard({
         <StateChip state={port.state} reason={port.reason} />
       </div>
 
-      {/* §5.3 — Stop is a request the firmware honours at a trial boundary, so
+      {/* Stop (`ARCHITECTURE.md#running-boxes`) is a request the firmware honours at a trial boundary, so
           it stays available while the box is live and doesn't force a state. */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button variant="primary" disabled={busy || live} onClick={onStart}>

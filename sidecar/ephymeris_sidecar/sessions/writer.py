@@ -1,14 +1,14 @@
-"""Per-animal session file writer — `data.md` §4, §7.
+"""Per-animal session file writer — `DATA.md#per-animal-files`, `DATA.md#crash-safety`.
 
 The `.tsv` is the **write-ahead log** that makes the durability guarantee real
-(§7), not a redundant export. Every strobe is appended and `flush()` +
+(`DATA.md#crash-safety`), not a redundant export. Every strobe is appended and `flush()` +
 `fsync()`'d the instant it arrives, in the exact `<code>\t<timestamp>` form the
 board sends — no transformation, so a formatting bug can't corrupt the one file
 that has to be bulletproof. `.json` and `.mat` are built once at clean
 finalization from the same in-memory list the `.tsv` was fed from.
 
 Per-line fsync is safe here because the real session rate is well under one event
-per second (§7.1); a few-ms fsync per line is nowhere near a bottleneck.
+per second (`DATA.md#written-live`); a few-ms fsync per line is nowhere near a bottleneck.
 """
 
 from __future__ import annotations
@@ -51,10 +51,10 @@ class AnimalWriter:
         self._json_path = json_path
         self._mat_path = mat_path
         # Core fields (rat, serial_port, session_id, sketch) + task-profile
-        # config fields, merged flat at the top level to match the sample (§5).
+        # config fields, merged flat at the top level to match the sample (`DATA.md#the-json-document`).
         self._core = dict(core_metadata)
         self._config = dict(config_metadata)
-        # The serialized Task Profile this run was configured from (§4.4) — the
+        # The serialized Task Profile this run was configured from (`DATA.md#the-embedded-task-profile`) — the
         # one nested value in the document, and the reason a copy of this file
         # decodes on a machine that has never seen the sketch. None for a
         # profile-less sketch, which is a supported way to run a bare START.
@@ -69,10 +69,10 @@ class AnimalWriter:
     def open_files(self) -> None:
         """Create the folders, open the `.tsv`, and write its header.
 
-        Called after `START`/`SEED` resolve, before the first strobe (§7.1).
+        Called after `START`/`SEED` resolve, before the first strobe (`DATA.md#the-tsv-log`).
 
         Opened **exclusively** (`"x"`), not truncating. The `HHMMSS` in the
-        filename (§2) already makes a collision practically unreachable, so
+        filename (`DATA.md#names`) already makes a collision practically unreachable, so
         this will effectively never fire — but this is the one file carrying
         the durability guarantee, and "practically unreachable" is a weaker
         claim there than anywhere else. Refusing to start beats silently
@@ -94,7 +94,7 @@ class AnimalWriter:
         for key, value in {**self._core, **self._config}.items():
             self._tsv.write(f"# {key}: {_render(value)}\n")
         # The snapshot rides in the header too, as one compact JSON line, so a
-        # `.tsv` recovered after a crash (§12) rebuilds a `.json` that is still
+        # `.tsv` recovered after a crash (`DATA.md#crash-recovery`) rebuilds a `.json` that is still
         # self-describing. Written here rather than in the footer for the
         # reason the rest of the header is: it is known before the first strobe
         # and the durable file should carry it from the first fsync.
@@ -106,7 +106,7 @@ class AnimalWriter:
     # --- per-strobe -------------------------------------------------------
 
     def record(self, code: int, timestamp: int) -> None:
-        """Append one strobe to memory and to the `.tsv`, fsync'd (§7.1)."""
+        """Append one strobe to memory and to the `.tsv`, fsync'd (`DATA.md#written-live`)."""
         if self._finalized:
             return
         self._events.append([code, timestamp])
@@ -120,7 +120,7 @@ class AnimalWriter:
     # --- teardown ---------------------------------------------------------
 
     def finalize(self, stop_reason: str) -> dict[str, Any]:
-        """Append the `.tsv` footer, then build `.json` and `.mat` once (§7.2).
+        """Append the `.tsv` footer, then build `.json` and `.mat` once (`DATA.md#built-once-at-the-end`).
 
         Returns the finished document (also the in-memory source for both
         structured formats), so callers don't re-read it off disk. Idempotent:
@@ -134,7 +134,7 @@ class AnimalWriter:
 
         document = self._document(stop_reason)
 
-        # Footer: the two fields not knowable at header time (§7.1).
+        # Footer: the two fields not knowable at header time (`DATA.md#the-tsv-log`).
         if self._tsv is not None:
             try:
                 self._tsv.write(f"# stop_reason: {stop_reason}\n")
@@ -144,7 +144,7 @@ class AnimalWriter:
                 self._tsv.close()
                 self._tsv = None
 
-        # Structured formats, built once from the same list (§7.2). A failure
+        # Structured formats, built once from the same list (`DATA.md#built-once-at-the-end`). A failure
         # here doesn't cost data — the .tsv already holds everything durably.
         try:
             self._json_path.write_text(
@@ -162,7 +162,7 @@ class AnimalWriter:
     # --- internals --------------------------------------------------------
 
     def _document(self, stop_reason: str) -> dict[str, Any]:
-        """The full per-animal document (§5). Core, then flat config, then the
+        """The full per-animal document (`DATA.md#the-json-document`). Core, then flat config, then the
         profile snapshot, then data."""
         doc: dict[str, Any] = dict(self._core)
         doc.update(self._config)

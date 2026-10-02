@@ -1,11 +1,11 @@
-"""Parse and validate a sketch's `task.json` — `tasks.md` §3.2.
+"""Parse and validate a sketch's `task.json` — `TASKS.md#task-profile`.
 
 Kept lenient in one specific way: a **missing** `task.json` is not an error —
-it's the fully-supported profile-less case (§6.1). A **malformed** one is an
+it's the fully-supported profile-less case (`TASKS.md#overview`). A **malformed** one is an
 error, surfaced so the operator can fix it, with the sketch otherwise treated as
 profile-less.
 
-Two sketch *kinds* share this file (§6.2):
+Two sketch *kinds* share this file (`TASKS.md#top-level-keys`):
 
 * ``behavior`` (the default) — a scored ``IN_SESSION`` task, described by
   ``config`` / ``strobes`` / ``liveMetrics``.
@@ -29,20 +29,20 @@ log = logging.getLogger(__name__)
 
 TASK_FILENAME = "task.json"
 
-#: Config field types the pre-flight form and START builder understand (§6.2).
+#: Config field types the pre-flight form and START builder understand (`TASKS.md#config-fields`).
 CONFIG_TYPES = {"int", "float", "bool", "string"}
 
-#: Sketch kinds (§6.2). Anything else is a malformed profile.
+#: Sketch kinds (`TASKS.md#top-level-keys`). Anything else is a malformed profile.
 PROFILE_KINDS = {"behavior", "utility"}
 
-#: Control widget types a utility profile can declare (§6.6).
+#: Control widget types a utility profile can declare (`TASKS.md#utility-controls-and-telemetry`).
 CONTROL_TYPES = {"button", "select", "grid"}
 
-#: Reserved across every profile (§6.4). The host appends the run's seed itself,
+#: Reserved across every profile (`TASKS.md#seed`). The host appends the run's seed itself,
 #: so a profile claiming this key would collide and silently lose one of the two.
 RESERVED_WIRE_KEYS = {"SEED"}
 
-#: The §5 core fields. Config is merged into the session file FLAT at the top
+#: The core session-file fields (`DATA.md#the-json-document`). Config is merged into the session file FLAT at the top
 #: level, so a `metadataKey` matching one of these would overwrite it rather than
 #: sit beside it — and nothing downstream would report the loss.
 CORE_METADATA_KEYS = frozenset(
@@ -59,7 +59,7 @@ CORE_METADATA_KEYS = frozenset(
         # The run's own profile snapshot, written after the task fields — a
         # field of this name would be silently replaced by it.
         "task_profile",
-        # `recording.md` §6 -- written beside the core fields when a run is
+        # `RECORDING.md#what-is-written` -- written beside the core fields when a run is
         # inside an Intan recording.
         "intan_recording",
         "intan_path",
@@ -70,7 +70,7 @@ CORE_METADATA_KEYS = frozenset(
     }
 )
 
-#: Python types a declared `default` may have, per the field's `type` (§6.2).
+#: Python types a declared `default` may have, per the field's `type` (`TASKS.md#config-fields`).
 #: `bool` is checked before `int` everywhere below: in Python `bool` IS an `int`,
 #: so an unguarded isinstance would accept `true` as a valid int default.
 _DEFAULT_TYPES: dict[str, tuple[type, ...]] = {
@@ -87,12 +87,12 @@ class TaskProfileError(Exception):
 
 @dataclass(frozen=True)
 class ConfigField:
-    metadata_key: str  # the .json/.mat field name (§5)
-    wire_key: str  # the START command token (§6.3)
+    metadata_key: str  # the .json/.mat field name (`DATA.md#the-json-document`)
+    wire_key: str  # the START command token (`TASKS.md#building-the-line`)
     label: str
     type: str
     default: Any
-    # Presentation metadata (§6.2) — all optional, all inert on the wire. A
+    # Presentation metadata (`TASKS.md#config-fields`) — all optional, all inert on the wire. A
     # profile that declares none renders exactly as it did before these existed.
     group: str | None = None
     unit: str | None = None
@@ -160,7 +160,7 @@ class ControlOption:
 
 @dataclass(frozen=True)
 class ControlChannel:
-    """One row of a ``grid`` control (§6.6) — a named output with its own
+    """One row of a ``grid`` control (`TASKS.md#utility-controls-and-telemetry`) — a named output with its own
     commands and its own live state key."""
 
     label: str
@@ -181,7 +181,7 @@ class ControlChannel:
 
 @dataclass(frozen=True)
 class Control:
-    """A utility control the app renders in Debug Mode (§6.6).
+    """A utility control the app renders in Debug Mode (`TASKS.md#utility-controls-and-telemetry`).
 
     ``button`` carries a single ``command``; ``select`` carries ``options`` (each
     with its own command); ``grid`` carries ``channels`` — a row per piece of
@@ -218,12 +218,12 @@ class TelemetryField:
 
 @dataclass(frozen=True)
 class Telemetry:
-    """How to parse a utility sketch's non-persisted ``STATUS`` lines (§6.6).
+    """How to parse a utility sketch's non-persisted ``STATUS`` lines (`TASKS.md#utility-controls-and-telemetry`).
 
     A line from ``port.output`` beginning with ``match`` (default ``"STATUS"``)
     carries space-separated ``key=value`` pairs; ``fields`` names the ones worth
     labelling in the live status strip. Parsing happens client-side off
-    ``port.output`` — nothing here is stored (`websocket-protocol.md` §5.4).
+    ``port.output`` — nothing here is stored (`ARCHITECTURE.md#invariants`).
     """
 
     match: str
@@ -235,7 +235,7 @@ class Telemetry:
 
 @dataclass(frozen=True)
 class Identify:
-    """The two commands that make a box announce itself (§6.8).
+    """The two commands that make a box announce itself (`TASKS.md#identify`).
 
     Declared by the sketch, never assumed by the app: "point at box 3" is a
     universal thing to want and ``ON LIGHT`` is a Hart-lab detail. A utility
@@ -261,7 +261,7 @@ class TaskProfile:
     telemetry: Telemetry | None = None
     identify: Identify | None = None
     #: Names older software wrote into a run document's `sketch` field for this
-    #: same task (`tasks.md` §3.7). Only the archive walk reads these, to
+    #: same task (`TASKS.md#legacy-names`). Only the archive walk reads these, to
     #: decode historical runs whose recorded name isn't a folder name. Declared
     #: rather than inferred on purpose: matching "Shape - L" to `shaping_GL`
     #: by resemblance would be a guess, and a wrong guess decodes real data
@@ -288,7 +288,7 @@ class TaskProfile:
 
     @property
     def end_code(self) -> int | None:
-        """The strobe that marks a clean session end (`dashboard.md` §10).
+        """The strobe that marks a clean session end (`ARCHITECTURE.md#clean-exit`).
 
         Identified by name in the strobes map — the code whose name contains
         `END_SESSION` (GRGL's `246 → END_SESSION`). A sketch that declares no
@@ -301,7 +301,7 @@ class TaskProfile:
 
 
 def profile_hash(profile: TaskProfile) -> str:
-    """A stable content address for a profile (`data.md` §8.3).
+    """A stable content address for a profile (`TASKS.md#profile-and-params-hashes`).
 
     Hashes the canonical JSON with sorted keys, so two profiles that mean the
     same thing hash the same regardless of authoring order. Used to snapshot
@@ -316,7 +316,7 @@ def profile_hash(profile: TaskProfile) -> str:
 
 
 def params_hash(config: dict[str, Any] | None) -> str | None:
-    """A stable content address for one run's task parameters (§6.9).
+    """A stable content address for one run's task parameters (`TASKS.md#profile-and-params-hashes`).
 
     The companion to `profile_hash`, and needed for the same reason it was:
     that hash covers the profile *declaration*, which is identical across every
@@ -335,7 +335,7 @@ def params_hash(config: dict[str, Any] | None) -> str | None:
 
 
 # --------------------------------------------------------------------------- #
-# The snapshot a session file carries (`data.md` §4.4)
+# The snapshot a session file carries (`DATA.md#the-embedded-task-profile`)
 # --------------------------------------------------------------------------- #
 
 #: The key a per-animal session document carries its profile snapshot under.
@@ -360,7 +360,7 @@ def embedded_profile(document: dict[str, Any]) -> TaskProfile | None:
 
     Returns None rather than raising for anything malformed: a file with a
     damaged snapshot is still a file full of real strobes, and the ladder below
-    it (`data.md` §8.3) still scores it.
+    it (`DATA.md#which-profile-decodes-a-run`) still scores it.
     """
     raw = document.get(SNAPSHOT_KEY)
     if not isinstance(raw, dict):
@@ -378,10 +378,10 @@ def recorded_config(
     """The parameter values this run actually ran on, out of its own file.
 
     The document already carries every one of them — `finalize` writes the
-    config flat at the top level (§5) — but *which* of its keys are parameters
+    config flat at the top level (`DATA.md#the-json-document`) — but *which* of its keys are parameters
     is a question only the profile answers. With the snapshot beside them, a
     copied run can be given the same `params_hash` its own rig computed, which
-    is what completes the comparability pair (§8.3) for data this machine never
+    is what completes the comparability pair (`TASKS.md#profile-and-params-hashes`) for data this machine never
     recorded. Without it those runs carry a profile hash and no parameters, and
     two differently-tuned runs of one task pool silently.
 
@@ -425,7 +425,7 @@ def build_legacy_name_index(
 ) -> dict[str, str]:
     """Every declared `legacyNames` entry → the sketch path that declares it.
 
-    Reading a whole Arduino Directory to answer one name is fine once and
+    Reading the whole sketch library to answer one name is fine once and
     ruinous per run: an adopted archive asks the same question for every file
     it holds. Built as a whole index so the answer costs one `task.json` read
     per sketch, not per question.
@@ -469,7 +469,7 @@ def parse_profile(raw: Any) -> TaskProfile:
 
 
 def _parse_identify(raw: Any) -> Identify | None:
-    """The `identify` pair (§6.8) — absent is the norm, not an error.
+    """The `identify` pair (`TASKS.md#identify`) — absent is the norm, not an error.
 
     Both halves are required together: a sketch that can be lit but not
     unlit would leave a box announcing itself forever.
@@ -488,7 +488,7 @@ def _parse_identify(raw: Any) -> Identify | None:
 
 
 def _parse_legacy_names(raw: Any) -> list[str]:
-    """The `legacyNames` list (§6.7) — absent is the norm, not an error."""
+    """The `legacyNames` list (`TASKS.md#legacy-names`) — absent is the norm, not an error."""
     if raw is None:
         return []
     if not isinstance(raw, list) or not all(isinstance(n, str) for n in raw):
@@ -552,12 +552,12 @@ def _parse_config(raw: Any) -> list[ConfigField]:
         if wire_key in RESERVED_WIRE_KEYS:
             raise TaskProfileError(
                 f"config entry {metadata_key} claims the reserved wire key "
-                f"{wire_key!r} (§6.4) — the app supplies it"
+                f"{wire_key!r} (TASKS.md#seed) — the app supplies it"
             )
         if metadata_key in CORE_METADATA_KEYS:
             raise TaskProfileError(
                 f"config entry {metadata_key} collides with a core session-file "
-                f"field (§5); config is merged in flat and would overwrite it"
+                f"field (DATA.md#the-json-document); config is merged in flat and would overwrite it"
             )
         if metadata_key in seen_metadata:
             raise TaskProfileError(f"config declares metadataKey {metadata_key!r} twice")

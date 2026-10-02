@@ -1,4 +1,4 @@
-"""Schema migration — `data.md` §6.3.
+"""Schema migration — `DATA.md#changing-the-schema`.
 
 The bug this file exists to prevent: `connect()` used to stamp
 `PRAGMA user_version` without ever reading it, and `SCHEMA` is entirely
@@ -328,7 +328,7 @@ def write_v2_database(path: Path) -> None:
 
 
 def test_v2_gains_the_profile_hash_column(tmp_path: Path) -> None:
-    """The first change that actually needed this branch (`data.md` §6.1).
+    """The first change that actually needed this branch (`DATA.md#changing-the-schema`).
 
     Before the migration branch existed, `CREATE TABLE IF NOT EXISTS` would
     have silently skipped this column on every existing database while
@@ -413,7 +413,7 @@ def write_v3_database(path: Path) -> None:
 
 
 def test_v3_gains_the_duration_minutes_column(tmp_path: Path) -> None:
-    """The per-box time limit (`dashboard.md` §7.2)."""
+    """The per-box time limit (`ARCHITECTURE.md#configuration`)."""
     path = tmp_path / "ephymeris.db"
     write_v3_database(path)
 
@@ -466,7 +466,7 @@ def write_v5_database(path: Path) -> None:
 
 
 def test_v5_gains_the_run_parameter_columns(tmp_path: Path) -> None:
-    """The task parameters a run used (`tasks.md` §6.1).
+    """The task parameters a run used (`TASKS.md#profile-and-params-hashes`).
 
     Two columns in one migration, so this checks both -- a half-applied
     migration would leave finalization raising `OperationalError` on the second.
@@ -604,7 +604,7 @@ def write_v6_database(path: Path) -> None:
 
 def test_v6_gains_the_adoption_stat_columns(tmp_path: Path) -> None:
     """The freshness key that lets a rescan skip a file it already read
-    (`data.md` §8.7). Two columns in one migration, so both are checked."""
+    (`DATA.md#carrying-adoptions-forward`). Two columns in one migration, so both are checked."""
     path = tmp_path / "ephymeris.db"
     write_v6_database(path)
 
@@ -709,7 +709,8 @@ def write_v7_database(path: Path) -> None:
 
 
 def test_v7_gains_the_recorded_run_columns(tmp_path: Path) -> None:
-    """What a run's own file records (`data.md` §4.4, §8.3). Two columns in one
+    """What a run's own file records (`DATA.md#the-embedded-task-profile`,
+    `DATA.md#which-profile-decodes-a-run`). Two columns in one
     migration, so both are checked — a half-applied one would leave the second
     raising `OperationalError` on the next indexing pass."""
     path = tmp_path / "ephymeris.db"
@@ -852,7 +853,7 @@ def write_v8_database(path: Path) -> None:
 
 
 def test_v8_gains_the_cohort_appearance_column(tmp_path: Path) -> None:
-    """The operator's tuning of a cohort's world (`cohorts.md` §5).
+    """The operator's tuning of a cohort's world (`ARCHITECTURE.md#cohort-browser`).
 
     A column on `cohorts` rather than a table, so `CREATE TABLE IF NOT EXISTS`
     does nothing for it: without the registered migration it would appear only
@@ -913,7 +914,7 @@ def test_a_cohort_from_before_v9_has_no_stored_appearance(tmp_path: Path) -> Non
 def test_startup_commits_at_most_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Each commit marks the database dirty for backup (`data.md` §7.3).
+    """Each commit marks the database dirty for backup (`DATA.md#the-database-copy`).
 
     A migration committing per step would trigger repeated whole-file copies to
     a possibly-networked target before the app has finished starting.
@@ -971,7 +972,7 @@ def write_v9_database(path: Path) -> None:
 
 
 def test_v9_gains_the_session_recording_column(tmp_path: Path) -> None:
-    """Whether a session is also an Intan recording (`recording.md` §6).
+    """Whether a session is also an Intan recording (`RECORDING.md#what-is-written`).
 
     A column, so `CREATE TABLE IF NOT EXISTS` does nothing for it. Without the
     registered migration the first "Start Recording" on a lab machine would

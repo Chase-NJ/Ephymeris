@@ -1,7 +1,7 @@
 /**
  * Which boxes a cohort can actually be assigned to on *this* machine.
  *
- * The stored `boxNumber` stays what `cohorts.md` §2 says it is — an abstract
+ * The stored `boxNumber` stays what `DATA.md#validation` says it is — an abstract
  * slot 1–6, validated against that range and nothing else, so a cohort written
  * on one lab machine still loads and saves on the other with different
  * bindings. What this module adds is a *machine-local* opinion layered on top:

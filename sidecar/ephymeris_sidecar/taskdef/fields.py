@@ -197,5 +197,5 @@ REWARD_WIRE_KEY = "RW"
 #: Keyed PW1..PW<n>, one per declared trial type.
 POOL_WIRE_KEY = "PW"
 
-#: Reserved by the protocol, claimable by no profile (`tasks.md` §6.4).
+#: Reserved by the protocol, claimable by no profile (`TASKS.md#seed`).
 RESERVED_WIRE_KEYS = frozenset({"SEED"})

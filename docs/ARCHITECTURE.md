@@ -8,10 +8,23 @@ are [DATA.md](DATA.md); Intan recording is [RECORDING.md](RECORDING.md).
 
 ### Three processes
 
-```
-Tauri shell (Rust, src-tauri/)  ── spawns & supervises ──>  Python sidecar (sidecar/)  ──>  up to 6 × Mega2560
-        │                                                          │
-        └── serves the webview (React/TS, src/) ── WebSocket ──────┘
+The three processes and everything the sidecar talks to; the webview reaches hardware only through the
+sidecar's WebSocket.
+
+```mermaid
+flowchart LR
+    shell["Tauri shell<br/>(Rust, src-tauri/)"]
+    webview["Webview<br/>(React/TS, src/)"]
+    sidecar["Python sidecar<br/>(sidecar/)"]
+    boards["Up to 6 × Mega2560"]
+    store[("ephymeris.db<br/>session files")]
+    rhx["Intan RHX<br/>(recordings only)"]
+    shell -->|"spawns, holds stdin open,<br/>kills on exit"| sidecar
+    shell -->|"serves"| webview
+    webview <-->|"WebSocket on 127.0.0.1<br/>commands, replies, events"| sidecar
+    sidecar -->|"serial, arduino-cli"| boards
+    sidecar --> store
+    sidecar -->|"TCP 5000 to 5002"| rhx
 ```
 
 | Process | Owns | Never does |
@@ -49,6 +62,31 @@ Tauri shell (Rust, src-tauri/)  ── spawns & supervises ──>  Python sidec
 5. The frontend gets the endpoint from the `sidecar_endpoint` command (for a sidecar ready before the
    webview loaded) or the event, connects, and authenticates
    ([Connection and authentication](#connection-and-authentication)).
+
+The same steps as a sequence, through to the first `settings.push` (`sidecar.rs`, `server.py`,
+`src/lib/ws/client.ts`):
+
+```mermaid
+sequenceDiagram
+    participant Shell as Tauri shell
+    participant Sidecar
+    participant Webview
+    Shell->>Sidecar: spawn with --data-dir, stdio piped
+    Sidecar->>Sidecar: bind 127.0.0.1 on an ephemeral port, generate a token
+    Sidecar-->>Shell: stdout line EPHYMERIS_WS_PORT=… EPHYMERIS_WS_TOKEN=…
+    Shell-->>Webview: sidecar://ready (or the sidecar_endpoint command)
+    Webview->>Sidecar: open WebSocket
+    Sidecar-->>Webview: server.hello
+    Webview->>Sidecar: auth with the token
+    alt wrong first message, bad token, or AUTH_TIMEOUT_S of silence
+        Sidecar-->>Webview: close with code 1008
+    else token matches
+        Sidecar-->>Webview: reply ok
+        Sidecar-->>Webview: replay (port.state per box, boards.presence, …)
+        Webview->>Sidecar: settings.push
+    end
+    Note over Shell,Sidecar: if stdout closes, the shell emits sidecar://down
+```
 
 With no shell (a plain-browser dev preview), `src/lib/ws/client.ts` reads a manual endpoint from
 `localStorage` key `ephymeris:endpoint`, for a sidecar started with `--token` and `--no-parent-watch`. It is
@@ -328,6 +366,35 @@ is the authority, and every state change goes through it.
 | `IN_SESSION` | `IDLE`, `ERROR` |
 | `ERROR` | `IDLE`, by `port.error.ack` only |
 
+The same table as a diagram, each transition labelled with what drives it (`ports/handler.py`,
+`ports/manager.py`):
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> PASSTHROUGH: port.passthrough.open
+    PASSTHROUGH --> IDLE: port.passthrough.close
+    IDLE --> FLASHING: port.flash
+    PASSTHROUGH --> FLASHING: port.flash, console released
+    IDLE --> RESETTING: port.reset
+    PASSTHROUGH --> RESETTING: port.reset, console released
+    FLASHING --> IDLE: done, no console or resume suppressed
+    RESETTING --> IDLE: done, no console to resume
+    FLASHING --> PASSTHROUGH: done, console auto-resumed
+    RESETTING --> PASSTHROUGH: done, console auto-resumed
+    IDLE --> IN_SESSION: Start or Start All
+    IN_SESSION --> IDLE: run finalized
+    IDLE --> ERROR: port would not open
+    PASSTHROUGH --> ERROR: board vanished
+    FLASHING --> ERROR: flash failed or console would not reopen
+    RESETTING --> ERROR: reset failed or console would not reopen
+    IN_SESSION --> ERROR: open failed, board dropped, or no READY
+    ERROR --> IDLE: port.error.ack
+```
+
+A failed *utility baseline* restore is the one `ERROR` the app acknowledges itself
+([Failed restores](#failed-restores)); every other one waits for the operator.
+
 The absences carry the meaning. **Only `IDLE` reaches `IN_SESSION`** — which is why the session flash
 sequence suppresses passthrough resume. **`IN_SESSION` leads only to `IDLE` or `ERROR`**, so a running
 animal's box can't be flashed, reset or monitored out from under it. **`ERROR` is a dead end until
@@ -428,6 +495,29 @@ box to do things — light itself, prime a line — without first asking the ope
 | A session lets go | `sessions.end`, `sessions.endGroup`, `sessions.abandon` (`_release_baseline`, `app.py`). `endGroup` restores at once because the operator's next act is walking the rig, which wants the lights |
 | On demand | `utility.ensure`: the Rig tab's **Reflash boxes** (the only caller passing `force`), the placement walk, Debug Mode's **Return to baseline** |
 
+What a trigger does to one box (`UtilityBaseline.ensure` and `_restore`). A `utility.ensure` that arrives
+over the wire first unpins the boxes it names; `force` skips the three "not forced" checks:
+
+```mermaid
+flowchart TD
+    trigger["A trigger names the box"] --> gate{"Rig held, or no<br/>utility sketch named?"}
+    gate -->|yes| nothing["Nothing queued"]
+    gate -->|no| queue["Queued: lowest box first,<br/>one flash at a time"]
+    queue --> failedBefore{"Failed before,<br/>not forced?"}
+    failedBefore -->|yes| stays["Stays failed"]
+    failedBefore -->|no| bound{"Bound and detected?"}
+    bound -->|no| unavailable["unavailable"]
+    bound -->|yes| idle{"Port IDLE?"}
+    idle -->|no| busy["busy: left alone"]
+    idle -->|yes| pinned{"Pinned,<br/>not forced?"}
+    pinned -->|yes| keep["pinned: left alone"]
+    pinned -->|no| carries{"Already carries the<br/>utility sketch, not forced?"}
+    carries -->|yes| ready["ready"]
+    carries -->|no| flash["port.flash the utility sketch,<br/>landing in IDLE"]
+    flash -->|ok| ready
+    flash -->|error| failed["failed: reported,<br/>ERROR acknowledged automatically"]
+```
+
 Restores run **one box at a time**, like the session flash sequence, so a cold start is up to six
 sequential flashes. If that proves annoying, defer the cold restore until a box is needed; don't
 parallelise it, which would fight the one-owner rule.
@@ -514,6 +604,41 @@ step (`/session/:id/group`) → Boxes … → End Session → `/analytics`. The 
 sessions at the group step. Status (`SessionStatus`, `sessions/models.py`) is `configuring` → `running` →
 `completed`, or `aborted` for an abandoned set-up; `sessions.active` reports crash-orphaned `running` rows
 as `stale`.
+
+The routes and the command that moves the operator between them, including the between-groups loop
+(`navigate` calls in `routes/Session*.tsx` and `MissionControl.tsx`):
+
+```mermaid
+flowchart TD
+    dash["Dashboard"] -->|"Start a Session or<br/>Start a Recording"| config["Configure<br/>/session/new"]
+    config -->|"sessions.create"| mapping["Boxes<br/>/session/:id/mapping"]
+    mapping -->|"sessions.confirmMapping,<br/>placement walk, flash"| isRec{"Recording<br/>session?"}
+    isRec -->|yes| record["Record<br/>/session/:id/recording"]
+    record -->|"intan.configure"| control["Run: Mission Control<br/>/session/:id/control"]
+    isRec -->|no| control
+    control -->|"Switch Group:<br/>sessions.endGroup"| group["Group step<br/>/session/:id/group"]
+    group -->|"Run this group"| mapping
+    group -->|"End session:<br/>sessions.end"| analytics["Analytics"]
+    control -->|"End Session:<br/>sessions.end"| analytics
+    dash -->|"dock: Continue with another group"| group
+    config -->|"Continue today"| group
+```
+
+On a session the runner no longer holds (the app was closed, or the session was ended too early), the group
+step's Run this group calls `sessions.resume` before moving on. A session's status over the same flow:
+
+```mermaid
+stateDiagram-v2
+    [*] --> configuring: sessions.create
+    configuring --> running: first box starts
+    configuring --> aborted: sessions.abandon
+    running --> running: sessions.endGroup, now between groups
+    running --> completed: sessions.end
+    completed --> running: sessions.resume, same day only
+```
+
+Mission Control's End Session on a session where no box ever ran calls `sessions.abandon` instead, and
+returns to the Dashboard.
 
 ### Configuration
 
@@ -603,6 +728,37 @@ Per box (`ports/handler.py`, `sessions/runner.py`):
 Writer I/O stays on the port's session thread; anything touching the socket or state machine is scheduled
 back onto the event loop.
 
+The same sequence for one box. The file is opened only once the handshake resolves — on a `SEED` line,
+the first strobe, or the end of the seed window — so its header can carry the seed:
+
+```mermaid
+sequenceDiagram
+    participant UI as Mission Control
+    participant Runner as SessionRunner
+    participant Port as PortHandler thread
+    participant Board as Mega2560
+    participant File as Animal .tsv
+    UI->>Runner: sessions.startAll or port.startSession
+    Runner->>Runner: draw the host seed, arm the time limit
+    Runner->>Port: start_session with START … SEED=n
+    Port->>Port: IDLE → IN_SESSION
+    Port->>Board: open the port, DTR resets the Mega
+    Board-->>Port: READY
+    Note over Port,Board: no READY within SESSION_READY_TIMEOUT_S → ERROR
+    Port->>Board: START … SEED=n
+    opt within SESSION_SEED_WINDOW_S
+        Board-->>Port: SEED and its value
+    end
+    Port->>Runner: on_ready
+    Runner->>File: open exclusively, write the header
+    loop every line matching STROBE_RE
+        Board-->>Port: code and timestamp
+        Port->>Runner: on_strobe
+        Runner->>File: append, flush, fsync
+        Runner->>Runner: MetricSet scores it, session.telemetry
+    end
+```
+
 ### Clean exit
 
 `STOP` → the board finishes its trial and emits its end strobe → the sidecar finalizes →
@@ -620,12 +776,31 @@ A board dropping during `IN_SESSION` is **always a hard stop into `ERROR`**, cle
 `port.error.ack`, with no auto-recovery. The run is finalized at once from what the `.tsv` already holds,
 so the hard stop costs no data.
 
+Every way a run ends, side by side (`SessionRunner.finalize_box`, `end_all`, `board_dropped`):
+
+```mermaid
+flowchart TD
+    running["Box IN_SESSION"]
+    running -->|"Stop, or the time limit"| stop["STOP written to the port"]
+    stop --> boundary["Board finishes its trial,<br/>emits its end strobe"]
+    running -->|"trial cap reached"| boundary
+    running -->|"End Session or Switch Group"| endAll["STOP every box, wait graceful_timeout_s:<br/>0.1 s, or 45 s while recording"]
+    endAll -->|"end strobe in time"| boundary
+    boundary -->|"stop_reason: BF_END_SESSION received"| finalize["Finalize: .tsv footer, .json, .mat"]
+    endAll -->|"no end strobe in time"| forced["Force-finalize"]
+    forced -->|"stop_reason: operator stop"| finalize
+    finalize --> idle["IN_SESSION → IDLE"]
+    running -->|"board drops"| err["IN_SESSION → ERROR"]
+    err -->|"stop_reason: board disconnected"| fromTsv["Finalize from what the .tsv holds"]
+    fromTsv --> ack["ERROR until port.error.ack"]
+```
+
 ### Stop reasons
 
 | `stop_reason` | Source |
 |---|---|
 | `"BF_END_SESSION received"` | `CLEAN_STOP_REASON` (`sessions/runner.py`): the board ended the run — trial cap, `STOP`, or time limit |
-| `"operator stop"` | Stop or End Session reached a box that hadn't ended itself |
+| `"operator stop"` | End Session or Switch Group force-finalized a box that hadn't ended itself within the wait. A box's own Stop never produces it: the board answers `STOP` with its end strobe |
 | `"board disconnected"` | The port dropped mid-session |
 | `"sidecar error: <cause>"` | The session files couldn't be opened |
 | `"recovered after crash"` | `RECOVERED_STOP_REASON`, from [crash recovery](DATA.md#crash-recovery) |
@@ -670,6 +845,24 @@ pushes settings on every connect, and a scope window must not re-push a stale co
 `lib.rs` closes every other window when `main` closes, or the app, the sidecar and its serial ports would
 not exit. Their canvas drawing is fenced to `routes/scope/`, not a second house style
 ([RECORDING.md](RECORDING.md#live-windows)).
+
+The two provider trees `main.tsx` mounts, outermost first:
+
+```mermaid
+flowchart TD
+    hash{"Window opened at<br/>a scope hash?"}
+    hash -->|"no: the main window"| sidecarMain["SidecarProvider"]
+    sidecarMain --> settings["SettingsProvider"]
+    settings --> hardware["HardwareProvider"]
+    hardware --> intanMain["IntanProvider"]
+    intanMain --> cohorts["CohortsProvider"]
+    cohorts --> sessions["SessionsProvider"]
+    sessions --> analytics["AnalyticsProvider"]
+    analytics --> app["App: AppShell and the routes"]
+    hash -->|"yes: a scope window"| sidecarScope["SidecarProvider"]
+    sidecarScope --> intanScope["IntanProvider"]
+    intanScope --> scope["ScopeApp"]
+```
 
 ### Status constellation
 

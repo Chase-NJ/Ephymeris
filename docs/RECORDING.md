@@ -143,6 +143,19 @@ line per box, carrying no code. The pulse says *when*, the serial strobe says *w
 paired by the [edge matcher](#edge-matcher). Eight lines per box would leave room for two boxes on a
 16-input controller.
 
+The two paths one event takes, and where they meet:
+
+```mermaid
+flowchart LR
+    emit["emitStrobe() on the Mega"] -->|"rising edge on BOX_PIN_SYNC_OUT"| din["RHX digital input<br/>the box's intanDigitalIn"]
+    emit -->|"code and ms over USB serial"| runner["SessionRunner<br/>appends to the .tsv"]
+    din -->|"saved at full rate"| rhxFiles[("RHX's own files")]
+    din -->|"digital-input word on the waveform socket"| detector["Edge detector<br/>for the box's input"]
+    detector -->|"edge sample numbers"| matcher["EdgeMatcher<br/>fresh at every START"]
+    runner -->|"strobe tap, after the fsync"| matcher
+    matcher -->|"code at a sample"| live["PSTH and the sync check"]
+```
+
 ### Firmware pulse
 
 `emitStrobe()` in `BehaviorBox.h` brackets its serial print with a pulse on `BOX_PIN_SYNC_OUT`, in this
@@ -206,6 +219,26 @@ where the strobe's own millisecond timestamp says, measured from the last accept
 | within tolerance | this strobe's pulse | match; becomes the new anchor |
 | too early | spurious | drop the edge, count `spuriousEdges` |
 | too late | this strobe's pulse never came | release the strobe unmatched, count `unmatchedStrobes` |
+
+The same loop as a flow, run whenever a strobe or a batch of edges arrives (`EdgeMatcher._drain`):
+
+```mermaid
+flowchart TD
+    head{"A strobe pending?"} -->|"no"| wait["Wait for more input"]
+    head -->|"yes"| anchored{"Anchored yet?"}
+    anchored -->|"no"| first{"Two consecutive gaps agree<br/>under some alignment?"}
+    first -->|"no"| wait
+    first -->|"yes: earliest one is the first<br/>match, skipped items counted"| head
+    anchored -->|"yes"| edgePending{"An edge pending?"}
+    edgePending -->|"no"| wait
+    edgePending -->|"yes"| compare{"Oldest edge vs oldest strobe,<br/>gaps from the anchor"}
+    compare -->|"too early"| spurious["Drop the edge,<br/>spuriousEdges + 1"]
+    compare -->|"too late"| unmatched["Release the strobe,<br/>unmatchedStrobes + 1"]
+    compare -->|"within tolerance"| match["Match: this pair<br/>becomes the anchor"]
+    spurious --> head
+    unmatched --> head
+    match --> head
+```
 
 - **The tolerance is relative**: the larger of `ABS_TOLERANCE_MS` and `REL_TOLERANCE` of the gap. The
   Mega's ceramic resonator drifts about half a percent, so over a long ITI the clocks honestly disagree by
@@ -279,6 +312,44 @@ box→animal→port map; `livenotes` stamps each box's start and end into RHX's 
 ## Start and end
 
 Where these steps sit in the wider session: [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle).
+
+One group's recording from Start All to the stored run (`Application._begin_recording_if_any`,
+`_end_all_boxes`, `IntanService.start_recording` and `stop_recording`):
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant App as Sidecar
+    participant RHX as Intan RHX
+    participant Boxes
+    Op->>App: Start All
+    alt no recording configured for this group
+        App-->>Op: INTAN_NOT_READY, no box started
+    else configured
+        App->>RHX: set runmode record, polled until it takes
+        App->>RHX: get currenttimestamp until it advances
+        alt RHX refuses, or no samples within 5 s
+            App-->>Op: INTAN_* error, no box started
+        else samples arriving
+            App->>RHX: get Filename.ActiveFileTimestamp
+            App->>App: pre-roll, PRE_ROLL_S
+            App->>Boxes: start every box
+        end
+    end
+    Note over App,Boxes: the session runs, each strobe tapped after its fsync
+    Op->>App: End Session or Switch Group
+    App->>Boxes: STOP
+    Boxes-->>App: BF_END_SESSION, box by box
+    opt End now pressed
+        Op->>App: intan.forceStop
+    end
+    App->>App: after RECORDING_GRACE_S or End now, force-finalize the rest
+    App->>App: post-roll, POST_ROLL_S
+    App->>RHX: set runmode stop
+    App->>App: append the run to sessions.recording_json
+```
+
+If RHX cannot be reached at the stop, `stop_recording` still returns the run and says to stop RHX by hand.
 
 ### Start
 

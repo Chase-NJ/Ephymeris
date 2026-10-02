@@ -48,6 +48,7 @@ CITATION = re.compile(
     r"\b(" + "|".join(re.escape(n) for n in DOC_FILES) + r")#([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)"
 )
 MD_LINK = re.compile(r"\]\(([^)\s]+?\.md)(?:#([^)\s]+))?\)")
+IMAGE = re.compile(r"!\[[^\]]*\]\(([^)\s]+)\)|<img[^>]+src=\"([^\"]+)\"")
 RETIRED_REF = re.compile(r"(?<![A-Za-z/_-])(" + "|".join(re.escape(n) for n in RETIRED) + r")\b")
 SECTION_SIGN = "§"
 
@@ -138,6 +139,21 @@ def test_every_cited_anchor_exists() -> None:
         elif anchor and anchor.lower() not in anchors(doc):
             broken.append(f"{source}: {target}#{anchor} — no such heading")
     assert not broken, "broken documentation references:\n  " + "\n  ".join(sorted(set(broken)))
+
+
+def test_every_doc_image_exists() -> None:
+    """A screenshot or figure referenced from a doc must be committed beside it."""
+    missing = []
+    for path in tracked_text_files():
+        if path.suffix != ".md":
+            continue
+        for match in IMAGE.finditer(path.read_text(encoding="utf-8")):
+            target = match.group(1) or match.group(2)
+            if "://" in target:
+                continue
+            if not (path.parent / target).resolve().exists():
+                missing.append(f"{path.relative_to(REPO_ROOT)}: {target}")
+    assert not missing, "missing doc images:\n  " + "\n  ".join(missing)
 
 
 def test_no_reference_to_a_retired_doc() -> None:

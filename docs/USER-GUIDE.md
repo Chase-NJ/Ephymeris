@@ -114,6 +114,26 @@ removes the cohort, its animals and groups from Ephymeris, but **never deletes i
 
 ## Running a session
 
+A session day at a glance. Each step is explained in the sections below:
+
+```mermaid
+flowchart TD
+    cohort["Cohort ready: animals in groups,<br/>each with a box"] --> start["Dashboard: Start a Session,<br/>or Start a Recording"]
+    start --> configure["Configure: cohort, first group,<br/>prefix, session number"]
+    configure --> boxes["Boxes: check each box's task"]
+    boxes --> place["Place the animals in box-number order,<br/>closing each box as you go"]
+    place --> flashed["Each box loads its program"]
+    flashed --> recording{"Recording session?"}
+    recording -->|"yes"| record["Set Up the Recording"]
+    recording -->|"no"| run["Mission Control: Start All,<br/>watch until every box finishes"]
+    record --> run
+    run --> another{"Another group to run?"}
+    another -->|"yes"| swap["Switch Group: animals home,<br/>pick the next group"]
+    swap --> boxes
+    another -->|"no"| finish["End session"]
+    finish --> results["Check the results in Analytics"]
+```
+
 ### Configure
 
 1. On the Dashboard, click **Start a Session**.
@@ -248,6 +268,23 @@ becomes `ERROR`. Everything recorded up to that moment is safe. Other boxes keep
    panel.
 4. Ask your lab manager before restarting that animal. If you press **Start** again, a new file is begun
    for it and the earlier file is kept.
+
+What to do depends on where you see the error. **Reset** never clears it; only **Acknowledge** does.
+
+```mermaid
+flowchart TD
+    where{"Where does the box show ERROR?"}
+    where -->|"Boxes step, while programs load"| card["Read the message on the box's card"]
+    card --> retry["Click Acknowledge, then Retry flash"]
+    retry --> again{"Did it fail again?"}
+    again -->|"yes"| tellFlash["Tell the lab manager"]
+    again -->|"no"| carryOn["Carry on placing animals"]
+    where -->|"Mission Control, during a run"| writeDown["Write down the box,<br/>the animal and the time"]
+    writeDown --> cable["Check the USB cable<br/>and the board's lights"]
+    cable --> clear["Dashboard: click the box's star,<br/>then Acknowledge"]
+    clear --> ask["Ask the lab manager before<br/>starting that animal again"]
+    where -->|"Anywhere else"| panel["Dashboard: click the box's star,<br/>then Acknowledge"]
+```
 
 ### Session write failed
 

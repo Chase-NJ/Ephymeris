@@ -256,6 +256,23 @@ A profile-less sketch writes no snapshot: an empty one would claim a declaration
 
 The goal is recoverable data up to the moment of a power loss, not eventual consistency.
 
+One animal's files from the first strobe to the last, and the two ways a run can be left with a `.tsv` and
+no `.json` (`sessions/writer.py`, `sessions/recovery.py`):
+
+```mermaid
+flowchart TD
+    opened["Handshake resolved:<br/>.tsv opened exclusively, header written"] --> strobe["A strobe arrives"]
+    strobe --> append["Append to .tsv,<br/>flush + fsync"]
+    append -->|"run continues"| strobe
+    append -->|"run ends: end strobe,<br/>End, or board drop"| footer["Footer appended:<br/>stop_reason, n_events"]
+    footer --> built[".json and .mat built once<br/>from memory, best effort"]
+    built -->|"write failed, e.g. disk full"| withFooter[".tsv with footer,<br/>no .json"]
+    append -->|"app or power dies"| noFooter[".tsv with no footer,<br/>no .json"]
+    withFooter -->|"Recover"| recover["sessions.recover rebuilds<br/>.json and .mat"]
+    noFooter -->|"Recover"| recover
+    recover --> reason["stop_reason: the footer's,<br/>else recovered after crash"]
+```
+
 ### Written live
 
 Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `flush()` + `fsync()` on every line (`AnimalWriter.record`). A real session averages under one event per second, so a few-millisecond fsync per line costs nothing. Lines are written **exactly as the board sent them** (`<code>\t<timestamp>`), so no formatting bug can corrupt the one file that must be bulletproof.
@@ -293,6 +310,70 @@ The Recover button chains an `analytics.rescan`, so recovered files are adopted 
 `ephymeris.db` lives in the **app data directory**, not in `dataDirectory`: that folder is where lab members browse session output, and an opaque database file does not belong among session files. Owned by `cohorts/db.py`: one connection behind a lock, called through `asyncio.to_thread` so the event loop never blocks on disk. The current version is `SCHEMA_VERSION` in that file.
 
 ### Tables
+
+The relations between the tables, with key columns only. Dotted lines are references **without** a foreign
+key, each deliberate (see the notes below). `run_metrics_cache` is left out: it is a pure cache whose
+`run_id` names either a run record or an adopted run.
+
+```mermaid
+erDiagram
+    cohorts ||--o{ groups : "cascade"
+    cohorts ||--o{ animals : "cascade"
+    groups ||--o{ animals : "cascade"
+    cohorts ||--o{ sessions : "cascade"
+    sessions ||--o{ session_animal_runs : "cascade"
+    cohorts ||--o{ adopted_runs : "cascade"
+    prefixes |o..o{ sessions : "prefix_id"
+    animals |o..o{ session_animal_runs : "animal_id"
+    animals |o..o{ adopted_runs : "animal_id"
+    task_profiles |o..o{ session_animal_runs : "profile_hash"
+    cohorts {
+        TEXT id PK
+        TEXT name
+        TEXT data_folder
+        TEXT archived_at
+    }
+    groups {
+        TEXT id PK
+        TEXT cohort_id FK
+        INTEGER order
+    }
+    animals {
+        TEXT id PK
+        TEXT cohort_id FK
+        TEXT group_id FK
+        INTEGER box_number
+    }
+    prefixes {
+        TEXT id PK
+        TEXT name
+    }
+    sessions {
+        TEXT id PK
+        TEXT cohort_id FK
+        TEXT prefix_id
+        TEXT status
+        TEXT group_runs
+    }
+    session_animal_runs {
+        TEXT id PK
+        TEXT session_id FK
+        TEXT animal_id
+        TEXT file_path
+        TEXT profile_hash
+        TEXT params_hash
+    }
+    task_profiles {
+        TEXT hash PK
+        TEXT profile_json
+    }
+    adopted_runs {
+        TEXT id PK
+        TEXT cohort_id FK
+        TEXT animal_id
+        TEXT file_path
+    }
+```
 
 | Table | Columns | Notes |
 |---|---|---|
@@ -352,6 +433,21 @@ Two complementary protections:
 
 > [!IMPORTANT]
 > **The backup target may be slow, networked, or dead, and none of that may ever slow, stall, or fail a session.** Finalization *queues* copies rather than waiting, `.tsv` mirroring is a periodic whole-file pass rather than per line, and every filesystem operation runs in a worker thread. Don't "optimize" any of it into the critical path: a mirror that blocks finalization is worse than no mirror.
+
+Everything the session side does is mark or queue and return; the copying happens in the manager's own
+passes (`backup/manager.py`):
+
+```mermaid
+flowchart TD
+    started["A run's .tsv opens"] -->|"track"| live["Live .tsv set"]
+    finalized["A run finalizes"] -->|"untrack, enqueue .tsv .json .mat"| queued["One-shot queue"]
+    commit["Any SQLite commit"] -->|"mark dirty"| dirty["Database dirty"]
+    queued --> pass["Mirror pass in worker threads,<br/>MIRROR_INTERVAL_S after the last one ended"]
+    live --> pass
+    dirty -->|"once DB_DEBOUNCE_S old"| pass
+    pass -->|"whole-file copy, .part then replace"| target[("backupDirectory")]
+    pass -->|"any copy failed"| failedState["backup.status failed,<br/>queued files re-queued"]
+```
 
 ### Mirror layout
 
@@ -456,7 +552,22 @@ The ladder has four rungs:
 3. **today's `task.json`** for the recorded sketch name — including a saved task whose `legacyNames` claim a historical name;
 4. **inference** from the stream.
 
-Rungs 1 and 3 are *resolution* and run before any file is opened (`_resolve_profile`); rungs 2 and 4 need the file open and live in `_scoring_profile`. A malformed `task.json` or a damaged embedded snapshot degrades to the next rung rather than raising: a file with a broken declaration is still a file full of real strobes.
+Rungs 1 and 3 are *resolution* and run before any file is opened (`_resolve_profile`); rungs 2 and 4 need the file open and live in `_scoring_profile`. A malformed `task.json` or a damaged embedded snapshot degrades to the next rung rather than raising: a file with a broken declaration is still a file full of real strobes. So does a declaration with no `liveMetrics`: a rung is taken only if its profile declares something to score.
+
+```mermaid
+flowchart TD
+    run["A run to score"] --> db{"Rung 1: profile_hash found<br/>in task_profiles?"}
+    db -->|"yes, with liveMetrics"| snapshotDb["snapshot"]
+    db -->|"no"| embedded{"Rung 2: the file embeds<br/>a task_profile?"}
+    embedded -->|"yes, with liveMetrics"| snapshotFile["snapshot"]
+    embedded -->|"no"| current{"Rung 3: today's task.json for the<br/>run's sketch path, name or legacyName?"}
+    current -->|"yes, with liveMetrics"| sketchCurrent["sketch-current †"]
+    current -->|"no"| infer{"Rung 4: the stream shows<br/>a recognisable condition?"}
+    infer -->|"yes"| inferred["inferred ≈"]
+    infer -->|"no"| fallback["What resolution found:<br/>scored as no-metrics, or unavailable"]
+```
+
+Each "no" also covers a rung whose profile exists but declares no `liveMetrics`, with one wrinkle: rung 3 is consulted only when rung 1 found no snapshot at all, so a metric-less database snapshot goes from rung 2 straight to inference.
 
 > [!CAUTION]
 > **The file's snapshot outranks today's `task.json`, deliberately.** Both are "a declaration for this sketch"; only one is the declaration this run used. Ranked the other way, a rig holding a same-named task would score a visiting file against its own edit of it — silently, under a `profileHash` asserting the two are comparable.
@@ -627,7 +738,22 @@ The declared metrics are **reward-unconditional**: `WATER_POKE_L/R` scores the i
 | **no response** | administered, none of the above | Sampled, never answered |
 | **aborted** | no `ODOR_UNPOKE` | Odor delivered, left before sampling cleared |
 
-`administered` (odor sampled to completion) is the denominator:
+How one trial is classified (`derive._classify_trials`). A trial runs from its onset to the next boundary
+code, and the first outcome code inside it decides; only a trial with none falls through to the sampling
+check:
+
+```mermaid
+flowchart TD
+    onset["Trial opened by an odor onset"] --> outcome{"First outcome code<br/>before the next boundary?"}
+    outcome -->|"FLUID_*"| rewarded["rewarded"]
+    outcome -->|"WATER_UNPOKE_EARLY_*"| holdFailed["hold failed"]
+    outcome -->|"WATER_POKE_ERROR_*"| wrongWell["wrong well"]
+    outcome -->|"none"| sampled{"ODOR_UNPOKE seen?"}
+    sampled -->|"yes"| noResponse["no response"]
+    sampled -->|"no"| aborted["aborted"]
+```
+
+`administered` (odor sampled to completion: every trial but `aborted`) is the denominator:
 
 - **Rewarded accuracy** (`pRewarded`) = `rewarded / administered`. Conservative.
 - **Response accuracy** (`pSide` on the wire) = `(rewarded + holdFailed) / administered` — the correct side was chosen, held or not. **Always ≥ rewarded accuracy; the gap is the consummatory hold-failure rate**, a real behaviour.
@@ -665,6 +791,17 @@ Everything above is delimited on odor onset, which the firmware reaches only aft
 | `odorDelivered` | An odor-on code within it | The pre-odor hold cleared and odor was delivered |
 
 **`pEngaged = poked / presented`** (with a Wilson interval) and `pDelivered = odorDelivered / presented`. The gaps are reported as `noPoke` and `pokeAborted`.
+
+The rungs and their gaps. Each gap is the difference between neighbouring rungs, and the last rung is where
+the outcome tally above begins:
+
+```mermaid
+flowchart LR
+    presented["presented<br/>LIGHTS_ON"] -->|"ODOR_POKE"| poked["poked"]
+    poked -->|"odor-on code"| delivered["odorDelivered<br/>= outcomes.trials"]
+    presented -.->|"never poked"| noPoke["noPoke =<br/>presented − poked"]
+    poked -.->|"let go before odor"| pokeAborted["pokeAborted =<br/>poked − odorDelivered"]
+```
 
 - **A ladder, not a partition**: each rung counts presentations reaching that stage, so `presented ≥ poked ≥ odorDelivered` by construction and no gap is negative.
 - **`pokeAborted` is not `outcomes.aborted`**: both let go of the port, but only the latter had smelled anything.

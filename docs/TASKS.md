@@ -20,6 +20,23 @@ Everything an experiment varies reaches the firmware one of two ways. Which way 
 | **Generated headers** (`TaskPins.h`, `TaskTrials.h`) | compile time | channel→pin map, strobe selection, the trial table, how many ramp stages and trial types exist, which selector runs | a rebuild and reflash |
 | **The `START` line** | run time | every timing, hold, window, penalty, per-condition reward volume (`RW<n>`), pool weight (`PW<n>`), anti-bias clamp and stage threshold | one serial line |
 
+The two roads to the board. The left one runs once per save or rewiring; the right one runs at every start:
+
+```mermaid
+flowchart LR
+    subgraph compileTime["Compile time: rebuild and reflash"]
+        definition["Task definition"] --> generator["taskdef generator"]
+        wiring["Rig wiring"] --> generator
+        generator --> headers["TaskPins.h<br/>TaskTrials.h"]
+        headers --> binary["Flashed binary"]
+    end
+    subgraph runTime["Run time: one serial line"]
+        values["Merged parameter values"] --> line["START line"]
+    end
+    binary --> board["Mega2560"]
+    line --> board
+```
+
 The dividing line is [`START_LINE_MAX`](#the-length-cap): a trial table and a pin map do not fit on the line, and pins must be compile-time constants anyway. Everything that fits stays on the wire, which is what lets **one flashed binary serve six boxes tuned differently** — the per-box overrides at mapping would otherwise mean six compiles.
 
 ### The three bundled sketches
@@ -349,6 +366,24 @@ A saved task's folder is regenerated on `tasks.save`, at **every sidecar start**
 - **At start**, because a folder written by an older generator either stops compiling (loud — `TrialType` grew an argument) or sends keys the firmware no longer parses (silent).
 - **On a wiring change**, because pins are compiled into `TaskPins.h`.
 
+A wiring change, from the Rig tab's save to the rescan (`_hardware_save`, `_hardware_reset`,
+`_rebuild_for_wiring` in `app.py`). Startup runs the same two rebuilds inline, before anything can flash:
+
+```mermaid
+flowchart TD
+    save["hardware.save"] --> impact{"Would it newly break<br/>a saved task?"}
+    impact -->|"yes, without confirm"| refuse["RIG_WOULD_BREAK_TASKS<br/>nothing written"]
+    impact -->|"no, or confirm: true"| write["Check the schema,<br/>write rig.json"]
+    write -->|"not a rig document"| invalid["RIG_INVALID<br/>nothing written"]
+    reset["hardware.reset"] --> install
+    write -->|"written"| install["set_rig_source:<br/>ChannelMap cache cleared"]
+    install --> rebuild["_rebuild_for_wiring"]
+    rebuild --> tasks["Regenerate every saved task"]
+    rebuild --> bundled["Rebuild every bundled sketch<br/>that includes TaskPins.h"]
+    tasks --> rescan["Rescan the library"]
+    bundled --> rescan
+```
+
 > [!CAUTION]
 > **A wiring change must rebuild every stored profile AND every bundled sketch, and the failure is invisible if it does not.** A stale folder still compiles and runs; the only symptom is a valve that never fires. Both rebuilds go through the one call site `Application._rebuild_for_wiring` (rebuild, then rescan), because splitting it into two calls is how one eventually gets forgotten.
 
@@ -385,6 +420,20 @@ The rig's description of itself lives in `sidecar/ephymeris_sidecar/rig/` and `h
 A second box generation is a one-file pinout swap, *provided the channel names are the same* — which is what resolving by name buys. The operator's `rig.json` **replaces** the shipped pair rather than merging with it: a merge would bring back a channel someone deleted and could not describe a box that lacks one. Channel kinds are `engagement` (exactly one), `response`, `emitter`, `reward`, `cue`, `vacuum` and `sync` (at most one).
 
 ### Registry rules
+
+Which documents become the `ChannelMap` (`registry.channels()`), and what is built from it:
+
+```mermaid
+flowchart TD
+    saved{"A saved<br/>hardware/rig.json?"}
+    saved -->|no| shipped["channels.v1.json + the<br/>selected hardware pinout"]
+    saved -->|"yes: replaces the pair"| rig["data_dir/hardware/rig.json<br/>(kinds still from channels.v1.json)"]
+    shipped --> map["ChannelMap<br/>lru_cached until set_rig_source"]
+    rig --> map
+    map --> taskPins["Each saved task's generated folder"]
+    map --> bundledPins["Bundled sketches rebuilt into<br/>data_dir/rig/sketches/"]
+    map --> diagnostics["Task diagnostics<br/>tasks.preview, tasks.get"]
+```
 
 `rig/registry.py` composes the pair into a `ChannelMap`. Three rules that are easy to break:
 
@@ -474,6 +523,18 @@ The metric is response-conditional and reward-unconditional: the firmware strobe
 | Profile default | the sketch's `task.json` (for a saved task, its definition) | the task, everywhere |
 | Rig default | `settings.taskDefaults[sketchName]` | this machine |
 | Per-box override | the session's box mapping | this animal, this run |
+
+For each field the profile declares, the most specific layer that has a value wins. From there the line is
+built sidecar-side, and only the seed is added at the click:
+
+```mermaid
+flowchart LR
+    profileDefault["Profile default<br/>task.json"] --> merge["defaultConfig<br/>src/lib/sessions/types.ts"]
+    rigDefault["Rig default<br/>settings.taskDefaults"] --> merge
+    override["Per-box override<br/>mapping step"] --> merge
+    merge -->|"sessions.confirmMapping"| build["build_start_command<br/>checked against START_LINE_MAX"]
+    build -->|"Start: with_trial_seed"| line["START … SEED=n<br/>to the board"]
+```
 
 They merge in that order in exactly one place, `defaultConfig` in `src/lib/sessions/types.ts`. **It iterates the profile's fields, not the stored objects**, so a value for a field the sketch no longer declares cannot reach the wire. `taskDefaults` is keyed by sketch folder name (what the session file records as `sketch`) and stores only divergences; it has no editor, and entries keyed by a sketch that no longer exists are inert. The session file records the merged values flat, plus `config_json`/`params_hash` on the run — a reader never needs to know which layer a number came from.
 
@@ -575,6 +636,35 @@ Outcomes, best to worst, each with exactly one inbound edge (never a condition �
 | No answer | always | window | |
 
 With more than one condition on a fan, edge labels and counts are dropped: one figure drawn N times would read as each arm's own.
+
+What `taskGraph` returns for the bundled `GRGL/task.json`, with the same labels. Its two conditions are congruent, so they collapse into one "Odor" node; it declares `WATER_POKE_NONE` but no metric scores it, so there is no Withheld outcome. Dashed nodes are aborts:
+
+```mermaid
+flowchart LR
+    light["Light"] -->|"pokes"| poke["Poke"]
+    light -->|"window elapses"| noPoke["No poke"]
+    poke -->|"holds"| odor["Odor"]
+    poke -->|"releases early"| letGo["Let go"]
+    odor -->|"samples"| unpoke["Unpoke"]
+    odor -->|"leaves early"| leftEarly["Left early"]
+    unpoke --> lightOff["Light off"]
+    lightOff --> answer["Answer"]
+    answer -->|"correct, held"| reward["Reward"]
+    answer --> noHold["No hold"]
+    answer --> wrongWell["Wrong well"]
+    lightOff --> noAnswer["No answer"]
+    reward --> iti["ITI"]
+    noHold --> iti
+    wrongWell --> iti
+    noAnswer --> iti
+    iti --> light
+    noPoke --> repeat["Repeat"]
+    letGo --> repeat
+    leftEarly --> repeat
+    repeat --> light
+    classDef abort stroke-dasharray: 5 4
+    class noPoke,letGo,leftEarly,repeat abort
+```
 
 ### One condition node
 

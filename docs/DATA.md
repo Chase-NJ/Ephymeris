@@ -121,6 +121,8 @@ Resolved by `cohorts/folders.py`. On creation, unless overridden: `dataFolder = 
 > [!IMPORTANT]
 > **Renaming a cohort does not move its data folder.** An automatic move-on-rename is exactly the kind of implicit file operation this project avoids; the detail view shows the real path instead.
 
+![The cohort editor for Odor Discrimination 2026: the Name field, and under Data folder the stored path D:/Ephymeris Data/Odor Discrimination 2026 with the note "Renaming this cohort won't move its folder" and a Change data folder button](images/cohort-editor.webp)
+
 Relocating is a separate action, `cohorts.setDataFolder` (`relocate`), with two intents chosen by `moveExisting` and **opposite** requirements for the destination:
 
 | `moveExisting` | Meaning | Destination |
@@ -643,6 +645,8 @@ A day that goes wrong leaves two kinds of leftover; **Tidy records** (`sessions.
 > [!IMPORTANT]
 > **Only the database changes.** Records merge only when they share a number, which is exactly when they share a folder, so no file ever ends up belonging to a session whose folder it is not in. Nothing on disk is moved, renamed or rewritten. Run ids don't change, so the cache follows them. A folder is removed bottom-up with `rmdir`, which the OS refuses for anything non-empty — never `rmtree`.
 
+![The Tidy session records preview: "Remove 1 empty record", naming 2O-Bdisc_rhx-check on 2026-10-01, with the promise "No data file is moved, renamed or deleted" and Cancel and Tidy buttons](images/tidy-records.webp)
+
 **Never touched:** the session the runner holds and every record sharing its folder; a `configuring` record from today (it may be under an operator's hands); and any record whose folder is unreachable (the same rule as [pruning](#pruning)). The first two are listed in the preview with the reason.
 
 **A recovered file counts under its recorded session without a tidy.** The rescan adopts a recovered `.json` under a synthetic session; when the database also recorded that session, the adopted run is attributed to the recorded one (the earliest, as a tidy would keep) at read time (`service._adoption_owners`) — in summaries and `sessions.list` — and it counts as data, so its record is never judged empty.
@@ -836,6 +840,11 @@ There is no task filter. The **outcome tallies and engagement ladder are vocabul
 > [!CAUTION]
 > **The effort panel's total is the trial light (`presented`), not the odor onset.** Counting `trials` drew a session the cohort largely ignored as a **short** bar rather than a mostly-hollow one, hiding exactly the collapse the panel exists to show. A profile with no trial light falls back to `trials` — an undercount, knowingly.
 
+![One cohort in Analytics: the header's Data folder, Rescan, Recover, Tidy records and Export cohort PNG; the Sessions rail spaced by date from Sep 4 to Sep 30; the Task strip changing from Shaping - Both Sides to 2-Odor Discrimination; the Accuracy chart with response and rewarded lines and the gap between them; and the Effort and Outcome mix bar charts below](images/analytics-cohort.webp)
+
+*The trend panels pool every task and disclose it in the task strip. In the session rail the numbers restart
+(1–4 under one prefix, then 1–14 under the next), which is why sessions are placed by date, never by number.*
+
 ### Session order
 
 > [!CAUTION]
@@ -858,6 +867,11 @@ Separates *learning* from *picking a side*: one point per run, x = accuracy at o
 - **Within a session** it walks the same plane at trial resolution, scoped to one profile with a picker; x takes the side of the first declared metric. Coordinates are the **rolling** figures, never the running whole-session average (which would flatten the transition the walk exists to show). A point needs both sides scored and both windows holding `minCountedTrials` — a rolling proportion over one trial is exactly 0 or 1 and would thrash between corners. Its `n` is the smaller window. The clock is counted trials across both conditions, which is why the walk is computed sidecar-side (`strategy_trail`, sent as `trail`): each metric's series is indexed by its own trials, so index *k* of one is not the same moment as index *k* of another.
 - A session point and a trial point never share a frame.
 
+![The cohort's lower panels: the Animals rail with each animal's pooled accuracy sparkline, the Strategy space with one point per animal per session between the corners discriminating, chance, side bias and reversed, its axes labelled right well (up) and left well (right), and Overall accuracy per animal from first session to latest](images/analytics-panels.webp)
+
+*Across sessions the axes are the two wells, whatever the task. Every number in the Animals rail and the
+Overall accuracy curves is [pooled accuracy](#pooled-accuracy).*
+
 **Not a signal-detection ROC.** Hit rate against false-alarm rate needs one metric's `successCode` and another's `alternateCode` to be the same physical response — a fact about the rig that no profile states. The plane as built needs no such inference. Folding conditions onto sides doesn't reintroduce it: each side comes from the metric's own code, through the profile's own `strobes` map.
 
 ### Learning curves
@@ -869,6 +883,11 @@ Separates *learning* from *picking a side*: one point per run, x = accuracy at o
 
 > [!IMPORTANT]
 > **The x axis is trial index or run order, never time.** `timestamp_ms` is elapsed since that animal's own start, animals in a session start minutes apart, and stream `t=0` trails `started_at`. Any plot aligning animals on a shared time axis is quietly wrong.
+
+![One session with remy3 pinned: per-animal cards listing each condition's administered and rewarded counts with outcome bars and trajectories, Strategy within this session as a per-trial trail from chance toward discriminating, and Rolling accuracy per trial with an Odor A → right / Odor B → left picker](images/analytics-session-detail.webp)
+
+*The one-session views: the strategy walk (here x is the first declared metric's side, the right well) and
+the rolling learning curve, both on counted-trial clocks.*
 
 ### Colour palette
 

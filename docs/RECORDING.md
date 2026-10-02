@@ -26,7 +26,8 @@ every networking failure mode from the list.
 ## Talking to RHX
 
 RHX exposes three TCP servers (its **Network → Remote TCP Control** dialog): commands on 5000, waveforms
-on 5001, spikes on 5002. The operator presses **Connect** on RHX's Commands tab; the sidecar opens the two
+on 5001, spikes on 5002 by default. If they were changed there, the Recording tab's TCP ports
+(`settings.intan`) must be changed to match. The operator presses **Connect** on RHX's Commands tab; the sidecar opens the two
 data sockets itself over the command socket (`set tcpwaveformdatasocket.status pending`).
 
 > [!NOTE]
@@ -74,7 +75,8 @@ case-insensitively, because RHX lowercases notes and custom channel names.
 > that settings-file paths must contain no spaces and says nothing about `Filename.Path`. A build that
 > split the value on whitespace would **accept** `C:/Hart Lab/x` and record into `C:/Hart`: no error,
 > plausible files, wrong place. The read-back catches it and `intan.configure` refuses with a message
-> saying to pick a path without a space. RHX 3.5.0 keeps the space, so on that build the refusal never
+> saying to pick a path without a space. The Record step warns under its resolved save location when the path
+contains a space, before anything reaches RHX. RHX 3.5.0 keeps the space, so on that build the refusal never
 > fires; the read-back stays because it is cheap and is the only defence on a build that differs.
 
 ### Run mode
@@ -253,8 +255,14 @@ flowchart TD
 - An unconnected line must not queue strobes forever: past `MAX_PENDING`, the oldest is given up on.
 
 `intan.status.sync` publishes `matched`/`spuriousEdges`/`unmatchedStrobes` per box and Mission Control
-shows them: **it is the wiring check**. `unmatchedStrobes` climbing with `matched` at zero is a sync line
-not reaching its input.
+shows them as the **sync check**, columns *matched*, *missed* (`unmatchedStrobes`) and *stray*
+(`spuriousEdges`): **it is the wiring check**. `unmatchedStrobes` climbing with `matched` at zero is a sync
+line not reaching its input, and the row then reads "no pulses arriving — check the sync line"
+(`RecordingStatus.tsx`).
+
+![Mission Control during a recording: a REC panel with the recording's file name, OneFilePerSignalType and 30 kS/s, a SYNC CHECK table for boxes 1 to 4 (din, matched, missed, stray), and each box tile showing its port, DIN and channel range with Spike Scope, PSTH, ISI and Probe map buttons](images/mission-control-recording.webp)
+
+*A healthy sync line: every box matching, nothing missed, one stray edge on box 3 dropped rather than paired.*
 
 The matcher exists for the **live views only**. The durable record needs none of it: RHX saves the digital
 input at full rate, the `.tsv` holds the strobes, and offline alignment can apply the same algorithm, or a
@@ -272,9 +280,13 @@ surface owns.
 | Tile | Holds |
 |---|---|
 | Live (only while a recording exists) | `RecordingStatus`, the same block as Mission Control's rail, and a link to Mission Control |
-| Connection | `IntanConnectionPanel`: Connect/Disconnect, controller, version, rate, the `synthetic` flag, `confirmsWrites` |
-| Sync inputs | `SyncInputsTable`: box → `DIGITAL-IN-n`, and whether the wiring declares a sync channel |
+| Connection | `IntanConnectionPanel`: Connect/Disconnect, controller, version, rate, the `synthetic` flag, `confirmsWrites`, and the three TCP ports (`settings.intan`) |
+| Sync inputs | `SyncInputsTable`: box → `DIN n`, and whether the wiring declares a sync channel |
 | Defaults | `settings.recordingDefaults` (shaped in `lib/intan/defaults.ts`), edited outright via `RecordingConfigRows` |
+
+![The Recording tab: Connection (connected to ControllerRecordUSB3, RHX 3.5.0, 30 kS/s, headstage A:64, with Disconnect and the commands, waveform and spike port fields), Sync inputs mapping boxes 1 to 6 to DIN 1 to DIN 6 with "This rig's wiring has a sync channel" and Open wiring, and the start of Defaults](images/recording-tab.webp)
+
+*The ports here (5100–5102) belong to the demo setup the screenshot was taken on; RHX's defaults are 5000–5002.*
 
 ### Record step
 
@@ -299,6 +311,8 @@ per group** (animals, ports and probes change between groups) and opens prefille
   the two halves match by eye), with the defaults collapsed to one summary behind an Edit door.
 - **Boxes**: per mapped box, Record or Behavior only, its DIN, headstage port, channel range and optional
   probe-map XML. Two boxes may share a port on disjoint ranges; an overlap is refused.
+
+![The Set Up the Recording step: Readiness 5/5 (RHX version and controller, RHX is not recording, headstage on port A, the wiring has a sync channel, every recorded box has a digital input), Saving with a save location ending in /ephys and a warning that the path contains a space, "Using your defaults" with Edit for this session, and the first box's Record or Behavior only choice with its port, channels 0 to 15 and probe map](images/record-step.webp)
 
 **Wideband defaults on**: it is the one option that cannot lose data. Everything else RHX saves is derived
 from it, and a threshold picked badly cannot be re-picked afterwards without it.
@@ -381,6 +395,8 @@ A failure in 1–2 is an `INTAN_*` error with no box started.
 > behavior-session contract. A recording passes the long timeout because electrophysiology with no
 > behavioral outcome to align to is the expensive half of the experiment with the cheap half missing.
 
+![Mission Control ending a recording: an ENDING panel reading "Finishing the trials in flight" and "Waiting for box 1, 4, 5 to finish its trial…" with an End now button above the sync check, while boxes 2 and 3 already read IDLE, "Finished — BF_END_SESSION received"](images/mission-control-ending.webp)
+
 **One recording per group run**, not per session: another group is different animals, possibly on
 different ports.
 
@@ -455,6 +471,14 @@ its serial ports would not exit until each was closed by hand.
 | PSTH | spike times + matched sync edges | RHX triggers on a digital input's edge, and here every event pulses the same input, so RHX would align to "anything happened". The sidecar knows which event each edge was, so the trigger is a **named event** from the profile. Only trials whose post-window has closed count (else the right edge sags by how recent the last trigger was), and only trials whose pre-window starts at or after `SpikeRing.complete_since` (else an old trial is drawn with whichever spikes survived eviction). Sent only when it changes |
 | ISI | spike times | Intervals past the span are **counted and shown**, not dropped: a histogram that looks complete while most intervals fall outside it is how a slow unit reads as a quiet one. A span that is not a whole number of bins gets a partial last bin at its true width |
 | Probe map | spike times | Each site shaded by its last second of firing (square-root ramp). Clicking a site opens its Spike Scope. **The file's colours are ignored** (they are RHX's UI); the geometry is the information. **Y is flipped at draw time**: Intan's y points up, and skipping the flip draws the probe tip-up with every site misplaced |
+
+| | |
+|---|---|
+| ![Spike Scope for Box 1, channel A-000: overlaid spike waveforms with the newest in white and a dashed threshold line at −41 µV, footer "drag the line to set RHX's threshold"](images/scope-spikescope.webp) | ![PSTH for Box 1, aligned to ODOR_1_ON: a raster of 18 trials above a 10 ms histogram that rises after the onset, footer "complete trials only"](images/scope-psth.webp) |
+| ![ISI for Box 2, channel A-016: an inter-spike interval histogram over 200 ms in 5 ms bins, footer counting 14874 intervals, mean 53.3 ms, 18.8 Hz and 373 beyond 200 ms](images/scope-isi.webp) | ![Probe Map for Box 2 from box2_A1x16-50um.xml: a 16-site shank drawn tip down, sites shaded by firing rate, a legend (firing, recorded quiet, not recorded) and "click a site for its Spike Scope"](images/scope-probemap.webp) |
+
+*The four windows. The PSTH aligns to a named event, the ISI counts what falls past its span ("373 beyond
+200 ms"), and the probe map is drawn tip down.*
 
 RHX's own option sets are offered (`lib/intan/types.ts`) so the two read the same. A scope is kept alive
 by `intan.scope.update` every `KEEPALIVE_MS` (`lib/intan/context.ts`); one untouched for `SCOPE_TTL_S` is

@@ -483,6 +483,11 @@ maintains it:** every bound box that isn't flashing, in a console or in a sessio
 operator's utility sketch (`utilitySketchName`). With a known sketch on every free box, the app can ask a
 box to do things — light itself, prime a line — without first asking the operator to flash.
 
+![The Rig tab: a Boxes table binding boxes 1 to 6 to boards DEMO-BOX-1 to 6 with a Test button each, and below it the Utility baseline section naming BOX_Utility, a Reflash boxes button and a Ready chip for every box](images/rig.webp)
+
+*The baseline's face on the Rig tab: the named sketch, **Reflash boxes** (the one `force` caller) and each
+box's restore state, which is where a failed restore stays visible.*
+
 ### When a restore happens
 
 **The trigger is always a box becoming free, never a clock.**
@@ -591,6 +596,16 @@ asked to light a box.
   sketch's own verbs over `port.send`: paced from the app so it knows which line is open, restoring the
   sketch's global pulse width afterwards, stopped with `ALLOFF`.
 
+![Debug Mode for box 3 running 2-Odor Discrimination: Send START, End and Return to baseline in the Sketch tile, the console streaming strobe lines, and a LIVE tile reading "Scored as a session would be. Nothing here is recorded." above two P(well) metrics, a P(right | odor) chart and an outcome mix](images/debug-run.webp)
+
+*A Debug run. The LIVE tile is Mission Control's `MetricStrip` and `LivePanels`, fed by `debug_run.py`. This
+box's animal is side-biased: P(right well) 1.00 against P(left well) 0.00.*
+
+![Debug Mode for box 3 on its baseline: the Sketch tile reads BOX_Utility, "the utility baseline, restored to every idle box", with Full self-test, Prime (duration and lines Left 1, Left 2, Right 1, Right 2) and switches for every fluid line, the vacuum, the trial light and twelve odor lines](images/debug-mode.webp)
+
+*The same panel on the baseline sketch: the utility controls and Prime that a known resting sketch makes
+possible without a flash. They act only while the console is open in `PASSTHROUGH`.*
+
 ## Session lifecycle
 
 The operator's view is [USER-GUIDE.md](USER-GUIDE.md#running-a-session); session records, runs and their
@@ -694,11 +709,18 @@ group on the rig, closes its group run, clears the runner and releases the basel
 finalizes here; only `sessions.end` finishes a session. A group may run again — new timestamped files,
 nothing overwritten.
 
+![The Next Group step for session 2O-Bdisc_15: a Group A card badged "ran 23:34" and a selected Group B card, each listing its animal-to-box mapping, with Run this group and End session below](images/group-step.webp)
+
+*Nothing is ordered: Group A is badged because it already ran, not locked, and the operator picks whichever
+group is ready.*
+
 **Continuing is not resumption.** `sessions.resume` continues one of today's sessions that already ran a
 group: any group run a crash left open is closed (its `.tsv` files are the record) and the session
 re-enters the between-groups state. **Same day only**, because the session folder is named for its date.
 
 ### Running boxes
+
+![Mission Control for session 2O-Bdisc_15 with Group A running: the clock and elapsed time, the journey rail at Run, Switch Group and End Session, the session's 3D sky, and a tile per box reading IN_SESSION with its run clock, Start, Stop and Reset, and two live metrics with sparklines](images/mission-control.webp)
 
 | Action | Sidecar behaviour |
 |---|---|
@@ -776,6 +798,15 @@ A board dropping during `IN_SESSION` is **always a hard stop into `ERROR`**, cle
 `port.error.ack`, with no auto-recovery. The run is finalized at once from what the `.tsv` already holds,
 so the hard stop costs no data.
 
+![Mission Control with box 2's tile reading ERROR and "Finished — board disconnected" while boxes 1, 3 and 4 stay IN_SESSION; box 2's star in the sidebar figure is red](images/mission-control-error.webp)
+
+*One board dropped: its tile shows the stop reason, its sidebar star turns red, and the other boxes run on.*
+
+![Debug Mode for box 2 after the drop: the header reads fault, the Connection tile shows an error chip and "board disconnected or unreadable" beside an Acknowledge button, above the console's strobe lines](images/debug-error.webp)
+
+*The box's own panel names the fault. **Acknowledge** sends `port.error.ack`, the only way out of `ERROR`.
+The operator's procedure is [USER-GUIDE.md](USER-GUIDE.md#when-a-box-shows-error-or-a-board-disconnects).*
+
 Every way a run ends, side by side (`SessionRunner.finalize_box`, `end_all`, `board_dropped`):
 
 ```mermaid
@@ -846,6 +877,8 @@ pushes settings on every connect, and a scope window must not re-push a stale co
 not exit. Their canvas drawing is fenced to `routes/scope/`, not a second house style
 ([RECORDING.md](RECORDING.md#live-windows)).
 
+<img src="images/scope-spikescope.webp" alt="A Spike Scope pop-up for Box 1, channel A-000: its own title bar with minimise and close, channel, scale, time and spike-count pickers, and overlaid spike waveforms under a dashed threshold line" width="420">
+
 The two provider trees `main.tsx` mounts, outermost first:
 
 ```mermaid
@@ -871,6 +904,8 @@ The sidebar's widget (`components/chrome/ConstellationStatus.tsx`) shows only **
 frame fits the whole asterism so its shape doesn't warp. Drag snaps to a star, swaps with an occupant, and
 writes settings **once per completed drag**.
 
+<img src="images/sidebar-status.webp" alt="The sidebar's status constellation: six lit stars joined by a fixed stick figure, labelled 6/6 boxes" width="240">
+
 > [!CAUTION]
 > **Two constellations, two linking rules.** This widget draws a declared adjacency (the zodiac's stick
 > figure) because a status readout must be glanceable and never reflow. The 3D sky is a different object
@@ -880,6 +915,12 @@ writes settings **once per completed drag**.
 
 There is **one app-wide WebGL canvas** (`components/constellation3d/SharedCanvas.tsx`) that views adopt in
 turn — never a canvas per view.
+
+![The Dashboard's 3D sky: box stars labelled Box 1 to Box 5 joined by lines, with each box's animals named beside its star](images/dashboard.webp)
+
+*The rig's sky on the Dashboard. Compare it with Mission Control under [Running boxes](#running-boxes): the
+same stars sit in the same places, relabelled with the animals they hold, because both views resolve
+through `useRigSky`.*
 
 > [!CAUTION]
 > **Every route mounts a constellation.** A route that mounts none is the only thing that makes
@@ -912,6 +953,8 @@ turn — never a canvas per view.
 `components/cohorts/CohortSky.tsx` makes each cohort a `SceneNode` whose `body` is a procedural planet, so
 hover, reticle, nameplate, arrival rings and flight are `ConstellationScene`'s (`Scene.tsx`) and not
 reimplemented; home cages ride `SceneNode.orbiters`.
+
+![The Cohorts browser: three procedural planets labelled Batch A — Spring, Batch B — Summer and Odor Discrimination 2026, a dust disc labelled New cohort, and Search, a Recent sort and Show archived (1) over the scene](images/cohorts.webp)
 
 - **Search dims in place; it does not filter.** Spatial memory is the whole return on a spatial layout, and
   a focused node whose position moves retriggers the camera flight. Sort is the one control that rearranges.

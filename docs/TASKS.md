@@ -263,6 +263,12 @@ A `"kind": "utility"` profile makes a priming, cleaning or self-test sketch firs
 | `select` | a dropdown | the chosen option's `command` | non-empty `options[]`, each with a `command` |
 | `grid` | one row per channel with a state lamp | that row's `toggle` or `pulse` | non-empty `channels[]`; each needs a `label` and at least one of `toggle`/`pulse` |
 
+![Debug Mode for box 3 on BOX_Utility: buttons for Full self-test, Stop test and All off, a pulse-width dropdown, a Prime block, and grid rows with a lamp and switch for each fluid line, the vacuum, the trial light (lit, "1 open") and twelve odor lines](images/debug-mode.webp)
+
+*`BOX_Utility`'s profile rendered in Debug Mode: `button`s, a `select` for the pulse width, and `grid`s whose
+section headers count what is open. Prime is the app's own control
+([ARCHITECTURE.md](ARCHITECTURE.md#running-a-task-from-debug-mode)), not a profile control.*
+
 `grid` exists because "which solenoid is energized right now" on a fluid rig is a safety readout, not a convenience. A row with neither `toggle` nor `pulse` is rejected rather than rendered as inert decoration. A missing `state` leaves the lamp neutral rather than claiming "closed" — not reported and closed are different facts.
 
 `telemetry` is `{ match?: string (default "STATUS"), fields?: [{key, label?}] }`. The app finds the newest `port.output` line beginning with `match`, parses space-separated `key=value` pairs, and shows the declared fields. **`STATUS` values cannot contain spaces.** Prose belongs in ordinary `Serial.println` lines, which land in the console.
@@ -445,6 +451,13 @@ flowchart TD
 
 `/config/wiring` (`routes/RigWiring.tsx`) hosts `RigWiringEditor` and `PinTable` over one document: the page owns the `useRig` session and the selected channel, so clicking a table row and clicking its pin are the same gesture. The board map selects and moves, the inspector rail edits, and the pin table edits nothing.
 
+![The Wiring page: a kind summary (1 engagement, 2 response, 12 emitter, 4 reward, 1 cue, 1 vacuum, 1 sync), the Mega's pin map with each channel labelled on its pin (odor_port, right_well and left_well on 2 to 4, odor lines on 22 to 33, trial_light, vacuum, fluid_0 to fluid_3, sync_out on 49), an Inspector, Reset, Revert and Save, and the Configured pins table below](images/rig-wiring.webp)
+
+*The shipped wiring ("as shipped"; a saved `rig.json` reads "this rig's own"). The hash beside it is
+`ChannelMap.content_hash()`, the one stamped into each generated header. Odor lines 1–6 sit on the even pins 22–32 and
+7–12 on the odd pins 23–33, which is why [odor index](#order-is-meaning) must come from declaration order,
+not pin order.*
+
 **Saving previews what it would break.** `hardware.preview` validates as the operator types and reports `breaks` — the saved tasks this wiring would *newly* break, computed by validating each definition under both wirings (`hardware/service.py`'s `impact_of`). `hardware.save` without `confirm` refuses such a change with `RIG_WOULD_BREAK_TASKS`; with `confirm: true` it writes anyway. Rewiring is the operator's call; the app only refuses to let it happen unnoticed. A document that fails validation is never written.
 
 ### Wiring rules
@@ -466,6 +479,11 @@ A well-formed document describing an impossible box is a successful reply carryi
 ## Strobe vocabulary
 
 `rig/schema/strobe_vocab.v1.json` is the registry of every `BF_*` code (`rig.strobes` over the wire), read by `registry.vocabulary()`. It is shown read-only at `/task/strobes`. The page lives on the Task tab rather than Rig because a code is what a *condition is named by* — the trial table's onset picker is its only consumer — while a pin is compile-time input that belongs to the box.
+
+![The Strobe vocabulary page: a summary line (38 codes in use, 4 retired and reserved, the free ranges to issue from), the In use table listing each code, its BF name and meaning, and below it the Retired table starting with 110 DUMMY_SOLENOID_CLICK_1](images/task-strobes.webp)
+
+*The odor onsets run 101–109 then 114–116, stepping over the retired 110–113, which is why a code is always
+looked up by name.*
 
 ### Append only
 
@@ -681,6 +699,11 @@ The conditions are **one node carrying `variants`**, drawn as a tick strip, not 
 
 `liveNodeId` walks the codes newest-first and returns the first node whose `entryNames` contains the code's name; `useLiveNode` scans the last `TAIL` strobes, and the condition lookup a wider `CONDITION_TAIL`, because a correction trial's repeated pokes can push the onset out of the short window. The newest-first walk is what disambiguates `LIGHTS_OFF`, which every path emits: each abort strobes its own code and then `INVALID_TRIAL` immediately after. On error paths the outcome strobe *is* the start of a long silent delay, so an outcome marked `settlesToIti` hands the token to `iti` after `OUTCOME_SETTLE_MS`.
 
+![A running box's panel in Mission Control: the Trial flow diagram with the live token on ITI, the collapsed condition node labelled Odor 3 with its tick lit, a status line reading "ITI · Odor 3 → left well", and below it a P(right | odor) chart, an outcome mix, live metrics and recent strobes](images/box-panel.webp)
+
+*The same derivation live, on a box's panel. While a condition is in play (`liveConditionId`), the
+collapsed node takes that condition's label and lights its tick.*
+
 ### Layout
 
 > [!CAUTION]
@@ -694,21 +717,37 @@ The Task tab answers *what the animal does*; the Rig tab answers *what this box 
 
 `/task` (`routes/Task.tsx`) lists this rig's saved tasks (`TaskRow`), with open, **Duplicate**, delete and create; doors to the strobe vocabulary and the walkthrough; and `LibraryStatusNote`, since a damaged install is the one thing that stops a task existing at all. Duplicate opens an **unsaved** copy named clear of every saved task (`GRGL copy`, `GRGL copy 2`) and **drops `legacyNames`**: a legacy name resolves to one sketch, so a copy carrying it would silently take over or lose the historical runs it decodes.
 
+![The Task landing: a New task row ("from scratch — or duplicate one below"), three saved tasks (4-Odor Discrimination, weighted; Shaping - Both Sides, pool; 2-Odor Discrimination, anti-bias) each with its conditions, stages and a ready dot, the Strobes and Walkthrough doors, and a library note that six sketches ship with this version](images/task-landing.webp)
+
 ### Editor
 
 `/task/new` and `/task/:taskId` (`routes/TaskEditor.tsx`): `TaskDetails` (category, `legacyNames`, notes), the derived state machine (`SketchStateMachine`, with a `ConditionRail` of real buttons since the SVG is inaccessible), `TrialTypeTable`, `StageRamp`, and the `ParameterInspector` rail. The state machine and the problem list stay on screen beside what is being edited, because the diagram is the fastest check that an edit did what was meant. **Every redraw comes from `tasks.preview`**: the diagram is derived from the profile the *current* definition compiles to, and validation needs the wiring, which the frontend does not hold.
+
+![The task editor for 2-Odor Discrimination: an outline rail (Details, Conditions, Shaping ramp, Parameters), the derived State machine with each state's parameter-group chips under it and a condition list below, the START meter at 240/640 in the header, and the Parameters rail with its Session, Trial pool, Trial timing, Abstention penalty and Anti-bias selection tabs](images/task-editor.webp)
+
+*The [derived state machine](#derived-state-machine) as the editor draws it: the conditions are one "Odor" node
+with a tick per condition, the chips under each state are its `governedBy` groups, and hovering a rail tab
+lights the states it governs.*
 
 ### Trial table
 
 - Every cell is a **channel name or code name**, never a pin or index; the rig's wiring supplies the options.
 - Row order is the contract ([Order is meaning](#order-is-meaning)); there is no drag handle.
 - Each go row carries its **reward volume** (ms) and, under pool or weighted selection only, its **weight**. These columns are on the row, not the rail, so they cannot outlive the row they describe.
-- Each row is **named** (`TSK110`/`TSK111`) and shows a plain contingency sentence ("odor line 3 → left well, paid from fluid 2"), the one rendering that catches `TSK103` by eye.
+- Each row is **named** (`TSK110`/`TSK111`) and shows a plain contingency sentence in the rig's own channel labels ("odor line 3 → left well, paid from fluid 0 · plumbed to left well"), the one rendering that catches `TSK103` by eye: the reward chip names the well its line is plumbed to, and is flagged when that is not the answering well.
 - The onset picker offers only **numbered** `*_<n>_ON` codes. A bare `_ON` suffix would offer `LIGHTS_ON`, which the runner emits every trial, and a task that picked it would pool two conditions silently.
+
+![The Trial types table under anti-bias selection: rows "Odor A → right" and "Odor B → left", each with go/no-go, odor line, onset code, answers at, paid from and reward ms, and a contingency line such as "odor line 3 → left well, paid from fluid 0 · plumbed to left well"; below, Holds & windows with a single stage-0 row](images/task-trial-table.webp)
 
 ### Ramp and START meter
 
-`StageRamp` shows the whole schedule; row 0 has no "engages at"; a new row is seeded from the row before it, never from a defaults table, so no stage appears carrying numbers nobody chose. The header's **`START` meter** shows the built line's length against `START_LINE_MAX`. It is not decoration: that cap is the one budget an operator can exhaust without noticing, and each added stage costs five tokens.
+`StageRamp` shows the whole schedule, titled "Holds & windows" while it has one row and "Shaping ramp — N stages" once it has more; row 0 has no "engages at"; a new row is seeded from the row before it, never from a defaults table, so no stage appears carrying numbers nobody chose. The header's **`START` meter** shows the built line's length against `START_LINE_MAX`. It is not decoration: that cap is the one budget an operator can exhaust without noticing, and each added stage costs five tokens.
+
+![A shaping task under Pool selection: both trial rows now carry a Weight beside Reward ms, and the Shaping ramp — 5 stages table gives each stage the trial it engages at (20, 40, 70, 110) with its odor hold, well hold, response window and odor port window](images/task-ramp.webp)
+
+*Under pool or weighted selection each row gains its weight; the ramp declares every ramped hold per stage,
+which is what stops the firmware's stage boundaries overwriting a single value
+([Ramped values](#ramped-values)).*
 
 ### Parameter rail
 

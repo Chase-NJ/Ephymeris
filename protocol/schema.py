@@ -1,21 +1,27 @@
-"""The machine-readable wire schema — the single source both mirrors are
-generated from.
+"""The wire schema — the single source of truth for every command, event,
+error code and payload shape on the WebSocket between frontend and sidecar.
 
-`docs/websocket-protocol.md` remains the prose authority (rationale,
-invariants, lifecycle); this file is the *shape* authority. When they disagree,
-fix whichever is wrong — but the generated mirrors always follow this file.
+Everything else is generated from this file: the two code mirrors
+(`sidecar/ephymeris_sidecar/protocol.py`, `src/lib/ws/protocol.ts`) and the
+human-readable reference `docs/PROTOCOL.md`. Every `doc=` here is rendered into
+that reference, so a command's behaviour, refusals and reasons belong in its
+`doc=`. The rules that govern the wire (connection lifecycle, the envelope,
+replay on connect, box numbers rather than ports) are in
+`docs/ARCHITECTURE.md#wire-protocol`.
 
 To change the wire:
-    1. Edit this file (and the doc).
+    1. Edit this file.
     2. Run `npm run gen:protocol` (or `python protocol/generate.py`).
-    3. Commit the regenerated mirrors with your change —
-       `sidecar/tests/test_protocol_contract.py` fails if they are stale.
+    3. Commit the regenerated mirrors and reference with your change —
+       `sidecar/tests/test_protocol_contract.py` fails if they are stale, or if
+       a command, event or error code has no `doc=`.
 
 Shape conventions, matching what the sidecar actually emits:
   - `optional` (key may be absent) is distinct from `nullable` (key present,
     value may be null). The validator enforces the difference.
   - Timestamps are ISO-8601 strings; `ts` on the envelope is float seconds.
-  - `box` is always a box number 1–6, never a port address (§5.1).
+  - `box` is always a box number 1–6, never a port address
+    (`docs/ARCHITECTURE.md#wire-protocol`).
 """
 
 from __future__ import annotations
@@ -56,18 +62,19 @@ SHAPES = (
     Shape(
         "PortStateName",
         lit("IDLE", "PASSTHROUGH", "FLASHING", "RESETTING", "IN_SESSION", "ERROR"),
-        doc="Per-port state machine names (`dashboard.md` §5.1). One owner at a "
+        doc="Per-port state machine names (`ARCHITECTURE.md#port-state-machine`). One owner at a "
         "time: FLASHING, RESETTING and IN_SESSION are each exclusive, and the "
         "first two force-release PASSTHROUGH and auto-resume it afterward.",
     ),
     Shape(
         "OutputLine",
         obj(
-            f("dir", lit("rx", "tx"), doc="Sent commands interleave as `tx` (§5.3)."),
+            f("dir", lit("rx", "tx"), doc="Sent commands interleave as `tx`, so scrollback stays chronological."),
             f("text", STR),
             f("ts", FLOAT),
         ),
-        doc="One passthrough console line. Debug output, never persisted (§5.4).",
+        doc="One passthrough console line. Debug output, never persisted beyond "
+        "the sidecar's capped in-memory ring buffer.",
     ),
     Shape(
         "DetectedBoard",
@@ -82,7 +89,7 @@ SHAPES = (
     Shape(
         "LibraryState",
         lit("ok", "empty", "damaged"),
-        doc="The three bundled-sketch-library states of `tasks.md` §2.4. There is "
+        doc="The three bundled-sketch-library states (`TASKS.md#sketch-library`). There is "
         "no `not_configured`: sketches ship with the app, so there is nothing to "
         "configure and no first-run state to be in.",
     ),
@@ -118,13 +125,14 @@ SHAPES = (
             f("library", Ref("SketchLibraryStatus")),
             f("sketches", ListOf(Ref("SketchEntry"))),
             f("skipped", ListOf(Ref("SkippedEntry"))),
-            f("skippedCount", INT, doc='Drives the "Partial" note (`tasks.md` §2.4).'),
+            f("skippedCount", INT, doc='Drives the "Partial" note (`TASKS.md#sketch-library`).'),
             f("libraries", ListOf(STR)),
             f("librariesPath", nullable(STR)),
         ),
-        doc="The full result of a bundled-library scan (`tasks.md` §2.3).",
+        doc="The full result of a library scan (`TASKS.md#sketch-library`): the "
+        "bundled sketches plus this rig's saved task profiles.",
     ),
-    # Settings (pushed Tauri → sidecar; the shell owns them — §4 of the doc)
+    # Settings (pushed Tauri → sidecar; the shell owns them — ARCHITECTURE.md#settings)
     Shape(
         "BoxBinding",
         obj(
@@ -136,7 +144,7 @@ SHAPES = (
                 nullable(INT),
                 optional=True,
                 doc="Which of the recording controller's digital inputs this box's "
-                "sync line is wired to, 1–16 (`recording.md` §3). Null = the box is "
+                "sync line is wired to, 1–16 (`RECORDING.md#the-sync-line`). Null = the box is "
                 "not wired for recording. A binding like `hardwareId`, and for the "
                 "same reason a setting rather than part of the rig document: it "
                 "describes a cable between two instruments, not the box.",
@@ -163,10 +171,11 @@ SHAPES = (
                 "utilitySketchName",
                 nullable(STR),
                 doc="The hardware utility sketch every idle box is returned to "
-                "(`settings.md` §8). Null turns the baseline off. Keyed by sketch "
-                "FOLDER NAME rather than by path, matching `taskDefaults` — the "
-                "path moved when sketches began shipping with the app, and the "
-                "name is what a session file already records.",
+                "(`ARCHITECTURE.md#hardware-utility-baseline`). Null turns the "
+                "baseline off. Keyed by sketch FOLDER NAME rather than by path, "
+                "matching `taskDefaults`: the path differs per install, and the "
+                "name is what a session file already records. A stale store's "
+                "path-valued `utilitySketchPath` is healed to its basename.",
             ),
             f("defaultBaud", INT),
             f("boxes", ListOf(Ref("BoxBinding"))),
@@ -174,8 +183,8 @@ SHAPES = (
                 "intan",
                 Ref("IntanSettings"),
                 optional=True,
-                doc="Absent on a store written before recording existed; both "
-                "ends fall back to RHX's defaults (5000/5001/5002).",
+                doc="May be absent; both ends then fall back to RHX's default "
+                "ports (5000/5001/5002).",
             ),
             f(
                 "recordingDefaults",
@@ -189,7 +198,7 @@ SHAPES = (
                 "constellation",
                 nullable(STR),
                 doc="Zodiac layout id for the box-status constellation; null = "
-                "the legacy fixed layout. Shell-only — the sidecar ignores it.",
+                "the fixed default layout. Shell-only — the sidecar ignores it.",
             ),
             f(
                 "constellationSlots",
@@ -201,18 +210,24 @@ SHAPES = (
                 "taskDefaults",
                 MapOf(MapOf(ANY)),
                 doc="Sketch folder name → this rig's default task parameters for "
-                "it, keyed by `metadataKey` (`tasks.md` §6.1). Keyed by "
-                "NAME, not path: the two lab machines keep their Arduino "
-                "Directories in different places, and the name is what the "
-                "session file already records. Shell-only — the frontend merges "
-                "these under the profile's own defaults and sends the result at "
-                "`sessions.confirmMapping`, so the sidecar never reads them.",
+                "it, keyed by `metadataKey` — the middle layer of the "
+                "three-layer merge (`TASKS.md#the-start-line`). Keyed by NAME, "
+                "not path, because the name is what the session file records. "
+                "Shell-only — the frontend merges these under the profile's own "
+                "defaults and sends the result as each box's `config` at "
+                "`sessions.confirmMapping`, so there is exactly one place a "
+                "value can enter a `START` line and the sidecar never reads "
+                "these.",
             ),
         ),
-        doc="The Tauri-side store's schema. The sidecar reads the keys it needs "
-        "and ignores the rest, so adding a setting is deliberately a non-event.",
+        doc="The Tauri-side store's schema; the store is the source of truth "
+        "(`ARCHITECTURE.md#settings`). The sidecar reads `dataDirectory`, "
+        "`backupDirectory`, `arduinoCliPath`, `utilitySketchName`, "
+        "`defaultBaud`, `boxes` and `intan`, and ignores the rest — including "
+        "keys a stale store still carries — so adding a setting the sidecar "
+        "doesn't consume is deliberately a non-event.",
     ),
-    # Hardware utility baseline (settings.md §8)
+    # Hardware utility baseline (ARCHITECTURE.md#hardware-utility-baseline)
     Shape(
         "UtilityBaselineState",
         lit("unknown", "restoring", "ready", "busy", "held", "pinned", "unavailable", "failed"),
@@ -221,7 +236,11 @@ SHAPES = (
         "mapping owns the rig) and `pinned` (the operator flashed another "
         "sketch here from Debug Mode, and it stays until they ask for the "
         "baseline back) are all 'not now' rather than 'not working' — "
-        "the distinction is the whole reason a restore never fights the user.",
+        "the distinction is the whole reason a restore never fights the user. "
+        "Only `failed` is a fault. A pin holds through every AUTOMATIC "
+        "restore trigger and is released by any `utility.ensure` naming the "
+        "box, a session releasing the rig, the board vanishing, a changed "
+        "utility sketch, or flashing the utility sketch by hand.",
     ),
     Shape(
         "UtilityBoxState",
@@ -258,20 +277,22 @@ SHAPES = (
             f(
                 "message",
                 nullable(STR),
-                doc="Why the baseline isn't operating at all (unset sketch, a "
-                "path no longer in the Arduino Directory, a non-utility profile).",
+                doc="Why the baseline isn't operating at all (no sketch set, a "
+                "name not in the bundled library, a non-utility profile).",
             ),
             f("boxes", ListOf(Ref("UtilityBoxState"))),
         ),
         doc="The whole baseline picture — one snapshot, shared by the command "
         "and the event, so a client never merges two shapes.",
     ),
-    # Backup Directory mirroring (data.md §7)
+    # Backup Directory mirroring (DATA.md#backup-mirroring)
     Shape(
         "BackupState",
         lit("disabled", "pending", "ok", "failed"),
-        doc='`pending` = directory set but no pass has completed yet — a fresh '
-        "unreachable network path must not read as healthy for its first 10 s.",
+        doc='`pending` = directory set but no pass has completed yet, distinct '
+        "from `ok` (a pass succeeded) and `failed` (the last pass didn't) — a "
+        "freshly set, unreachable network path must not read as healthy "
+        "before its first pass.",
     ),
     Shape(
         "BackupStatus",
@@ -298,14 +319,19 @@ SHAPES = (
             f("directory", STR),
         ),
     ),
-    # Cohorts (cohorts.md §1)
+    # Cohorts (DATA.md#cohorts-animals-and-groups)
     Shape("Sex", lit("M", "F", "unknown")),
     Shape(
         "Group",
         obj(
             f("id", STR),
             f("name", STR),
-            f("order", INT, doc="Run order for consecutive execution."),
+            f(
+                "order",
+                INT,
+                doc="Display order of the cohort's groups. Not a run order: "
+                "any group may run at any time, and more than once.",
+            ),
         ),
     ),
     Shape(
@@ -345,7 +371,7 @@ SHAPES = (
                 "the world's weather, never its type, hue or size.",
             ),
         ),
-        doc="How a cohort's world looks (cohorts.md §5). **Null is the normal "
+        doc="How a cohort's world looks (`ARCHITECTURE.md#frontend`). **Null is the normal "
         "state**: an untouched cohort derives every field from a hash of its "
         "`id`, so it already has a stable, distinct planet and the column that "
         "stores this carries no data for it.",
@@ -355,7 +381,12 @@ SHAPES = (
         obj(
             f("id", STR),
             f("name", STR),
-            f("dataFolder", STR, doc="Resolved once at creation, persisted verbatim (§8)."),
+            f(
+                "dataFolder",
+                STR,
+                doc="Resolved once at creation and persisted verbatim; renaming the "
+                "cohort never moves it (`DATA.md#cohorts-animals-and-groups`).",
+            ),
             f("animals", ListOf(Ref("Animal"))),
             f("groups", ListOf(Ref("Group")), doc="Always ≥ 1 — a default group always exists."),
             f("archivedAt", nullable(STR)),
@@ -440,20 +471,27 @@ SHAPES = (
             f(
                 "rejected",
                 nullable(Ref("GroupRejection")),
-                doc="Set when the request would break the six-per-group constraint "
-                "(§7.2) — guidance rather than a failure, so not an error reply.",
+                doc="Set when the request would break the six-animals-per-group "
+                "hard constraint (one box each). Guidance rather than a failure, "
+                "so not an error reply: `minimumGroups` is the smallest viable "
+                "count, which the user can accept.",
             ),
         ),
         doc="An Auto-Balance preview. Nothing is written; apply via cohorts.update.",
     ),
-    # Prefixes, sessions, Task Profiles (data.md §3.1–§6)
+    # Prefixes, sessions, Task Profiles (DATA.md#sessions-and-runs)
     Shape("Prefix", obj(f("id", STR), f("name", STR)), doc="Global — shared across cohorts."),
     Shape("SessionStatus", lit("configuring", "running", "completed", "aborted")),
     Shape(
         "GroupRun",
         obj(
             f("groupId", STR),
-            f("order", INT),
+            f(
+                "order",
+                INT,
+                doc="0-based position in the session's run sequence. A group "
+                "may appear more than once.",
+            ),
             f("startedAt", STR),
             f("endedAt", nullable(STR)),
         ),
@@ -465,7 +503,7 @@ SHAPES = (
             f("cohortId", STR),
             f("prefixId", STR),
             f("prefixName", STR),
-            f("sessionNumber", STR, doc="Free text, not strictly numeric (§10)."),
+            f("sessionNumber", STR, doc="Free text, not strictly numeric — never sort by it."),
             f("date", STR, doc="ISO `YYYY-MM-DD`."),
             f("startedAt", STR),
             f("endedAt", nullable(STR)),
@@ -482,8 +520,8 @@ SHAPES = (
                 "recording",
                 nullable(Ref("SessionRecording")),
                 doc="Set when the session is also an Intan recording "
-                "(`recording.md` §6). Null = behavior only, which is every "
-                "session from before recording existed.",
+                "(`RECORDING.md#what-is-written`): one entry per group run "
+                "recorded. Null = behavior only.",
             ),
         ),
     ),
@@ -492,7 +530,7 @@ SHAPES = (
         "ConfigField",
         obj(
             f("metadataKey", STR, doc="The `.json`/`.mat` field name the form collects under."),
-            f("wireKey", STR, doc="The `START` command token (§6.3)."),
+            f("wireKey", STR, doc="The `START` command token (`TASKS.md#the-start-line`)."),
             f("label", STR),
             f("type", Ref("ConfigFieldType")),
             f("default", ANY),
@@ -500,8 +538,10 @@ SHAPES = (
                 "group",
                 STR,
                 optional=True,
-                doc="Section heading the form files this field under. Absent = "
-                "ungrouped, which is how every pre-existing profile renders.",
+                doc="Section heading the form files this field under; absent = "
+                "ungrouped. Part of `profile_hash`, so re-filing a field splits "
+                "a task's recorded runs from its future ones "
+                "(`TASKS.md#profile-and-params-hashes`).",
             ),
             f("unit", STR, optional=True, doc='Suffix shown after the input, e.g. "ms".'),
             f("min", NUMBER, optional=True, doc="Inclusive bound the form clamps to."),
@@ -517,8 +557,8 @@ SHAPES = (
             ),
         ),
         doc="One operator-tunable parameter. Everything past `default` is "
-        "presentation metadata and optional — a profile that declares none "
-        "renders exactly as it did before these keys existed.",
+        "optional presentation metadata, so a three-field profile and a "
+        "forty-field one share one code path.",
     ),
     Shape(
         "LiveMetric",
@@ -534,7 +574,9 @@ SHAPES = (
     Shape(
         "ProfileKind",
         lit("behavior", "utility"),
-        doc="A scored IN_SESSION task, or a PASSTHROUGH tool (§6.2).",
+        doc="A scored IN_SESSION task, or a PASSTHROUGH tool (`TASKS.md#task-profile`). "
+        "A behavior profile uses `config`/`strobes`/`liveMetrics`; a utility "
+        "profile uses `controls`/`telemetry`/`identify`.",
     ),
     Shape("ControlOption", obj(f("label", STR), f("command", STR))),
     Shape(
@@ -570,20 +612,22 @@ SHAPES = (
                 "control surface.",
             ),
         ),
-        doc="A utility control rendered in Debug Mode (§6.6); sends over port.send.",
+        doc="A utility control rendered in Debug Mode (`TASKS.md#task-profile`). "
+        "Sends over `port.send` — no command of its own.",
     ),
     Shape("TelemetryField", obj(f("key", STR), f("label", STR))),
     Shape(
         "TelemetrySpec",
         obj(f("match", STR), f("fields", ListOf(Ref("TelemetryField")))),
         doc="How to parse a utility sketch's non-persisted STATUS lines out of "
-        "port.output (§6.6). Parsed client-side — nothing here is stored.",
+        "`port.output` (`TASKS.md#task-profile`). Parsed client-side — nothing "
+        "here is stored.",
     ),
     Shape(
         "IdentifySpec",
         obj(f("on", STR), f("off", STR)),
         doc="The two commands that make a box announce itself — a trial light, "
-        "a buzzer, whatever the rig has (`settings.md` §8.3). "
+        "a buzzer, whatever the rig has (`ARCHITECTURE.md#hardware-utility-baseline`). "
         "Declared by the sketch so the app never has to know that a Hart-lab "
         "box says `ON LIGHT`.",
     ),
@@ -605,7 +649,7 @@ SHAPES = (
                 "legacyNames",
                 ListOf(STR),
                 doc="Names older software wrote for this same task, so the archive "
-                "walk can decode historical runs (`tasks.md` §3.7). Declared, "
+                "walk can decode historical runs (`TASKS.md#task-profile`). Declared, "
                 "never inferred.",
             ),
             f("telemetry", Ref("TelemetrySpec"), optional=True, doc="Utility profiles only."),
@@ -618,8 +662,9 @@ SHAPES = (
                 "degrades around rather than refusing.",
             ),
         ),
-        doc="Parsed from the sketch's task.json sibling (§6.1); passed through "
-        "verbatim — the sidecar validates shape but doesn't reinterpret.",
+        doc="Parsed from the sketch's `task.json` sibling "
+        "(`TASKS.md#task-profile`); passed through verbatim — the sidecar "
+        "validates shape but doesn't reinterpret.",
     ),
     Shape(
         "SessionBoxMapping",
@@ -629,7 +674,8 @@ SHAPES = (
             f("sketchPath", STR),
             f("config", MapOf(ANY), doc="Keyed by `metadataKey`, per the Task Profile."),
         ),
-        doc="One box's session-local mapping + task config (`dashboard.md` §7.3).",
+        doc="One box's session-local mapping + task config "
+        "(`ARCHITECTURE.md#session-lifecycle`).",
     ),
     Shape(
         "SessionBox",
@@ -647,7 +693,7 @@ SHAPES = (
                 "What lets a reloaded Mission Control resume its elapsed clocks.",
             ),
         ),
-        doc="One box as the runner sees it — the source Mission Control renders (§5).",
+        doc="One box as the runner sees it — the source Mission Control renders.",
     ),
     Shape(
         "TelemetryMetric",
@@ -682,7 +728,7 @@ SHAPES = (
         obj(
             f("box", INT),
             f("animalId", STR),
-            f("stopReason", STR, doc="`dashboard.md` §10.4's stop-reason set."),
+            f("stopReason", STR, doc="One of the stop reasons in `ARCHITECTURE.md#session-lifecycle`."),
             f("filePath", nullable(STR)),
         ),
     ),
@@ -690,7 +736,12 @@ SHAPES = (
         "RunnerSession",
         obj(
             f("session", Ref("Session")),
-            f("groupId", nullable(STR), doc="Null only before any mapping was confirmed."),
+            f(
+                "groupId",
+                nullable(STR),
+                doc="Null when the runner holds no group — before a mapping is "
+                "confirmed, and between groups.",
+            ),
             f("boxes", ListOf(Ref("SessionBox"))),
         ),
         doc="The runner-held session — the same shape a sessions.status reply carries.",
@@ -721,7 +772,7 @@ SHAPES = (
         doc="Everything unfinished, discoverable with no prior knowledge of ids. "
         "Also the session.lifecycle payload — one shape, one emitter.",
     ),
-    # Analytics (websocket-protocol.md §3.4)
+    # Analytics (DATA.md#analytics-views)
     Shape(
         "SessionListItem",
         obj(
@@ -763,7 +814,8 @@ SHAPES = (
                 "recorded",
                 BOOL,
                 doc="True when this machine's database knows the folder — a session row, or "
-                "adopted runs from a rescan (§8.1 writes no session row on purpose). False only "
+                "adopted runs from a rescan, which writes no session row on purpose "
+                "(`DATA.md#reading-the-archive`). False only "
                 "for a folder another Ephymeris machine wrote that no rescan here has adopted.",
             ),
         ),
@@ -806,14 +858,14 @@ SHAPES = (
                 "answerSide",
                 nullable(Ref("AnswerSide")),
                 doc="Which answer this condition rewards, read off its metric's "
-                "`successCode` (`tasks.md` §4.10). Null whenever the profile "
+                "`successCode` (`TASKS.md#derived-state-machine`). Null whenever the profile "
                 "cannot prove one — never guessed, and never taken from "
                 "`alternateCode`, which on a no-go metric means 'any port will "
                 "do'. This is what lets the strategy plane fold N conditions "
                 "onto two axes without knowing anything about odors.",
             ),
         ),
-        doc="One metric's whole-session result (`data.md` §9.2, §3.5).",
+        doc="One metric's whole-session result (`DATA.md#derived-metrics`).",
     ),
     Shape(
         "TrialOutcomes",
@@ -853,7 +905,7 @@ SHAPES = (
             f("sideLow", nullable(FLOAT)),
             f("sideHigh", nullable(FLOAT)),
         ),
-        doc="What actually happened per trial (`data.md` §9.8). Distinct "
+        doc="What actually happened per trial (`DATA.md#derived-metrics`). Distinct "
         "from the declared metrics, which are reward-*unconditional* — they "
         "score a detected poke whether or not the fluid hold cleared.",
     ),
@@ -889,7 +941,7 @@ SHAPES = (
             f("engagedHigh", nullable(FLOAT)),
         ),
         doc="How far each offered trial got before the animal dropped out "
-        "(`data.md` §9.10). Delimited on the trial light, not on odor "
+        "(`DATA.md#derived-metrics`). Delimited on the trial light, not on odor "
         "onset — the firmware only strobes odor-on after the animal has poked "
         "and held, so every other count in a run summary is silently "
         "conditioned on engagement and none of them can measure it. A ladder, "
@@ -909,15 +961,16 @@ SHAPES = (
             ),
             f("outcomes", Ref("TrialOutcomes")),
         ),
-        doc="TrialOutcomes restricted to one declared condition (`data.md` "
-        "§3.9), in authored liveMetrics order. Answers 'how many trials of this "
+        doc="TrialOutcomes restricted to one declared condition "
+        "(`DATA.md#derived-metrics`), in authored liveMetrics order; the "
+        "entries partition `RunSummary.outcomes` field for field. Answers 'how many trials of this "
         "kind were administered, and how many of those paid out'.",
     ),
     Shape("RunStatus", lit("ok", "no-metrics", "missing", "unreadable")),
     Shape(
         "ProfileSource",
         lit("snapshot", "sketch-current", "inferred", "unavailable"),
-        doc="How much the decoding can be trusted (§8.2). Four states — "
+        doc="How much the decoding can be trusted (`DATA.md#reading-the-archive`). Four states — "
         "`sketch-current` means the profile may have changed since the run; "
         "`inferred` means no profile resolved at all and the conditions were "
         "read out of the recorded stream itself, sound because the strobe "
@@ -932,7 +985,8 @@ SHAPES = (
             f(
                 "boxNumber",
                 nullable(INT),
-                doc="Null for an adopted orphan (§8.1) — a filename carries no box.",
+                doc="Null for an adopted orphan (`DATA.md#reading-the-archive`) — a "
+                "filename carries no box.",
             ),
             f("startedAt", STR),
             f("endedAt", nullable(STR)),
@@ -945,18 +999,18 @@ SHAPES = (
                 "segment of `sketchPath`. Not the same question as "
                 "`sketchPath`, which is where THIS machine found a `task.json` "
                 "to decode with and is empty for a file copied from another "
-                "rig (`data.md` §8.2). Empty only when the file named no "
+                "rig (`DATA.md#reading-the-archive`). Empty only when the file named no "
                 "sketch at all.",
             ),
             f("profileHash", nullable(STR)),
             f(
                 "paramsHash",
                 nullable(STR),
-                doc="Hash of the task parameters this run used (`data.md` "
-                "§6.9). Comparability is the PAIR with `profileHash` — that one "
+                doc="Hash of the task parameters this run used "
+                "(`TASKS.md#profile-and-params-hashes`). Comparability is the PAIR with `profileHash` — that one "
                 "covers the profile declaration, which is identical across every "
-                "run of a sketch however it was tuned. Null for a run recorded "
-                "before parameters were operator-set.",
+                "run of a sketch however it was tuned. Null when the run "
+                "recorded no parameters.",
             ),
             f("profileSource", Ref("ProfileSource")),
             f("stale", BOOL, doc="The file is gone but this is its last known-good summary."),
@@ -966,12 +1020,13 @@ SHAPES = (
                 "overall",
                 nullable(Ref("MetricSummary")),
                 doc="Accuracy pooled across every metric — the only single number "
-                "that can tell learning from a side bias (§3.7).",
+                "that can tell learning from a side bias (`DATA.md#derived-metrics`).",
             ),
             f(
                 "outcomes",
                 nullable(Ref("TrialOutcomes")),
-                doc="Null when the profile declares no reward vocabulary (§3.8) — "
+                doc="Null when the profile declares no reward vocabulary "
+                "(`DATA.md#derived-metrics`) — "
                 "absent rather than zeroed, since 'this task has no notion of a "
                 "reward delivery' is not 'this animal earned nothing'.",
             ),
@@ -986,7 +1041,7 @@ SHAPES = (
                 "engagement",
                 nullable(Ref("TrialEngagement")),
                 doc="How many trials the box offered and how far each got "
-                "(§3.10) — the layer above every other count here. Null when "
+                "(`DATA.md#derived-metrics`) — the layer above every other count here. Null when "
                 "the profile declares no trial light, on the same rule as "
                 "`outcomes`: a zeroed ladder would read as an animal that never "
                 "engaged rather than as a task that can't say.",
@@ -1040,7 +1095,8 @@ SHAPES = (
             f("metrics", ListOf(Ref("ProfileMetricInfo"))),
             f("runCount", INT),
         ),
-        doc="A comparability set: two runs share axes only if they share a hash (§4.3).",
+        doc="A comparability set: two runs share axes only if they share a hash "
+        "(`TASKS.md#profile-and-params-hashes`).",
     ),
     Shape("AnalyticsWarning", obj(f("code", STR), f("runId", STR), f("message", STR))),
     Shape(
@@ -1105,11 +1161,16 @@ SHAPES = (
                 doc="Counted trials resolved across *both* conditions at this "
                 "sample — the only shared clock the two metrics have.",
             ),
-            f("x", FLOAT),
-            f("y", FLOAT),
+            f(
+                "x",
+                FLOAT,
+                doc="Rolling P pooled over every condition answered at one "
+                "well. The axes are SIDES, not conditions.",
+            ),
+            f("y", FLOAT, doc="The same for the conditions answered at the other well."),
             f("n", INT, doc="The smaller of the two rolling window lengths."),
         ),
-        doc="One sample of the within-session strategy walk (`data.md` §11.1).",
+        doc="One sample of the within-session strategy walk (`DATA.md#analytics-views`).",
     ),
     Shape(
         "TrialRecord",
@@ -1139,7 +1200,7 @@ SHAPES = (
                 "no-response/aborted trials, which nothing settles.",
             ),
         ),
-        doc="One classified trial (`data.md` §9.11) — the same classification "
+        doc="One classified trial (`DATA.md#derived-metrics`) — the same classification "
         "pass the outcome tallies come from, kept as a sequence instead of "
         "being summed away.",
     ),
@@ -1154,10 +1215,12 @@ SHAPES = (
                 ListOf(Ref("StrategyPoint")),
                 doc="The joint walk through the strategy plane. Always rolling, "
                 "whatever `mode` is — 'what strategy is running right now' is a "
-                "rolling question. Empty unless the profile declares exactly two "
-                "conditions. Cannot be assembled client-side from `metrics`: "
-                "those are indexed by each metric's own counted trials, which "
-                "interleave.",
+                "rolling question. Empty when the profile's conditions can't be "
+                "split into two opposing sides (`derive.strategy_axes`). Starts "
+                "only once both windows hold enough counted trials, since a "
+                "one-trial proportion pins the walk to a corner. Cannot be "
+                "assembled client-side from `metrics`: those are indexed by each "
+                "metric's own counted trials, which interleave.",
             ),
             f(
                 "trials",
@@ -1178,7 +1241,12 @@ SHAPES = (
         "RescanOrphan",
         obj(
             f("path", STR),
-            f("animalId", nullable(STR), doc="Matched by name, never guessed (§8.1)."),
+            f(
+                "animalId",
+                nullable(STR),
+                doc="Matched by name against the roster, never guessed "
+                "(`DATA.md#reading-the-archive`).",
+            ),
             f(
                 "animalName",
                 nullable(STR),
@@ -1191,7 +1259,7 @@ SHAPES = (
                 doc="Which recording of the animal `animalId` came from. "
                 "`filename` means the document's `rat` field matched no animal "
                 "and the file stem did — an exact match against the roster on a "
-                "second recording of the same fact, never a guess (§8.1). Null "
+                "second recording of the same fact, never a guess. Null "
                 "when the run is unattributed.",
             ),
             f("date", nullable(STR)),
@@ -1211,7 +1279,8 @@ SHAPES = (
             ),
             f("adopted", INT, doc="`adopted_runs` rows dropped."),
         ),
-        doc="What the rescan removed because the disk no longer has it (§8.6). "
+        doc="What the rescan removed because the disk no longer has it "
+        "(`DATA.md#reading-the-archive`). "
         "Bookkeeping only — the rescan never deletes a file.",
     ),
     Shape(
@@ -1224,21 +1293,21 @@ SHAPES = (
                 doc="What this scan **decided** — not how many adopted rows the "
                 "cohort has. A file already adopted from that same path and "
                 "unchanged since is carried forward unread, so a rescan that "
-                "changed nothing reports 0 (§8.7).",
+                "changed nothing reports 0.",
             ),
             f(
                 "pruned",
                 Ref("RescanPruned"),
                 doc="Records reconciled away. Only ever counts paths that are "
                 "**reachable and absent** — a path under an unreachable root is "
-                "left alone, so an unplugged drive can't erase history (§8.6).",
+                "left alone, so an unplugged drive can't erase history.",
             ),
             f(
                 "duplicates",
                 INT,
                 doc="Extra copies of an already-seen run, skipped. A hand-managed "
                 "archive often keeps a consolidated copy beside the per-prefix "
-                "originals; adopting both would double every animal (§8.1).",
+                "originals; adopting both would double every animal.",
             ),
             f("orphans", ListOf(Ref("RescanOrphan"))),
             f("cohortId", STR),
@@ -1302,7 +1371,8 @@ SHAPES = (
             ),
             f("groupIds", ListOf(STR), doc="Its group runs, in order; a group may repeat."),
         ),
-        doc="One session record as the tidy preview names it (data.md §8.8).",
+        doc="One session record as the tidy preview names it "
+        "(`DATA.md#reading-the-archive`).",
     ),
     Shape(
         "TidyMerge",
@@ -1369,7 +1439,7 @@ SHAPES = (
     Shape(
         "SidecarErrorData",
         obj(f("code", STR), f("message", STR), f("detail", ANY)),
-        doc="Failures with no command to attribute them to (§4).",
+        doc="Failures with no command to attribute them to.",
     ),
     # ---------------------------------------------------------------- rig wiring
     Shape(
@@ -1560,9 +1630,9 @@ SHAPES = (
     Shape(
         "RetiredStrobe",
         obj(f("name", STR), f("code", INT)),
-        doc="Emitted by firmware this repository no longer contains. Reserved "
-        "forever: reissuing one would merge two unrelated event types in any "
-        "analysis spanning the change.",
+        doc="A code whose emitter is gone but which recorded sessions contain. "
+        "Reserved forever: reissuing one would merge two unrelated event types "
+        "in any analysis spanning the change.",
     ),
     Shape(
         "StrobeVocabulary",
@@ -1575,11 +1645,14 @@ SHAPES = (
             f("retired", ListOf(Ref("RetiredStrobe"))),
             f("portSlots", MapOf(MapOf(STR)), doc="Slot number → its six per-port code names."),
         ),
-        doc="The append-only strobe registry. Codes are never renumbered, never "
-        "repurposed and never deleted — four years of recorded sessions carry "
-        "them.",
+        doc="The append-only strobe registry (`TASKS.md#strobe-vocabulary`). "
+        "Codes are never renumbered or repurposed: recorded sessions carry "
+        "them, and reissuing one silently merges two unrelated event types in "
+        "any analysis spanning the change. A code whose emitter is gone moves "
+        "to `retired` and stays reserved — a third state, neither declared "
+        "nor free, which `freeRanges` excludes.",
     ),
-    # Intan recording (recording.md)
+    # Intan recording (RECORDING.md)
     Shape(
         "RecordingBox",
         obj(
@@ -1652,7 +1725,8 @@ SHAPES = (
             f("threshold", Ref("RecordingThreshold")),
             f("boxes", ListOf(Ref("RecordingBoxConfig"))),
         ),
-        doc="Everything the recording walkthrough collects (`recording.md` §4).",
+        doc="Everything the recording walkthrough collects "
+        "(`RECORDING.md#recording-walkthrough`).",
     ),
     Shape(
         "IntanState",
@@ -1686,7 +1760,8 @@ SHAPES = (
                 "confirmsWrites",
                 nullable(BOOL),
                 doc="False when this RHX does not answer a `get` that rides a batch, "
-                "so a refused command cannot be detected (`recording.md` §2).",
+                "so a refused command cannot be detected (`RECORDING.md#talking-to-rhx`). "
+                "The values that matter are read back either way.",
             ),
             f("rigHasSync", BOOL, doc="This rig's wiring declares a `sync` channel."),
             f("liveStreams", BOOL, doc="The waveform and spike sockets are both open."),
@@ -1707,7 +1782,7 @@ SHAPES = (
             f("kind", Ref("ScopeKind")),
             f("box", INT),
             f("channel", nullable(STR)),
-            f("data", ANY, doc="Per kind; see `recording.md` §7."),
+            f("data", ANY, doc="Per kind; see `RECORDING.md#live-windows`."),
         ),
     ),
 )
@@ -1720,34 +1795,65 @@ _COHORT = obj(f("cohort", Ref("Cohort")))
 _SESSION = obj(f("session", Ref("Session")))
 
 COMMANDS = (
+    # ------------------------------------------------- connection and settings
     Command(
         "auth",
         args=obj(f("token", STR)),
         result=obj(f("authenticated", BOOL)),
-        doc="Must be the connection's first message (§1.1); consumed by the "
-        "server's authentication step, never dispatched to a handler.",
-        section="Connection & hardware",
+        doc="Must be the connection's first frame. A bad or missing token, any "
+        "other first message, or `AUTH_TIMEOUT_S` (`server.py`) of silence "
+        "closes the connection with code 1008 "
+        "(`ARCHITECTURE.md#wire-protocol`). Consumed by the server's "
+        "authentication step and never dispatched to a handler.",
+        section="Connection and settings",
     ),
     Command(
         "settings.push",
         args=obj(f("settings", Ref("EphymerisSettings"))),
         result=obj(f("library", Ref("SketchLibraryStatus"))),
-        doc="Sent on every connect and change, Tauri → sidecar only. The reply "
-        "carries the bundled library's state (`tasks.md` §2.1) — which no longer "
-        "depends on the settings being pushed, but is still answered here so a "
-        "client learns it on connect without a second round trip.",
+        doc="Sent on every connect and every change, Tauri → sidecar only; the "
+        "sidecar is never the settings source of truth "
+        "(`ARCHITECTURE.md#settings`). Each push rescans the sketch library and "
+        "re-applies the backup directory, box bindings and utility baseline. "
+        "The reply carries the bundled library's state so a client learns it "
+        "on connect without a second round trip.",
     ),
     Command(
         "sketches.refresh",
         result=Ref("SketchDiscovery"),
-        doc="Manual Refresh and Debug Mode mount (`tasks.md` §2.3).",
+        doc="Re-run discovery now (Debug Mode's Refresh, and on its mount) "
+        "(`TASKS.md#sketch-library`). Also broadcasts `sketches.updated`. "
+        "Long-running; the client raises its reply timeout.",
     ),
+    # ------------------------------------------------------------------- ports
     Command(
         "port.passthrough.open",
-        args=obj(f("box", INT), f("baud", INT, optional=True, doc="Defaults to the configured `defaultBaud`, per box.")),
+        args=obj(
+            f(
+                "box",
+                INT,
+            ),
+            f(
+                "baud",
+                INT,
+                optional=True,
+                doc="Omitted means the configured `defaultBaud`.",
+            ),
+        ),
         result=_STATE,
+        doc="Open the box's serial console: `IDLE` → `PASSTHROUGH` "
+        "(`ARCHITECTURE.md#flashing-reset-and-passthrough`). Output then "
+        "arrives as `port.output`. `PORT_NOT_BOUND` for a box with no bound "
+        "board, `PORT_OPEN_FAILED` when the board is absent or the port busy.",
+        section="Ports",
     ),
-    Command("port.passthrough.close", args=obj(f("box", INT)), result=_STATE),
+    Command(
+        "port.passthrough.close",
+        args=obj(f("box", INT)),
+        result=_STATE,
+        doc="Close the console: `PASSTHROUGH` → `IDLE`. An idle port then "
+        "becomes eligible for a utility-baseline restore.",
+    ),
     Command(
         "port.send",
         args=obj(
@@ -1756,7 +1862,9 @@ COMMANDS = (
             f("lineEnding", lit("none", "lf", "cr", "crlf"), optional=True, doc="Default `lf`."),
         ),
         result=obj(f("bytesWritten", INT)),
-        doc="Rejected with SEND_NOT_PASSTHROUGH unless the port is in PASSTHROUGH.",
+        doc="Write one line to the open console. The sent text is echoed into "
+        "`port.output` as `dir: \"tx\"`. Rejected with `SEND_NOT_PASSTHROUGH` "
+        "unless the port is in `PASSTHROUGH`.",
     ),
     Command(
         "port.sendStart",
@@ -1766,40 +1874,93 @@ COMMANDS = (
             f("config", MapOf(ANY), optional=True, doc="Keyed by `metadataKey`, exactly as in a session mapping."),
         ),
         result=obj(f("command", STR, doc="The line as sent, for the console's record."), f("bytesWritten", INT)),
-        doc="Debug Mode's way to start a behaviour sketch by hand: builds the "
-        "`START` line from the sketch's Task Profile the way a session would "
-        "and writes it to the open console. No `SEED` token and no strobe "
-        "parsing — this is not a run and nothing it produces is data. "
-        "Rejected with SEND_NOT_PASSTHROUGH unless the port is in PASSTHROUGH.",
+        doc="Debug Mode's **Send START**: builds the `START` line from the "
+        "named sketch's Task Profile exactly as `sessions.confirmMapping` does "
+        "(a sketch with no profile gets a bare `START`) and writes it to the "
+        "open console, then arms live scoring, reported as `port.telemetry`. "
+        "No `SEED` token and nothing recorded: this is not a run. "
+        "`SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` "
+        "when the line would exceed the firmware's `START_LINE_MAX` "
+        "(`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port "
+        "is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and "
+        "wait for `port.telemetry.running` to go false — the board ends it.",
     ),
     Command(
         "port.flash",
         args=obj(
             f("box", INT),
-            f("sketchPath", STR),
+            f("sketchPath", STR, doc="Must be a path in the current discovery result."),
             f(
                 "suppressPassthroughResume",
                 BOOL,
                 optional=True,
                 doc="Default false. The session flash sequence sets it so boxes "
-                "land in IDLE for the runner to claim (`dashboard.md` §7.4).",
+                "land in `IDLE` for the runner to claim "
+                "(`ARCHITECTURE.md#session-lifecycle`). It is also what tells "
+                "the two kinds of flash apart: without it the flash counts as "
+                "a deliberate Debug Mode flash and the box is **pinned** "
+                "against automatic baseline restores (`UtilityBaselineState`).",
             ),
         ),
-        result=obj(f("state", Ref("PortStateName")), f("resumedPassthrough", BOOL)),
-        doc="Streams flash.progress events carrying this command's `corr`.",
+        result=obj(
+            f("state", Ref("PortStateName")),
+            f(
+                "resumedPassthrough",
+                BOOL,
+                doc="The port was in `PASSTHROUGH` before the flash and was "
+                "reopened afterward.",
+            ),
+        ),
+        doc="Compile and upload. Entering `FLASHING` force-releases "
+        "`PASSTHROUGH` and resumes it afterward unless suppressed "
+        "(`ARCHITECTURE.md#flashing-reset-and-passthrough`). Streams "
+        "`flash.progress` events carrying this command's `corr`. "
+        "`SKETCH_UNKNOWN` for a path outside discovery — the bundled library "
+        "and saved task profiles are the only flashable sketches, enforced "
+        "here and not just by the picker. `FLASH_FAILED` carries the parsed "
+        "`arduino-cli` output. Long-running; the client raises its reply "
+        "timeout, and timing out does not cancel the flash.",
     ),
     Command(
         "port.reset",
         args=obj(f("box", INT)),
         result=obj(f("state", Ref("PortStateName")), f("resumedPassthrough", BOOL)),
-        doc="DTR toggle (`dashboard.md` §6.2).",
+        doc="DTR toggle through `RESETTING`, with the same passthrough "
+        "release-and-resume as a flash "
+        "(`ARCHITECTURE.md#flashing-reset-and-passthrough`).",
     ),
     Command(
         "port.error.ack",
         args=obj(f("box", INT)),
         result=_STATE,
-        doc="ERROR → IDLE (`dashboard.md` §5.2).",
+        doc="`ERROR` → `IDLE`. The only way out of `ERROR`: a board dropping "
+        "mid-session is a hard stop that a person clears, never an automatic "
+        "recovery (`ARCHITECTURE.md#port-state-machine`).",
     ),
+    Command(
+        "port.startSession",
+        args=obj(f("box", INT)),
+        result=_STATE,
+        doc="Start one box of the confirmed mapping: open the port (the Mega "
+        "DTR-resets), await `READY`, send the `START` line built at "
+        "`sessions.confirmMapping`, capture an optional `SEED`, then parse "
+        "strobes (`ARCHITECTURE.md#session-lifecycle`). Requires `IDLE`. On a "
+        "recording session RHX recording begins first and an `INTAN_*` "
+        "refusal comes before the box starts. Opens the group's run and marks "
+        "the session `running` if this is the group's first box. "
+        "`SESSION_INVALID` for a box with no confirmed mapping. Long-running "
+        "on a recording session; the client raises its reply timeout.",
+    ),
+    Command(
+        "port.stopSession",
+        args=obj(f("box", INT)),
+        result=_STATE,
+        doc="Sends the literal `STOP` line and does **not** force the "
+        "transition: the firmware ends the run at its next trial boundary with "
+        "its own end-of-session strobe, and the port leaves `IN_SESSION` when "
+        "the sidecar sees it.",
+    ),
+    # ----------------------------------------------------- utility baseline
     Command(
         "utility.ensure",
         args=obj(
@@ -1809,36 +1970,134 @@ COMMANDS = (
                 BOOL,
                 optional=True,
                 doc="Reflash even a box already believed to be at baseline. For "
-                "the Config button; the automatic paths never set it.",
+                "the Rig tab's button; the automatic paths never set it.",
             ),
         ),
         result=Ref("UtilityStatus"),
-        doc="Restore the baseline now, rather than waiting for the next board "
-        "or session event. Returns as soon as the work is scheduled — progress "
-        "arrives on `utility.updated`. Never touches a box that isn't IDLE.",
+        doc="Restore the baseline now rather than at the next board or session "
+        "event (`ARCHITECTURE.md#hardware-utility-baseline`). **Returns as "
+        "soon as the work is scheduled** — flashing six boxes outlasts any "
+        "reply timeout, so progress arrives on `utility.updated`. Never touches "
+        "a box that isn't `IDLE`, nor any box while a confirmed session mapping "
+        "holds the rig. Arriving over the wire means a person asked, so it "
+        "also **releases the pin** on the boxes it names. `UTILITY_UNAVAILABLE` "
+        "when no usable utility sketch is configured; a box-level problem is a "
+        "`state` in the snapshot, not an error.",
+        section="Utility baseline",
     ),
     Command(
         "utility.identify",
         args=obj(f("box", INT), f("on", BOOL)),
         result=obj(f("delivered", BOOL), f("state", Ref("UtilityBoxState"))),
-        doc="Make one box point at itself, using its profile's `identify` pair "
-        "(`dashboard.md` §7.3). `delivered: false` is the ordinary "
-        "answer for a box that isn't at baseline — the caller carries on "
-        "without the light rather than failing.",
+        doc="Make one box point at itself with the utility profile's `identify` "
+        "pair, for the placement walk. Opens `PASSTHROUGH` if the box is `IDLE` "
+        "and closes it again on the matching `off`; a console the user already "
+        "has open keeps it. Delivery is confirmed by waiting for the sketch's "
+        "own telemetry line. `delivered: false` is the ordinary answer for a "
+        "box not at baseline or a port with another owner — the caller carries "
+        "on by box number rather than failing. `off` never raises. "
+        "`UTILITY_UNAVAILABLE` when the configured sketch declares no "
+        "`identify` pair.",
     ),
-    # Cohorts
+    # ------------------------------------------------------------- rig wiring
+    #
+    # THE WIRING IS NOT A SETTING, and these commands are why. Settings are
+    # shell-owned, pushed one-directionally, leniently parsed and silently
+    # defaulting to a working value — right for a directory path, catastrophic
+    # for a pin number, which has no safe default and fails by firing the wrong
+    # valve. So the wiring is a sidecar-owned DOCUMENT instead
+    # (`<data_dir>/hardware/rig.json`): validated on the way in, refused when it
+    # is the wrong shape, and every problem located on the field that caused it.
+    Command(
+        "hardware.get",
+        result=Ref("RigDocument"),
+        doc="This rig's wiring and everything wrong with it "
+        "(`TASKS.md#rig-wiring`). A rig never edited gets the shipped pinout "
+        "as an editable document, so the editor always opens something real "
+        "rather than a blank form.",
+        section="Rig wiring",
+    ),
+    Command(
+        "hardware.preview",
+        args=obj(f("document", ANY)),
+        result=Ref("RigSaved"),
+        doc="Validate a wiring document and cost it, writing nothing. The "
+        "editor calls it as the operator types, so a schema violation or a "
+        "wiring rule (RIG101–RIG105) lands against the field that caused it; "
+        "and it is what the save preflight shows, because `breaks` is the "
+        "honest form of 'this applies to every task'. A well-formed document "
+        "describing an impossible box is a successful reply carrying "
+        "`problems`; `RIG_INVALID` only when it is not a document at all.",
+    ),
+    Command(
+        "hardware.save",
+        args=obj(
+            f("document", ANY),
+            f(
+                "confirm",
+                BOOL,
+                doc="False ⇒ refuse with `RIG_WOULD_BREAK_TASKS` if the change "
+                "would newly stop a saved task profile generating. True ⇒ write "
+                "anyway. Rewiring a box is the operator's call and the app does "
+                "not veto it — but it must not let it happen unnoticed.",
+            ),
+        ),
+        result=Ref("RigSaved"),
+        doc="Validate, then write: a document that fails validation is never "
+        "written, so the file on disk is never one the app refuses. On success "
+        "the cached channel map is cleared, **every stored task profile and "
+        "every bundled sketch that opts into rig pins is regenerated** before "
+        "the reply (pins are compiled into `TaskPins.h`, so a stale folder "
+        "would flash the old pins and still compile), and `hardware.updated` "
+        "is broadcast, with `sketches.updated` and `tasks.updated` from the "
+        "rebuild.",
+    ),
+    Command(
+        "hardware.reset",
+        result=Ref("RigDocument"),
+        doc="Discard this rig's document and go back to the shipped wiring. A "
+        "wiring change like any other: regenerates every profile and "
+        "broadcasts `hardware.updated`, as `hardware.save` does. Replies in "
+        "`hardware.get`'s shape so the editor re-renders from one shape.",
+    ),
+    Command(
+        "rig.strobes",
+        result=Ref("StrobeVocabulary"),
+        doc="The whole append-only strobe registry (`TASKS.md#strobe-vocabulary`), "
+        "for the Task tab's viewer and the trial table's onset-code picker. "
+        "Static unless a code is added. Named `rig.` because the registry "
+        "belongs to the hardware.",
+    ),
+    # ----------------------------------------------------------------- cohorts
+    #
+    # All cohort state lives in the sidecar's SQLite database. Every mutating
+    # command below broadcasts `cohorts.updated`.
     Command(
         "cohorts.list",
         result=obj(f("cohorts", ListOf(Ref("CohortSummary")))),
-        doc="Includes archived; the client filters (cohorts.md §4).",
-        section="Cohorts (cohorts.md)",
+        doc="Every cohort, archived included; the client filters.",
+        section="Cohorts",
     ),
-    Command("cohorts.get", args=obj(f("id", STR)), result=_COHORT),
+    Command(
+        "cohorts.get",
+        args=obj(f("id", STR)),
+        result=_COHORT,
+        doc="One cohort's full record, roster included — fetched when a cohort "
+        "is opened, since `CohortSummary` carries no per-animal detail. "
+        "`COHORT_NOT_FOUND` for an unknown id.",
+    ),
     Command(
         "cohorts.create",
         args=obj(
             f("name", STR),
-            f("dataFolder", STR, optional=True, doc="Resolved per cohorts.md §8 when omitted."),
+            f(
+                "dataFolder",
+                STR,
+                optional=True,
+                doc="An explicit folder wins. Omitted, it is derived from the "
+                "configured `dataDirectory` and the name, suffixed until unused "
+                "(`DATA.md#cohorts-animals-and-groups`).",
+            ),
             f(
                 "animals",
                 ListOf(Ref("Animal")),
@@ -1857,31 +2116,61 @@ COMMANDS = (
             ),
         ),
         result=_COHORT,
+        doc="Create a cohort and its data folder. The record is written before "
+        "the folder, so a duplicate name (`COHORT_NAME_TAKEN`) or an invalid "
+        "roster (`COHORT_INVALID`) creates no directory; a folder that can't "
+        "be made (`DATA_FOLDER_INVALID`) rolls the record back.",
     ),
     Command(
         "cohorts.update",
         args=obj(f("id", STR), f("patch", Ref("CohortPatch"))),
         result=_COHORT,
-        doc="Also the commit path for an Auto-Balance preview — no separate apply.",
+        doc="Patch name, roster, groups or appearance. Also the commit path "
+        "for an Auto-Balance preview from `cohorts.suggestGroups` — there is no "
+        "separate apply. Renaming never moves the data folder; that is "
+        "`cohorts.setDataFolder`.",
     ),
-    Command("cohorts.archive", args=obj(f("id", STR)), result=_COHORT),
+    Command(
+        "cohorts.archive",
+        args=obj(f("id", STR)),
+        result=_COHORT,
+        doc="Soft delete: the record and its data folder stay intact, and an "
+        "archived cohort no longer reserves its name.",
+    ),
     Command(
         "cohorts.restore",
         args=obj(f("id", STR)),
         result=_COHORT,
-        doc="Rejected with COHORT_NAME_TAKEN if an active cohort claimed the name.",
+        doc="Un-archive. `COHORT_NAME_TAKEN` if an active cohort claimed the "
+        "name while it was archived.",
     ),
     Command(
         "cohorts.delete",
-        args=obj(f("id", STR), f("confirm", BOOL, doc="Must be literally true.")),
+        args=obj(f("id", STR), f("confirm", BOOL, doc="Must be literally true, or `BAD_MESSAGE`.")),
         result=obj(f("deleted", BOOL)),
-        doc="Rejected unless already archived. Never touches dataFolder on disk (§9).",
+        doc="Permanent delete of the bookkeeping only. `COHORT_NOT_ARCHIVED` "
+        "unless archived first — the deliberate two-step guard. **Never "
+        "touches the data folder on disk.**",
     ),
     Command(
         "cohorts.setDataFolder",
-        args=obj(f("id", STR), f("path", STR), f("moveExisting", BOOL)),
+        args=obj(
+            f("id", STR),
+            f("path", STR),
+            f(
+                "moveExisting",
+                BOOL,
+                doc="Selects between two intents. True moves the cohort's data "
+                "and refuses (`DATA_FOLDER_INVALID`) a destination that isn't "
+                "empty — merging two archives can silently collide filenames. "
+                "False writes nothing and re-points the cohort, so a full "
+                "destination is expected: that is how a cohort attaches to an "
+                "existing archive.",
+            ),
+        ),
         result=_COHORT,
-        doc="The explicit relocate of §8. Refuses a non-empty destination.",
+        doc="The explicit relocate, distinct from renaming "
+        "(`DATA.md#cohorts-animals-and-groups`).",
     ),
     Command(
         "cohorts.suggestGroups",
@@ -1892,47 +2181,217 @@ COMMANDS = (
             f("balanceBySex", BOOL, optional=True),
         ),
         result=Ref("GroupProposal"),
-        doc="Non-mutating preview; the user applies via cohorts.update.",
+        doc="**Non-mutating** Auto-Balance preview — a balanced round-robin "
+        "over the roster (`DATA.md#cohorts-animals-and-groups`). The user "
+        "applies it via `cohorts.update`.",
     ),
-    # Prefixes, Task Profiles, sessions
+    # --------------------------------------------------- prefixes and sessions
+    #
+    # Prefixes and session records live in the same SQLite database as
+    # cohorts. The per-strobe file writing happens sidecar-side and is not a
+    # command (`DATA.md#crash-safety`).
     Command(
         "prefixes.list",
         result=obj(f("prefixes", ListOf(Ref("Prefix")))),
-        section="Prefixes, Task Profiles & sessions",
+        doc="Every session prefix. Prefixes are global, shared across all "
+        "cohorts (`DATA.md#sessions-and-runs`).",
+        section="Prefixes and sessions",
     ),
     Command(
         "prefixes.create",
         args=obj(f("name", STR)),
         result=obj(f("prefix", Ref("Prefix"))),
-        doc="Name-unique; rejected with PREFIX_NAME_TAKEN.",
+        doc="Name-unique; rejected with `PREFIX_NAME_TAKEN`. Broadcasts "
+        "`prefixes.updated`.",
     ),
     Command(
         "prefixes.delete",
         args=obj(f("id", STR)),
         result=obj(f("deleted", BOOL)),
-        doc="Never touches folders already written under the name.",
+        doc="Removes the prefix from the list only — never touches folders "
+        "already written under the name. Broadcasts `prefixes.updated`.",
     ),
+    Command(
+        "sessions.suggestNumber",
+        args=obj(f("prefixId", STR)),
+        result=obj(
+            f(
+                "suggestion",
+                nullable(STR),
+                doc="The prefix's highest numeric session number + 1; null when "
+                "it has no numeric history.",
+            ),
+            f(
+                "sameDayNumbers",
+                ListOf(STR),
+                doc="Numbers already used for this prefix today. Drives the "
+                "**soft** reuse warning — reuse is legal, never blocked.",
+            ),
+        ),
+        doc="The session-number pre-fill for the setup step. Aborted sessions "
+        "count toward neither field: they never wrote data, so their numbers "
+        "stay claimable.",
+    ),
+    Command(
+        "sessions.create",
+        args=obj(
+            f("cohortId", STR),
+            f("prefixId", STR),
+            f("sessionNumber", STR, doc="Free text; required and non-blank."),
+            f(
+                "durationMinutes",
+                INT,
+                optional=True,
+                doc="Optional per-box time limit, a positive whole number of "
+                "minutes. The sidecar sends `STOP` to each box that long after "
+                "*that box's* start — per box, because boxes can be started "
+                "individually. Omitted means the session runs until stopped.",
+            ),
+            f(
+                "recording",
+                BOOL,
+                optional=True,
+                doc="True makes the session an Intan recording as well "
+                "(`RECORDING.md#start-and-end`): `Session.recording` is then "
+                "`{runs: []}` rather than null, and starting a group refuses "
+                "unless `intan.configure` has run for it.",
+            ),
+        ),
+        result=_SESSION,
+        doc="Create a session in status `configuring` and make its folder. "
+        "`SESSION_NOT_READY` if no group in the cohort has a box-assigned "
+        "animal; `SESSION_INVALID` for an unknown cohort or prefix, a blank "
+        "number, a bad duration, or a folder that can't be created. Broadcasts "
+        "`session.lifecycle`.",
+    ),
+    Command(
+        "sessions.abandon",
+        args=obj(f("sessionId", STR)),
+        result=_SESSION,
+        doc="Discard a session still in `configuring` (the mapping step's "
+        "Back): marks it `aborted`, clears any confirmed-but-unstarted mapping "
+        "from the runner, drops an unstarted recording setup, and hands the "
+        "rig back to the utility baseline. Nothing on disk is touched. "
+        "`SESSION_INVALID` once a group has run.",
+    ),
+    Command(
+        "sessions.confirmMapping",
+        args=obj(f("sessionId", STR), f("groupId", STR), f("boxes", ListOf(Ref("SessionBoxMapping")))),
+        result=obj(f("ok", BOOL)),
+        doc="Load one group's box → animal → sketch mapping into the runner and "
+        "build each box's `START` line from its sketch's Task Profile and "
+        "`config`. `TASK_PROFILE_INVALID` when a line would exceed "
+        "`START_LINE_MAX` — refused because the board cannot report a "
+        "truncated `START` and would run on whichever values fit "
+        "(`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing "
+        "its box, sketch, or an animal of this cohort. From here until the "
+        "session lets go the rig is **held**: no baseline restore runs. "
+        "Broadcasts `session.lifecycle`.",
+    ),
+    Command(
+        "sessions.status",
+        args=obj(f("sessionId", STR)),
+        result=obj(
+            f("session", Ref("Session")),
+            f(
+                "groupId",
+                nullable(STR),
+                doc="The group the runner holds; an empty string when it holds "
+                "none (before a mapping is confirmed, and between groups).",
+            ),
+            f("boxes", ListOf(Ref("SessionBox"))),
+        ),
+        doc="What Mission Control renders. The runner is the authority on the "
+        "confirmed mapping and which boxes are live, so a reopened window asks "
+        "rather than trusting a stale copy.",
+    ),
+    Command(
+        "sessions.startAll",
+        args=obj(f("sessionId", STR)),
+        result=_SESSION,
+        doc="Enter `IN_SESSION` on every box of the confirmed mapping not "
+        "already running, open the group's run, and mark the session "
+        "`running`. On a recording session RHX recording begins **before any "
+        "box starts**, and an `INTAN_*` refusal (no recording configured for "
+        "this group, RHX unreachable) leaves every box untouched — a session "
+        "quietly missing its electrophysiology cannot be re-run. Broadcasts "
+        "`session.lifecycle`. Long-running on a recording session; the client "
+        "raises its reply timeout.",
+    ),
+    Command(
+        "sessions.endGroup",
+        args=obj(f("sessionId", STR)),
+        result=_SESSION,
+        doc="End the current group's runs, close its `groupRuns` entry, clear "
+        "the runner's mapping and hand the rig back to the utility baseline — "
+        "leaving the session **between groups**: still `running` and held, "
+        "`groupId` null, no boxes. The sidecar never picks the next group and "
+        "never finalizes here; the operator picks any group (one that already "
+        "ran may run again) or ends the session with `sessions.end`. Stops "
+        "boxes as `sessions.end` does, gracefully on a recording.",
+    ),
+    Command(
+        "sessions.resume",
+        args=obj(f("sessionId", STR)),
+        result=_SESSION,
+        doc="Continue one of **today's** sessions with another group — a "
+        "crash-orphaned `running` one (the app closed between groups) or a "
+        "`completed` one ended too early. Closes any group run a crash left "
+        "open, sets `running`, and re-holds the session in the between-groups "
+        "state `sessions.endGroup` leaves. Nothing resumes mid-group. "
+        "`SESSION_INVALID` for another day's session (its folder is named for "
+        "that date), one that never ran a group, or while a different session "
+        "is held.",
+    ),
+    Command(
+        "sessions.end",
+        args=obj(f("sessionId", STR)),
+        result=_SESSION,
+        doc="Finish the session: stop every box, finalize files, close the "
+        "open group run, mark it `completed`, and release the rig to the "
+        "utility baseline. A behavior-only session sends `STOP` and waits only "
+        "briefly, cutting the trial in flight; a **recording** waits for each "
+        "box's own end strobe (`intan.status.waitingOn`, cut short by "
+        "`intan.forceStop`), then post-rolls and stops RHX "
+        "(`RECORDING.md#start-and-end`). Only the **held** session's boxes are "
+        "stopped: closing out a crash orphan while another session runs marks "
+        "the orphan and touches nothing live. The only command that finishes a "
+        "session. Long-running on a recording; the client raises its reply "
+        "timeout.",
+    ),
+    Command(
+        "sessions.active",
+        result=Ref("ActiveSessions"),
+        doc="The global 'what is running?' query — argument-free, so a client "
+        "with no prior knowledge of ids (the Launch page, a reconnecting "
+        "window) can discover the running session. The `running` slot comes "
+        "from the live runner; `configuring` and `stale` come from the "
+        "database. The same payload is broadcast as `session.lifecycle`.",
+    ),
+    # ----------------------------------------------------------- task profiles
+    #
+    # NOTHING HERE FLASHES. Saving generates a sketch folder under
+    # `<data_dir>/tasks/` that `discovery` then finds, so `port.flash` takes it
+    # by path like any other — which is what keeps the session flow,
+    # `taskDefaults` and Analytics free of a special case for a profile-backed
+    # run.
     Command(
         "tasks.getProfile",
         args=obj(f("sketchPath", STR)),
         result=union(Ref("TaskProfile"), obj(f("profile", NULL))),
-        doc="Reads the task.json sibling of the sketch's .ino. A sketch with "
-        "none returns `{profile: null}` — fully supported. Works the same on a "
-        "bundled sketch and on one generated from a task profile, which is the "
-        "point of generating a real sketch folder.",
+        doc="Read the `task.json` beside a sketch's `.ino` "
+        "(`TASKS.md#task-profile`). A sketch with none returns "
+        "`{profile: null}` — fully supported (bare `START`, raw strobe log). "
+        "`TASK_PROFILE_INVALID` when the file exists but is malformed. Works "
+        "the same on a bundled sketch and on one generated from a saved task.",
+        section="Task profiles",
     ),
-    # ---------------------------------------------------------- task profiles
-    #
-    # NOTHING HERE FLASHES. Saving generates a sketch folder that `discovery`
-    # then finds, so `port.flash` takes it by path like any other — which is
-    # what keeps the session flow, `taskDefaults` and Analytics free of a
-    # special case for a profile-backed run.
     Command(
         "tasks.list",
         result=obj(f("tasks", ListOf(Ref("TaskEntry")))),
-        doc="This rig's saved task profiles. Reads each definition and validates "
-        "it, never generates — the list stays cheap however many exist.",
-        section="Task profiles (tasks.md §11)",
+        doc="This rig's saved task profiles (`TASKS.md#task-definitions`). "
+        "Reads and validates each definition, never generates, so the list "
+        "stays cheap however many exist.",
     ),
     Command(
         "tasks.get",
@@ -1944,7 +2403,7 @@ COMMANDS = (
         doc="One definition and everything currently wrong with it. The "
         "diagnostics are recomputed rather than stored, because most of them "
         "depend on the WIRING — a task saved clean can be broken by a rewiring "
-        "it never saw.",
+        "it never saw. `TASK_NOT_FOUND` for an unknown id.",
     ),
     Command(
         "tasks.preview",
@@ -1953,149 +2412,61 @@ COMMANDS = (
         doc="Compile an unsaved definition and say what is wrong with it, "
         "writing nothing. The editor calls it as the operator types, so a "
         "problem lands against the field that caused it; it also carries the "
-        "built `START` line's length, which is the one budget an operator can "
-        "exhaust without noticing.",
+        "built `START` line's length, the one budget an operator can exhaust "
+        "without noticing. `TASK_INVALID` only when the document is not a "
+        "definition.",
     ),
     Command(
         "tasks.save",
         args=obj(f("definition", ANY)),
         result=Ref("TaskSaved"),
         doc="Write the definition and regenerate its sketch. **Always saves, "
-        "even with diagnostics** — a half-finished task must be savable, and the "
-        "gate is flashing, not saving. Refused only when the name collides with "
-        "a bundled sketch, which would make the picker ambiguous. Broadcasts "
-        "`tasks.updated` and `sketches.updated`, since a profile is a sketch.",
+        "even with diagnostics** — a half-finished task must be savable, and "
+        "the gate is flashing, not saving. Refused with `TASK_INVALID` only "
+        "when the name collides with a bundled sketch or another saved task "
+        "(case-insensitively): two sketches with one name make the picker "
+        "ambiguous, and two tasks would share one folder. Broadcasts "
+        "`tasks.updated` and `sketches.updated`, since a saved profile is also "
+        "a sketch.",
     ),
     Command(
         "tasks.delete",
         args=obj(f("taskId", STR)),
         result=obj(f("deleted", BOOL)),
-        doc="Remove the definition and its generated sketch. Idempotent: "
-        "deleting what is already gone is a successful `{deleted: false}`, "
-        "because two clients racing on the same task is not an error.",
+        doc="Remove the definition and its generated sketch folder. "
+        "Idempotent: deleting what is already gone is a successful "
+        "`{deleted: false}`, because two clients racing on one task is not an "
+        "error.",
     ),
-    Command(
-        "rig.strobes",
-        result=Ref("StrobeVocabulary"),
-        doc="The whole strobe registry, for the Task tab's viewer and for the "
-        "task editor's code picker. Static unless a code is added.",
-        section="Strobe vocabulary (tasks.md §3.3)",
-    ),
-    Command(
-        "sessions.suggestNumber",
-        args=obj(f("prefixId", STR)),
-        result=obj(
-            f("suggestion", nullable(STR), doc="Highest numeric number for the prefix +1."),
-            f("sameDayNumbers", ListOf(STR), doc="Drives the soft reuse warning — never a block."),
-        ),
-    ),
-    Command(
-        "sessions.create",
-        args=obj(
-            f("cohortId", STR),
-            f("prefixId", STR),
-            f("sessionNumber", STR),
-            f(
-                "durationMinutes",
-                INT,
-                optional=True,
-                doc="Optional per-box time limit in whole minutes; omitted "
-                "means the session runs until stopped by the operator or board.",
-            ),
-            f(
-                "recording",
-                BOOL,
-                optional=True,
-                doc="True makes the session an Intan recording as well "
-                "(`recording.md` §5): `sessions.startAll` then refuses unless "
-                "`intan.configure` has run for the group.",
-            ),
-        ),
-        result=_SESSION,
-        doc="Rejected with SESSION_NOT_READY if no group has a box-assigned animal.",
-    ),
-    Command(
-        "sessions.abandon",
-        args=obj(f("sessionId", STR)),
-        result=_SESSION,
-        doc="Discards a session still in `configuring`; rejected once running.",
-    ),
-    Command(
-        "sessions.confirmMapping",
-        args=obj(f("sessionId", STR), f("groupId", STR), f("boxes", ListOf(Ref("SessionBoxMapping")))),
-        result=obj(f("ok", BOOL)),
-        doc="Session-local mapping + per-box config; feeds the flash sequence.",
-    ),
-    Command(
-        "sessions.status",
-        args=obj(f("sessionId", STR)),
-        result=obj(
-            f("session", Ref("Session")),
-            f("groupId", nullable(STR), doc="Null only before any mapping was confirmed."),
-            f("boxes", ListOf(Ref("SessionBox"))),
-        ),
-        doc="What Mission Control renders — the runner is the authority on the "
-        "confirmed mapping, so a reload asks rather than trusting a stale copy.",
-    ),
-    Command(
-        "sessions.startAll",
-        args=obj(f("sessionId", STR)),
-        result=_SESSION,
-        doc="Enters IN_SESSION on every configured box not already running.",
-    ),
-    Command(
-        "sessions.endGroup",
-        args=obj(f("sessionId", STR)),
-        result=_SESSION,
-        doc="Ends the current group's runs and leaves the session BETWEEN GROUPS: "
-        "still `running` and held, no boxes, `groupId` null. The operator then "
-        "picks any group (or ends the session) — the sidecar never chooses one.",
-    ),
-    Command(
-        "sessions.resume",
-        args=obj(f("sessionId", STR)),
-        result=_SESSION,
-        doc="Re-holds one of TODAY's sessions that already ran a group — a "
-        "crash-orphaned `running` one or a `completed` one ended too early — in "
-        "the between-groups state, so another group can run under it. Closes a "
-        "group run a crash left open. Never resumes a group mid-run.",
-    ),
-    Command("sessions.end", args=obj(f("sessionId", STR)), result=_SESSION),
-    Command(
-        "sessions.active",
-        result=Ref("ActiveSessions"),
-        doc="The global 'what is running?' query — no args, so a client with no "
-        "prior knowledge (the Launch page, a reconnect) can discover the running "
-        "session's id. The running slot is authoritative from live app state; "
-        "configuring/stale come from the DB.",
-    ),
-    Command(
-        "port.startSession",
-        args=obj(f("box", INT)),
-        result=_STATE,
-        doc="Open → DTR reset → await READY → START → optional SEED (§7).",
-    ),
-    Command(
-        "port.stopSession",
-        args=obj(f("box", INT)),
-        result=_STATE,
-        doc="Sends the literal STOP line; the board's own end strobe ends the run.",
-    ),
-    # Backup
+    # ------------------------------------------------------------------ backup
     Command(
         "backup.syncNow",
         result=Ref("SyncResult"),
-        doc="The explicit backfill — setting a directory deliberately doesn't "
-        "copy what's already on disk. Long-running; client raises its timeout.",
-        section="Backup (data.md §7)",
+        doc="The explicit backfill (`DATA.md#backup-mirroring`): walks every "
+        "cohort data folder, mirrors anything missing or stale, then backs up "
+        "`ephymeris.db`. Mirroring itself takes no command — it runs off "
+        "`backupDirectory` — and setting a directory deliberately does **not** "
+        "backfill, since that could start an unannounced multi-gigabyte copy "
+        "to a network share; this is the deliberate version, and the way to "
+        "prove a target works. `BACKUP_UNAVAILABLE` with no directory set or "
+        "a sync already running. Long-running; the client raises its reply "
+        "timeout.",
+        section="Backup",
     ),
-    # Analytics
+    # --------------------------------------------------------------- analytics
+    #
+    # A corrupt or missing file is DATA, NOT AN ERROR: it yields a run with a
+    # non-ok status plus a warning, and the command still succeeds. One
+    # unreadable `.json` must never blank a year of history.
     Command(
         "sessions.list",
         args=obj(f("cohortId", STR), f("includeAborted", BOOL, optional=True)),
         result=obj(f("sessions", ListOf(Ref("SessionListItem")))),
-        doc="Must never touch the filesystem, so selectors populate instantly.",
-        section="Analytics (websocket-protocol.md §3.4)",
+        doc="A cohort's sessions in chronological order, including the "
+        "payload-only sessions that adopted archive runs are grouped under. "
+        "**Never touches the filesystem**, so selectors populate instantly "
+        "while `analytics.summary` is still reading files.",
+        section="Analytics",
     ),
     Command(
         "analytics.summary",
@@ -2106,15 +2477,33 @@ COMMANDS = (
             f("minCountedTrials", INT, optional=True),
         ),
         result=Ref("AnalyticsSummary"),
+        doc="The whole cohort table in **one** call (`DATA.md#analytics-views`): "
+        "sessions, animals, run summaries, profile groups, counts and "
+        "warnings. Every later session or animal selection filters it "
+        "client-side rather than costing a round trip. A cold first index "
+        "reads every historical run and publishes `analytics.progress`; "
+        "long-running, so the client raises its reply timeout. A corrupt or "
+        "missing file is a run with a non-ok `status` plus a warning, never a "
+        "failed command. `COHORT_NOT_FOUND` for an unknown cohort.",
     ),
     Command(
         "analytics.series",
         args=obj(
-            f("runIds", ListOf(STR), doc="Plural so one session is one call; capped server-side."),
-            f("mode", lit("rolling", "cumulative"), optional=True),
+            f(
+                "runIds",
+                ListOf(STR),
+                doc="Non-empty. Plural so one session's animals are one call; "
+                "more than `MAX_SERIES_RUNS` (`analytics/service.py`) is "
+                "`BAD_MESSAGE`.",
+            ),
+            f("mode", lit("rolling", "cumulative"), optional=True, doc="Default `rolling`."),
             f("metricIds", ListOf(STR), optional=True),
         ),
         result=Ref("SeriesResult"),
+        doc="Per-run learning-curve data (`DATA.md#derived-metrics`), plus each "
+        "run's strategy-plane `trail` and per-trial `trials` tape, which ride "
+        "here because the file is already open and decoded. The x-axis is "
+        "the counted-trial index and is implicit.",
     ),
     Command(
         "analytics.rescan",
@@ -2133,34 +2522,44 @@ COMMANDS = (
             ),
         ),
         result=Ref("RescanResult"),
-        doc="The explicit archive walk — expensive reconciliation is a "
-        "deliberate user action, never a side effect of opening a view. "
-        "Reconciliation runs **both ways**: files no record points at are "
-        "adopted, and records pointing at files the disk no longer has are "
-        "pruned (§8.6).",
+        doc="The explicit archive walk (`DATA.md#reading-the-archive`) — "
+        "expensive reconciliation is a deliberate user action, never a side "
+        "effect of opening a view. Reconciles **both ways**: files no record "
+        "points at are adopted, and records pointing at files the disk no "
+        "longer has are pruned. Publishes `analytics.progress`. `INTERNAL` "
+        "when another analytics walk is already running. Long-running; the "
+        "client raises its reply timeout.",
     ),
     Command(
         "analytics.recentSessions",
-        args=obj(f("limit", INT, optional=True)),
+        args=obj(
+            f(
+                "limit",
+                INT,
+                optional=True,
+                doc="Default `DEFAULT_RECENT_LIMIT` (`analytics/service.py`).",
+            )
+        ),
         result=obj(f("sessions", ListOf(Ref("DiskSession")))),
         doc="The N most recent session folders across every active cohort's "
-        "archive, by folder-name date — directory names only, no file is ever "
-        "opened, which is what keeps this cheap enough for a landing page where "
-        "the rescan is not. Sees sessions other Ephymeris machines wrote into "
-        "the shared archive, which sessions.list (this machine's database) "
-        "cannot.",
+        "archive, by folder-name date. **Directory names only — no file is "
+        "ever opened**, which keeps this cheap enough for the Dashboard where "
+        "the rescan is not. Sees sessions another Ephymeris machine wrote into "
+        "a shared archive, which `sessions.list` (this machine's database) "
+        "cannot; `DiskSession.recorded` says which.",
     ),
-    # Crash recovery
     Command(
         "sessions.recover",
         args=obj(f("cohortId", STR)),
         result=Ref("RecoverResult"),
-        doc="The crash-recovery backfill (`data.md` §12, §11): "
-        "rebuilds .json/.mat from orphaned write-ahead .tsv files. Same "
-        "traversal as analytics.rescan's walk, and same discipline — an "
-        "explicit user action, never a side effect. Rejected while any box "
-        "is running: a live run's .tsv has no .json yet and is not an orphan.",
-        section="Crash recovery (data.md §12, §11)",
+        doc="The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds "
+        "`.json`/`.mat` from orphaned write-ahead `.tsv` files, using the same "
+        "traversal as `analytics.rescan` and the same explicit-action "
+        "discipline. A `.tsv` with a footer keeps its recorded stop reason; a "
+        "footer-less (crashed) one gets 'recovered after crash'. "
+        "`SESSION_INVALID` while any box is running — a live run's `.tsv` has "
+        "no `.json` yet and is not an orphan. Long-running; the client raises "
+        "its reply timeout.",
     ),
     Command(
         "sessions.tidy",
@@ -2169,70 +2568,17 @@ COMMANDS = (
             f("apply", BOOL, optional=True, doc="Default false: a preview that changes nothing."),
         ),
         result=Ref("TidyPlan"),
-        doc="Merges session records that share prefix, number and date — one "
-        "folder, split by a day that went wrong — into the earliest, and "
-        "deletes records with no run, recording or file behind them (data.md "
-        "§8.8). Database only, except an empty folder of a deleted record. "
-        "Never touches the session the runner holds, nor a set-up started "
-        "today. An explicit user action with a preview, like recover.",
+        doc="Merge session records that share prefix, number and date — one "
+        "folder, split by a day that went wrong — into the earliest record "
+        "holding data, and delete records with no run, recording or file "
+        "behind them (`DATA.md#reading-the-archive`). An apply re-plans rather "
+        "than replaying the preview. **Database only**, except the empty "
+        "folder of a deleted record. Never touches the held session (or its "
+        "folder-mates) nor a set-up from today; those are listed in "
+        "`skipped`. Broadcasts `session.lifecycle` after an apply. `INTERNAL` "
+        "when another analytics walk is already running.",
     ),
-    # ---------------------------------------------------------------- rig wiring
-    #
-    # THE WIRING IS NOT A SETTING, and these four commands are why. Settings are
-    # shell-owned, pushed one-directionally, leniently parsed and silently
-    # defaulting to a working value — right for a directory path, catastrophic
-    # for a pin number, which has no safe default and fails by firing the wrong
-    # valve. So the wiring is a sidecar-owned DOCUMENT instead: validated on the
-    # way in, refused when it is the wrong shape, and every problem located on
-    # the field that caused it.
-    Command(
-        "hardware.get",
-        result=Ref("RigDocument"),
-        doc="This rig's wiring, and everything wrong with it. Returns the shipped "
-        "pinout as an editable document when the rig has never been edited, so "
-        "the editor always has something real to open rather than a blank form.",
-    ),
-    Command(
-        "hardware.preview",
-        args=obj(f("document", ANY)),
-        result=Ref("RigSaved"),
-        doc="Validate a wiring document and say what it would cost, WITHOUT "
-        "writing. Two jobs, and it is the same answer for both: the editor calls "
-        "it as the operator types, so schema violations and TG226-229 appear "
-        "against the field that caused them; and it is what the save preflight "
-        "shows, because `breaks` is the honest form of 'this applies to every "
-        "task'. A pin change that silently stopped a task compiling would be the "
-        "worst version of that promise.",
-    ),
-    Command(
-        "hardware.save",
-        args=obj(
-            f("document", ANY),
-            f(
-                "confirm",
-                BOOL,
-                doc="False ⇒ refuse the write if it would break a task that "
-                "compiles today, and return them in `breaks`. True ⇒ write "
-                "anyway. Rewiring a box is the operator's call and the app must "
-                "not veto it — but it must not let them make it unknowingly.",
-            ),
-        ),
-        result=Ref("RigSaved"),
-        doc="Validate, then write. A document that fails validation is never "
-        "written at all, so there is no state in which the file on disk is one "
-        "the compiler refuses. On success the compiler's channel cache is "
-        "cleared and `hardware.updated` is broadcast — every task compiles to "
-        "different bytes from that moment, which is the design working (D15) "
-        "and the reason the listing carries a pinout hash (D22).",
-    ),
-    Command(
-        "hardware.reset",
-        result=Ref("RigDocument"),
-        doc="Discard this rig's document and go back to the wiring the build "
-        "shipped with. The reply is `hardware.get`'s, so the editor re-renders "
-        "from one shape either way.",
-    ),
-    # ------------------------------------------------------------ Intan recording
+    # --------------------------------------------------------- Intan recording
     #
     # RHX MAY BE SLOW, ABSENT OR DEAD AND NONE OF THAT MAY STALL OR FAIL A
     # BEHAVIOR SESSION -- the Backup mirror's rule, restated. The one exception
@@ -2240,56 +2586,88 @@ COMMANDS = (
     Command(
         "intan.status",
         result=Ref("IntanStatus"),
-        doc="The current snapshot; also replayed on connect and pushed as `intan.status`.",
-        section="Intan recording (recording.md)",
+        doc="The current recording snapshot (`RECORDING.md#talking-to-rhx`). "
+        "Also replayed on connect and pushed as the `intan.status` event, so "
+        "this exists for a window that attaches mid-session — a scope pop-up.",
+        section="Intan recording",
     ),
     Command(
         "intan.connect",
         result=Ref("IntanStatus"),
         doc="Open RHX's command socket now rather than at the next background "
-        "attempt. INTAN_UNAVAILABLE says what to click in RHX.",
+        "attempt. `INTAN_UNAVAILABLE` says what to click in RHX: Network → "
+        "Remote TCP Control → Connect, on the Commands tab. That is the only "
+        "manual step; the sidecar opens the waveform and spike sockets itself.",
     ),
-    Command("intan.disconnect", result=Ref("IntanStatus"), doc="Refused while recording."),
+    Command(
+        "intan.disconnect",
+        result=Ref("IntanStatus"),
+        doc="Close the sockets. `INTAN_NOT_READY` while recording: closing "
+        "them would not stop RHX, but it would blind the app to it.",
+    ),
     Command(
         "intan.configure",
         args=obj(f("sessionId", STR), f("groupId", STR), f("config", Ref("RecordingConfig"))),
         result=Ref("IntanStatus"),
-        doc="Apply a recording setup to RHX for one group run. Every value that "
-        "decides WHERE and AS WHAT the data is saved is read back and refused on "
-        "a mismatch. INTAN_NOT_READY for a box with no digital input, a rig with "
-        "no sync channel, or a controller that is running.",
+        doc="Apply a recording setup to RHX **for one group run** — animals, "
+        "and so ports and probes, change between groups "
+        "(`RECORDING.md#recording-walkthrough`). Connects first if needed. The "
+        "three values a recording cannot be wrong about — file format, save "
+        "path, base filename — are read back and refused on a mismatch "
+        "(`INTAN_COMMAND_FAILED`), which is the only thing that catches RHX "
+        "accepting a path and storing it cut at its first space. An RHX left "
+        "in Run is stopped (saving parameters are ignored while it runs); one "
+        "already recording is refused and not touched. `INTAN_NOT_READY` names "
+        "the first problem: the rig's wiring declares no `sync` channel, a box "
+        "with no digital input, a port with no headstage, two boxes claiming "
+        "one channel, or nothing selected to save. `SESSION_INVALID` for a "
+        "session that is not a recording. Long-running; the client raises its "
+        "reply timeout.",
     ),
     Command(
         "intan.parseProbeMap",
         args=obj(f("path", STR)),
         result=obj(f("probeMap", ANY)),
-        doc="Parse an Intan probe-map XML for the setup preview. RHX cannot be "
-        "asked to load one over TCP, so Ephymeris reads the same file itself.",
+        doc="Parse an Intan probe-map XML for the setup preview. RHX has no "
+        "TCP command to load a probe map, so Ephymeris reads the same file "
+        "the operator would have loaded there. Inheriting attributes are "
+        "resolved here; coordinates pass through **unflipped** (Intan's y is "
+        "up — flipping is the renderer's job). `INTAN_NOT_READY` for a file "
+        "that can't be parsed.",
     ),
     Command(
         "intan.probeMap",
         args=obj(f("box", INT)),
         result=obj(f("probeMap", ANY)),
-        doc="The probe map configured for this box, or null.",
+        doc="The probe map configured for this box in the current recording, "
+        "or null.",
     ),
     Command(
         "intan.setThreshold",
         args=obj(f("channel", STR), f("microvolts", INT)),
         result=obj(f("channel", STR), f("microvolts", INT)),
-        doc="One channel's spike threshold, from the SpikeScope's threshold line.",
+        doc="Set one channel's spike threshold, −5000…5000 µV, read back from "
+        "RHX. Sent by the SpikeScope's draggable threshold line. The reply's "
+        "channel name is upper-cased.",
     ),
     Command(
         "intan.scope.open",
         args=obj(
             f("kind", Ref("ScopeKind")),
             f("box", INT),
-            f("channel", nullable(STR), optional=True),
+            f("channel", nullable(STR), optional=True, doc="Required for every kind but `probemap`."),
             f("params", MapOf(ANY), optional=True),
         ),
         result=obj(f("scopeId", STR)),
-        doc="Begin publishing one live view as `intan.scope.data`. A SpikeScope "
-        "also asks RHX to stream that channel's highpass band, which is why "
-        "there is a cap on how many may be open.",
+        doc="Begin publishing one live view as `intan.scope.data` "
+        "(`RECORDING.md#live-windows`). RHX cannot be asked to open its own "
+        "SpikeScope/PSTH/ISI windows over TCP, so these are computed here from "
+        "RHX's data sockets. A `spikescope` also asks RHX to stream that "
+        "channel's highpass band, and at most `MAX_SCOPED_CHANNELS` "
+        "(`intan/service.py`) channels may be scoped at once — beyond a "
+        "handful, TCP stops keeping up with acquisition. `INTAN_NOT_READY` for "
+        "a box not in the configured recording or a channel outside the box's "
+        "claimed range.",
     ),
     Command(
         "intan.scope.update",
@@ -2298,14 +2676,18 @@ COMMANDS = (
             f("channel", nullable(STR), optional=True),
             f("params", MapOf(ANY), optional=True),
         ),
-        result=obj(f("ok", BOOL)),
+        result=obj(f("ok", BOOL, doc="False when the scope is already gone.")),
+        doc="Change a scope's channel or parameters in place, **and its "
+        "keepalive**: a scope with no update for `SCOPE_TTL_S` "
+        "(`intan/service.py`) is swept, which is how a window that was killed "
+        "rather than closed stops costing RHX a streamed channel. A scope "
+        "window sends one periodically even when nothing changed.",
     ),
     Command(
         "intan.scope.close",
         args=obj(f("scopeId", STR)),
         result=obj(f("ok", BOOL)),
-        doc="Idempotent. A window that vanishes without closing its scope is "
-        "swept when its connection drops.",
+        doc="Stop publishing a scope. Idempotent.",
     ),
     Command(
         "intan.forceStop",
@@ -2319,62 +2701,135 @@ COMMANDS = (
 # --- Events (server → client) ----------------------------------------------
 
 EVENTS = (
-    Event("server.hello", Ref("ServerHello"), doc="First frame on every connection."),
-    Event("port.state", Ref("PortStateData"), doc="Emitted on every transition."),
-    Event("port.output", Ref("PortOutputData"), doc="Batched at ~20Hz per port (§5.3)."),
+    Event(
+        "server.hello",
+        Ref("ServerHello"),
+        doc="First frame on every connection, before `auth`.",
+    ),
+    Event(
+        "port.state",
+        Ref("PortStateData"),
+        doc="Emitted on **every** transition, and replayed for all six boxes "
+        "on connect (with `prev` equal to `state`). The client renders this and "
+        "never predicts a transition.",
+    ),
+    Event(
+        "port.output",
+        Ref("PortOutputData"),
+        doc="Passthrough console lines, **batched** on a ~20 Hz tick per port "
+        "rather than one message per line, with sent commands interleaved as "
+        "`tx` so scrollback stays chronological. Never persisted beyond the "
+        "sidecar's capped in-memory ring buffer "
+        "(`ARCHITECTURE.md#flashing-reset-and-passthrough`).",
+    ),
     Event(
         "port.telemetry",
         Ref("PortTelemetry"),
-        doc="Live metrics for a task started from Debug Mode with `port.sendStart`, "
-        "scored by the same `MetricSet` a session uses. At most one per "
-        "`port.output` batch; every payload is the whole picture.",
+        doc="Live metrics for a task started from Debug Mode with "
+        "`port.sendStart`, scored by the **same `MetricSet`** a session uses so "
+        "the bench and the session never disagree about what P(hit) means. "
+        "Sent when the run is armed, at most once per `port.output` batch "
+        "after that, and once more when it ends. Not replayed on connect; "
+        "every payload is the whole picture.",
     ),
-    Event("boards.presence", Ref("BoardsPresenceData"), doc="The out-of-band poll; never opens a port."),
-    Event("flash.progress", Ref("FlashProgressData"), doc="Carries the causing command's `corr`."),
-    Event("sketches.updated", Ref("SketchDiscovery"), doc="Pushed whenever discovery re-runs."),
-    Event("cohorts.updated", Ref("CohortsUpdatedData"), doc="Push-on-change, same pattern as sketches.updated."),
-    Event("prefixes.updated", Ref("PrefixesUpdatedData")),
+    Event(
+        "boards.presence",
+        Ref("BoardsPresenceData"),
+        doc="The out-of-band `arduino-cli board list` poll "
+        "(`ARCHITECTURE.md#boxes-and-boards`). Never opens a port, so it never "
+        "contends with the port state machine. Includes boards bound to no "
+        "box (`boxId: null`) so Settings can offer them. Replayed on connect.",
+    ),
+    Event(
+        "flash.progress",
+        Ref("FlashProgressData"),
+        doc="One line of `arduino-cli` output during `port.flash`, carrying "
+        "the causing command's `corr`.",
+    ),
+    Event(
+        "sketches.updated",
+        Ref("SketchDiscovery"),
+        doc="Pushed whenever discovery re-runs for any reason; replayed on "
+        "connect.",
+    ),
+    Event(
+        "cohorts.updated",
+        Ref("CohortsUpdatedData"),
+        doc="The full cohort list, pushed whenever it changes and replayed on "
+        "connect — keeps every window in sync without polling.",
+    ),
+    Event(
+        "prefixes.updated",
+        Ref("PrefixesUpdatedData"),
+        doc="The full prefix list, pushed after `prefixes.create` or "
+        "`prefixes.delete` and replayed on connect — the `cohorts.updated` "
+        "pattern.",
+    ),
     Event(
         "session.telemetry",
         Ref("BoxTelemetry"),
-        doc="Pushed on every strobe that updates a rolling live metric — far "
-        "lower-frequency than raw strobes, so not batched.",
+        doc="Pushed on every strobe that updates a rolling live metric. Not "
+        "batched like `port.output`: metric updates are far lower-frequency "
+        "than raw strobes.",
     ),
-    Event("session.animalEnded", Ref("AnimalEnded"), doc="One animal's run finalized."),
+    Event(
+        "session.animalEnded",
+        Ref("AnimalEnded"),
+        doc="One animal's run finalized and recorded.",
+    ),
     Event(
         "session.lifecycle",
         Ref("ActiveSessions"),
-        doc="Broadcast whenever session identity or status changes (create, "
-        "abandon, confirmMapping, startAll, endGroup, resume, end). A full snapshot, "
-        "not a delta — clients replace state wholesale. Per-box liveness is not "
-        "re-broadcast here; port.state remains that channel.",
+        doc="Broadcast whenever session identity or status changes — create, "
+        "abandon, confirmMapping, startAll (or a group's first "
+        "`port.startSession`), endGroup, resume, end, and an applied tidy. A "
+        "full snapshot, not a delta: a second window learns 'ended' by seeing "
+        "`running: null`, with no merge logic to get wrong. Per-box liveness "
+        "is deliberately not re-broadcast here — `port.state` is that channel, "
+        "and `boxes[].running` in the snapshot is point-in-time.",
     ),
     Event(
         "hardware.updated",
         Ref("RigStatus"),
-        doc="Broadcast after a successful save or reset. Every open client must "
-        "drop any cached copy of the channel map: it used to be a fact about the "
-        "build, fixed for the life of the process, and it is now a fact about "
-        "this rig that an operator can change between two reads.",
+        doc="Broadcast after a successful `hardware.save` or `hardware.reset`. "
+        "Every client must drop any cached copy of the channel map: the wiring "
+        "is a fact about this rig that an operator can change between two "
+        "reads, not a fact about the build.",
     ),
     Event(
         "utility.updated",
         Ref("UtilityStatus"),
-        doc="Pushed on connect and whenever any box's baseline belief changes — "
-        "a restore starting or finishing, a hold, an identify light.",
+        doc="The utility baseline's whole picture, on connect and whenever any "
+        "box's belief changes — a restore starting or finishing, a hold going "
+        "on or off, an identify light. The only progress channel "
+        "`utility.ensure` has, since that command returns before flashing "
+        "starts.",
     ),
     Event(
         "backup.status",
         Ref("BackupStatus"),
-        doc="On connect, on directory change, and on state change or actual "
-        "copies — deliberately not every quiet 10 s tick.",
+        doc="Backup mirroring's state (`DATA.md#backup-mirroring`): on connect, "
+        "on a settings push that changes the directory, and when the state "
+        "changes or something is actually copied — deliberately not every "
+        "quiet tick. An ordinary mirroring failure surfaces only here, as "
+        "`state: \"failed\"`; there is no command to attribute it to.",
     ),
     Event(
         "analytics.progress",
         Ref("AnalyticsProgress"),
-        doc="Published on phase change and every N files — never per file.",
+        doc="Progress of a long analytics read (`walking` during a rescan, "
+        "`reading` while indexing runs), so a cold index over a network-mounted "
+        "archive reads as working rather than hung. Published on phase change "
+        "and every few files — never per file.",
     ),
-    Event("sidecar.error", Ref("SidecarErrorData"), doc="Failures with no command to attribute to."),
+    Event(
+        "sidecar.error",
+        Ref("SidecarErrorData"),
+        doc="A failure with no command to attribute it to. Emitted by the "
+        "session runner when a mid-session `.tsv` write fails (disk full, "
+        "permissions) with `code: \"INTERNAL\"`, a message naming the box, and "
+        "`detail: {box}` (`DATA.md#crash-safety`).",
+    ),
     Event(
         "tasks.updated",
         Ref("TasksUpdatedData"),
@@ -2386,13 +2841,19 @@ EVENTS = (
     Event(
         "intan.status",
         Ref("IntanStatus"),
-        doc="A full snapshot, on every change and on connect.",
+        doc="The recording subsystem's full snapshot, on every change and on "
+        "connect. A lost command socket mid-recording is `state: \"error\"`, "
+        "never a session failure — RHX keeps recording on its own when the "
+        "socket drops.",
     ),
     Event(
         "intan.scope.data",
         Ref("ScopeData"),
-        doc="One live view's payload, a few times a second, only while that "
-        "scope is open. Never persisted — like `port.output`, it is a view.",
+        doc="One live view's payload, only while that scope is open "
+        "(`RECORDING.md#live-windows`). A `spikescope` is **incremental** — "
+        "the snippets added since the last send; `psth`, `isi` and `probemap` "
+        "are whole and sent less often. Never persisted — like `port.output`, "
+        "it is a view of data whose durable copy is RHX's own files.",
     ),
 )
 
@@ -2400,44 +2861,112 @@ EVENTS = (
 # --- Error codes ------------------------------------------------------------
 
 ERRORS = (
-    ErrorCode("BAD_MESSAGE", "Malformed JSON, non-object frame, or invalid args."),
+    ErrorCode("BAD_MESSAGE", "Malformed JSON, a non-object frame, or invalid args."),
     ErrorCode("UNKNOWN_COMMAND", "Unrecognized `cmd`."),
-    ErrorCode("UNAUTHORIZED", "Missing/invalid token, or a non-auth first message."),
-    ErrorCode("PROTOCOL_VERSION_MISMATCH", "`v` does not match the sidecar's protocol version."),
-    ErrorCode("ILLEGAL_TRANSITION", "Operation not permitted from the port's current state."),
-    ErrorCode("SEND_NOT_PASSTHROUGH", "port.send attempted while not in PASSTHROUGH."),
-    ErrorCode("PORT_NOT_BOUND", "No board bound to that box number."),
-    ErrorCode("PORT_OPEN_FAILED", "Serial open failed (absent, busy, permissions)."),
-    ErrorCode("FLASH_FAILED", "Compile or upload failed; detail carries parsed arduino-cli output."),
-    ErrorCode("SKETCH_UNKNOWN", "port.flash named a path outside the current discovery result."),
+    ErrorCode("UNAUTHORIZED", "Missing or invalid token, or a first message that isn't `auth`."),
+    ErrorCode(
+        "PROTOCOL_VERSION_MISMATCH",
+        "`v` does not match the sidecar's protocol version; rejected rather "
+        "than parsed best-effort.",
+    ),
+    ErrorCode(
+        "ILLEGAL_TRANSITION",
+        "Operation not permitted from the port's current state "
+        "(`ARCHITECTURE.md#port-state-machine`). `detail` carries `from` and "
+        "`to`. Disabled buttons are a courtesy; this is the enforcement.",
+    ),
+    ErrorCode(
+        "SEND_NOT_PASSTHROUGH",
+        "A console write (`port.send`, `port.sendStart`) to a port not in "
+        "`PASSTHROUGH`.",
+    ),
+    ErrorCode(
+        "PORT_NOT_BOUND",
+        "No board is bound to that box number. An unbound box still exists on "
+        "the wire and reports `IDLE`.",
+    ),
+    ErrorCode("PORT_OPEN_FAILED", "Serial open failed — board absent, port busy, or permissions."),
+    ErrorCode(
+        "FLASH_FAILED",
+        "Compile or upload failed; `detail` carries the phase and the parsed "
+        "`arduino-cli` output.",
+    ),
+    ErrorCode(
+        "SKETCH_UNKNOWN",
+        "`port.flash` or `port.sendStart` named a path outside the current "
+        "discovery result. The bundled library and saved task profiles are the "
+        "only flashable sketches, enforced here and not just by the picker.",
+    ),
     ErrorCode("COHORT_NOT_FOUND", "No cohort with that id."),
-    ErrorCode("COHORT_NAME_TAKEN", "Name already used by an active cohort."),
-    ErrorCode("COHORT_INVALID", "A cohorts.md §2 validation failure; detail carries per-field errors."),
-    ErrorCode("COHORT_NOT_ARCHIVED", "cohorts.delete on a cohort that wasn't archived first."),
-    ErrorCode("DATA_FOLDER_INVALID", "A data folder couldn't be created, or a destination isn't empty."),
+    ErrorCode(
+        "COHORT_NAME_TAKEN",
+        "Name already used by an **active** cohort. Archived cohorts don't "
+        "reserve names, so this can also reject a `cohorts.restore`.",
+    ),
+    ErrorCode(
+        "COHORT_INVALID",
+        "A cohort validation failure (`DATA.md#cohorts-animals-and-groups`). "
+        "`detail` carries per-field errors so the editor can show them inline.",
+    ),
+    ErrorCode(
+        "COHORT_NOT_ARCHIVED",
+        "`cohorts.delete` on a cohort that wasn't archived first — the "
+        "deliberate two-step guard.",
+    ),
+    ErrorCode(
+        "DATA_FOLDER_INVALID",
+        "A data folder couldn't be created, or a `cohorts.setDataFolder` "
+        "destination isn't empty **while `moveExisting` is true**. A non-empty "
+        "destination with `moveExisting: false` is legal and expected.",
+    ),
     ErrorCode("PREFIX_NAME_TAKEN", "A prefix with that name already exists."),
-    ErrorCode("SESSION_INVALID", "Malformed session command — unknown cohort/prefix/group or mapping."),
-    ErrorCode("SESSION_NOT_READY", "sessions.create against a cohort with no box-assigned animal."),
-    ErrorCode("TASK_PROFILE_INVALID", "A sketch's task.json exists but is malformed."),
-    ErrorCode("BACKUP_UNAVAILABLE", "backup.syncNow with no directory set, or a sync already running."),
+    ErrorCode(
+        "SESSION_INVALID",
+        "A session command that can't apply: unknown session, cohort, prefix "
+        "or group; a mapping naming a box or animal outside the session; a box "
+        "with no confirmed mapping; or a lifecycle step from the wrong state "
+        "(abandoning a session that ran, resuming another day's, recovering "
+        "while a box runs).",
+    ),
+    ErrorCode(
+        "SESSION_NOT_READY",
+        "`sessions.create` against a cohort with no group holding a "
+        "box-assigned animal.",
+    ),
+    ErrorCode(
+        "TASK_PROFILE_INVALID",
+        "A sketch's `task.json` exists but is malformed (`detail` carries the "
+        "parse error), or a profile's `START` line would exceed "
+        "`START_LINE_MAX`.",
+    ),
+    ErrorCode(
+        "BACKUP_UNAVAILABLE",
+        "`backup.syncNow` with no `backupDirectory` set, or with a sync "
+        "already running. An ordinary mirroring failure is never a command "
+        "error; it appears on `backup.status`.",
+    ),
     ErrorCode(
         "UTILITY_UNAVAILABLE",
-        "No hardware utility sketch is configured, or the named one can't be used "
-        "(not in the bundled library, or not a utility profile).",
+        "A `utility.*` command with no `utilitySketchName` set, or one that "
+        "can't be used at all — not among the bundled sketches, or not a "
+        "utility profile; for `utility.identify`, also a profile with no "
+        "`identify` pair. A box-level problem never raises this: it is that "
+        "box's `state` in the snapshot, because 'box 4 has no board' is a fact "
+        "about the rig, not a failure of the command.",
     ),
     ErrorCode(
         "RIG_INVALID",
         "The wiring document is not a wiring document — wrong shape, or too "
         "large. NOT a wiring MISTAKE: a document that is well-formed and "
-        "describes an impossible box is a successful hardware.preview reply "
+        "describes an impossible box is a successful `hardware.preview` reply "
         "carrying located problems.",
     ),
     ErrorCode(
         "RIG_WOULD_BREAK_TASKS",
-        "hardware.save without `confirm` on a change that would stop a saved task "
-        "profile generating. detail carries them. Retry with confirm: true to "
-        "proceed — the app does not veto a rewiring, it refuses to let one happen "
-        "unnoticed.",
+        "`hardware.save` without `confirm` on a change that would stop a saved "
+        "task profile generating. `detail.breaks` lists them. Retry with "
+        "`confirm: true` to proceed — the app does not veto a rewiring, it "
+        "refuses to let one happen unnoticed.",
     ),
     ErrorCode(
         "TASK_NOT_FOUND",
@@ -2455,19 +2984,28 @@ ERRORS = (
     ErrorCode(
         "INTAN_UNAVAILABLE",
         "RHX is not reachable: not running, its Remote TCP Control command "
-        "server not opened, or the socket died.",
+        "server not opened, or the socket died. The message says what to click.",
     ),
     ErrorCode(
         "INTAN_NOT_READY",
-        "RHX is reachable but this cannot be done now — the controller is "
-        "running, no recording is configured, a box has no digital input, or "
-        "the rig's wiring has no sync channel.",
+        "RHX is reachable but this cannot be done now — RHX is already "
+        "recording, no recording is configured for this group, a box has no "
+        "digital input, the rig's wiring has no sync channel, or a scope asked "
+        "for a channel the box does not own. The message is the operator's "
+        "next step.",
     ),
     ErrorCode(
         "INTAN_COMMAND_FAILED",
-        "RHX refused a command, or accepted it and stored something else.",
+        "RHX refused a command, or **accepted it and stored something else** "
+        "(a read-back mismatch — the save-location-with-a-space case). "
+        "`detail.command` carries what was sent.",
     ),
-    ErrorCode("INTERNAL", "Unhandled sidecar exception; also carried by sidecar.error."),
+    ErrorCode(
+        "INTERNAL",
+        "Unhandled sidecar exception, a subsystem that isn't running, or an "
+        "analytics walk already in progress. Also the code `sidecar.error` "
+        "carries for a mid-session write failure.",
+    ),
 )
 
 

@@ -6,17 +6,19 @@ requires-python = ">=3.12"
 dependencies = [
     "pyserial>=3.5",
     "websockets>=14",
-    # The arduino-cli gRPC daemon client (ARCHITECTURE.md#flashing). A
-    # deliberate exception to the two-dependency rule — see
-    # ARCHITECTURE.md#dependency-policy: the subprocess backend remains as a fallback, so a
-    # failed grpcio install degrades flashing to the old path, never breaks it.
+    # Every entry below the first two is admitted and fenced under
+    # ARCHITECTURE.md#dependency-policy.
+    #
+    # The arduino-cli gRPC daemon client (ARCHITECTURE.md#flashing): the
+    # subprocess backend remains as a fallback, so a failed grpcio install
+    # degrades flashing to the old path, never breaks it.
     "grpcio>=1.60",
     "protobuf>=5",
     # Validation for the two operator-authored documents: the rig wiring
-    # (hardware/store.py) and a task profile. A SECOND exception to the
-    # two-dependency rule, and a weaker one than grpcio's — grpcio has the
-    # subprocess backend behind it, so a failed wheel degrades flashing rather
-    # than removing it, and there is no second validator to fall back to. So the
+    # (hardware/store.py) and a task profile. A weaker fence than grpcio's —
+    # grpcio has the subprocess backend behind it, so a failed wheel degrades
+    # flashing rather than removing it, and there is no second validator to
+    # fall back to. So the
     # fence is around SCOPE instead: every import of it is inside the function
     # that needs it, a failure disables the wiring and profile editors, and
     # flashing, the session flow and everything already saved keep working.
@@ -24,6 +26,11 @@ dependencies = [
     # fail to install; a packaged build resolves it once and freezes the result,
     # so lab machines never run pip for it.
     "jsonschema>=4.20",
+    # The .mat mirror (sessions/matwriter.py, DATA.md#the-mat-mirror), in place
+    # of a hand-written MAT-5 writer. Imported only there and preloaded at
+    # startup off the session path; a failure costs the .mat, never the .tsv
+    # or .json beside it.
+    "scipy>=1.14",
 ]
 
 [project.optional-dependencies]

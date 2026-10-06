@@ -272,7 +272,6 @@ These were decided, not missed.
 | Auto-recovery from a board drop mid-session | No. Always a hard stop into `ERROR`, cleared by hand; the write-ahead log means no data is lost |
 | Light mode | Not in v1, not even a placeholder toggle |
 | Sketches from outside the bundled library | No. One source keeps the empty and error states unambiguous; saved tasks extend it |
-| `scipy` for `.mat` files | No. A hand-written MAT v5 writer keeps the sidecar's dependencies minimal |
 | A `states`/`graph` key in `task.json` | No. It changes `profile_hash` and splits a sketch's runs in Analytics |
 | Uploaded cohort artwork | Deferred. A cohort's world is procedural and tunable with four fields |
 | A live filesystem watcher on the sketch library | Not needed. The library only changes when the app does |

@@ -1,161 +1,78 @@
-"""Minimal MATLAB Level-5 MAT-file writer — pure Python, no numpy/scipy.
+"""The `.mat` mirror of a session document (`DATA.md#the-mat-mirror`), via `scipy.io.savemat`.
 
-The obvious tool is `scipy.io.savemat`, but scipy pulls in numpy and is
-the single heaviest dependency the sidecar would carry — a real setup-error risk
-for a non-technical lab and a burden on the eventual Windows packaging. Since the
-session file needs only a handful of value shapes (an `N×2` double array plus
-scalar strings / bools / ints), a small hand-written serializer covers it with
-zero runtime dependencies. The choice is recorded in `DATA.md#the-mat-mirror`.
+What this module owns is the mapping from the document's Python values to the
+MATLAB classes the lab's code expects, which `savemat` alone gets wrong in
+three places:
 
-Format reference: the MAT-File Format spec (Level 5). Everything is written
-little-endian; MATLAB and scipy both read that via the header's endian
-indicator. Validated against `scipy.io.loadmat` during development.
+- **Numbers are doubles.** `savemat` keeps a Python int as `int64`, and MATLAB
+  integer arithmetic saturates and refuses to mix with doubles. Every number in
+  the file, `ts_data` included, is a `double`, as it always has been.
+- **An empty `ts_data` is `0×2`**, not the `0×0` an empty list becomes, so
+  `size(ts_data, 2)` is 2 whether or not the board said anything.
+- **Nothing is dropped or mis-sized silently.** `savemat` skips a name starting
+  with `_` with only a warning, and sizes a char array in code points where
+  MATLAB counts UTF-16 code units, so a character outside the BMP would yield
+  a char array whose dimensions disagree with its data. Both raise here
+  instead. The task profile, the one field carrying operator-written labels,
+  is ASCII-escaped JSON and can't trip the second.
+
+scipy is imported on first use, never at module scope, so a broken install
+costs the `.mat` and nothing else; `preload` takes that first-use cost at
+startup instead of at the end of someone's run.
 """
 
 from __future__ import annotations
 
 import json
-import struct
-from datetime import datetime, timezone
+import logging
+import warnings
 from typing import Any
 
-# --- data type codes (miXXX) ---------------------------------------------
-_MI_INT8 = 1
-_MI_UINT8 = 2
-_MI_UINT16 = 4
-_MI_INT32 = 5
-_MI_UINT32 = 6
-_MI_DOUBLE = 9
-_MI_MATRIX = 14
-
-# --- array class codes (mxXXX) -------------------------------------------
-_MX_CHAR = 4
-_MX_DOUBLE = 6
-_MX_UINT8 = 9
-
-_LOGICAL_FLAG = 0x02  # set in the array-flags byte for a MATLAB `logical`
+log = logging.getLogger(__name__)
 
 
-def _pad8(data: bytes) -> bytes:
-    """Pad to the 8-byte boundary every MAT data element must sit on."""
-    remainder = len(data) % 8
-    return data if remainder == 0 else data + b"\x00" * (8 - remainder)
+def preload() -> None:
+    """Import scipy now, off the session path. A failure is logged, not raised."""
+    try:
+        import scipy.io  # noqa: F401
+    except Exception:  # noqa: BLE001 - the first savemat will report it properly
+        log.exception("scipy.io failed to import; .mat files will not be written")
 
 
-def _element(mtype: int, data: bytes) -> bytes:
-    """A full (non-compressed) data element: 8-byte tag + padded data."""
-    return struct.pack("<ii", mtype, len(data)) + _pad8(data)
+def to_matlab(data: dict[str, Any]) -> dict[str, Any]:
+    """The document with every value converted to what `savemat` should write."""
+    import numpy as np
 
-
-def _array_flags(mx_class: int, logical: bool = False) -> bytes:
-    flags = _LOGICAL_FLAG if logical else 0
-    class_and_flags = mx_class | (flags << 8)
-    return _element(_MI_UINT32, struct.pack("<II", class_and_flags, 0))
-
-
-def _dims(dimensions: tuple[int, ...]) -> bytes:
-    return _element(_MI_INT32, struct.pack(f"<{len(dimensions)}i", *dimensions))
-
-
-def _name(name: str) -> bytes:
-    return _element(_MI_INT8, name.encode("ascii"))
-
-
-def _matrix(name: str, mx_class: int, dimensions: tuple[int, ...], pr: bytes,
-            logical: bool = False) -> bytes:
-    body = (
-        _array_flags(mx_class, logical)
-        + _dims(dimensions)
-        + _name(name)
-        + pr
-    )
-    return _element(_MI_MATRIX, body)
-
-
-def _double_scalar(name: str, value: float) -> bytes:
-    pr = _element(_MI_DOUBLE, struct.pack("<d", float(value)))
-    return _matrix(name, _MX_DOUBLE, (1, 1), pr)
-
-
-def _logical_scalar(name: str, value: bool) -> bytes:
-    pr = _element(_MI_UINT8, struct.pack("<B", 1 if value else 0))
-    return _matrix(name, _MX_UINT8, (1, 1), pr, logical=True)
-
-
-def _char_row(name: str, value: str) -> bytes:
-    # MATLAB char arrays are 1×N of UTF-16 code units. Empty string → 1×0.
-    #
-    # N is the CODE UNIT count, not `len(value)`: outside the BMP the two
-    # differ, and a dimension that disagrees with the data it labels produces a
-    # file MATLAB reads as truncated or refuses outright. They agreed for every
-    # value this file used to carry; a task profile carries operator-written
-    # labels, which is exactly where an astral character arrives.
-    units = value.encode("utf-16-le")
-    pr = _element(_MI_UINT16, units)
-    return _matrix(name, _MX_CHAR, (1, len(units) // 2), pr)
-
-
-def _double_matrix_2col(name: str, rows: list[tuple[float, float]]) -> bytes:
-    """An N×2 double array, stored column-major as MATLAB expects.
-
-    `ts_data` is `[[code, ts], …]` row-major in Python; MATLAB wants all of
-    column 1 (codes) then all of column 2 (timestamps).
-    """
-    n = len(rows)
-    col0 = struct.pack(f"<{n}d", *(float(r[0]) for r in rows))
-    col1 = struct.pack(f"<{n}d", *(float(r[1]) for r in rows))
-    pr = _element(_MI_DOUBLE, col0 + col1)
-    return _matrix(name, _MX_DOUBLE, (n, 2), pr)
-
-
-def _field(name: str, value: Any) -> bytes:
-    """Serialize one top-level field, choosing the MAT class by Python type."""
-    if isinstance(value, bool):
-        return _logical_scalar(name, value)
-    if isinstance(value, (int, float)):
-        return _double_scalar(name, value)
-    if isinstance(value, str):
-        return _char_row(name, value)
-    if isinstance(value, (list, tuple)):
-        # The only array in the schema is ts_data: a list of [code, ts] pairs.
-        pairs = [(float(p[0]), float(p[1])) for p in value]
-        return _double_matrix_2col(name, pairs)
-    if isinstance(value, dict):
-        # The one nested value a session document carries is the task profile
-        # snapshot (`DATA.md#the-embedded-task-profile`). MAT-5 has a struct class, but a profile is
-        # a deep, ragged tree — arrays of objects with optional keys — and
-        # nothing in the lab's MATLAB reads it as a struct anyway. Written as
-        # JSON text, which `jsondecode(...)` gives straight back.
-        #
-        # NOT `str(dict)`, which is what the old fallback did to it: a Python
-        # repr uses single quotes and bare `True`, so it is not JSON and no
-        # decoder accepts it — the snapshot would have shipped in a form
-        # nothing could read.
-        return _char_row(name, json.dumps(value, sort_keys=True, separators=(",", ":")))
-    # Fall back to a string rather than failing the whole write.
-    return _char_row(name, str(value))
-
-
-def _header() -> bytes:
-    text = (
-        f"MATLAB 5.0 MAT-file, written by Ephymeris "
-        f"on {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
-    )
-    header = text.encode("ascii")[:116].ljust(116, b" ")
-    header += b"\x00" * 8  # subsystem data offset (unused)
-    header += struct.pack("<H", 0x0100)  # version
-    header += b"IM"  # endian indicator
-    return header
-
-
-def dumps(data: dict[str, Any]) -> bytes:
-    """Serialize a flat dict of scalars + one `ts_data` array to MAT-5 bytes."""
-    out = bytearray(_header())
+    out: dict[str, Any] = {}
     for name, value in data.items():
-        out += _field(name, value)
-    return bytes(out)
+        if isinstance(value, bool):
+            out[name] = value  # bool before int: a MATLAB `logical`
+        elif isinstance(value, (int, float)):
+            out[name] = float(value)
+        elif isinstance(value, (list, tuple)):
+            # The only array in the schema is ts_data: [[code, ts], …] → N×2.
+            out[name] = np.asarray(value, dtype=np.float64).reshape(-1, 2)
+        elif isinstance(value, dict):
+            # The task profile snapshot (`DATA.md#the-embedded-task-profile`): a
+            # deep, ragged tree nobody reads as a struct, so JSON text that
+            # `jsondecode(...)` gives straight back. ASCII (json's default
+            # `ensure_ascii`), so no label in it can trip the BMP check below.
+            out[name] = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        else:
+            # Strings, and a string rather than a failed write for anything else.
+            out[name] = value if isinstance(value, str) else str(value)
+        if isinstance(out[name], str) and any(ord(c) > 0xFFFF for c in out[name]):
+            raise ValueError(
+                f"{name!r} has a character outside the BMP, which savemat would size wrongly"
+            )
+    return out
 
 
 def savemat(path: str, data: dict[str, Any]) -> None:
-    with open(path, "wb") as fh:
-        fh.write(dumps(data))
+    import scipy.io
+    from scipy.io.matlab import MatWriteWarning
+
+    converted = to_matlab(data)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", MatWriteWarning)
+        scipy.io.savemat(path, converted, appendmat=False)

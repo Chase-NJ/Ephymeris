@@ -310,8 +310,10 @@ The `# key: value` header is written by `AnimalWriter.open_files` after `START`/
 
 Same field names, written from the same in-memory dict as the JSON — one source serialized twice. `ts_data` becomes an `N×2` double array; `task_profile` becomes a **char array holding JSON** (`jsondecode(task_profile)` in MATLAB), since a profile is a deep ragged tree nobody reads as a struct.
 
-> [!NOTE]
-> **`sessions/matwriter.py` is a hand-written MAT v5 writer, not `scipy.io.savemat`.** `scipy` is a large binary wheel and the likeliest install failure on a lab machine. The writer emits Level-5 directly (column-major doubles, strings as `miUINT16` char arrays, bools as `miUINT8` with the logical flag) and was validated by round-tripping through `scipy.io.loadmat` outside the runtime. `tests/test_matwriter.py` covers it.
+Every number is a `double` and every bool a `logical`; an empty `ts_data` is still `0×2`. `sessions/matwriter.py` writes it with `scipy.io.savemat` (uncompressed Level 5) and owns the conversion from Python values, because `savemat` unaided would keep an int as `int64` and an empty list as `0×0`. `tests/test_matwriter.py` pins each class and shape through `scipy.io.loadmat`.
+
+> [!CAUTION]
+> **A `.mat` is refused rather than written wrong.** `savemat` sizes a char array in code points where MATLAB counts UTF-16 code units, so a character outside the BMP (an emoji) would yield a string whose dimensions disagree with its data; it also drops a variable whose name starts with `_` with only a warning. Both raise instead, the `.mat` is skipped and logged, and the `.tsv` and `.json` carry the run. `task_profile` is ASCII-escaped JSON, so labels in it never trip this; a top-level string such as an animal name can.
 
 ### The embedded task profile
 
@@ -772,7 +774,7 @@ Both come from **one replay through one accumulator** (`_summarize_metric`), so 
 
 ### Uncertainty
 
-Every probability carries `counted` and a **95% Wilson score interval** (`wilson_interval`). Wilson, not the normal approximation, because this data lives at small *n* **and** at *p* near 1 (a trained animal sits near 0.95) — exactly where the normal interval runs past 1.0. It is a few lines over `math.sqrt`, so no dependency.
+Every probability carries `counted` and a **95% Wilson score interval** (`wilson_interval`). Wilson, not the normal approximation, because this data lives at small *n* **and** at *p* near 1 (a trained animal sits near 0.95) — exactly where the normal interval runs past 1.0. It is a few lines over `math.sqrt`, cheaper than importing `scipy.stats` for it ([dependency policy](ARCHITECTURE.md#dependency-policy)).
 
 **The sidecar never suppresses.** It reports value, count, interval and a `lowConfidence` flag (`counted < minCountedTrials`, default `DEFAULT_MIN_COUNTED` = 10). Suppression is a presentation choice made client-side: a learning curve draws a widening band; a strategy point draws hollow and smaller; a session-summary chip drops to an outline. Keeping the value preserves the difference between *"cut short after three trials"* and *"never happened"*.
 

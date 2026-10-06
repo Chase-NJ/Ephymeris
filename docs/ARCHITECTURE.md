@@ -1143,26 +1143,38 @@ setting, and reduced motion stills things rather than removing them. Icons are L
 
 ## Dependency policy
 
-The sidecar's runtime dependencies are deliberately minimal — `pyserial` and `websockets` — because lab
-machines are kept by non-technical users and an install failure is a real cost. That is why `.mat` files
-come from a hand-written writer (`sessions/matwriter.py`): `scipy` is a large binary wheel and the
-likeliest thing to fail at install.
+Lab machines never run `pip`: the installer ships a PyInstaller-frozen sidecar, so a wheel's install
+risk falls on dev and packaging machines. That makes a stable, widely used package cheaper than code
+written and kept by hand to avoid it. **A sidecar runtime dependency is welcome when it meets all four:**
 
-Two exceptions are granted, fenced differently:
+1. **Stable and widely used**, with wheels for Windows x64 on the CPython the freeze uses.
+2. **It removes code we would otherwise maintain** — the hand-written thing it duplicates is deleted, not
+   kept beside it.
+3. **No runtime cost.** Nothing heavy is imported on the session path (the port threads, strobe → `.tsv`,
+   the event loop's per-message work): import it inside the function that needs it, take a large import at
+   startup on a thread, and measure before and after.
+4. **Fenced**: a failure to import costs only the feature that uses it.
+
+The current dependencies beyond `pyserial` and `websockets`, and their fences:
 
 | Dependency | For | Fence |
 |---|---|---|
 | `grpcio`, `protobuf` | The `arduino-cli` daemon backend | **Capability**: `create_board_tool` falls back, loudly, to the subprocess backend when `grpcio` won't import or the daemon won't start. A failed wheel loses live streaming, never flashing. `grpcio-tools` is dev-only |
 | `jsonschema` | Validating the rig wiring document and task profiles | **Scope**: there is no second validator, so every import is inside the function that needs it, never at module scope. A failure disables the wiring and task editors and nothing else |
+| `scipy` (with `numpy`) | Writing the `.mat` mirror (`sessions/matwriter.py`, [DATA.md](DATA.md#the-mat-mirror)) | **Scope**: imported only inside `matwriter`, preloaded on a thread at startup so the first run to finish doesn't pay for it. A failure costs the `.mat` file — the `.tsv` and `.json` are already written |
 
 `jsonschema` pulls the native `rpds-py`, the part that can fail on a too-new CPython; a packaged build
 resolves it once and freezes it, so the exposure is dev and packaging machines.
 
 > [!IMPORTANT]
-> **Don't add a sidecar runtime dependency without strong justification.** If one is granted, prefer the
-> `grpcio` pattern — the feature **degrades, not disappears**. Where that's impossible, the `jsonschema`
-> pattern: the new feature disappears cleanly and nothing that worked before stops working. A dependency
-> that can take an existing feature down with it qualifies under neither.
+> **A dependency that can take an existing feature down with it doesn't qualify**, and neither does one
+> whose import lands on the session path. Prefer the `grpcio` pattern — the feature **degrades, not
+> disappears** — and otherwise the scoped pattern: the feature that needs it disappears cleanly and
+> nothing that worked before stops working.
+
+Small maths stays hand-written when the package's import costs more than the code it would replace: the
+Wilson interval ([DATA.md](DATA.md#derived-metrics)) is a few lines over `math.sqrt`, and `scipy.stats`
+takes about 0.3 s to import.
 
 The Intan subsystem is stdlib only. Frontend dependencies (`three`, `@react-three/fiber`,
 `@react-three/drei`, `modern-screenshot`) are less constrained because they are bundled at build time;

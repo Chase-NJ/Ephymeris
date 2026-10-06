@@ -40,7 +40,7 @@ from .sessions.models import (
     SessionInvalid,
     SessionNotFound,
 )
-from .sessions import recovery
+from .sessions import matwriter, recovery
 from .sessions.paths import resolve_session_folder
 from .hardware import service as hardware_service
 from .hardware import store as hardware_store
@@ -247,6 +247,10 @@ class Application:
 
     def start(self) -> None:
         self.db.connect()
+        # scipy's import (`DATA.md#the-mat-mirror`) is ~0.1 s of GIL-holding
+        # work. Paid here, while nothing is running, rather than by the first
+        # box to finish while five others are still streaming.
+        threading.Thread(target=matwriter.preload, name="scipy-preload", daemon=True).start()
         self._log_rig_wiring()
         # Rebuild the bundled sketches against this rig's wiring before anything
         # can flash one. Synchronous and on the startup path on purpose: it is a

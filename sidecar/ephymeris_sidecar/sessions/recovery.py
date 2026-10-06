@@ -169,7 +169,7 @@ def recover_file(tsv_path: Path) -> dict[str, Any]:
     try:
         mat_path.parent.mkdir(parents=True, exist_ok=True)
         matwriter.savemat(str(mat_path), document)
-    except OSError as exc:
+    except Exception as exc:  # noqa: BLE001 - scipy missing or a value it can't write
         log.error("couldn't write %s: %s", mat_path, exc)
 
     entry.update(

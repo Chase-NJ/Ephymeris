@@ -154,7 +154,7 @@ class AnimalWriter:
             log.error("couldn't write %s: %s", self._json_path, exc)
         try:
             matwriter.savemat(str(self._mat_path), document)
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 - scipy missing or a value it can't write
             log.error("couldn't write %s: %s", self._mat_path, exc)
 
         return document

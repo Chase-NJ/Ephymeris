@@ -6,6 +6,33 @@ over its TCP protocol. The code is `sidecar/ephymeris_sidecar/intan/` (stdlib on
 [USER-GUIDE.md](USER-GUIDE.md#recording-with-intan). Recording has been run through the app against a
 real RHX and real boxes; a full-length recording from a real animal has not ([Not yet verified](#not-yet-verified)).
 
+## Contents
+
+- [The rule](#the-rule)
+- [Talking to RHX](#talking-to-rhx)
+  - [What the protocol lacks](#what-the-protocol-lacks)
+  - [Confirmed writes](#confirmed-writes)
+  - [Run mode](#run-mode)
+  - [Data sockets](#data-sockets)
+  - [Synthetic data](#synthetic-data)
+- [The sync line](#the-sync-line)
+  - [Firmware pulse](#firmware-pulse)
+  - [Wiring and binding](#wiring-and-binding)
+  - [Edge matcher](#edge-matcher)
+- [Recording walkthrough](#recording-walkthrough)
+  - [Recording tab](#recording-tab)
+  - [Record step](#record-step)
+- [Start and end](#start-and-end)
+  - [Start](#start)
+  - [Graceful end](#graceful-end)
+  - [When RHX goes away](#when-rhx-goes-away)
+  - [Runner taps](#runner-taps)
+- [What is written](#what-is-written)
+- [Live windows](#live-windows)
+- [Not yet verified](#not-yet-verified)
+  - [Answered by the probe](#answered-by-the-probe)
+  - [To watch on the first full-length recording](#to-watch-on-the-first-full-length-recording)
+
 ## The rule
 
 > **RHX may be slow, absent or dead, and none of that may stall or fail a behavior session.**

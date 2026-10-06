@@ -7,6 +7,44 @@ not know are in the [Glossary](#glossary).
 The screenshots come from a demo rig of six boxes running a cohort called *Odor Discrimination 2026*
 (animals `remy1` to `remy12`, in Group A and Group B). Your names and numbers will differ.
 
+## Contents
+
+- [Before you start](#before-you-start)
+- [A tour of the app](#a-tour-of-the-app)
+- [Setting up a cohort](#setting-up-a-cohort)
+  - [Create a cohort](#create-a-cohort)
+  - [Groups](#groups)
+  - [Auto-balance](#auto-balance)
+  - [The data folder](#the-data-folder)
+  - [Archive and delete](#archive-and-delete)
+- [Running a session](#running-a-session)
+  - [Configure](#configure)
+  - [Boxes](#boxes)
+  - [Place the animals](#place-the-animals)
+  - [Record](#record)
+  - [Run](#run)
+  - [Switching groups](#switching-groups)
+  - [Ending the session](#ending-the-session)
+  - [Leaving set-up and coming back](#leaving-set-up-and-coming-back)
+  - [Continue a session from earlier today](#continue-a-session-from-earlier-today)
+- [During a session](#during-a-session)
+  - [Reading a box tile](#reading-a-box-tile)
+  - [The buttons](#the-buttons)
+  - [When a box shows ERROR or a board disconnects](#when-a-box-shows-error-or-a-board-disconnects)
+  - [Session write failed](#session-write-failed)
+  - [Backup pill](#backup-pill)
+  - [Do not touch during a session](#do-not-touch-during-a-session)
+- [Recording with Intan](#recording-with-intan)
+- [Checking a box](#checking-a-box)
+- [Looking at results](#looking-at-results)
+  - [Where files are saved](#where-files-are-saved)
+  - [Analytics](#analytics)
+  - [Exporting a sheet](#exporting-a-sheet)
+  - [Rescan Recover and Tidy records](#rescan-recover-and-tidy-records)
+- [Troubleshooting](#troubleshooting)
+- [Rules that protect the data](#rules-that-protect-the-data)
+- [Glossary](#glossary)
+
 ## Before you start
 
 **What Ephymeris does.** It runs behaviour sessions for a cohort of animals. It puts the right program

@@ -12,8 +12,11 @@ export function ChangesList({
   changes,
   names,
   colors,
+  recovered = false,
 }: {
   changes: RunChange[];
+  /** A recovered-files session, whose runs are never compared. */
+  recovered?: boolean;
   names: Map<string, string>;
   colors: Map<string, string>;
 }) {
@@ -27,6 +30,13 @@ export function ChangesList({
     );
   const changed = rows.filter((row) => row.parts.length > 0);
 
+  if (recovered) {
+    return (
+      <p className="px-4 py-4 text-[12px] text-static">
+        Not compared: runs recovered from files carry no recorded parameters or box.
+      </p>
+    );
+  }
   if (changes.length === 0) {
     return <p className="px-4 py-4 text-[12px] text-static">No runs recorded yet.</p>;
   }

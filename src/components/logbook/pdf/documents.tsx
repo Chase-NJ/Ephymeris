@@ -101,26 +101,56 @@ const s = StyleSheet.create({
   th: { fontFamily: FAMILY.mono, fontSize: 6.5, color: PAPER.muted },
   tr: { flexDirection: "row", paddingVertical: 3, borderBottomWidth: 0.5, borderColor: PAPER.rule },
   td: { fontFamily: FAMILY.mono, fontSize: 7.5 },
+  // Pinned from the TOP, with a height and its own line height — all three
+  // load-bearing. A `fixed` element is laid out again on every page; pinned by
+  // `bottom` it grew about fortyfold per page, until by page 7 of a long
+  // logbook its top was -1e21 and the PDF writer refused the whole export
+  // ("unsupported number"). And the page's `lineHeight` reaches it already
+  // resolved against the page's 9pt — taller than the footer — so without its
+  // own, not one line fits and the footer silently prints nothing. 792 is
+  // LETTER's height in points.
   footer: {
     position: "absolute",
-    bottom: 24,
+    top: 792 - 24 - 12,
+    height: 12,
+    lineHeight: 1.2,
     left: 44,
-    right: 44,
-    flexDirection: "row",
-    justifyContent: "space-between",
+    right: 140,
     fontFamily: FAMILY.mono,
     fontSize: 6.5,
     color: PAPER.muted,
   },
+  // Spans the margins and aligns right, with NO height or width: a `render`
+  // text given an explicit height is laid out empty and never prints.
+  pageNumber: {
+    position: "absolute",
+    top: 792 - 24 - 12,
+    lineHeight: 1.2,
+    left: 44,
+    right: 44,
+    textAlign: "right",
+    fontFamily: FAMILY.mono,
+    fontSize: 6.5,
+    color: PAPER.muted,
+  },
+
   divider: { marginTop: 22, marginBottom: 18, borderTopWidth: 1.5, borderColor: PAPER.pulsar },
 });
 
 function Footer({ left }: { left: string }) {
   return (
-    <View style={s.footer} fixed>
-      <Text>{left}</Text>
-      <Text render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
-    </View>
+    <>
+      <Text style={s.footer} fixed>
+        {left}
+      </Text>
+      {/* Its own fixed element, react-pdf's documented form, styled per
+          `pageNumber`'s note. */}
+      <Text
+        style={s.pageNumber}
+        fixed
+        render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`}
+      />
+    </>
   );
 }
 
@@ -273,7 +303,11 @@ function SessionBody({ session }: { session: DocSession }) {
       <Section title="What changed since each animal's previous run">
         {session.changes.every((c) => c.parts.length === 0) ? (
           <Text style={s.empty}>
-            {session.changes.length === 0 ? "No runs recorded." : "Nothing changed."}
+            {session.recovered
+              ? "Not compared: runs recovered from files carry no recorded parameters or box."
+              : session.changes.length === 0
+                ? "No runs recorded."
+                : "Nothing changed."}
           </Text>
         ) : (
           session.changes

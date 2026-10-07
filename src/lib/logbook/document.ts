@@ -5,7 +5,13 @@
  * screen uses, so the PDF can't drift from the Log it was exported from.
  */
 
-import { conditionColumns, conditionFor, conditionName, sessionRunsOf } from "../analytics/session";
+import {
+  conditionColumns,
+  conditionFor,
+  conditionName,
+  runEnd,
+  sessionRunsOf,
+} from "../analytics/session";
 import type { AnalyticsSummary, SessionListItem, TrialOutcomes } from "../analytics/types";
 import { changeParts } from "./changes";
 import { elapsedSeconds, formatDuration, formatOffset, longDate, wallClock } from "./clock";
@@ -54,6 +60,8 @@ export interface DocPerformance {
 
 export interface DocSession {
   id: string;
+  /** Recovered from files: its runs are never compared (`DATA.md#what-changed`). */
+  recovered: boolean;
   title: string;
   date: string;
   longDate: string;
@@ -156,7 +164,8 @@ function cell(outcomes: TrialOutcomes | null, minCounted: number): DocCell {
   return {
     sampled: String(outcomes.administered),
     rate: p === null ? "—" : `${Math.round(p * 100)}%`,
-    thin: outcomes.administered < minCounted,
+    // A thin rate is flagged; no rate at all has nothing to flag.
+    thin: p !== null && outcomes.administered < minCounted,
   };
 }
 
@@ -175,7 +184,12 @@ export function performanceOf(
     rows: runs.map((run) => ({
       animal: names.get(run.animalId) ?? animalNames.get(run.animalId) ?? run.animalId,
       start: wallClock(run.startedAt),
-      end: wallClock(run.endedAt),
+      // The screen's rule: a recovered run's end is derived from the recorded
+      // stream's own span, and marked "~" (`DATA.md#orphan-adoption`).
+      end: (() => {
+        const end = runEnd(run);
+        return end.derived ? `~${end.text}` : end.text;
+      })(),
       cells: [
         cell(run.outcomes, min),
         ...columns.map((column) => cell(conditionFor(run, column)?.outcomes ?? null, min)),
@@ -215,6 +229,7 @@ function sessionModel(
     .sort((a, b) => collator.compare(a.animal, b.animal));
   return {
     id: session.id,
+    recovered: session.id.startsWith("adopted:"),
     title: `${session.prefixName}_${session.sessionNumber}`,
     date: session.date,
     longDate: longDate(session.date),

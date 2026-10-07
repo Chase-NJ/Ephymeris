@@ -320,6 +320,8 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
 > - **A character no embedded face covers prints as `?`** (`printable`). Left alone, the engine falls through to a built-in face and draws *another* glyph — `≥ 3` printed as `ꞓ3`. Inter's latin-ext and Greek subsets are registered as fallbacks, so accented names and `ΔF/F` print correctly; common symbols (`→ ≥ ≤ ≠`) are spelled out.
 > - **Fonts are `.woff`, inlined with `?inline`**, for the PNG sheet's reason: a fetch over the packaged app's custom scheme fails silently, and the fallback is Helvetica.
 > - **Titles have a pinned height.** The engine measures Space Grotesk's line box short and draws the next line through the title.
+> - **The page footer is pinned from the top, with its own height and line height.** A `fixed` element is laid out again on every page; pinned by `bottom` it grew roughly fortyfold per page until, around page seven, the writer refused a coordinate of −2.6e21 and the whole logbook export failed — while every short export worked. The page number is the exception that proves the care needed: a `render` text given an explicit height prints nothing, so it spans the margins instead. `lib/logbook/pdf.test.ts` renders a forty-session logbook to keep this honest.
+> - **A recovered session reads as one.** Its run ends are derived from the recorded stream, marked `~`, as on screen; what changed says its runs are not compared rather than that there were none.
 
 ## Per-animal files
 

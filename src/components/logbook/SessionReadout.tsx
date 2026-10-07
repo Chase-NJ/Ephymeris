@@ -205,7 +205,7 @@ export function SessionReadout({
         </HudTile>
 
         <HudTile icon={GitCompareArrows} label="What changed" status="since each animal's previous run">
-          <ChangesList changes={changes} names={tableNames} colors={colors} />
+          <ChangesList changes={changes} names={tableNames} colors={colors} recovered={readOnly} />
         </HudTile>
 
         <HudTile icon={UserRound} label="Operator and summary">

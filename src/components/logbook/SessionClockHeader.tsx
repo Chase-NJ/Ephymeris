@@ -83,7 +83,17 @@ export function SessionClockHeader({
         <Readout
           label="End"
           value={open ? (live ? "Live" : "—") : wallClock(session.clockEndedAt)}
-          sub={open ? (live ? "still running" : "not ended") : ran ? "last group" : "record closed"}
+          sub={
+            open
+              ? live
+                ? "still running"
+                : recovered
+                  ? "not recorded"
+                  : "not ended"
+              : ran
+                ? "last group"
+                : "record closed"
+          }
           tone={live ? "text-status-ok" : undefined}
         />
         <Readout

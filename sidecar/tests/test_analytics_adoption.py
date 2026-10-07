@@ -640,6 +640,28 @@ async def test_adoption_synthesizes_sessions_without_writing_rows(
     assert rig.sessions.list_sessions(rig.cohort.id) == []
 
 
+async def test_a_recovered_session_closes_its_clock_from_its_files(rig: LegacyRig) -> None:
+    """Nothing records when a recovered run stopped, but its file records how
+    long it ran: the session's clock ends at the latest run's start plus its
+    stream's span (`DATA.md#the-session-clock`) — on the summary, and on
+    `sessions.list` once the index has cached the files."""
+    rig.add_legacy_run("remy1", HIT_1 * 5, time="120022")  # ten events, a 9 s stream
+    rig.add_legacy_run("remy2", HIT_1 * 8, time="120100")  # sixteen events, 15 s
+    await rig.service.rescan(rig.cohort.id)
+
+    # Unread, the session is open: a file nobody has read yet can't say.
+    listed, _ = rig.service.adopted_session_entries(rig.cohort.id, [])
+    assert listed[0].clock_ended_at is None
+
+    payload = await rig.service.summary(rig.cohort.id)
+    session = payload["sessions"][0]
+    assert session["clockStartedAt"] == "2026-06-16T12:00:22"
+    assert session["clockEndedAt"] == "2026-06-16T12:01:15.000"
+
+    listed, _ = rig.service.adopted_session_entries(rig.cohort.id, [])
+    assert listed[0].clock_ended_at == "2026-06-16T12:01:15.000"
+
+
 async def test_rescan_stays_idempotent_when_the_winning_copy_changes(
     rig: LegacyRig,
 ) -> None:

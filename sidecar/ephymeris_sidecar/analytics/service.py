@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -144,6 +145,18 @@ class AnalyticsService:
 
         async with self._lock:
             summaries = await self._index(runs, threshold, cohort_id)
+
+        # A recovered session's clock closes from its files — each run's start
+        # plus its stream's span (`DATA.md#the-session-clock`) — known only once
+        # the index has read them, which it just did.
+        _close_recovered_sessions(
+            synthetic,
+            _stream_ends(
+                adopted,
+                owners,
+                {run.id: entry.summary for run, entry in zip(runs, summaries)},
+            ),
+        )
 
         counts = {"runs": len(runs), "decoded": 0, "noProfile": 0, "missing": 0, "unreadable": 0}
         warnings: list[dict[str, Any]] = []
@@ -1059,7 +1072,13 @@ class AnalyticsService:
         a real session's
         id: the caller ADDS them to its own."""
         adopted = self._repo.adopted_for_cohort(cohort_id)
-        return _synthetic_sessions(adopted, cohort_id, _adoption_owners(adopted, recorded))
+        owners = _adoption_owners(adopted, recorded)
+        # The ends come from the metrics cache — the database, so the
+        # no-filesystem rule holds; a file the index has not read yet leaves
+        # its session open until the next summary.
+        cached = self._repo.load_cached([entry.id for entry in adopted])
+        ends = _stream_ends(adopted, owners, {rid: c.summary for rid, c in cached.items()})
+        return _synthetic_sessions(adopted, cohort_id, owners, ends)
 
     def _resolve_profile(
         self,
@@ -1579,6 +1598,7 @@ def _synthetic_sessions(
     adopted: list[AdoptedRun],
     cohort_id: str,
     owners: dict[str, str] | None = None,
+    ends: dict[str, str] | None = None,
 ) -> tuple[list[Session], dict[str, int]]:
     """Payload-only session entries grouped from adopted runs' folder names.
 
@@ -1587,6 +1607,9 @@ def _synthetic_sessions(
 
     A group `owners` maps to a recorded session gets no entry of its own; its
     count is filed under the recorded session's id instead (`DATA.md#tidy-records`).
+
+    `ends` (`_stream_ends`) closes each session's clock; a session with no
+    entry stays open, which the Log prints as "not recorded".
     """
     groups: dict[str, list[AdoptedRun]] = {}
     for entry in adopted:
@@ -1609,12 +1632,60 @@ def _synthetic_sessions(
                 session_number=first.session_number,
                 date=first.date or "",
                 started_at=first.started_at,
+                ended_at=(ends or {}).get(session_id),
                 status="completed",
                 folder_path=str(reader.session_folder_of(Path(first.file_path))),
             )
         )
         counts[session_id] = len(entries)
     return sessions, counts
+
+
+def _stream_end(started_at: str, summary: dict[str, Any] | None) -> datetime | None:
+    """When a recovered run's recorded stream ended: its start plus the
+    stream's span (`durationMs`), the same derivation the session table draws
+    as `~`. Nothing records when a recovered run stopped; its file records how
+    long it ran. `None` for a start without a time of day (a file named with
+    no `HHMMSS`) or a file the index has not read."""
+    duration = (summary or {}).get("durationMs")
+    if not isinstance(duration, (int, float)) or isinstance(duration, bool):
+        return None
+    if "T" not in started_at:
+        return None
+    try:
+        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return start + timedelta(milliseconds=float(duration))
+
+
+def _stream_ends(
+    adopted: list[AdoptedRun],
+    owners: dict[str, str],
+    summaries: dict[str, dict[str, Any]],
+) -> dict[str, str]:
+    """Each synthetic session's clock end (`DATA.md#the-session-clock`): the
+    latest of its runs' stream ends, in the same spelling as their starts.
+    A session whose files have all gone unread has no entry. A group a
+    recorded session owns is skipped — that session has its own clock."""
+    latest: dict[str, datetime] = {}
+    for entry in adopted:
+        session_id = _synthetic_session_id(entry)
+        if session_id in owners:
+            continue
+        end = _stream_end(entry.started_at, summaries.get(entry.id))
+        if end is not None and (session_id not in latest or end > latest[session_id]):
+            latest[session_id] = end
+    return {sid: end.isoformat(timespec="milliseconds") for sid, end in latest.items()}
+
+
+def _close_recovered_sessions(sessions: list[Session], ends: dict[str, str]) -> None:
+    """Stamp `_stream_ends` onto synthetic sessions built before the index
+    had read their files."""
+    for session in sessions:
+        end = ends.get(session.id)
+        if end is not None:
+            session.ended_at = end
 
 
 def _merge_sessions(recorded: list[Session], synthetic: list[Session]) -> list[Session]:

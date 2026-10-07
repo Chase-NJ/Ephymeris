@@ -2335,7 +2335,7 @@ The runner-held session — the same shape a sessions.status reply carries.
 | `startedAt` | string |  |
 | `endedAt` | string \| null |  |
 | `clockStartedAt` | string | When the session actually began running: the first group run's start, or `startedAt` before any group ran (`DATA.md#the-session-clock`). `startedAt` is when Step 1 created the record. Elapsed time and note offsets count from this. |
-| `clockEndedAt` | string \| null | The last group run's end once every run is closed, else `endedAt`; null while the session is open. |
+| `clockEndedAt` | string \| null | The last group run's end once every run is closed, else `endedAt`; null while the session is open. For a session recovered from files, the latest run's start plus its stream's span, once the index has read the files (`DATA.md#the-session-clock`) — derived, so shown as `~`. |
 | `status` | [SessionStatus](#shape-sessionstatus) |  |
 | `folderPath` | string |  |
 | `groupRuns` | [GroupRun](#shape-grouprun)[] |  |
@@ -2384,7 +2384,7 @@ One session, from sessions.list or inside a summary.
 | `startedAt` | string |  |
 | `endedAt` | string \| null |  |
 | `clockStartedAt` | string | When the session actually began running: the first group run's start, or `startedAt` before any group ran (`DATA.md#the-session-clock`). `startedAt` is when Step 1 created the record. Elapsed time and note offsets count from this. |
-| `clockEndedAt` | string \| null | The last group run's end once every run is closed, else `endedAt`; null while the session is open. |
+| `clockEndedAt` | string \| null | The last group run's end once every run is closed, else `endedAt`; null while the session is open. For a session recovered from files, the latest run's start plus its stream's span, once the index has read the files (`DATA.md#the-session-clock`) — derived, so shown as `~`. |
 | `status` | [SessionStatus](#shape-sessionstatus) |  |
 | `folderPath` | string |  |
 | `ordinal` | number | 1-based chronological position from (date, startedAt) — never from sessionNumber, which is free text and would sort "10" before "9". |

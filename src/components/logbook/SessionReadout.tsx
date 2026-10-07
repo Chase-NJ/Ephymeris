@@ -22,7 +22,7 @@ import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useSidecar } from "@/lib/ws/context";
 
-import { ChangesList } from "./ChangesList";
+import { ChangesList, ChangesStatus } from "./ChangesList";
 import { NoteComposer } from "./NoteComposer";
 import { NotesTimeline, noteAnchor } from "./NotesTimeline";
 import { SessionClockHeader } from "./SessionClockHeader";
@@ -216,7 +216,11 @@ export function SessionReadout({
           )}
         </HudTile>
 
-        <HudTile icon={GitCompareArrows} label="What changed" status="since each animal's previous run">
+        <HudTile
+          icon={GitCompareArrows}
+          label="What changed"
+          status={<ChangesStatus changes={changes} />}
+        >
           <ChangesList changes={changes} names={tableNames} colors={colors} />
         </HudTile>
 

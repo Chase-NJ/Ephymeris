@@ -218,6 +218,10 @@ function sessionModel(
 ): DocSession {
   const live = session.status === "running";
   const open = session.clockEndedAt === null;
+  const recovered = session.id.startsWith("adopted:");
+  // A recovered session's end is derived from its files' streams, never
+  // recorded, so it prints `~` as on screen (`DATA.md#the-session-clock`).
+  const approx = recovered && !open ? "~" : "";
   const elapsed = elapsedSeconds(session.clockStartedAt, session.clockEndedAt, now);
   const log = entry.logs.get(session.id) ?? null;
   const changes = (entry.changesBySession.get(session.id) ?? [])
@@ -232,10 +236,10 @@ function sessionModel(
     title: `${session.prefixName}_${session.sessionNumber}`,
     date: session.date,
     longDate: longDate(session.date),
-    status: session.id.startsWith("adopted:") ? "Recovered from files" : STATUS_LABEL[session.status],
+    status: recovered ? "Recovered from files" : STATUS_LABEL[session.status],
     start: wallClock(session.clockStartedAt),
-    end: open ? (live ? "running" : "—") : wallClock(session.clockEndedAt),
-    elapsed: elapsed === null || (open && !live) ? "—" : formatDuration(elapsed),
+    end: open ? (live ? "running" : "—") : approx + wallClock(session.clockEndedAt),
+    elapsed: elapsed === null || (open && !live) ? "—" : approx + formatDuration(elapsed),
     setup:
       session.startedAt !== session.clockStartedAt
         ? `Set-up began ${wallClock(session.startedAt)}`

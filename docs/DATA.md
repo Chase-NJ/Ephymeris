@@ -273,6 +273,8 @@ The **Log** tab's lab notebook: timestamped notes and a few free fields per sess
 
 Both are derived, never stored, and ride on `Session` and `SessionListItem`. Elapsed time everywhere — the Log header, Mission Control, the PDF — is `clockEndedAt − clockStartedAt`, or `now − clockStartedAt` while open.
 
+A session recovered from files (`adopted:…`, [Orphan adoption](#orphan-adoption)) has no record and no group runs. Its `clockStartedAt` is its earliest file's start, and its `clockEndedAt` the latest of its runs' **stream ends** — a run's start plus its `durationMs`, the span of the recorded stream — read from the [metrics cache](#caching) once the index has read the files (`analytics/service.py`'s `_stream_ends`), and null until then. Nothing recorded when such a run stopped, so the Log and the PDF mark the end and elapsed `~`, as the session table marks a recovered run's end.
+
 A note's **T+ offset** (`offsetMs`) is its `at` minus `clockStartedAt`, derived on every read so a tidy merge or an edited `at` can never leave a stale one. A note whose `at` falls outside `[clockStartedAt, clockEndedAt or now]` — one written the next morning about the session — has no offset rather than a misleading one.
 
 > [!CAUTION]

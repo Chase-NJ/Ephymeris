@@ -683,7 +683,11 @@ flag means it has a note carried forward.
 The top of the page reads the session's **Date**, **Start**, **End** and **Elapsed**. Start is when the
 first group began running, not when you started setting up; set-up time is noted underneath. The strip
 below shows each group run, with a tick for every note at the moment it was taken. Click a tick to go to
-the note.
+the note. For a session recovered from files, End and Elapsed are marked **~**: nothing recorded when it
+stopped, so they are read from how long each animal's file ran.
+
+**Session folder**, beside the session's status, opens its folder on disk; **Cohort folder**, at the top
+right of the Log, opens the cohort's data folder.
 
 ### Writing notes
 
@@ -718,10 +722,14 @@ when setting up the next session, and on Mission Control. Click **Resolve** once
 sampled, overall and for each condition. **Open in Analytics** goes to that session there.
 
 **What changed** lists, for each animal, anything different from its previous session: a new task, a
-different box, or a changed setting (such as `holdMs 200 → 300`). Ephymeris records these itself, so
-you don't have to. Sessions copied from the other lab machine are compared too, from the settings saved
-in each animal's file; they show **recovered** instead of a box, because the file doesn't say which box
-it was. Very old files saved no settings, so only their task is compared.
+different box, or a changed setting. Each animal with something to report gets a row, marked with its
+colour from the performance table, and each change its own line — the kind at the left (**task**,
+**box**, **settings**), then the old value and the new one, the new one brighter. Settings line up in a
+small table (`holdMs  200 → 300`). Animals with nothing to report are named once underneath, and the
+heading counts how many changed. Ephymeris records these itself, so you don't have to. Sessions copied
+from the other lab machine are compared too, from the settings saved in each animal's file; they show
+**recovered** instead of a box, because the file doesn't say which box it was. Very old files saved no
+settings, so only their task is compared.
 
 ### Saving the log as a PDF
 

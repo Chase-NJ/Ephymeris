@@ -519,7 +519,10 @@ SHAPES = (
                 "clockEndedAt",
                 nullable(STR),
                 doc="The last group run's end once every run is closed, else "
-                "`endedAt`; null while the session is open.",
+                "`endedAt`; null while the session is open. For a session "
+                "recovered from files, the latest run's start plus its stream's "
+                "span, once the index has read the files "
+                "(`DATA.md#the-session-clock`) — derived, so shown as `~`.",
             ),
             f("status", Ref("SessionStatus")),
             f("folderPath", STR),
@@ -809,7 +812,10 @@ SHAPES = (
                 "clockEndedAt",
                 nullable(STR),
                 doc="The last group run's end once every run is closed, else "
-                "`endedAt`; null while the session is open.",
+                "`endedAt`; null while the session is open. For a session "
+                "recovered from files, the latest run's start plus its stream's "
+                "span, once the index has read the files "
+                "(`DATA.md#the-session-clock`) — derived, so shown as `~`.",
             ),
             f("status", Ref("SessionStatus")),
             f("folderPath", STR),

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useLocation } from "react-router";
 
 import { ChangeCohort } from "@/components/analytics/ChangeCohort";
+import { FolderButton } from "@/components/common/FolderButton";
 import { CohortSky } from "@/components/cohorts/CohortSky";
 import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import { DENSE_SKY_OPACITY, SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
@@ -13,7 +14,7 @@ import { LogRail } from "@/components/logbook/LogRail";
 import { MonthStrip } from "@/components/logbook/MonthStrip";
 import { SessionReadout } from "@/components/logbook/SessionReadout";
 import { useAnimalNames, useRoster } from "@/components/logbook/useRoster";
-import { useAnalyticsStore } from "@/lib/analytics/context";
+import { useAnalyticsStore, useSummary } from "@/lib/analytics/context";
 import { useCohorts } from "@/lib/cohorts/context";
 import { resolveFlag } from "@/lib/logbook/commands";
 import { useLogbook, useLogbookStore, useLogCohort, useLogSession } from "@/lib/logbook/context";
@@ -45,6 +46,9 @@ export function Log() {
   const selectedId = useLogSession();
   const entry = useLogbook(cohortId);
   const active = cohorts.find((c) => c.id === cohortId) ?? null;
+  // The data folder rides the Analytics summary, as on that page; the session
+  // page asks for the summary, so it is here by the time anyone looks.
+  const dataFolder = useSummary(cohortId)?.dataFolder ?? null;
   const roster = useRoster(cohortId);
   const names = useAnimalNames(roster);
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -184,13 +188,19 @@ export function Log() {
               </p>
             </div>
           </div>
-          <LogExport
-            cohortId={cohortId}
-            cohortName={active?.name ?? "Cohort"}
-            entry={entry}
-            session={selected}
-            names={names}
-          />
+          <div className="flex items-start gap-2">
+            {/* The cohort's data folder, beside the exports: the other way the
+                log leaves the app. The selected session's own folder opens
+                from its page header. */}
+            {dataFolder && <FolderButton path={dataFolder} label="Cohort folder" />}
+            <LogExport
+              cohortId={cohortId}
+              cohortName={active?.name ?? "Cohort"}
+              entry={entry}
+              session={selected}
+              names={names}
+            />
+          </div>
         </header>
 
         <div className="mx-auto mt-5 flex min-h-0 w-full max-w-6xl flex-1 gap-5 px-8 pb-6">

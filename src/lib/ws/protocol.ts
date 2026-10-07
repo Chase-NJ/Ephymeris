@@ -578,7 +578,8 @@ export interface Session {
   clockStartedAt: string;
   /**
    * The last group run's end once every run is closed, else `endedAt`; null while the session is
-   * open.
+   * open. For a session recovered from files, the latest run's start plus its stream's span, once
+   * the index has read the files (`DATA.md#the-session-clock`) — derived, so shown as `~`.
    */
   clockEndedAt: string | null;
   status: SessionStatus;
@@ -844,7 +845,8 @@ export interface SessionListItem {
   clockStartedAt: string;
   /**
    * The last group run's end once every run is closed, else `endedAt`; null while the session is
-   * open.
+   * open. For a session recovered from files, the latest run's start plus its stream's span, once
+   * the index has read the files (`DATA.md#the-session-clock`) — derived, so shown as `~`.
    */
   clockEndedAt: string | null;
   status: SessionStatus;

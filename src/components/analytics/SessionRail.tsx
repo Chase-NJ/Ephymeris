@@ -1,6 +1,7 @@
 import { CalendarDays } from "lucide-react";
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PanelTitle } from "@/components/charts/PanelTitle";
 
 import { Button } from "@/components/common/controls";
 import { useAnalyticsStore } from "@/lib/analytics/context";
@@ -127,10 +128,10 @@ export function SessionRail({
       <div className="flex items-baseline justify-between gap-3">
         <span className="flex items-center gap-1.5 text-[11px] text-static">
           <CalendarDays size={13} strokeWidth={1.75} className="text-pulsar" />
-          <span>
-            Sessions
-            <span className="ml-2 text-static/70">spaced by date — a gap is a real gap</span>
-          </span>
+          <PanelTitle
+            name="Sessions"
+            note="spaced by date — a gap is a real gap"
+          />
         </span>
         <Button
           variant={selected === ALL_SESSIONS ? "primary" : "outline"}

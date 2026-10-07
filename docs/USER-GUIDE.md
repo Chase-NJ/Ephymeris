@@ -603,16 +603,17 @@ is saved in an `ephys` folder in the session folder, unless the Recording defaul
 ### Analytics
 
 1. Open **Analytics** and click a cohort's planet.
-2. The **Sessions** rail places sessions by date, so a gap in training shows as a gap. Under it, the
-   **Task** strip shows which task each stretch of sessions was running. Below that are the cohort's
-   **Accuracy**, **Effort** and **Outcome mix** charts.
+2. The **Sessions** rail places sessions by date, so a gap in training shows as a gap. Under it, in one
+   row: the **Animals** list, **Strategy space**, and the **Accuracy** chart with the **Task** strip
+   above it, showing which task each stretch of sessions was running. Below them are the **Effort** and
+   **Outcome mix** charts.
 
    ![Analytics for one cohort: the Data folder, Rescan, Recover, Tidy records and Export cohort PNG buttons at the top, the Sessions rail spaced by date, the Task strip changing from Shaping to 2-Odor Discrimination, and the Accuracy chart with response and rewarded lines](images/analytics-cohort.webp)
 
-3. The **Animals** rail lists each animal with its trend. Hover over one to highlight it in every chart;
-   click to keep it highlighted. Beside it, **Strategy space** places each animal per session in one of
-   four corners (*discriminating*, *chance*, *side bias*, *reversed*), and **Overall accuracy** shows each
-   animal's line over time. Each chart has a **how to read this** note you can open.
+3. The **Animals** list shows each animal with its trend. Hover over one to highlight it in every chart;
+   click to keep it highlighted. **Strategy space** places each animal per session in one of four
+   corners (*discriminating*, *chance*, *side bias*, *reversed*). Each chart has a **how to read this**
+   note you can open. (The screenshots here show an earlier arrangement of the same charts.)
 
    ![The lower half of the cohort view: Effort and Outcome mix bar charts, the Animals rail grouped by Group A and B with a trend and score for each animal, the Strategy space scatter, and Overall accuracy per animal](images/analytics-panels.webp)
 

@@ -50,7 +50,12 @@ export function ChartFrame({
       )}
       <div className="flex items-stretch gap-1.5">
         {(yTop || yBottom) && (
-          <div className="flex w-[26px] shrink-0 flex-col justify-between py-px text-right font-mono text-[9px] tabular-nums text-static/80">
+          // A ruled scale, the instrument's way: the extremes labelled, a
+          // hairline spine, and a tick at each end and the midpoint.
+          <div className="relative flex w-[26px] shrink-0 flex-col justify-between border-r border-static/25 py-px pr-1 text-right font-mono text-[9px] tabular-nums text-static/80">
+            <span className="absolute top-0 -right-px h-px w-1 bg-static/40" aria-hidden />
+            <span className="absolute top-1/2 -right-px h-px w-[3px] bg-static/30" aria-hidden />
+            <span className="absolute bottom-0 -right-px h-px w-1 bg-static/40" aria-hidden />
             <span>{yTop}</span>
             <span>{yBottom}</span>
           </div>

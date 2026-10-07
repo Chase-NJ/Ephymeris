@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
+import { PanelTitle } from "@/components/charts/PanelTitle";
 import { HowToRead } from "@/components/charts/HowToRead";
 import { useHasHighlight, useIsHighlighted, useAnalyticsStore } from "@/lib/analytics/context";
 import type {
@@ -111,10 +112,10 @@ export function SessionStrategy({
         icon={Route}
         title={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span>
-              Strategy within this session
-              <span className="ml-2 text-static/70">one point per trial</span>
-            </span>
+            <PanelTitle
+              name="Strategy within this session"
+              note="one point per trial"
+            />
             {profiles.length > 1 ? (
               <ProfilePicker
                 profiles={profiles}

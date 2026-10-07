@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { useMemo } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
+import { PanelTitle } from "@/components/charts/PanelTitle";
 import { useRevealOnView } from "@/components/charts/reveal";
 import { UnitChart } from "@/components/charts/UnitChart";
 import type { AnalyticsSummary } from "@/lib/analytics/types";
@@ -77,16 +78,14 @@ function EffortBody({ summary }: { summary: AnalyticsSummary }) {
   }));
 
   return (
-    <div className="surface rounded-md p-4" ref={ref}>
+    <div className="telemetry p-4" ref={ref}>
       <ChartFrame
         icon={Gauge}
         title={
-          <span>
-            Effort
-            <span className="ml-2 text-static/70">
-              trials offered per session · filled = administered
-            </span>
-          </span>
+          <PanelTitle
+            name="Effort"
+            note="trials offered per session · filled = administered"
+          />
         }
         yTop={String(maxTrials)}
         yBottom="0"

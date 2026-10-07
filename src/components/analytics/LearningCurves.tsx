@@ -1,55 +1,51 @@
-import { Activity, TrendingUp } from "lucide-react";
+import { Activity } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
+import { PanelTitle } from "@/components/charts/PanelTitle";
 import { HowToRead } from "@/components/charts/HowToRead";
 import { DrawOn } from "@/components/charts/DrawOn";
 import { HIGHLIGHT_DRAW } from "@/components/charts/reveal";
-import {
-  UnitChart,
-  ribbon,
-  segmentsWithGaps,
-  unitX,
-  unitY,
-  type BandPoint,
-  type Segment,
-} from "@/components/charts/UnitChart";
+import { UnitChart, unitX, unitY, type Segment } from "@/components/charts/UnitChart";
 import { Segmented } from "@/components/common/controls";
 import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
 import { conditionName } from "@/lib/analytics/session";
-import { ALL_SESSIONS } from "@/lib/analytics/store";
-import type { AnalyticsSummary, RunSeries, RunSummary } from "@/lib/analytics/types";
-import { chronological, pickMetric } from "@/lib/analytics/view";
+import type { RunSeries, RunSummary } from "@/lib/analytics/types";
 
 /**
- * P(correct) over time (`DATA.md#learning-curves`).
+ * Rolling P(correct) within one session (`DATA.md#learning-curves`): the
+ * value per counted trial for each condition any of the session's runs
+ * declares, from the `analytics.series` reply the route fetches once.
+ * Conditions are the union across the session's runs — a mixed-task session
+ * offers more choices rather than hiding runs.
  *
- * Two resolutions, chosen by the session selector — and two different
- * scopings, each decided by the panel rather than by a filter:
+ * Session scope only. Across sessions, the accuracy trend and the strategy
+ * plane answer "how is each animal doing" (`DATA.md#analytics-views`); a third
+ * per-animal accuracy chart only repeated them at a lower resolution.
  *
- * - **Across sessions**: one chart, each animal's whole history at its
- *   pooled overall accuracy (`DATA.md#pooled-accuracy`) — every run, whatever task it was on,
- *   because "how is this animal doing" is a question about the animal, not
- *   about one task. Per-condition histories are the strategy space's job;
- *   here they would be one chart per task per condition, unreadable at
- *   cohort scale.
- * - **Within one session**: the rolling value per counted trial for each
- *   condition any of the session's runs declares, from the
- *   `analytics.series` reply the route fetches once. Conditions are the
- *   union across the session's runs — a mixed-task session grows charts
- *   rather than hiding runs.
+ * The x axis is **trial index, never time**. Timestamps are elapsed since each
+ * animal's own start, animals in one session begin minutes apart, and stream
+ * t=0 trails the recorded start by the handshake — so a shared time axis would
+ * be quietly wrong.
  *
- * The x axis is **trial index / run ordinal, never time**. Timestamps are
- * elapsed since each animal's own start, animals in one session begin minutes
- * apart, and stream t=0 trails the recorded start by the handshake — so a
- * shared time axis would be quietly wrong.
- *
- * Each animal's band and curve draw in a per-animal `<CurveLayer>` inside the
- * chart rather than through `UnitChart`'s `series` prop, because the layer is
- * where the shared highlight lands: the highlighted animal gains
- * stroke weight, the rest drop to a dim opacity, and only these small layers
- * re-render on hover.
+ * Each animal's curve draws in a per-animal `<CurveLayer>` inside the chart
+ * rather than through `UnitChart`'s `series` prop, because the layer is where
+ * the shared highlight lands: the highlighted animal gains stroke weight, the
+ * rest drop to a dim opacity, and only these small layers re-render on hover.
  */
+export function LearningCurves({
+  sessionRuns,
+  series,
+  colors,
+}: {
+  /** The selected session's runs — every one, whatever task (`session.ts`). */
+  sessionRuns: RunSummary[];
+  series: RunSeries[];
+  colors: Map<string, string>;
+}) {
+  return <WithinSessionCurves sessionRuns={sessionRuns} series={series} colors={colors} />;
+}
+
 /**
  * One condition's rolling accuracy, in a tile the reader chooses.
  *
@@ -97,7 +93,7 @@ function WithinSessionCurves({
 
   if (!condition) {
     return (
-      <div className="surface rounded-md p-4">
+      <div className="telemetry p-4">
         <p className="text-[12px] leading-relaxed text-static">
           No scored runs in this session — curves appear once a run with a task
           profile has been recorded.
@@ -109,15 +105,15 @@ function WithinSessionCurves({
   const layers = withinSessionLayers(series, sessionRuns, condition.id, colors);
 
   return (
-    <div className="surface flex flex-col gap-3 rounded-md p-4">
+    <div className="telemetry flex flex-col gap-3 p-4">
       <ChartFrame
         icon={Activity}
         title={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span>
-              Rolling accuracy
-              <span className="ml-2 text-static/70">per trial</span>
-            </span>
+            <PanelTitle
+              name="Rolling accuracy"
+              note="per trial"
+            />
             {conditions.length > 1 && (
               <Segmented
                 value={condition.id}
@@ -166,107 +162,16 @@ function WithinSessionCurves({
   );
 }
 
-/** Fixed plot heights (the trends' `PLOT_PX` pattern) — deliberate, not
- *  aspect- or row-driven, so a neighbouring tile's disclosure opening can
- *  never stretch a curve. Two session-scope charts roughly match the
- *  strategy plane's height; the single cohort chart gets the sum. */
-/** One chart instead of N, so it gets the room the stack used to divide. */
+/** A fixed plot height (the trends' `PLOT_PX` pattern) — deliberate, not
+ *  row-driven, so a neighbouring tile's disclosure opening can never stretch
+ *  a curve. Roughly the strategy plane's height beside it. */
 const SOLO_PLOT_PX = 300;
-const COHORT_PLOT_PX = 300;
-
-export function LearningCurves({
-  summary,
-  colors,
-  sessionScope,
-  sessionRuns,
-  series,
-}: {
-  summary: AnalyticsSummary;
-  colors: Map<string, string>;
-  sessionScope: string;
-  /** The selected session's runs — every one, whatever task (`session.ts`).
-   *  Empty across sessions. */
-  sessionRuns: RunSummary[];
-  /** The selected session's trajectories. Empty across sessions, where the
-   *  curves are built from the summary's per-session scalars instead. */
-  series: RunSeries[];
-}) {
-  const withinSession = sessionScope !== ALL_SESSIONS;
-
-  if (withinSession) {
-    return (
-      <WithinSessionCurves
-        sessionRuns={sessionRuns}
-        series={series}
-        colors={colors}
-      />
-    );
-  }
-
-  const layers = acrossSessionLayers(summary, colors);
-  if (layers.length === 0) {
-    return (
-      <div className="surface rounded-md p-4">
-        <p className="text-[12px] leading-relaxed text-static">
-          No scored runs yet — curves appear once a session with a task profile
-          has been recorded.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="surface flex flex-col gap-4 rounded-md p-4">
-      <div>
-        <ChartFrame
-          icon={TrendingUp}
-          title={
-            <span>
-              Overall accuracy
-              <span className="ml-2 text-static/70">
-                whole session, per session · every task
-              </span>
-            </span>
-          }
-          yTop="1.0"
-          yBottom="0.0"
-          xLeft="first"
-          xRight="latest"
-        >
-          <div style={{ height: COHORT_PLOT_PX }}>
-            <UnitChart height={46} className="h-full w-full" references={[{ y: 0.5 }]}>
-              {layers.map((layer) => (
-                <CurveLayer key={layer.key} layer={layer} height={46} />
-              ))}
-            </UnitChart>
-          </div>
-        </ChartFrame>
-      </div>
-      <HowToRead>
-        <p>
-          One line per animal, one point per run, at the run&rsquo;s accuracy
-          pooled across every condition — the only single number that can tell
-          learning from a side bias. Each run is scored at whatever task
-          it ran that day; the task strip below marks where that changed.
-        </p>
-        <p className="mt-1">
-          The ribbon behind a line is its 95% Wilson interval — wide where a
-          session scored few trials, so thin evidence is drawn rather than
-          hidden. The x axis is each animal&rsquo;s own run order, not calendar
-          time; the session rail above is where a gap in days is real.
-        </p>
-      </HowToRead>
-    </div>
-  );
-}
 
 interface CurveLayerData {
   key: string;
   animalId: string;
   color: string;
   segments: Segment[];
-  /** The Wilson ribbon behind the curve — across-session scope only. */
-  band: BandPoint[] | null;
 }
 
 /**
@@ -275,7 +180,7 @@ interface CurveLayerData {
  * Weight, not colour alone, marks the highlight (`DATA.md#colour-palette`).
  *
  * Picking an animal also re-lays its curve down in order — left to right,
- * which on both of this panel's x axes is chronological. The `key` is what
+ * which on this panel's x axis, trial order, is chronological. The `key` is what
  * replays it: this layer is mounted whether or not it is highlighted, so
  * without it the wipe would have run once, on arrival, and never again.
  */
@@ -286,18 +191,6 @@ function CurveLayer({ layer, height }: { layer: CurveLayerData; height: number }
 
   const body = (
     <>
-      {/* Band before curve: SVG paints in document order, and the ribbon
-          belongs behind its own line. Wide where n is small, so uncertainty
-          is drawn rather than thresholded away — kept faint so six
-          overlapping bands stay readable (`DATA.md#uncertainty`). */}
-      {layer.band && layer.band.length >= 2 && (
-        <polygon
-          points={ribbon(layer.band, height)}
-          fill={layer.color}
-          fillOpacity={highlighted ? 0.18 : 0.1}
-          stroke="none"
-        />
-      )}
       {layer.segments.map((segment, index) =>
         segment.points.length < 2 ? null : (
           <polyline
@@ -353,52 +246,6 @@ function withinSessionLayers(
         animalId,
         color: colors.get(animalId) ?? "var(--color-series-1)",
         segments: [{ points }],
-        band: null,
-      },
-    ];
-  });
-}
-
-/** Every run, pooled overall per run (`DATA.md#pooled-accuracy`) — `pickMetric(run, null)`. */
-function acrossSessionLayers(
-  summary: AnalyticsSummary,
-  colors: Map<string, string>,
-): CurveLayerData[] {
-  return summary.animals.flatMap((animal) => {
-    const runs = chronological(
-      summary.runs.filter((run) => run.animalId === animal.id),
-      summary.sessions,
-    );
-    const points = runs.map((run, index) => {
-      const value = pickMetric(run, null)?.pSession;
-      return value === null || value === undefined
-        ? null
-        : { x: runs.length === 1 ? 0.5 : index / (runs.length - 1), y: value };
-    });
-    const segments =
-      points.filter(Boolean).length >= 2 ? segmentsWithGaps(points) : [];
-
-    const band: BandPoint[] = [];
-    if (runs.length >= 2) {
-      runs.forEach((run, index) => {
-        const metric = pickMetric(run, null);
-        if (!metric || metric.wilsonLow === null || metric.wilsonHigh === null) return;
-        band.push({
-          x: index / (runs.length - 1),
-          low: metric.wilsonLow,
-          high: metric.wilsonHigh,
-        });
-      });
-    }
-
-    if (segments.length === 0 && band.length < 2) return [];
-    return [
-      {
-        key: animal.id,
-        animalId: animal.id,
-        color: colors.get(animal.id) ?? "var(--color-series-1)",
-        segments,
-        band: band.length >= 2 ? band : null,
       },
     ];
   });

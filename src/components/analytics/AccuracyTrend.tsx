@@ -3,6 +3,7 @@ import { useMemo, type ReactNode } from "react";
 
 import { ChartDots, type Dot } from "@/components/charts/ChartDots";
 import { ChartFrame } from "@/components/charts/ChartFrame";
+import { PanelTitle } from "@/components/charts/PanelTitle";
 import { DrawOn } from "@/components/charts/DrawOn";
 import { HowToRead } from "@/components/charts/HowToRead";
 import { HIGHLIGHT_DRAW, useRevealOnView } from "@/components/charts/reveal";
@@ -161,12 +162,10 @@ function TrendBody({
         <ChartFrame
           icon={Target}
           title={
-            <span>
-              Accuracy
-              <span className="ml-2 text-static/70">
-                response and rewarded · pooled across the cohort, every task
-              </span>
-            </span>
+            <PanelTitle
+              name="Accuracy"
+              note="response and rewarded · pooled across the cohort, every task"
+            />
           }
           yTop="1.0"
           yBottom="0.0"
@@ -469,5 +468,5 @@ function pct(value: number): string {
 }
 
 function Panel({ children }: { children: ReactNode }) {
-  return <div className="surface rounded-md p-4">{children}</div>;
+  return <div className="telemetry p-4">{children}</div>;
 }

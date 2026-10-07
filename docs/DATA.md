@@ -888,7 +888,7 @@ Every probability carries `counted` and a **95% Wilson score interval** (`wilson
 
 ### Pooled accuracy
 
-Each run also carries **`overall`** (id `__overall__`): correct trials over scored trials, pooled across every condition. **It is every per-run readout's default** — the animal rail, the session rail and the across-session learning curves read it.
+Each run also carries **`overall`** (id `__overall__`): correct trials over scored trials, pooled across every condition. **It is every per-run readout's default** — the animal rail and the session rail read it.
 
 > [!IMPORTANT]
 > **A single condition cannot show a side bias.** An animal that pokes right on every trial scores ~1.0 on "P(R | Odor 1)" and ~0.0 on "P(L | Odor 3)", so any readout keyed on one declared metric paints a completely bias-locked animal as one of the best in the cohort. Pooled, it sits at chance, which is the truth. This was found on real output, where a deliberately non-learning animal read 0.72–0.84.
@@ -1000,6 +1000,11 @@ The tallies say *how often*; the tape says *when* (streaks, bias episodes, the m
 
 `/analytics` (`routes/Analytics.tsx`, `components/analytics/`, pure helpers in `src/lib/analytics/view.ts`). Its cold landing is the 3D cohort browser ([ARCHITECTURE.md](ARCHITECTURE.md#frontend)). Selecting a session **narrows** every panel rather than navigating; per-animal identity colour is what ties the panels together. Only the rules a change could break are recorded here.
 
+**Layout.** Across sessions (`CohortTrends`, shared with the PNG sheet): the animal rail, the [strategy plane](#strategy-plane) and the accuracy trend in one row — the plane square at a fixed width, the trend taking the rest with the task strip directly above it — then effort and outcome mix side by side. Within a session: the session summary, then the rail, the strategy walk and the rolling [learning curve](#learning-curves) in the same proportions. The panels are [telemetry panels](ARCHITECTURE.md#telemetry-panels).
+
+> [!CAUTION]
+> **The task strip and the accuracy trend are one column.** They share x slots (`sessionOutcomePoints`), so a session's segment sits directly above its point; anything placed between them, or a strip and a trend of different widths, misaligns every boundary with no error.
+
 ### Pooling across tasks
 
 There is no task filter. The **outcome tallies and engagement ladder are vocabulary-defined** — the same measurement on every task — so the trend panels show every run and **disclose** the task instead: the task strip (one segment per run of sessions sharing a dominant task, on the trends' own session slots), a dashed rule where the dominant task changes, and the mix in hover titles. What changes across tasks is difficulty, and the disclosure keeps a cliff at a boundary reading as a task change rather than forgetting. **Declared metrics stay incomparable**, so views of them scope to one profile.
@@ -1040,8 +1045,9 @@ Separates *learning* from *picking a side*: one point per run, x = accuracy at o
 
 ![The cohort's lower panels: the Animals rail with each animal's pooled accuracy sparkline, the Strategy space with one point per animal per session between the corners discriminating, chance, side bias and reversed, its axes labelled right well (up) and left well (right), and Overall accuracy per animal from first session to latest](images/analytics-panels.webp)
 
-*Across sessions the axes are the two wells, whatever the task. Every number in the Animals rail and the
-Overall accuracy curves is [pooled accuracy](#pooled-accuracy).*
+*Across sessions the axes are the two wells, whatever the task. Every number in the Animals rail is
+[pooled accuracy](#pooled-accuracy). (This screenshot predates the current layout, which drops the Overall
+accuracy chart and sets the plane beside the accuracy trend — [Analytics views](#analytics-views).)*
 
 **Not a signal-detection ROC.** Hit rate against false-alarm rate needs one metric's `successCode` and another's `alternateCode` to be the same physical response — a fact about the rig that no profile states. The plane as built needs no such inference. Folding conditions onto sides doesn't reintroduce it: each side comes from the metric's own code, through the profile's own `strobes` map.
 
@@ -1050,10 +1056,11 @@ Overall accuracy curves is [pooled accuracy](#pooled-accuracy).*
 | Scope | x axis | y |
 |---|---|---|
 | One session | Counted trial index | Rolling P(hit) at the authored window, one condition chosen from a picker |
-| All sessions | Each animal's own run ordinal | Pooled `overall` accuracy per run, every task |
+
+Session scope only. Across sessions, each animal's history is the accuracy trend (pooled per session, with the animal picked out on hover) and its rail sparkline, and its strategy is the plane beside them; a third per-animal accuracy chart only repeated those at a lower resolution, so there is none.
 
 > [!IMPORTANT]
-> **The x axis is trial index or run order, never time.** `timestamp_ms` is elapsed since that animal's own start, animals in a session start minutes apart, and stream `t=0` trails `started_at`. Any plot aligning animals on a shared time axis is quietly wrong.
+> **The x axis is trial index, never time.** `timestamp_ms` is elapsed since that animal's own start, animals in a session start minutes apart, and stream `t=0` trails `started_at`. Any plot aligning animals on a shared time axis is quietly wrong.
 
 ![One session with remy3 pinned: per-animal cards listing each condition's administered and rewarded counts with outcome bars and trajectories, Strategy within this session as a per-trial trail from chance toward discriminating, and Rolling accuracy per trial with an Odor A → right / Odor B → left picker](images/analytics-session-detail.webp)
 

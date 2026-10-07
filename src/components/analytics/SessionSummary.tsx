@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { AnimalCard } from "@/components/analytics/session/AnimalCard";
 import { SessionTable, TableKey } from "@/components/analytics/session/SessionTable";
+import { PanelTitle } from "@/components/charts/PanelTitle";
 import { FolderButton } from "@/components/common/FolderButton";
 import { conditionColumns } from "@/lib/analytics/session";
 import type {
@@ -106,7 +107,7 @@ export function SessionSummary({
 
   if (runs.length === 0) {
     return (
-      <div className="surface flex flex-wrap items-center justify-between gap-3 rounded-md p-4">
+      <div className="telemetry flex flex-wrap items-center justify-between gap-3 p-4">
         <p className="text-[12px] leading-relaxed text-static">
           No runs recorded in{" "}
           <span className="font-mono text-starlight">
@@ -129,7 +130,7 @@ export function SessionSummary({
 
   return (
     <motion.div
-      className="surface rounded-md p-4"
+      className="telemetry p-4"
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={springSnappy}
@@ -137,13 +138,17 @@ export function SessionSummary({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="flex items-center gap-2 text-[11px] text-static">
           <ClipboardList size={13} strokeWidth={1.75} className="shrink-0 text-pulsar" />
-          <span>
-            Session summary
-            <span className="ml-2 font-mono text-starlight">
-              {session.prefixName}_{session.sessionNumber}
-            </span>
-            <span className="ml-2 text-static/70">{session.date}</span>
-          </span>
+          <PanelTitle
+            name="Session summary"
+            note={
+              <>
+                <span className="font-mono text-starlight">
+                  {session.prefixName}_{session.sessionNumber}
+                </span>
+                <span className="ml-2">{session.date}</span>
+              </>
+            }
+          />
           {/* Gated on `interactive`: this panel is also the export sheet
               (`DATA.md#exporting-a-sheet`), and a button in a PNG is a lie. */}
           {interactive && session.folderPath && (

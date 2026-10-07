@@ -185,6 +185,59 @@
      already-blurred backdrop, costs a second full-panel filter pass, and reads
      muddier than either surface alone. What a nested card actually wants is what
      `.surface` used to be — a flat lift off its parent. */
+  /* Telemetry — Analytics' panels, drawn as segments of one large translucent
+     display (`ARCHITECTURE.md#telemetry-panels`). The `.hud` glass, thinner,
+     with a sharper radius; corner brackets where a card would have a rounded
+     edge; and a faint dot reticle, so the sky reads as being *behind* a
+     display surface rather than around floating cards.
+
+     Every mark is an SVG — no gradient, and nothing on Pulsar glows (the
+     theme's rule). The colours are Static's hex because a data URI cannot
+     read a custom property; change them with the token. */
+  .telemetry {
+    position: relative;
+    border: 1px solid color-mix(in srgb, var(--color-halo) 55%, transparent);
+    border-radius: 3px;
+    background-color: color-mix(in srgb, var(--color-nebula) 46%, transparent);
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M0.5 12V0.5H12' fill='none' stroke='%23948fa8' stroke-opacity='0.7' stroke-width='1'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M0 0.5H11.5V12' fill='none' stroke='%23948fa8' stroke-opacity='0.7' stroke-width='1'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M0.5 0V11.5H12' fill='none' stroke='%23948fa8' stroke-opacity='0.7' stroke-width='1'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M0 11.5H11.5V0' fill='none' stroke='%23948fa8' stroke-opacity='0.7' stroke-width='1'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14'%3E%3Ccircle cx='0.75' cy='0.75' r='0.6' fill='%23948fa8' fill-opacity='0.16'/%3E%3C/svg%3E");
+    background-position:
+      top left,
+      top right,
+      bottom left,
+      bottom right,
+      0 0;
+    background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, repeat;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  }
+
+  /* A display's section heading: the segment's name in tracked mono, and a
+     hairline running out to the edge with a tick at its end. */
+  .telemetry-section {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-static);
+  }
+  .telemetry-section::after {
+    content: "";
+    flex: 1;
+    height: 5px;
+    border-top: 1px solid color-mix(in srgb, var(--color-halo) 80%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--color-halo) 80%, transparent);
+    transform: translateY(2px);
+  }
+
   .surface-inset {
     background-color: var(--color-nebula);
     border: 1px solid var(--color-halo);

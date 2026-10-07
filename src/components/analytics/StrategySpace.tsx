@@ -2,6 +2,7 @@ import { Compass } from "lucide-react";
 import { useMemo } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
+import { PanelTitle } from "@/components/charts/PanelTitle";
 import { HowToRead } from "@/components/charts/HowToRead";
 import { useHasHighlight, useIsHighlighted } from "@/lib/analytics/context";
 import type { AnalyticsSummary, RunSummary } from "@/lib/analytics/types";
@@ -76,15 +77,14 @@ export function StrategySpace({
       <ChartFrame
         icon={Compass}
         title={
-          <span>
-            Strategy space
-            <span className="ml-2 text-static/70">
-              {plot.sessionCount < STRATEGY_SESSIONS
+          <PanelTitle
+            name="Strategy space"
+            note={`${
+              plot.sessionCount < STRATEGY_SESSIONS
                 ? `${plot.sessionCount} session${plot.sessionCount === 1 ? "" : "s"}`
-                : `last ${STRATEGY_SESSIONS} sessions`}{" "}
-              · one point per animal per session
-            </span>
-          </span>
+                : `last ${STRATEGY_SESSIONS} sessions`
+            } · one point per animal per session`}
+          />
         }
         yTop="1.0"
         yBottom="0.0"

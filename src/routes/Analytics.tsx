@@ -27,16 +27,12 @@ import {
   reportFilename,
   useExportReport,
 } from "@/components/analytics/report/useExportReport";
-import { AccuracyTrend } from "@/components/analytics/AccuracyTrend";
-import { EffortTrend } from "@/components/analytics/EffortTrend";
-import { TaskStrip } from "@/components/analytics/TaskStrip";
+import { CohortTrends } from "@/components/analytics/CohortTrends";
 import { Footnote } from "@/components/analytics/Footnote";
 import { LearningCurves } from "@/components/analytics/LearningCurves";
-import { OutcomeMix } from "@/components/analytics/OutcomeMix";
 import { SessionRail } from "@/components/analytics/SessionRail";
 import { SessionStrategy } from "@/components/analytics/SessionStrategy";
 import { SessionSummary } from "@/components/analytics/SessionSummary";
-import { StrategySpace } from "@/components/analytics/StrategySpace";
 import { TidyRecords, describeTidy } from "@/components/analytics/TidyRecords";
 import { Button } from "@/components/common/controls";
 import { FolderButton } from "@/components/common/FolderButton";
@@ -68,8 +64,6 @@ import { sessionRunsOf } from "@/lib/analytics/session";
 import {
   buildAnimalColors,
   findSessionByFolder,
-  sessionOutcomePoints,
-  taskLabels,
 } from "@/lib/analytics/view";
 import { useCohorts } from "@/lib/cohorts/context";
 import { springPanel } from "@/lib/motion";
@@ -212,14 +206,6 @@ export function Analytics() {
   // switch. Nothing the archive holds is ever silently hidden.
   const colors = useMemo(
     () => buildAnimalColors(summary?.animals ?? []),
-    [summary],
-  );
-  const outcomePoints = useMemo(
-    () => (summary ? sessionOutcomePoints(summary) : []),
-    [summary],
-  );
-  const labels = useMemo(
-    () => (summary ? taskLabels(summary) : new Map<string, string>()),
     [summary],
   );
   const revealKey = `${cohortId ?? ""}:${reveal}`;
@@ -426,7 +412,10 @@ export function Analytics() {
         transition={springPanel}
         className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
       >
-        <section className="pointer-events-auto mx-auto max-w-6xl px-8 py-8">
+        {/* Wider than the app's other pages: this is the large display, and
+            its first row carries the roster, the strategy plane and the trend
+            side by side. */}
+        <section className="pointer-events-auto mx-auto max-w-[1440px] px-8 py-8">
           <div className="flex flex-wrap items-start justify-between gap-3">
             {/* `items-start`, not centre: the text block is three lines here
                 (title, breadcrumb, fact) and a chip centred on it sat beside
@@ -440,6 +429,24 @@ export function Analytics() {
                 />
               </span>
               <div className="min-w-0">
+                {/* What the display is showing, in its own idiom — and the
+                    link it is reading over, Ion because that is exactly the
+                    one thing Ion means (`ARCHITECTURE.md#theme`). */}
+                <p className="flex items-center gap-2 font-mono text-[9px] tracking-[0.18em] text-static/70 uppercase">
+                  <span>
+                    Telemetry ·{" "}
+                    {selectedSession
+                      ? `${selectedSession.prefixName}_${selectedSession.sessionNumber}`
+                      : "all sessions"}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span
+                      className={`size-1.5 rounded-full ${connected ? "bg-ion" : "bg-halo"}`}
+                      aria-hidden
+                    />
+                    {connected ? "link" : "no link"}
+                  </span>
+                </p>
                 <h1 className="font-display text-[22px] text-starlight">
                   Analytics
                 </h1>
@@ -639,6 +646,9 @@ export function Analytics() {
               first: it lands directly under the rail that made the selection,
               not below three screens of cohort-scale panels. The cohort views
               compare sessions; this one is the inside of a single one. */}
+              {selectedSession && (
+                <h2 className="telemetry-section mt-1.5">Inside the session</h2>
+              )}
               <AnimatePresence mode="wait">
                 {selectedSession && (
                   <SessionSummary
@@ -653,54 +663,26 @@ export function Analytics() {
                 )}
               </AnimatePresence>
 
-              {/* Across sessions, the headline answer leads: the combined
-              accuracy figure, then what it cost (effort) and what happened
-              instead (outcome mix). One pooled figure per session, every
-              task — the strip and the dashed rules are the disclosure. The
-              strip, the accuracy tile and the two below share x slots
-              (`sessionOutcomePoints`), so a session sits above itself in all
-              of them — this run stays unbroken and nothing may be inserted
-              between them. */}
-              {sessionScope === ALL_SESSIONS && (
+              {/* Across sessions: the roster, the strategy plane and the
+              accuracy trend in one row, then effort and the outcome mix
+              (`CohortTrends`). Within a session, the rail sits beside that
+              session's strategy walk and rolling accuracy. */}
+              {sessionScope === ALL_SESSIONS ? (
                 <>
-                  {/* `mt-1.5` on top of the parent's gap: the trends are a
-                      different altitude of answer than the rail above, and
-                      the seam wants a visible breath. */}
-                  <div className="mt-1.5">
-                    <TaskStrip points={outcomePoints} labels={labels} />
-                  </div>
-                  <AccuracyTrend
-                    summary={summary}
-                    colors={colors}
-                    revealKey={revealKey}
-                  />
-                  <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
-                    <EffortTrend summary={summary} revealKey={revealKey} />
-                    <OutcomeMix summary={summary} revealKey={revealKey} />
-                  </div>
+                  <h2 className="telemetry-section mt-1.5">Across sessions</h2>
+                  <CohortTrends summary={summary} colors={colors} revealKey={revealKey} />
                 </>
-              )}
-
-              {/* The rail shares a row with the strategy tile and nothing else.
-              It used to be one grid item beside the whole stack, which — grid
-              items stretching by default — drew it as tall as every panel to
-              its right combined, most of it empty. Everything below is now a
-              full-width sibling instead of being indented behind it. */}
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,224px)_minmax(0,1fr)]">
-                {/* Stretches to the row so the rail has a height to cap against —
-                see `AnimalRail`'s `scroll`. */}
-                <div className="lg:relative">
-                  <AnimalRail summary={summary} colors={colors} />
-                </div>
-                <div className="grid min-w-0 grid-cols-1 items-start gap-3 xl:grid-cols-2">
-                  {/* `items-start`: these two tiles must not share a height —
-                  opening one's "how to read this" would stretch the other's
-                  chart, since its plots fill their tile. Each takes its own
-                  height and the charts keep a fixed plot budget instead. */}
-                  {/* The two strategy panels (`DATA.md#strategy-plane`) share one plane and swap,
-                  never coexist: a line in one spans weeks and a line in the
-                  other spans an hour, and the frame cannot tell them apart. */}
-                  {selectedSession ? (
+              ) : (
+                // The across-session row's proportions (`CohortTrends`): the
+                // roster, the walk on a square plane of a fixed width, and the
+                // rolling curve taking the rest. `items-start`: the tiles must
+                // not share a height, or opening one's "how to read this"
+                // would stretch the other's chart.
+                <div className="grid grid-cols-1 gap-3 xl:grid-cols-[208px_minmax(240px,280px)_minmax(0,1fr)] 2xl:grid-cols-[224px_minmax(300px,360px)_minmax(0,1fr)] xl:items-start">
+                  <div className="xl:relative xl:self-stretch">
+                    <AnimalRail summary={summary} colors={colors} scroll="xl" />
+                  </div>
+                  <div className="w-full max-w-[420px] min-w-0 xl:max-w-none">
                     <SessionStrategy
                       summary={summary}
                       colors={colors}
@@ -708,18 +690,10 @@ export function Analytics() {
                       series={sessionSeries}
                       revealKey={revealKey}
                     />
-                  ) : (
-                    <StrategySpace summary={summary} colors={colors} />
-                  )}
-                  <LearningCurves
-                    summary={summary}
-                    colors={colors}
-                    sessionScope={sessionScope}
-                    sessionRuns={sessionAllRuns}
-                    series={sessionSeries}
-                  />
+                  </div>
+                  <LearningCurves colors={colors} sessionRuns={sessionAllRuns} series={sessionSeries} />
                 </div>
-              </div>
+              )}
 
               <Footnote
                 summary={summary}

@@ -74,6 +74,8 @@ are [DATA.md](DATA.md); Intan recording is [RECORDING.md](RECORDING.md).
   - [Live session views](#live-session-views)
   - [Drag and drop](#drag-and-drop)
 - [Theme](#theme)
+  - [Telemetry panels](#telemetry-panels)
+  - [Printed documents](#printed-documents)
 - [Dependency policy](#dependency-policy)
 - [Module map](#module-map)
   - [Sidecar packages](#sidecar-packages)
@@ -1146,6 +1148,21 @@ another sans), Inter for all UI text, JetBrains Mono for all data — timestamps
 text. **Motion** is Framer Motion spring physics everywhere except the 3D camera's zoom-to-star flight, the
 one deliberate cubic-eased move. Ambient motion respects `prefers-reduced-motion` and the `reducedMotion`
 setting, and reduced motion stills things rather than removing them. Icons are Lucide, outline only.
+
+### Telemetry panels
+
+Analytics is drawn as one large translucent display rather than a page of cards. Its panels are
+`.telemetry` (`styles/index.css`): the `.hud` glass, thinner, with a 3px radius, **corner brackets**
+where a card would have a rounded edge, and a faint **dot reticle**, so the sky reads as behind a display
+surface. Panel names are `PanelTitle` (`components/charts/PanelTitle.tsx`): the subject in tracked mono
+capitals, the note beside it in Inter. Sections are `.telemetry-section` headings, a hairline ending in a
+tick; chart y-axes are ruled with end and midpoint ticks (`ChartFrame`). The page header names what is on
+the display and shows the link in Ion.
+
+> [!IMPORTANT]
+> **Every mark is an SVG data URI, never a gradient, and nothing glows** — the theme's rule holds on the
+> display too. A data URI cannot read a custom property, so the brackets and reticle carry Static's hex;
+> change them with the token.
 
 ### Printed documents
 

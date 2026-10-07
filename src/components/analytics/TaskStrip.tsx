@@ -1,5 +1,6 @@
 import { Layers } from "lucide-react";
 import { useMemo } from "react";
+import { PanelTitle } from "@/components/charts/PanelTitle";
 
 import {
   colorForIndex,
@@ -34,17 +35,14 @@ export function TaskStrip({
   if (points.length < 2 || segments.length === 0) return null;
 
   return (
-    <div className="surface rounded-md px-4 pt-3 pb-2">
+    <div className="telemetry px-4 pt-3 pb-2">
       <div className="flex items-baseline justify-between gap-3">
         <span className="flex items-center gap-1.5 text-[11px] text-static">
           <Layers size={13} strokeWidth={1.75} className="shrink-0 text-pulsar" />
-          <span>
-            Task
-            <span className="ml-2 text-static/70">
-              what each session below was running — the trends pool every task
-              and this is where they change
-            </span>
-          </span>
+          <PanelTitle
+            name="Task"
+            note="what each session was running — the trends pool every task, and this is where it changes"
+          />
         </span>
       </div>
       {/* The same 26px + 6px y-axis gutter the ChartFrames below carry, so a

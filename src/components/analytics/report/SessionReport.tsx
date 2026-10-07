@@ -36,9 +36,9 @@ export function SessionReport({
       {/* `items-start` and an unbounded rail, as in `CohortReport`: a PNG
           cannot scroll, so the roster must be allowed to run past the tile
           beside it rather than be quietly cropped. */}
-      <div className="grid grid-cols-[224px_minmax(0,1fr)] items-start gap-3">
+      <div className="grid grid-cols-[224px_340px_minmax(0,1fr)] items-start gap-3">
         <AnimalRail summary={summary} colors={colors} scroll={false} />
-        <div className="grid min-w-0 grid-cols-2 gap-3">
+        <div className="min-w-0">
           <SessionStrategy
             summary={summary}
             colors={colors}
@@ -46,16 +46,8 @@ export function SessionReport({
             series={sessionSeries}
             revealKey={revealKey}
           />
-          {/* Scoped to the session, so the curves are per-trial rolling
-              trajectories rather than one dot per session. */}
-          <LearningCurves
-            summary={summary}
-            colors={colors}
-            sessionScope={session.id}
-            sessionRuns={sessionAllRuns}
-            series={sessionSeries}
-          />
         </div>
+        <LearningCurves colors={colors} sessionRuns={sessionAllRuns} series={sessionSeries} />
       </div>
 
       {/* Two-up explicitly: `"auto"` is the route's `xl:` breakpoint, which

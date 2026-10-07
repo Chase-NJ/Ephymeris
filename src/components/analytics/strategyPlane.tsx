@@ -182,7 +182,7 @@ function Region({ label, children }: { label: string; children: ReactNode }) {
 
 /** The surface both panels sit on, so they swap without the frame moving. */
 export function StrategyPanel({ children }: { children: ReactNode }) {
-  return <div className="surface rounded-md p-4">{children}</div>;
+  return <div className="telemetry p-4">{children}</div>;
 }
 
 /**

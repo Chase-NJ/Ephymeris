@@ -2,6 +2,7 @@ import { PawPrint } from "lucide-react";
 import { useMemo } from "react";
 
 import { DrawOn } from "@/components/charts/DrawOn";
+import { PanelTitle } from "@/components/charts/PanelTitle";
 import { LINK_STROKE } from "@/components/chrome/constellationStyle";
 import { useAnalyticsStore, useIsHighlighted, usePinnedAnimal } from "@/lib/analytics/context";
 import type { AnalyticsSummary } from "@/lib/analytics/types";
@@ -17,30 +18,32 @@ import { chronological, pickMetric } from "@/lib/analytics/view";
 export function AnimalRail({
   summary,
   colors,
-  scroll = true,
+  scroll = "lg",
 }: {
   summary: AnalyticsSummary;
   colors: Map<string, string>;
   /**
-   * Whether the rail caps at its row's height and scrolls, or grows to fit.
+   * Whether the rail caps at its row's height and scrolls, and from which
+   * breakpoint — or `false` to grow to fit.
    *
    * Capped, it is lifted out of flow (`absolute`) inside a stretched wrapper.
    * That is what makes the cap possible without measuring anything: the
-   * wrapper takes its height from the strategy tile beside it, `max-h-full`
-   * resolves against that, and a rail contributing **zero** height can never
-   * stretch the row it is trying to match. Under the cap the height stays
-   * `auto`, so a two-animal cohort gets a compact card rather than a tall
-   * empty one.
+   * wrapper takes its height from the tiles beside it, `max-h-full` resolves
+   * against that, and a rail contributing **zero** height can never stretch
+   * the row it is trying to match. Under the cap the height stays `auto`, so a
+   * two-animal cohort gets a compact card rather than a tall empty one.
    *
-   * A report sheet passes `false`: a rasterizer captures a scroll container as whatever was
-   * in view, so a long roster would lose animals off the bottom of the PNG
-   * with nothing to show it had happened.
+   * The breakpoint is the one at which its row stops stacking (`lg` for the
+   * session row, `xl` for the across-session one): below it, an absolute rail
+   * whose wrapper has no sibling to give it height would fall to zero and sit
+   * on top of the panel beneath. The wrapper must be `relative` from the same
+   * breakpoint.
    *
-   * Only applied from `lg` up. Below it the two-column grid collapses, and an
-   * absolute rail whose wrapper has no sibling to give it height would fall to
-   * zero and sit on top of the panel beneath.
+   * A report sheet passes `false`: a rasterizer captures a scroll container as
+   * whatever was in view, so a long roster would lose animals off the bottom
+   * of the PNG with nothing to show it had happened.
    */
-  scroll?: boolean;
+  scroll?: "lg" | "xl" | false;
 }) {
   const trends = useMemo(() => buildTrends(summary), [summary]);
 
@@ -60,13 +63,17 @@ export function AnimalRail({
 
   return (
     <div
-      className={`surface flex flex-col gap-3 rounded-md p-4 ${
-        scroll ? "lg:absolute lg:inset-x-0 lg:top-0 lg:max-h-full" : ""
+      className={`telemetry flex flex-col gap-3 p-4 ${
+        scroll === "lg"
+          ? "lg:absolute lg:inset-x-0 lg:top-0 lg:max-h-full"
+          : scroll === "xl"
+            ? "xl:absolute xl:inset-x-0 xl:top-0 xl:max-h-full"
+            : ""
       }`}
     >
       <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-static">
         <PawPrint size={13} strokeWidth={1.75} className="text-pulsar" />
-        Animals
+        <PanelTitle name="Animals" note="hover to trace · click to pin" />
       </span>
       {/* The groups live in their own box so the heading stays put while they
           scroll, and so spacing is identical either way — the root's `gap-3`

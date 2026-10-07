@@ -4,6 +4,7 @@ import { useMemo } from "react";
 
 import { barLeft, barWidth } from "@/components/analytics/EffortTrend";
 import { ChartFrame } from "@/components/charts/ChartFrame";
+import { PanelTitle } from "@/components/charts/PanelTitle";
 import { useRevealOnView } from "@/components/charts/reveal";
 import { UnitChart } from "@/components/charts/UnitChart";
 import type { AnalyticsSummary } from "@/lib/analytics/types";
@@ -71,16 +72,14 @@ function MixBody({ summary }: { summary: AnalyticsSummary }) {
   const width = barWidth(points.length);
 
   return (
-    <div className="surface rounded-md p-4" ref={ref}>
+    <div className="telemetry p-4" ref={ref}>
       <ChartFrame
         icon={ChartPie}
         title={
-          <span>
-            Outcome mix
-            <span className="ml-2 text-static/70">
-              how administered trials resolved · share per session
-            </span>
-          </span>
+          <PanelTitle
+            name="Outcome mix"
+            note="how administered trials resolved · share per session"
+          />
         }
         yTop="1.0"
         yBottom="0.0"

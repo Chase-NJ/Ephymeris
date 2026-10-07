@@ -59,6 +59,9 @@ class CachedRun:
     #: session copied from another rig arrives as. `None` when the file carries
     #: no snapshot to say which of its fields are parameters.
     params_hash: str | None
+    #: The values `params_hash` hashes — what the session log compares for a
+    #: recovered run (`DATA.md#what-changed`). `None` exactly when it is.
+    config: dict[str, Any] | None
     summary: dict[str, Any]
     key: CacheKey
     #: A file that has gone missing keeps its last good summary rather than
@@ -169,6 +172,7 @@ class AnalyticsRepository:
                     profile_hash=row["scored_profile_hash"] or row["profile_hash"],
                     profile_source=row["profile_source"],
                     params_hash=row["params_hash"],
+                    config=_load_config(row["config_json"]),
                     summary=summary,
                     key=CacheKey(
                         file_path=row["file_path"],
@@ -287,9 +291,9 @@ class AnalyticsRepository:
             self._db.conn.executemany(
                 "INSERT OR REPLACE INTO run_metrics_cache"
                 " (run_id, file_path, file_mtime_ns, file_size, profile_hash,"
-                "  scored_profile_hash, profile_source, params_hash,"
+                "  scored_profile_hash, profile_source, params_hash, config_json,"
                 "  codec_version, computed_at, status, detail, summary_json)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         entry.run_id,
@@ -300,6 +304,7 @@ class AnalyticsRepository:
                         entry.profile_hash,
                         entry.profile_source,
                         entry.params_hash,
+                        None if entry.config is None else json.dumps(entry.config, sort_keys=True),
                         entry.key.codec_version,
                         _now(),
                         entry.status,
@@ -364,3 +369,15 @@ def _chunks(items: list[str], size: int) -> list[list[str]]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _load_config(raw: str | None) -> dict[str, Any] | None:
+    """A cached run's recorded parameters; `None` for absent or unreadable —
+    a corrupt cache cell costs one comparison, never the summary."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None

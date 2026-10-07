@@ -63,7 +63,10 @@ DB_FILENAME = "ephymeris.db"
 #: v11 added session_notes / session_logs (`DATA.md#the-session-log`) — new
 #: tables only, so no migration; the bump marks a file a v10 build should know
 #: was written by something newer.
-SCHEMA_VERSION = 11
+#: v12 added run_metrics_cache.config_json (`DATA.md#what-changed`) — the
+#: parameter values a recovered run's own file records, so the session log can
+#: compare a run this database never recorded.
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -200,6 +203,11 @@ CREATE TABLE IF NOT EXISTS run_metrics_cache (
     -- orphan, which is what a session copied from another rig arrives as.
     -- NULL for a run whose file carries no profile snapshot to name them.
     params_hash    TEXT,
+    -- Those parameters' values, as JSON — what `params_hash` hashes. Like it,
+    -- only ever read for a run with no session_animal_runs row of its own:
+    -- the session log compares it with the animal's previous run
+    -- (DATA.md#what-changed). NULL when the file names no parameters.
+    config_json    TEXT,
     codec_version  INTEGER NOT NULL,
     computed_at    TEXT NOT NULL,
     status         TEXT NOT NULL,   -- 'ok' | 'no-metrics' | 'missing' | 'unreadable'
@@ -416,6 +424,22 @@ def _to_v9(conn: sqlite3.Connection) -> None:
     add_column(conn, "cohorts", "appearance_json", "TEXT")
 
 
+def _to_v12(conn: sqlite3.Connection) -> None:
+    """v11 → v12: a recovered run's recorded parameter values
+    (`DATA.md#what-changed`).
+
+    The column alone would never fill for rows already in the cache: their
+    freshness key still matches, so they are never re-read. So the rows of
+    recovered runs — the only ones the column is read for — are dropped, the
+    v8 repair's pattern. It is a pure cache: the cost is reading those files
+    once more on the next summary.
+    """
+    if add_column(conn, "run_metrics_cache", "config_json", "TEXT"):
+        conn.execute(
+            "DELETE FROM run_metrics_cache WHERE run_id IN (SELECT id FROM adopted_runs)"
+        )
+
+
 def _to_v5(conn: sqlite3.Connection) -> None:
     """v4 → v5: the home-cage grouping label (`DATA.md#data-model`).
 
@@ -452,6 +476,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     8: _to_v8,
     9: _to_v9,
     10: _to_v10,
+    12: _to_v12,
 }
 
 

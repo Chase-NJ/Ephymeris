@@ -1014,3 +1014,48 @@ def test_a_v10_database_gains_the_session_log_tables(tmp_path: Path) -> None:
 
     assert {"session_notes", "session_logs"} <= tables(path)
     assert user_version(path) == SCHEMA_VERSION
+
+
+def test_v12_caches_recorded_parameters_and_rereads_only_recovered_runs(tmp_path: Path) -> None:
+    """The column alone would never fill: a cached row's freshness key still
+    matches, so it is never re-read. So the migration drops the rows of
+    recovered runs — the only ones the column is read for — and keeps the rest
+    (`DATA.md#what-changed`)."""
+    path = tmp_path / "ephymeris.db"
+    db = Database(path)
+    db.connect()
+    db.close()
+
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE run_metrics_cache DROP COLUMN config_json")
+    conn.execute(
+        "INSERT INTO cohorts (id, name, data_folder, created_at, updated_at)"
+        " VALUES ('c1', 'Batch A', '/data', 'then', 'then')"
+    )
+    conn.execute(
+        "INSERT INTO adopted_runs (id, cohort_id, animal_id, file_path, prefix_name,"
+        " session_number, started_at, adopted_at) VALUES"
+        " ('orphan', 'c1', 'a1', '/x.json', 'P', '1', 'then', 'then')"
+    )
+    for run_id in ("orphan", "recorded"):
+        conn.execute(
+            "INSERT INTO run_metrics_cache (run_id, file_path, profile_source,"
+            " codec_version, computed_at, status, summary_json)"
+            " VALUES (?, '/x.json', 'snapshot', 1, 'then', 'ok', '{}')",
+            (run_id,),
+        )
+    conn.execute("PRAGMA user_version = 11")
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    db.connect()
+    db.close()
+
+    conn = sqlite3.connect(path)
+    try:
+        assert "config_json" in table_columns(conn, "run_metrics_cache")
+        kept = [row[0] for row in conn.execute("SELECT run_id FROM run_metrics_cache")]
+        assert kept == ["recorded"]
+    finally:
+        conn.close()

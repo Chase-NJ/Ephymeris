@@ -1825,7 +1825,7 @@ A cohort's whole session log, flat; the client groups it by `sessionId`. Session
 | `cohortId` | string |  |
 | `logs` | [SessionLog](#shape-sessionlog)[] |  |
 | `notes` | [SessionNote](#shape-sessionnote)[] | Every live note, oldest first. |
-| `changes` | [RunChange](#shape-runchange)[] | One per recorded run. |
+| `changes` | [RunChange](#shape-runchange)[] | One per run, recorded or recovered. |
 
 <a id="shape-logbookupdated"></a>
 #### LogbookUpdated
@@ -2213,22 +2213,23 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 <a id="shape-runchange"></a>
 #### RunChange
 
-What differs between a recorded run and the same animal's previous recorded run (`DATA.md#what-changed`). Adopted runs are not compared.
+What differs between a run and the same animal's previous run, recorded and recovered alike (`DATA.md#what-changed`).
 
 | Field | Type | Notes |
 |---|---|---|
 | `runId` | string |  |
 | `sessionId` | string |  |
 | `animalId` | string |  |
-| `box` | number |  |
+| `box` | number \| null | Null for a recovered run: its file names only the OS port it used, and ports renumber, so the box is unknown rather than guessed. |
 | `task` | string | This run's task name. |
+| `recovered` | boolean | Adopted from a file this database never recorded (`DATA.md#orphan-adoption`); compared from what the file records. |
 | `previousRunId` | string \| null |  |
 | `previousSessionId` | string \| null |  |
-| `first` | boolean | The animal's first recorded run; nothing to compare. |
+| `first` | boolean | The animal's first run on record; nothing to compare. |
 | `taskChange` | [ValueChange](#shape-valuechange) \| null | Task names, `from` → `to`. Equal names mean the same task with a revised definition (a different profile hash). |
-| `boxChange` | [ValueChange](#shape-valuechange) \| null |  |
+| `boxChange` | [ValueChange](#shape-valuechange) \| null | Only between two runs that both know their box. |
 | `params` | [ParamChange](#shape-paramchange)[] |  |
-| `paramsKnown` | boolean | False when either run predates recorded parameters — unknown, never reported as changed. |
+| `paramsKnown` | boolean | False when either run carries no parameters — a run from before they were recorded, or a recovered file too old to hold them, or one the analytics index has not read yet. Unknown, never reported as changed. |
 
 <a id="shape-runnersession"></a>
 #### RunnerSession

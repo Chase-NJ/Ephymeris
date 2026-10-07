@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..analytics import service as analytics_service
 from ..protocol import Evt, event
 from ..sessions.models import Session, SessionNotFound
 from . import diff, mirror
@@ -96,13 +97,55 @@ class LogbookService:
         return await asyncio.to_thread(read)
 
     def _changes(self, cohort_id: str) -> dict[str, dict[str, Any]]:
-        runs = self._sessions.runs_for_cohort(cohort_id)
-        hashes = sorted({r.profile_hash for r in runs if r.profile_hash})
+        """What changed for every run, recorded and recovered, in one
+        chronological history per animal (`DATA.md#what-changed`). Database
+        only: a recovered run's task and parameters come from the analytics
+        cache, filled the first time the index read its file."""
+        sessions = {
+            s.id: s for s in self._sessions.list_sessions(cohort_id, include_aborted=True)
+        }
+        recorded = self._sessions.runs_for_cohort(cohort_id)
+        entries = self._profiles.adopted_for_cohort(cohort_id)
+        adopted = analytics_service.adopted_runs(
+            entries, [s for s in sessions.values() if s.status != "aborted"]
+        )
+        cached = self._profiles.load_cached([run.id for run in adopted])
+        hashes = sorted(
+            {r.profile_hash for r in recorded if r.profile_hash}
+            | {c.profile_hash for c in cached.values() if c.profile_hash}
+        )
         names = {
             digest: meta["taskName"]
             for digest, meta in self._profiles.profile_meta(hashes).items()
         }
-        return diff.changes_for_runs(runs, names)
+
+        timeline: list[tuple[tuple[str, str], diff.ComparedRun]] = []
+        for run in recorded:
+            session = sessions.get(run.session_id)
+            day = session.date if session else ""
+            timeline.append(((day, run.started_at), diff.from_recorded(run, names)))
+        for run, entry in zip(adopted, entries, strict=True):
+            cache = cached.get(run.id)
+            digest = cache.profile_hash if cache else None
+            sketch = getattr(run, "sketch_name", None) or diff.task_label(run, {})
+            timeline.append(
+                (
+                    (entry.date or "", run.started_at),
+                    diff.ComparedRun(
+                        id=run.id,
+                        session_id=run.session_id,
+                        animal_id=run.animal_id,
+                        box=None,
+                        task_identity=f"hash:{digest}" if digest else f"name:{sketch}",
+                        task=names.get(digest, sketch) if digest else sketch,
+                        config=cache.config if cache else None,
+                        params_hash=cache.params_hash if cache else None,
+                        recovered=True,
+                    ),
+                )
+            )
+        timeline.sort(key=lambda item: item[0])
+        return diff.compare(run for _, run in timeline)
 
     @staticmethod
     def _note_json(note: SessionNote, session: Session | None, now: datetime) -> dict[str, Any]:

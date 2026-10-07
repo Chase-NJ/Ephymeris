@@ -302,11 +302,7 @@ function SessionBody({ session }: { session: DocSession }) {
       <Section title="What changed since each animal's previous run">
         {session.changes.every((c) => c.parts.length === 0) ? (
           <Text style={s.empty}>
-            {session.recovered
-              ? "Not compared: runs recovered from files carry no recorded parameters or box."
-              : session.changes.length === 0
-                ? "No runs recorded."
-                : "Nothing changed."}
+            {session.changes.length === 0 ? "No runs recorded." : "Nothing changed."}
           </Text>
         ) : (
           session.changes
@@ -314,12 +310,13 @@ function SessionBody({ session }: { session: DocSession }) {
             .map((change) => (
               <View key={change.animal + change.box} style={s.tr} wrap={false}>
                 <Text style={{ width: 110, fontSize: 8.5 }}>
-                  {change.animal} <Text style={s.time}>box {change.box}</Text>
+                  {change.animal} <Text style={s.time}>{change.box}</Text>
                 </Text>
                 <Text style={{ flex: 1, fontSize: 8.5 }}>{change.parts.join(" · ")}</Text>
               </View>
             ))
         )}
+        {session.changesNote && <Text style={s.fine}>{session.changesNote}</Text>}
       </Section>
     </>
   );

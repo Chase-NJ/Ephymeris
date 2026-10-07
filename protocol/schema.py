@@ -1901,29 +1901,45 @@ SHAPES = (
             f("runId", STR),
             f("sessionId", STR),
             f("animalId", STR),
-            f("box", INT),
+            f(
+                "box",
+                nullable(INT),
+                doc="Null for a recovered run: its file names only the OS port it "
+                "used, and ports renumber, so the box is unknown rather than guessed.",
+            ),
             f("task", STR, doc="This run's task name."),
+            f(
+                "recovered",
+                BOOL,
+                doc="Adopted from a file this database never recorded "
+                "(`DATA.md#orphan-adoption`); compared from what the file records.",
+            ),
             f("previousRunId", nullable(STR)),
             f("previousSessionId", nullable(STR)),
-            f("first", BOOL, doc="The animal's first recorded run; nothing to compare."),
+            f("first", BOOL, doc="The animal's first run on record; nothing to compare."),
             f(
                 "taskChange",
                 nullable(Ref("ValueChange")),
                 doc="Task names, `from` → `to`. Equal names mean the same task "
                 "with a revised definition (a different profile hash).",
             ),
-            f("boxChange", nullable(Ref("ValueChange"))),
+            f(
+                "boxChange",
+                nullable(Ref("ValueChange")),
+                doc="Only between two runs that both know their box.",
+            ),
             f("params", ListOf(Ref("ParamChange"))),
             f(
                 "paramsKnown",
                 BOOL,
-                doc="False when either run predates recorded parameters — "
-                "unknown, never reported as changed.",
+                doc="False when either run carries no parameters — a run from "
+                "before they were recorded, or a recovered file too old to hold "
+                "them, or one the analytics index has not read yet. Unknown, never "
+                "reported as changed.",
             ),
         ),
-        doc="What differs between a recorded run and the same animal's "
-        "previous recorded run (`DATA.md#what-changed`). Adopted runs are "
-        "not compared.",
+        doc="What differs between a run and the same animal's previous run, "
+        "recorded and recovered alike (`DATA.md#what-changed`).",
     ),
     Shape(
         "LogbookCohort",
@@ -1931,7 +1947,7 @@ SHAPES = (
             f("cohortId", STR),
             f("logs", ListOf(Ref("SessionLog"))),
             f("notes", ListOf(Ref("SessionNote")), doc="Every live note, oldest first."),
-            f("changes", ListOf(Ref("RunChange")), doc="One per recorded run."),
+            f("changes", ListOf(Ref("RunChange")), doc="One per run, recorded or recovered."),
         ),
         doc="A cohort's whole session log, flat; the client groups it by "
         "`sessionId`. Sessions themselves come from `sessions.list`.",

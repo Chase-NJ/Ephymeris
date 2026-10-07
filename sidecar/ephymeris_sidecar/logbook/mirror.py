@@ -67,7 +67,8 @@ def _value(value: Any) -> str:
 def change_lines(changes: Iterable[dict[str, Any]], names: dict[str, str]) -> list[str]:
     lines = []
     for change in changes:
-        who = f"{names.get(change['animalId'], change['animalId'])} (box {change['box']})"
+        box = "recovered" if change["box"] is None else f"box {change['box']}"
+        who = f"{names.get(change['animalId'], change['animalId'])} ({box})"
         parts = []
         if change["first"]:
             parts.append(f"first run — {change['task']}")
@@ -78,10 +79,20 @@ def change_lines(changes: Iterable[dict[str, Any]], names: dict[str, str]) -> li
             )
         if change.get("boxChange"):
             parts.append(f"box {change['boxChange']['from']} → {change['boxChange']['to']}")
-        for param in change.get("params", []):
+        # As on screen (`lib/logbook/changes.ts`): changed values in full, a
+        # setting only one side has counted — across a task change most are.
+        params = change.get("params", [])
+        added = [p["key"] for p in params if p["from"] is None and p["to"] is not None]
+        dropped = [p["key"] for p in params if p["from"] is not None and p["to"] is None]
+        for param in params:
+            if param["key"] in added or param["key"] in dropped:
+                continue
             parts.append(f"{param['key']} {_value(param['from'])} → {_value(param['to'])}")
-        if not change["first"] and not change.get("paramsKnown", True):
-            parts.append("parameters not recorded")
+        for keys, what in ((added, "new"), (dropped, "dropped")):
+            if keys:
+                parts.append(
+                    f"{', '.join(keys)} {what}" if len(keys) <= 3 else f"{len(keys)} settings {what}"
+                )
         if parts:
             lines.append(f"- **{who}**: " + "; ".join(parts))
     return lines
@@ -129,6 +140,12 @@ def render_markdown(
         out += ["## Summary", "", *("\n\n".join(summaries).splitlines()), ""]
 
     lines = change_lines(changes, animal_names)
+    unknown = sum(1 for c in changes if not c["first"] and not c.get("paramsKnown", True))
+    if unknown:
+        lines.append(
+            f"_Parameters aren't on record for {unknown} of these runs, so only the task "
+            "is compared for them._"
+        )
     if lines:
         out += ["## What changed", "", *lines, ""]
 

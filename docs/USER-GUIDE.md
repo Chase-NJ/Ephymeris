@@ -719,7 +719,9 @@ sampled, overall and for each condition. **Open in Analytics** goes to that sess
 
 **What changed** lists, for each animal, anything different from its previous session: a new task, a
 different box, or a changed setting (such as `holdMs 200 → 300`). Ephymeris records these itself, so
-you don't have to.
+you don't have to. Sessions copied from the other lab machine are compared too, from the settings saved
+in each animal's file; they show **recovered** instead of a box, because the file doesn't say which box
+it was. Very old files saved no settings, so only their task is compared.
 
 ### Saving the log as a PDF
 

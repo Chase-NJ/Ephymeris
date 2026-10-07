@@ -1804,28 +1804,42 @@ export interface ParamChange {
 }
 
 /**
- * What differs between a recorded run and the same animal's previous recorded run
- * (`DATA.md#what-changed`). Adopted runs are not compared.
+ * What differs between a run and the same animal's previous run, recorded and recovered alike
+ * (`DATA.md#what-changed`).
  */
 export interface RunChange {
   runId: string;
   sessionId: string;
   animalId: string;
-  box: number;
+  /**
+   * Null for a recovered run: its file names only the OS port it used, and ports renumber, so the
+   * box is unknown rather than guessed.
+   */
+  box: number | null;
   /** This run's task name. */
   task: string;
+  /**
+   * Adopted from a file this database never recorded (`DATA.md#orphan-adoption`); compared from
+   * what the file records.
+   */
+  recovered: boolean;
   previousRunId: string | null;
   previousSessionId: string | null;
-  /** The animal's first recorded run; nothing to compare. */
+  /** The animal's first run on record; nothing to compare. */
   first: boolean;
   /**
    * Task names, `from` → `to`. Equal names mean the same task with a revised definition (a
    * different profile hash).
    */
   taskChange: ValueChange | null;
+  /** Only between two runs that both know their box. */
   boxChange: ValueChange | null;
   params: ParamChange[];
-  /** False when either run predates recorded parameters — unknown, never reported as changed. */
+  /**
+   * False when either run carries no parameters — a run from before they were recorded, or a
+   * recovered file too old to hold them, or one the analytics index has not read yet. Unknown,
+   * never reported as changed.
+   */
   paramsKnown: boolean;
 }
 
@@ -1838,7 +1852,7 @@ export interface LogbookCohort {
   logs: SessionLog[];
   /** Every live note, oldest first. */
   notes: SessionNote[];
-  /** One per recorded run. */
+  /** One per run, recorded or recovered. */
   changes: RunChange[];
 }
 

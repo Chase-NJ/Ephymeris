@@ -882,6 +882,7 @@ class AnalyticsService:
                 profile_hash=resolved.digest,
                 profile_source=resolved.source,
                 params_hash=None,
+                config=None,
                 summary=derive.RunSummary(status="missing").to_json(),
                 key=CacheKey("", None, None, resolved.digest, derive.CODEC_VERSION),
             )
@@ -907,6 +908,7 @@ class AnalyticsService:
                 profile_hash=resolved.digest,
                 profile_source=resolved.source,
                 params_hash=None,
+                config=None,
                 summary=derive.RunSummary(status="missing", detail=stat.detail).to_json(),
                 key=CacheKey(run.file_path, None, None, resolved.digest, derive.CODEC_VERSION),
             )
@@ -937,6 +939,7 @@ class AnalyticsService:
                 profile_hash=resolved.digest,
                 profile_source=resolved.source,
                 params_hash=None,
+                config=None,
                 summary=derive.RunSummary(
                     status="unreadable", detail=result.detail
                 ).to_json(),
@@ -953,20 +956,21 @@ class AnalyticsService:
             # from a genuinely profile-less sketch and offers nothing to fix.
             detail = resolved.reason
             payload["detail"] = detail
+        # What the FILE says it ran on. Only ever read for a run this database
+        # has no row for (`DATA.md#the-embedded-task-profile`) — the row's own
+        # `params_hash` and `config` win where there is one — so this costs a
+        # dictionary comprehension on the runs that would otherwise report no
+        # parameters at all. The values ride along for the session log's
+        # what-changed (`DATA.md#what-changed`).
+        recorded = task_profile.recorded_config(result.document, profile)
         return CachedRun(
             run_id=run.id,
             status=summary.status,
             detail=detail,
             profile_hash=digest,
             profile_source=source,
-            # What the FILE says it ran on. Only ever read for a run this
-            # database has no row for (`DATA.md#the-embedded-task-profile`)
-            # — the row's own `params_hash` wins
-            # where there is one — so this costs a dictionary comprehension on
-            # the runs that would otherwise report no parameters at all.
-            params_hash=task_profile.params_hash(
-                task_profile.recorded_config(result.document, profile)
-            ),
+            params_hash=task_profile.params_hash(recorded),
+            config=recorded,
             summary=payload,
             key=key,
         )
@@ -1535,6 +1539,15 @@ def _adoption_owners(adopted: list[AdoptedRun], recorded: list[Session]) -> dict
         if owner is not None:
             owners[synthetic] = owner
     return owners
+
+
+def adopted_runs(adopted: list[AdoptedRun], recorded: list[Session]) -> list[SessionAnimalRun]:
+    """A cohort's adopted orphans as runs, each filed under the session the
+    rest of the app lists it under — its recorded owner if there is one, else
+    its synthetic session (`DATA.md#tidy-records`). For the session log's
+    what-changed (`DATA.md#what-changed`), which reads the database only."""
+    owners = _adoption_owners(adopted, recorded)
+    return [_adopted_to_run(entry, owners) for entry in adopted]
 
 
 def _adopted_to_run(

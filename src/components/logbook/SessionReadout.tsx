@@ -16,6 +16,7 @@ import { conditionColumns, sessionRunsOf } from "@/lib/analytics/session";
 import type { SessionListItem } from "@/lib/analytics/types";
 import { buildAnimalColors } from "@/lib/analytics/view";
 import { addNote, deleteNote, editNote, resolveFlag, setSessionLog } from "@/lib/logbook/commands";
+import { useLogbookStore } from "@/lib/logbook/context";
 import type { LogbookEntry } from "@/lib/logbook/store";
 import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
@@ -68,6 +69,14 @@ export function SessionReadout({
     void analytics.load(client, cohortId);
   }, [analytics, client, cohortId, status, version]);
 
+  // A fresh summary means the index has just read files — including recovered
+  // runs', whose parameters the log's what-changed is computed from
+  // (`DATA.md#what-changed`). The log is database-only and cheap; ask again.
+  const logStore = useLogbookStore();
+  useEffect(() => {
+    if (summary) void logStore.load(cohortId, true);
+  }, [summary, cohortId, logStore]);
+
   const notes = entry.notesBySession.get(session.id) ?? NONE;
   const changes = entry.changesBySession.get(session.id) ?? [];
   const log = entry.logs.get(session.id) ?? null;
@@ -88,7 +97,9 @@ export function SessionReadout({
     return merged;
   }, [summary, names]);
   const boxes = useMemo(() => {
-    const used = new Set<number>(changes.map((c) => c.box));
+    const used = new Set<number>(
+      changes.flatMap((c) => (c.box === null ? [] : [c.box])),
+    );
     for (const run of runs) if (run.boxNumber !== null) used.add(run.boxNumber);
     return used.size > 0 ? [...used].sort((a, b) => a - b) : [1, 2, 3, 4, 5, 6];
   }, [changes, runs]);
@@ -206,7 +217,7 @@ export function SessionReadout({
         </HudTile>
 
         <HudTile icon={GitCompareArrows} label="What changed" status="since each animal's previous run">
-          <ChangesList changes={changes} names={tableNames} colors={colors} recovered={readOnly} />
+          <ChangesList changes={changes} names={tableNames} colors={colors} />
         </HudTile>
 
         <HudTile icon={UserRound} label="Operator and summary">

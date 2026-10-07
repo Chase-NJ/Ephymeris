@@ -13,7 +13,7 @@ import {
   sessionRunsOf,
 } from "../analytics/session";
 import type { AnalyticsSummary, SessionListItem, TrialOutcomes } from "../analytics/types";
-import { changeParts } from "./changes";
+import { boxText, changeParts, unknownParams, unknownParamsNote } from "./changes";
 import { elapsedSeconds, formatDuration, formatOffset, longDate, wallClock } from "./clock";
 import { newestFirst } from "./rail";
 import type { LogbookEntry } from "./store";
@@ -60,8 +60,6 @@ export interface DocPerformance {
 
 export interface DocSession {
   id: string;
-  /** Recovered from files: its runs are never compared (`DATA.md#what-changed`). */
-  recovered: boolean;
   title: string;
   date: string;
   longDate: string;
@@ -74,7 +72,9 @@ export interface DocSession {
   summary: string | null;
   notes: DocNote[];
   performance: DocPerformance | null;
-  changes: Array<{ animal: string; box: number; parts: string[] }>;
+  changes: Array<{ animal: string; box: string; parts: string[] }>;
+  /** Said once under the changes, not on each row (`unknownParamsNote`). */
+  changesNote: string | null;
 }
 
 export interface DocCohort {
@@ -223,13 +223,12 @@ function sessionModel(
   const changes = (entry.changesBySession.get(session.id) ?? [])
     .map((change) => ({
       animal: names.get(change.animalId) ?? change.animalId,
-      box: change.box,
+      box: boxText(change.box),
       parts: changeParts(change).map((p) => p.text),
     }))
     .sort((a, b) => collator.compare(a.animal, b.animal));
   return {
     id: session.id,
-    recovered: session.id.startsWith("adopted:"),
     title: `${session.prefixName}_${session.sessionNumber}`,
     date: session.date,
     longDate: longDate(session.date),
@@ -246,6 +245,9 @@ function sessionModel(
     notes: noteRows(entry.notesBySession.get(session.id) ?? [], names),
     performance: summary ? performanceOf(summary, session.id, names) : null,
     changes,
+    changesNote: unknownParamsNote(
+      unknownParams(entry.changesBySession.get(session.id) ?? []),
+    ),
   };
 }
 

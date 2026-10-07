@@ -20,7 +20,6 @@ function session(n: number): DocSession {
   const cell = { sampled: "60", rate: "70%", thin: false };
   return {
     id: `s${n}`,
-    recovered: n % 2 === 0,
     title: `2O-Bdisc_${n}`,
     date: "2026-10-02",
     longDate: "Friday 2 October 2026",
@@ -44,7 +43,8 @@ function session(n: number): DocSession {
         note: null,
       })),
     },
-    changes: [{ animal: "remy1", box: 1, parts: ["rewardUl 20 → 25"] }],
+    changes: [{ animal: "remy1", box: "box 1", parts: ["rewardUl 20 → 25"] }],
+    changesNote: null,
   };
 }
 

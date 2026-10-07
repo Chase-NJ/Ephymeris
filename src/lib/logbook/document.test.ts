@@ -59,6 +59,7 @@ describe("buildSession", () => {
             animalId: "a1",
             box: 1,
             task: "GRGL",
+            recovered: false,
             previousRunId: "p",
             previousSessionId: "ps",
             first: false,
@@ -78,7 +79,8 @@ describe("buildSession", () => {
     expect(doc.notes.map((n) => n.offset)).toEqual(["T+08:00", "T+50:00"]);
     expect(doc.notes[1]!.flag).toBe("carry forward");
     expect(doc.notes[0]!.body).toBe("Beam -> flickers");
-    expect(doc.changes).toEqual([{ animal: "remy1", box: 1, parts: ["rewardUl 20 -> 25"] }]);
+    expect(doc.changes).toEqual([{ animal: "remy1", box: "box 1", parts: ["rewardUl 20 -> 25"] }]);
+    expect(doc.changesNote).toBeNull();
     expect(doc.performance).toBeNull();
   });
 });
@@ -96,5 +98,30 @@ describe("forPrint", () => {
       b: { c: "~ 3" },
       n: 2,
     });
+  });
+});
+
+describe("changeParts", () => {
+  it("prints changed values and counts settings only one side has", async () => {
+    const { changeParts } = await import("./changes");
+    const parts = changeParts({
+      runId: "r", sessionId: "s", animalId: "a", box: null, task: "6-Odor", recovered: true,
+      previousRunId: "p", previousSessionId: "ps", first: false,
+      taskChange: { from: "4-Odor", to: "6-Odor" }, boxChange: null, paramsKnown: true,
+      params: [
+        { key: "holdMs", from: 200, to: 300 },
+        { key: "odor5", from: null, to: 1 },
+        { key: "odor6", from: null, to: 1 },
+        { key: "a", from: 1, to: null },
+        { key: "b", from: 1, to: null },
+        { key: "c", from: 1, to: null },
+        { key: "d", from: 1, to: null },
+      ],
+    }).map((p) => p.text);
+    expect(parts).toEqual([
+      "task 4-Odor → 6-Odor",
+      "holdMs 200 → 300",
+      "odor5, odor6 new, 4 settings dropped",
+    ]);
   });
 });

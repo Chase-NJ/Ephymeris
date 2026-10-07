@@ -292,13 +292,13 @@ A note flagged **carry forward** stays open until resolved, and every open flag 
 
 ### What changed
 
-For every recorded run, `logbook/diff.py` compares the same animal's previous recorded run, in `(date, started_at)` order — never by session number:
+For every run — recorded, and [adopted](#orphan-adoption) from files this machine never recorded — `logbook/diff.py` compares the same animal's previous run, in one history per animal ordered by `(date, started_at)` — never by session number:
 
-- **Task**: the `profile_hash` differs (a snapshotless run compares `sketch_path`). Same name with a different hash reads as *definition revised*.
-- **Box**.
-- **Parameters**: equal `params_hash` is no change; otherwise a key-level diff of `config`. A run from before parameters were recorded (`config` null) reports `paramsKnown: false` — **unknown, never "changed"**.
+- **Task**: two profile hashes compare exactly, so the same name under a different hash reads as *definition revised*. Anything weaker — a snapshotless recorded run's `sketch_path`, a legacy file's sketch name — compares by task name, so an old file is not "revised" merely for lacking a snapshot.
+- **Box**, only between two runs that both know theirs. A file records the OS port it ran on, never the box, and ports renumber (`ARCHITECTURE.md#wire-protocol`), so a recovered run's box is **unknown** (`box: null`), never guessed.
+- **Parameters**: equal `params_hash` is no change; otherwise a key-level diff of the values. A recorded run's come from `config_json`; a recovered run's from what its own file records — the flat task fields the [embedded profile](#the-embedded-task-profile) names — cached as `run_metrics_cache.config_json` the first time the index reads the file. A run with none (recorded before parameters were, a file too old to carry them, or a recovered file the index has not read yet) reports `paramsKnown: false` — **unknown, never "changed"** — said once per session rather than on every row. A value that changed prints in full; a setting only one of the two runs has is counted ("19 settings new"), not listed — across a task change most settings are of that kind, and listing each would bury the few that moved.
 
-Adopted runs are not compared: they carry no parameters or box of their own, and a diff against one would report missing knowledge as change. Entries appear as each run is recorded at finalization.
+Recorded runs' entries appear as each run is recorded at finalization; recovered runs' once the next summary has read their files (the Log refetches when one arrives). The log itself still reads the database only.
 
 ### The notes.md mirror
 
@@ -548,7 +548,7 @@ erDiagram
 | `sessions` | `id`, `cohort_id`, `prefix_id`, `prefix_name`, `session_number`, `date`, `started_at`, `ended_at`, `status`, `folder_path`, `group_runs` (JSON), `duration_minutes`, `recording_json` | No FK on `prefix_id` |
 | `session_animal_runs` | `id`, `session_id`, `animal_id`, `box_number`, `sketch_path`, `file_path`, `started_at`, `ended_at`, `stop_reason`, `profile_hash`, `config_json`, `params_hash` | Cascades from `sessions`; **no FK on `animal_id`** |
 | `task_profiles` | `hash`, `task_name`, `kind`, `profile_json`, `first_seen_at` | **Content-addressed** snapshots: identical profiles store once, and comparability is an indexed equality test |
-| `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](#which-profile-decodes-a-run)) |
+| `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `config_json`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](#which-profile-decodes-a-run)) |
 | `adopted_runs` | `id`, `cohort_id`, `animal_id`, `file_path`, `prefix_name`, `session_number`, `date`, `started_at`, `sketch_name`, `sketch_path`, `adopted_at`, `file_mtime_ns`, `file_size` | Files the archive walk matched to an animal. Deliberately separate from `sessions`/`session_animal_runs` |
 | `session_notes` | `id`, `session_id`, `cohort_id`, `at`, `created_at`, `edited_at`, `deleted_at`, `tag`, `scope_kind`, `animal_id`, `box_number`, `body`, `carry_forward`, `resolved_at`, `resolved_in_session` | [The session log](#notes). Cascades from `sessions` and `cohorts`; **no FK on `animal_id`** (the caution below) or `resolved_in_session` |
 | `session_logs` | `session_id`, `operator`, `summary`, `updated_at` | One per session that has one. Cascades from `sessions` |
@@ -584,7 +584,7 @@ Plus plain lookup indexes on each table's parent id.
 - **`add_column` is idempotent** (it checks `PRAGMA table_info`), so a migration interrupted by a power loss re-runs safely. New columns must be nullable or have a constant default.
 - **Startup commits once**, because every commit marks the database dirty for [backup](#the-database-copy).
 - **A newer database still opens**, with a loud error rather than a refusal: every change is additive, and refusing would strand a machine that merely ran an older installer.
-- **A migration may repair a cache**, never data: the v8 step deletes `inferred` cache rows that would otherwise never recompute ([below](#which-profile-decodes-a-run)).
+- **A migration may repair a cache**, never data: the v8 step deletes `inferred` cache rows that would otherwise never recompute ([below](#which-profile-decodes-a-run)), and the v12 step deletes adopted runs' rows so their recorded parameters are read into the new `config_json` ([What changed](#what-changed)).
 
 > [!TIP]
 > `tests/test_migrations.py` pins the v1 and v2 schemas as **literal fixtures**. Extend it rather than importing the current schema, which would test today's code against itself.

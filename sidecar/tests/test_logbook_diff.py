@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.cohorts.db import Database
-from ephymeris_sidecar.logbook.diff import changes_for_runs, param_changes
+from ephymeris_sidecar.logbook.diff import ComparedRun, changes_for_runs, compare, param_changes
 from ephymeris_sidecar.protocol import validate
 from ephymeris_sidecar.sessions.models import SessionAnimalRun
 from ephymeris_sidecar.tasks.profile import params_hash
@@ -138,3 +138,83 @@ def test_order_is_chronological_never_by_session_number(rig: Rig) -> None:
     out = changes_for_runs(rig.sessions.runs_for_cohort(rig.cohort.id), {})
     assert out[f"r-{nine}"]["first"] is True
     assert out[f"r-{ten}"]["params"] == [{"key": "holdMs", "from": 200, "to": 300}]
+
+
+# --- recovered runs (adopted orphans) ------------------------------------------
+
+def compared(rid: str, *, task: str = "GRGL", identity: str | None = None, box: int | None = None,
+             config: dict | None = None, recovered: bool = True) -> ComparedRun:
+    return ComparedRun(
+        id=rid, session_id=f"s-{rid}", animal_id="a1", box=box,
+        task_identity=identity or f"name:{task}", task=task,
+        config=config, params_hash=params_hash(config), recovered=recovered,
+    )
+
+
+def test_a_recovered_run_compares_its_parameters_but_never_its_box() -> None:
+    out = compare([
+        compared("old", box=3, config={"holdMs": 200}, recovered=False, identity="hash:h1"),
+        compared("new", config={"holdMs": 300}, identity="hash:h1"),
+    ])
+    change = out["new"]
+    assert change["recovered"] is True
+    assert change["box"] is None and change["boxChange"] is None
+    assert change["params"] == [{"key": "holdMs", "from": 200, "to": 300}]
+    assert validate(("ref", "RunChange"), change) == []
+
+
+def test_a_legacy_file_naming_only_its_sketch_is_not_a_revised_task() -> None:
+    """A hash on one side and only a name on the other compares by name: an
+    old file is not "definition revised" merely for lacking a snapshot."""
+    out = compare([
+        compared("legacy", identity="name:GRGL"),
+        compared("modern", identity="hash:h1", config={"holdMs": 200}),
+    ])
+    assert out["modern"]["taskChange"] is None
+    assert out["modern"]["paramsKnown"] is False
+
+
+def test_two_hashes_under_one_name_are_a_revised_definition() -> None:
+    out = compare([compared("a", identity="hash:h1"), compared("b", identity="hash:h2")])
+    assert out["b"]["taskChange"] == {"from": "GRGL", "to": "GRGL"}
+
+
+async def test_the_log_compares_recovered_files_from_what_they_record(tmp_path: Path) -> None:
+    """End to end: files copied from another rig, adopted by a rescan, read by
+    the summary — and the log, reading the database only, compares their
+    parameters (`DATA.md#what-changed`)."""
+    from ephymeris_sidecar.logbook.service import LogbookService
+    from tests.test_analytics_adoption import GRGL, HIT_1, LegacyRig
+
+    db = Database(tmp_path / "test.db")
+    db.connect()
+    try:
+        rig = LegacyRig(db, tmp_path)
+        tuned = {**GRGL, "config": [
+            {"metadataKey": "odor_poke_hold", "wireKey": "OPH", "label": "Odor poke hold",
+             "type": "int", "default": 500},
+        ]}
+        rig.add_legacy_run("remy1", HIT_1 * 10, number="01", folder_date="06_16_26",
+                           profile=tuned, params={"odor_poke_hold": 500})
+        rig.add_legacy_run("remy1", HIT_1 * 10, number="02", folder_date="06_17_26",
+                           profile=tuned, params={"odor_poke_hold": 300})
+
+        async def broadcast(message: dict) -> None:
+            pass
+
+        logbook = LogbookService(db=db, cohorts=rig.cohorts, sessions=rig.sessions,
+                                 profiles=rig.repo, broadcast=broadcast)
+        await rig.service.rescan(rig.cohort.id)
+
+        # Adopted but not yet read: unknown, never "changed".
+        before = [c for c in (await logbook.cohort(rig.cohort.id))["changes"] if not c["first"]]
+        assert [c["paramsKnown"] for c in before] == [False]
+
+        await rig.service.summary(rig.cohort.id)
+        cohort = await logbook.cohort(rig.cohort.id)
+        later = next(c for c in cohort["changes"] if not c["first"])
+        assert later["recovered"] is True and later["box"] is None
+        assert later["params"] == [{"key": "odor_poke_hold", "from": 500, "to": 300}]
+        assert later["sessionId"].startswith("adopted:2O-Bdisc_02")
+    finally:
+        db.close()

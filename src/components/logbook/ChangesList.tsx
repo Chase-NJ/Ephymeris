@@ -1,4 +1,4 @@
-import { changeParts } from "@/lib/logbook/changes";
+import { boxText, changeParts, unknownParams, unknownParamsNote } from "@/lib/logbook/changes";
 import type { RunChange } from "@/lib/logbook/types";
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
@@ -12,11 +12,8 @@ export function ChangesList({
   changes,
   names,
   colors,
-  recovered = false,
 }: {
   changes: RunChange[];
-  /** A recovered-files session, whose runs are never compared. */
-  recovered?: boolean;
   names: Map<string, string>;
   colors: Map<string, string>;
 }) {
@@ -29,47 +26,57 @@ export function ChangesList({
       ),
     );
   const changed = rows.filter((row) => row.parts.length > 0);
+  const note = unknownParamsNote(unknownParams(changes));
 
-  if (recovered) {
-    return (
-      <p className="px-4 py-4 text-[12px] text-static">
-        Not compared: runs recovered from files carry no recorded parameters or box.
-      </p>
-    );
-  }
   if (changes.length === 0) {
     return <p className="px-4 py-4 text-[12px] text-static">No runs recorded yet.</p>;
   }
   if (changed.length === 0) {
     return (
-      <p className="px-4 py-4 text-[12px] text-static">
-        Nothing changed: every animal ran the same task, box and parameters as its previous run.
-      </p>
+      <div className="px-4 py-4 text-[12px] text-static">
+        <p>
+          Nothing changed: every animal ran the same task
+          {note ? "" : ", box and parameters"} as its previous run.
+        </p>
+        {note && <p className="mt-1 text-[11px] text-static/70">{note}</p>}
+      </div>
     );
   }
 
   return (
-    <ul className="divide-y divide-halo/70">
-      {changed.map(({ change, parts }) => (
-        <li key={change.runId} className="grid grid-cols-[150px_1fr] gap-4 px-4 py-2.5">
-          <span className="flex min-w-0 items-center gap-2 text-[12px] text-starlight">
-            <span
-              className="size-2 shrink-0 rounded-full"
-              style={{ background: colors.get(change.animalId) ?? "var(--color-static)" }}
-              aria-hidden
-            />
-            <span className="truncate">{names.get(change.animalId) ?? change.animalId}</span>
-            <span className="shrink-0 font-mono text-[10px] text-static">box {change.box}</span>
-          </span>
-          <span className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-starlight" data-selectable>
-            {parts.map((part, index) => (
-              <span key={index} className={part.mono ? "font-mono text-[11px]" : ""}>
-                {part.text}
+    <div>
+      <ul className="divide-y divide-halo/70">
+        {changed.map(({ change, parts }) => (
+          <li key={change.runId} className="grid grid-cols-[150px_1fr] gap-4 px-4 py-2.5">
+            <span className="flex min-w-0 items-center gap-2 text-[12px] text-starlight">
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ background: colors.get(change.animalId) ?? "var(--color-static)" }}
+                aria-hidden
+              />
+              <span className="truncate">{names.get(change.animalId) ?? change.animalId}</span>
+              <span
+                className="shrink-0 font-mono text-[10px] text-static"
+                title={
+                  change.box === null
+                    ? "Recovered from a file, which records the port it used but not the box"
+                    : undefined
+                }
+              >
+                {boxText(change.box)}
               </span>
-            ))}
-          </span>
-        </li>
-      ))}
-    </ul>
+            </span>
+            <span className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-starlight" data-selectable>
+              {parts.map((part, index) => (
+                <span key={index} className={part.mono ? "font-mono text-[11px]" : ""}>
+                  {part.text}
+                </span>
+              ))}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {note && <p className="px-4 pb-3 text-[11px] text-static/70">{note}</p>}
+    </div>
   );
 }

@@ -390,6 +390,11 @@ Same field names, written from the same in-memory dict as the JSON — one sourc
 
 Every number is a `double` and every bool a `logical`; an empty `ts_data` is still `0×2`. `sessions/matwriter.py` writes it with `scipy.io.savemat` (uncompressed Level 5) and owns the conversion from Python values, because `savemat` unaided would keep an int as `int64` and an empty list as `0×0`. `tests/test_matwriter.py` pins each class and shape through `scipy.io.loadmat`.
 
+scipy is imported on first use, never at module scope, so a broken install costs the `.mat` and nothing else. The sidecar's entry point pays that first import at startup (`matwriter.preload` in `__main__._run`), **on the main thread, before any other thread exists** — in particular before the parent watch parks a thread in a blocking read of stdin.
+
+> [!CAUTION]
+> **Importing numpy while another thread is blocked reading stdin deadlocks the frozen sidecar.** Loading numpy's OpenBLAS extension with the parent-watch thread sitting in `sys.stdin.buffer.read` hangs inside the DLL load, before the handshake line is printed, so the app waits for a backend forever. It happens only under the shell's launch (stdin is a pipe held open for the app's life); a sidecar run by hand, with stdin at EOF or `--no-parent-watch`, never shows it. Keep the preload ahead of the watch, and never move the first import of scipy or numpy onto a thread or later into startup.
+
 > [!CAUTION]
 > **A `.mat` is refused rather than written wrong.** `savemat` sizes a char array in code points where MATLAB counts UTF-16 code units, so a character outside the BMP (an emoji) would yield a string whose dimensions disagree with its data; it also drops a variable whose name starts with `_` with only a warning. Both raise instead, the `.mat` is skipped and logged, and the `.tsv` and `.json` carry the run. `task_profile` is ASCII-escaped JSON, so labels in it never trip this; a top-level string such as an animal name can.
 

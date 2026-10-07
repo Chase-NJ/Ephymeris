@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 from .server import SidecarServer
+from .sessions import matwriter
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -74,6 +75,17 @@ async def _run(args: argparse.Namespace) -> None:
             loop.add_signal_handler(sig, server.request_shutdown)
         except NotImplementedError:  # pragma: no cover - Windows
             signal.signal(sig, lambda *_: server.request_shutdown())
+
+    # scipy (`DATA.md#the-mat-mirror`) is imported here, before any thread
+    # exists -- in particular before the parent watch below parks a thread in
+    # a blocking read of stdin. In the frozen build, loading numpy's OpenBLAS
+    # while another thread sits in that read deadlocks inside the DLL load,
+    # and the sidecar hangs before it ever prints its handshake. The first
+    # installed launch of Alpha 1.0 did exactly that; a sidecar run by hand,
+    # with stdin at EOF or `--no-parent-watch`, never shows it. The import is
+    # a fraction of a second, paid while nothing is running rather than by the
+    # first box to finish while five others are still streaming.
+    matwriter.preload()
 
     if not args.no_parent_watch:
         server.watch_parent_via_stdin()

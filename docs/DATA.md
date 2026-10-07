@@ -976,6 +976,10 @@ The tallies say *how often*; the tape says *when* (streaks, bias episodes, the m
 - `atMs` is ms from the run's **earliest** timestamp (not first, for `durationMs`'s reason). `latencyMs` is open → settling code; `null` for `no-response`/`aborted`, and nulled rather than negative on a disordered file.
 - Empty, not `null`, when the profile can't express outcomes.
 - Carried on `analytics.series` because the file is already open there; uncached, like the series.
+- **Session-log notes are drawn on it** (`lib/logbook/tapeMarkers.ts`): a note marks every run if it is
+  session-wide, otherwise only its animal's or box's run, and only if it falls within the run (a minute's
+  slack at either end). It sits before the first trial that opened after it — approximate to a few
+  seconds, for [the session clock's](#the-session-clock) reason, and its hover text says so.
 
 ## Analytics views
 

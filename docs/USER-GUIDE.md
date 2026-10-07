@@ -622,7 +622,8 @@ is saved in an `ephys` folder in the session folder, unless the Recording defaul
    ![One session selected: the Session summary for 2O-Bdisc_14 with a row per animal giving start, end, trials sampled and percent rewarded for all trials and for each odor, and the Export session PNG button](images/analytics-session.webp)
 
    Further down, each animal has a card with its conditions and outcomes, and the strategy and rolling
-   accuracy charts follow that session trial by trial. Clicking an animal in the **Animals** rail picks it
+   accuracy charts follow that session trial by trial. On a card's **Tape**, a thin purple line marks a
+   note from the [log](#keeping-the-log), at about the trial it was taken; hover it to read the note. Clicking an animal in the **Animals** rail picks it
    out in these charts.
 
    ![One session with remy3 picked out: per-animal condition cards with outcome bars, the Strategy within this session chart tracing remy3's trials, and Rolling accuracy per trial](images/analytics-session-detail.webp)

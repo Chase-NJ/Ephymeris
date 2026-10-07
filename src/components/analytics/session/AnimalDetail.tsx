@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ChartFrame } from "@/components/charts/ChartFrame";
 import { Segmented } from "@/components/common/controls";
@@ -12,6 +12,11 @@ import type {
 } from "@/lib/analytics/types";
 import { OUTCOME_STYLE, colorForIndex, type OutcomeKey } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
+import { useSelectedCohort } from "@/lib/analytics/context";
+import { formatDuration } from "@/lib/logbook/clock";
+import { useLogbook, useLogbookStore } from "@/lib/logbook/context";
+import { tapeMarkers, type TapeMarker } from "@/lib/logbook/tapeMarkers";
+import { tagOf } from "@/components/logbook/tags";
 
 /**
  * The inside of one animal's run (`DATA.md#pooling-across-tasks`) — the views a
@@ -107,14 +112,17 @@ function TapeView({ run, series }: { run: RunSummary; series: RunSeries | null }
 
   return (
     <div>
-      {lanes.map(({ condition, own }) => (
-        <TapeLane
-          key={condition.metricId}
-          label={condition.label}
-          trials={trials}
-          own={own}
-        />
-      ))}
+      <div className="relative">
+        {lanes.map(({ condition, own }) => (
+          <TapeLane
+            key={condition.metricId}
+            label={condition.label}
+            trials={trials}
+            own={own}
+          />
+        ))}
+        <NoteMarkers run={run} trials={trials} />
+      </div>
       <div className="mt-1 flex items-baseline justify-between pl-[96px] font-mono text-[9px] tabular-nums text-static/70">
         <span>trial 1</span>
         <span>trial {trials.length}</span>
@@ -122,10 +130,60 @@ function TapeView({ run, series }: { run: RunSummary; series: RunSeries | null }
       <p className="mt-1.5 text-[10px] leading-relaxed text-static/80">
         One tick per trial in session order, coloured by resolution; half-height
         ticks were never administered (the odor port was left early). Hover a
-        tick for its time and latency.
+        tick for its time and latency. A purple line is a note from the session
+        log, placed to within a few seconds.
       </p>
     </div>
   );
+}
+
+/**
+ * The session log's notes on the tape (`DATA.md#per-trial-tape`): a hairline at
+ * the first trial after each note that concerns this run, so "cleaned the
+ * spout" sits where the tape changes colour. Placement is good to a few
+ * seconds (`lib/logbook/tapeMarkers.ts`), and the hover text says ≈.
+ */
+function NoteMarkers({ run, trials }: { run: RunSummary; trials: TrialRecord[] }) {
+  const cohortId = useSelectedCohort();
+  const logStore = useLogbookStore();
+  const entry = useLogbook(cohortId);
+  useEffect(() => {
+    if (cohortId) void logStore.load(cohortId);
+  }, [cohortId, logStore]);
+  const notes = entry.notesBySession.get(run.sessionId);
+  const markers = useMemo(
+    () => (notes ? tapeMarkers(notes, run, trials) : []),
+    [notes, run, trials],
+  );
+  if (markers.length === 0) return null;
+
+  return (
+    <div
+      className="pointer-events-none absolute inset-y-0 right-0 left-[96px]"
+      role="list"
+      aria-label="Notes from the session log"
+    >
+      {markers.map((marker) => (
+        <span
+          key={marker.note.id}
+          role="listitem"
+          className="pointer-events-auto absolute inset-y-[-3px] flex w-2 -translate-x-1/2 justify-center"
+          style={{ left: `${(marker.position / trials.length) * 100}%` }}
+          title={describeMarker(marker)}
+          aria-label={describeMarker(marker)}
+        >
+          <span className="h-full w-px bg-pulsar" />
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function describeMarker(marker: TapeMarker): string {
+  const sign = marker.runOffsetMs < 0 ? "−" : "";
+  return `≈ ${sign}${formatDuration(Math.abs(marker.runOffsetMs) / 1000)} into this run · ${
+    tagOf(marker.note.tag).label
+  }\n${marker.note.body}`;
 }
 
 function TapeLane({

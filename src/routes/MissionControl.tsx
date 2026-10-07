@@ -1,9 +1,20 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, CircleAlert, Play, RotateCcw, Square, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  CircleAlert,
+  NotebookPen,
+  Play,
+  RotateCcw,
+  Square,
+  Users,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { Button } from "@/components/common/controls";
+import { CarryForwardPanel } from "@/components/logbook/CarryForwardPanel";
+import { QuickNote } from "@/components/logbook/QuickNote";
+import { WrapUpLog } from "@/components/logbook/WrapUpLog";
 import { useBackupStatus } from "@/lib/backup/useBackupStatus";
 import { RatPlacementBanner } from "@/components/sessions/RatPlacementBanner";
 import { ReturnChecklist } from "@/components/sessions/ReturnChecklist";
@@ -47,6 +58,9 @@ import {
 import { useBoxAccuracies } from "@/lib/sessions/useBoxAccuracies";
 import { metricLabels, useTaskProfiles } from "@/lib/sessions/useTaskProfiles";
 import { useLastRuns } from "@/lib/analytics/useLastRuns";
+import { resolveFlag } from "@/lib/logbook/commands";
+import { useLogbook, useLogbookStore } from "@/lib/logbook/context";
+import type { NoteScope } from "@/lib/logbook/types";
 import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
@@ -140,6 +154,30 @@ export function MissionControl() {
   // is an ADDITION — the rail block and each box's scope buttons — and renders
   // nothing for a behavior-only session.
   const isRecording = session?.recording != null;
+
+  // The session log (`DATA.md#the-session-log`): the quick note, this cohort's
+  // open carry-forward flags, and the wrap-up's operator and summary.
+  const logStore = useLogbookStore();
+  const logEntry = useLogbook(cohortId || null);
+  useEffect(() => {
+    if (connected && cohortId) void logStore.load(cohortId);
+  }, [connected, cohortId, logStore]);
+  const roster = useMemo(
+    () => (cohort?.animals ?? []).map((a) => ({ id: a.id, name: a.name, box: a.boxNumber })),
+    [cohort],
+  );
+  const animalNames = useMemo(() => new Map(roster.map((a) => [a.id, a.name])), [roster]);
+  const noteBoxes = useMemo(
+    () => [...new Set((snapshot?.boxes ?? []).map((b) => b.box))].sort((a, b) => a - b),
+    [snapshot],
+  );
+  const [note, setNote] = useState<{ open: boolean; scope?: NoteScope | undefined }>({
+    open: false,
+  });
+  const openNote = useCallback(
+    (scope?: NoteScope) => setNote({ open: true, scope }),
+    [],
+  );
 
   /*
    * `configuring` is NOT "the mapping was never confirmed", tempting as the name
@@ -315,10 +353,29 @@ export function MissionControl() {
   }, [groupDone]);
   const wrapOpen = connected && groupDone && lastGroup && hasRun && !wrapDismissed;
 
+  // N takes a note from anywhere on the screen — hands are often full, and the
+  // moment is the point. Not while typing, and not over the wrap-up, which has
+  // its own note box.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "n" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) {
+        return;
+      }
+      if (note.open || wrapOpen || !session) return;
+      event.preventDefault();
+      openNote();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [note.open, wrapOpen, session, openNote]);
+
   // Whole-session elapsed, for the wrap-up's fact line only — the header has
-  // its own ticking clock.
-  const sessionSeconds = session?.startedAt
-    ? Math.max(0, Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000))
+  // its own ticking clock. Both count from the session clock
+  // (`DATA.md#the-session-clock`): the first group's start, never the record's.
+  const sessionSeconds = session?.clockStartedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(session.clockStartedAt).getTime()) / 1000))
     : 0;
   const wrapFacts = [
     `${boxes.length} animal${boxes.length === 1 ? "" : "s"}`,
@@ -513,13 +570,13 @@ export function MissionControl() {
             <Header
               name={sessionName ?? "—"}
               date={session?.date ?? ""}
-              // startedAt is the record's *creation* time and is never
-              // restamped, so it only means anything once something is
-              // recording — until then, "started 11:49" with a ticking counter
-              // describes a run that never began. Gated on a box having
-              // actually run rather than on the session status, which per-box
-              // Start never advances.
-              startedAt={hasRun ? (session?.startedAt ?? null) : null}
+              // The session clock (`DATA.md#the-session-clock`): the first
+              // group's start, the same moment the log's T+ offsets count
+              // from. Gated on a box having actually run rather than on the
+              // session status, which per-box Start never advances — until
+              // then, "started 11:49" with a ticking counter describes a run
+              // that never began.
+              startedAt={hasRun ? (session?.clockStartedAt ?? null) : null}
               groupName={groupInfo?.name ?? null}
             />
 
@@ -582,7 +639,28 @@ export function MissionControl() {
               >
                 {hasRun ? "End Session" : "Discard session"}
               </Button>
+              <Button
+                variant="outline"
+                disabled={!connected || !session}
+                title="Add a note to the session log (N)"
+                onClick={() => openNote()}
+              >
+                <NotebookPen size={13} strokeWidth={1.75} />
+                Note
+              </Button>
             </div>
+
+            {/* Whatever the last session asked this one to check
+                (`DATA.md#carry-forward-flags`). Resolving it here records that
+                it was dealt with during this session. */}
+            <CarryForwardPanel
+              flags={logEntry.openFlags}
+              sessions={logEntry.sessions}
+              names={animalNames}
+              onResolve={async (note) => {
+                await resolveFlag(client, note.id, true, sessionId ?? null);
+              }}
+            />
 
             {isRecording && <RecordingRail />}
           </div>
@@ -636,13 +714,30 @@ export function MissionControl() {
                 }
                 onBack={() => setFocusedId(null)}
                 extra={
-                  isRecording ? (
-                    <ScopeButtons
-                      box={focusedBox.box}
-                      animalName={focusedBox.animalName}
-                      triggers={triggersFor[focusedBox.sketchPath] ?? []}
-                    />
-                  ) : null
+                  <div className="mt-3 flex flex-col gap-3">
+                    {/* The box's own note, scoped to it — the panel is where
+                        the operator is looking when something happens there. */}
+                    <span className="self-start">
+                      <Button
+                        variant="outline"
+                        disabled={!connected || !session}
+                        title={`Add a note about box ${focusedBox.box}`}
+                        onClick={() =>
+                          openNote({ kind: "box", animalId: null, box: focusedBox.box })
+                        }
+                      >
+                        <NotebookPen size={13} strokeWidth={1.75} />
+                        Note about box {focusedBox.box}
+                      </Button>
+                    </span>
+                    {isRecording && (
+                      <ScopeButtons
+                        box={focusedBox.box}
+                        animalName={focusedBox.animalName}
+                        triggers={triggersFor[focusedBox.sketchPath] ?? []}
+                      />
+                    )}
+                  </div>
                 }
               />
             ) : boxes.length > 0 ? (
@@ -788,7 +883,31 @@ export function MissionControl() {
         onEnd={doEndSession}
         onAnotherGroup={multiGroup ? doSwitchGroup : undefined}
         onDismiss={() => setWrapDismissed(true)}
+        log={
+          session && cohortId ? (
+            <WrapUpLog
+              cohortId={cohortId}
+              sessionId={session.id}
+              sessionDate={session.date}
+              roster={roster}
+              boxes={noteBoxes}
+            />
+          ) : null
+        }
       />
+
+      {session && (
+        <QuickNote
+          open={note.open}
+          onClose={() => setNote({ open: false })}
+          sessionId={session.id}
+          sessionName={sessionName ?? "—"}
+          sessionDate={session.date}
+          roster={roster}
+          boxes={noteBoxes}
+          scope={note.scope}
+        />
+      )}
     </div>
   );
 }
@@ -811,8 +930,8 @@ function Header({
     return () => window.clearInterval(timer);
   }, []);
 
-  // Whole-session elapsed, from the record's startedAt — a different clock
-  // than the per-box ones below, which run from each box's own start.
+  // Whole-session elapsed, on the session clock — a different clock than the
+  // per-box ones below, which run from each box's own start.
   const sessionElapsed = startedAt
     ? Math.max(0, Math.floor((now.getTime() - new Date(startedAt).getTime()) / 1000))
     : null;

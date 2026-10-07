@@ -41,6 +41,11 @@ The screenshots come from a demo rig of six boxes running a cohort called *Odor 
   - [Analytics](#analytics)
   - [Exporting a sheet](#exporting-a-sheet)
   - [Rescan Recover and Tidy records](#rescan-recover-and-tidy-records)
+- [Keeping the log](#keeping-the-log)
+  - [Moving through sessions](#moving-through-sessions)
+  - [Writing notes](#writing-notes)
+  - [Carry-forward flags](#carry-forward-flags)
+  - [What changed and how they did](#what-changed-and-how-they-did)
 - [Troubleshooting](#troubleshooting)
 - [Rules that protect the data](#rules-that-protect-the-data)
 - [Glossary](#glossary)
@@ -71,8 +76,8 @@ task's short name, such as `2O-Bdisc`) and a **session number**.
 
 ## A tour of the app
 
-The sidebar on the left lists the screens: **Dashboard**, **Rig**, **Cohorts**, **Task**, **Recording**
-and **Analytics** at the top, and **Settings** near the bottom. At the very bottom is a small star
+The sidebar on the left lists the screens: **Dashboard**, **Rig**, **Cohorts**, **Task**, **Recording**,
+**Analytics** and **Log** at the top, and **Settings** near the bottom. At the very bottom is a small star
 figure, one star per box, with a count such as *6/6 boxes* under it. A box's star is lit when its board
 is connected, dim when it is missing, green while that box is running (or while you are placing an
 animal in it), and red when it has a fault. You can check it from any screen.
@@ -118,6 +123,9 @@ and the default recording settings. See [Recording with Intan](#recording-with-i
 **Analytics.** Results. Pick a cohort to see its sessions, animals and learning curves.
 
 ![The Analytics landing: the same cohort planets as the Cohorts screen, under the heading "Pick a cohort to study its recorded sessions"](images/analytics-landing.webp)
+
+**Log.** The lab notebook: every session of a cohort on a timeline, with its start, end and elapsed
+time, notes anyone wrote, and what changed since the last session. See [Keeping the log](#keeping-the-log).
 
 **Settings.** Where data is saved (**Data directory**), where a backup copy goes (**Backup directory**),
 **Reduce motion**, and how the star figure is drawn (**Constellation**). If no backup directory is set,
@@ -219,7 +227,8 @@ for a recording) shows where you are.
 ### Configure
 
 1. On the Dashboard, click **Start a Session**.
-2. Pick the **Cohort**.
+2. Pick the **Cohort**. If an earlier session left a note for this one, it appears under **Before you
+   start**. Check it, then click **Resolve**.
 3. Pick the **Group** that goes on the rig first. Each group card lists which animal goes in which box.
    Only groups with at least one animal assigned to a box are offered.
 4. Pick the **Prefix** (the task's short name). Use **Add a prefix** for a new one.
@@ -319,7 +328,8 @@ finished — return each animal to its home cage, then pick the next group*.
 ### Ending the session
 
 When the last group finishes, a **That's a wrap** window appears. Tick each animal home, then click
-**End session**. The files are already saved, and Analytics opens on this session. **Run another group**
+**End session**. Under the checklist, **For the log** takes the operator's name, a short summary and one
+last note while it is fresh; it is optional and saves as you go (see [Keeping the log](#keeping-the-log)). The files are already saved, and Analytics opens on this session. **Run another group**
 is still offered if you need it; **Not yet** closes the window.
 
 ![The That's a wrap window: "Every group has run", a checklist with all six animals ticked home, and the Not yet, Run another group and End session buttons](images/wrap-up.webp)
@@ -362,6 +372,11 @@ The line under the session name reminds you how Stop works: *Stop takes effect a
 boundary*.
 
 ![Mission Control while running: the session name, the clock with time elapsed, Switch Group and End Session on the left, the session drawn as a 3D sky, and box tiles on the right, each IN_SESSION with its own clock and two live metrics](images/mission-control.webp)
+
+**Taking a note.** Click **Note** under the session controls, or press **n**, and type what happened; it
+is stamped with the time and how far into the session it was. In a box's panel, **Note about box 3** does
+the same with the note already about that box. If the last session left a flag for this one, it is listed
+under the session controls: click **Resolve** once you have dealt with it.
 
 ### Reading a box tile
 
@@ -640,6 +655,67 @@ These buttons are at the top of Analytics. Use them when the lab manager asks, o
   go ahead, or **Cancel**.
 
   ![The Tidy session records window: "No data file is moved, renamed or deleted", a preview listing one empty record to remove, and the Cancel and Tidy buttons](images/tidy-records.webp)
+
+## Keeping the log
+
+The **Log** tab is the cohort's lab notebook. Open it and click a cohort's planet. The left column is the
+cohort's sessions; the right is the selected session's page.
+
+### Moving through sessions
+
+The sessions sit on a timeline, newest at the top, **spaced by real days**: a weekend or a missed day is
+a visible gap, and a long break is marked with how many days it lasted. The selected session always sits
+at the bar near the top of the column, and the timeline slides past it.
+
+- **Scroll** over the timeline, or press **j** (older) and **k** (newer), to step one session at a time.
+- Click a session to jump to it, or a month in the strip at the top to jump to that month.
+- **Page Up** and **Page Down** jump a month while the timeline has focus; **Home** and **End** go to the
+  newest and oldest.
+
+A diamond is filled for a finished session, green with **live** for a running one, and hollow for an
+abandoned session or one recovered from files. A number beside a session is how many notes it has; a
+flag means it has a note carried forward.
+
+The top of the page reads the session's **Date**, **Start**, **End** and **Elapsed**. Start is when the
+first group began running, not when you started setting up; set-up time is noted underneath. The strip
+below shows each group run, with a tick for every note at the moment it was taken. Click a tick to go to
+the note.
+
+### Writing notes
+
+Press **n**, or click the note box under **Notes**.
+
+1. Pick what kind of note it is: **Observation**, **Intervention**, **Hardware**, **Health** or
+   **Deviation** (from the protocol).
+2. Pick what it is about: the whole session, one box, or one animal.
+3. Type it. **⌘↵** (Ctrl+Enter on Windows) saves.
+
+A note is stamped with the time you save it. To record something that happened earlier, type the time in
+**At** first. A note taken while the session was running shows how far into the session it was, such as
+**T+12:04**; a note written afterwards shows only the clock time.
+
+To change or remove a note, hover over it and click the pencil or the bin. Edited notes say **edited**.
+
+**Operator and summary**, at the bottom of the page, are for who ran the session and how it went. They
+save when you click away.
+
+Every session's notes are also written to a file called `notes.md` in its session folder, so they stay
+with the data when the folder is copied or backed up. Change notes in the app, not in that file.
+
+### Carry-forward flags
+
+Turn on **Carry forward to next session** for anything the next person at the rig needs to know, such as
+*Box 2's right port beam flickers*. Open flags are listed at the top of the Log, under **Before you start**
+when setting up the next session, and on Mission Control. Click **Resolve** once it has been dealt with.
+
+### What changed and how they did
+
+**Performance** is the same per-animal table as in Analytics: trials sampled and the share rewarded,
+overall and for each condition. **Open in Analytics** goes to that session there.
+
+**What changed** lists, for each animal, anything different from its previous session: a new task, a
+different box, or a changed setting (such as `holdMs 200 → 300`). Ephymeris records these itself, so
+you don't have to.
 
 ## Troubleshooting
 

@@ -256,7 +256,7 @@ Resuming a group **mid-run** after a crash is out of scope by decision (reconnec
 
 ## The session log
 
-The **Log** tab's lab notebook: timestamped notes and a few free fields per session, plus what the app can say on its own — when the session ran and what changed since each animal's previous run. Owned by `logbook/` in the sidecar; the commands are `logbook.*` ([PROTOCOL.md](PROTOCOL.md#session-log)).
+The **Log** tab's lab notebook: timestamped notes and a few free fields per session, plus what the app can say on its own — when the session ran and what changed since each animal's previous run. Owned by `logbook/` in the sidecar; the commands are `logbook.*` ([PROTOCOL.md](PROTOCOL.md#session-log)). What the operator sees: [USER-GUIDE.md](USER-GUIDE.md#keeping-the-log).
 
 > [!IMPORTANT]
 > **Notes are user data, not bookkeeping.** Every other table here can be rebuilt from the archive or is the app's own record; a note is the operator's words and exists nowhere else. So a session carrying one is **never** judged empty by [Tidy records](#tidy-records) and never [pruned](#pruning), and a delete is soft (`deleted_at`) — hidden, never erased.

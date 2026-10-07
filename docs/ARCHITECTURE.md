@@ -949,6 +949,7 @@ All routes are children of `components/chrome/AppShell.tsx` in `src/App.tsx`; fi
 | `/cohorts`, `/cohorts/new`, `/cohorts/:id` | `Cohorts.tsx`, `CohortEditor.tsx` | Cohort browser; create and manage |
 | `/task`, `/task/new`, `/task/:taskId`, `/task/strobes` | `Task.tsx`, `TaskEditor.tsx`, `TaskStrobes.tsx` | Saved tasks, the editor, the read-only strobe vocabulary |
 | `/analytics` | `Analytics.tsx` | Its cold landing is the cohort browser |
+| `/log` | `Log.tsx` | The lab notebook ([DATA.md](DATA.md#the-session-log)). Same cold landing as Analytics |
 | `/config`, `/config/wiring` | `Config.tsx`, `RigWiring.tsx` | Rig tab and wiring editor |
 | `/recording`, `/settings` | `Recording.tsx`, `Settings.tsx` | |
 | `/session/new`, `/session/:id/mapping`, `/session/:id/recording`, `/session/:id/group`, `/session/:id/control` | `SessionConfig.tsx`, `SessionMapping.tsx`, `SessionRecording.tsx`, `SessionGroup.tsx`, `MissionControl.tsx` | The [session flow](#the-flow) |
@@ -958,8 +959,8 @@ Rig and Task are split **by subject**: a pin is compile-time input that belongs 
 code is what a condition is named by, and the trial table's onset picker is its only consumer.
 
 `src/lib/ws/` holds the client and generated protocol; each domain (`lib/hardware`, `lib/cohorts`,
-`lib/sessions`, `lib/settings`, `lib/analytics`, `lib/intan`) has **one Provider + store** wrapping the
-shared client. `HardwareProvider` is mounted at the **app root**, not per view, because the sidebar's status
+`lib/sessions`, `lib/settings`, `lib/analytics`, `lib/intan`, `lib/logbook`) has **one Provider + store**
+wrapping the shared client. `HardwareProvider` is mounted at the **app root**, not per view, because the sidebar's status
 constellation needs box health on every screen.
 
 **Unit tests cover `src/lib/**` only** (vitest), on purpose: no jsdom, no component rendering. What's worth
@@ -1106,6 +1107,11 @@ Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and 
 > which is capped and trimmed oldest-first. A real session emits thousands of strobes; deriving from the
 > ring would silently drop the early trials — the part of a learning curve you most want.
 
+Mission Control's elapsed time and the session log's T+ offsets read one clock, the **session clock**
+(`clockStartedAt`, [DATA.md](DATA.md#the-session-clock)) — the first group's start, not the record's
+creation in Step 1. The quick note (**n**, or a box panel's **Note about box N**) writes to the log
+without leaving the view.
+
 A star's temperature is **pooled** rolling accuracy with chance as the ramp's floor, because a single
 condition can't tell learning from a side bias ([DATA.md](DATA.md#derived-metrics)).
 
@@ -1206,6 +1212,7 @@ The Intan subsystem is stdlib only. Frontend dependencies (`three`, `@react-thre
 | `hardware/` | The operator's `rig.json`: `store.py` (load, validate, save), `service.py` (located problems) | [TASKS.md](TASKS.md#rig-wiring) |
 | `analytics/` | `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#derived-metrics) |
 | `backup/` | `manager.py` (the mirror), `paths.py` (cohort-anchored paths) | [DATA.md](DATA.md#backup-mirroring) |
+| `logbook/` | The session log: `models.py`, `repository.py`, `service.py`, `diff.py` (what changed), `mirror.py` (`notes.md`) | [DATA.md](DATA.md#the-session-log) |
 | `intan/` | `client.py`, `streams.py`, `analysis.py`, `probemap.py`, `service.py` | [RECORDING.md](RECORDING.md) |
 
 `sidecar/tests/` holds the suite (`conftest.py` sets wire validation, `fake_rhx.py` is the fake RHX);
@@ -1228,6 +1235,7 @@ The Intan subsystem is stdlib only. Frontend dependencies (`three`, `@react-thre
 | `components/cohorts/`, `components/task/`, `components/hardware/` | Cohort browser and editor; task editor and landing; board map and wiring editor | [Cohort browser](#cohort-browser), [TASKS.md](TASKS.md#the-task-tab) |
 | `components/recording/`, `routes/scope/` | Recording tab, rail and pop-up windows | [RECORDING.md](RECORDING.md) |
 | `components/analytics/`, `components/charts/` | Observatory panels, PNG report, chart primitives | [DATA.md](DATA.md#analytics-views) |
+| `lib/logbook/`, `components/logbook/` | Session-log store and commands, `rail.ts` (the time rail's layout), `clock.ts`; the rail, readout and note components | [DATA.md](DATA.md#the-session-log) |
 | `components/{config,settings,dashboard,common}/` | Rig and Settings parts, Dashboard tiles, shared HUD and form pieces | |
 | `styles/` | `index.css` theme, fonts | [Theme](#theme) |
 

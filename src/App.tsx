@@ -7,6 +7,7 @@ import { CohortEditor } from "./routes/CohortEditor";
 import { Cohorts } from "./routes/Cohorts";
 import { Dashboard } from "./routes/Dashboard";
 import { DebugMode } from "./routes/DebugMode";
+import { Log } from "./routes/Log";
 import { MissionControl } from "./routes/MissionControl";
 import { Recording } from "./routes/Recording";
 import { RigWiring } from "./routes/RigWiring";
@@ -51,6 +52,9 @@ export default function App() {
             channel↔pin are different wirings but one subject, so the editor
             lives at `/config/wiring` behind the landing's Wiring door. */}
         <Route path="/analytics" element={<Analytics />} />
+        {/* The lab notebook (`DATA.md#the-session-log`): a cohort's sessions
+            on a time rail, each with its notes, clock and what changed. */}
+        <Route path="/log" element={<Log />} />
         {/* The route spelling stays `/config` while the tab reads **Rig**. The
             name is the user's word for the screen; the path is an internal
             address that every doc, and this app's own history, already spells

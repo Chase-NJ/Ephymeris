@@ -7,6 +7,7 @@ import { AnalyticsProvider } from "./lib/analytics/AnalyticsProvider";
 import { CohortsProvider } from "./lib/cohorts/CohortsProvider";
 import { HardwareProvider } from "./lib/hardware/HardwareProvider";
 import { IntanProvider } from "./lib/intan/IntanProvider";
+import { LogbookProvider } from "./lib/logbook/LogbookProvider";
 import { SessionsProvider } from "./lib/sessions/SessionsProvider";
 import { SettingsProvider } from "./lib/settings/SettingsProvider";
 import { SidecarProvider } from "./lib/ws/SidecarProvider";
@@ -61,7 +62,11 @@ createRoot(container).render(
                     {/* App-level too: a cold summary can index an entire archive,
                         and navigating away and back shouldn't pay that twice. */}
                     <AnalyticsProvider>
-                      <App />
+                      {/* App-level for the same reason, and because Mission
+                          Control and the session wrap-up take notes too. */}
+                      <LogbookProvider>
+                        <App />
+                      </LogbookProvider>
                     </AnalyticsProvider>
                   </SessionsProvider>
                 </CohortsProvider>

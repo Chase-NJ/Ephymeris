@@ -1,5 +1,14 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { AudioWaveform, ChartLine, Orbit, Radio, Settings, Users, Workflow } from "lucide-react";
+import {
+  AudioWaveform,
+  ChartLine,
+  NotebookPen,
+  Orbit,
+  Radio,
+  Settings,
+  Users,
+  Workflow,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
 import type { LucideIcon } from "lucide-react";
@@ -79,6 +88,9 @@ const NAV_MAIN: readonly NavItem[] = [
   // and stays with Dashboard.
   { to: "/recording", label: "Recording", icon: AudioWaveform },
   { to: "/analytics", label: "Analytics", icon: ChartLine },
+  // **Log**, the lab notebook — last, because it is where a session's story
+  // ends up: after it ran (Dashboard), and after its numbers (Analytics).
+  { to: "/log", label: "Log", icon: NotebookPen },
 ];
 
 // Settings alone. The sketch library used to sit here as its own tab; the Task

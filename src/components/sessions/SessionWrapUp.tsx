@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, ChartLine, Home } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { Button } from "@/components/common/controls";
@@ -42,6 +42,7 @@ export function SessionWrapUp({
   onEnd,
   onAnotherGroup,
   onDismiss,
+  log,
 }: {
   open: boolean;
   sessionName: string;
@@ -57,6 +58,9 @@ export function SessionWrapUp({
    *  cohort only, since groups no longer run in a fixed order to a fixed end. */
   onAnotherGroup?: (() => void) | undefined;
   onDismiss: () => void;
+  /** The session log's corner (`USER-GUIDE.md#ending-the-session`) —
+   *  optional, and never a step between the operator and End session. */
+  log?: ReactNode;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -131,6 +135,8 @@ export function SessionWrapUp({
                   disabled={busy}
                 />
               </div>
+
+              {log}
             </div>
 
             <div className="flex items-center justify-between gap-3 border-t border-halo px-6 py-4">

@@ -7,6 +7,7 @@ import { Button, TextInput } from "@/components/common/controls";
 import { Dropdown } from "@/components/common/Dropdown";
 import { Modal } from "@/components/common/Modal";
 import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
+import { CarryForwardPanel } from "@/components/logbook/CarryForwardPanel";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { GroupPicker } from "@/components/sessions/GroupPicker";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
@@ -24,6 +25,8 @@ import {
 } from "@/lib/sessions/commands";
 import { listSessions } from "@/lib/analytics/commands";
 import type { SessionListItem } from "@/lib/analytics/types";
+import { resolveFlag } from "@/lib/logbook/commands";
+import { useLogbook, useLogbookStore } from "@/lib/logbook/context";
 import { useActiveSessions, usePrefixes } from "@/lib/sessions/context";
 import {
   clearSetupDraft,
@@ -111,6 +114,18 @@ export function SessionConfig() {
       active = false;
     };
   }, [client, cohortId, connected]);
+
+  // What the last session asked the next one to check
+  // (`DATA.md#carry-forward-flags`) — read before anyone touches the rig.
+  const logStore = useLogbookStore();
+  const logEntry = useLogbook(cohortId);
+  useEffect(() => {
+    if (cohortId && connected) void logStore.load(cohortId);
+  }, [cohortId, connected, logStore]);
+  const animalNames = useMemo(
+    () => new Map((cohort?.animals ?? []).map((a) => [a.id, a.name])),
+    [cohort],
+  );
 
   // Today's sessions for this cohort that another group can still run under.
   // The one currently held is left to the Dashboard's dock and Mission Control.
@@ -328,6 +343,25 @@ export function SessionConfig() {
             </div>
           </SettingGroup>
           </motion.div>
+
+          {cohortId && logEntry.openFlags.length > 0 && (
+            // `mt-4`, under the cohort it belongs to rather than a group's
+            // full `mt-7`: it is about the cohort just picked.
+            <motion.div variants={RISE} className="mt-4">
+              {/* Resolved against no session: this one doesn't exist yet,
+                  and a flag dealt with before it starts was dealt with
+                  outside one. */}
+              <CarryForwardPanel
+                title="Before you start"
+                flags={logEntry.openFlags}
+                sessions={logEntry.sessions}
+                names={animalNames}
+                onResolve={async (note) => {
+                  await resolveFlag(client, note.id, true, null);
+                }}
+              />
+            </motion.div>
+          )}
 
           {todays.length > 0 && (
             <motion.div variants={RISE}>

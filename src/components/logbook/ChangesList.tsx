@@ -1,3 +1,4 @@
+import { changeParts } from "@/lib/logbook/changes";
 import type { RunChange } from "@/lib/logbook/types";
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
@@ -17,7 +18,7 @@ export function ChangesList({
   colors: Map<string, string>;
 }) {
   const rows = [...changes]
-    .map((change) => ({ change, parts: describe(change) }))
+    .map((change) => ({ change, parts: changeParts(change) }))
     .sort((a, b) =>
       collator.compare(
         names.get(a.change.animalId) ?? a.change.animalId,
@@ -50,62 +51,15 @@ export function ChangesList({
             <span className="truncate">{names.get(change.animalId) ?? change.animalId}</span>
             <span className="shrink-0 font-mono text-[10px] text-static">box {change.box}</span>
           </span>
-          <span className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-static" data-selectable>
+          <span className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-starlight" data-selectable>
             {parts.map((part, index) => (
-              <span key={index}>{part}</span>
+              <span key={index} className={part.mono ? "font-mono text-[11px]" : ""}>
+                {part.text}
+              </span>
             ))}
           </span>
         </li>
       ))}
     </ul>
   );
-}
-
-/** One change as short phrases, mono where it is a value. */
-export function describe(change: RunChange): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  if (change.first) {
-    parts.push(
-      <>
-        first run · <span className="text-starlight">{change.task}</span>
-      </>,
-    );
-    return parts;
-  }
-  if (change.taskChange) {
-    const { from, to } = change.taskChange as { from: string; to: string };
-    parts.push(
-      from === to ? (
-        <>
-          <span className="text-starlight">{to}</span> definition revised
-        </>
-      ) : (
-        <>
-          task {String(from)} → <span className="text-starlight">{String(to)}</span>
-        </>
-      ),
-    );
-  }
-  if (change.boxChange) {
-    parts.push(
-      <>
-        box {String(change.boxChange.from)} →{" "}
-        <span className="text-starlight">{String(change.boxChange.to)}</span>
-      </>,
-    );
-  }
-  for (const param of change.params) {
-    parts.push(
-      <span className="font-mono">
-        {param.key} {show(param.from)} → <span className="text-starlight">{show(param.to)}</span>
-      </span>,
-    );
-  }
-  if (!change.paramsKnown) parts.push(<>parameters not recorded</>);
-  return parts;
-}
-
-function show(value: unknown): string {
-  if (value === null || value === undefined) return "—";
-  return typeof value === "string" ? value : JSON.stringify(value);
 }

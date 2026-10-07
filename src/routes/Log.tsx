@@ -8,6 +8,7 @@ import { CohortSky } from "@/components/cohorts/CohortSky";
 import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import { DENSE_SKY_OPACITY, SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { CarryForwardPanel } from "@/components/logbook/CarryForwardPanel";
+import { LogExport } from "@/components/logbook/LogExport";
 import { LogRail } from "@/components/logbook/LogRail";
 import { MonthStrip } from "@/components/logbook/MonthStrip";
 import { SessionReadout } from "@/components/logbook/SessionReadout";
@@ -183,6 +184,13 @@ export function Log() {
               </p>
             </div>
           </div>
+          <LogExport
+            cohortId={cohortId}
+            cohortName={active?.name ?? "Cohort"}
+            entry={entry}
+            session={selected}
+            names={names}
+          />
         </header>
 
         <div className="mx-auto mt-5 flex min-h-0 w-full max-w-6xl flex-1 gap-5 px-8 pb-6">

@@ -46,6 +46,7 @@ The screenshots come from a demo rig of six boxes running a cohort called *Odor 
   - [Writing notes](#writing-notes)
   - [Carry-forward flags](#carry-forward-flags)
   - [What changed and how they did](#what-changed-and-how-they-did)
+  - [Saving the log as a PDF](#saving-the-log-as-a-pdf)
 - [Troubleshooting](#troubleshooting)
 - [Rules that protect the data](#rules-that-protect-the-data)
 - [Glossary](#glossary)
@@ -717,6 +718,15 @@ overall and for each condition. **Open in Analytics** goes to that session there
 **What changed** lists, for each animal, anything different from its previous session: a new task, a
 different box, or a changed setting (such as `holdMs 200 → 300`). Ephymeris records these itself, so
 you don't have to.
+
+### Saving the log as a PDF
+
+At the top right of the Log, **Session PDF** saves the selected session's page, and **Logbook PDF**
+saves every session of the cohort, oldest first, after a cover page listing any open flags. Choose where
+to save it. The PDF is printed on white, and its text can be searched and copied.
+
+Notes print as written, except that a few symbols are spelled out (`≥` becomes `>=`), and characters the
+PDF's fonts don't have, such as Chinese or emoji, print as `?`. Accented letters and Greek print normally.
 
 ## Troubleshooting
 

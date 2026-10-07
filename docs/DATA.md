@@ -34,6 +34,7 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
   - [Carry-forward flags](#carry-forward-flags)
   - [What changed](#what-changed)
   - [The notes.md mirror](#the-notesmd-mirror)
+  - [Exporting a log](#exporting-a-log)
 - [Per-animal files](#per-animal-files)
   - [The JSON document](#the-json-document)
   - [The tsv log](#the-tsv-log)
@@ -307,6 +308,18 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
 - **Written about a second after the last change** (debounced per session), in a worker thread, via `notes.md.part` and an atomic replace, then queued for [backup](#session-files). A command reply never waits on it and the runner never calls it, so a slow share costs only a stale copy.
 - **A missing session folder is created; a missing parent is not.** A missing prefix folder means an unmounted or moved archive, and recreating its path would scatter notes away from their data. Any failure is logged; the database copy is intact.
 - **Invisible to the archive walk**, which only reads inside the format folders.
+
+### Exporting a log
+
+**Session PDF** and **Logbook PDF** (the Log header) write a vector PDF with selectable text: one session's page, or the whole cohort oldest-first behind a cover that lists the open flags. Rendered in the webview by `@react-pdf/renderer` (`components/logbook/pdf/`), loaded by dynamic `import()` on the first export only, and saved through the shell like the [PNG sheet](#exporting-a-sheet). Every string comes from `lib/logbook/document.ts`, built from the same helpers as the screen — the performance table from `sessionRunsOf` and `conditionColumns`, what changed from `changeParts` — and is unit-tested there; the renderer only lays it out. Printed in the paper palette ([ARCHITECTURE.md](ARCHITECTURE.md#printed-documents)).
+
+> [!CAUTION]
+> Each of these, done wrong, yields a **plausible-looking wrong PDF**, or none:
+>
+> - **Ligatures are off on every page** (`fontFeatureSettings`). The faces are `@fontsource` latin subsets, and a ligature — JetBrains Mono's `...`, `//`, `==`, `--`; Inter's `->` — maps to a glyph the subset dropped. That does not misprint; it throws inside the font engine and loses the export, on text people type in notes all the time.
+> - **A character no embedded face covers prints as `?`** (`printable`). Left alone, the engine falls through to a built-in face and draws *another* glyph — `≥ 3` printed as `ꞓ3`. Inter's latin-ext and Greek subsets are registered as fallbacks, so accented names and `ΔF/F` print correctly; common symbols (`→ ≥ ≤ ≠`) are spelled out.
+> - **Fonts are `.woff`, inlined with `?inline`**, for the PNG sheet's reason: a fetch over the packaged app's custom scheme fails silently, and the fallback is Helvetica.
+> - **Titles have a pinned height.** The engine measures Space Grotesk's line box short and draws the next line through the title.
 
 ## Per-animal files
 

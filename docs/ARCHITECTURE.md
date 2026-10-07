@@ -1147,6 +1147,14 @@ text. **Motion** is Framer Motion spring physics everywhere except the 3D camera
 one deliberate cubic-eased move. Ambient motion respects `prefers-reduced-motion` and the `reducedMotion`
 setting, and reduced motion stills things rather than removing them. Icons are Lucide, outline only.
 
+### Printed documents
+
+A printed page is not a screen, so the dark-only rule stops at the PDF exporter
+([DATA.md](DATA.md#exporting-a-log)). **Paper is the background and Void is the ink**; every other colour is
+a token darkened only as far as small text on white needs to clear WCAG AA, on the token's own hue
+(`components/logbook/pdf/theme.ts`). Pulsar stays flat and is kept to rules, headers and large figures;
+`status-*` still means state only. The typefaces keep their roles.
+
 ## Dependency policy
 
 Lab machines never run `pip`: the installer ships a PyInstaller-frozen sidecar, so a wheel's install
@@ -1183,8 +1191,10 @@ Wilson interval ([DATA.md](DATA.md#derived-metrics)) is a few lines over `math.s
 takes about 0.3 s to import.
 
 The Intan subsystem is stdlib only. Frontend dependencies (`three`, `@react-three/fiber`,
-`@react-three/drei`, `modern-screenshot`) are less constrained because they are bundled at build time;
-`npm install` never runs on a lab machine.
+`@react-three/drei`, `modern-screenshot`, `@react-pdf/renderer`) are less constrained because they are
+bundled at build time; `npm install` never runs on a lab machine. `@react-pdf/renderer` follows the scoped
+pattern all the same: it is reached only through a dynamic `import()` in the log's PDF export, so it is its
+own chunk, costs nothing until the first export, and a failure to load it loses only the export.
 
 ## Module map
 

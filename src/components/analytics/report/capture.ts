@@ -67,16 +67,22 @@ export async function captureSheet(node: HTMLElement): Promise<Blob> {
 
 /**
  * Ask for a path and write the bytes. Resolves to the path, or `null` if the
- * user cancelled — which is an outcome, not an error.
+ * user cancelled — which is an outcome, not an error. Shared with the session
+ * log's PDF export (`components/logbook/pdf/export.ts`).
  */
-export async function saveSheet(blob: Blob, defaultName: string): Promise<string | null> {
-  const path = await save({
-    defaultPath: defaultName,
-    filters: [{ name: "PNG image", extensions: ["png"] }],
-  });
+export async function saveFile(
+  blob: Blob,
+  defaultName: string,
+  filter: { name: string; extensions: string[] },
+): Promise<string | null> {
+  const path = await save({ defaultPath: defaultName, filters: [filter] });
   if (!path) return null;
   await writeFile(path, new Uint8Array(await blob.arrayBuffer()));
   return path;
+}
+
+export function saveSheet(blob: Blob, defaultName: string): Promise<string | null> {
+  return saveFile(blob, defaultName, { name: "PNG image", extensions: ["png"] });
 }
 
 /**

@@ -1043,6 +1043,135 @@ Stop waiting for boxes to finish their trials during a graceful end; the recordi
 |---|---|---|
 | `ok` | boolean |  |
 
+### Session log
+
+<a id="cmd-logbook.cohort"></a>
+#### `logbook.cohort`
+
+A cohort's notes, session fields and what-changed entries (`DATA.md#the-session-log`). **Database only**, like `sessions.list`. `COHORT_NOT_FOUND` for an unknown cohort.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `cohortId` | string |  |
+
+**Result:** [LogbookCohort](#shape-logbookcohort)
+
+<a id="cmd-logbook.addnote"></a>
+#### `logbook.addNote`
+
+Add a note to a session, running or finished. `SESSION_INVALID` for an unknown session, a recovered-files session (no record to note against), an unknown tag, a blank body, or an animal outside the cohort. Broadcasts `logbook.updated`.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `sessionId` | string |  |
+| `tag` | [NoteTag](#shape-notetag) |  |
+| `body` | string |  |
+| `scope` *(optional)* | [NoteScope](#shape-notescope) | Default: the whole session. |
+| `carryForward` *(optional)* | boolean |  |
+| `at` *(optional)* | string | ISO with an offset. Default: now. |
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `note` | [SessionNote](#shape-sessionnote) |  |
+
+<a id="cmd-logbook.editnote"></a>
+#### `logbook.editNote`
+
+Change any of a note's fields; an absent field is kept. Stamps `editedAt`. Same refusals as `logbook.addNote`, plus an unknown or deleted note. Broadcasts `logbook.updated`.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `noteId` | string |  |
+| `tag` *(optional)* | [NoteTag](#shape-notetag) |  |
+| `body` *(optional)* | string |  |
+| `scope` *(optional)* | [NoteScope](#shape-notescope) |  |
+| `carryForward` *(optional)* | boolean |  |
+| `at` *(optional)* | string |  |
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `note` | [SessionNote](#shape-sessionnote) |  |
+
+<a id="cmd-logbook.deletenote"></a>
+#### `logbook.deleteNote`
+
+Hide a note. A soft delete: the row stays in the database with `deleted_at` set, and is never sent again. Broadcasts `logbook.updated`.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `noteId` | string |  |
+
+**Result**
+
+`{}`
+
+<a id="cmd-logbook.resolveflag"></a>
+#### `logbook.resolveFlag`
+
+Resolve or reopen a carry-forward flag. `SESSION_INVALID` for a note that is not flagged. Broadcasts `logbook.updated`.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `noteId` | string |  |
+| `resolved` | boolean | False reopens a resolved flag. |
+| `sessionId` *(optional)* | string \| null | The session it was dealt with during; null or absent when outside one (Step 1, before the session exists). |
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `note` | [SessionNote](#shape-sessionnote) |  |
+
+<a id="cmd-logbook.setsessionlog"></a>
+#### `logbook.setSessionLog`
+
+Set a session's operator and/or summary; an absent field is kept, a blank one cleared. Broadcasts `logbook.updated`.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `sessionId` | string |  |
+| `operator` *(optional)* | string \| null |  |
+| `summary` *(optional)* | string \| null |  |
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `log` | [SessionLog](#shape-sessionlog) |  |
+
+<a id="cmd-logbook.openflags"></a>
+#### `logbook.openFlags`
+
+A cohort's unresolved carry-forward notes, oldest first — what Step 1 and the running session show.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `cohortId` | string |  |
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `notes` | [SessionNote](#shape-sessionnote)[] |  |
+
 ## Events
 
 <a id="evt-server.hello"></a>
@@ -1121,6 +1250,13 @@ Pushed on every strobe that updates a rolling live metric. Not batched like `por
 One animal's run finalized and recorded.
 
 **Data:** [AnimalEnded](#shape-animalended)
+
+<a id="evt-logbook.updated"></a>
+#### `logbook.updated`
+
+A session log changed: a note or session field was written, a run finalized (its what-changed entry appeared), a session ended (its clock closed), or a tidy moved notes between records. A pointer, not the data — the client refetches `logbook.cohort`. Not replayed on connect.
+
+**Data:** [LogbookUpdated](#shape-logbookupdated)
 
 <a id="evt-session.lifecycle"></a>
 #### `session.lifecycle`
@@ -1679,6 +1815,26 @@ The three bundled-sketch-library states (`TASKS.md#sketch-library`). There is no
 | `alternateCode` | number |  |
 | `windowSize` | number |  |
 
+<a id="shape-logbookcohort"></a>
+#### LogbookCohort
+
+A cohort's whole session log, flat; the client groups it by `sessionId`. Sessions themselves come from `sessions.list`.
+
+| Field | Type | Notes |
+|---|---|---|
+| `cohortId` | string |  |
+| `logs` | [SessionLog](#shape-sessionlog)[] |  |
+| `notes` | [SessionNote](#shape-sessionnote)[] | Every live note, oldest first. |
+| `changes` | [RunChange](#shape-runchange)[] | One per recorded run. |
+
+<a id="shape-logbookupdated"></a>
+#### LogbookUpdated
+
+| Field | Type | Notes |
+|---|---|---|
+| `cohortId` | string |  |
+| `sessionIds` | string[] | The sessions whose log changed. |
+
 <a id="shape-metricseries"></a>
 #### MetricSeries
 
@@ -1711,6 +1867,24 @@ One metric's whole-session result (`DATA.md#derived-metrics`).
 | `lowConfidence` | boolean |  |
 | `answerSide` | [AnswerSide](#shape-answerside) \| null | Which answer this condition rewards, read off its metric's `successCode` (`TASKS.md#derived-state-machine`). Null whenever the profile cannot prove one — never guessed, and never taken from `alternateCode`, which on a no-go metric means 'any port will do'. This is what lets the strategy plane fold N conditions onto two axes without knowing anything about odors. |
 
+<a id="shape-notescope"></a>
+#### NoteScope
+
+What a note is about. A session-wide note marks every animal's trial tape; an animal or box note marks only that run's.
+
+| Field | Type | Notes |
+|---|---|---|
+| `kind` | "session" \| "animal" \| "box" |  |
+| `animalId` | string \| null | Set only for `kind: animal`. |
+| `box` | number \| null | Set only for `kind: box`; 1–6. |
+
+<a id="shape-notetag"></a>
+#### NoteTag
+
+What kind of entry a note is. Closed so the log, its PDF and `notes.md` can group and colour by it.
+
+"observation" \| "intervention" \| "hardware" \| "animal-health" \| "protocol-deviation"
+
 <a id="shape-outputline"></a>
 #### OutputLine
 
@@ -1721,6 +1895,15 @@ One passthrough console line. Debug output, never persisted beyond the sidecar's
 | `dir` | "rx" \| "tx" | Sent commands interleave as `tx`, so scrollback stays chronological. |
 | `text` | string |  |
 | `ts` | number |  |
+
+<a id="shape-paramchange"></a>
+#### ParamChange
+
+| Field | Type | Notes |
+|---|---|---|
+| `key` | string | The parameter's `metadataKey`. |
+| `from` | unknown | Null when the previous run did not have the key. |
+| `to` | unknown | Null when this run does not have the key. |
 
 <a id="shape-portoutputdata"></a>
 #### PortOutputData
@@ -2027,6 +2210,26 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 | `editedAt` | string \| null |  |
 | `pinoutHash` | string | The composed wiring's hash, over the fields that can change a compiled byte. Prose and pin notes are excluded: it answers 'could these two produce different firmware?', so a reworded rationale must not move it. |
 
+<a id="shape-runchange"></a>
+#### RunChange
+
+What differs between a recorded run and the same animal's previous recorded run (`DATA.md#what-changed`). Adopted runs are not compared.
+
+| Field | Type | Notes |
+|---|---|---|
+| `runId` | string |  |
+| `sessionId` | string |  |
+| `animalId` | string |  |
+| `box` | number |  |
+| `task` | string | This run's task name. |
+| `previousRunId` | string \| null |  |
+| `previousSessionId` | string \| null |  |
+| `first` | boolean | The animal's first recorded run; nothing to compare. |
+| `taskChange` | [ValueChange](#shape-valuechange) \| null | Task names, `from` → `to`. Equal names mean the same task with a revised definition (a different profile hash). |
+| `boxChange` | [ValueChange](#shape-valuechange) \| null |  |
+| `params` | [ParamChange](#shape-paramchange)[] |  |
+| `paramsKnown` | boolean | False when either run predates recorded parameters — unknown, never reported as changed. |
+
 <a id="shape-runnersession"></a>
 #### RunnerSession
 
@@ -2130,6 +2333,8 @@ The runner-held session — the same shape a sessions.status reply carries.
 | `date` | string | ISO `YYYY-MM-DD`. |
 | `startedAt` | string |  |
 | `endedAt` | string \| null |  |
+| `clockStartedAt` | string | When the session actually began running: the first group run's start, or `startedAt` before any group ran (`DATA.md#the-session-clock`). `startedAt` is when Step 1 created the record. Elapsed time and note offsets count from this. |
+| `clockEndedAt` | string \| null | The last group run's end once every run is closed, else `endedAt`; null while the session is open. |
 | `status` | [SessionStatus](#shape-sessionstatus) |  |
 | `folderPath` | string |  |
 | `groupRuns` | [GroupRun](#shape-grouprun)[] |  |
@@ -2177,11 +2382,46 @@ One session, from sessions.list or inside a summary.
 | `date` | string |  |
 | `startedAt` | string |  |
 | `endedAt` | string \| null |  |
+| `clockStartedAt` | string | When the session actually began running: the first group run's start, or `startedAt` before any group ran (`DATA.md#the-session-clock`). `startedAt` is when Step 1 created the record. Elapsed time and note offsets count from this. |
+| `clockEndedAt` | string \| null | The last group run's end once every run is closed, else `endedAt`; null while the session is open. |
 | `status` | [SessionStatus](#shape-sessionstatus) |  |
 | `folderPath` | string |  |
 | `ordinal` | number | 1-based chronological position from (date, startedAt) — never from sessionNumber, which is free text and would sort "10" before "9". |
 | `runCount` *(optional)* | number |  |
 | `groupRuns` | [GroupRun](#shape-grouprun)[] | Which groups ran, so Step 1 can offer to continue one of today's sessions with another group (`sessions.resume`). |
+
+<a id="shape-sessionlog"></a>
+#### SessionLog
+
+A session's free fields. Absent from `LogbookCohort.logs` for a session nobody has filled in.
+
+| Field | Type | Notes |
+|---|---|---|
+| `sessionId` | string |  |
+| `operator` | string \| null |  |
+| `summary` | string \| null |  |
+| `updatedAt` | string \| null |  |
+
+<a id="shape-sessionnote"></a>
+#### SessionNote
+
+One timestamped log entry (`DATA.md#the-session-log`). A deleted note is never sent.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string |  |
+| `sessionId` | string |  |
+| `cohortId` | string |  |
+| `at` | string | The moment the note is about, UTC ISO. Defaults to when it was written; editable afterwards. |
+| `createdAt` | string |  |
+| `editedAt` | string \| null |  |
+| `tag` | [NoteTag](#shape-notetag) |  |
+| `scope` | [NoteScope](#shape-notescope) |  |
+| `body` | string |  |
+| `offsetMs` | number \| null | `at` minus the session's `clockStartedAt` (`DATA.md#the-session-clock`) — the T+ the log shows. Derived on every read, never stored. Null when `at` falls outside the session's running window, e.g. a note written the next morning. |
+| `carryForward` | boolean | Flagged for the next session: surfaces in Step 1 and on the running session until resolved. |
+| `resolvedAt` | string \| null |  |
+| `resolvedInSessionId` | string \| null | The session a flag was resolved during. Null when it was resolved outside one, or that session has since been tidied away. |
 
 <a id="shape-sessionrecording"></a>
 #### SessionRecording
@@ -2537,3 +2777,11 @@ The whole baseline picture — one snapshot, shared by the command and the event
 | `held` | boolean | Restores are suspended because a confirmed session mapping owns the boxes — reflashing then would erase the task sketch. |
 | `message` | string \| null | Why the baseline isn't operating at all (no sketch set, a name not in the bundled library, a non-utility profile). |
 | `boxes` | [UtilityBoxState](#shape-utilityboxstate)[] |  |
+
+<a id="shape-valuechange"></a>
+#### ValueChange
+
+| Field | Type | Notes |
+|---|---|---|
+| `from` | unknown |  |
+| `to` | unknown |  |

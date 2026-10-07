@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from ..logbook.repository import LogbookRepository
 from ..sessions import tidy as session_tidy
 from ..sessions.models import Session, SessionAnimalRun
 from ..sessions.paths import parse_name_date, parse_name_time, parse_session_folder
@@ -88,6 +89,9 @@ class AnalyticsService:
         self._sessions = sessions
         self._broadcast = broadcast
         self._repo = AnalyticsRepository(db)
+        #: Read only for which sessions carry notes — those are never empty
+        #: and never pruned (`DATA.md#the-session-log`).
+        self._logbook = LogbookRepository(db)
         self._min_counted = min_counted
         #: Resolve a document's `sketch` *name* to a sketch in this install's
         #: library, for adopted orphans whose run record never existed
@@ -545,11 +549,17 @@ class AnalyticsService:
         # written elsewhere (a cohort relocated with `moveExisting: false` leaves
         # exactly that shape). No-runs alone would delete every aborted session,
         # which never wrote a file in the first place and whose folder is real.
+        #
+        # A session the operator wrote notes on is never pruned: the notes are
+        # their data, not bookkeeping, and they outlive the folder they were
+        # mirrored into (`DATA.md#the-session-log`).
         surviving = self._sessions.run_counts_by_session(cohort_id)
+        annotated = self._logbook.annotated_session_ids(cohort_id)
         doomed = [
             session.id
             for session in self._sessions.list_sessions(cohort_id, include_aborted=True)
             if not surviving.get(session.id)
+            and session.id not in annotated
             and _is_gone(session.folder_path, kind="folder")
         ]
         # `delete_sessions` refuses an open session; count what it actually did.
@@ -611,6 +621,7 @@ class AnalyticsService:
             folder_state=_folder_state,
             protect=protect,
             today=today,
+            annotated=self._logbook.annotated_session_ids(cohort_id),
         )
         if not apply or planned.is_empty:
             return session_tidy.plan_json(

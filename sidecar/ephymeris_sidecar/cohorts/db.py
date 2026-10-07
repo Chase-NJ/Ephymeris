@@ -60,7 +60,10 @@ DB_FILENAME = "ephymeris.db"
 #: whether a session is
 #: also an electrophysiology recording, and what each group run's recording was.
 #: NULL on every behavior-only session, which is every session before this.
-SCHEMA_VERSION = 10
+#: v11 added session_notes / session_logs (`DATA.md#the-session-log`) — new
+#: tables only, so no migration; the bump marks a file a v10 build should know
+#: was written by something newer.
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -234,6 +237,46 @@ CREATE TABLE IF NOT EXISTS adopted_runs (
     file_mtime_ns  INTEGER,
     file_size      INTEGER
 );
+
+-- The session log's timestamped notes (DATA.md#the-session-log). The
+-- operator's own words, so — unlike every other table here — user data, not
+-- bookkeeping: tidy and prune keep a session that carries one.
+CREATE TABLE IF NOT EXISTS session_notes (
+    id                  TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    -- Denormalized from the session so a cohort's open flags are one indexed
+    -- lookup rather than a join.
+    cohort_id           TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
+    -- The moment the note is about, UTC ISO. Defaults to when it was written
+    -- and is editable; a note's T+ offset is derived from it on every read,
+    -- never stored, so a tidy merge cannot leave one stale.
+    at                  TEXT NOT NULL,
+    created_at          TEXT NOT NULL,
+    edited_at           TEXT,
+    deleted_at          TEXT,           -- soft delete: hidden, never erased
+    tag                 TEXT NOT NULL,  -- observation | intervention | hardware | animal-health | protocol-deviation
+    scope_kind          TEXT NOT NULL DEFAULT 'session',  -- session | animal | box
+    -- No foreign key, for the reason session_animal_runs has none: the roster
+    -- is deleted and re-inserted on every cohort edit.
+    animal_id           TEXT,
+    box_number          INTEGER,
+    body                TEXT NOT NULL,
+    carry_forward       INTEGER NOT NULL DEFAULT 0,
+    resolved_at         TEXT,
+    -- The session a flag was resolved during, when there was one. No foreign
+    -- key: tidy may delete that session, and the resolution still stands.
+    resolved_in_session TEXT
+);
+
+-- The session log's free fields (DATA.md#the-session-log): who ran it and what
+-- they made of it. A table of its own rather than columns on `sessions`, so
+-- the Session wire shape and every session code path stay untouched.
+CREATE TABLE IF NOT EXISTS session_logs (
+    session_id  TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    operator    TEXT,
+    summary     TEXT,
+    updated_at  TEXT NOT NULL
+);
 """
 
 
@@ -266,6 +309,11 @@ CREATE INDEX IF NOT EXISTS idx_sessions_cohort_dt ON sessions(cohort_id, date);
 CREATE INDEX IF NOT EXISTS idx_adopted_cohort ON adopted_runs(cohort_id);
 -- One row per file even if a re-scan races a path-normalization change.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_adopted_file ON adopted_runs(cohort_id, file_path);
+CREATE INDEX IF NOT EXISTS idx_notes_session ON session_notes(session_id, at);
+CREATE INDEX IF NOT EXISTS idx_notes_cohort  ON session_notes(cohort_id);
+-- Step 1 asks for a cohort's open carry-forward flags on every set-up.
+CREATE INDEX IF NOT EXISTS idx_notes_open_flags ON session_notes(cohort_id)
+    WHERE carry_forward = 1 AND resolved_at IS NULL AND deleted_at IS NULL;
 """
 
 

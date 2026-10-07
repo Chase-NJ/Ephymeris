@@ -999,3 +999,18 @@ def test_v9_gains_the_session_recording_column(tmp_path: Path) -> None:
         db.close()
 
     assert user_version(path) == SCHEMA_VERSION
+
+
+def test_a_v10_database_gains_the_session_log_tables(tmp_path: Path) -> None:
+    """v11 added tables only (`DATA.md#the-session-log`): no migration entry,
+    and `CREATE TABLE IF NOT EXISTS` still has to reach an existing file."""
+    path = tmp_path / "ephymeris.db"
+    write_v1_database(path, version=10)
+    assert "session_notes" not in tables(path)
+
+    db = Database(path)
+    db.connect()
+    db.close()
+
+    assert {"session_notes", "session_logs"} <= tables(path)
+    assert user_version(path) == SCHEMA_VERSION

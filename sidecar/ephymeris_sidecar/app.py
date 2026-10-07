@@ -47,6 +47,8 @@ from .hardware import store as hardware_store
 from .intan.client import RhxCommandFailed, RhxError, RhxUnavailable
 from .intan import probemap as intan_probemap
 from .intan.service import IntanNotReady, IntanService
+from .logbook.models import NoteInvalid, NoteNotFound
+from .logbook.service import LogbookService
 from .rig import registry as rig_registry
 from .sessions.repository import SessionRepository
 from .sessions.runner import ActiveRun, BoxConfig, SessionRunner
@@ -146,6 +148,9 @@ class Application:
         self.runner: SessionRunner | None = None
         self.backup: BackupManager | None = None
         self.analytics: AnalyticsService | None = None
+        #: The session log (`DATA.md#the-session-log`). Off the session path:
+        #: the runner never calls it, and its `notes.md` writes never block a reply.
+        self.logbook: LogbookService | None = None
         #: The Intan RHX recording subsystem (`RECORDING.md`). Never on the
         #: session path except at `start_recording`.
         self.intan: IntanService | None = None
@@ -226,6 +231,14 @@ class Application:
         self.server.register(Cmd.SESSIONS_RECOVER, self._sessions_recover)
         self.server.register(Cmd.SESSIONS_TIDY, self._sessions_tidy)
 
+        self.server.register(Cmd.LOGBOOK_COHORT, self._logbook_cohort)
+        self.server.register(Cmd.LOGBOOK_ADD_NOTE, self._logbook_add_note)
+        self.server.register(Cmd.LOGBOOK_EDIT_NOTE, self._logbook_edit_note)
+        self.server.register(Cmd.LOGBOOK_DELETE_NOTE, self._logbook_delete_note)
+        self.server.register(Cmd.LOGBOOK_RESOLVE_FLAG, self._logbook_resolve_flag)
+        self.server.register(Cmd.LOGBOOK_SET_SESSION_LOG, self._logbook_set_session_log)
+        self.server.register(Cmd.LOGBOOK_OPEN_FLAGS, self._logbook_open_flags)
+
         self.server.register(Cmd.HARDWARE_GET, self._hardware_get)
         self.server.register(Cmd.HARDWARE_PREVIEW, self._hardware_preview)
         self.server.register(Cmd.HARDWARE_SAVE, self._hardware_save)
@@ -293,6 +306,14 @@ class Application:
             broadcast=self.server.broadcast,
             sketch_lookup=self._sketch_path_for_name,
         )
+        self.logbook = LogbookService(
+            db=self.db,
+            cohorts=self.cohorts,
+            sessions=self.sessions,
+            profiles=self.profiles,
+            broadcast=self.server.broadcast,
+            enqueue_backup=self.backup.enqueue,
+        )
         self.ports = PortManager(
             loop=loop,
             tool=self.tool,
@@ -341,6 +362,9 @@ class Application:
         # After ports: nothing may be mid-flash once the manager has stopped,
         # so the daemon child (if the gRPC backend is active) can go too.
         await self.tool.close()
+        # Before backup stops, so the last notes.md it writes is still mirrored.
+        if self.logbook is not None:
+            await self.logbook.drain()
         if self.backup is not None:
             await self.backup.stop()
         self.db.close()
@@ -1341,6 +1365,9 @@ class Application:
         if result["applied"]:
             # Stale and set-up rows may have gone from the Dashboard's dock.
             await self._broadcast_lifecycle()
+            # Notes may have moved to the kept record (`DATA.md#tidy-records`).
+            if self.logbook is not None:
+                await self.logbook.refresh(cohort_id)
         return result
 
     async def _analytics_recent_sessions(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -1696,6 +1723,9 @@ class Application:
         if held or self._running_session_id is None:
             await self._release_baseline()
         await self._broadcast_lifecycle()
+        # The session's clock just closed; its log's end time and elapsed did too.
+        if self.logbook is not None:
+            await self.logbook.refresh(session.cohort_id, [session.id])
         return {"session": session.to_json()}
 
     # --- recording (RECORDING.md#start-and-end) ---------------------------
@@ -1876,6 +1906,65 @@ class Application:
                 },
             )
         )
+        # The run's what-changed entry exists now (`DATA.md#what-changed`).
+        # After the event above, and never able to fail a finalization.
+        if self.logbook is not None and self._running_session_id is not None:
+            try:
+                session = await asyncio.to_thread(
+                    self.sessions.get_session, self._running_session_id
+                )
+                await self.logbook.refresh(session.cohort_id, [session.id])
+            except Exception:  # noqa: BLE001
+                log.exception("logbook: couldn't announce box %d's run", run.box)
+
+    # --- the session log (DATA.md#the-session-log) ---------------------------
+
+    def _require_logbook(self) -> LogbookService:
+        if self.logbook is None:
+            raise CommandError(ErrCode.INTERNAL, "the session log isn't running")
+        return self.logbook
+
+    async def _logbook_cohort(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        cohort_id = _str_arg(args, "cohortId")
+        with _cohort_errors():
+            return await self._require_logbook().cohort(cohort_id)
+
+    async def _logbook_open_flags(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        cohort_id = _str_arg(args, "cohortId")
+        with _cohort_errors():
+            return await self._require_logbook().open_flags(cohort_id)
+
+    async def _logbook_add_note(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        session_id = _str_arg(args, "sessionId")
+        with _logbook_errors():
+            return await self._require_logbook().add_note(session_id, args)
+
+    async def _logbook_edit_note(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        note_id = _str_arg(args, "noteId")
+        fields = {k: v for k, v in args.items() if k != "noteId"}
+        with _logbook_errors():
+            return await self._require_logbook().edit_note(note_id, fields)
+
+    async def _logbook_delete_note(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        note_id = _str_arg(args, "noteId")
+        with _logbook_errors():
+            return await self._require_logbook().delete_note(note_id)
+
+    async def _logbook_resolve_flag(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        note_id = _str_arg(args, "noteId")
+        session_id = args.get("sessionId")
+        with _logbook_errors():
+            return await self._require_logbook().resolve_flag(
+                note_id,
+                args.get("resolved") is True,
+                session_id if isinstance(session_id, str) and session_id else None,
+            )
+
+    async def _logbook_set_session_log(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        session_id = _str_arg(args, "sessionId")
+        fields = {k: args[k] for k in ("operator", "summary") if k in args}
+        with _logbook_errors():
+            return await self._require_logbook().set_session_log(session_id, fields)
 
     # --- Intan recording (RECORDING.md) -----------------------------------
 
@@ -2122,6 +2211,27 @@ class _cohort_errors:
             )
         if isinstance(exc, DataFolderError):
             raise CommandError(ErrCode.DATA_FOLDER_INVALID, str(exc))
+        return False
+
+
+class _logbook_errors:
+    """Map session-log refusals onto `SESSION_INVALID`, the code every other
+    'that session command can't apply' already uses."""
+
+    def __enter__(self) -> "_logbook_errors":
+        return self
+
+    def __exit__(self, _exc_type, exc, _tb) -> bool:  # noqa: ANN001
+        if exc is None:
+            return False
+        if isinstance(exc, NoteInvalid):
+            raise CommandError(ErrCode.SESSION_INVALID, str(exc)) from exc
+        if isinstance(exc, NoteNotFound):
+            raise CommandError(ErrCode.SESSION_INVALID, "That note no longer exists.") from exc
+        if isinstance(exc, SessionNotFound):
+            raise CommandError(ErrCode.SESSION_INVALID, "That session no longer exists.") from exc
+        if isinstance(exc, CohortNotFound):
+            raise CommandError(ErrCode.COHORT_NOT_FOUND, "That cohort no longer exists.") from exc
         return False
 
 

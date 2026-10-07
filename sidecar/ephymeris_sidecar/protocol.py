@@ -113,6 +113,15 @@ class Cmd:
     INTAN_SCOPE_CLOSE: Final = "intan.scope.close"
     INTAN_FORCE_STOP: Final = "intan.forceStop"
 
+    # Session log
+    LOGBOOK_COHORT: Final = "logbook.cohort"
+    LOGBOOK_ADD_NOTE: Final = "logbook.addNote"
+    LOGBOOK_EDIT_NOTE: Final = "logbook.editNote"
+    LOGBOOK_DELETE_NOTE: Final = "logbook.deleteNote"
+    LOGBOOK_RESOLVE_FLAG: Final = "logbook.resolveFlag"
+    LOGBOOK_SET_SESSION_LOG: Final = "logbook.setSessionLog"
+    LOGBOOK_OPEN_FLAGS: Final = "logbook.openFlags"
+
 
 ALL_COMMANDS: Final[frozenset[str]] = frozenset(
     v for k, v in vars(Cmd).items() if not k.startswith("_") and isinstance(v, str)
@@ -133,6 +142,7 @@ class Evt:
     PREFIXES_UPDATED: Final = "prefixes.updated"
     SESSION_TELEMETRY: Final = "session.telemetry"
     SESSION_ANIMAL_ENDED: Final = "session.animalEnded"
+    LOGBOOK_UPDATED: Final = "logbook.updated"
     SESSION_LIFECYCLE: Final = "session.lifecycle"
     HARDWARE_UPDATED: Final = "hardware.updated"
     UTILITY_UPDATED: Final = "utility.updated"
@@ -227,7 +237,7 @@ SHAPES: Final[dict[str, Any]] = {
     "Prefix": ('obj', (('id', 'str', False), ('name', 'str', False))),
     "SessionStatus": ('lit', ('configuring', 'running', 'completed', 'aborted')),
     "GroupRun": ('obj', (('groupId', 'str', False), ('order', 'int', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False))),
-    "Session": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('groupRuns', ('list', ('ref', 'GroupRun')), False), ('durationMinutes', ('union', ('int', 'null')), False), ('recording', ('union', (('ref', 'SessionRecording'), 'null')), False))),
+    "Session": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('clockStartedAt', 'str', False), ('clockEndedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('groupRuns', ('list', ('ref', 'GroupRun')), False), ('durationMinutes', ('union', ('int', 'null')), False), ('recording', ('union', (('ref', 'SessionRecording'), 'null')), False))),
     "ConfigFieldType": ('lit', ('int', 'float', 'bool', 'string')),
     "ConfigField": ('obj', (('metadataKey', 'str', False), ('wireKey', 'str', False), ('label', 'str', False), ('type', ('ref', 'ConfigFieldType'), False), ('default', 'any', False), ('group', 'str', True), ('unit', 'str', True), ('min', ('union', ('int', 'float')), True), ('max', ('union', ('int', 'float')), True), ('step', ('union', ('int', 'float')), True), ('help', 'str', True), ('advanced', 'bool', True))),
     "LiveMetric": ('obj', (('id', 'str', False), ('label', 'str', False), ('triggerCode', 'int', False), ('successCode', 'int', False), ('alternateCode', 'int', False), ('windowSize', 'int', False))),
@@ -247,7 +257,7 @@ SHAPES: Final[dict[str, Any]] = {
     "AnimalEnded": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('stopReason', 'str', False), ('filePath', ('union', ('str', 'null')), False))),
     "RunnerSession": ('obj', (('session', ('ref', 'Session'), False), ('groupId', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'SessionBox')), False))),
     "ActiveSessions": ('obj', (('running', ('union', (('ref', 'RunnerSession'), 'null')), False), ('configuring', ('list', ('ref', 'Session')), False), ('stale', ('list', ('ref', 'Session')), False))),
-    "SessionListItem": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('ordinal', 'int', False), ('runCount', 'int', True), ('groupRuns', ('list', ('ref', 'GroupRun')), False))),
+    "SessionListItem": ('obj', (('id', 'str', False), ('cohortId', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('clockStartedAt', 'str', False), ('clockEndedAt', ('union', ('str', 'null')), False), ('status', ('ref', 'SessionStatus'), False), ('folderPath', 'str', False), ('ordinal', 'int', False), ('runCount', 'int', True), ('groupRuns', ('list', ('ref', 'GroupRun')), False))),
     "DiskSession": ('obj', (('cohortId', 'str', False), ('cohortName', 'str', False), ('prefixName', 'str', False), ('sessionNumber', 'str', False), ('date', 'str', False), ('folderPath', 'str', False), ('recorded', 'bool', False))),
     "MetricSummary": ('obj', (('id', 'str', False), ('label', 'str', False), ('pSession', ('union', ('float', 'null')), False), ('pWindow', ('union', ('float', 'null')), False), ('hits', 'int', False), ('counted', 'int', False), ('triggered', 'int', False), ('excluded', 'int', False), ('windowSize', 'int', False), ('wilsonLow', ('union', ('float', 'null')), False), ('wilsonHigh', ('union', ('float', 'null')), False), ('lowConfidence', 'bool', False), ('answerSide', ('union', (('ref', 'AnswerSide'), 'null')), False))),
     "TrialOutcomes": ('obj', (('trials', 'int', False), ('administered', 'int', False), ('rewarded', 'int', False), ('holdFailed', 'int', False), ('wrongWell', 'int', False), ('noResponse', 'int', False), ('aborted', 'int', False), ('pRewarded', ('union', ('float', 'null')), False), ('pSide', ('union', ('float', 'null')), False), ('rewardedLow', ('union', ('float', 'null')), False), ('rewardedHigh', ('union', ('float', 'null')), False), ('sideLow', ('union', ('float', 'null')), False), ('sideHigh', ('union', ('float', 'null')), False))),
@@ -311,6 +321,15 @@ SHAPES: Final[dict[str, Any]] = {
     "IntanStatus": ('obj', (('state', ('ref', 'IntanState'), False), ('message', ('union', ('str', 'null')), False), ('connected', 'bool', False), ('controller', ('union', ('str', 'null')), False), ('version', ('union', ('str', 'null')), False), ('sampleRate', ('union', ('int', 'null')), False), ('synthetic', 'bool', False), ('headstagePresent', 'bool', False), ('runMode', ('union', ('str', 'null')), False), ('ports', ('map', 'int'), False), ('confirmsWrites', ('union', ('bool', 'null')), False), ('rigHasSync', 'bool', False), ('liveStreams', 'bool', False), ('recording', ('union', (('ref', 'RecordingRun'), 'null')), False), ('waitingOn', ('list', 'int'), False), ('sync', ('list', ('ref', 'IntanSyncStat')), False))),
     "ScopeKind": ('lit', ('spikescope', 'psth', 'isi', 'probemap')),
     "ScopeData": ('obj', (('scopeId', 'str', False), ('kind', ('ref', 'ScopeKind'), False), ('box', 'int', False), ('channel', ('union', ('str', 'null')), False), ('data', 'any', False))),
+    "NoteTag": ('lit', ('observation', 'intervention', 'hardware', 'animal-health', 'protocol-deviation')),
+    "NoteScope": ('obj', (('kind', ('lit', ('session', 'animal', 'box')), False), ('animalId', ('union', ('str', 'null')), False), ('box', ('union', ('int', 'null')), False))),
+    "SessionNote": ('obj', (('id', 'str', False), ('sessionId', 'str', False), ('cohortId', 'str', False), ('at', 'str', False), ('createdAt', 'str', False), ('editedAt', ('union', ('str', 'null')), False), ('tag', ('ref', 'NoteTag'), False), ('scope', ('ref', 'NoteScope'), False), ('body', 'str', False), ('offsetMs', ('union', ('int', 'null')), False), ('carryForward', 'bool', False), ('resolvedAt', ('union', ('str', 'null')), False), ('resolvedInSessionId', ('union', ('str', 'null')), False))),
+    "SessionLog": ('obj', (('sessionId', 'str', False), ('operator', ('union', ('str', 'null')), False), ('summary', ('union', ('str', 'null')), False), ('updatedAt', ('union', ('str', 'null')), False))),
+    "ValueChange": ('obj', (('from', 'any', False), ('to', 'any', False))),
+    "ParamChange": ('obj', (('key', 'str', False), ('from', 'any', False), ('to', 'any', False))),
+    "RunChange": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('box', 'int', False), ('task', 'str', False), ('previousRunId', ('union', ('str', 'null')), False), ('previousSessionId', ('union', ('str', 'null')), False), ('first', 'bool', False), ('taskChange', ('union', (('ref', 'ValueChange'), 'null')), False), ('boxChange', ('union', (('ref', 'ValueChange'), 'null')), False), ('params', ('list', ('ref', 'ParamChange')), False), ('paramsKnown', 'bool', False))),
+    "LogbookCohort": ('obj', (('cohortId', 'str', False), ('logs', ('list', ('ref', 'SessionLog')), False), ('notes', ('list', ('ref', 'SessionNote')), False), ('changes', ('list', ('ref', 'RunChange')), False))),
+    "LogbookUpdated": ('obj', (('cohortId', 'str', False), ('sessionIds', ('list', 'str'), False))),
 }
 
 COMMAND_ARGS: Final[dict[str, Any]] = {
@@ -380,6 +399,13 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "intan.scope.update": ('obj', (('scopeId', 'str', False), ('channel', ('union', ('str', 'null')), True), ('params', ('map', 'any'), True))),
     "intan.scope.close": ('obj', (('scopeId', 'str', False),)),
     "intan.forceStop": ('obj', ()),
+    "logbook.cohort": ('obj', (('cohortId', 'str', False),)),
+    "logbook.addNote": ('obj', (('sessionId', 'str', False), ('tag', ('ref', 'NoteTag'), False), ('body', 'str', False), ('scope', ('ref', 'NoteScope'), True), ('carryForward', 'bool', True), ('at', 'str', True))),
+    "logbook.editNote": ('obj', (('noteId', 'str', False), ('tag', ('ref', 'NoteTag'), True), ('body', 'str', True), ('scope', ('ref', 'NoteScope'), True), ('carryForward', 'bool', True), ('at', 'str', True))),
+    "logbook.deleteNote": ('obj', (('noteId', 'str', False),)),
+    "logbook.resolveFlag": ('obj', (('noteId', 'str', False), ('resolved', 'bool', False), ('sessionId', ('union', ('str', 'null')), True))),
+    "logbook.setSessionLog": ('obj', (('sessionId', 'str', False), ('operator', ('union', ('str', 'null')), True), ('summary', ('union', ('str', 'null')), True))),
+    "logbook.openFlags": ('obj', (('cohortId', 'str', False),)),
 }
 
 COMMAND_RESULTS: Final[dict[str, Any]] = {
@@ -449,6 +475,13 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "intan.scope.update": ('obj', (('ok', 'bool', False),)),
     "intan.scope.close": ('obj', (('ok', 'bool', False),)),
     "intan.forceStop": ('obj', (('ok', 'bool', False),)),
+    "logbook.cohort": ('ref', 'LogbookCohort'),
+    "logbook.addNote": ('obj', (('note', ('ref', 'SessionNote'), False),)),
+    "logbook.editNote": ('obj', (('note', ('ref', 'SessionNote'), False),)),
+    "logbook.deleteNote": ('obj', ()),
+    "logbook.resolveFlag": ('obj', (('note', ('ref', 'SessionNote'), False),)),
+    "logbook.setSessionLog": ('obj', (('log', ('ref', 'SessionLog'), False),)),
+    "logbook.openFlags": ('obj', (('notes', ('list', ('ref', 'SessionNote')), False),)),
 }
 
 EVENT_DATA: Final[dict[str, Any]] = {
@@ -463,6 +496,7 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "prefixes.updated": ('ref', 'PrefixesUpdatedData'),
     "session.telemetry": ('ref', 'BoxTelemetry'),
     "session.animalEnded": ('ref', 'AnimalEnded'),
+    "logbook.updated": ('ref', 'LogbookUpdated'),
     "session.lifecycle": ('ref', 'ActiveSessions'),
     "hardware.updated": ('ref', 'RigStatus'),
     "utility.updated": ('ref', 'UtilityStatus'),

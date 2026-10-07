@@ -68,6 +68,33 @@ class Session:
     #: contents, only on its presence.
     recording: dict[str, Any] | None = None
 
+    @property
+    def clock_started_at(self) -> str:
+        """When the session actually began running (`DATA.md#the-session-clock`).
+
+        `started_at` is when Step 1 created the record, which can be many
+        minutes of set-up before a box ran. The first group run's start is the
+        moment the operator thinks of as "the session started"; a session that
+        never ran a group falls back to the record's own time.
+        """
+        starts = [run.started_at for run in self.group_runs if run.started_at]
+        return min(starts) if starts else self.started_at
+
+    @property
+    def clock_ended_at(self) -> str | None:
+        """When the session stopped running, or `None` while it is still open.
+
+        The last group run's end when every run is closed — the operator may
+        leave the wrap-up screen open long after the boxes stopped, and that
+        is not session time — falling back to the record's `ended_at`.
+        """
+        if self.status in ("configuring", "running"):
+            return None
+        ends = [run.ended_at for run in self.group_runs]
+        if ends and all(ends):
+            return max(e for e in ends if e)
+        return self.ended_at
+
     def to_json(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -78,6 +105,8 @@ class Session:
             "date": self.date,
             "startedAt": self.started_at,
             "endedAt": self.ended_at,
+            "clockStartedAt": self.clock_started_at,
+            "clockEndedAt": self.clock_ended_at,
             "status": self.status,
             "folderPath": self.folder_path,
             "groupRuns": [g.to_json() for g in self.group_runs],
@@ -101,6 +130,8 @@ class Session:
             "date": self.date,
             "startedAt": self.started_at,
             "endedAt": self.ended_at,
+            "clockStartedAt": self.clock_started_at,
+            "clockEndedAt": self.clock_ended_at,
             "status": self.status,
             "folderPath": self.folder_path,
             "ordinal": ordinal,

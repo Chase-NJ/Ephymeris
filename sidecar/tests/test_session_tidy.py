@@ -270,3 +270,84 @@ def test_the_session_key_is_the_folder_name() -> None:
     """Two spellings that make one folder are one session."""
     assert tidy.session_key("2O-Bdisc", " 12", DAY) == tidy.session_key("2o-bdisc", "12", DAY)
     assert tidy.session_key("2O-Bdisc", "12", DAY) != tidy.session_key("2O-Bdisc", "12", "2026-07-23")
+
+
+# --- the session log (DATA.md#the-session-log) --------------------------------
+
+
+def _note(rig: Rig, session_id: str, body: str, **kw) -> str:
+    from ephymeris_sidecar.logbook.models import SessionNote
+    from ephymeris_sidecar.logbook.repository import LogbookRepository, new_note_id
+
+    session = rig.sessions.get_session(session_id)
+    note = SessionNote(
+        id=new_note_id(),
+        session_id=session_id,
+        cohort_id=session.cohort_id,
+        at="2026-07-22T09:30:00+00:00",
+        created_at="2026-07-22T09:30:00+00:00",
+        tag="observation",
+        body=body,
+        **kw,
+    )
+    return LogbookRepository(rig.db).add(note).id
+
+
+async def test_a_record_with_only_a_note_is_never_empty(rig: Rig) -> None:
+    sid = rig.add_session("12", DAY)
+    _note(rig, sid, "Box 2 never powered up; nothing ran.")
+    assert (await preview(rig))["empty"] == []
+    await apply(rig)
+    assert rig.sessions.get_session(sid)
+
+
+async def test_a_merge_carries_notes_resolutions_and_fields(rig: Rig) -> None:
+    from ephymeris_sidecar.logbook.repository import LogbookRepository
+
+    logbook = LogbookRepository(rig.db)
+    first = started(rig, rig.add_session("12", DAY), "2026-07-22T08:55:00")
+    second = started(rig, rig.add_session("12", DAY), "2026-07-22T12:55:00")
+    rig.add_run(first, "a1", HIT_1 * 5)
+    rig.add_run(second, "a2", HIT_3 * 5)
+    note = _note(rig, second, "afternoon")
+    earlier = rig.add_session("11", "2026-07-21")
+    flag = _note(rig, earlier, "check spout", carry_forward=True)
+    logbook.set_resolved(flag, True, second)
+    logbook.upsert_log(first, {"summary": "Morning fine."})
+    logbook.upsert_log(second, {"operator": "CJ", "summary": "Afternoon jam."})
+
+    await apply(rig)
+
+    assert logbook.get(note).session_id == first
+    assert logbook.get(flag).resolved_in_session == first
+    merged = logbook.get_log(first)
+    assert merged is not None
+    assert merged.operator == "CJ"
+    assert merged.summary == "Morning fine.\n\nAfternoon jam."
+    assert logbook.get_log(second) is None
+
+
+async def test_discarding_a_record_keeps_a_flag_resolved_during_it(rig: Rig) -> None:
+    from ephymeris_sidecar.logbook.repository import LogbookRepository
+
+    logbook = LogbookRepository(rig.db)
+    noted = rig.add_session("11", "2026-07-21")
+    rig.add_run(noted, "a1", HIT_1 * 5)
+    flag = _note(rig, noted, "check spout", carry_forward=True)
+    empty = rig.add_session("12", DAY)
+    logbook.set_resolved(flag, True, empty)
+
+    await apply(rig)
+
+    resolved = logbook.get(flag)
+    assert resolved.resolved_at is not None
+    assert resolved.resolved_in_session is None
+
+
+async def test_prune_never_drops_a_noted_session(rig: Rig) -> None:
+    sid = rig.add_session("12", DAY)
+    _note(rig, sid, "Ran on the other rig; files are there.")
+    # No runs and no folder: exactly what prune drops — but for the note.
+    assert not Path(rig.sessions.get_session(sid).folder_path).exists()
+    await rig.service.rescan(rig.cohort.id)
+    assert rig.sessions.get_session(sid)

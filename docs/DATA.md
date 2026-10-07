@@ -28,6 +28,12 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
   - [Session records](#session-records)
   - [Run records](#run-records)
   - [Continuing between groups](#continuing-between-groups)
+- [The session log](#the-session-log)
+  - [The session clock](#the-session-clock)
+  - [Notes](#notes)
+  - [Carry-forward flags](#carry-forward-flags)
+  - [What changed](#what-changed)
+  - [The notes.md mirror](#the-notesmd-mirror)
 - [Per-animal files](#per-animal-files)
   - [The JSON document](#the-json-document)
   - [The tsv log](#the-tsv-log)
@@ -88,6 +94,7 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
 └── <cohort name>/                                     ← Cohort.dataFolder
     └── <prefix>/                                      ← session prefix
         └── <prefix>_<sessionNumber>_<YYYY-MM-DD>/     ← one per (prefix, number, date)
+            ├── notes.md                               ← the session log, when there is one
             ├── behavior.tsv/                          ← written live
             │   └── remy1_<prefix>_<number>_<date>_<HHMMSS>.tsv
             ├── behavior.json/                         ← built once, at run end
@@ -96,7 +103,7 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
                 └── remy1_<prefix>_<number>_<date>_<HHMMSS>.mat
 ```
 
-Built by `sessions/paths.py` (`resolve_session_folder`, `resolve_animal_files`). Example: `Batch A/2O-Bdisc/2O-Bdisc_25_2026-07-22/behavior.json/remy1_2O-Bdisc_25_2026-07-22_113123.json`.
+Built by `sessions/paths.py` (`resolve_session_folder`, `resolve_animal_files`). `notes.md` is derived from the database ([The notes.md mirror](#the-notesmd-mirror)). Example: `Batch A/2O-Bdisc/2O-Bdisc_25_2026-07-22/behavior.json/remy1_2O-Bdisc_25_2026-07-22_113123.json`.
 
 **A session folder is keyed by `(prefix, sessionNumber, date)`.** A second session with the same prefix and a different number the same day gets its own folder; reusing prefix **and** number the same day (unusual, not blocked — `sessions.suggestNumber` returns `sameDayNumbers` for a soft warning) lands in the same folder with new files beside the old. The per-animal `HHMMSS` suffix means same-day reruns never collide, so there is no "already exists" logic. The writer still opens its `.tsv` exclusively ([Written live](#written-live)): the naming makes a collision unreachable; the exclusive open makes an unreachable collision fail loudly instead of truncating data.
 
@@ -227,7 +234,7 @@ One row in `sessions` per session-flow invocation (`sessions/models.py`'s `Sessi
 | `cohortId`, `prefixId`, `prefixName` | |
 | `sessionNumber` | Free text, not strictly numeric — never sort by it |
 | `date` | The calendar day the folder belongs to (ISO) |
-| `startedAt`, `endedAt` | |
+| `startedAt`, `endedAt` | When the record was created (Step 1) and closed — **not** when boxes ran; see [The session clock](#the-session-clock) |
 | `status` | `configuring` → `running` → `completed`, or `aborted` |
 | `folderPath` | The session folder |
 | `groupRuns` | JSON list of `{groupId, order, startedAt, endedAt}` — one per group run, `order` its position in this session's sequence. A group may appear more than once |
@@ -246,6 +253,60 @@ One row in `session_animal_runs` per animal per session — the unit Analytics s
 ### Continuing between groups
 
 Resuming a group **mid-run** after a crash is out of scope by decision (reconnecting boards, restoring trial state, deciding whether the animal kept running). What is built is continuing **between** groups: `sessions.resume` re-holds one of *today's* sessions that already ran a group — a crash-orphaned `running` one or a `completed` one ended too early — closes any group run the crash left open, and leaves it between groups so the operator can run any group. The new files land in the same folder beside the earlier ones. Same day only, because the folder is named for its date. Flow: [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle).
+
+## The session log
+
+The **Log** tab's lab notebook: timestamped notes and a few free fields per session, plus what the app can say on its own — when the session ran and what changed since each animal's previous run. Owned by `logbook/` in the sidecar; the commands are `logbook.*` ([PROTOCOL.md](PROTOCOL.md#session-log)).
+
+> [!IMPORTANT]
+> **Notes are user data, not bookkeeping.** Every other table here can be rebuilt from the archive or is the app's own record; a note is the operator's words and exists nowhere else. So a session carrying one is **never** judged empty by [Tidy records](#tidy-records) and never [pruned](#pruning), and a delete is soft (`deleted_at`) — hidden, never erased.
+
+### The session clock
+
+`sessions.started_at` is stamped when Step 1 creates the record, which can be many minutes of set-up before a box runs. The **session clock** is what the operator means by "the session":
+
+| Field | Definition (`Session.clock_started_at`, `clock_ended_at`) |
+|---|---|
+| `clockStartedAt` | The earliest group run's `startedAt`; the record's `startedAt` if no group ran |
+| `clockEndedAt` | The latest group run's `endedAt` once every run is closed, else the record's `endedAt`; null while the session is `configuring` or `running` |
+
+Both are derived, never stored, and ride on `Session` and `SessionListItem`. Elapsed time everywhere — the Log header, Mission Control, the PDF — is `clockEndedAt − clockStartedAt`, or `now − clockStartedAt` while open.
+
+A note's **T+ offset** (`offsetMs`) is its `at` minus `clockStartedAt`, derived on every read so a tidy merge or an edited `at` can never leave a stale one. A note whose `at` falls outside `[clockStartedAt, clockEndedAt or now]` — one written the next morning about the session — has no offset rather than a misleading one.
+
+> [!CAUTION]
+> **The session clock is not a run's clock.** Each animal's stream `t = 0` is its own first strobe, which trails its run's `started_at` (stamped before the board handshake, to the second). Placing a note on a run's [trial tape](#per-trial-tape) is therefore approximate to a few seconds, and is drawn as approximate.
+
+### Notes
+
+`session_notes`, one row per entry: `at` (the moment it is about, UTC with milliseconds, editable), a **tag** (`observation`, `intervention`, `hardware`, `animal-health`, `protocol-deviation`), a **scope** (the whole session, one animal, or one box), and free text. Editing stamps `edited_at`; there is no revision history.
+
+A session's **operator** and **summary** live in `session_logs`, one row per session, a table of its own so the `sessions` row and its wire shape stay untouched.
+
+A recovered-files session (`adopted:…`, [Orphan adoption](#orphan-adoption)) takes no notes: it has no record to hang one on, and fabricating one would corrupt session-number suggestion.
+
+### Carry-forward flags
+
+A note flagged **carry forward** stays open until resolved, and every open flag for the cohort is shown in Step 1 of the next set-up and on Mission Control (`logbook.openFlags`). Resolving records when and, if during a session, which one (`resolved_in_session`). If tidy later deletes that session, the flag stays resolved and only loses the reference; if tidy merges it, the reference follows to the kept record.
+
+### What changed
+
+For every recorded run, `logbook/diff.py` compares the same animal's previous recorded run, in `(date, started_at)` order — never by session number:
+
+- **Task**: the `profile_hash` differs (a snapshotless run compares `sketch_path`). Same name with a different hash reads as *definition revised*.
+- **Box**.
+- **Parameters**: equal `params_hash` is no change; otherwise a key-level diff of `config`. A run from before parameters were recorded (`config` null) reports `paramsKnown: false` — **unknown, never "changed"**.
+
+Adopted runs are not compared: they carry no parameters or box of their own, and a diff against one would report missing knowledge as change. Entries appear as each run is recorded at finalization.
+
+### The notes.md mirror
+
+Each session folder that has a log gets a `notes.md` beside its format folders: header times, operator, summary, what changed, and the notes in time order. The database is the source of truth; the file is **derived**, rewritten whole, never read back. It exists so the log travels with the data — to the backup mirror, a colleague's copy, whoever opens the folder without Ephymeris.
+
+- **One file per folder, not per record.** Split records share a folder ([Tidy records](#tidy-records)), so the file covers every record pointing at it.
+- **Written about a second after the last change** (debounced per session), in a worker thread, via `notes.md.part` and an atomic replace, then queued for [backup](#session-files). A command reply never waits on it and the runner never calls it, so a slow share costs only a stale copy.
+- **A missing session folder is created; a missing parent is not.** A missing prefix folder means an unmounted or moved archive, and recreating its path would scatter notes away from their data. Any failure is logged; the database copy is intact.
+- **Invisible to the archive walk**, which only reads inside the format folders.
 
 ## Per-animal files
 
@@ -396,6 +457,8 @@ erDiagram
     cohorts ||--o{ sessions : "cascade"
     sessions ||--o{ session_animal_runs : "cascade"
     cohorts ||--o{ adopted_runs : "cascade"
+    sessions ||--o{ session_notes : "cascade"
+    sessions ||--o| session_logs : "cascade"
     prefixes |o..o{ sessions : "prefix_id"
     animals |o..o{ session_animal_runs : "animal_id"
     animals |o..o{ adopted_runs : "animal_id"
@@ -446,6 +509,19 @@ erDiagram
         TEXT animal_id
         TEXT file_path
     }
+    session_notes {
+        TEXT id PK
+        TEXT session_id FK
+        TEXT cohort_id FK
+        TEXT at
+        TEXT tag
+        TEXT deleted_at
+    }
+    session_logs {
+        TEXT session_id PK
+        TEXT operator
+        TEXT summary
+    }
 ```
 
 | Table | Columns | Notes |
@@ -459,6 +535,8 @@ erDiagram
 | `task_profiles` | `hash`, `task_name`, `kind`, `profile_json`, `first_seen_at` | **Content-addressed** snapshots: identical profiles store once, and comparability is an indexed equality test |
 | `run_metrics_cache` | `run_id`, `file_path`, `file_mtime_ns`, `file_size`, `profile_hash`, `profile_source`, `scored_profile_hash`, `params_hash`, `codec_version`, `computed_at`, `status`, `detail`, `summary_json` | A pure cache. **No FK on `run_id`** — adopted runs have no run record. `profile_hash` is what *resolution* reached; `scored_profile_hash` what the run was *scored* with ([why both](#which-profile-decodes-a-run)) |
 | `adopted_runs` | `id`, `cohort_id`, `animal_id`, `file_path`, `prefix_name`, `session_number`, `date`, `started_at`, `sketch_name`, `sketch_path`, `adopted_at`, `file_mtime_ns`, `file_size` | Files the archive walk matched to an animal. Deliberately separate from `sessions`/`session_animal_runs` |
+| `session_notes` | `id`, `session_id`, `cohort_id`, `at`, `created_at`, `edited_at`, `deleted_at`, `tag`, `scope_kind`, `animal_id`, `box_number`, `body`, `carry_forward`, `resolved_at`, `resolved_in_session` | [The session log](#notes). Cascades from `sessions` and `cohorts`; **no FK on `animal_id`** (the caution below) or `resolved_in_session` |
+| `session_logs` | `session_id`, `operator`, `summary`, `updated_at` | One per session that has one. Cascades from `sessions` |
 
 ### Indexes
 
@@ -471,6 +549,7 @@ Indexes live in their own `INDEXES` block, applied **after** migrations: an inde
 | `idx_runs_profile`, `idx_runs_params` | Comparability is the pair `(profile_hash, params_hash)` |
 | `idx_sessions_cohort_dt` | The chronological session axis, index-ordered |
 | `idx_adopted_file` | Unique `(cohort_id, file_path)`: one adoption per file |
+| `idx_notes_open_flags` | **Partial** on `cohort_id` for open carry-forward flags — asked on every Step 1 |
 
 Plus plain lookup indexes on each table's parent id.
 
@@ -543,6 +622,7 @@ Two relocated cohort folders sharing a basename both get a short path-derived su
 
 - **`.json`/`.mat` at finalization are queued**, never copied inline. `backup.status` reports the queue depth, so "not yet mirrored" is visible.
 - **A running `.tsv` is mirrored every `MIRROR_INTERVAL_S` (10 s)**, measured from the end of the previous pass, so a slow target stretches the cadence instead of overlapping passes. That leaves at most a few strobes unmirrored, against a local file already fsync'd per line.
+- **`notes.md` is queued whenever it is rewritten** ([The notes.md mirror](#the-notesmd-mirror)).
 - **Every copy is whole-file** via a `.part` file plus an atomic replace, so a crash mid-copy never leaves a torn file where a good one was.
 
 ### The database copy
@@ -693,7 +773,7 @@ Order of removal:
 
 1. **Run records** and **adoptions** whose file is gone — and adoptions whose file a *run record* now claims (otherwise the file counts twice: the record wins).
 2. **Their cache rows**, which are what was actually still serving numbers.
-3. **Sessions** only where the folder is gone **and** no run of the session survived. Folder-gone alone would delete sessions whose runs were written elsewhere (a cohort relocated with `moveExisting: false`); no-runs alone would delete every aborted session.
+3. **Sessions** only where the folder is gone, no run of the session survived, **and** it carries no [session log](#the-session-log) entry. Folder-gone alone would delete sessions whose runs were written elsewhere (a cohort relocated with `moveExisting: false`); no-runs alone would delete every aborted session.
 
 A session that is `configuring` or `running` is never deleted (enforced in the repository). The result reports `pruned: {runs, sessions, adopted}`. **Records only** — the rescan never writes to the archive.
 
@@ -711,7 +791,8 @@ A row with no recorded stat is never fresh: it is re-read once and carried from 
 A day that goes wrong leaves two kinds of leftover; **Tidy records** (`sessions.tidy`, `sessions/tidy.py`) clears both. It previews first (`apply: false`) and the apply re-plans from scratch rather than trusting the preview.
 
 - **Split records are merged.** Records sharing prefix, number and date (compared through `sanitize_name`, case-folded, exactly as the folder name is built) share one folder, so they are one session: they fold into **the earliest one holding data** — runs re-parented, group and recording runs concatenated in start order, earliest `started_at`, latest `ended_at`, status `completed`.
-- **Empty records are deleted** — no run, no recording run, no file in the folder — with the folder itself when it contains no file at all.
+- **Empty records are deleted** — no run, no recording run, no file in the folder, no [note or log field](#the-session-log) — with the folder itself when it contains no file at all.
+- **The session log follows a merge.** Notes are re-parented, a flag resolved during an absorbed record names the kept one, and operators and summaries merge (the kept record's operator, else the first; summaries joined in record order).
 
 > [!IMPORTANT]
 > **Only the database changes.** Records merge only when they share a number, which is exactly when they share a folder, so no file ever ends up belonging to a session whose folder it is not in. Nothing on disk is moved, renamed or rewritten. Run ids don't change, so the cache follows them. A folder is removed bottom-up with `rmdir`, which the OS refuses for anything non-empty — never `rmtree`.

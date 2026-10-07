@@ -8,8 +8,8 @@ Two kinds of leftover pile up when a day goes wrong:
   into the one folder — the folder name is `<prefix>_<number>_<date>` — and
   Analytics shows the day twice. They are merged into the earliest record.
 * **Empty records.** A set-up nobody started, a session closed out before a box
-  ran, an abandoned one: rows with no run, no recording and no file behind
-  them. They are deleted, with their folder when it holds nothing.
+  ran, an abandoned one: rows with no run, no recording, no file and no note
+  behind them. They are deleted, with their folder when it holds nothing.
 
 Everything here is planning, and pure: it is handed the facts (the rows, their
 run counts, what each folder holds) and returns what to do. Applying the plan is
@@ -87,11 +87,14 @@ def plan(
     folder_state: Callable[[str], FolderState],
     protect: set[str],
     today: str,
+    annotated: set[str] | None = None,
 ) -> TidyPlan:
     """What a tidy would do to these records.
 
     `run_counts` counts every run a record owns — recorded runs, and recovered
-    files attributed to it (`service._adoption_owners`). `protect` holds the
+    files attributed to it (`service._adoption_owners`). `annotated` holds the
+    records the operator has written in (`DATA.md#the-session-log`): a note is
+    data as much as a file is, so such a record is never empty. `protect` holds the
     session the runner is holding; a group containing it is left whole, since
     moving runs under a live session could strand what it is about to write.
 
@@ -114,9 +117,15 @@ def plan(
             return "set-up started today"
         return None
 
+    noted = annotated or set()
+
     def has_data(session: Session) -> bool:
         recording = session.recording or {}
-        return run_counts.get(session.id, 0) > 0 or bool(recording.get("runs"))
+        return (
+            run_counts.get(session.id, 0) > 0
+            or bool(recording.get("runs"))
+            or session.id in noted
+        )
 
     for members in groups.values():
         reasons = {m.id: guarded(m) for m in members}

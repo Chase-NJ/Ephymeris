@@ -100,6 +100,15 @@ export const CMD = {
   INTAN_SCOPE_UPDATE: "intan.scope.update",
   INTAN_SCOPE_CLOSE: "intan.scope.close",
   INTAN_FORCE_STOP: "intan.forceStop",
+
+  // Session log
+  LOGBOOK_COHORT: "logbook.cohort",
+  LOGBOOK_ADD_NOTE: "logbook.addNote",
+  LOGBOOK_EDIT_NOTE: "logbook.editNote",
+  LOGBOOK_DELETE_NOTE: "logbook.deleteNote",
+  LOGBOOK_RESOLVE_FLAG: "logbook.resolveFlag",
+  LOGBOOK_SET_SESSION_LOG: "logbook.setSessionLog",
+  LOGBOOK_OPEN_FLAGS: "logbook.openFlags",
 } as const;
 
 export type CommandName = (typeof CMD)[keyof typeof CMD];
@@ -118,6 +127,7 @@ export const EVT = {
   PREFIXES_UPDATED: "prefixes.updated",
   SESSION_TELEMETRY: "session.telemetry",
   SESSION_ANIMAL_ENDED: "session.animalEnded",
+  LOGBOOK_UPDATED: "logbook.updated",
   SESSION_LIFECYCLE: "session.lifecycle",
   HARDWARE_UPDATED: "hardware.updated",
   UTILITY_UPDATED: "utility.updated",
@@ -560,6 +570,17 @@ export interface Session {
   date: string;
   startedAt: string;
   endedAt: string | null;
+  /**
+   * When the session actually began running: the first group run's start, or `startedAt` before
+   * any group ran (`DATA.md#the-session-clock`). `startedAt` is when Step 1 created the record.
+   * Elapsed time and note offsets count from this.
+   */
+  clockStartedAt: string;
+  /**
+   * The last group run's end once every run is closed, else `endedAt`; null while the session is
+   * open.
+   */
+  clockEndedAt: string | null;
   status: SessionStatus;
   folderPath: string;
   groupRuns: GroupRun[];
@@ -815,6 +836,17 @@ export interface SessionListItem {
   date: string;
   startedAt: string;
   endedAt: string | null;
+  /**
+   * When the session actually began running: the first group run's start, or `startedAt` before
+   * any group ran (`DATA.md#the-session-clock`). `startedAt` is when Step 1 created the record.
+   * Elapsed time and note offsets count from this.
+   */
+  clockStartedAt: string;
+  /**
+   * The last group run's end once every run is closed, else `endedAt`; null while the session is
+   * open.
+   */
+  clockEndedAt: string | null;
   status: SessionStatus;
   folderPath: string;
   /**
@@ -1703,6 +1735,119 @@ export interface ScopeData {
   data: unknown;
 }
 
+/**
+ * What kind of entry a note is. Closed so the log, its PDF and `notes.md` can group and colour by
+ * it.
+ */
+export type NoteTag = "observation" | "intervention" | "hardware" | "animal-health" | "protocol-deviation";
+
+/**
+ * What a note is about. A session-wide note marks every animal's trial tape; an animal or box
+ * note marks only that run's.
+ */
+export interface NoteScope {
+  kind: "session" | "animal" | "box";
+  /** Set only for `kind: animal`. */
+  animalId: string | null;
+  /** Set only for `kind: box`; 1–6. */
+  box: number | null;
+}
+
+/** One timestamped log entry (`DATA.md#the-session-log`). A deleted note is never sent. */
+export interface SessionNote {
+  id: string;
+  sessionId: string;
+  cohortId: string;
+  /** The moment the note is about, UTC ISO. Defaults to when it was written; editable afterwards. */
+  at: string;
+  createdAt: string;
+  editedAt: string | null;
+  tag: NoteTag;
+  scope: NoteScope;
+  body: string;
+  /**
+   * `at` minus the session's `clockStartedAt` (`DATA.md#the-session-clock`) — the T+ the log
+   * shows. Derived on every read, never stored. Null when `at` falls outside the session's
+   * running window, e.g. a note written the next morning.
+   */
+  offsetMs: number | null;
+  /** Flagged for the next session: surfaces in Step 1 and on the running session until resolved. */
+  carryForward: boolean;
+  resolvedAt: string | null;
+  /**
+   * The session a flag was resolved during. Null when it was resolved outside one, or that
+   * session has since been tidied away.
+   */
+  resolvedInSessionId: string | null;
+}
+
+/** A session's free fields. Absent from `LogbookCohort.logs` for a session nobody has filled in. */
+export interface SessionLog {
+  sessionId: string;
+  operator: string | null;
+  summary: string | null;
+  updatedAt: string | null;
+}
+
+export interface ValueChange {
+  from: unknown;
+  to: unknown;
+}
+
+export interface ParamChange {
+  /** The parameter's `metadataKey`. */
+  key: string;
+  /** Null when the previous run did not have the key. */
+  from: unknown;
+  /** Null when this run does not have the key. */
+  to: unknown;
+}
+
+/**
+ * What differs between a recorded run and the same animal's previous recorded run
+ * (`DATA.md#what-changed`). Adopted runs are not compared.
+ */
+export interface RunChange {
+  runId: string;
+  sessionId: string;
+  animalId: string;
+  box: number;
+  /** This run's task name. */
+  task: string;
+  previousRunId: string | null;
+  previousSessionId: string | null;
+  /** The animal's first recorded run; nothing to compare. */
+  first: boolean;
+  /**
+   * Task names, `from` → `to`. Equal names mean the same task with a revised definition (a
+   * different profile hash).
+   */
+  taskChange: ValueChange | null;
+  boxChange: ValueChange | null;
+  params: ParamChange[];
+  /** False when either run predates recorded parameters — unknown, never reported as changed. */
+  paramsKnown: boolean;
+}
+
+/**
+ * A cohort's whole session log, flat; the client groups it by `sessionId`. Sessions themselves
+ * come from `sessions.list`.
+ */
+export interface LogbookCohort {
+  cohortId: string;
+  logs: SessionLog[];
+  /** Every live note, oldest first. */
+  notes: SessionNote[];
+  /** One per recorded run. */
+  changes: RunChange[];
+}
+
+export interface LogbookUpdated {
+  cohortId: string;
+  /** The sessions whose log changed. */
+  sessionIds: string[];
+}
+
 // --- Per-command and per-event payload maps --------------------------------
 
 /** Args each command takes; `Record<string, never>` = none. */
@@ -1773,6 +1918,13 @@ export interface CommandArgsMap {
   "intan.scope.update": { scopeId: string; channel?: string | null; params?: Record<string, unknown> };
   "intan.scope.close": { scopeId: string };
   "intan.forceStop": Record<string, never>;
+  "logbook.cohort": { cohortId: string };
+  "logbook.addNote": { sessionId: string; tag: NoteTag; body: string; scope?: NoteScope; carryForward?: boolean; at?: string };
+  "logbook.editNote": { noteId: string; tag?: NoteTag; body?: string; scope?: NoteScope; carryForward?: boolean; at?: string };
+  "logbook.deleteNote": { noteId: string };
+  "logbook.resolveFlag": { noteId: string; resolved: boolean; sessionId?: string | null };
+  "logbook.setSessionLog": { sessionId: string; operator?: string | null; summary?: string | null };
+  "logbook.openFlags": { cohortId: string };
 }
 
 /** The `result` field of each command's ok-reply. */
@@ -1843,6 +1995,13 @@ export interface CommandResultMap {
   "intan.scope.update": { ok: boolean };
   "intan.scope.close": { ok: boolean };
   "intan.forceStop": { ok: boolean };
+  "logbook.cohort": LogbookCohort;
+  "logbook.addNote": { note: SessionNote };
+  "logbook.editNote": { note: SessionNote };
+  "logbook.deleteNote": Record<string, never>;
+  "logbook.resolveFlag": { note: SessionNote };
+  "logbook.setSessionLog": { log: SessionLog };
+  "logbook.openFlags": { notes: SessionNote[] };
 }
 
 /** The `data` field of each event. */
@@ -1858,6 +2017,7 @@ export interface EventDataMap {
   "prefixes.updated": PrefixesUpdatedData;
   "session.telemetry": BoxTelemetry;
   "session.animalEnded": AnimalEnded;
+  "logbook.updated": LogbookUpdated;
   "session.lifecycle": ActiveSessions;
   "hardware.updated": RigStatus;
   "utility.updated": UtilityStatus;

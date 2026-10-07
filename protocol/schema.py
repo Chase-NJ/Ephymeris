@@ -507,6 +507,20 @@ SHAPES = (
             f("date", STR, doc="ISO `YYYY-MM-DD`."),
             f("startedAt", STR),
             f("endedAt", nullable(STR)),
+            f(
+                "clockStartedAt",
+                STR,
+                doc="When the session actually began running: the first group "
+                "run's start, or `startedAt` before any group ran "
+                "(`DATA.md#the-session-clock`). `startedAt` is when Step 1 "
+                "created the record. Elapsed time and note offsets count from this.",
+            ),
+            f(
+                "clockEndedAt",
+                nullable(STR),
+                doc="The last group run's end once every run is closed, else "
+                "`endedAt`; null while the session is open.",
+            ),
             f("status", Ref("SessionStatus")),
             f("folderPath", STR),
             f("groupRuns", ListOf(Ref("GroupRun"))),
@@ -783,6 +797,20 @@ SHAPES = (
             f("date", STR),
             f("startedAt", STR),
             f("endedAt", nullable(STR)),
+            f(
+                "clockStartedAt",
+                STR,
+                doc="When the session actually began running: the first group "
+                "run's start, or `startedAt` before any group ran "
+                "(`DATA.md#the-session-clock`). `startedAt` is when Step 1 "
+                "created the record. Elapsed time and note offsets count from this.",
+            ),
+            f(
+                "clockEndedAt",
+                nullable(STR),
+                doc="The last group run's end once every run is closed, else "
+                "`endedAt`; null while the session is open.",
+            ),
             f("status", Ref("SessionStatus")),
             f("folderPath", STR),
             f(
@@ -1785,6 +1813,136 @@ SHAPES = (
             f("data", ANY, doc="Per kind; see `RECORDING.md#live-windows`."),
         ),
     ),
+    # The session log (DATA.md#the-session-log)
+    Shape(
+        "NoteTag",
+        lit("observation", "intervention", "hardware", "animal-health", "protocol-deviation"),
+        doc="What kind of entry a note is. Closed so the log, its PDF and "
+        "`notes.md` can group and colour by it.",
+    ),
+    Shape(
+        "NoteScope",
+        obj(
+            f("kind", lit("session", "animal", "box")),
+            f("animalId", nullable(STR), doc="Set only for `kind: animal`."),
+            f("box", nullable(INT), doc="Set only for `kind: box`; 1–6."),
+        ),
+        doc="What a note is about. A session-wide note marks every animal's "
+        "trial tape; an animal or box note marks only that run's.",
+    ),
+    Shape(
+        "SessionNote",
+        obj(
+            f("id", STR),
+            f("sessionId", STR),
+            f("cohortId", STR),
+            f(
+                "at",
+                STR,
+                doc="The moment the note is about, UTC ISO. Defaults to when it "
+                "was written; editable afterwards.",
+            ),
+            f("createdAt", STR),
+            f("editedAt", nullable(STR)),
+            f("tag", Ref("NoteTag")),
+            f("scope", Ref("NoteScope")),
+            f("body", STR),
+            f(
+                "offsetMs",
+                nullable(INT),
+                doc="`at` minus the session's `clockStartedAt` "
+                "(`DATA.md#the-session-clock`) — the T+ the log shows. Derived "
+                "on every read, never stored. Null when `at` falls outside the "
+                "session's running window, e.g. a note written the next morning.",
+            ),
+            f(
+                "carryForward",
+                BOOL,
+                doc="Flagged for the next session: surfaces in Step 1 and on the "
+                "running session until resolved.",
+            ),
+            f("resolvedAt", nullable(STR)),
+            f(
+                "resolvedInSessionId",
+                nullable(STR),
+                doc="The session a flag was resolved during. Null when it was "
+                "resolved outside one, or that session has since been tidied away.",
+            ),
+        ),
+        doc="One timestamped log entry (`DATA.md#the-session-log`). A deleted "
+        "note is never sent.",
+    ),
+    Shape(
+        "SessionLog",
+        obj(
+            f("sessionId", STR),
+            f("operator", nullable(STR)),
+            f("summary", nullable(STR)),
+            f("updatedAt", nullable(STR)),
+        ),
+        doc="A session's free fields. Absent from `LogbookCohort.logs` for a "
+        "session nobody has filled in.",
+    ),
+    Shape(
+        "ValueChange",
+        obj(f("from", ANY), f("to", ANY)),
+    ),
+    Shape(
+        "ParamChange",
+        obj(
+            f("key", STR, doc="The parameter's `metadataKey`."),
+            f("from", ANY, doc="Null when the previous run did not have the key."),
+            f("to", ANY, doc="Null when this run does not have the key."),
+        ),
+    ),
+    Shape(
+        "RunChange",
+        obj(
+            f("runId", STR),
+            f("sessionId", STR),
+            f("animalId", STR),
+            f("box", INT),
+            f("task", STR, doc="This run's task name."),
+            f("previousRunId", nullable(STR)),
+            f("previousSessionId", nullable(STR)),
+            f("first", BOOL, doc="The animal's first recorded run; nothing to compare."),
+            f(
+                "taskChange",
+                nullable(Ref("ValueChange")),
+                doc="Task names, `from` → `to`. Equal names mean the same task "
+                "with a revised definition (a different profile hash).",
+            ),
+            f("boxChange", nullable(Ref("ValueChange"))),
+            f("params", ListOf(Ref("ParamChange"))),
+            f(
+                "paramsKnown",
+                BOOL,
+                doc="False when either run predates recorded parameters — "
+                "unknown, never reported as changed.",
+            ),
+        ),
+        doc="What differs between a recorded run and the same animal's "
+        "previous recorded run (`DATA.md#what-changed`). Adopted runs are "
+        "not compared.",
+    ),
+    Shape(
+        "LogbookCohort",
+        obj(
+            f("cohortId", STR),
+            f("logs", ListOf(Ref("SessionLog"))),
+            f("notes", ListOf(Ref("SessionNote")), doc="Every live note, oldest first."),
+            f("changes", ListOf(Ref("RunChange")), doc="One per recorded run."),
+        ),
+        doc="A cohort's whole session log, flat; the client groups it by "
+        "`sessionId`. Sessions themselves come from `sessions.list`.",
+    ),
+    Shape(
+        "LogbookUpdated",
+        obj(
+            f("cohortId", STR),
+            f("sessionIds", ListOf(STR), doc="The sessions whose log changed."),
+        ),
+    ),
 )
 
 
@@ -2695,6 +2853,89 @@ COMMANDS = (
         doc="Stop waiting for boxes to finish their trials during a graceful "
         "end; the recording is then stopped at once.",
     ),
+    # ------------------------------------------------------------ session log
+    Command(
+        "logbook.cohort",
+        args=obj(f("cohortId", STR)),
+        result=Ref("LogbookCohort"),
+        doc="A cohort's notes, session fields and what-changed entries "
+        "(`DATA.md#the-session-log`). **Database only**, like `sessions.list`. "
+        "`COHORT_NOT_FOUND` for an unknown cohort.",
+        section="Session log",
+    ),
+    Command(
+        "logbook.addNote",
+        args=obj(
+            f("sessionId", STR),
+            f("tag", Ref("NoteTag")),
+            f("body", STR),
+            f("scope", Ref("NoteScope"), optional=True, doc="Default: the whole session."),
+            f("carryForward", BOOL, optional=True),
+            f("at", STR, optional=True, doc="ISO with an offset. Default: now."),
+        ),
+        result=obj(f("note", Ref("SessionNote"))),
+        doc="Add a note to a session, running or finished. `SESSION_INVALID` "
+        "for an unknown session, a recovered-files session (no record to note "
+        "against), an unknown tag, a blank body, or an animal outside the "
+        "cohort. Broadcasts `logbook.updated`.",
+    ),
+    Command(
+        "logbook.editNote",
+        args=obj(
+            f("noteId", STR),
+            f("tag", Ref("NoteTag"), optional=True),
+            f("body", STR, optional=True),
+            f("scope", Ref("NoteScope"), optional=True),
+            f("carryForward", BOOL, optional=True),
+            f("at", STR, optional=True),
+        ),
+        result=obj(f("note", Ref("SessionNote"))),
+        doc="Change any of a note's fields; an absent field is kept. Stamps "
+        "`editedAt`. Same refusals as `logbook.addNote`, plus an unknown or "
+        "deleted note. Broadcasts `logbook.updated`.",
+    ),
+    Command(
+        "logbook.deleteNote",
+        args=obj(f("noteId", STR)),
+        result=obj(),
+        doc="Hide a note. A soft delete: the row stays in the database with "
+        "`deleted_at` set, and is never sent again. Broadcasts `logbook.updated`.",
+    ),
+    Command(
+        "logbook.resolveFlag",
+        args=obj(
+            f("noteId", STR),
+            f("resolved", BOOL, doc="False reopens a resolved flag."),
+            f(
+                "sessionId",
+                nullable(STR),
+                optional=True,
+                doc="The session it was dealt with during; null or absent when "
+                "outside one (Step 1, before the session exists).",
+            ),
+        ),
+        result=obj(f("note", Ref("SessionNote"))),
+        doc="Resolve or reopen a carry-forward flag. `SESSION_INVALID` for a "
+        "note that is not flagged. Broadcasts `logbook.updated`.",
+    ),
+    Command(
+        "logbook.setSessionLog",
+        args=obj(
+            f("sessionId", STR),
+            f("operator", nullable(STR), optional=True),
+            f("summary", nullable(STR), optional=True),
+        ),
+        result=obj(f("log", Ref("SessionLog"))),
+        doc="Set a session's operator and/or summary; an absent field is kept, "
+        "a blank one cleared. Broadcasts `logbook.updated`.",
+    ),
+    Command(
+        "logbook.openFlags",
+        args=obj(f("cohortId", STR)),
+        result=obj(f("notes", ListOf(Ref("SessionNote")))),
+        doc="A cohort's unresolved carry-forward notes, oldest first — what "
+        "Step 1 and the running session show.",
+    ),
 )
 
 
@@ -2776,6 +3017,14 @@ EVENTS = (
         "session.animalEnded",
         Ref("AnimalEnded"),
         doc="One animal's run finalized and recorded.",
+    ),
+    Event(
+        "logbook.updated",
+        Ref("LogbookUpdated"),
+        doc="A session log changed: a note or session field was written, a run "
+        "finalized (its what-changed entry appeared), a session ended (its "
+        "clock closed), or a tidy moved notes between records. A pointer, not "
+        "the data — the client refetches `logbook.cohort`. Not replayed on connect.",
     ),
     Event(
         "session.lifecycle",

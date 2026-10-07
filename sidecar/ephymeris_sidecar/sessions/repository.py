@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..cohorts.db import Database
+from ..logbook.models import SessionLog, merge_logs
 from .models import (
     GroupRun,
     Prefix,
@@ -60,6 +61,18 @@ def _load_config(raw: str | None) -> dict[str, Any] | None:
         log.warning("run has unreadable config_json; treating it as absent")
         return None
     return value if isinstance(value, dict) else None
+
+
+def _forget_resolutions_in(conn: sqlite3.Connection, session_ids: list[str]) -> None:
+    """A flag resolved during a session that is now gone stays resolved; it
+    just no longer names where (`DATA.md#the-session-log`). Only rows whose
+    session survived matter — the deleted session's own notes cascaded."""
+    marks = ",".join("?" * len(session_ids))
+    conn.execute(
+        "UPDATE session_notes SET resolved_in_session = NULL"
+        f" WHERE resolved_in_session IN ({marks})",
+        tuple(session_ids),
+    )
 
 
 def _now() -> str:
@@ -321,6 +334,7 @@ class SessionRepository:
                     tuple(chunk),
                 )
                 removed += cursor.rowcount
+                _forget_resolutions_in(self._db.conn, chunk)
             self._db.conn.commit()
         return removed
 
@@ -420,10 +434,32 @@ class SessionRepository:
         cache's key, so the cached summaries follow the run to its new session
         untouched. Only the database changes — the files never knew which
         session row owned them.
+
+        The session log moves with them (`DATA.md#the-session-log`): notes are
+        re-parented, a flag resolved during an absorbed record now names the
+        kept one, and the records' operator and summary fields are merged —
+        before the absorbed rows go, since their log rows cascade with them.
         """
         with self._db.lock:
             conn = self._db.conn
             try:
+                logs = {
+                    row["session_id"]: SessionLog(
+                        session_id=row["session_id"],
+                        operator=row["operator"],
+                        summary=row["summary"],
+                        updated_at=row["updated_at"],
+                    )
+                    for chunk in _id_chunks([keep_id, *absorb_ids])
+                    for row in conn.execute(
+                        "SELECT * FROM session_logs WHERE session_id IN"
+                        f" ({','.join('?' * len(chunk))})",
+                        tuple(chunk),
+                    ).fetchall()
+                }
+                merged_log = merge_logs(
+                    keep_id, [logs[sid] for sid in [keep_id, *absorb_ids] if sid in logs]
+                )
                 for chunk in _id_chunks(absorb_ids):
                     marks = ",".join("?" * len(chunk))
                     conn.execute(
@@ -431,7 +467,29 @@ class SessionRepository:
                         f" WHERE session_id IN ({marks})",
                         (keep_id, *chunk),
                     )
+                    conn.execute(
+                        f"UPDATE session_notes SET session_id = ? WHERE session_id IN ({marks})",
+                        (keep_id, *chunk),
+                    )
+                    conn.execute(
+                        "UPDATE session_notes SET resolved_in_session = ?"
+                        f" WHERE resolved_in_session IN ({marks})",
+                        (keep_id, *chunk),
+                    )
                     conn.execute(f"DELETE FROM sessions WHERE id IN ({marks})", tuple(chunk))
+                if merged_log is not None:
+                    conn.execute(
+                        "INSERT INTO session_logs (session_id, operator, summary, updated_at)"
+                        " VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET"
+                        " operator = excluded.operator, summary = excluded.summary,"
+                        " updated_at = excluded.updated_at",
+                        (
+                            keep_id,
+                            merged_log.operator,
+                            merged_log.summary,
+                            merged_log.updated_at or _now(),
+                        ),
+                    )
                 conn.execute(
                     "UPDATE sessions SET group_runs = ?, recording_json = ?,"
                     " started_at = ?, ended_at = ?, status = ? WHERE id = ?",
@@ -469,6 +527,7 @@ class SessionRepository:
                     f"DELETE FROM sessions WHERE id IN ({marks})", tuple(chunk)
                 )
                 removed += cursor.rowcount
+                _forget_resolutions_in(self._db.conn, chunk)
             self._db.conn.commit()
         return removed
 

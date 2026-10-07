@@ -85,6 +85,7 @@ def app(db: Database) -> SimpleNamespace:
         runner=FakeRunner(),
         ports=FakePorts(),
         intan=None,
+        logbook=None,
         utility=None,
         server=SimpleNamespace(broadcast=broadcast),
         events=events,

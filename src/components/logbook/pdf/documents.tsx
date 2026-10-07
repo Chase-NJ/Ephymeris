@@ -200,55 +200,54 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/**
+ * The screen's table on paper (`SessionTable`'s layout): one column per
+ * condition, each cell the rewarded share over the sampled count, and the
+ * run's clock folded under the animal's name — so ten conditions fit a
+ * Letter page's 524pt without shrinking the type.
+ */
 function Performance({ performance }: { performance: DocPerformance }) {
-  const groups = ["all trials", ...performance.conditions];
-  const animalWidth = 78;
-  const clockWidth = 44;
+  const groups = ["all", ...performance.conditions];
+  const animalWidth = 96;
+  const column = { flexGrow: 1, flexBasis: 0, textAlign: "right" as const, paddingLeft: 3 };
   return (
     <View>
-      <View style={s.tableHead} fixed={false}>
+      <View style={[s.tableHead, { alignItems: "flex-end" }]}>
         <Text style={[s.th, { width: animalWidth }]}>animal</Text>
-        <Text style={[s.th, { width: clockWidth, textAlign: "right" }]}>start</Text>
-        <Text style={[s.th, { width: clockWidth, textAlign: "right" }]}>end</Text>
-        {groups.map((group) => (
-          <Text key={group} style={[s.th, { flexGrow: 1, flexBasis: 0, textAlign: "right" }]}>
-            {group} · n / rewarded
+        {groups.map((group, index) => (
+          <Text key={group + index} style={[s.th, column, index === 0 ? { color: PAPER.ink } : {}]}>
+            {group}
           </Text>
         ))}
       </View>
       {performance.rows.map((row) => (
-        <View key={row.animal + row.start} style={s.tr} wrap={false}>
-          <Text style={[s.td, { width: animalWidth, fontFamily: FAMILY.sans }]}>{row.animal}</Text>
-          <Text style={[s.td, { width: clockWidth, textAlign: "right", color: PAPER.muted }]}>
-            {row.start}
-          </Text>
-          <Text style={[s.td, { width: clockWidth, textAlign: "right", color: PAPER.muted }]}>
-            {row.end}
-          </Text>
+        <View key={row.animal + row.start} style={[s.tr, { alignItems: "flex-start" }]} wrap={false}>
+          <View style={{ width: animalWidth }}>
+            <Text style={{ fontSize: 8 }}>{row.animal}</Text>
+            <Text style={[s.time, { marginTop: 1 }]}>
+              {row.start}–{row.end}
+            </Text>
+          </View>
           {row.note ? (
-            <Text style={[s.td, { flexGrow: groups.length, flexBasis: 0, color: PAPER.muted, textAlign: "right" }]}>
+            <Text style={[s.td, column, { flexGrow: groups.length, color: PAPER.muted }]}>
               {row.note}
             </Text>
           ) : (
             row.cells.map((cell, index) => (
-              <Text
-                key={index}
-                style={[
-                  s.td,
-                  { flexGrow: 1, flexBasis: 0, textAlign: "right" },
-                  cell.thin ? { color: PAPER.muted } : {},
-                ]}
-              >
-                {cell.sampled} / {cell.rate}
-                {cell.thin ? "*" : ""}
-              </Text>
+              <View key={index} style={column}>
+                <Text style={[s.td, cell.thin ? { color: PAPER.muted } : {}]}>
+                  {cell.rate}
+                  {cell.thin ? "*" : ""}
+                </Text>
+                <Text style={[s.time, { marginTop: 1 }]}>{cell.sampled}</Text>
+              </View>
             ))
           )}
         </View>
       ))}
       <Text style={s.fine}>
-        n is trials sampled to completion; rewarded is the share that ended with the reward delivered.
-        * fewer trials than the cohort's minimum — read loosely.
+        Each cell: the share of sampled trials that ended with the reward delivered, over the number
+        of trials sampled to completion. * fewer trials than the cohort's minimum — read loosely.
       </Text>
     </View>
   );

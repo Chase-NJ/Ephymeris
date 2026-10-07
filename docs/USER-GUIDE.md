@@ -617,8 +617,9 @@ is saved in an `ephys` folder in the session folder, unless the Recording defaul
    ![The lower half of the cohort view: Effort and Outcome mix bar charts, the Animals rail grouped by Group A and B with a trend and score for each animal, the Strategy space scatter, and Overall accuracy per animal](images/analytics-panels.webp)
 
 4. Click a session on the rail to look at just that one, or **All sessions** to see everything. One
-   session shows a **Session summary** table: each animal's start and end time, how many trials it
-   sampled and the share rewarded, overall and per condition.
+   session shows a **Session summary** table: one row per animal, with its start and end time and
+   program under its name, then one column for all trials and one per condition. Each cell shows the
+   share rewarded as a coloured box, with the number of trials sampled under it.
 
    ![One session selected: the Session summary for 2O-Bdisc_14 with a row per animal giving start, end, trials sampled and percent rewarded for all trials and for each odor, and the Export session PNG button](images/analytics-session.webp)
 
@@ -712,8 +713,8 @@ when setting up the next session, and on Mission Control. Click **Resolve** once
 
 ### What changed and how they did
 
-**Performance** is the same per-animal table as in Analytics: trials sampled and the share rewarded,
-overall and for each condition. **Open in Analytics** goes to that session there.
+**Performance** is the same per-animal table as in Analytics: the share rewarded and the trials
+sampled, overall and for each condition. **Open in Analytics** goes to that session there.
 
 **What changed** lists, for each animal, anything different from its previous session: a new task, a
 different box, or a changed setting (such as `holdMs 200 → 300`). Ephymeris records these itself, so

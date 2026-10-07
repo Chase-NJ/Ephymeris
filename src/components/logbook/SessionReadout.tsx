@@ -3,7 +3,7 @@ import { ChartLine, ClipboardList, GitCompareArrows, Loader2, NotebookPen, UserR
 import { useEffect, useMemo, type Ref } from "react";
 import { useNavigate } from "react-router";
 
-import { SessionTable } from "@/components/analytics/session/SessionTable";
+import { SessionTable, TableKey } from "@/components/analytics/session/SessionTable";
 import { Button } from "@/components/common/controls";
 import { HudTile } from "@/components/common/HudTile";
 import {
@@ -185,6 +185,7 @@ export function SessionReadout({
                 minCounted={summary.minCountedTrials}
                 onSelect={null}
               />
+              <TableKey />
             </div>
           ) : (
             <p className="flex items-center gap-2 px-4 py-4 text-[12px] text-static">

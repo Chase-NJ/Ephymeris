@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
 
 import { AnimalCard } from "@/components/analytics/session/AnimalCard";
-import { SessionTable } from "@/components/analytics/session/SessionTable";
+import { SessionTable, TableKey } from "@/components/analytics/session/SessionTable";
 import { FolderButton } from "@/components/common/FolderButton";
 import { conditionColumns } from "@/lib/analytics/session";
 import type {
@@ -167,6 +167,7 @@ export function SessionSummary({
           selectedRunId={expanded}
           onSelect={interactive ? toggleCard : null}
         />
+        <TableKey />
       </div>
 
       <div
@@ -247,10 +248,6 @@ function Legend() {
           {style.label}
         </span>
       ))}
-      <span className="ml-auto">
-        P(correct) = reward delivered, the animal held · sampled = odor sampled
-        to completion
-      </span>
     </div>
   );
 }

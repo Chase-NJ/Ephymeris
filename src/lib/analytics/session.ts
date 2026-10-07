@@ -236,3 +236,44 @@ export function conditionFor(
  * two from drifting. Re-exported so the session components' imports still read
  * from the module that owns the rest of their helpers. */
 export { programOf } from "./view";
+
+/**
+ * The session table's columns (`DATA.md#analytics-views`), as one CSS grid
+ * template shared by the header and every row.
+ *
+ * **One column per condition**, its cell stacking the rewarded share over the
+ * sampled count, and the animal's clock and program folded into its own cell —
+ * so the table grows by one narrow column per condition instead of a pair of
+ * wide ones. Ten conditions fit the Log's readout (about 770px) and Analytics'
+ * session panel without a horizontal scroll (`TABLE_FITS_CONDITIONS`); fewer
+ * get roomier columns, never wider than reads well.
+ */
+export const TABLE_COLUMNS = {
+  animal: { min: 136, max: "1fr" },
+  pooled: { min: 54, max: 72 },
+  condition: { min: 46, max: 76 },
+  gap: 6,
+} as const;
+
+/** The design target the widths are chosen for — pinned by a test. */
+export const TABLE_FITS_CONDITIONS = 10;
+
+export function tableTemplate(conditionCount: number): string {
+  const { animal, pooled, condition } = TABLE_COLUMNS;
+  return [
+    `minmax(${animal.min}px,${animal.max})`,
+    `minmax(${pooled.min}px,${pooled.max}px)`,
+    ...Array.from({ length: conditionCount }, () => `minmax(${condition.min}px,${condition.max}px)`),
+  ].join(" ");
+}
+
+/** The narrowest the table can be before its wrapper has to scroll. */
+export function tableMinWidth(conditionCount: number): number {
+  const { animal, pooled, condition, gap } = TABLE_COLUMNS;
+  return animal.min + pooled.min + conditionCount * condition.min + (conditionCount + 1) * gap;
+}
+
+/** `09:00:00` → `09:00`, for the compact clock under an animal's name. */
+export function shortClock(text: string): string {
+  return /^\d{2}:\d{2}:\d{2}$/.test(text) ? text.slice(0, 5) : text;
+}

@@ -11,9 +11,6 @@ src-tauri/gen/schemas/
 # Staged by scripts/package-resources.mjs; regenerated per build
 src-tauri/resources/
 
-# Staged by scripts/stage-sketches.mjs from firmware/. A build output: edit
-# firmware/, never this.
-sketches/
 
 # Python sidecar
 sidecar/.venv/

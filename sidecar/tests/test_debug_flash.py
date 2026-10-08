@@ -118,7 +118,6 @@ def make_app() -> SimpleNamespace:
     settings = SidecarSettings.from_payload(
         {
             "defaultBaud": 9600,
-            "utilitySketchName": "BOX_Utility",
             "boxes": [{"box": 1, "hardwareId": HWID}],
         }
     )
@@ -131,6 +130,7 @@ def make_app() -> SimpleNamespace:
         discovery=FakeDiscovery,
         broadcast=broadcast,
         load_profile=lambda _path: UTILITY_PROFILE,
+        is_utility=lambda sketch: sketch.name == "BOX_Utility",
     )
     utility.update_settings(settings)
 
@@ -354,7 +354,7 @@ async def test_send_start_refuses_an_undiscovered_sketch(task_profile_on_disk) -
 
 # --- live metrics for a hand-started task (debug_run.py) --------------------
 
-GRGL_DIR = Path(__file__).resolve().parents[2] / "sketches" / "Olfactory Behavior" / "GRGL"
+GRGL_DIR = Path(__file__).resolve().parents[2] / "firmware" / "Olfactory Behavior" / "GRGL"
 
 # Odor 1 rewards the right well (249), odor 3 the left (248) — GRGL's shipped
 # profile. Two hits, one miss, one abstention, then the board's own end strobe.

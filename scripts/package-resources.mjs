@@ -14,8 +14,8 @@
  *                             avrdude) seeded via `core install` into an empty
  *                             directory, so nothing from the dev machine's own
  *                             Arduino15 rides along
- *     sketches/               the bundled sketch library, freshly staged by
- *                             stage-sketches.mjs from firmware/
+ *     sketches/               the bundled sketch library: firmware/, copied
+ *                             without dotfiles or host-test build output
  *
  * The shell resolves these through Tauri's resource dir and hands their
  * locations to the sidecar via EPHYMERIS_BUNDLED_* env vars; the sidecar
@@ -195,16 +195,36 @@ if (existsSync(join(dataDir, "packages", "arduino"))) {
 }
 
 // --- 4. bundle the sketch library ------------------------------------------
-// Sketches ship with the app (`TASKS.md#sketch-library`). stage-sketches.mjs owns the
-// merge of the two source repos; this just re-runs it fresh and copies the
-// result into the installer payload. Never reuses a stale staging, unlike the
-// arduino data seed — sketches are small and edited often, and a stale copy in
-// an installer is exactly the drift bundling exists to end.
+// Sketches ship with the app (`TASKS.md#sketch-library`), copied fresh from
+// `firmware/` on every run — never a stale copy, unlike the arduino data seed:
+// sketches are small and edited often, and a stale copy in an installer is
+// exactly the drift bundling exists to end. A dev run needs no copy at all;
+// the sidecar reads `firmware/` in place (`discovery.library_root()`).
 
-run(process.execPath, [join(repoRoot, "scripts", "stage-sketches.mjs")]);
+const firmwareDir = join(repoRoot, "firmware");
 const sketchesOut = join(resourcesDir, "sketches");
 rmSync(sketchesOut, { recursive: true, force: true });
-cpSync(join(repoRoot, "sketches"), sketchesOut, { recursive: true });
-console.log(`staged sketch library (${sizeOf(sketchesOut)})`);
+cpSync(firmwareDir, sketchesOut, {
+  recursive: true,
+  // Symlinks resolved, not copied: the lab machines are Windows, where a
+  // symlink in an installer payload is a support call.
+  dereference: true,
+  filter: (src) => {
+    const parts = src.slice(firmwareDir.length).split(/[\\/]/).filter(Boolean);
+    // Dotfiles (.gitignore, .DS_Store) are repo plumbing, and the host tests'
+    // compiled binaries are this machine's build output.
+    if (parts.some((part) => part.startsWith("."))) return false;
+    const name = parts.at(-1) ?? "";
+    return !(parts.includes("host_test") && /^(test|test_box)(\.exe|\.obj)?$/.test(name));
+  },
+});
+const inos = readdirSync(sketchesOut, { withFileTypes: true, recursive: true }).filter(
+  (e) => e.isFile() && e.name.endsWith(".ino"),
+).length;
+if (inos === 0) {
+  console.error(`no sketches found in ${firmwareDir}`);
+  process.exit(1);
+}
+console.log(`bundled sketch library: ${inos} sketches (${sizeOf(sketchesOut)})`);
 
 console.log(`\nresources staged at ${resourcesDir} — total ${sizeOf(resourcesDir)}`);

@@ -429,6 +429,10 @@ class Application:
         await self._rescan()
         if tasks:
             await self._broadcast_tasks()
+        # The box utility was rebuilt with the rest, so every idle box is
+        # carrying an old build of it — old pins, old codes, old channel names.
+        if pinned and self.utility is not None:
+            self.utility.rebuilt()
 
     def _log_rig_wiring(self) -> None:
         """Say once, at startup, which wiring is in force.
@@ -580,8 +584,7 @@ class Application:
         """
         self.settings = SidecarSettings.from_payload(args.get("settings", args))
         log.info(
-            "settings received (utilitySketch=%r, defaultBaud=%d, backupDirectory=%r)",
-            self.settings.utility_sketch_name,
+            "settings received (defaultBaud=%d, backupDirectory=%r)",
             self.settings.default_baud,
             self.settings.backup_directory,
         )

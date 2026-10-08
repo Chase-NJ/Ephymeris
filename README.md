@@ -49,8 +49,9 @@ backend, `arduino-cli` and the `arduino:avr` toolchain all ship inside it.
    - **Boxes**: click **Add box** once per behaviour box, give each a **Label**, and pick its board under
      **Bound board** (boards are listed by USB serial number). **Test** opens the box's console and
      waits for its firmware to announce itself.
-   - **Utility baseline**: choose the **Hardware utility sketch** (`BOX_Utility`). Idle boxes are kept on
-     it, which is what lets the app light a box during animal placement.
+   - **Constellation**: optionally pick how the boxes are drawn in the sidebar and the Dashboard sky.
+   - **Utility baseline**: nothing to choose. Idle boxes are kept on `BOX_Utility`, which the app builds
+     from this rig's wiring; that is what lets the app light a box during animal placement.
    - **Hardware**: the **Default baud rate** (leave at 115200 unless the firmware changes) and an
      optional **arduino-cli path override**.
    - **Wiring** opens the channel-to-pin editor. A recording rig needs a sync channel added here.
@@ -98,10 +99,9 @@ git clone https://github.com/Chase-NJ/Ephymeris.git
 cd Ephymeris && npm install
 ```
 
-The firmware lives in [`firmware/`](firmware/README.md). `npm run stage:sketches` copies it into the
-gitignored `sketches/` (`predev` runs it for you). Edit firmware in `firmware/`: anything edited under
-`sketches/` is overwritten at the next stage. `EPHYMERIS_SKETCH_LIBRARY` points a dev sidecar at
-another library.
+The firmware lives in [`firmware/`](firmware/README.md). A dev run reads it in place, so an edit there
+reaches the app at its next start; the installer build copies it into its resources.
+`EPHYMERIS_SKETCH_LIBRARY` points a dev sidecar at another library.
 
 ### Sidecar virtual environment
 
@@ -156,7 +156,6 @@ Run from the repo root unless noted.
 | `npm run test` / `npm run test:watch` | Vitest over `src/lib/**`, once or watching |
 | `npm run check` | Protocol mirrors up to date, typecheck and unit tests; runs all three even after a failure |
 | `npm run gen:protocol` | Regenerate `sidecar/ephymeris_sidecar/protocol.py`, `src/lib/ws/protocol.ts` and `docs/PROTOCOL.md` from `protocol/schema.py` |
-| `npm run stage:sketches` | Copy `firmware/` into `sketches/` |
 | `npm run package` | Stage installer resources, then build the Windows installer |
 | `pytest` (in `sidecar/`, inside the venv) | The sidecar suite |
 | `pytest tests/test_protocol_contract.py` (in `sidecar/`) | The mirror-drift guard; run it after any wire change |
@@ -183,7 +182,7 @@ The guards that matter most:
 - `test_analytics_infer.py`: inference from the strobe stream scores identically to the declared GRGL
   profile. Extend it before touching either side.
 - `test_analytics_derive.py`: the metric definitions, and the payload's field names against `CODEC_VERSION`.
-- `test_taskdef.py`: the default strobe vocabulary against the names the staged firmware emits, in both directions; `test_strobes.py`: vocabulary edits, the archive scan, and the v13 hash re-key.
+- `test_taskdef.py`: the default strobe vocabulary against the names the firmware emits, in both directions; `test_strobes.py`: vocabulary edits, the archive scan, and the v13 hash re-key.
 - `test_debug_flash.py`: a Debug Mode flash survives the utility baseline, and Debug scoring matches a session's.
 - `test_writer.py`: kills a child mid-write to prove the `.tsv` crash guarantee.
 - `test_doc_links.py`: every `FILE.md#anchor` cited anywhere in the repo exists.

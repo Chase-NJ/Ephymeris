@@ -191,8 +191,8 @@ fn bundled_arduino_env<R: Runtime>(app: &AppHandle<R>) -> Vec<(&'static str, Pat
 
 /// The bundled sketch library, exported the same way.
 ///
-/// Absent in a dev run (no staged resources), where the sidecar falls back to
-/// `<repo>/sketches`, staged by `npm run predev` — see `discovery.library_root()`
+/// Absent in a dev run (no staged resources), where the sidecar reads
+/// `<repo>/firmware` in place — see `discovery.library_root()`
 /// for the full resolution order, including the `EPHYMERIS_SKETCH_LIBRARY`
 /// developer override that outranks both.
 fn bundled_sketches_env<R: Runtime>(app: &AppHandle<R>) -> Vec<(&'static str, PathBuf)> {

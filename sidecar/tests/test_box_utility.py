@@ -108,6 +108,16 @@ def test_the_rebuild_writes_both_halves(tmp_path):
     assert "fluids" not in (FIRMWARE / "Utility" / "BOX_Utility" / "task.json").read_text()
 
 
+def test_the_baseline_finds_the_utility_without_being_told():
+    """No setting names it any more: discovery over the shipped firmware must
+    yield exactly one box utility, and it must be BOX_Utility."""
+    from ephymeris_sidecar import discovery
+    from ephymeris_sidecar.utility import _is_generated_utility
+
+    found = [s.name for s in discovery.discover().sketches if _is_generated_utility(s)]
+    assert found == ["BOX_Utility"]
+
+
 def test_a_sketch_that_does_not_include_the_table_is_not_a_utility():
     assert utility.wants_utility(FIRMWARE / "Utility" / "BOX_Utility")
     assert not utility.wants_utility(FIRMWARE / "Utility" / "GRGL_Sim")

@@ -167,16 +167,6 @@ SHAPES = (
             f("dataDirectory", nullable(STR)),
             f("backupDirectory", nullable(STR)),
             f("arduinoCliPath", nullable(STR)),
-            f(
-                "utilitySketchName",
-                nullable(STR),
-                doc="The hardware utility sketch every idle box is returned to "
-                "(`ARCHITECTURE.md#hardware-utility-baseline`). Null turns the "
-                "baseline off. Keyed by sketch FOLDER NAME rather than by path, "
-                "matching `taskDefaults`: the path differs per install, and the "
-                "name is what a session file already records. A stale store's "
-                "path-valued `utilitySketchPath` is healed to its basename.",
-            ),
             f("defaultBaud", INT),
             f("boxes", ListOf(Ref("BoxBinding"))),
             f(
@@ -222,7 +212,7 @@ SHAPES = (
         ),
         doc="The Tauri-side store's schema; the store is the source of truth "
         "(`ARCHITECTURE.md#settings`). The sidecar reads `dataDirectory`, "
-        "`backupDirectory`, `arduinoCliPath`, `utilitySketchName`, "
+        "`backupDirectory`, `arduinoCliPath`, "
         "`defaultBaud`, `boxes` and `intan`, and ignores the rest — including "
         "keys a stale store still carries — so adding a setting the sidecar "
         "doesn't consume is deliberately a non-event.",
@@ -254,18 +244,24 @@ SHAPES = (
     Shape(
         "UtilityStatus",
         obj(
-            f("configured", BOOL),
+            f(
+                "configured",
+                BOOL,
+                doc="The install's library has a box utility. Not a setting: the "
+                "app finds it (`TASKS.md#the-box-utility`).",
+            ),
             f(
                 "sketchPath",
                 nullable(STR),
-                doc="Resolved from the name against the bundled library — an "
+                doc="Where the copy rebuilt for this rig lives — an "
                 "install-specific fact, informational only.",
             ),
-            f("sketchName", nullable(STR)),
+            f("sketchName", nullable(STR), doc="The box utility's folder name."),
             f(
                 "canIdentify",
                 BOOL,
-                doc="The configured sketch's profile declares an `identify` pair. "
+                doc="The utility's profile declares an `identify` pair (generated on "
+                "the rig's first cue). "
                 "False means placement can still run, just without lights.",
             ),
             f(
@@ -2318,7 +2314,7 @@ COMMANDS = (
         "a box that isn't `IDLE`, nor any box while a confirmed session mapping "
         "holds the rig. Arriving over the wire means a person asked, so it "
         "also **releases the pin** on the boxes it names. `UTILITY_UNAVAILABLE` "
-        "when no usable utility sketch is configured; a box-level problem is a "
+        "when the box utility can't be used at all; a box-level problem is a "
         "`state` in the snapshot, not an error.",
         section="Utility baseline",
     ),
@@ -3506,9 +3502,9 @@ ERRORS = (
     ),
     ErrorCode(
         "UTILITY_UNAVAILABLE",
-        "A `utility.*` command with no `utilitySketchName` set, or one that "
-        "can't be used at all — not among the bundled sketches, or not a "
-        "utility profile; for `utility.identify`, also a profile with no "
+        "A `utility.*` command when the box utility can't be used at all — "
+        "the install's sketch library has none, or its profile is unreadable "
+        "or not a utility profile; for `utility.identify`, also a profile with no "
         "`identify` pair. A box-level problem never raises this: it is that "
         "box's `state` in the snapshot, because 'box 4 has no board' is a fact "
         "about the rig, not a failure of the command.",

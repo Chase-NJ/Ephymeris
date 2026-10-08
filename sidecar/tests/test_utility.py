@@ -149,13 +149,9 @@ def make_baseline(
         on_output=_noop_output,
         on_presence=_noop_presence,
     )
-    # Deliberately the RETIRED path-valued key: from_payload heals it to the
-    # basename, so this doubles as an integration test of the migration — the
-    # whole baseline runs on a value that arrived in the old spelling.
     settings = SidecarSettings.from_payload(
         {
             "defaultBaud": 9600,
-            "utilitySketchPath": sketch_path,
             "boxes": [{"box": 1, "hardwareId": HWID}],
         }
     )
@@ -173,6 +169,9 @@ def make_baseline(
         discovery=FakeDiscovery,
         broadcast=broadcast,
         load_profile=lambda _path: profile,
+        # The fakes have no folders to read an `.ino` from; name the utility
+        # the way the real predicate would find it.
+        is_utility=lambda sketch: sketch_path is not None and sketch.path == sketch_path,
     )
     baseline.update_settings(settings)
     return baseline, manager, tool, events
@@ -316,12 +315,30 @@ async def test_a_non_utility_sketch_is_refused_with_a_reason() -> None:
     assert "must declare" in (baseline.status()["message"] or "")
 
 
-async def test_an_unset_sketch_is_a_state_not_a_complaint() -> None:
-    baseline, _manager, _tool, _ = make_baseline(profile=None, sketch_path=None)
+async def test_a_library_without_a_box_utility_says_so() -> None:
+    """The utility is generated and found, never chosen — so its absence is a
+    damaged install worth a sentence, and nothing is flashed."""
+    baseline, _manager, tool, _ = make_baseline(profile=None, sketch_path=None)
+    baseline.ensure()
+    await settle(baseline)
     status = baseline.status()
     assert status["configured"] is False
-    assert status["message"] is None
+    assert "no box utility" in (status["message"] or "")
     assert status["canIdentify"] is False
+    assert tool.uploads == []
+
+
+async def test_a_rebuilt_utility_is_restored_to_every_box_that_carried_the_old_one() -> None:
+    """A rewiring rebuilds the utility; every box still carries the old build
+    (old pins, old channel names), so believing it current would be wrong."""
+    baseline, _manager, tool, _ = make_baseline()
+    baseline.ensure()
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH]
+
+    baseline.rebuilt()
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH, UTILITY_PATH]
 
 
 # --- identify ---------------------------------------------------------------

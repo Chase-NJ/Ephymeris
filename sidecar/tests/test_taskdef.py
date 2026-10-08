@@ -707,10 +707,10 @@ def library(tmp_path_factory):
 
 
 def _firmware_names() -> set[str] | None:
-    """Every `BF_*` the staged firmware NAMES, or None outside a checkout.
+    """Every `BF_*` the firmware NAMES, or None outside a checkout.
 
-    Read from `sketches/`, which `npm run stage:sketches` writes from the
-    repo's `firmware/`. Skipped rather than failed when it is absent: a
+    Read from the repo's `firmware/`, which `discovery.library_root()` serves
+    in a checkout. Skipped rather than failed when it is absent: a
     packaged sidecar has no library beside it, and this is a developer guard.
     The firmware holds no numbers any more — `BoxStrobes.h` refuses to compile
     without the generated ones — so names are all there is to compare.
@@ -733,7 +733,7 @@ def test_the_firmware_defines_no_strobe_code_of_its_own():
     root, _ = discovery.library_root()
     header = (root / "libraries" / "BehaviorBox" / "BoxStrobes.h") if root else None
     if header is None or not header.is_file():
-        pytest.skip("no staged sketch library (run `npm run stage:sketches`)")
+        pytest.skip("no firmware/ beside the sidecar (a packaged build)")
     text = header.read_text(encoding="utf-8")
     assert "#define BF_" not in text
     assert "#error" in text
@@ -745,7 +745,7 @@ def test_everything_the_firmware_emits_is_in_the_default_vocabulary():
     header would not define it."""
     names = _firmware_names()
     if names is None:
-        pytest.skip("no staged sketch library (run `npm run stage:sketches`)")
+        pytest.skip("no firmware/ beside the sidecar (a packaged build)")
     vocab = registry.Vocabulary(registry.default_vocabulary_document())
     assert names <= vocab.names(), f"named in firmware, not in the vocabulary: {sorted(names - vocab.names())}"
 
@@ -761,7 +761,7 @@ def test_every_default_code_has_a_mechanism_that_emits_it():
 
     names = _firmware_names()
     if names is None:
-        pytest.skip("no staged sketch library (run `npm run stage:sketches`)")
+        pytest.skip("no firmware/ beside the sidecar (a packaged build)")
     vocab = registry.Vocabulary(registry.default_vocabulary_document())
     orphaned = {
         n for n in vocab.names() - names if not re.search(r"_\d+_ON$", n)
@@ -964,7 +964,7 @@ def test_every_bundled_sketch_that_drives_a_pin_asks_to_be_rebuilt():
 
     result = discovery.discover()
     if not result.sketches:
-        pytest.skip("no staged sketch library (run `npm run stage:sketches`)")
+        pytest.skip("no firmware/ beside the sidecar (a packaged build)")
     missing = [
         s.name for s in result.sketches if not bundled.wants_pinning(Path(s.path))
     ]

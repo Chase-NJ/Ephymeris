@@ -4,8 +4,8 @@ The Arduino code that runs on every behavior box: the **BehaviorBox** library an
 sketches the app ships with. It lives inside Ephymeris and changes alongside it.
 
 > [!NOTE]
-> **Edit firmware here, in `firmware/`.** `npm run stage:sketches` copies this folder into the
-> gitignored `sketches/` (and `npm run predev` runs it), and the app builds from that copy. Until
+> **Edit firmware here, in `firmware/`.** A dev run of the app reads this folder in place, and the
+> installer build copies it into the app's resources. There is no other copy. Until
 > 2026-10-08 this was the separate repo `Chase-NJ/Arduino`; it was imported with its full history,
 > so `git log -- firmware/` still tells the whole story.
 
@@ -178,15 +178,13 @@ name outputs by their Rig channel name, case-insensitively:
 ## Building and testing
 
 ```bash
-npm run stage:sketches        # firmware/ → sketches/ (predev does this for you)
-
 # Off-target host tests: the strictest type check the firmware gets
 sh firmware/libraries/BehaviorBox/extras/host_test/run.sh       # the library
 sh firmware/libraries/BehaviorBox/extras/host_test/run_box.sh   # the box utility
 
 # A real AVR build, from a folder the app generated
 arduino-cli compile --fqbn arduino:avr:mega --warnings all \
-  --libraries sketches/libraries "<app data>/rig/sketches/Olfactory Behavior/GRGL"
+  --libraries firmware/libraries "<app data>/rig/sketches/Olfactory Behavior/GRGL"
 ```
 
 The host tests run against fixture headers whose strobe codes and box are **deliberately not the
@@ -208,8 +206,8 @@ script's header carries the `cl` line.
 2. **New sketch?** Put it in a category folder as `<Name>/<Name>.ino`, `#include "TaskPins.h"`
    before `<BehaviorBox.h>`, and ship a `TaskPins.h` that declares nothing. Describe it to the app
    with a `task.json` ([TASKS.md › Writing a new sketch](../docs/TASKS.md#writing-a-new-sketch)).
-3. **Changed the library?** Run both host tests and an `--warnings all` compile, then
-   `npm run stage:sketches` and restart the app.
+3. **Changed the library?** Run both host tests and an `--warnings all` compile, then restart the
+   app.
 
 Where it is all explained: [TASKS.md › Firmware](../docs/TASKS.md#firmware) and
 [ARCHITECTURE.md › Hardware utility baseline](../docs/ARCHITECTURE.md#hardware-utility-baseline).

@@ -301,22 +301,14 @@ export interface IntanSettings {
 
 /**
  * The Tauri-side store's schema; the store is the source of truth (`ARCHITECTURE.md#settings`).
- * The sidecar reads `dataDirectory`, `backupDirectory`, `arduinoCliPath`, `utilitySketchName`,
- * `defaultBaud`, `boxes` and `intan`, and ignores the rest — including keys a stale store still
- * carries — so adding a setting the sidecar doesn't consume is deliberately a non-event.
+ * The sidecar reads `dataDirectory`, `backupDirectory`, `arduinoCliPath`, `defaultBaud`, `boxes`
+ * and `intan`, and ignores the rest — including keys a stale store still carries — so adding a
+ * setting the sidecar doesn't consume is deliberately a non-event.
  */
 export interface EphymerisSettings {
   dataDirectory: string | null;
   backupDirectory: string | null;
   arduinoCliPath: string | null;
-  /**
-   * The hardware utility sketch every idle box is returned to
-   * (`ARCHITECTURE.md#hardware-utility-baseline`). Null turns the baseline off. Keyed by sketch
-   * FOLDER NAME rather than by path, matching `taskDefaults`: the path differs per install, and
-   * the name is what a session file already records. A stale store's path-valued
-   * `utilitySketchPath` is healed to its basename.
-   */
-  utilitySketchName: string | null;
   defaultBaud: number;
   boxes: BoxBinding[];
   /** May be absent; both ends then fall back to RHX's default ports (5000/5001/5002). */
@@ -370,16 +362,18 @@ export interface UtilityBoxState {
  * never merges two shapes.
  */
 export interface UtilityStatus {
-  configured: boolean;
   /**
-   * Resolved from the name against the bundled library — an install-specific fact, informational
-   * only.
+   * The install's library has a box utility. Not a setting: the app finds it
+   * (`TASKS.md#the-box-utility`).
    */
+  configured: boolean;
+  /** Where the copy rebuilt for this rig lives — an install-specific fact, informational only. */
   sketchPath: string | null;
+  /** The box utility's folder name. */
   sketchName: string | null;
   /**
-   * The configured sketch's profile declares an `identify` pair. False means placement can still
-   * run, just without lights.
+   * The utility's profile declares an `identify` pair (generated on the rig's first cue). False
+   * means placement can still run, just without lights.
    */
   canIdentify: boolean;
   /**

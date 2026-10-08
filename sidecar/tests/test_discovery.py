@@ -4,8 +4,8 @@ The scan itself is unchanged from the configured-directory era; what changed is
 where the root comes from (`library_root()`, not a setting) and what a non-ok
 state MEANS — a broken install rather than a wrong setting. The tests point the
 library at `tmp_path` through the developer override, which is also the only
-way a test can exercise the scan without depending on this machine's staged
-`<repo>/sketches`.
+way a test can exercise the scan without depending on this checkout's
+`<repo>/firmware`.
 """
 
 from __future__ import annotations

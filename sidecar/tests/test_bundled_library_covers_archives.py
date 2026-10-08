@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
-STAGED = REPO / "sketches"
+FIRMWARE = REPO / "firmware"
 
 #: Every value of `sketch` observed across the lab's session archives.
 ARCHIVE_RECORDED_NAMES = frozenset(
@@ -46,15 +46,15 @@ ARCHIVE_RECORDED_NAMES = frozenset(
 )
 
 pytestmark = pytest.mark.skipif(
-    not STAGED.is_dir(),
-    reason="the sketch library isn't staged — run `npm run stage:sketches` first",
+    not FIRMWARE.is_dir(),
+    reason="no firmware/ beside the sidecar (a packaged build)",
 )
 
 
 def _resolvable_names() -> set[str]:
     """Folder names plus every legacyNames entry, mirroring the app's rule."""
     names: set[str] = set()
-    for ino in STAGED.rglob("*.ino"):
+    for ino in FIRMWARE.rglob("*.ino"):
         folder = ino.parent
         if ino.stem != folder.name:
             continue  # not a valid sketch; discovery would skip it too

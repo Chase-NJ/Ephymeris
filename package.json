@@ -10,7 +10,7 @@
   },
   "license": "ISC",
   "scripts": {
-    "predev": "node scripts/gen-protocol.mjs && node scripts/stage-sketches.mjs",
+    "predev": "node scripts/gen-protocol.mjs",
     "dev": "vite",
     "prebuild": "node scripts/gen-protocol.mjs",
     "build": "tsc --noEmit && vite build",
@@ -20,7 +20,6 @@
     "test:watch": "vitest",
     "check": "node scripts/check.mjs",
     "gen:protocol": "node scripts/gen-protocol.mjs",
-    "stage:sketches": "node scripts/stage-sketches.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "package": "node scripts/package-resources.mjs && tauri build --config src-tauri/tauri.bundle.conf.json"

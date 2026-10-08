@@ -1,8 +1,9 @@
 """The hardware utility baseline — `ARCHITECTURE.md#hardware-utility-baseline`.
 
 The baseline is one idea: **a box that isn't doing anything else is a box
-Ephymeris can talk to.** The operator picks a utility sketch once
-(`Settings.utilitySketchName`), and from then on the app quietly returns every
+Ephymeris can talk to.** The sketch is not a choice: it is the box utility
+the app generates from this rig (`TASKS.md#the-box-utility`) — the one bundled
+sketch that includes `UtilityChannels.h` — and the app quietly returns every
 idle, bound box to it — at startup, when a board appears, and whenever a run or
 session ends. Nothing about that is announced; it is the resting state, not an
 operation. What *is* announced is failure, because a box that can't be restored
@@ -25,8 +26,8 @@ Two rules keep this from being hostile:
   no pin the task was overwritten by the baseline within seconds of being put
   there, silently. The pin is respected by every *automatic* trigger and is
   released only by something the operator did: asking for the baseline
-  (`utility.ensure`), running a session, replugging the board, flashing the
-  utility sketch themselves, or naming a different utility sketch.
+  (`utility.ensure`), running a session, replugging the board, or flashing the
+  utility sketch themselves.
 
 The payoff is `identify()`: with a known sketch on the board, the app can ask
 one box to point at itself (`ARCHITECTURE.md#mapping-and-the-placement-walk`). The commands come
@@ -111,12 +112,16 @@ class UtilityBaseline:
         discovery: Callable[[], Any],
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         load_profile: Callable[[str], TaskProfile | None] = task_profile.load_profile,
+        is_utility: Callable[[Any], bool] | None = None,
     ) -> None:
         self._loop = loop
         self._ports = ports
         self._discovery = discovery
         self._broadcast = broadcast
         self._load_profile = load_profile
+        #: Which discovered sketch is the box utility. Injected so a test can
+        #: name one without a folder on disk; the real answer reads the `.ino`.
+        self._is_utility = is_utility or _is_generated_utility
 
         self._settings = SidecarSettings()
         self._boxes: dict[int, BoxBaseline] = {
@@ -137,16 +142,20 @@ class UtilityBaseline:
     # --- configuration ----------------------------------------------------
 
     def update_settings(self, settings: SidecarSettings) -> None:
-        """Take the shell's settings; a changed sketch invalidates every belief."""
-        changed = settings.utility_sketch_name != self._settings.utility_sketch_name
+        """Take the shell's settings."""
         self._settings = settings
-        if changed:
-            self._profile_cache = None
-            for state in self._boxes.values():
-                state.believed = None
-                state.failed = False
-                # A newly named baseline is the operator asking for it.
-                state.pinned = False
+
+    def rebuilt(self) -> None:
+        """The utility was just regenerated — a wiring change or a vocabulary
+        edit (`app._rebuild_generated`). What is on every box is now an OLD
+        build of it, with the old pins, codes and channel names, so no belief
+        survives and every idle box is restored. Pins stay: a box the operator
+        deliberately flashed with something else keeps it."""
+        self._profile_cache = None
+        for state in self._boxes.values():
+            state.believed = None
+            state.failed = False
+        self.ensure()
 
     def hold(self) -> None:
         """Suspend restores — a confirmed session mapping owns the boxes."""
@@ -251,9 +260,9 @@ class UtilityBaseline:
         no reply timeout should ever be asked to cover. `utility.updated`
         carries the progress.
         """
-        if self._held or not self._settings.utility_sketch_name:
-            # No baseline configured is a supported way to run the app, not a
-            # degraded one — so it costs nothing and reports nothing.
+        if self._held or self._sketch_name() is None:
+            # No utility in the library is a damaged install, reported by
+            # `status()`'s message; there is nothing to restore boxes to.
             return
         targets = list(boxes) if boxes is not None else list(self._boxes)
         for box in targets:
@@ -515,15 +524,18 @@ class UtilityBaseline:
 
     # --- resolution -------------------------------------------------------
 
-    def _sketch_entry(self) -> Any | None:
-        """The named sketch, as the current discovery knows it.
+    def _sketch_name(self) -> str | None:
+        """The box utility's name, found in the current discovery.
 
-        Resolved BY NAME against discovery every time rather than cached: the
-        setting stores a folder name (the same key `taskDefaults` uses), and the
-        library it resolves against ships with the app — so the path this yields
-        is per-install, while the name survives an update.
+        Found every time rather than cached: discovery is replaced on every
+        rescan, and the entry it serves is the copy rebuilt for this rig.
         """
-        name = self._settings.utility_sketch_name
+        sketches = getattr(self._discovery(), "sketches", [])
+        return next((s.name for s in sketches if self._is_utility(s)), None)
+
+    def _sketch_entry(self) -> Any | None:
+        """The box utility, as the current discovery knows it."""
+        name = self._sketch_name()
         if not name:
             return None
         sketches = getattr(self._discovery(), "sketches", [])
@@ -536,7 +548,7 @@ class UtilityBaseline:
         return entry
 
     def _profile(self) -> TaskProfile | None:
-        name = self._settings.utility_sketch_name
+        name = self._sketch_name()
         if not name:
             return None
         sketches = getattr(self._discovery(), "sketches", [])
@@ -555,14 +567,11 @@ class UtilityBaseline:
 
     def _unavailable_reason(self) -> str | None:
         """Why the baseline can't operate at all, in words worth showing."""
-        name = self._settings.utility_sketch_name
+        name = self._sketch_name()
         if not name:
-            return None  # not configured is a state, not a complaint
-        sketches = getattr(self._discovery(), "sketches", [])
-        if not any(s.name == name for s in sketches):
             return (
-                f"{name} isn't among the sketches this version of Ephymeris ships "
-                "with — pick a bundled sketch in Config."
+                "This install's sketch library has no box utility, so idle boxes "
+                "can't be returned to a known sketch. Reinstalling restores it."
             )
         profile = self._profile()
         if profile is None:
@@ -583,11 +592,11 @@ class UtilityBaseline:
         entry = self._sketch_entry()
         profile = self._profile()
         return {
-            "configured": bool(self._settings.utility_sketch_name),
-            # Resolved, not stored: the setting is a name, and where that name
-            # lives is a fact about this install of the bundled library.
+            "configured": self._sketch_name() is not None,
+            # Found, not stored: which sketch is the box utility, and where its
+            # rebuilt copy lives, are facts about this install and this rig.
             "sketchPath": entry.path if entry is not None else None,
-            "sketchName": self._settings.utility_sketch_name,
+            "sketchName": self._sketch_name(),
             "canIdentify": entry is not None and profile is not None and profile.identify is not None,
             "held": self._held,
             "message": self._unavailable_reason(),
@@ -620,3 +629,13 @@ def _scrollback(handler: Any) -> list[Any]:
         except RuntimeError:
             continue
     return []
+
+
+def _is_generated_utility(sketch: Any) -> bool:
+    """A bundled sketch whose `.ino` asks for the generated channel table."""
+    from pathlib import Path
+
+    from .taskdef.utility import wants_utility
+
+    return getattr(sketch, "source", "bundled") == "bundled" and wants_utility(Path(sketch.path))
+

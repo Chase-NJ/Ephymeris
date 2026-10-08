@@ -229,7 +229,7 @@ Sends the literal `STOP` line and does **not** force the transition: the firmwar
 <a id="cmd-utility.ensure"></a>
 #### `utility.ensure`
 
-Restore the baseline now rather than at the next board or session event (`ARCHITECTURE.md#hardware-utility-baseline`). **Returns as soon as the work is scheduled** — flashing six boxes outlasts any reply timeout, so progress arrives on `utility.updated`. Never touches a box that isn't `IDLE`, nor any box while a confirmed session mapping holds the rig. Arriving over the wire means a person asked, so it also **releases the pin** on the boxes it names. `UTILITY_UNAVAILABLE` when no usable utility sketch is configured; a box-level problem is a `state` in the snapshot, not an error.
+Restore the baseline now rather than at the next board or session event (`ARCHITECTURE.md#hardware-utility-baseline`). **Returns as soon as the work is scheduled** — flashing six boxes outlasts any reply timeout, so progress arrives on `utility.updated`. Never touches a box that isn't `IDLE`, nor any box while a confirmed session mapping holds the rig. Arriving over the wire means a person asked, so it also **releases the pin** on the boxes it names. `UTILITY_UNAVAILABLE` when the box utility can't be used at all; a box-level problem is a `state` in the snapshot, not an error.
 
 **Args**
 
@@ -1497,7 +1497,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `SESSION_NOT_READY` | `sessions.create` against a cohort with no group holding a box-assigned animal. |
 | `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed (`detail` carries the parse error), or a profile's `START` line would exceed `START_LINE_MAX`. |
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. An ordinary mirroring failure is never a command error; it appears on `backup.status`. |
-| `UTILITY_UNAVAILABLE` | A `utility.*` command with no `utilitySketchName` set, or one that can't be used at all — not among the bundled sketches, or not a utility profile; for `utility.identify`, also a profile with no `identify` pair. A box-level problem never raises this: it is that box's `state` in the snapshot, because 'box 4 has no board' is a fact about the rig, not a failure of the command. |
+| `UTILITY_UNAVAILABLE` | A `utility.*` command when the box utility can't be used at all — the install's sketch library has none, or its profile is unreadable or not a utility profile; for `utility.identify`, also a profile with no `identify` pair. A box-level problem never raises this: it is that box's `state` in the snapshot, because 'box 4 has no board' is a fact about the rig, not a failure of the command. |
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
 | `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail.breaks` lists them. Retry with `confirm: true` to proceed — the app does not veto a rewiring, it refuses to let one happen unnoticed. |
 | `STROBE_INVALID` | A strobe edit the vocabulary cannot take: a malformed or duplicate name, a code that is not free, a blank meaning, an unknown name, or an import file that is not a vocabulary. |
@@ -1834,14 +1834,13 @@ One session folder found on disk, identified by name alone (`sessions/paths.py`)
 <a id="shape-ephymerissettings"></a>
 #### EphymerisSettings
 
-The Tauri-side store's schema; the store is the source of truth (`ARCHITECTURE.md#settings`). The sidecar reads `dataDirectory`, `backupDirectory`, `arduinoCliPath`, `utilitySketchName`, `defaultBaud`, `boxes` and `intan`, and ignores the rest — including keys a stale store still carries — so adding a setting the sidecar doesn't consume is deliberately a non-event.
+The Tauri-side store's schema; the store is the source of truth (`ARCHITECTURE.md#settings`). The sidecar reads `dataDirectory`, `backupDirectory`, `arduinoCliPath`, `defaultBaud`, `boxes` and `intan`, and ignores the rest — including keys a stale store still carries — so adding a setting the sidecar doesn't consume is deliberately a non-event.
 
 | Field | Type | Notes |
 |---|---|---|
 | `dataDirectory` | string \| null |  |
 | `backupDirectory` | string \| null |  |
 | `arduinoCliPath` | string \| null |  |
-| `utilitySketchName` | string \| null | The hardware utility sketch every idle box is returned to (`ARCHITECTURE.md#hardware-utility-baseline`). Null turns the baseline off. Keyed by sketch FOLDER NAME rather than by path, matching `taskDefaults`: the path differs per install, and the name is what a session file already records. A stale store's path-valued `utilitySketchPath` is healed to its basename. |
 | `defaultBaud` | number |  |
 | `boxes` | [BoxBinding](#shape-boxbinding)[] |  |
 | `intan` *(optional)* | [IntanSettings](#shape-intansettings) | May be absent; both ends then fall back to RHX's default ports (5000/5001/5002). |
@@ -3013,10 +3012,10 @@ The whole baseline picture — one snapshot, shared by the command and the event
 
 | Field | Type | Notes |
 |---|---|---|
-| `configured` | boolean |  |
-| `sketchPath` | string \| null | Resolved from the name against the bundled library — an install-specific fact, informational only. |
-| `sketchName` | string \| null |  |
-| `canIdentify` | boolean | The configured sketch's profile declares an `identify` pair. False means placement can still run, just without lights. |
+| `configured` | boolean | The install's library has a box utility. Not a setting: the app finds it (`TASKS.md#the-box-utility`). |
+| `sketchPath` | string \| null | Where the copy rebuilt for this rig lives — an install-specific fact, informational only. |
+| `sketchName` | string \| null | The box utility's folder name. |
+| `canIdentify` | boolean | The utility's profile declares an `identify` pair (generated on the rig's first cue). False means placement can still run, just without lights. |
 | `held` | boolean | Restores are suspended because a confirmed session mapping owns the boxes — reflashing then would erase the task sketch. |
 | `message` | string \| null | Why the baseline isn't operating at all (no sketch set, a name not in the bundled library, a non-utility profile). |
 | `boxes` | [UtilityBoxState](#shape-utilityboxstate)[] |  |

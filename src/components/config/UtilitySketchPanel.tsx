@@ -1,51 +1,41 @@
 import { CircleAlert, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/common/controls";
-import { SketchPicker } from "@/components/sessions/TaskConfigForm";
 import { baselineColor, baselineLabel } from "@/lib/hardware/utility";
-import type { BoxBinding, SketchEntry } from "@/lib/settings/schema";
+import type { BoxBinding } from "@/lib/settings/schema";
 import type { UtilityStatus } from "@/lib/ws/protocol";
 
 /**
- * The hardware utility sketch and what the baseline is currently doing
+ * What the hardware utility baseline is doing
  * (`ARCHITECTURE.md#hardware-utility-baseline`).
  *
  * The restores themselves are silent by design — this panel exists so that
  * "silent" never means "unaccountable". It answers the two questions a silent
  * background flash raises: which sketch is being pushed, and which boxes
  * actually took it.
+ *
+ * NOT A CHOICE. The sketch is the box utility the app generates from this
+ * rig's wiring (`TASKS.md#the-box-utility`), found by the sidecar and named
+ * here. It used to be a picker, which let any sketch be named — including a
+ * behavior task, flashed to every idle box with animals being placed in them.
  */
 export function UtilitySketchPanel({
-  sketches,
   boxes,
-  value,
   status,
   busy,
   connected,
-  onChange,
   onReflash,
 }: {
-  sketches: SketchEntry[];
   boxes: BoxBinding[];
-  /** The sketch's folder NAME — the settings key
-   *  (`ARCHITECTURE.md#hardware-utility-baseline`). */
-  value: string | null;
   status: UtilityStatus;
   busy: boolean;
   connected: boolean;
-  onChange: (name: string | null) => void;
   onReflash: () => void;
 }) {
   const bound = boxes.filter((b) => b.hardwareId !== null).map((b) => b.box);
   const rows = status.boxes.filter((b) => bound.includes(b.box));
   const restoring = rows.some((b) => b.state === "restoring");
 
-  // The picker is path-keyed (paths are unique within one discovery; names are
-  // what the setting stores). Translate at this boundary rather than fork the
-  // picker: the same component serves the session flow, where a path is right.
-  const selectedPath = sketches.find((s) => s.name === value)?.path ?? null;
-  const nameOf = (path: string | null) =>
-    path === null ? null : (sketches.find((s) => s.path === path)?.name ?? null);
 
   return (
     <div className="px-4 py-3.5">
@@ -57,21 +47,23 @@ export function UtilitySketchPanel({
           <p className="mt-0.5 text-[12px] leading-relaxed text-static">
             The sketch every idle box is returned to, so the app can always talk
             to the rig — and can light one box while you place an animal in it.
-            Flashed quietly in the background; you only hear about it if it
-            fails.
+            Built from this rig&rsquo;s wiring, and rebuilt and reflashed
+            whenever the wiring changes. Flashed quietly in the background; you
+            only hear about it if it fails.
           </p>
         </div>
-        <SketchPicker
-          label="Hardware utility sketch"
-          sketches={sketches}
-          value={selectedPath}
-          onChange={(path) => onChange(nameOf(path))}
-          className="w-[240px] shrink-0 truncate"
-        />
+        {status.sketchName && (
+          <span
+            className="shrink-0 rounded-sm border border-halo px-2.5 py-1 font-mono text-[11px] text-static"
+            title="Generated from the Rig page — not a setting"
+          >
+            {status.sketchName}
+          </span>
+        )}
       </div>
 
-      {/* A configured sketch the sidecar can't use is the one state that must
-          not be quiet: nothing would happen, and nothing would say why. */}
+      {/* A utility the sidecar can't use is the one state that must not be
+          quiet: nothing would happen, and nothing would say why. */}
       {status.message && (
         <div
           className="mt-3 flex items-start gap-2 rounded-sm border border-halo px-2.5 py-2 text-[11px]"
@@ -82,7 +74,7 @@ export function UtilitySketchPanel({
         </div>
       )}
 
-      {value !== null && !status.message && (
+      {status.configured && !status.message && (
         <div className="mt-3">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] text-static">

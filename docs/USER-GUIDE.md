@@ -102,8 +102,10 @@ name, which boxes are recording, and **Open Mission Control** and **End Session*
 
 **Rig.** What each box is: which board is box 3, which program idle boxes rest on, and the wiring of
 every pin. Usually set up once by the lab manager. The **Boxes** table has each box's label, its bound
-board, a **Handshake** column and a **Test** button. Under **Utility baseline**, a chip per box says
-whether it is **Ready** on the resting program.
+board, a **Handshake** column and a **Test** button. **Constellation** chooses how the boxes are drawn
+in the sidebar and the Dashboard sky; drag a box to a different star to move it. Under **Utility
+baseline**, a chip per box says whether it is **Ready** on the resting program. That program is built
+from the rig's wiring, so there is nothing to choose.
 
 ![The Rig tab: the Boxes table with label, bound board, handshake and Test button for each of six boxes, and below it the Utility baseline section showing BOX_Utility and a Ready chip for every box](images/rig.webp)
 
@@ -146,10 +148,9 @@ and the default recording settings. See [Recording with Intan](#recording-with-i
 time, notes anyone wrote, and what changed since the last session. See [Keeping the log](#keeping-the-log).
 
 **Settings.** Where data is saved (**Data directory**), where a backup copy goes (**Backup directory**),
-**Reduce motion**, and how the star figure is drawn (**Constellation**). If no backup directory is set,
-a note under it says so.
+and **Reduce motion**. If no backup directory is set, a note under it says so.
 
-![The Settings screen: Data directory set to a folder, Backup directory showing Not set with a warning that data is only on one drive, the Reduce motion switch, and the Constellation picker](images/settings.webp)
+![The Settings screen: Data directory set to a folder, Backup directory showing Not set with a warning that data is only on one drive, and the Reduce motion switch](images/settings.webp)
 
 ## Setting up a cohort
 

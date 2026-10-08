@@ -84,9 +84,6 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
   dataDirectory: null,
   backupDirectory: null,
   arduinoCliPath: null,
-  // No baseline until the user names a utility sketch
-  // (`ARCHITECTURE.md#hardware-utility-baseline`) — there is no safe sketch to guess, and guessing would flash the rig.
-  utilitySketchName: null,
   defaultBaud: DEFAULT_BAUD,
   // No boxes until the user adds them.
   boxes: [],
@@ -105,25 +102,6 @@ export const DEFAULT_SETTINGS: EphymerisSettings = {
 
 function optString(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
-}
-
-/**
- * The baseline sketch, healing the retired path-valued key.
- *
- * `utilitySketchPath` stored an absolute path into the old user-configured
- * Arduino Directory; the setting is now a sketch folder NAME resolved against
- * the bundled library, matching `taskDefaults`' key. The basename of the old
- * path IS that name — arduino-cli requires `<folder>/<folder>.ino` — so a lab
- * machine's stored `BOX_Utility` path heals on first load and the migrated
- * value is written back on the next save.
- */
-function normalizeUtilitySketch(value: Record<string, unknown>): string | null {
-  const name = optString(value["utilitySketchName"]);
-  if (name !== null) return name;
-  const legacy = optString(value["utilitySketchPath"]);
-  if (legacy === null) return null;
-  const base = legacy.split(/[\\/]/).filter(Boolean).pop() ?? "";
-  return base || null;
 }
 
 function normalizeBoxes(value: unknown): BoxBinding[] {
@@ -233,7 +211,10 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
     // key configured a directory that nothing reads any more, so there is
     // nothing to migrate it INTO. Don't reintroduce it.
     arduinoCliPath: optString(value["arduinoCliPath"]),
-    utilitySketchName: normalizeUtilitySketch(value),
+    // `utilitySketchName` (and the older `utilitySketchPath`) were retired when
+    // the box utility began being generated from the rig
+    // (`TASKS.md#the-box-utility`): the sidecar finds it, so there is nothing
+    // to choose. A stored value is dropped here, like `arduinoDirectory`.
     defaultBaud: typeof baud === "number" && baud > 0 ? baud : DEFAULT_BAUD,
     boxes: normalizeBoxes(value["boxes"]),
     intan: normalizeIntan(value["intan"]),

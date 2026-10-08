@@ -1,29 +1,13 @@
 import { motion } from "framer-motion";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
-import {
-  CircleAlert,
-  HardDrive,
-  MonitorCog,
-  Orbit,
-  Settings as SettingsIcon,
-} from "lucide-react";
-import { useMemo } from "react";
+import { CircleAlert, HardDrive, MonitorCog, Settings as SettingsIcon } from "lucide-react";
 
-import {
-  NODE_FILL,
-  useBoxHealth,
-  type BoxHealth,
-} from "@/components/chrome/ConstellationStatus";
 import { Toggle } from "@/components/common/controls";
 import { HudTile } from "@/components/common/HudTile";
-import { ConstellationBoard } from "@/components/config/ConstellationBoard";
-import { ConstellationPicker } from "@/components/config/ConstellationPicker";
 import { BackupStatusNote } from "@/components/settings/BackupStatusNote";
 import { DirectoryField } from "@/components/settings/DirectoryField";
 import { SettingRow } from "@/components/settings/SettingRow";
 import { useBackupStatus, type BackupStatus } from "@/lib/backup/useBackupStatus";
-import { reconcileSlots } from "@/lib/constellations/slots";
-import { zodiacById } from "@/lib/constellations/zodiac";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
@@ -40,49 +24,19 @@ import { useSidecar } from "@/lib/ws/context";
  * **A column of HUD tiles, in the Rig tab's idiom.** Each subject is a tile
  * with an icon header and one live fact on the glass — and the fact is the
  * point: the Storage tile's corner says whether the mirror is alive before
- * the row that configures it is read, the Constellation tile's shows the
- * boxes as the same health dots the sidebar draws. `SettingGroup`'s title
+ * the row that configures it is read. `SettingGroup`'s title
  * used to sit above its card and read as a document heading; a settings
  * screen that is one of five glass pages over the sky should look like the
  * other four.
  *
- * **The constellation moved here from the Rig screen**, and the move is the
- * argument: which zodiac the status display draws, and which star a box sits
- * on, style how the rig is *shown* — the sidebar widget and the Dashboard sky —
- * and never touch how it is wired. Interface, filed under Interface. The slot
- * map still follows box add/remove automatically (`Config.onBoxesChange`
- * reconciles it), so this section can be ignored forever and stay honest.
+ * The constellation lives on the Rig tab, beside the boxes it draws
+ * (`components/config/ConstellationTile.tsx`).
  */
 export function Settings() {
   const { settings, update, loaded, saveError } = useSettings();
   const { status } = useSidecar();
   const backup = useBackupStatus();
-  const health = useBoxHealth();
   const connected = status === "connected";
-
-  const boundNumbers = useMemo(
-    () =>
-      settings.boxes.filter((b) => b.hardwareId !== null).map((b) => b.box),
-    [settings.boxes],
-  );
-  const labels = useMemo(
-    () => Object.fromEntries(settings.boxes.map((b) => [b.box, b.label])),
-    [settings.boxes],
-  );
-  const chosen = zodiacById(settings.constellation);
-
-  function onPickConstellation(id: string) {
-    const constellation = zodiacById(id);
-    if (!constellation) return;
-    void update({
-      constellation: id,
-      constellationSlots: reconcileSlots(
-        constellation,
-        settings.constellationSlots,
-        boundNumbers,
-      ),
-    });
-  }
 
   return (
     // Every route sits on the rig's sky. Not decoration: a route that mounts no
@@ -117,8 +71,8 @@ export function Settings() {
                 Settings
               </h1>
               <p className="font-mono text-[10px] text-static/70">
-                where the data lands, where its copy goes, and how the rig is
-                drawn
+                where the data lands, where its copy goes, and how the app
+                moves
               </p>
             </div>
           </div>
@@ -225,65 +179,6 @@ export function Settings() {
                 </HudTile>
               </motion.div>
 
-              <motion.div variants={RISE}>
-                <HudTile
-                  icon={Orbit}
-                  label="Constellation"
-                  status={
-                    <ConstellationFact
-                      name={chosen?.name ?? null}
-                      bound={boundNumbers}
-                      health={health}
-                    />
-                  }
-                >
-                  <div className="px-4 py-3.5">
-                    <p className="pb-2 text-[12px] leading-relaxed text-static">
-                      How the status display draws your boxes — the widget at
-                      the foot of the sidebar and the Dashboard&rsquo;s sky.
-                      Pure presentation: nothing here changes how the rig is
-                      wired.
-                    </p>
-                    {chosen ? (
-                      <>
-                        {/* The board sits on its own inset so the drag surface
-                            reads as a surface — a chart in a tile, not stars
-                            loose on the glass. */}
-                        <div className="surface-inset rounded-md px-4 pb-2 pt-3">
-                          <div className="mx-auto max-w-[460px]">
-                            <ConstellationBoard
-                              constellation={chosen}
-                              slots={settings.constellationSlots}
-                              boxes={boundNumbers}
-                              labels={labels}
-                              health={health}
-                              onSlotsChange={(constellationSlots) =>
-                                void update({ constellationSlots })
-                              }
-                            />
-                          </div>
-                          <p className="mt-1 text-center font-mono text-[10px] text-static/70">
-                            {chosen.name} — drag a box to a different star to
-                            rearrange
-                          </p>
-                        </div>
-                      </>
-                    ) : (
-                      <p className="pb-2 text-[12px] leading-relaxed text-static">
-                        No constellation chosen yet — the status display uses
-                        the plain layout. Pick one below.
-                      </p>
-                    )}
-                    <div className="mt-3">
-                      <ConstellationPicker
-                        selected={settings.constellation}
-                        boxCount={boundNumbers.length}
-                        onSelect={onPickConstellation}
-                      />
-                    </div>
-                  </div>
-                </HudTile>
-              </motion.div>
             </motion.div>
           </fieldset>
 
@@ -346,46 +241,5 @@ function StorageFact({
     <span style={{ color: "var(--color-status-ok)" }}>
       mirroring every {Math.round(backup.intervalSeconds)}s
     </span>
-  );
-}
-
-/**
- * The Constellation tile's fact: the chosen sky, and the bound boxes as the
- * same health dots the sidebar widget and the Rig tab's Boxes tile draw
- * (`NODE_FILL`, four states). The board below lights its nodes from the same
- * map, so the corner is a preview of the drawing, not a second opinion.
- */
-function ConstellationFact({
-  name,
-  bound,
-  health,
-}: {
-  name: string | null;
-  bound: readonly number[];
-  health: Partial<Record<number, BoxHealth>>;
-}) {
-  return (
-    <>
-      {bound.length > 0 && (
-        <span className="flex items-center gap-1" aria-hidden>
-          {bound.map((box) => (
-            <span
-              key={box}
-              className="size-1.5 rounded-full"
-              style={{ background: NODE_FILL[health[box] ?? "absent"] }}
-            />
-          ))}
-        </span>
-      )}
-      <span className={name ? "text-starlight" : undefined}>
-        {name ?? "plain layout"}
-        {bound.length > 0 && (
-          <span className="text-static">
-            {" · "}
-            {bound.length} {bound.length === 1 ? "box" : "boxes"}
-          </span>
-        )}
-      </span>
-    </>
   );
 }

@@ -4,7 +4,8 @@ Implements `TASKS.md#sketch-library`. Owned by the sidecar because filesystem wo
 `arduino-cli` interaction already live here.
 
 SKETCHES SHIP WITH THE APP. There is no configured sketch directory: the
-library is staged into the installer by `scripts/stage-sketches.mjs` and located
+library is copied into the installer from `firmware/` by `scripts/package-resources.mjs`
+(a checkout reads `firmware/` in place) and located
 here by `library_root()`. That makes the failure modes structural rather than
 user-authored — a library can be missing or partial, but it can no longer be
 *misconfigured*, and "you haven't set this up yet" stopped being a state anyone
@@ -162,11 +163,12 @@ def library_root() -> tuple[Path | None, LibrarySource]:
 
         $EPHYMERIS_SKETCH_LIBRARY   a developer pointing somewhere else
         $EPHYMERIS_BUNDLED_SKETCHES the installed app, set by the Tauri shell
-        <repo>/sketches             a checkout, staged by npm run predev
+        <repo>/firmware             a checkout, read in place
 
     The last one is not a fallback for a broken install — it is the only way
-    `npm run tauri:dev` works at all, since a dev run has no staged installer
-    resources.
+    `npm run tauri:dev` works at all, since a dev run has no installer
+    resources. It is the firmware source itself, not a copy: nothing in a
+    checkout can drift from what is being edited.
     """
     override = os.environ.get(LIBRARY_ENV)
     if override and override.strip():
@@ -176,8 +178,8 @@ def library_root() -> tuple[Path | None, LibrarySource]:
     if bundled and bundled.strip():
         return _plain(bundled), "bundled"
 
-    # sidecar/ephymeris_sidecar/discovery.py -> <repo>/sketches
-    repo = Path(__file__).resolve().parent.parent.parent / "sketches"
+    # sidecar/ephymeris_sidecar/discovery.py -> <repo>/firmware
+    repo = Path(__file__).resolve().parent.parent.parent / "firmware"
     if repo.is_dir():
         return repo, "bundled"
     return None, "bundled"

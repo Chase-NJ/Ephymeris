@@ -199,7 +199,7 @@ exports `EPHYMERIS_BUNDLED_ARDUINO_CLI`, `EPHYMERIS_BUNDLED_ARDUINO_DATA_SEED` a
 > prefix. Windows APIs and Python accept it, so nothing looks wrong — but `arduino-cli` is Go, and given
 > `--libraries \\?\C:\…` it finds no libraries and says nothing. The compile then fails on
 > `#include <BehaviorBox.h>`, reading exactly like a library missing from the install. Dev builds never
-> see it, because they fall back to `<repo>/sketches`. `simplified()` leaves verbatim UNC paths and paths
+> see it, because they read `<repo>/firmware` in place. `simplified()` leaves verbatim UNC paths and paths
 > past `MAX_PATH` alone, where the prefix is needed; `discovery._plain()` strips it again on the Python side.
 
 ## Wire protocol
@@ -316,8 +316,8 @@ Four screens, **split by subject**, all writing through one `useSettings().updat
 
 | Screen | Route | Answers |
 |---|---|---|
-| **Settings** | `/settings` | Where data goes and how the app feels: directories, reduced motion, the status constellation |
-| **Rig** | `/config` (file `routes/Config.tsx`) | What this box *is*: box→board bindings and the handshake test, the utility baseline, default baud, the `arduino-cli` path, and the channel→pin wiring editor at `/config/wiring` ([TASKS.md](TASKS.md#rig-wiring)) |
+| **Settings** | `/settings` | Where data goes and how the app feels: directories, reduced motion |
+| **Rig** | `/config` (file `routes/Config.tsx`) | What this box *is*: box→board bindings and the handshake test, how the boxes are drawn (the status constellation), the utility baseline (read-only: the sketch is generated, not chosen), default baud, the `arduino-cli` path, and the channel→pin wiring editor at `/config/wiring` ([TASKS.md](TASKS.md#rig-wiring)) |
 | **Recording** | `/recording` | The RHX link and ports, each box's sync input, recording defaults ([RECORDING.md](RECORDING.md#recording-walkthrough)) |
 | **Task** | `/task` | What the animal does: saved tasks, the editor, the strobe vocabulary ([TASKS.md](TASKS.md#the-task-tab)) |
 
@@ -336,21 +336,20 @@ sidecar's receiving end: `sidecar/ephymeris_sidecar/settings.py`.
 | `dataDirectory` | Settings | yes | Base for new cohorts' data folders ([DATA.md](DATA.md#directory-layout-and-naming)) |
 | `backupDirectory` | Settings | yes | Mirror target ([DATA.md](DATA.md#backup-mirroring)). Setting it does not backfill |
 | `arduinoCliPath` | Rig | yes | Override for the bundled `arduino-cli` |
-| `utilitySketchName` | Rig | yes | The baseline sketch, or `null` for none ([Hardware utility baseline](#hardware-utility-baseline)) |
 | `defaultBaud` | Rig | yes | Starting baud per console ([Baud](#baud)) |
 | `boxes` | Rig (board, label), Recording (`intanDigitalIn`) | yes | The box list ([Box bindings](#box-bindings)) |
 | `intan` | Recording | yes | RHX's command, waveform and spike ports. No host: RHX is always local |
 | `recordingDefaults` | Recording, and the Record step | no | What a recording saves, thresholds, save root, per-box memory (`src/lib/intan/defaults.ts`) |
 | `reducedMotion` | Settings | no | Forces reduced motion on; the system preference applies on top |
-| `constellation` | Settings | no | Zodiac layout of the status constellation, validated against the catalogue on load |
-| `constellationSlots` | Settings (drag), Rig (box add/remove) | no | Which star each box sits on. `reconcileSlots` is the single authority and runs in the same write as a box add or remove |
+| `constellation` | Rig | no | Zodiac layout of the status constellation, validated against the catalogue on load |
+| `constellationSlots` | Rig (drag, and box add/remove) | no | Which star each box sits on. `reconcileSlots` is the single authority and runs in the same write as a box add or remove |
 | `taskDefaults` | none | no | Middle layer of the parameter merge, per sketch ([TASKS.md](TASKS.md#the-start-line)) |
 
 **Adding a key the sidecar doesn't read is a non-event, and so is removing one.** The sidecar's parser is
 deliberately lenient — an unknown key is ignored and a malformed value degrades to a default rather than
-killing the process that owns the ports. `normalizeSettings` drops retired keys; a path-valued
-`utilitySketchPath` heals to its basename on both sides. Keys naming a sketch use its **folder name, not a
-path**, because the bundled library's path differs per install while the name is what a session file
+killing the process that owns the ports. `normalizeSettings` drops retired keys (`arduinoDirectory`,
+and `utilitySketchName`/`utilitySketchPath` since the box utility became generated). Keys naming a sketch
+use its **folder name, not a path**, because the bundled library's path differs per install while the name is what a session file
 records. `taskDefaults` has no editor; entries for a sketch that no longer exists are inert, because the
 merge iterates the profile's own fields.
 
@@ -559,7 +558,11 @@ Per box, starting from `defaultBaud`; Debug Mode allows a per-box override.
 
 `sidecar/ephymeris_sidecar/utility.py` (`UtilityBaseline`). **The rig has a resting state and the app
 maintains it:** every bound box that isn't flashing, in a console or in a session should carry the
-operator's utility sketch (`utilitySketchName`). With a known sketch on every free box, the app can ask a
+box utility. That sketch is **not a setting**: it is the one bundled sketch that includes
+`UtilityChannels.h`, generated from this rig ([TASKS.md](TASKS.md#the-box-utility)), and a picker that
+could name any sketch — a behavior task included — was removed with that change. When the utility is
+rebuilt (a wiring change or a vocabulary edit), `rebuilt()` drops every belief and restores every idle,
+unpinned box, since each now carries an old build. With a known sketch on every free box, the app can ask a
 box to do things — light itself, prime a line — without first asking the operator to flash.
 
 ![The Rig tab: a Boxes table binding boxes 1 to 6 to boards DEMO-BOX-1 to 6 with a Test button each, and below it the Utility baseline section naming BOX_Utility, a Reflash boxes button and a Ready chip for every box](images/rig.webp)
@@ -584,7 +587,7 @@ over the wire first unpins the boxes it names; `force` skips the three "not forc
 
 ```mermaid
 flowchart TD
-    trigger["A trigger names the box"] --> gate{"Rig held, or no<br/>utility sketch named?"}
+    trigger["A trigger names the box"] --> gate{"Rig held, or no<br/>box utility in the library?"}
     gate -->|yes| nothing["Nothing queued"]
     gate -->|no| queue["Queued: lowest box first,<br/>one flash at a time"]
     queue --> failedBefore{"Failed before,<br/>not forced?"}
@@ -625,8 +628,8 @@ parallelise it, which would fight the one-owner rule.
 > silently, and the box could not be started. The two kinds of flash are told apart by
 > `suppressPassthroughResume` (`note_flashed(..., pin=not suppress)` in `app.py`). A pinned box reports
 > `pinned` and is skipped by **every automatic trigger**; only something a person did releases it: any
-> `utility.ensure` naming the box, a session releasing the rig, the board vanishing, a different utility
-> sketch being named, or flashing the utility sketch by hand. `force` overrides it. `test_utility.py` wires
+> `utility.ensure` naming the box, a session releasing the rig, the board vanishing, or flashing the
+> utility sketch by hand. `force` overrides it. `test_utility.py` wires
 > the idle hook to a no-op, which is how this hid; `test_debug_flash.py` wires it the way `app.py` does.
 
 ### Failed restores
@@ -1282,6 +1285,5 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 |---|---|
 | `protocol/schema.py`, `wire_dsl.py`, `generate.py` | The wire schema, its DSL, and the generator for the three generated files |
 | `scripts/gen-protocol.mjs` | `npm run gen:protocol` |
-| `scripts/stage-sketches.mjs` | Copies `firmware/` into the gitignored `sketches/` ([TASKS.md](TASKS.md#firmware)) |
 | `scripts/package-resources.mjs` | Stages the frozen sidecar, `arduino-cli` and its data seed for the installer |
 | `scripts/check.mjs` | `npm run check`: protocol freshness, typecheck, unit tests |

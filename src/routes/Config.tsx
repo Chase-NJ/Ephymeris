@@ -20,6 +20,7 @@ import { KindStrip } from "@/components/hardware/KindStrip";
 import { TextInput } from "@/components/common/controls";
 import { Dropdown } from "@/components/common/Dropdown";
 import { HudTile } from "@/components/common/HudTile";
+import { ConstellationTile } from "@/components/config/ConstellationTile";
 import { UtilitySketchPanel } from "@/components/config/UtilitySketchPanel";
 import { SettingRow } from "@/components/settings/SettingRow";
 import { BoxBindingsTable } from "@/components/settings/BoxBindingsTable";
@@ -51,18 +52,18 @@ import { useSidecar } from "@/lib/ws/context";
  *
  * Top to bottom it follows the order a rig comes up in: **Boxes** (bind a box
  * number to a board, name it, watch it come alive — with the handshake test to
- * prove a binding took), **Utility baseline** (the resting firmware and what
+ * prove a binding took), **Constellation** (how those boxes are drawn —
+ * `onBoxesChange` reconciles its slot map in the same write as a box edit),
+ * **Utility baseline** (the resting firmware and what
  * it is doing right now), **Wiring** (a door now, not a section — the
  * channel→pin editor lives at `/config/wiring` behind it, `RigWiring.tsx`),
  * then the two knobs that rarely move (baud, `arduino-cli`).
  *
  * What is NOT here, and why:
  *
- * - **The constellation board and picker are on Settings.** They style the
- *   status display — which star a box sits on — and never touch the hardware.
- *   `onBoxesChange` still reconciles the slot map, because *this* screen is
- *   where boxes appear and disappear, and the slot map has to follow whether
- *   or not anyone visits Settings.
+ * - **There is no utility-sketch picker.** The resting firmware is the box
+ *   utility the app generates from this rig (`TASKS.md#the-box-utility`); the
+ *   Utility baseline tile names it and reports on it, nothing more.
  * - **There is no setup wizard.** The page itself reads in setup order; first
  *   run lands here with an empty Boxes table and its own "add one for each
  *   box" prompt.
@@ -73,7 +74,7 @@ import { useSidecar } from "@/lib/ws/context";
  */
 export function Config() {
   const navigate = useNavigate();
-  const { settings, update, discovery, loaded, saveError } = useSettings();
+  const { settings, update, loaded, saveError } = useSettings();
   const { client, status } = useSidecar();
   const health = useBoxHealth();
   const handshake = useHandshakeTest();
@@ -200,21 +201,26 @@ export function Config() {
               </motion.div>
 
               <motion.div variants={RISE}>
+                <ConstellationTile
+                  boxes={settings.boxes}
+                  constellation={settings.constellation}
+                  constellationSlots={settings.constellationSlots}
+                  health={health}
+                  onChange={(patch) => void update(patch)}
+                />
+              </motion.div>
+
+              <motion.div variants={RISE}>
                 <HudTile
                   icon={Anchor}
                   label="Utility baseline"
-                  status={settings.utilitySketchName ?? "off"}
+                  status={utility.sketchName ?? "unavailable"}
                 >
                   <UtilitySketchPanel
-                    sketches={discovery.sketches}
                     boxes={settings.boxes}
-                    value={settings.utilitySketchName}
                     status={utility}
                     busy={reflashing}
                     connected={connected}
-                    onChange={(utilitySketchName) =>
-                      void update({ utilitySketchName })
-                    }
                     onReflash={() => void reflashBaseline()}
                   />
                 </HudTile>

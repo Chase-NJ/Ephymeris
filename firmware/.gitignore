@@ -1,0 +1,18 @@
+# macOS Finder metadata (the old quoted patterns never actually matched)
+.DS_Store
+**/.DS_Store
+
+# Arduino build artifacts
+build/
+*.hex
+*.elf
+
+# Host compile-check binaries (libraries/BehaviorBox/extras/host_test/run*.sh,
+# and the MSVC equivalents a Windows machine produces)
+libraries/**/extras/host_test/test
+libraries/**/extras/host_test/test_box
+libraries/**/extras/host_test/*.exe
+libraries/**/extras/host_test/*.obj
+
+# NOTE: the shared library at libraries/BehaviorBox/ IS tracked on purpose --
+# every sketch depends on it, and it is what arduino-cli --libraries points at.

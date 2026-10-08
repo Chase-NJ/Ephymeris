@@ -1794,6 +1794,7 @@ One row of a `grid` control — a named piece of hardware with its own commands 
 | `state` *(optional)* | string | Telemetry key whose 0/1 value lights this row's indicator. |
 | `toggle` *(optional)* | string | Command that latches this channel. |
 | `pulse` *(optional)* | string | Command that pulses this channel. |
+| `kind` *(optional)* | string | The rig channel kind behind the row (`emitter`, `reward`, `cue`, `vacuum`). Always set by a generated utility profile. |
 
 <a id="shape-controloption"></a>
 #### ControlOption
@@ -1900,7 +1901,7 @@ An Auto-Balance preview. Nothing is written; apply via cohorts.update.
 <a id="shape-identifyspec"></a>
 #### IdentifySpec
 
-The two commands that make a box announce itself — a trial light, a buzzer, whatever the rig has (`ARCHITECTURE.md#hardware-utility-baseline`). Declared by the sketch so the app never has to know that a Hart-lab box says `ON LIGHT`.
+The two commands that make a box announce itself — a trial light, a buzzer, whatever the rig has (`ARCHITECTURE.md#hardware-utility-baseline`). Declared by the sketch so the app never has to know that a Hart-lab box says `ON trial_light`.
 
 | Field | Type | Notes |
 |---|---|---|

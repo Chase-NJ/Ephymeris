@@ -263,7 +263,7 @@ SHAPES: Final[dict[str, Any]] = {
     "LiveMetric": ('obj', (('id', 'str', False), ('label', 'str', False), ('triggerCode', 'int', False), ('successCode', 'int', False), ('alternateCode', 'int', False), ('windowSize', 'int', False))),
     "ProfileKind": ('lit', ('behavior', 'utility')),
     "ControlOption": ('obj', (('label', 'str', False), ('command', 'str', False))),
-    "ControlChannel": ('obj', (('label', 'str', False), ('state', 'str', True), ('toggle', 'str', True), ('pulse', 'str', True))),
+    "ControlChannel": ('obj', (('label', 'str', False), ('state', 'str', True), ('toggle', 'str', True), ('pulse', 'str', True), ('kind', 'str', True))),
     "Control": ('obj', (('id', 'str', False), ('label', 'str', False), ('type', ('lit', ('button', 'select', 'grid')), False), ('command', 'str', True), ('options', ('list', ('ref', 'ControlOption')), True), ('channels', ('list', ('ref', 'ControlChannel')), True))),
     "TelemetryField": ('obj', (('key', 'str', False), ('label', 'str', False))),
     "TelemetrySpec": ('obj', (('match', 'str', False), ('fields', ('list', ('ref', 'TelemetryField')), False))),

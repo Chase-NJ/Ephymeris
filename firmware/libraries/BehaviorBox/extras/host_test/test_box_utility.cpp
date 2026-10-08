@@ -1,20 +1,15 @@
 /*
-  Host test for Utility/BOX_Utility.ino.
+  Host test for BoxUtility.h, through Utility/BOX_Utility/BOX_Utility.ino.
 
-  The sketch's command dispatch, channel-token parsing, and STATUS formatting
-  are pure logic sitting on top of digitalWrite/Serial — so they can be driven
+  The utility's command dispatch, channel lookup, STATUS formatting and
+  self-test are pure logic over digitalWrite/Serial, so they can be driven
   off-target through the instrumented shim in box_shim/Arduino.h. This does NOT
   replace flashing to the rig (only arduino-cli does the full AVR compile, and
-  only a real box proves a solenoid actually fires), but it does prove the part
-  most likely to be wrong: that "TOGGLE F2" opens pin 44 and nothing else.
+  only a real box proves a solenoid fires), but it proves the part most likely
+  to be wrong: that "TOGGLE fluid_1" opens pin 44 and nothing else.
 
-  NAMING: the sketch is #included as a translation unit, so every file-scope
-  name in it is in scope here — and BOX_Utility.ino already has a `check()`
-  (its self-test reporter, which even prints the same "[pass]/[FAIL]" prose)
-  and a `lastStatus` (its heartbeat timestamp). This harness therefore calls
-  its own helpers `expect()` and `lastStatusLine()`. The sketch's names are the
-  ones flashed to hardware; when they collide, THIS file yields. Renaming
-  either of these back is a compile error, not a style question.
+  The box is utility_fixture.h -- smaller than the lab's on purpose, so passing
+  here means the engine reads its table rather than knowing a box by heart.
 
   Usage:  sh run_box.sh
 */
@@ -25,9 +20,11 @@
 #include <iostream>
 #include <string>
 
-// The sketch under test, compiled as a translation unit.
 #include "strobe_fixture.h"  // arbitrary codes; the real ones are generated
+#include "utility_fixture.h" // a small box; the real table is generated
 #include "../../../../Utility/BOX_Utility/BOX_Utility.ino"
+
+using namespace box_utility;
 
 static int failures = 0;
 
@@ -37,12 +34,11 @@ static void expect(const char *what, bool ok)
   if (!ok) failures++;
 }
 
-/* Run one whole command line through the sketch exactly as the app would:
-   queue it on the serial input, then let loop() pick it up. */
+/* Run one command line through the sketch exactly as the app would. */
 static void sendCommand(const char *line)
 {
   bb_feed(line);
-  loop();
+  ::loop();
 }
 
 static bool outputContains(const char *needle)
@@ -50,7 +46,6 @@ static bool outputContains(const char *needle)
   return bb_output().find(needle) != std::string::npos;
 }
 
-/* The most recent STATUS line the sketch emitted. */
 static std::string lastStatusLine()
 {
   const std::string &all = bb_output();
@@ -62,175 +57,129 @@ static std::string lastStatusLine()
 
 static bool statusHas(const char *token)
 {
-  std::string s = lastStatusLine();
-  return s.find(token) != std::string::npos;
+  return lastStatusLine().find(token) != std::string::npos;
 }
+
+static bool allClosed()
+{
+  for (int i = 0; i < NUM_OUTPUTS; i++)
+    if (digitalRead(outputs[i].pin) != LOW) return false;
+  return true;
+}
+
+const int ODOR_1 = 22, ODOR_3 = 26, LEFT_REWARD = 42, RIGHT_REWARD = 44;
+const int LIGHT = 36, VACUUM = 40, ODOR_PORT = 2, LEFT_WELL = 4, RIGHT_WELL = 3;
 
 int main()
 {
   // Beams read HIGH (clear) at rest, as INPUT_PULLUP does with an intact beam.
   for (int i = 0; i < BB_MAX_PIN; i++) bb_pinValue[i] = HIGH;
-  setup();
+  ::setup();
 
-  std::cout << "BOX_Utility host test\n";
+  std::cout << "BoxUtility host test\n";
 
-  // --- boot state -------------------------------------------------------
-  expect("boot lands every output LOW", digitalRead(Fluids[0]) == LOW &&
-                                       digitalRead(Odors[0]) == LOW &&
-                                       digitalRead(vac) == LOW &&
-                                       digitalRead(trialLight) == LOW);
+  // --- boot -----------------------------------------------------------------
+  expect("boot lands every output LOW", allClosed());
+  expect("boot pulls every beam up", bb_pinMode[ODOR_PORT] == INPUT_PULLUP &&
+                                     bb_pinMode[RIGHT_WELL] == INPUT_PULLUP);
   expect("boot announces READY, like every task sketch", outputContains("READY"));
-  expect("boot announces itself in the console", outputContains("BOX Utility."));
   expect("boot emits a STATUS snapshot", statusHas("mode=idle"));
+  expect("STATUS carries a key per output, named as on the Rig page",
+         statusHas("odor_line_1=0") && statusHas("odor_line_3=0") &&
+         statusHas("fluid_1=0") && statusHas("trial_light=0") && statusHas("vacuum=0"));
+  expect("STATUS carries a key per beam", statusHas("odor_port=0") && statusHas("right_well=0"));
+  expect("the table, not the lab's box, decides what exists", !statusHas("odor_line_4"));
 
-  // --- nothing runs without the app ------------------------------------
-  // TEST_Box started its self-test on an odor poke. This sketch is now the
-  // resting firmware on every idle box, and animals are placed into boxes
-  // while it runs — a nose poke must not fire twelve odor lines into an
-  // occupied chamber.
+  // --- nothing runs without the app -------------------------------------------
+  // This is the resting firmware on every idle box, and animals are placed into
+  // boxes while it runs: a held nose poke must fire nothing.
   bb_resetCapture();
-  bb_pinValue[odorPort] = LOW; // a poke, held
-  // Long enough to clear the 1 s STATUS heartbeat (loop() delays pollingRate
-  // per pass and the shim's millis advances on delay), so there is a fresh
-  // status to read — and so a *held* poke is proven harmless, not just a brief one.
-  for (int i = 0; i < 600; i++) loop();
+  bb_pinValue[ODOR_PORT] = LOW;
+  for (int i = 0; i < 600; i++) ::loop(); // past the 1 s heartbeat
   expect("an odor poke starts nothing", !outputContains("Box self-test starting"));
-  expect("an odor poke leaves the box closed", digitalRead(Odors[0]) == LOW &&
-                                              digitalRead(Fluids[0]) == LOW &&
-                                              digitalRead(vac) == LOW);
-  expect("an odor poke leaves it idle", statusHas("mode=idle"));
-  expect("the poke is still reported", statusHas("beams=100"));
-  bb_pinValue[odorPort] = HIGH; // beam clear again for the checks below
-  expect("STATUS carries a key per fluid line", statusHas("f1=0") && statusHas("f4=0"));
-  expect("STATUS carries a key per odor line", statusHas("o1=0") && statusHas("o12=0"));
-  expect("STATUS carries vac/light/pulse", statusHas("vac=0") && statusHas("light=0") &&
-                                          statusHas("pulse=200"));
+  expect("an odor poke leaves the box closed", allClosed());
+  expect("the poke is reported on its own key", statusHas("odor_port=1") && statusHas("left_well=0"));
+  bb_pinValue[ODOR_PORT] = HIGH;
 
-  // --- toggling each solenoid ------------------------------------------
+  // --- one output, by name --------------------------------------------------------
   bb_resetCapture();
-  sendCommand("TOGGLE F2");
-  expect("TOGGLE F2 opens the left-2 fluid pin", digitalRead(Fluids[1]) == HIGH);
-  expect("TOGGLE F2 touches nothing else", digitalRead(Fluids[0]) == LOW &&
-                                          digitalRead(Fluids[2]) == LOW &&
-                                          digitalRead(Fluids[3]) == LOW);
-  expect("TOGGLE F2 reports f2=1", statusHas("f2=1"));
+  sendCommand("TOGGLE fluid_1");
+  expect("TOGGLE fluid_1 opens its pin", digitalRead(RIGHT_REWARD) == HIGH);
+  expect("and touches nothing else", digitalRead(LEFT_REWARD) == LOW && digitalRead(ODOR_1) == LOW);
+  expect("and reports fluid_1=1", statusHas("fluid_1=1"));
+  sendCommand("TOGGLE fluid_1");
+  expect("TOGGLE again closes it", digitalRead(RIGHT_REWARD) == LOW);
 
-  sendCommand("TOGGLE F2");
-  expect("TOGGLE F2 again closes it", digitalRead(Fluids[1]) == LOW);
+  sendCommand("TOGGLE odor_line_3");
+  sendCommand("TOGGLE vacuum");
+  sendCommand("TOGGLE trial_light");
+  expect("every kind is addressable by name", digitalRead(ODOR_3) == HIGH &&
+                                             digitalRead(VACUUM) == HIGH && digitalRead(LIGHT) == HIGH);
 
-  bb_resetCapture();
-  sendCommand("TOGGLE O7");
-  expect("TOGGLE O7 maps to Odors[6]", digitalRead(Odors[6]) == HIGH);
-  expect("TOGGLE O7 reports o7=1", statusHas("o7=1"));
-
-  sendCommand("TOGGLE O12");
-  expect("TOGGLE O12 maps to Odors[11]", digitalRead(Odors[11]) == HIGH);
-
-  sendCommand("TOGGLE VAC");
-  sendCommand("TOGGLE LIGHT");
-  expect("VAC and LIGHT are addressable", digitalRead(vac) == HIGH &&
-                                         digitalRead(trialLight) == HIGH);
-
-  // --- ALLOFF is the safety net ----------------------------------------
+  // --- ALLOFF is the safety net ----------------------------------------------------
   bb_resetCapture();
   sendCommand("ALLOFF");
-  {
-    bool allClosed = true;
-    for (int i = 0; i < NUM_ODORS; i++) if (digitalRead(Odors[i]) != LOW) allClosed = false;
-    for (int i = 0; i < NUM_FLUIDS; i++) if (digitalRead(Fluids[i]) != LOW) allClosed = false;
-    if (digitalRead(vac) != LOW || digitalRead(trialLight) != LOW) allClosed = false;
-    expect("ALLOFF closes every channel", allClosed);
-  }
-  expect("ALLOFF reports the cleared state", statusHas("o7=0") && statusHas("o12=0") &&
-                                            statusHas("vac=0"));
+  expect("ALLOFF closes every output", allClosed());
+  expect("and reports it", statusHas("odor_line_3=0") && statusHas("vacuum=0"));
 
-  // --- pulsing ----------------------------------------------------------
+  // --- pulsing ------------------------------------------------------------------------
   unsigned long before = millis();
-  sendCommand("PULSE F3");
-  expect("PULSE leaves the line closed", digitalRead(Fluids[2]) == LOW);
-  expect("PULSE held it open for the pulse width", millis() - before >= 200);
-
+  sendCommand("PULSE fluid_0");
+  expect("PULSE leaves the line closed", digitalRead(LEFT_REWARD) == LOW);
+  expect("after holding it open for the pulse width", millis() - before >= 200);
   bb_resetCapture();
   sendCommand("SET PULSE=500");
   expect("SET PULSE takes an in-range width", statusHas("pulse=500"));
   before = millis();
-  sendCommand("PULSE O1");
+  sendCommand("PULSE odor_line_1");
   expect("PULSE honours the new width", millis() - before >= 500);
-  expect("PULSE O1 closed again", digitalRead(Odors[0]) == LOW);
-
-  // A refused SET PULSE changes nothing *and says nothing*: the dispatch
-  // returns without reporting, exactly as it does for any unrecognised input.
-  // So the state is asserted directly and the status is asked for — checking
-  // `statusHas` against a freshly-reset capture would be testing that a
-  // refusal emits a STATUS line, which it deliberately does not.
-  bb_resetCapture();
   sendCommand("SET PULSE=99999");
-  expect("an out-of-range pulse width is refused", pulseMs == 500);
   sendCommand("SET PULSE=1");
-  expect("a too-short pulse width is refused", pulseMs == 500);
-  sendCommand("STATUS?");
-  expect("and the width it reports is the one it kept", statusHas("pulse=500"));
+  expect("out-of-range widths are refused", pulseMs == 500);
 
-  // --- explicit ON/OFF --------------------------------------------------
-  sendCommand("ON F1");
-  expect("ON opens", digitalRead(Fluids[0]) == HIGH);
-  sendCommand("ON F1");
-  expect("ON is idempotent, unlike TOGGLE", digitalRead(Fluids[0]) == HIGH);
-  sendCommand("OFF F1");
-  expect("OFF closes", digitalRead(Fluids[0]) == LOW);
-
-  // --- junk is ignored, not obeyed --------------------------------------
-  sendCommand("TOGGLE O13");   // out of range
-  sendCommand("TOGGLE F5");    // out of range
-  sendCommand("TOGGLE NOPE");  // unknown token
-  sendCommand("WIGGLE F1");    // unknown verb
-  sendCommand("");             // empty
-  {
-    bool stillClosed = true;
-    for (int i = 0; i < NUM_ODORS; i++) if (digitalRead(Odors[i]) != LOW) stillClosed = false;
-    for (int i = 0; i < NUM_FLUIDS; i++) if (digitalRead(Fluids[i]) != LOW) stillClosed = false;
-    expect("malformed commands change nothing", stillClosed);
-  }
-
-  // --- case insensitivity (a human typing into the console) -------------
-  sendCommand("toggle f4");
-  expect("commands are case-insensitive", digitalRead(Fluids[3]) == HIGH);
+  // --- ON / OFF, junk, case ---------------------------------------------------------
+  sendCommand("ON fluid_0");
+  sendCommand("ON fluid_0");
+  expect("ON is idempotent, unlike TOGGLE", digitalRead(LEFT_REWARD) == HIGH);
+  sendCommand("OFF fluid_0");
+  expect("OFF closes", digitalRead(LEFT_REWARD) == LOW);
+  sendCommand("TOGGLE odor_line_4"); // not on this box
+  sendCommand("TOGGLE F1");          // the retired token
+  sendCommand("WIGGLE fluid_0");     // unknown verb
+  sendCommand("");
+  expect("malformed and foreign commands change nothing", allClosed());
+  sendCommand("toggle FLUID_1");
+  expect("commands are case-insensitive", digitalRead(RIGHT_REWARD) == HIGH);
   sendCommand("alloff");
 
-  // --- the self-test ----------------------------------------------------
+  // --- the self-test: the operator wasn't there ---------------------------------
   bb_resetCapture();
-  // Leave every beam clear; the three prompted breaks will time out, which is
-  // the honest "operator wasn't there" path and must still finish and report.
   sendCommand("SELFTEST");
-
   expect("self-test announces itself", outputContains("Box self-test starting"));
-  expect("self-test walks the odor lines", outputContains("Odor lines: all 12 fired"));
-  expect("self-test walks the fluid lines", outputContains("Fluid lines: all 4 pulsed"));
-  expect("self-test blinks the light", outputContains("Trial light: done"));
-  expect("self-test prompts for each beam", outputContains("block the ODOR PORT beam") &&
-                                           outputContains("block the LEFT WELL beam") &&
-                                           outputContains("block the RIGHT WELL beam"));
-  expect("self-test confirms the resting-beam check", outputContains("[pass] all three beams read clear at rest"));
-  expect("unbroken beams are reported as failures", outputContains("[FAIL] odor port"));
-  expect("self-test reports a pass tally", outputContains("of 4 automatic checks passed"));
-  expect("self-test completes", outputContains("Self-test complete"));
-  expect("self-test leaves the box safe", digitalRead(Fluids[0]) == LOW &&
-                                         digitalRead(Odors[0]) == LOW &&
-                                         digitalRead(vac) == LOW &&
-                                         digitalRead(trialLight) == LOW);
-  expect("self-test returns to idle", statusHas("mode=idle") && statusHas("test=done"));
+  expect("it names each line by its Rig label", outputContains("Odor 2 (odor_line_2)") &&
+                                                outputContains("Right reward (fluid_1)"));
+  expect("stimulus lines fire with the vacuum closed",
+         outputContains("each fires for 500 ms with the vacuum closed"));
+  expect("it blinks the cue", outputContains("Cue, six blinks: Trial light"));
+  expect("it prompts for each beam by label", outputContains("block the odor port beam") &&
+                                              outputContains("block the right well beam"));
+  expect("the resting check passes", outputContains("[pass] every beam reads clear at rest"));
+  expect("an unbroken beam is a failure", outputContains("[FAIL] odor port"));
+  expect("the tally counts one check per beam, plus rest", outputContains("1 of 4 automatic checks passed"));
+  expect("it completes", outputContains("Self-test complete"));
+  expect("it leaves the box safe", allClosed());
+  expect("and idle", statusHas("mode=idle") && statusHas("test=done"));
 
-  // --- a self-test that finds working sensors ---------------------------
+  // --- the self-test: working sensors ------------------------------------------------
   bb_resetCapture();
-  // A beam that reads LOW is a blocked beam: the prompted checks pass at once.
-  bb_pinValue[odorPort] = LOW;
-  bb_pinValue[leftWell] = LOW;
-  bb_pinValue[rightWell] = LOW;
+  bb_pinValue[ODOR_PORT] = LOW;
+  bb_pinValue[LEFT_WELL] = LOW;
+  bb_pinValue[RIGHT_WELL] = LOW;
   sendCommand("SELFTEST");
-  expect("blocked beams fail the resting check", outputContains("[FAIL] all three beams read clear at rest"));
-  expect("blocked beams pass their prompted check", outputContains("[pass] odor port") &&
-                                                   outputContains("[pass] left well") &&
-                                                   outputContains("[pass] right well"));
+  expect("blocked beams fail the resting check", outputContains("[FAIL] every beam reads clear at rest"));
+  expect("and pass their prompted checks", outputContains("[pass] odor port") &&
+                                           outputContains("[pass] left well") &&
+                                           outputContains("[pass] right well"));
   expect("tally counts the passes", outputContains("3 of 4 automatic checks passed"));
 
   std::cout << (failures == 0 ? "\nall checks passed\n" : "\nFAILURES\n");

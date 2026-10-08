@@ -22,7 +22,7 @@ import type { ControlChannel } from "@/lib/sessions/types";
  * the next line. Firing every command at once would work — the serial buffer
  * holds them — but the app would have no idea which line was open. So each
  * pulse is sent when the previous one's time is up, plus a little slack, and
- * the board's own `STATUS` lines (`f1=1` … `f1=0`) light the row underneath as
+ * the board's own `STATUS` lines (`fluid_0=1` … `fluid_0=0`) light the row underneath as
  * the truth of what is happening.
  *
  * **Long primes are chunked.** The sketch caps a pulse at 5 s. A 12 s prime is

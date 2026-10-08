@@ -33,6 +33,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Diagnostics](#diagnostics)
   - [Saving and regeneration](#saving-and-regeneration)
   - [Rebuilt bundled sketches](#rebuilt-bundled-sketches)
+  - [The box utility](#the-box-utility)
   - [Order is meaning](#order-is-meaning)
 - [Rig wiring](#rig-wiring)
   - [Three documents](#three-documents)
@@ -356,10 +357,10 @@ section headers count what is open. Prime is the app's own control
 ### Identify
 
 ```jsonc
-{ "identify": { "on": "ON LIGHT", "off": "OFF LIGHT" } }
+{ "identify": { "on": "ON trial_light", "off": "OFF trial_light" } }
 ```
 
-The two commands that make a box announce itself, used by the utility baseline's `utility.identify` and the guided placement walk ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). Keeping them in the profile is what lets the walk work on a rig that signals with a buzzer, another LED, or not at all. **Both halves are required together** — a box that can be lit but not unlit would announce itself indefinitely. Omitting the block is normal: that box simply cannot be asked. `identify` is not the same as a `LIGHT` row in a `grid`: that is a manual control; this is a contract the app drives on its own.
+The two commands that make a box announce itself, used by the utility baseline's `utility.identify` and the guided placement walk ([ARCHITECTURE.md](ARCHITECTURE.md#hardware-utility-baseline)). Keeping them in the profile is what lets the walk work on a rig that signals with a buzzer, another LED, or not at all. **Both halves are required together** — a box that can be lit but not unlit would announce itself indefinitely. Omitting the block is normal: that box simply cannot be asked. For the box utility it is generated, on the rig's first `cue` channel ([The box utility](#the-box-utility)). `identify` is not the same as that channel's row in a `grid`: that is a manual control; this is a contract the app drives on its own.
 
 ### Legacy names
 
@@ -485,6 +486,31 @@ The shipped sketches compile against `BoxPins.h`'s defaults — the box as built
 | **Pins and the vocabulary** (`bundled_pins_h`) | No counts or trial table — those are what a task adds — but every live code, since `BoxStrobes.h` defines none. |
 | **Always rebuilt from the bundle** | `repin` refuses a source inside the rebuild root, since it clears the target before copying. |
 | **On failure the bundled entry stands** | And refuses to compile at `BoxStrobes.h`, loudly — a refused flash with a reason beats firmware strobing numbers the machine decodes differently. |
+
+### The box utility
+
+`BOX_Utility` is the resting firmware on every idle box and Debug Mode's control panel: it latches and pulses outputs, primes lines, and runs a hardware self-test. **Nothing in it describes the box.** The logic is written once in the library's `BoxUtility.h` and host-tested (`extras/host_test/run_box.sh`, against a deliberately smaller fixture box). What the box *is* comes from the rig, through `taskdef/utility.py`, whenever the sketch is rebuilt (every start, wiring change and vocabulary edit, the same triggers as any [rebuilt bundled sketch](#rebuilt-bundled-sketches)).
+
+```mermaid
+flowchart LR
+    rig["Rig page<br/>channels, pins, labels"] --> gen["taskdef/utility.py"]
+    tmpl["firmware/Utility/BOX_Utility/task.json<br/>buttons, pulse select, legacyNames"] --> gen
+    gen --> h["UtilityChannels.h<br/>one row per output and beam"]
+    gen --> tj["task.json<br/>+ grids, beam fields, identify"]
+    h --> eng["BoxUtility.h<br/>commands, STATUS, self-test"]
+    tj --> dm["Debug Mode panel"]
+```
+
+| From the rig | Becomes |
+|---|---|
+| Every `emitter`, `reward`, `cue` and `vacuum` channel, in declaration order within its kind | An output row: its **channel name** is the command token (`PULSE fluid_2`) and STATUS key (`fluid_2=1`); its **Rig label** names it in the self-test and the Debug Mode grid (a reward line adds its well) |
+| Every `engagement` and `response` channel | A beam: a STATUS key, a telemetry field, a prompted step in the self-test |
+| The first `cue` | The `identify` pair (`ON trial_light` / `OFF trial_light`) |
+| `sync` | Nothing. A pulse on it would be an edge in a recording |
+
+- **Opt-in is the include.** A sketch whose `.ino` includes `UtilityChannels.h` is generated (`wants_utility`), as one including `TaskPins.h` is re-pinned. The shipped `UtilityChannels.h` declares nothing, so a bare build stops at `BoxUtility.h`'s `#error`.
+- **The profile is merged, not replaced.** The folder's own `task.json` keeps what does not depend on the box. The generator adds three grids (`fluids`, `aux`, `emitters`) whose rows carry an explicit `kind`, beam telemetry fields and `identify`. `fluids` keeps its id because Prime finds the reward grid by it.
+- **The self-test follows the table.** Stimulus lines fire with the vacuum energised, reward lines pulse one by one with their labels printed, each cue blinks, then every beam must read clear at rest and break when prompted. The tally is one check per beam plus the rest check.
 
 ### Order is meaning
 

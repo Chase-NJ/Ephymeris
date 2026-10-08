@@ -330,6 +330,9 @@ class Channel:
     well: str | None = None        # reward lines declare which port they serve
     port_slot: int | None = None   # response ports: which strobe family they report with
     rationale: str = ""            # what the channel means
+    #: What the operator calls it on the Rig page. The rig document's own
+    #: label, else the name with spaces -- what the editor shows either way.
+    label: str = ""
     pin_note: str = ""             # why THIS pin, when there is anything to say
     pin_source: str = ""           # the BehaviorBox.h line the number came from
 
@@ -391,6 +394,7 @@ class ChannelMap:
                 well=c.get("well"),
                 port_slot=c.get("port_slot"),
                 rationale=c.get("rationale", ""),
+                label=str(c.get("label") or name.replace("_", " ")),
                 pin_note=pins[name].get("note", ""),
                 pin_source=pins[name].get("source", ""),
             )

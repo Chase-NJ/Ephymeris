@@ -383,7 +383,13 @@ function SelectControl({
  * than from a declared kind because a `ControlChannel` declares none — and
  * adding one would change `profile_hash` for every utility profile.
  */
+/**
+ * What a row drives. A generated profile says so outright (`kind`, from the
+ * Rig page — `TASKS.md#the-box-utility`); the key-shape guess is for a
+ * hand-written profile that predates it.
+ */
 function familyOf(ch: ControlChannel): keyof typeof KIND_COLOR | undefined {
+  if (ch.kind && ch.kind in KIND_COLOR) return ch.kind as keyof typeof KIND_COLOR;
   const key = ch.state?.toLowerCase() ?? "";
   if (/^f\d+$/.test(key)) return "reward";
   if (/^o\d+$/.test(key)) return "emitter";

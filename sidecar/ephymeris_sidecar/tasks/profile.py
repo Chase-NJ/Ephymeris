@@ -170,11 +170,17 @@ class ControlChannel:
     state: str | None = None
     toggle: str | None = None
     pulse: str | None = None
+    #: The rig channel kind behind the row (`emitter`, `reward`, …), when the
+    #: profile says — a generated one always does. Lets Debug Mode colour and
+    #: find rows by what they ARE rather than by guessing from their names.
+    kind: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"label": self.label}
         if self.state is not None:
             out["state"] = self.state
+        if self.kind is not None:
+            out["kind"] = self.kind
         if self.toggle is not None:
             out["toggle"] = self.toggle
         if self.pulse is not None:
@@ -241,7 +247,7 @@ class Identify:
     """The two commands that make a box announce itself (`TASKS.md#identify`).
 
     Declared by the sketch, never assumed by the app: "point at box 3" is a
-    universal thing to want and ``ON LIGHT`` is a Hart-lab detail. A utility
+    universal thing to want and ``ON trial_light`` is a Hart-lab detail. A utility
     profile that omits it simply can't be asked, which the guided placement
     walk degrades around rather than refusing.
     """
@@ -776,12 +782,14 @@ def _parse_control_channels(control_id: str, raw: Any) -> list[ControlChannel]:
                 f"{control_id} channel {label!r} needs a toggle or a pulse command"
             )
         state = entry.get("state")
+        kind = entry.get("kind")
         channels.append(
             ControlChannel(
                 label=label,
                 state=state if isinstance(state, str) and state else None,
                 toggle=toggle if isinstance(toggle, str) and toggle else None,
                 pulse=pulse if isinstance(pulse, str) and pulse else None,
+                kind=kind if isinstance(kind, str) and kind else None,
             )
         )
     return channels

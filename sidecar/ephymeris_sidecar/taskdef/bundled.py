@@ -34,11 +34,13 @@ a reason beats firmware strobing numbers the machine decodes differently.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from pathlib import Path
 
 from ..rig import registry
+from . import utility
 from .generate import bundled_pins_h
 
 log = logging.getLogger(__name__)
@@ -96,8 +98,20 @@ def repin(sketch_dir: Path, category: str, root: Path) -> Path | None:
         (target / PINS_HEADER).write_text(
             bundled_pins_h(source.name), encoding="utf-8"
         )
+        if utility.wants_utility(target):
+            # The box utility gets the rest of the box too: its channel table
+            # and the Debug Mode half of its profile (`taskdef/utility.py`).
+            (target / utility.UTILITY_HEADER).write_text(
+                utility.utility_channels_h(source.name), encoding="utf-8"
+            )
+            profile_path = target / "task.json"
+            template = json.loads(profile_path.read_text(encoding="utf-8"))
+            profile_path.write_text(
+                json.dumps(utility.utility_profile(template), indent=2) + "\n",
+                encoding="utf-8",
+            )
         return target
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         log.warning("could not rebuild %s against this rig's wiring (%s)", source.name, exc)
         shutil.rmtree(target, ignore_errors=True)
         return None

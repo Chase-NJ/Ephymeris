@@ -608,6 +608,13 @@ SHAPES = (
             ),
             f("toggle", STR, optional=True, doc="Command that latches this channel."),
             f("pulse", STR, optional=True, doc="Command that pulses this channel."),
+            f(
+                "kind",
+                STR,
+                optional=True,
+                doc="The rig channel kind behind the row (`emitter`, `reward`, `cue`, "
+                "`vacuum`). Always set by a generated utility profile.",
+            ),
         ),
         doc="One row of a `grid` control — a named piece of hardware with its "
         "own commands and its own live state key.",
@@ -646,7 +653,7 @@ SHAPES = (
         doc="The two commands that make a box announce itself — a trial light, "
         "a buzzer, whatever the rig has (`ARCHITECTURE.md#hardware-utility-baseline`). "
         "Declared by the sketch so the app never has to know that a Hart-lab "
-        "box says `ON LIGHT`.",
+        "box says `ON trial_light`.",
     ),
     Shape(
         "TaskProfile",

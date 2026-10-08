@@ -684,6 +684,11 @@ export interface ControlChannel {
   toggle?: string;
   /** Command that pulses this channel. */
   pulse?: string;
+  /**
+   * The rig channel kind behind the row (`emitter`, `reward`, `cue`, `vacuum`). Always set by a
+   * generated utility profile.
+   */
+  kind?: string;
 }
 
 /**
@@ -722,7 +727,7 @@ export interface TelemetrySpec {
 /**
  * The two commands that make a box announce itself — a trial light, a buzzer, whatever the rig
  * has (`ARCHITECTURE.md#hardware-utility-baseline`). Declared by the sketch so the app never has
- * to know that a Hart-lab box says `ON LIGHT`.
+ * to know that a Hart-lab box says `ON trial_light`.
  */
 export interface IdentifySpec {
   on: string;

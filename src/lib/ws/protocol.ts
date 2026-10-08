@@ -1479,7 +1479,7 @@ export interface RigProblem {
   location: string;
   message: string;
   /**
-   * The wiring rule, when one produced it — RIG101 through RIG105. Null for a schema violation,
+   * The wiring rule, when one produced it — RIG101 through RIG106. Null for a schema violation,
    * which has no rule number because it is caught before the halves are composed.
    */
   code: string | null;
@@ -1541,8 +1541,8 @@ export interface TaskDiagnostic {
   location: string;
   message: string;
   /**
-   * TSK101–TSK111 and TSK113 from the sidecar; TSK112 is derived on the Task tab. Each names a
-   * failure that is silent without it.
+   * TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived on the Task tab. Each
+   * names a failure that is silent without it.
    */
   code: string;
 }

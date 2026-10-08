@@ -14,6 +14,9 @@ export interface RigChannel {
   label?: string;
   well?: string;
   port_slot?: number;
+  /** Emitters only: the vocabulary code this odor line announces its onset
+   *  with, by name (`TASKS.md#onset-codes`). RIG106 checks it. */
+  onset_strobe?: string;
   rationale?: string;
 }
 

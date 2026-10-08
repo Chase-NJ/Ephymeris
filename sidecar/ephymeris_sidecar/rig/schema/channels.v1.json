@@ -14,7 +14,13 @@
     "`well` stays here even though it is a plumbing fact, because its VALUE is a",
     "logical channel name and its job is to catch a reward line wired to the wrong",
     "side of the box. A rig that re-plumbs which fluid line feeds which well edits",
-    "this file; see the note in the pinout."
+    "this file; see the note in the pinout.",
+    "",
+    "`onset_strobe` names the vocabulary code an odor line announces its onset with,",
+    "the way `port_slot` names a response port's family. It is a NAME -- the number",
+    "lives only in the vocabulary -- and nothing derives it from the channel's name",
+    "or position, because the onsets are not contiguous (101-109, then 114-116).",
+    "The task editor sets each trial type's code from it; RIG106 checks it."
   ],
   "kinds": {
     "engagement": {
@@ -71,50 +77,62 @@
     },
     "odor_line_1": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_1_ON",
       "rationale": "Odor solenoid 1."
     },
     "odor_line_2": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_2_ON",
       "rationale": "Odor solenoid 2."
     },
     "odor_line_3": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_3_ON",
       "rationale": "Odor solenoid 3."
     },
     "odor_line_4": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_4_ON",
       "rationale": "Odor solenoid 4."
     },
     "odor_line_5": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_5_ON",
       "rationale": "Odor solenoid 5."
     },
     "odor_line_6": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_6_ON",
       "rationale": "Odor solenoid 6."
     },
     "odor_line_7": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_7_ON",
       "rationale": "Odor solenoid 7. Note the pin ordering is NOT monotonic past line 6 -- 22,24,26,28,30,32 then 23,25,27,29,31,33 -- which is why channels resolve by name and never by arithmetic."
     },
     "odor_line_8": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_8_ON",
       "rationale": "Odor solenoid 8."
     },
     "odor_line_9": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_9_ON",
       "rationale": "Odor solenoid 9."
     },
     "odor_line_10": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_10_ON",
       "rationale": "Odor solenoid 10."
     },
     "odor_line_11": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_11_ON",
       "rationale": "Odor solenoid 11."
     },
     "odor_line_12": {
       "kind": "emitter",
+      "onset_strobe": "ODOR_12_ON",
       "rationale": "Odor solenoid 12."
     },
     "fluid_0": {

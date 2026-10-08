@@ -124,6 +124,8 @@ function detailOf(
   const parts: string[] = [];
   if (entry.kind === "response" && entry.port_slot !== undefined)
     parts.push(`slot ${entry.port_slot}`);
+  if (entry.kind === "emitter")
+    parts.push(entry.onset_strobe ? `announces ${entry.onset_strobe}` : "no onset code");
   if (entry.kind === "reward")
     parts.push(entry.well ? `serves ${entry.well}` : "not plumbed");
   if (entry.kind === "sync") parts.push("pulses on every event → recording DIN");

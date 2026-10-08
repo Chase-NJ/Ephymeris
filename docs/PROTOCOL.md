@@ -271,7 +271,7 @@ This rig's wiring and everything wrong with it (`TASKS.md#rig-wiring`). A rig ne
 <a id="cmd-hardware.preview"></a>
 #### `hardware.preview`
 
-Validate a wiring document and cost it, writing nothing. The editor calls it as the operator types, so a schema violation or a wiring rule (RIG101–RIG105) lands against the field that caused it; and it is what the save preflight shows, because `breaks` is the honest form of 'this applies to every task'. A well-formed document describing an impossible box is a successful reply carrying `problems`; `RIG_INVALID` only when it is not a document at all.
+Validate a wiring document and cost it, writing nothing. The editor calls it as the operator types, so a schema violation or a wiring rule (RIG101–RIG106) lands against the field that caused it; and it is what the save preflight shows, because `breaks` is the honest form of 'this applies to every task'. A well-formed document describing an impossible box is a successful reply carrying `problems`; `RIG_INVALID` only when it is not a document at all.
 
 **Args**
 
@@ -2352,7 +2352,7 @@ One thing wrong with a wiring document, located. Every problem is reported rathe
 |---|---|---|
 | `location` | string | `channels.left_well.kind`, `pins.odor_port`, or a rule's registry file. |
 | `message` | string |  |
-| `code` | string \| null | The wiring rule, when one produced it — RIG101 through RIG105. Null for a schema violation, which has no rule number because it is caught before the halves are composed. |
+| `code` | string \| null | The wiring rule, when one produced it — RIG101 through RIG106. Null for a schema violation, which has no rule number because it is caught before the halves are composed. |
 
 <a id="shape-rigsaved"></a>
 #### RigSaved
@@ -2794,7 +2794,7 @@ This machine's strobe vocabulary (`TASKS.md#strobe-vocabulary`) — the one sour
 |---|---|---|
 | `location` | string | `trials[1].rewardChannel`, `stages[2].trials`. |
 | `message` | string |  |
-| `code` | string | TSK101–TSK111 and TSK113 from the sidecar; TSK112 is derived on the Task tab. Each names a failure that is silent without it. |
+| `code` | string | TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived on the Task tab. Each names a failure that is silent without it. |
 
 <a id="shape-taskentry"></a>
 #### TaskEntry

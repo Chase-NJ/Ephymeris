@@ -7,9 +7,9 @@ is not a command error. It is a successful reply carrying located problems.
 `problems` comes from two places and reads as one list:
 
   * the JSON Schema, for shape -- a `kind` that is not a kind, a missing pin;
-  * the wiring rules (`RIG101`-`RIG104`), for sense -- a pin the board does not
-    have, two channels on one pin, a response port with no strobe slot, halves
-    that describe different boxes.
+  * the wiring rules (`RIG101`-`RIG106`), for sense -- a pin the board does not
+    have, two channels on one pin, a response port with no strobe slot, an odor
+    line with no onset code of its own, halves that describe different boxes.
 
 They are merged rather than reported separately because an operator fixing new
 wiring does not care which layer objected, and running one and then the other
@@ -84,6 +84,7 @@ def _rule_problems(document: Any) -> list[dict[str, Any]]:
             ("RIG103", chans.duplicate_pins()),
             ("RIG104", chans.slot_problems(vocab)),
             ("RIG105", chans.sync_problems()),
+            ("RIG106", chans.onset_problems(vocab)),
         )
         for loc, msg in pairs
     ]

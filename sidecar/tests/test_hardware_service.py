@@ -239,3 +239,27 @@ def test_a_saved_rig_reports_itself_as_custom(rig_store):
     assert payload["status"]["derivedFrom"] == "behaviorbox_mega2560.v1"
     assert payload["status"]["editedAt"]
     assert payload["problems"] == []
+
+
+def test_rewiring_a_line_s_onset_names_the_task_it_would_mislabel(rig_store):
+    """An onset declaration changes no compiled byte, so nothing at generation
+    would catch it. Through the definitions' own validation, a saved task whose
+    rows still carry the old pairing reports TSK114 before the write."""
+    from ephymeris_sidecar.taskdef.validate import validate
+    from tests.fixtures import task_definitions as presets
+
+    definition = presets.instantiate("grgl_2odor", "probe")
+
+    class Definitions:
+        def list_entries(self):
+            return [{"id": "probe", "label": "Probe"}]
+
+        def failures(self, task_id):
+            return {d.code for d in validate(definition)}
+
+    doc = rig()
+    doc["channels"]["odor_line_1"]["onset_strobe"] = "ODOR_9_ON"
+    doc["channels"]["odor_line_9"]["onset_strobe"] = "ODOR_1_ON"
+    breaks = service.impact_of(doc, Definitions())
+    assert [b["specId"] for b in breaks] == ["probe"]
+    assert "TSK114" in breaks[0]["codes"]

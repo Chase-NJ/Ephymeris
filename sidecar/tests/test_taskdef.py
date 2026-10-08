@@ -451,13 +451,54 @@ def test_an_undeclared_strobe_is_reported():
     ]))
 
 
-def test_two_types_sharing_an_onset_code_are_reported():
+def test_two_types_sharing_an_odor_line_are_reported():
     """Two conditions reporting one code are indistinguishable in the data —
-    every analysis would pool them without saying so."""
+    every analysis would pool them without saying so. A line declares one onset
+    code (`TASKS.md#onset-codes`), so sharing a code is sharing a line."""
     assert "TSK105" in codes(a_task(trials=[
         TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "right_well", "fluid_2"),
-        TrialTypeDef("odor_line_3", "ODOR_1_ON", True, "left_well", "fluid_0"),
+        TrialTypeDef("odor_line_1", "ODOR_1_ON", True, "left_well", "fluid_0"),
     ]))
+
+
+def test_an_onset_code_that_is_not_its_line_s_own_is_reported():
+    """TSK114: the row records odor line 3 under line 1's code — every session
+    it runs labels one bottle as another, and nothing else looks wrong."""
+    found = codes(a_task(trials=[
+        TrialTypeDef("odor_line_3", "ODOR_1_ON", True, "right_well", "fluid_2", label="A"),
+    ]))
+    assert "TSK114" in found
+
+
+def test_a_line_that_declares_no_onset_is_not_second_guessed():
+    """An undeclared line is RIG106's problem, on the Rig tab. The trial row has
+    nothing to disagree WITH, so TSK114 stays silent rather than inventing one."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    doc = rig_store.default_document()
+    doc["channels"]["odor_line_3"].pop("onset_strobe")
+    registry.set_rig_source(lambda: doc)
+    assert "TSK114" not in codes(a_task(trials=[
+        TrialTypeDef("odor_line_3", "ODOR_1_ON", True, "right_well", "fluid_2", label="A"),
+    ]))
+
+
+def test_editing_a_line_s_onset_declaration_changes_no_generated_byte():
+    """The declaration decides what the EDITOR writes into a row; the generator
+    emits the row's own code. So rewiring an onset must leave every generated
+    file — and with it `profile_hash` — exactly as it was."""
+    from ephymeris_sidecar.hardware import store as rig_store
+
+    task = a_task()
+    before = (generate.task_trials_h(task), generate.task_pins_h(task),
+              json.dumps(generate.build_profile(task).to_json(), sort_keys=True))
+    doc = rig_store.default_document()
+    doc["channels"]["odor_line_1"]["onset_strobe"] = "ODOR_9_ON"
+    doc["channels"]["odor_line_9"]["onset_strobe"] = "ODOR_1_ON"
+    registry.set_rig_source(lambda: doc)
+    after = (generate.task_trials_h(task), generate.task_pins_h(task),
+             json.dumps(generate.build_profile(task).to_json(), sort_keys=True))
+    assert before == after
 
 
 def test_an_unnamed_condition_is_reported():
@@ -562,6 +603,43 @@ def test_an_all_zero_table_is_reported_under_weighted_selection_too():
     assert "TSK109" not in codes(task)
     zeroed = replace(task, trials=[replace(t, weight=0) for t in task.trials])
     assert "TSK109" in codes(zeroed)
+
+
+def test_weighted_selection_reports_a_side_that_weighs_nothing():
+    """`pickWeighted` draws a SIDE first, then weighs the types on it — so one
+    side zeroed out is drawn uniformly while the total still looks fine."""
+    from dataclasses import replace
+
+    task = a_task(selection_mode="weighted")
+    side = task.trials[0].response_channel
+    one_side = replace(task, trials=[
+        replace(t, weight=0) if t.response_channel == side else t for t in task.trials
+    ])
+    assert sum(t.weight for t in one_side.trials) > 0
+    assert "TSK109" in codes(one_side)
+
+
+def test_a_no_go_only_table_presents_nothing_outside_the_pool():
+    """Both anti-bias selectors draw a side first, and a withhold has none —
+    only the pool presents a no-go type."""
+    from dataclasses import replace
+
+    task = a_task()
+    nogo = [replace(t, is_go=False, response_channel=None, reward_channel=None)
+            for t in task.trials]
+    assert "TSK108" in codes(replace(task, trials=nogo, selection_mode="antibias"))
+    assert "TSK108" in codes(replace(task, trials=nogo, selection_mode="weighted"))
+    assert "TSK108" not in codes(replace(task, trials=nogo, selection_mode="pool"))
+
+
+def test_a_pool_weight_is_read_off_the_row_never_out_of_params():
+    """The same rule as reward volume: the generator reads `trial.weight`, so a
+    stale `pool_weight_1` in `params` must not reach the wire."""
+    from dataclasses import replace
+
+    task = replace(a_task(selection_mode="pool"), params={"pool_weight_1": 99})
+    profile = generate.build_profile(task)
+    assert next(f for f in profile.config if f.wire_key == "PW1").default == task.trials[0].weight
 
 
 def test_a_go_condition_paying_nothing_is_reported():

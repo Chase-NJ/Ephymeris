@@ -1,4 +1,4 @@
-"""The rig wiring document: the store, the composition, and RIG101-105.
+"""The rig wiring document: the store, the composition, and RIG101-106.
 
 Everything here was unreachable until the pinout became editable. The shipped
 pair is a transcription of BehaviorBox.h that lives inside the package and is
@@ -13,6 +13,7 @@ errors rather than warnings:
   RIG103  two channels on one pin makes every reverse lookup arbitrary
   RIG104  a response port with no slot has no strobes, and generates anyway
   RIG105  a second sync line is a wire believed to carry events that carries none
+  RIG106  an odor line with no onset code of its own records its odor as another
 """
 
 from __future__ import annotations
@@ -204,8 +205,68 @@ def test_rig101_halves_that_describe_different_boxes_are_refused():
     assert "RIG101" in codes_for(doc)
 
 
+def test_rig106_an_odor_line_without_an_onset_is_reported():
+    doc = rig()
+    doc["channels"]["odor_line_2"].pop("onset_strobe")
+    assert "RIG106" in codes_for(doc)
+
+
+def test_rig106_two_lines_announcing_one_code_are_reported():
+    doc = rig()
+    doc["channels"]["odor_line_2"]["onset_strobe"] = "ODOR_1_ON"
+    assert "RIG106" in codes_for(doc)
+
+
+def test_rig106_an_onset_the_vocabulary_lacks_is_reported():
+    doc = rig()
+    doc["channels"]["odor_line_2"]["onset_strobe"] = "ODOR_99_ON"
+    assert "RIG106" in codes_for(doc)
+
+
+def test_rig106_a_code_that_is_not_an_onset_is_reported():
+    """LIGHTS_ON is a live code and the wrong kind of one."""
+    doc = rig()
+    doc["channels"]["odor_line_2"]["onset_strobe"] = "LIGHTS_ON"
+    assert "RIG106" in codes_for(doc)
+
+
+def test_rig106_an_onset_on_a_channel_that_is_not_an_emitter_is_reported():
+    doc = rig()
+    doc["channels"]["trial_light"]["onset_strobe"] = "ODOR_2_ON"
+    assert "RIG106" in codes_for(doc)
+
+
+def test_an_onset_declaration_does_not_move_the_pinout_hash():
+    """It changes no compiled byte — the generator emits the row's code — so a
+    hash that moved with it would churn every rig's provenance for nothing."""
+    baseline = registry.channels().content_hash()
+    doc = rig()
+    doc["channels"]["odor_line_1"]["onset_strobe"] = "ODOR_9_ON"
+    doc["channels"]["odor_line_9"]["onset_strobe"] = "ODOR_1_ON"
+    registry.set_rig_source(lambda: doc)
+    assert registry.channels().content_hash() == baseline
+
+
+def test_a_rig_saved_before_onsets_existed_is_filled_from_the_shipped_wiring(tmp_path):
+    """By name and kind only: a line this rig added stays undeclared, and RIG106
+    asks the operator rather than anything guessing."""
+    doc = rig()
+    for channel in doc["channels"].values():
+        channel.pop("onset_strobe", None)
+    doc["channels"]["channel_99"] = {"kind": "emitter", "label": "channel 99"}
+    doc["pins"]["channel_99"] = {"index": 53}
+    s = store.HardwareStore(tmp_path)
+    s.root.mkdir(parents=True)
+    s.path.write_text(json.dumps(doc), encoding="utf-8")
+
+    loaded = s.load()
+    assert loaded["channels"]["odor_line_3"]["onset_strobe"] == "ODOR_3_ON"
+    assert "onset_strobe" not in loaded["channels"]["channel_99"]
+    assert "RIG106" in codes_for(loaded)
+
+
 def test_the_shipped_wiring_trips_none_of_them():
-    """The regression guard for all four: if any rule fires on the wiring the
+    """The regression guard for all of them: if any rule fires on the wiring the
     app ships with, it is the rule that is wrong."""
     chans = registry.channels()
     assert chans.disagreements() == []
@@ -213,6 +274,7 @@ def test_the_shipped_wiring_trips_none_of_them():
     assert chans.duplicate_pins() == []
     assert chans.slot_problems(registry.vocabulary()) == []
     assert chans.sync_problems() == []
+    assert chans.onset_problems(registry.vocabulary()) == []
 
 
 def test_rig105_a_second_sync_line_is_refused_and_none_at_all_is_not():

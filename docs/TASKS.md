@@ -47,6 +47,7 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Moving codes between machines](#moving-codes-between-machines)
   - [Every declared code is emitted](#every-declared-code-is-emitted)
   - [Port slots](#port-slots)
+  - [Onset codes](#onset-codes)
 - [Live metrics](#live-metrics)
   - [The definition](#the-definition)
   - [Boundary codes](#boundary-codes)
@@ -396,7 +397,7 @@ Four answers, nothing derivable (`taskdef/model.py`):
 
 | Field | Holds |
 |---|---|
-| `trials[]` | Each row names an **odor channel**, a **response channel**, a **reward channel** and an **onset strobe** (go rows; a no-go row has neither response nor reward), plus its own `rewardTime`, `weight` and required `label` |
+| `trials[]` | Each row names an **odor channel**, a **response channel**, a **reward channel** and an **onset strobe** (go rows; a no-go row has neither response nor reward), plus its own `rewardTime`, `weight` and required `label`. The onset strobe is still stored on the row — the format, the generator and `profile_hash` are unchanged — but the editor sets it from the line's declared onset ([Onset codes](#onset-codes)) |
 | `selectionMode` | `antibias`, `weighted` or `pool` ([Selection modes](#selection-modes)) |
 | `stages[]` | The ramp, at least one row |
 | `params{}` | Only what **diverges** from the field catalogue's default |
@@ -408,7 +409,7 @@ A definition stores **channel names and strobe code names, never pins or numbers
 > [!CAUTION]
 > **`params` holds only divergences**, for the same reason `settings.taskDefaults` does. Storing the merged set would mean a catalogue change — a corrected range, a better help string — could never reach a saved definition.
 
-**Reward volume and weight live on the row, never in `params`.** The generator reads `reward_time`/`weight` off each `TrialTypeDef` and emits `RW<i+1>`/`PW<i+1>` from the same loop that emits `kTrials[i]`, so a `params["reward_time_1"]` is accepted and ignored. A value on the row is a property of that condition: two conditions paying from one fluid line can pay differently, and deleting the row takes its volume with it.
+**Reward volume and weight live on the row, never in `params`.** The generator reads `reward_time`/`weight` off each `TrialTypeDef` and emits `RW<i+1>`/`PW<i+1>` from the same loop that emits `kTrials[i]`, so a `params["reward_time_1"]` or `params["pool_weight_1"]` is accepted and ignored. The editor offers these only on the row and never writes them into `params` (`isRowOwnedField`, `src/lib/taskdef/lines.ts`). A value on the row is a property of that condition: two conditions paying from one fluid line can pay differently, and deleting the row takes its volume with it.
 
 **There are no presets.** A task is built from scratch. What a preset would seed that matters most is a condition's *name*, which differs on every bench, and a guessed name is wrong for everyone but its author. The lab's real historical definitions survive as test data in `sidecar/tests/fixtures/task_definitions.py`, each transcribed from the sketch it replaced — a generator change that breaks one breaks something the lab actually ran.
 
@@ -429,18 +430,19 @@ A definition stores **channel names and strobe code names, never pins or numbers
 | `TSK102` | A channel of the wrong kind | A valve driven as a sensor |
 | **`TSK103`** | **A reward line serving the other well** | The row reads "→ left", the animal answers left, water arrives on the right |
 | `TSK104` | A strobe code the vocabulary does not declare | An unlabelled number in the data |
-| **`TSK105`** | **Two trial types sharing an onset code** | Two conditions, one label, pooled by every analysis |
+| **`TSK105`** | **Two trial types on one odor line** (one line declares one onset code) | Two conditions, one label, pooled by every analysis |
 | `TSK106` | A ramp not strictly ascending after row 0 | `liveStage()` scans down, so the row never engages |
 | `TSK107` | A `START` line over the cap | The firmware truncates in silence |
-| `TSK108` | No presentable trial | A session that runs nothing |
-| **`TSK109`** | **All pool weights zero** (pool and weighted modes) | `generateTrials()` falls back to equal weights: a uniform pool while the table says otherwise |
+| `TSK108` | No presentable trial — including a table of only no-go types outside pool, since both anti-bias selectors draw a side first | A session that runs nothing |
+| **`TSK109`** | **All pool weights zero** (pool), or **a side whose go types all weigh zero** (weighted) | The firmware falls back to a uniform draw while the table says otherwise |
 | `TSK110` | A condition with no name | Every readout titles it after whichever channel carried it |
 | `TSK111` | Two conditions sharing a name (case- and whitespace-insensitive) | Two curves under one title |
 | `TSK112` | An onset code no live metric scores — **derived client-side** in `routes/TaskEditor.tsx` | The condition silently drops out of the diagram |
 | **`TSK113`** | **A go condition paying 0 ms** | A dry well every readout scores as rewarded |
+| **`TSK114`** | **An onset code that is not its line's declared one** ([Onset codes](#onset-codes)) | Every session records one bottle under another's name |
 
 > [!CAUTION]
-> **`TSK103`, `TSK105`, `TSK109` and `TSK113` produce plausible wrong data rather than a failure.** Read them first.
+> **`TSK103`, `TSK105`, `TSK109`, `TSK113` and `TSK114` produce plausible wrong data rather than a failure.** Read them first.
 
 **Every trial type must be named.** The name is the one thing the trial table cannot derive, and the metric label built from it titles Mission Control's live sparkline, the learning curve and a strategy axis. Two kinds of name meet here and must stay apart: the **rig's channel label** ("sandalwood") belongs to the wiring and never enters the profile; the **row's name** ("Go right") is the condition and does.
 
@@ -527,7 +529,7 @@ The rig's description of itself lives in `sidecar/ephymeris_sidecar/rig/` and `h
 
 | File | Says | Owner |
 |---|---|---|
-| `rig/schema/channels.v1.json` | **What a channel means** — `kind`, `well`, `port_slot` | shipped |
+| `rig/schema/channels.v1.json` | **What a channel means** — `kind`, `well`, `port_slot`, `onset_strobe` | shipped |
 | `rig/hardware/<pinout>.json` (selected by `_default.json`; `$EPHYMERIS_PINOUT` for tests) | **Where it is** on this box generation — a literal transcription of the firmware pinout | shipped |
 | `<data_dir>/hardware/rig.json` | This rig's own wiring, written by the wiring editor | operator |
 
@@ -553,7 +555,7 @@ flowchart TD
 
 - **`channels()` is `lru_cache`d and cleared only by `set_rig_source`**, which `Application` calls at construction and after a wiring write. Never hang invalidation off `settings.push`: it fires on every reconnect.
 - **`hardware/store.py`'s `default_document()` reads the shipped pair via `shipped_channels()`**, never the wiring in force — otherwise Reset resets to itself. It also keeps declaration order (sorting by pin once re-ordered the odor table on a rig's first save).
-- **`ChannelMap.content_hash()` covers only fields that can change a compiled byte** (name, kind, direction, pin, watch bit, well, port slot). A reworded rationale must not move it, or people learn to ignore it. A profile names channels, not pins, so a rewiring moves no `profile_hash`; this hash is what records which wiring a sketch was built against (it is stamped into each generated header).
+- **`ChannelMap.content_hash()` covers only fields that can change a compiled byte** (name, kind, direction, pin, watch bit, well, port slot). A reworded rationale must not move it, or people learn to ignore it. **`onset_strobe` is excluded for the same reason**: the generator emits the code a trial row stores, so the declaration changes what the editor writes, never a compiled byte. A profile names channels, not pins, so a rewiring moves no `profile_hash`; this hash is what records which wiring a sketch was built against (it is stamped into each generated header).
 
 ### The wiring page
 
@@ -579,6 +581,7 @@ A well-formed document describing an impossible box is a successful reply carryi
 | `RIG103` | Two channels on one pin |
 | `RIG104` | A response port with no strobe slot ([Port slots](#port-slots)) |
 | `RIG105` | More than one `sync` channel |
+| `RIG106` | An odor line with no onset code, one that is not a live onset code, two lines on one code, or an onset on a channel that is not an emitter ([Onset codes](#onset-codes)) |
 
 ### The sync channel
 
@@ -647,6 +650,18 @@ A declared code that nothing can emit is a name in every picker that no session 
 ### Port slots
 
 `port_slots` maps a slot number to the six codes a response port on it reports with (enter, error, break, exit, reward, reward-stop). There are **two** slots, pointing at the historical `_L`/`_R` names, because `checkResponse()` polls two ports. The vocabulary is the authority; `RIG104` reads it, so the channel schema deliberately does not cap `port_slot` as well. Nothing derives a code from a channel's *name*.
+
+### Onset codes
+
+**An odor line declares the code that announces its onset** — `onset_strobe: "ODOR_3_ON"` on the emitter in `channels.v1.json` and in a rig's own `rig.json` — the way a response port declares its slot. It is a code **name**; the number lives only in the vocabulary. Nothing derives it from the channel's name or position: the onsets run 101–109 and then 114–116, and the emitter pins are not in line order (`generate._onset_macro` records the derivation that was wrong).
+
+- **The editor fills a row's code from its line**, and shows it read-only, so line and code are one choice. One line declares one code, so **a line can carry only one trial type** — the picker lists a line another row holds as disabled, and two rows on one line are `TSK105`.
+- **The row still stores `onsetStrobe`**; the generator emits it, and `profile_hash` is unchanged. A stored row that disagrees with its line's declaration is **`TSK114`**.
+- **`RIG106`** checks the declarations: every emitter has one, each is a live onset-shaped code (`ONSET_NAME`, mirrored in `src/lib/taskdef/lines.ts`), no two lines share one.
+- **A rig saved before the field existed is filled on load** (`hardware/store.py`'s `upgrade`) from the shipped channel of the same name and kind, in memory until the next save. A line the rig added or renamed stays undeclared and `RIG106` asks the operator — nothing guesses.
+
+> [!CAUTION]
+> **When `TSK114` appears on a task the lab has run, fix the wiring, not the task.** Changing the row changes the code every *future* session records for that bottle, splitting it from the archive. If the bottle has always been recorded under the stored code, set the line's onset code on the Rig tab to match.
 
 ## Live metrics
 

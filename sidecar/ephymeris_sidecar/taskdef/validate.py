@@ -19,13 +19,14 @@ rather than a warning:
   TSK110  a condition with no name             -> a chart titled after a channel
   TSK111  two conditions sharing a name        -> two curves, one title
   TSK113  a go condition paying 0 ms           -> a dry well scored as rewarded
+  TSK114  an onset code not its line's own      -> a condition labelled as another odor
 
 (TSK112 is the Task tab's own, derived client-side: an onset code no live
 metric scores.)
 
-TSK103, TSK105, TSK109 and TSK113 are the four that produce plausible-looking
-wrong DATA rather than an obvious failure, and are the reason this file exists
-at all.
+TSK103, TSK105, TSK109, TSK113 and TSK114 are the five that produce
+plausible-looking wrong DATA rather than an obvious failure, and are the reason
+this file exists at all.
 
 TSK110 and TSK111 are the naming pair, and they are errors for the same reason
 TSK105 is: a condition is only ever read back by its NAME. It titles the live
@@ -130,6 +131,7 @@ def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
                 "TSK102",
             ))
 
+        declared = emitter.onset_strobe if emitter is not None and emitter.kind == "emitter" else None
         if trial.onset_strobe not in vocab:
             out.append(Diagnostic(
                 f"{at}.onsetStrobe",
@@ -144,19 +146,39 @@ def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
         else:
             first = seen_onsets.setdefault(trial.onset_strobe, i)
             if first != i:
+                # An odor line declares ONE onset code (`TASKS.md#onset-codes`),
+                # so sharing a code is sharing a line — say so in the terms the
+                # editor shows.
                 out.append(Diagnostic(
                     f"{at}.onsetStrobe",
-                    f"trial type {first + 1} already announces itself with "
-                    f"{trial.onset_strobe!r}. Two conditions reporting one code "
+                    f"trial type {first + 1} already presents this odor line "
+                    f"({trial.onset_strobe}). Two conditions reporting one code "
                     "are indistinguishable in the data — every analysis would "
                     "pool them without saying so.",
                     "TSK105",
                 ))
+            if declared and declared != trial.onset_strobe:
+                # THE PAIRING IS THE RIG'S. A trial carrying another line's code
+                # records its odor under the wrong name for every session it
+                # runs. Two fixes, and the message names both: which is right
+                # depends on what the archive already says this bottle is.
+                out.append(Diagnostic(
+                    f"{at}.onsetStrobe",
+                    f"{trial.odor_channel!r} announces its onset as {declared}, but "
+                    f"this trial type records it as {trial.onset_strobe}. Use "
+                    f"{declared} — or, if this bottle has always been recorded as "
+                    f"{trial.onset_strobe}, change the line's onset code on the Rig "
+                    "tab instead, so past and future sessions agree.",
+                    "TSK114",
+                ))
 
         if not trial.is_go:
             # A withhold type answers at no port and pays nothing; both being
-            # absent is the definition of it, not an omission.
-            presentable += 1
+            # absent is the definition of it, not an omission. Only the pool
+            # PRESENTS one: both anti-bias selectors draw a side first, and a
+            # no-go type has no side (`BehaviorBox.h`, `TASKS.md#selection-modes`).
+            if definition.selection_mode == "pool":
+                presentable += 1
             continue
 
         port = channels.get(trial.response_channel) if trial.response_channel else None
@@ -223,9 +245,14 @@ def _trial_problems(definition, channels, vocab) -> list[Diagnostic]:
             presentable += 1
 
     if definition.trials and presentable == 0:
+        only_nogo = all(not trial.is_go for trial in definition.trials)
         out.append(Diagnostic(
             "trials",
-            "no trial type in this table can actually be presented, so a "
+            "every trial type here is no-go, and only Pool selection presents a "
+            "no-go type — anti-bias draws a side first, and a withhold has none. "
+            "Switch to Pool, or add a go type."
+            if only_nogo and definition.selection_mode != "pool"
+            else "no trial type in this table can actually be presented, so a "
             "session would run nothing.",
             "TSK108",
         ))
@@ -262,6 +289,8 @@ def _pool_problems(definition: TaskDefinition) -> list[Diagnostic]:
     """
     if definition.selection_mode == "antibias" or not definition.trials:
         return []
+    if definition.selection_mode == "weighted":
+        return _side_weight_problems(definition)
     # `<= 0` rather than `== 0`: this mirrors `generateTrials()`'s own condition,
     # so the two agree about the edge even if a negative weight ever reaches it.
     if sum(trial.weight for trial in definition.trials) > 0:
@@ -274,6 +303,32 @@ def _pool_problems(definition: TaskDefinition) -> list[Diagnostic]:
         "pool instead of the proportions in this table.",
         "TSK109",
     )]
+
+
+def _side_weight_problems(definition: TaskDefinition) -> list[Diagnostic]:
+    """Weighted anti-bias: a SIDE whose go types all weigh zero.
+
+    The total is the wrong test here. `pickWeighted` draws a side against the
+    animal's bias first and only then weighs the types on that side, falling
+    back to a uniform draw when the side's weights sum to nothing — so one side
+    zeroed out runs uniformly while the other runs the table, and the totals
+    look fine.
+    """
+    sides: dict[str, list[float]] = {}
+    for trial in definition.trials:
+        if trial.is_go and trial.response_channel:
+            sides.setdefault(trial.response_channel, []).append(trial.weight)
+    return [
+        Diagnostic(
+            "trials",
+            f"every trial type answered at {side!r} has a weight of zero. Weighted "
+            "selection draws a side first, then a type on it by weight — so this "
+            "side would quietly be drawn uniformly instead of by this table.",
+            "TSK109",
+        )
+        for side, weights in sorted(sides.items())
+        if sum(weights) <= 0
+    ]
 
 
 def _stage_problems(definition: TaskDefinition) -> list[Diagnostic]:

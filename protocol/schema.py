@@ -1516,7 +1516,7 @@ SHAPES = (
             f(
                 "code",
                 nullable(STR),
-                doc="The wiring rule, when one produced it — RIG101 through RIG105. "
+                doc="The wiring rule, when one produced it — RIG101 through RIG106. "
                 "Null for a schema violation, which has no rule number because it "
                 "is caught before the halves are composed.",
             ),
@@ -1596,7 +1596,7 @@ SHAPES = (
             f(
                 "code",
                 STR,
-                doc="TSK101–TSK111 and TSK113 from the sidecar; TSK112 is derived "
+                doc="TSK101–TSK111, TSK113 and TSK114 from the sidecar; TSK112 is derived "
                 "on the Task tab. Each names a failure that is silent without it.",
             ),
         ),
@@ -2356,7 +2356,7 @@ COMMANDS = (
         result=Ref("RigSaved"),
         doc="Validate a wiring document and cost it, writing nothing. The "
         "editor calls it as the operator types, so a schema violation or a "
-        "wiring rule (RIG101–RIG105) lands against the field that caused it; "
+        "wiring rule (RIG101–RIG106) lands against the field that caused it; "
         "and it is what the save preflight shows, because `breaks` is the "
         "honest form of 'this applies to every task'. A well-formed document "
         "describing an impossible box is a successful reply carrying "

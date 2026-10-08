@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Button, Select } from "@/components/common/controls";
 import { Callout } from "@/components/common/Callout";
+import { Dropdown } from "@/components/common/Dropdown";
 import { FieldRow } from "@/components/common/FieldRow";
 import { RowDensityContext } from "@/components/common/rowDensity";
 import { BoardMap } from "@/components/hardware/BoardMap";
@@ -12,6 +13,8 @@ import {
   type RigChannel,
   type RigDocument,
 } from "@/lib/hardware/types";
+import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
+import { onsetOptions } from "@/lib/taskdef/lines";
 import type { RigSession } from "@/lib/hardware/useRig";
 
 /**
@@ -81,9 +84,13 @@ export function RigWiringEditor({
     if (!doc) return;
     const current = doc.channels[name];
     if (!current) return;
+    const next: RigChannel = { ...current, ...patch };
+    // Only an odor line announces an onset; a channel that stops being one
+    // drops its declaration rather than carrying a code RIG106 would refuse.
+    if (next.kind !== "emitter" || next.onset_strobe === "") delete next.onset_strobe;
     edit({
       ...doc,
-      channels: { ...doc.channels, [name]: { ...current, ...patch } },
+      channels: { ...doc.channels, [name]: next },
     });
   }
 
@@ -379,6 +386,7 @@ function ChannelInspector({
   onRemove: (name: string) => void;
   onCarry: (name: string) => void;
 }) {
+  const { vocabulary } = useStrobeVocabulary();
   if (selected === null || !doc.channels[selected]) {
     return (
       <div className="flex flex-col gap-2 px-1 py-2">
@@ -449,6 +457,29 @@ function ChannelInspector({
           onChange={(v) => onEdit(selected, { port_slot: Number(v) })}
           help="Which family of per-port strobes this port reports with. Slots 1 and 2 are the historical left/right codes; two ports on one slot are indistinguishable in the data."
         />
+      )}
+
+      {entry.kind === "emitter" && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-starlight">Onset code</span>
+          <Dropdown
+            label="Onset code"
+            size="regular"
+            value={entry.onset_strobe ?? ""}
+            placeholder="— none —"
+            options={[
+              { value: "", label: "— none —" },
+              ...onsetOptions(doc, vocabulary, selected),
+            ]}
+            onChange={(v) => onEdit(selected, { onset_strobe: v })}
+          />
+          <span className="text-[10px] leading-relaxed text-static">
+            The code this line announces its odor with. Every trial type on this line
+            records it — the Task tab fills it in from here — so it is declared once,
+            on the wiring, and never worked out from the line&apos;s name. Two lines on
+            one code are indistinguishable in the data.
+          </span>
+        </label>
       )}
 
       {entry.kind === "reward" && (

@@ -119,7 +119,7 @@ class HardwareStore:
         except json.JSONDecodeError as exc:
             log.warning("rig document will not parse (%s); using the shipped pinout", exc)
             return None
-        return doc if isinstance(doc, dict) else None
+        return upgrade(doc) if isinstance(doc, dict) else None
 
     def status(self) -> RigStatus:
         doc = self.load()
@@ -213,6 +213,38 @@ def _json_path(path) -> str:
 # --------------------------------------------------------------------------- #
 
 
+def upgrade(doc: dict) -> dict:
+    """Fill what a rig saved before a field existed, from the shipped wiring.
+
+    Today that is one field: an odor line's `onset_strobe`
+    (`TASKS.md#onset-codes`). A rig saved before emitters declared their onset
+    would otherwise report RIG106 on every line the moment it loaded. The fill
+    is by CHANNEL NAME AND KIND against the shipped registry -- the same source
+    `default_document()` copies -- so a line this rig added or renamed stays
+    undeclared and RIG106 asks the operator, rather than anything guessing.
+
+    In memory only; the operator's next save writes it.
+    """
+    channels = doc.get("channels")
+    if not isinstance(channels, dict):
+        return doc
+    from ephymeris_sidecar.rig import registry
+
+    shipped = registry.shipped_channels()
+    filled: dict[str, Any] = {}
+    for name, channel in channels.items():
+        if not isinstance(channel, dict) or channel.get("kind") != "emitter":
+            continue
+        if channel.get("onset_strobe"):
+            continue
+        source = shipped.get(name)
+        if source is not None and source.kind == "emitter" and source.onset_strobe:
+            filled[name] = {**channel, "onset_strobe": source.onset_strobe}
+    if not filled:
+        return doc
+    return {**doc, "channels": {name: filled.get(name, c) for name, c in channels.items()}}
+
+
 def default_document() -> dict:
     """A rig document equal to the shipped pinout, as a starting point.
 
@@ -248,6 +280,7 @@ def default_document() -> dict:
                 "label": c.name.replace("_", " "),
                 **({"well": c.well} if c.well else {}),
                 **({"port_slot": c.port_slot} if c.port_slot else {}),
+                **({"onset_strobe": c.onset_strobe} if c.onset_strobe else {}),
                 **({"rationale": c.rationale} if c.rationale else {}),
             }
             for c in chans

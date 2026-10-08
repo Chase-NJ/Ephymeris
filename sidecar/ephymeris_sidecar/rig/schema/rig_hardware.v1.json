@@ -15,8 +15,9 @@
     "rule easy to satisfy.",
     "",
     "THIS SCHEMA CHECKS SHAPE, NOT SENSE. Whether a pin is one this board has,",
-    "whether two channels share one, and whether every response port has its own",
-    "strobe slot are RIG102, RIG103 and RIG104 -- and they run against the COMPOSED",
+    "whether two channels share one, whether every response port has its own",
+    "strobe slot and every odor line its own onset code are RIG102, RIG103, RIG104",
+    "and RIG106 -- and they run against the COMPOSED",
     "ChannelMap, so a problem is reported once regardless of which half caused it.",
     "",
     "A PIN CHANGE IS NOT A TASK CHANGE. A task profile names channels, never",
@@ -105,6 +106,11 @@
             "type": "integer",
             "minimum": 1,
             "description": "Response ports only: which family of per-port strobes this port reports with. The slots that exist are declared in strobe_vocab `port_slots`, and there are TWO because BehaviorBox.h's checkResponse() polls exactly two ports — a third would be a promise nothing can keep. Deliberately NOT capped here: the vocabulary is the authority and RIG104 reads it, so a firmware that gained a third port would need one file changed rather than two. Slots 1 and 2 are the historical _L/_R codes. Two ports on one slot are indistinguishable in the data, which is also RIG104."
+          },
+          "onset_strobe": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "description": "Emitters only: the strobe vocabulary code this odor line announces its onset with, by NAME (e.g. ODOR_3_ON) — the number lives only in the vocabulary. Declared rather than derived because the onsets are not contiguous and the emitter pins are not in line order. The task editor sets each trial type's onset code from it; RIG106 checks that it is a live onset code and that no two lines share one."
           },
           "rationale": {
             "type": "string"

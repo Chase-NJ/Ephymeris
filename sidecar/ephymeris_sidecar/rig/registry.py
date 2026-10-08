@@ -88,6 +88,12 @@ class RetiredEntry:
 #: prefixed `BF_` itself, or the header would define `BF_BF_...`.
 STROBE_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
+#: The shape of a stimulus onset code (`ODOR_3_ON`). A SHAPE CHECK ONLY: it
+#: tells an onset from `LIGHTS_ON` in RIG106, and never yields a number -- the
+#: vocabulary is the only place a code is defined. Mirrored by `ONSET_NAME` in
+#: `src/lib/taskdef/lines.ts`, which filters the same picker.
+ONSET_NAME = re.compile(r"_\d+_ON$")
+
 
 class Vocabulary:
     """The strobe vocabulary in force: one document, read-only here.
@@ -329,6 +335,7 @@ class Channel:
     watch_bit: int | None = None   # dense 0-based index over the watchable channels
     well: str | None = None        # reward lines declare which port they serve
     port_slot: int | None = None   # response ports: which strobe family they report with
+    onset_strobe: str | None = None  # emitters: the vocabulary code that announces their onset
     rationale: str = ""            # what the channel means
     #: What the operator calls it on the Rig page. The rig document's own
     #: label, else the name with spaces -- what the editor shows either way.
@@ -393,6 +400,7 @@ class ChannelMap:
                 watch_bit=pins[name].get("watch_bit"),
                 well=c.get("well"),
                 port_slot=c.get("port_slot"),
+                onset_strobe=c.get("onset_strobe"),
                 rationale=c.get("rationale", ""),
                 label=str(c.get("label") or name.replace("_", " ")),
                 pin_note=pins[name].get("note", ""),
@@ -528,6 +536,61 @@ class ChannelMap:
                 ))
         return out
 
+    def onset_problems(self, vocab: "Vocabulary") -> list[tuple[str, str]]:
+        """An emitter whose onset code does not resolve, or is not its own.
+
+        THE PAIRING IS DECLARED, NEVER DERIVED (`TASKS.md#onset-codes`). An odor
+        line announces its onset with one vocabulary code, named here the way a
+        response port names its slot. Deriving it from the channel's name or its
+        position is the bug `generate._onset_macro` records: the onsets run
+        101-109 and then 114-116, and the emitter pins are not in line order.
+        The task editor sets each trial's code from this declaration, and TSK114
+        catches a stored trial that disagrees with it.
+        """
+        out: list[tuple[str, str]] = []
+        where = self.channels_source
+        by_code: dict[str, list[str]] = {}
+        for c in sorted(self._by_name.values(), key=lambda c: c.name):
+            at = self._at(where, c.name)
+            if c.kind != "emitter":
+                if c.onset_strobe:
+                    out.append((
+                        at,
+                        f"{c.name!r} is a {c.kind} channel but declares the onset code "
+                        f"{c.onset_strobe!r}. Only an odor line announces an onset.",
+                    ))
+                continue
+            if not c.onset_strobe:
+                out.append((
+                    at,
+                    f"odor line {c.name!r} declares no onset code, so a trial type on "
+                    "it cannot say which code announces its odor. Pick one in the "
+                    "wiring editor.",
+                ))
+                continue
+            if not ONSET_NAME.search(c.onset_strobe):
+                out.append((
+                    at,
+                    f"{c.name!r} declares {c.onset_strobe!r} as its onset, which is not "
+                    "an onset code (those are named like ODOR_3_ON).",
+                ))
+            elif c.onset_strobe not in vocab:
+                retired = vocab.retired_entry(c.onset_strobe)
+                out.append((
+                    at,
+                    f"{c.name!r} declares the onset code {c.onset_strobe!r}, which the "
+                    + ("strobe vocabulary has retired." if retired else "strobe vocabulary does not define."),
+                ))
+            by_code.setdefault(c.onset_strobe, []).append(c.name)
+        for code, names in sorted(by_code.items()):
+            if len(names) > 1:
+                out.append((
+                    where,
+                    f"{code} is declared by {', '.join(sorted(names))}. Two odor lines "
+                    "announcing one code are indistinguishable in the data.",
+                ))
+        return out
+
     def sync_problems(self) -> list[tuple[str, str]]:
         """More than one `sync` channel.
 
@@ -566,6 +629,11 @@ class ChannelMap:
         `direction` rides along because it comes from the kind, and a kind change
         moves it -- a reward line that became an input is a real difference even
         though no pin moved.
+
+        `onset_strobe` is LEFT OUT. It changes no compiled byte: the generator
+        emits the code a trial row stores, and the declaration only decides what
+        the editor writes there. Including it would move every rig's pinout hash
+        for a change no box can observe.
         """
         payload = [
             [c.name, c.kind, c.direction, c.index, c.watch_bit, c.well, c.port_slot]
@@ -599,6 +667,7 @@ class ChannelMap:
                     **({"watch_bit": c.watch_bit} if c.watchable else {}),
                     **({"well": c.well} if c.well else {}),
                     **({"port_slot": c.port_slot} if c.port_slot else {}),
+                    **({"onset_strobe": c.onset_strobe} if c.onset_strobe else {}),
                     **({"rationale": c.rationale} if c.rationale else {}),
                     **({"note": c.pin_note} if c.pin_note else {}),
                     **({"source": c.pin_source} if c.pin_source else {}),

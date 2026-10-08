@@ -56,7 +56,9 @@ export function ConstellationPicker({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+    // Six across on anything wider than a phone: twelve signs in two rows, a
+    // choice made once, not a gallery to browse.
+    <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
       {ZODIAC.map((c) => {
         const tooSmall = c.stars.length < boxCount;
         const active = selected === c.id;
@@ -73,20 +75,20 @@ export function ConstellationPicker({
                 ? `${c.name} has ${c.stars.length} stars — needs at least ${boxCount}`
                 : c.name
             }
-            className={`rounded-md border px-2 pb-1.5 pt-2 text-left transition-colors ${
+            className={`rounded-md border px-1.5 pb-1 pt-1.5 text-left transition-colors ${
               active
                 ? "border-pulsar bg-pulsar/12"
                 : "border-halo bg-nebula hover:border-static/40"
             } ${tooSmall ? "opacity-40" : ""}`}
           >
             <ZodiacThumb constellation={c} />
-            <div className="mt-1 flex items-baseline justify-between gap-1">
+            <div className="mt-0.5 flex items-baseline justify-between gap-1">
               <span
-                className={`text-[12px] font-medium ${active ? "text-starlight" : "text-static"}`}
+                className={`truncate text-[11px] font-medium ${active ? "text-starlight" : "text-static"}`}
               >
                 {c.name}
               </span>
-              <span className="font-mono text-[10px] text-static/80">
+              <span className="shrink-0 font-mono text-[9px] text-static/80">
                 {c.stars.length}★
               </span>
             </div>

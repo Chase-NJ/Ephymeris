@@ -125,7 +125,7 @@ The dividing line is [`START_LINE_MAX`](#the-length-cap): a trial table and a pi
 
 ## Firmware
 
-The firmware lives in the sibling repo `../Arduino` (override with `EPHYMERIS_FIRMWARE_REPO`). `scripts/stage-sketches.mjs` copies it into this repo's gitignored `sketches/` (`npm run stage:sketches`; `npm run predev` runs it too). **Edit firmware in the Arduino repo and commit it there** — an edit under `sketches/` is discarded at the next stage.
+The firmware lives in `firmware/` ([its README](../firmware/README.md)); it was a separate repository until it was imported here with its history. `scripts/stage-sketches.mjs` copies it into the gitignored `sketches/` (`npm run stage:sketches`; `npm run predev` runs it too). **Edit firmware in `firmware/`** — an edit under `sketches/` is discarded at the next stage.
 
 All trial logic lives in `libraries/BehaviorBox/BehaviorBox.h`: the serial helpers (strobe emitter, `START` reader, `STOP` poll), `TaskParams` and the one declarative wire-key list `TASK_PARAM_LIST` the `START` parser is generated from, the trial primitives (`TrialType`, `generateTrials`), the selection policies, and one `runTrial()` loop. That shared loop is why the state machine can be [derived](#derived-state-machine) rather than declared. The pinout is in `BoxPins.h`; the strobe codes are in no file of the firmware repo — the app generates them into `TaskPins.h`, and `BoxStrobes.h` only refuses to build without them.
 
@@ -141,7 +141,7 @@ Every pin in `BoxPins.h` is `#ifndef`-guarded. Strobe codes are not defaults at 
 #include "TaskTrials.h"  // constructs TrialType, so it must come after
 ```
 
-Whatever `TaskPins.h` declares wins; an unmentioned pin falls back to the box as built. A sketch built bare from the firmware repo therefore does not compile — build the folder the app generated. `TaskPins.h` must stay pure preprocessor — it is read before `BehaviorBox.h` has defined any type.
+Whatever `TaskPins.h` declares wins; an unmentioned pin falls back to the box as built. A sketch built bare from `firmware/` therefore does not compile — build the folder the app generated. `TaskPins.h` must stay pure preprocessor — it is read before `BehaviorBox.h` has defined any type.
 
 ### Counts that move with their key lists
 
@@ -687,7 +687,7 @@ It is built sidecar-side at `sessions.confirmMapping` (and by `port.sendStart` i
 ### The length cap
 
 > [!CAUTION]
-> **The cap is checked rather than trusted, because the firmware cannot report the failure.** `readLineInto()` truncates an overlong line and drops the rest, so an over-declared profile would run on whichever values happened to fit. `build_start_command` raises instead, naming the length and the limit. `START_LINE_MAX` lives in **two repositories** — `tasks/start_command.py` and the Arduino repo's `BehaviorBox.h` — and they must be changed together.
+> **The cap is checked rather than trusted, because the firmware cannot report the failure.** `readLineInto()` truncates an overlong line and drops the rest, so an over-declared profile would run on whichever values happened to fit. `build_start_command` raises instead, naming the length and the limit. `START_LINE_MAX` lives in **two files** — `tasks/start_command.py` and `firmware/libraries/BehaviorBox/BehaviorBox.h` — and `tests/test_task_profiles.py` fails when they disagree.
 
 The budget reserves room for the `SEED` token (`_SEED_TOKEN_BUDGET`), because the config half of the line is built at mapping, minutes before the seed is drawn. A `TaskProfileError` here becomes `TASK_PROFILE_INVALID` with the box, and **the mapping is refused**. A profile that fails to *parse* at mapping is instead treated as profile-less (bare `START`).
 
@@ -885,7 +885,7 @@ For a firmware author adding a sketch to the bundle with its own hand-written `t
 
 ### Authoring steps
 
-1. **Write the sketch in `../Arduino`**, inside a category folder, with `<Name>/<Name>.ino`. `#include "TaskPins.h"` before `<BehaviorBox.h>` (and ship a `TaskPins.h` that declares nothing) so the app rebuilds it against each rig's wiring and vocabulary — a `BehaviorBox` sketch without it does not compile. A name must not collide with a saved task.
+1. **Write the sketch in `firmware/`**, inside a category folder, with `<Name>/<Name>.ino`. `#include "TaskPins.h"` before `<BehaviorBox.h>` (and ship a `TaskPins.h` that declares nothing) so the app rebuilds it against each rig's wiring and vocabulary — a `BehaviorBox` sketch without it does not compile. A name must not collide with a saved task.
 2. **Minimum profile:** `{ "taskName": "My Task" }`. This alone gives a bare `START`, no form, a raw log and no diagram.
 3. **Emit only codes the vocabulary holds.** Add any new one on the Strobes page first ([Editing the vocabulary](#editing-the-vocabulary)), then emit `BF_<NAME>`. Don't declare `strobes` in `task.json`; the vocabulary fills it. Which names the vocabulary holds unlocks each part of the diagram ([Nodes and outcomes](#nodes-and-outcomes)); `END_SESSION` is what lets the runner finalize cleanly.
 4. **Declare every operator-tunable parameter** in `config`, with `wireKey`s that `TASK_PARAM_LIST` parses, a `metadataKey` you want in the data file, a `group` from `GROUP_ORDER` (unknown groups sort last), and ramped values **per stage**. Mind the [length cap](#the-length-cap).

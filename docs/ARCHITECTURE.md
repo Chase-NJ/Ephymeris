@@ -1282,6 +1282,6 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 |---|---|
 | `protocol/schema.py`, `wire_dsl.py`, `generate.py` | The wire schema, its DSL, and the generator for the three generated files |
 | `scripts/gen-protocol.mjs` | `npm run gen:protocol` |
-| `scripts/stage-sketches.mjs` | Copies the sibling Arduino repo into the gitignored `sketches/` ([TASKS.md](TASKS.md#firmware)) |
+| `scripts/stage-sketches.mjs` | Copies `firmware/` into the gitignored `sketches/` ([TASKS.md](TASKS.md#firmware)) |
 | `scripts/package-resources.mjs` | Stages the frozen sidecar, `arduino-cli` and its data seed for the installer |
 | `scripts/check.mjs` | `npm run check`: protocol freshness, typecheck, unit tests |

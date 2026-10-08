@@ -18,9 +18,9 @@ from .profile import ConfigField, TaskProfile, TaskProfileError
 #: silently lose one of the two values.
 SEED_WIRE_KEY = "SEED"
 
-#: Hard cap on a `START` line, mirroring `START_LINE_MAX` in the Arduino repo's
-#: `libraries/BehaviorBox/BehaviorBox.h`. There is no shared source across the
-#: two repos, so the two constants must be changed together.
+#: Hard cap on a `START` line, mirroring `START_LINE_MAX` in the firmware's
+#: `libraries/BehaviorBox/BehaviorBox.h`. Two files, one value:
+#: `tests/test_task_profiles.py` reads the header and fails when they disagree.
 #:
 #: This is checked rather than trusted because the firmware CANNOT report the
 #: failure: `readLineInto()` truncates an overlong line and drops the rest of the

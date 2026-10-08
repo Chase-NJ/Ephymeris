@@ -710,7 +710,7 @@ def _firmware_names() -> set[str] | None:
     """Every `BF_*` the staged firmware NAMES, or None outside a checkout.
 
     Read from `sketches/`, which `npm run stage:sketches` writes from the
-    behaviour firmware repo. Skipped rather than failed when it is absent: a
+    repo's `firmware/`. Skipped rather than failed when it is absent: a
     packaged sidecar has no library beside it, and this is a developer guard.
     The firmware holds no numbers any more — `BoxStrobes.h` refuses to compile
     without the generated ones — so names are all there is to compare.

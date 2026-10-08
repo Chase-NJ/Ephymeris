@@ -9,7 +9,11 @@
  *
  * One source:
  *
- *   ../Arduino        the lab's behaviour sketches + libraries/BehaviorBox
+ *   firmware/         the behaviour sketches + libraries/BehaviorBox, in this repo
+ *
+ * The firmware used to be a sibling repo (../Arduino) kept in step by hand; it
+ * was imported here with its history, because it exists only for this app and
+ * a change to one is so often a change to the other.
  *
  * It used to be two. `<repo>/firmware` held the task-spec interpreter library
  * and its bench sketch, and this script existed largely to MERGE the two
@@ -21,12 +25,7 @@
  * than copied because the lab machines are Windows.
  *
  * `sketches/` is gitignored and regenerated. It is a build output, not a mirror —
- * nobody edits it, and committing it would create a copy of the firmware repo
- * inside this one that would drift the first time someone touched a sketch.
- *
- * The behaviour-sketch source is overridable so a machine with a different
- * layout can still build:
- *   EPHYMERIS_FIRMWARE_REPO   default ../Arduino
+ * nobody edits it; edit `firmware/`.
  */
 
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
@@ -37,9 +36,7 @@ import process from "node:process";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const stagedDir = join(repoRoot, "sketches");
 
-const behaviorRepo = resolve(
-  process.env.EPHYMERIS_FIRMWARE_REPO ?? join(repoRoot, "..", "Arduino"),
-);
+const behaviorRepo = join(repoRoot, "firmware");
 
 const IGNORE_PREFIXES = [".", "_"];
 
@@ -79,9 +76,8 @@ function countSketches(dir) {
 
 if (!existsSync(behaviorRepo)) {
   console.error(
-    `the behaviour firmware repo not found at ${behaviorRepo}\n` +
-      "Sketches ship with the app, so this repo is required to build one.\n" +
-      "Set EPHYMERIS_FIRMWARE_REPO if yours lives elsewhere.",
+    `the firmware folder is missing: ${behaviorRepo}\n` +
+      "Sketches ship with the app, so it is required to build one.",
   );
   process.exit(1);
 }

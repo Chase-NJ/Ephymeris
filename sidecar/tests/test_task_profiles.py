@@ -609,3 +609,21 @@ def test_a_value_with_whitespace_falls_back_to_the_default() -> None:
     profile = parse_profile({"taskName": "T", "config": [
         {"metadataKey": "mode", "wireKey": "MD", "label": "Mode", "type": "string", "default": "fast"}]})
     assert build_start_command(profile, {"mode": "not fast"}) == "START MD=fast"
+
+
+def test_the_start_line_cap_matches_the_firmware():
+    """Two files, one value (`TASKS.md#the-length-cap`). Were they ever to
+    disagree upward, the firmware would truncate a line the host had
+    accepted, and the run would start on whichever values happened to fit."""
+    import re
+    from pathlib import Path
+
+    from ephymeris_sidecar.tasks.start_command import START_LINE_MAX
+
+    header = (
+        Path(__file__).resolve().parents[2]
+        / "firmware" / "libraries" / "BehaviorBox" / "BehaviorBox.h"
+    )
+    match = re.search(r"^#define START_LINE_MAX (\d+)", header.read_text(encoding="utf-8"), re.M)
+    assert match is not None, "BehaviorBox.h no longer defines START_LINE_MAX"
+    assert int(match.group(1)) == START_LINE_MAX

@@ -11,9 +11,8 @@ src-tauri/gen/schemas/
 # Staged by scripts/package-resources.mjs; regenerated per build
 src-tauri/resources/
 
-# Staged by scripts/stage-sketches.mjs from ../Arduino.
-# A build output, not a mirror: committing it would put a copy of the firmware
-# repo inside this one, and it would drift the first time anyone edited a sketch.
+# Staged by scripts/stage-sketches.mjs from firmware/. A build output: edit
+# firmware/, never this.
 sketches/
 
 # Python sidecar

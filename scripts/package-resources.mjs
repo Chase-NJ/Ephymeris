@@ -15,7 +15,7 @@
  *                             directory, so nothing from the dev machine's own
  *                             Arduino15 rides along
  *     sketches/               the bundled sketch library, freshly staged by
- *                             stage-sketches.mjs from ../Arduino
+ *                             stage-sketches.mjs from firmware/
  *
  * The shell resolves these through Tauri's resource dir and hands their
  * locations to the sidecar via EPHYMERIS_BUNDLED_* env vars; the sidecar

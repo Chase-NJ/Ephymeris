@@ -95,14 +95,13 @@ arduino-cli core update-index && arduino-cli core install arduino:avr
 
 ```bash
 git clone https://github.com/Chase-NJ/Ephymeris.git
-git clone https://github.com/Chase-NJ/Arduino.git   # the firmware, as a sibling: ../Arduino
 cd Ephymeris && npm install
 ```
 
-The firmware lives in its own repo. `npm run stage:sketches` copies it into this repo's gitignored
-`sketches/` (`predev` runs it for you). Edit firmware in `../Arduino` and commit it there: anything
-edited under `sketches/` is overwritten at the next stage. Set `EPHYMERIS_FIRMWARE_REPO` if the
-firmware repo lives elsewhere; `EPHYMERIS_SKETCH_LIBRARY` points a dev sidecar at another library.
+The firmware lives in [`firmware/`](firmware/README.md). `npm run stage:sketches` copies it into the
+gitignored `sketches/` (`predev` runs it for you). Edit firmware in `firmware/`: anything edited under
+`sketches/` is overwritten at the next stage. `EPHYMERIS_SKETCH_LIBRARY` points a dev sidecar at
+another library.
 
 ### Sidecar virtual environment
 
@@ -136,7 +135,7 @@ minutes. On first launch, do steps 4 to 6 of [Installing on a lab machine](#inst
 
 | Symptom | Cause |
 |---|---|
-| `predev` fails: firmware repo not found | `../Arduino` is missing. Clone it, or set `EPHYMERIS_FIRMWARE_REPO` |
+| `predev` fails: the firmware folder is missing | `firmware/` was deleted or the checkout is partial |
 | No boards detected | Genuine Mega2560 R3 boards need no driver, but CH340 clones do. Ephymeris lists only what `arduino-cli board list` reports |
 | "Sidecar interpreter not found" | No venv at `sidecar/.venv`, or one made with Python older than 3.12 |
 | `.venv/bin/pytest` fails with "No such file" | The repo moved after the venv was made, and its scripts point at the old path. Run `python -m pytest`, or recreate the venv |
@@ -157,12 +156,12 @@ Run from the repo root unless noted.
 | `npm run test` / `npm run test:watch` | Vitest over `src/lib/**`, once or watching |
 | `npm run check` | Protocol mirrors up to date, typecheck and unit tests; runs all three even after a failure |
 | `npm run gen:protocol` | Regenerate `sidecar/ephymeris_sidecar/protocol.py`, `src/lib/ws/protocol.ts` and `docs/PROTOCOL.md` from `protocol/schema.py` |
-| `npm run stage:sketches` | Copy `../Arduino` into `sketches/` |
+| `npm run stage:sketches` | Copy `firmware/` into `sketches/` |
 | `npm run package` | Stage installer resources, then build the Windows installer |
 | `pytest` (in `sidecar/`, inside the venv) | The sidecar suite |
 | `pytest tests/test_protocol_contract.py` (in `sidecar/`) | The mirror-drift guard; run it after any wire change |
 | `cargo test` (in `src-tauri/`) | Shell unit tests, such as the handshake parser |
-| `libraries/BehaviorBox/extras/host_test/run.sh` (in `../Arduino`) | Firmware host tests for the shared library; `run_box.sh` tests `BOX_Utility` |
+| `firmware/libraries/BehaviorBox/extras/host_test/run.sh` | Firmware host tests for the shared library; `run_box.sh` tests the box utility |
 
 ## Tests
 
@@ -195,7 +194,7 @@ against a live RHX. Everything else in the Intan suite runs against `tests/fake_
 
 **Rust: `cargo test`** in `src-tauri/`, for the sidecar handshake parser and other shell units.
 
-**Firmware: host tests** in `../Arduino/libraries/BehaviorBox/extras/host_test/`. They compile the
+**Firmware: host tests** in `firmware/libraries/BehaviorBox/extras/host_test/`. They compile the
 shared library without `-fpermissive`, which makes them the strictest type check the sketches get.
 
 > [!CAUTION]
@@ -213,7 +212,7 @@ npm run package
 
 `scripts/package-resources.mjs` stages `src-tauri/resources/`: it freezes the sidecar with PyInstaller
 from `sidecar/.venv`, copies `arduino-cli` from this machine's `PATH`, seeds a clean `arduino:avr` core
-(this needs the network once), and stages the sketch library from `../Arduino`. Then `tauri build`
+(this needs the network once), and stages the sketch library from `firmware/`. Then `tauri build`
 merges `src-tauri/tauri.bundle.conf.json` and writes an NSIS installer to
 `src-tauri/target/release/bundle/nsis/`. Delete `src-tauri/resources/` to force a fresh stage.
 

@@ -69,9 +69,10 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
 - [The Task tab](#the-task-tab)
   - [Landing](#landing)
   - [Editor](#editor)
-  - [Trial table](#trial-table)
+  - [Trial types](#trial-types)
+  - [Trial generation](#trial-generation)
   - [Ramp and START meter](#ramp-and-start-meter)
-  - [Parameter rail](#parameter-rail)
+  - [Parameter dial](#parameter-dial)
 - [Writing a new sketch](#writing-a-new-sketch)
   - [Authoring steps](#authoring-steps)
   - [Verify](#verify)
@@ -166,8 +167,19 @@ A key list shorter than its count only leaves slots unreachable; a longer one co
 | Mode | Behaviour |
 |---|---|
 | `BOX_SELECT_ANTIBIAS` | Draw a side against the animal's recent bias, then a type uniformly within the side. Weights are ignored. |
-| `BOX_SELECT_WEIGHTED` | The same side draw, then a type within the side by `poolWeights` (`WeightedAntiBiasSelector`; no virtuals, `TrialPolicy` still holds the base pointer). For showing a stimulus still being learned more often without giving up side balancing. |
-| `BOX_SELECT_POOL` | A block-shuffled sequence built from `poolWeights` at `START`. |
+| `BOX_SELECT_WEIGHTED` | The same side draw, then a type within the side by `poolWeights` (`WeightedAntiBiasSelector`; no virtuals, `TrialPolicy` still holds the base pointer). For showing a stimulus still being learned more often without giving up side balancing. A side whose weights sum to zero is drawn uniformly. |
+| `BOX_SELECT_POOL` | A block-shuffled sequence built from `poolWeights` at `START`, exact proportions per block of `BS`, `NT` clamped to 1000. |
+
+What each reads — the editor's [trial generation](#trial-generation) panel mirrors this by hand (`src/lib/taskdef/selection.ts`):
+
+| | Anti-bias | Weighted | Pool |
+|---|---|---|---|
+| Side balancing (`BW`, `MCS`, `DBS`, `PMN`, `PMX`) | yes | yes | no |
+| Row weights (`PW<n>`) | no | within a side | across the session |
+| Block size (`BS`) | no | no | yes |
+| Correction budgets (`CL`, `CR`) | yes | yes | no — `runTrial` gets no policy |
+| Abstention escalation (`LAZY`, `LZS`, `LZM`, `LZG`) | yes | yes | no; `LZD` still applies, flat |
+| No-go types presented | no — a withhold has no side | no | yes |
 
 The three values are themselves guarded in `BehaviorBox.h`. A header that once omitted them made `#if BOX_SELECTION_MODE == BOX_SELECT_POOL` evaluate as `0 == 0`.
 
@@ -755,7 +767,7 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 What this rests on:
 
-- **Anything in `to_json` moves `profile_hash`**, and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter rail's tab fold is the app's rather than the profile's ([Parameter rail](#parameter-rail)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
+- **Anything in `to_json` moves `profile_hash`**, and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter dial's tab fold is the app's rather than the profile's ([Parameter dial](#parameter-dial)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
 - **`strobes` is left out** because a loaded profile's map is the machine's whole vocabulary: hashing it would split every task's history the first time anyone added a code, and codes are never renumbered, so the map says nothing about comparability. Stored hashes were re-keyed once when this changed (`cohorts/db.py` `_to_v13`, [DATA.md](DATA.md#changing-the-schema)).
 - **`to_json` must round-trip through `parse_profile` byte-for-byte.** A finalized session file embeds its profile ([DATA.md](DATA.md#per-animal-files)); if the round trip drifts, a copied run lands under a different hash than its origin.
 - **`intan_*` fields are core, not config** (`CORE_METADATA_KEYS`), so they stay out of `params_hash`: two runs of one tuning are comparable whether or not one was recorded.
@@ -876,42 +888,48 @@ The Task tab answers *what the animal does*; the Rig tab answers *what this box 
 
 ### Editor
 
-`/task/new` and `/task/:taskId` (`routes/TaskEditor.tsx`): `TaskDetails` (category, `legacyNames`, notes), the derived state machine (`SketchStateMachine`, with a `ConditionRail` of real buttons since the SVG is inaccessible), `TrialTypeTable`, `StageRamp`, and the `ParameterInspector` rail. The state machine and the problem list stay on screen beside what is being edited, because the diagram is the fastest check that an edit did what was meant. **Every redraw comes from `tasks.preview`**: the diagram is derived from the profile the *current* definition compiles to, and validation needs the wiring, which the frontend does not hold.
+`/task/new` and `/task/:taskId` (`routes/TaskEditor.tsx`) is a [telemetry display](ARCHITECTURE.md#telemetry-panels) in one frame: the derived **state machine** front and centre with every **trial type** beneath it, and beside them the **parameter dial** and **trial generation**. The diagram is the fastest check that an edit did what was meant, so it is never off screen. **Every redraw comes from `tasks.preview`**: the diagram is derived from the profile the *current* definition compiles to, and validation needs the wiring, which the frontend does not hold.
 
-**The diagram has a floor and the page bends around it** (`lib/tasks/editorLayout.ts`). The machine is never drawn narrower than `EDITOR_MIN_W` and never scaled — type, radii and strokes are always 1:1. As the window narrows, the page gives up the next-cheapest thing instead: first the section spine folds to a strip of marks (`medium`), then the parameter rail leaves the side and docks under the diagram (`stacked`, the app's minimum window). Every boundary moves on `springPanel`, the rail travels between its two homes under one `layoutId`, and the diagram's own layout width moves in `WIDTH_STEP`s that glide on the same spring (`useGlidingWidth`): `frameFor` re-runs each frame, so the states slide apart or together as one drawing. At the side, the rail is set **in front of** the machine — the diagram card's glass runs on under it (`.hud-front`) while the drawing stays in the uncovered span; docked, it overlaps the card's foot.
+- **The header** (`editor/EditorHeader.tsx`): the way back, the task's glyph and name, a **Problems** popover (every diagnostic grouped by where it lives; each one jumps to its row, the dial's Holds stop or the generation panel), the **`START` meter**, the **Details** popover (category, legacy names, notes — `TaskDetailsBody`, opened once on a new task because the category decides the sketch folder), then Revert and Save.
+- **One link, read from every end.** A planet, the generation panel or a machine chip lights the states it tunes; hovering a state lights its planet; a trial row or a composition segment lights its condition's tick. A chip or state click opens its home. The machine's own condition list is off here (`conditionRail={false}`): the trial rows are the accessible condition list.
+- **The machine draws itself on** left to right on first sight (a `DrawOn` clip wipe, each state fading in as the wipe reaches it), and a small flat dot rides the rewarded trial from start to ITI (`happyPath`, `spinePath`). The dot is not the live token: it has no ring, and it is hidden under reduced motion and whenever anything is lit.
+- **The machine has a floor and the page bends around it** (`lib/tasks/editorLayout.ts`). It is never drawn narrower than `EDITOR_MIN_W` and never scaled. **Split**: the machine and trial types in the main column, the dial and generation in an aside. **Stacked** — when the aside would squeeze the machine below its floor, as on the app's minimum window — the aside's panels move under the trial types and the page scrolls. Panels carry `layoutId`s, so they travel between homes on a spring, and the drawing's layout width moves in `WIDTH_STEP`s that glide (`useGlidingWidth`).
 
-![The task editor for 2-Odor Discrimination: an outline rail (Details, Conditions, Shaping ramp, Parameters), the derived State machine with each state's parameter-group chips under it and a condition list below, the START meter at 240/640 in the header, and the Parameters rail with its Session, Trial pool, Trial timing, Abstention penalty and Anti-bias selection tabs](images/task-editor.webp)
+### Trial types
 
-*The [derived state machine](#derived-state-machine) as the editor draws it: the conditions are one "Odor" node
-with a tick per condition, the chips under each state are its `governedBy` groups, and hovering a rail tab
-lights the states it governs.*
+`editor/TrialTypes.tsx`, one row per condition: name, **odor line**, answers at, paid from, reward ms, weight (weighted and pool only), go/no-go.
 
-### Trial table
+- **The odor line is the one choice.** Its onset code is the line's own, declared on the Rig tab ([Onset codes](#onset-codes)); choosing a line writes both, and the code is shown read-only with its number from the vocabulary. A line another row presents is listed disabled ("in row 2"). A line with no declaration says so and points at the Rig tab; a stored row that disagrees (`TSK114`) shows its code in error colour with a one-click fix and the note that the wiring may be the right thing to change.
+- Every cell is a **channel name or code name**, never a pin or index. Row order is the contract ([Order is meaning](#order-is-meaning)); there is no drag handle. A new row is seeded from the last one, on the first free line.
+- **Reward volume and weight live on the row** and only there — the generator reads them off the row, so the editor never offers `pool_weight_N`/`reward_time_N` anywhere else and never writes them into `params` (`isRowOwnedField`).
+- Each row is **named** (`TSK110`/`TSK111`) and has a second line — its onset code and the contingency in the rig's own labels ("sandalwood → left well, paid from fluid 0 · plumbed to left well"), the one rendering that catches `TSK103` by eye — or its first problem. When the rows would not all fit two lines in the room the panel has, they go to one line and the hovered row's second line shows in a caption below.
+- A no-go row outside Pool says it is never presented ([Selection modes](#selection-modes)).
 
-- Every cell is a **channel name or code name**, never a pin or index; the rig's wiring supplies the options.
-- Row order is the contract ([Order is meaning](#order-is-meaning)); there is no drag handle.
-- Each go row carries its **reward volume** (ms) and, under pool or weighted selection only, its **weight**. These columns are on the row, not the rail, so they cannot outlive the row they describe.
-- Each row is **named** (`TSK110`/`TSK111`) and shows a plain contingency sentence in the rig's own channel labels ("odor line 3 → left well, paid from fluid 0 · plumbed to left well"), the one rendering that catches `TSK103` by eye: the reward chip names the well its line is plumbed to, and is flagged when that is not the answering well.
-- The onset picker offers only **numbered** `*_<n>_ON` codes. A bare `_ON` suffix would offer `LIGHTS_ON`, which the runner emits every trial, and a task that picked it would pool two conditions silently.
+### Trial generation
 
-![The Trial types table under anti-bias selection: rows "Odor A → right" and "Odor B → left", each with go/no-go, odor line, onset code, answers at, paid from and reward ms, and a contingency line such as "odor line 3 → left well, paid from fluid 0 · plumbed to left well"; below, Holds & windows with a single stage-0 row](images/task-trial-table.webp)
+`editor/GenerationPanel.tsx` makes how the next trial is chosen a choice of its own: the three modes as one control, a sentence on how each draws and a ✓/✗ row of what it does (`lib/taskdef/selection.ts`, a hand mirror of the [selection modes](#selection-modes)), and a **composition strip** — the session the mode would deal, each condition in its colour; two side halves for the anti-bias modes, one bar for the pool, never-presented types as outlines after it.
+
+Below sit the groups that are selection policy: **Anti-bias selection**, **Trial pool** (the block size) and **Correction trials** (the firmware runs correction budgets as policy, and the pool has none). A group the mode never reads folds to one dimmed "not used in pool" line that still opens, so its values survive switching back; a field the mode skips inside a live group (the escalation fields under pool, the no-go window outside it) is dimmed with a note. Table-level `TSK109` shows here.
 
 ### Ramp and START meter
 
-`StageRamp` shows the whole schedule, titled "Holds & windows" while it has one row and "Shaping ramp — N stages" once it has more; row 0 has no "engages at"; a new row is seeded from the row before it, never from a defaults table, so no stage appears carrying numbers nobody chose. The header's **`START` meter** shows the built line's length against `START_LINE_MAX`. It is not decoration: that cap is the one budget an operator can exhaust without noticing, and each added stage costs five tokens.
+The ramp is the dial's **Holds & shaping** stop (`editor/StageList.tsx`): one compact row per stage — the trial it engages at, odor hold, well hold, response window, odor port window — with the timeline strip once there is more than one stage. Row 0 has no "engages at"; a new row is seeded from the row before it, never from a defaults table, so no stage appears carrying numbers nobody chose. The header's **`START` meter** shows the built line's length against `START_LINE_MAX` and is never hidden: that cap is the one budget an operator can exhaust without noticing, each added stage costs five tokens, and over the cap the meter says the firmware truncates in silence.
 
-![A shaping task under Pool selection: both trial rows now carry a Weight beside Reward ms, and the Shaping ramp — 5 stages table gives each stage the trial it engages at (20, 40, 70, 110) with its odor hold, well hold, response window and odor port window](images/task-ramp.webp)
+### Parameter dial
 
-*Under pool or weighted selection each row gains its weight; the ramp declares every ramped hold per stage,
-which is what stops the firmware's stage boundaries overwriting a single value
-([Ramped values](#ramped-values)).*
+`editor/ParameterOrrery.tsx`: the task's parameter categories as planets on an **orbit** — the upper half of a tilted ellipse with a fixed zenith marker. Selecting one (click, arrow keys, Home/End, or one wheel step per gesture) turns the whole orbit on one spring until it sits at the zenith, and its fields slide in from the direction of travel. Geometry is `lib/tasks/orrery.ts`. A planet with values this task pins carries a small moon; one with problems a red ring. Under reduced motion the orbit jumps.
 
-### Parameter rail
+**Stops are tabs, not groups** (`topology.ts`'s `tabOf`, `dialTabs`):
 
-**The rail's pills are tabs, not groups** (`topology.ts`'s `tabOf`). `Correction trials` and `Reward volume` fold under `Session`, and the rail then excludes `Reward volume` outright because the trial table owns it.
+| Home | Groups |
+|---|---|
+| Dial: Session, Trial timing, Abstention penalty | their own group |
+| Dial: Holds & shaping | `Holds & windows`, `Stage n` |
+| Trial generation panel | `Anti-bias selection`, `Trial pool`, `Correction trials` |
+| Trial rows | `Reward volume` (and the pool weights, which are row-owned) |
 
 > [!IMPORTANT]
-> **The fold is the app's, never the profile's.** `group` rides in `ConfigField.to_json` and therefore inside `profile_hash`, so re-filing a field in `fields.py` would give every regenerated `task.json` a new hash and split each task's runs. `QUICK_TUNE_GROUPS` (the groups the mapping step promotes) rests on the same reasoning, and both registries live in `topology.ts`. Anything comparing a rail tab against a node's `governedBy` folds through `tabOf` first (`nodesGovernedByTab`); the diagram's chips keep the real group names.
+> **The fold is the app's, never the profile's.** `group` rides in `ConfigField.to_json` and therefore inside `profile_hash`, so re-filing a field in `fields.py` would give every regenerated `task.json` a new hash and split each task's runs. `QUICK_TUNE_GROUPS` (the groups the mapping step promotes) and the mode scope in `selection.ts` rest on the same reasoning. Anything comparing a tab against a node's `governedBy` folds through `tabOf` first (`nodesGovernedByTab`); the machine's chips fold the same way (`holds`, `selection`).
 
 `settings.taskDefaults` has no editor here or anywhere; a profile's own values are edited on this tab.
 

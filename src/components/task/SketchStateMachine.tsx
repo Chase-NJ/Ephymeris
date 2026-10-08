@@ -1,12 +1,14 @@
-import { motion } from "framer-motion";
-import { useMemo, useState, type ReactNode } from "react";
+import { animate, motion, useMotionValue } from "framer-motion";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+import { DrawOn } from "@/components/charts/DrawOn";
 
 import { NODE_PRIMARY } from "@/components/chrome/constellationStyle";
 import { OUTCOME_STYLE, colorForIndex } from "@/lib/analytics/view";
 import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import type { TaskProfile } from "@/lib/sessions/types";
-import { tabOf } from "@/lib/tasks/topology";
+import { GENERATION_TAB, HOLDS_TAB, happyPath, tabOf } from "@/lib/tasks/topology";
 import type {
   Condition,
   LiveCondition,
@@ -33,6 +35,7 @@ import {
   VIEWER_GEOMETRY,
   frameFor,
   layoutWidthFor,
+  spinePath,
   type Frame,
 } from "@/lib/tasks/graphLayout";
 import { useGlidingWidth } from "@/lib/tasks/useGlidingWidth";
@@ -101,6 +104,9 @@ export function SketchStateMachine({
   onHoverNode,
   onNodeClick,
   onSelectGroup,
+  hoverCondition: hoverConditionProp,
+  onHoverCondition,
+  conditionRail = true,
 }: {
   model: TaskGraphModel;
   profile: TaskProfile | null;
@@ -113,6 +119,18 @@ export function SketchStateMachine({
   onNodeClick: (node: TaskNode) => void;
   /** A chip click selects exactly the group it names. */
   onSelectGroup: (group: string) => void;
+  /**
+   * The condition under the pointer, when the PAGE owns it — the task editor's
+   * trial rows and composition strip light a tick this way. Uncontrolled (the
+   * drawing's own condition rail) when omitted.
+   */
+  hoverCondition?: string | null;
+  onHoverCondition?: (id: string | null) => void;
+  /**
+   * The condition list under the drawing. The editor turns it off: its trial
+   * rows are the accessible, keyboard-reachable condition list there.
+   */
+  conditionRail?: boolean;
 }) {
   const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
   /**
@@ -124,7 +142,18 @@ export function SketchStateMachine({
    * takes the caption strip; it never touches the geometry. Precedence, when
    * more than one is live: group > node > condition.
    */
-  const [hoverCondition, setHoverCondition] = useState<string | null>(null);
+  const [ownHoverCondition, setOwnHoverCondition] = useState<string | null>(null);
+  const hoverCondition = hoverConditionProp !== undefined ? hoverConditionProp : ownHoverCondition;
+  const setHoverCondition = (id: string | null) => {
+    setOwnHoverCondition(id);
+    onHoverCondition?.(id);
+  };
+  const reduceMotion = useReduceMotion();
+  /** The first frame draws itself on; later redraws do not. */
+  const drawn = useRef(false);
+  useEffect(() => {
+    drawn.current = true;
+  }, []);
 
   /** Groups this profile actually declares — a chip must never name a tile
    *  that doesn't exist below. */
@@ -200,17 +229,31 @@ export function SketchStateMachine({
         role="img"
         aria-label="The task's state machine, derived from its strobe vocabulary"
       >
-        {/* Edges first, under the nodes. */}
-        {distinctEdges(model, frame).map((edge) => (
-          <EdgePath
-            key={edge.id}
-            edge={edge}
-            model={model}
-            lit={litNodes}
-            frame={frame}
-          />
-        ))}
+        {/* Edges first, under the nodes — drawn on left to right with the
+            trial on first sight, as a clip wipe (never `pathLength`, which
+            breaks under non-scaling strokes; `DrawOn`). */}
+        <DrawOn viewBox={[0, 0, frame.width, frame.height]} duration={drawn.current ? 0 : 0.9}>
+          {distinctEdges(model, frame).map((edge) => (
+            <EdgePath
+              key={edge.id}
+              edge={edge}
+              model={model}
+              lit={litNodes}
+              frame={frame}
+            />
+          ))}
+        </DrawOn>
+        {model.usable && !reduceMotion && litNodes === null && hoverCondition === null && (
+          <TransitToken d={spinePath(happyPath(model), frame)} />
+        )}
         {model.nodes.map((node) => (
+          <motion.g
+            key={node.id}
+            // Each state arrives as the wipe reaches it, on first sight only.
+            initial={drawn.current ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: (frame.x(node) / frame.width) * 0.9, duration: 0.3 }}
+          >
           <NodeGlyph
             key={node.id}
             node={node}
@@ -229,6 +272,7 @@ export function SketchStateMachine({
             onChipLeave={() => onHoverGroup(null)}
             onChipClick={(group) => onSelectGroup(tabOf(group))}
           />
+          </motion.g>
         ))}
       </svg>
       </div>
@@ -279,7 +323,7 @@ export function SketchStateMachine({
           It sits BELOW the caption strip — the strip is glued to the drawing
           and is where a rail hover writes, so putting the rail between them
           would separate the two halves of one gesture. */}
-      {model.conditions.length > 1 && (
+      {conditionRail && model.conditions.length > 1 && (
         <ConditionRail
           conditions={model.conditions}
           active={hoverCondition}
@@ -294,11 +338,11 @@ export function SketchStateMachine({
  * One row per condition — the identity the collapsed node no longer spends a
  * row of the diagram on.
  *
- * It does NOT print the contingency. `TrialTypeTable`, a few hundred pixels
- * below, already says *"sandalwood → right well · paid from fluid_2"* in the
- * rig's own words with a mismatch flag, and the metric label printed here
- * contains the well besides. Three statements of one fact inside one scroll
- * column is not emphasis.
+ * Mission Control's form of the list; the task editor turns it off, because
+ * its trial rows are the condition list there. It does NOT print the
+ * contingency: the trial rows already say *"sandalwood → right well · paid from
+ * fluid_2"* in the rig's own words, and the metric label printed here contains
+ * the well besides.
  */
 function ConditionRail({
   conditions,
@@ -536,33 +580,38 @@ interface Chip {
   covers: string[];
 }
 
-/** The ramp is six groups that always travel together; one chip carries them.
- *  Everything else maps one group to one short word. */
-const RAMP = ["Holds & windows", "Stage 0", "Stage 1", "Stage 2", "Stage 3", "Stage 4"];
+/**
+ * Groups that travel together share one chip: the ramp's six as `holds`, and
+ * the three selection-policy groups as `selection` — each opens one home in
+ * the editor (`topology.tabOf`), so one chip per home. Everything else maps one
+ * group to one short word.
+ */
+const FOLDED: Record<string, string> = { [HOLDS_TAB]: "holds", [GENERATION_TAB]: "selection" };
 const SHORT: Record<string, string> = {
   Session: "session",
-  "Trial pool": "pool",
   "Trial timing": "timing",
-  "Correction trials": "correction",
   "Abstention penalty": "penalty",
   "Reward volume": "volume",
-  "Anti-bias selection": "anti-bias",
 };
 
 function chipsFor(node: TaskNode, declared: Set<string>): Chip[] {
   const chips: Chip[] = [];
-  const governed = node.governedBy.filter((g) => declared.has(g));
-  const ramp = governed.filter((g) => RAMP.includes(g));
-  if (ramp.length > 0) {
-    chips.push({ short: "holds", group: ramp[0]!, covers: ramp });
-  }
-  for (const group of governed) {
-    if (RAMP.includes(group)) continue;
-    chips.push({
-      short: SHORT[group] ?? group.toLowerCase(),
-      group,
-      covers: [group],
-    });
+  const byHome = new Map<string, Chip>();
+  for (const group of node.governedBy.filter((g) => declared.has(g))) {
+    const home = tabOf(group);
+    const folded = FOLDED[home];
+    if (folded) {
+      const existing = byHome.get(home);
+      if (existing) {
+        existing.covers.push(group);
+        continue;
+      }
+      const chip = { short: folded, group, covers: [group] };
+      byHome.set(home, chip);
+      chips.push(chip);
+      continue;
+    }
+    chips.push({ short: SHORT[group] ?? group.toLowerCase(), group, covers: [group] });
   }
   return chips;
 }
@@ -993,6 +1042,59 @@ function NodeGlyph({
           </text>
         );
       })}
+    </g>
+  );
+}
+
+/**
+ * A rewarded trial in transit: one small flat dot riding the happy path from
+ * start to the ITI, resting, and riding again — the machine shown working
+ * rather than only drawn.
+ *
+ * NOT THE LIVE TOKEN. That one is a ringed, pulsing mark on Mission Control's
+ * drawing and means "the box is here now"; this is a 2.5px dot with no ring,
+ * at 0.6 opacity, so the two can never be confused. Flat — no blur, no glow
+ * (`ARCHITECTURE.md#theme`). The page hides it under reduced motion and while
+ * anything is lit, so it never moves under a reading.
+ *
+ * Driven through a hidden path's `getPointAtLength` rather than CSS
+ * `offset-path`, which SVG in WKWebView does not reliably honour.
+ */
+function TransitToken({ d }: { d: string }) {
+  const track = useRef<SVGPathElement>(null);
+  const progress = useMotionValue(0);
+  const cx = useMotionValue(-10);
+  const cy = useMotionValue(-10);
+
+  useEffect(() => {
+    const path = track.current;
+    if (!path) return;
+    const length = path.getTotalLength();
+    const place = (p: number) => {
+      const point = path.getPointAtLength(p * length);
+      cx.set(point.x);
+      cy.set(point.y);
+    };
+    place(0);
+    const unsubscribe = progress.on("change", place);
+    progress.set(0);
+    const controls = animate(progress, 1, {
+      duration: 3.2,
+      ease: "linear",
+      repeat: Infinity,
+      repeatDelay: 1.4,
+      delay: 1,
+    });
+    return () => {
+      controls.stop();
+      unsubscribe();
+    };
+  }, [d, progress, cx, cy]);
+
+  return (
+    <g pointerEvents="none">
+      <path ref={track} d={d} fill="none" stroke="none" />
+      <motion.circle cx={cx} cy={cy} r={2.5} fill="var(--color-starlight)" opacity={0.6} />
     </g>
   );
 }

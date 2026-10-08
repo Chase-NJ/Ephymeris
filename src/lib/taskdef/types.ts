@@ -129,16 +129,3 @@ export function channelLabel(rig: RigDocument | null, name: string): string {
   const label = rig?.channels?.[name]?.label?.trim();
   return label || name.replace(/_/g, " ");
 }
-
-/**
- * Whether a parameter group is one the ramp editor already owns.
- *
- * The generated profile files the four ramped holds under "Stage N" when a task
- * ramps and "Holds & windows" when it does not. `StageRamp` edits the whole
- * schedule as a table, so showing the same values again as rail pills would be
- * TWO SURFACES FOR ONE FIELD — and the table is the better one, because a ramp
- * is only legible as a sequence of rows.
- */
-export function isRampGroup(group: string): boolean {
-  return group === "Holds & windows" || /^Stage \d+$/.test(group);
-}

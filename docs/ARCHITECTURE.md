@@ -1170,16 +1170,16 @@ ramps are in [DATA.md](DATA.md#analytics-views).
 
 **Typefaces have fixed roles:** Space Grotesk for **headers only** (in body text it dilutes into just
 another sans), Inter for all UI text, JetBrains Mono for all data — timestamps, IDs, port names, console
-text. A panel set **in front of** another (the task editor's parameter rail over its state machine, a hint
-over its row, an export card) is `.hud-front`: a denser glass and a flat, dark drop shadow — depth, never
+text. A panel set **in front of** another (the task editor's Details and Problems popovers, a hint over
+its row, an export card) is `.hud-front`: a denser glass and a flat, dark drop shadow — depth, never
 glow. **Motion** is Framer Motion spring physics everywhere except the 3D camera's zoom-to-star flight, the
 one deliberate cubic-eased move. Ambient motion respects `prefers-reduced-motion` and the `reducedMotion`
 setting, and reduced motion stills things rather than removing them. Icons are Lucide, outline only.
 
 ### Telemetry panels
 
-Analytics — and, in the same idiom, the Recording tab and the cohort list Analytics and Log open on — is
-drawn as one large translucent display rather than a page of cards. Its panels are
+Analytics — and, in the same idiom, the Recording tab, the task editor and the cohort list Analytics and
+Log open on — is drawn as one large translucent display rather than a page of cards. Its panels are
 `.telemetry` (`styles/index.css`): the `.hud` glass, thinner, with a 3px radius, **corner brackets**
 where a card would have a rounded edge, and a faint **dot reticle**, so the sky reads as behind a display
 surface. Panel names are `PanelTitle` (`components/charts/PanelTitle.tsx`): the subject in tracked mono
@@ -1283,13 +1283,13 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `main.tsx`, `App.tsx` | Provider trees (main, scope) and the router | [Routes](#routes) |
 | `lib/ws/`, `lib/settings/`, `lib/hardware/` | Client and protocol; settings `schema.ts`; hardware store, `useHandshakeTest.ts`, `useRig.ts` | [Wire protocol](#wire-protocol), [Settings](#settings) |
 | `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
-| `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `editorLayout.ts`, `useGlidingWidth.ts`, `useLiveNode.ts`; task commands; vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine) |
+| `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `editorLayout.ts`, `orrery.ts`, `useGlidingWidth.ts`, `useLiveNode.ts`; task commands, `lines.ts` (odor lines and onsets), `selection.ts` (mode scope); vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine), [TASKS.md](TASKS.md#editor) |
 | `lib/exports/` | `jobs.ts`, the export progress store | [Export progress](#export-progress) |
 | `lib/constellations/` | `zodiac.ts`, `slots.ts`, `ships.ts`, `cohortSky.ts`, `viewMemory.ts` | [One sky](#one-sky) |
 | `lib/prng.ts`, `lib/motion.ts`, `lib/useReduceMotion.ts` | Seeded PRNG behind every procedural visual; springs; reduced motion | [Theme](#theme) |
 | `components/chrome/`, `components/constellation3d/` | Shell, status constellation and export cards; the shared canvas, scene, camera, backdrop, shaders, `ProgramWarmth` | [One sky](#one-sky), [Shaders and lights](#shaders-and-lights), [Export progress](#export-progress) |
 | `components/sessions/`, `components/debug/` | Mission Control and the session flow; Debug Mode, flash dialog, Prime | [Session lifecycle](#session-lifecycle) |
-| `components/cohorts/`, `components/task/`, `components/hardware/`, `components/strobes/` | Cohort browser and editor; task editor and landing; board map and wiring editor; the strobe vocabulary page (code band, table, detail, dialogs) | [Cohort browser](#cohort-browser), [TASKS.md](TASKS.md#the-task-tab), [TASKS.md](TASKS.md#strobe-vocabulary) |
+| `components/cohorts/`, `components/task/`, `components/hardware/`, `components/strobes/` | Cohort browser and editor; task editor (`task/editor/`) and landing; board map and wiring editor; the strobe vocabulary page (code band, table, detail, dialogs) | [Cohort browser](#cohort-browser), [TASKS.md](TASKS.md#the-task-tab), [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `components/recording/`, `routes/scope/` | Recording tab, rail and pop-up windows | [RECORDING.md](RECORDING.md) |
 | `components/analytics/`, `components/charts/` | Observatory panels, PNG report, chart primitives | [DATA.md](DATA.md#analytics-views) |
 | `lib/logbook/`, `components/logbook/` | Session-log store and commands, `rail.ts` (the time rail's layout), `clock.ts`; the rail, readout and note components | [DATA.md](DATA.md#the-session-log) |

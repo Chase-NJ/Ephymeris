@@ -1,68 +1,61 @@
-import { AnimatePresence, motion } from "framer-motion";
-import {
-  ArrowLeft,
-  CircleAlert,
-  FileText,
-  SlidersHorizontal,
-  Split,
-  TrendingUp,
-  Workflow,
-  type LucideIcon,
-} from "lucide-react";
+import { LayoutGroup, motion } from "framer-motion";
+import { CircleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
 
-import { Button } from "@/components/common/controls";
-import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
-import { ParameterInspector } from "@/components/task/ParameterInspector";
-import { StageRamp } from "@/components/task/StageRamp";
-import { TaskDetails } from "@/components/task/TaskDetails";
-import { TaskGlyph } from "@/components/task/TaskGlyph";
-import { TrialTypeTable } from "@/components/task/TrialTypeTable";
+import { DENSE_SKY_OPACITY, SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { SketchStateMachine } from "@/components/task/SketchStateMachine";
-import { colorForIndex } from "@/lib/analytics/view";
+import { EditorHeader, homeOf } from "@/components/task/editor/EditorHeader";
+import { GenerationPanel } from "@/components/task/editor/GenerationPanel";
+import { Panel } from "@/components/task/editor/Panel";
+import { ParameterOrrery } from "@/components/task/editor/ParameterOrrery";
+import { TrialTypes } from "@/components/task/editor/TrialTypes";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { getRig } from "@/lib/hardware/commands";
 import type { RigDocument } from "@/lib/hardware/types";
-import { CASCADE, PANEL_TRAVEL, RISE, springPanel } from "@/lib/motion";
-import { idFromName, listTasks } from "@/lib/taskdef/commands";
+import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
-import { blankTrial, isRampGroup, nextStage } from "@/lib/taskdef/types";
+import { idFromName, listTasks } from "@/lib/taskdef/commands";
+import { isRowOwnedField } from "@/lib/taskdef/lines";
+import { blankTrial, nextStage } from "@/lib/taskdef/types";
 import type { TaskDefinition, TaskDiagnostic, TaskEntry } from "@/lib/taskdef/types";
 import { useTask } from "@/lib/taskdef/useTask";
-import { SPINE_COMPACT, editorLayout, railInset as railInsetFor } from "@/lib/tasks/editorLayout";
-import { taskGraph, type TaskNode } from "@/lib/tasks/topology";
+import { editorLayout } from "@/lib/tasks/editorLayout";
+import {
+  GENERATION_TAB,
+  HOLDS_TAB,
+  ROWS_TAB,
+  dialTabs,
+  tabOf,
+  taskGraph,
+  type TaskNode,
+} from "@/lib/tasks/topology";
 import { useElementWidth } from "@/lib/useElementWidth";
 import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
 
+/** How long a row or panel a jump landed on stays marked. */
+const MARK_MS = 2400;
+
 /**
- * The task-profile editor — one task, open.
+ * The task editor — one task, open (`TASKS.md#editor`).
  *
- * It was `/task` itself until the library grew a landing of its own. What
- * changed here is the left rail: it used to be the profile list plus the five
- * presets a new task started from, and it is the SECTION SPINE now. Both halves
- * of that had to move. The list belongs on the landing because "what have I
- * got" is a different question from "what is this one"; the presets are gone
- * because a task is built from scratch, and the one thing a preset supplied
- * that nothing else could — `legacyNames` — is a field in `TaskDetails` now.
+ * A telemetry display (`ARCHITECTURE.md#telemetry-panels`) in one frame: the
+ * derived state machine front and centre with every trial type beneath it,
+ * and beside them the parameter dial and the trial-generation panel. The
+ * machine has a floor and the page bends around it (`editorLayout`): when the
+ * aside would squeeze it, the aside's panels move under the trial types and
+ * the page scrolls.
  *
- * The Dashboard's HUD layout survives, and so does its point: the machine and
- * the thing being edited stay on screen together, because the diagram is the
- * fastest check that an edit did what was meant. Three regions —
+ * ONE LINK, READ FROM EVERY END. A planet, the generation panel or a machine
+ * chip lights the states it tunes; a state lights its planet; a trial row or a
+ * composition segment lights its condition's tick. The drawing is the fastest
+ * check that an edit did what was meant, so it is never off screen.
  *
- *   left    the way back, this task's mark, and its sections
- *   centre  details, the derived state machine, the trial table, the ramp
- *   right   the parameter rail
- *
- * — and the CENTRE column scrolls rather than the page, because there are four
- * editors in it and only the first is a hero.
- *
- * EVERY REDRAW COMES FROM `tasks.preview`. The state machine is derived from
- * the profile the current definition COMPILES TO, not from a saved file, so an
- * added trial type grows an arm before the save. That round trip is also what
- * validates: most of the eleven rules depend on the wiring, and the frontend
- * holds no copy of it.
+ * EVERY REDRAW COMES FROM `tasks.preview`. The machine is derived from the
+ * profile the current definition COMPILES TO, so an added trial type grows an
+ * arm before the save — and that round trip is also what validates, because
+ * most rules depend on the wiring and the frontend holds no copy of it.
  */
 export function TaskEditor() {
   const navigate = useNavigate();
@@ -72,30 +65,27 @@ export function TaskEditor() {
 
   const [tasks, setTasks] = useState<TaskEntry[]>([]);
   const [rig, setRig] = useState<RigDocument | null>(null);
-  // Kept current across edits on the Strobes page: a code retired there must
-  // leave the onset picker here without a reload.
+  // Kept current across edits on the Strobes page.
   const { vocabulary } = useStrobeVocabulary();
   const [hoverGroup, setHoverGroup] = useState<string | null>(null);
   const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [hoverCondition, setHoverCondition] = useState<string | null>(null);
+  const [selectedTab, setSelectedTab] = useState<string | null>(null);
+  const [flashGeneration, setFlashGeneration] = useState(false);
+  const [markedRow, setMarkedRow] = useState<number | null>(null);
+  const [problemsOpen, setProblemsOpen] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
 
-  /** A brand-new task, built here rather than fetched.
-   *
-   *  Held in state and seeded ONCE: `useTask` treats a change of `seed` object
-   *  as a fresh open and would throw away every edit made since the last render
-   *  if this were rebuilt inline. One trial row and one stage row, because a
-   *  table with no rows has no Add button worth pointing at and an empty ramp
-   *  is not "no ramp" — it is a task with no holds, which the firmware cannot
-   *  express.
-   *
-   *  Or a DUPLICATE, handed over in router state by the landing's Duplicate:
-   *  already renamed and stripped of legacy names there, and opened unsaved
-   *  exactly like a fresh task, so nothing is written until Save. */
+  /** A brand-new task, built here rather than fetched — or a DUPLICATE handed
+   *  over in router state by the landing. Seeded ONCE: `useTask` treats a new
+   *  seed object as a fresh open and would discard every edit since. */
   const location = useLocation();
   const [seed] = useState<TaskDefinition | null>(() =>
     taskId === undefined ? (seedFrom(location.state) ?? freshTask()) : null,
   );
+  // Opened once on a new task: its category decides where the sketch folder
+  // is written.
+  const [detailsOpen, setDetailsOpen] = useState(taskId === undefined);
 
   const session = useTask(taskId ?? null, seed);
   const { definition, setDefinition } = session;
@@ -105,14 +95,13 @@ export function TaskEditor() {
     void listTasks(client)
       .then((r) => setTasks(r.tasks))
       .catch((err) => setListError(errorMessage(err)));
-    // The wiring is what the trial table's channel dropdowns offer, fetched
-    // here rather than per-row so a rig with twelve odor lines costs one round
-    // trip. The vocabulary arrives from `useStrobeVocabulary` above.
+    // The wiring is what the row pickers offer and where each line's onset
+    // code is declared. The vocabulary arrives from `useStrobeVocabulary`.
     void getRig(client).then((r) => setRig(r.document as RigDocument));
   }, [client, connected]);
 
-  // A rewiring changes what the dropdowns may offer, and can break a task that
-  // never saw it.
+  // A rewiring changes what the pickers offer, and can break a task that never
+  // saw it.
   useEffect(
     () =>
       client.on(EVT.HARDWARE_UPDATED, () => {
@@ -121,14 +110,8 @@ export function TaskEditor() {
     [client],
   );
 
-  /* An UNSAVED task's id follows its name.
-   *
-   * The id is derived rather than asked for (`idFromName`) — it names a file
-   * and never appears on screen. The seed has to carry some id to be a
-   * definition at all, so it carries the placeholder's; without this every task
-   * built from scratch would be saved as `new_task`, and the second one would
-   * overwrite the first. Only while unsaved: an id is a filename, so renaming a
-   * SAVED task must leave its document where it is. */
+  /* An UNSAVED task's id follows its name (`idFromName`); a saved task's id is
+   * a filename and stays put when it is renamed. */
   useEffect(() => {
     if (taskId !== undefined || !definition) return;
     const want = idFromName(
@@ -140,25 +123,25 @@ export function TaskEditor() {
 
   const model = useMemo(() => taskGraph(session.profile), [session.profile]);
 
-  /* The rail's three inputs. `config` is what the profile compiles with today;
-   * `catalogueDefaults` is what it would compile with if this profile pinned
-   * nothing, so the difference between them is exactly what this task PINS —
-   * which is what the Pulsar dots mark and what a reset drops. */
+  /* `config` is what the profile compiles with today; `catalogueDefaults` is
+   * what it would compile with if this task pinned nothing — the difference is
+   * exactly what this task PINS. */
   const config = useMemo(() => {
     const out: Record<string, unknown> = {};
     for (const field of session.profile?.config ?? []) out[field.metadataKey] = field.default;
     return out;
   }, [session.profile]);
 
-  /** Rail edits land in `params`, and only where they diverge. Storing a value
-   *  merely equal to the catalogue's would freeze the field against a later
-   *  correction to its range or default. */
+  /** Parameter edits land in `params`, and only where they diverge — and never
+   *  a row-owned field, which the generator reads off the row and would ignore
+   *  in `params` (`lib/taskdef/lines.ts`). */
   const onParams = useCallback(
     (next: Record<string, unknown>) => {
       if (!definition) return;
       const params: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(next)) {
         if (value === undefined) continue; // a reset
+        if (isRowOwnedField(key)) continue;
         if (Object.is(value, session.catalogueDefaults[key])) continue;
         params[key] = value;
       }
@@ -170,20 +153,13 @@ export function TaskEditor() {
   const litGroups = useMemo(() => new Set(hoverNode?.governedBy ?? []), [hoverNode]);
 
   /**
-   * Trial types the state machine cannot see, said on the row that causes it.
+   * Trial types the state machine cannot see (TSK112), said on the row.
    *
-   * `conditionsOf` filters a profile's odor codes through `liveMetrics`, and the
-   * generator's `_live_metrics` silently `continue`s past a trial type with a
-   * missing onset code or an unbound response channel. So a row can be typed,
-   * saved, flashed — and never appear as a condition anywhere: not on the
-   * diagram, not in the live metrics, not in Analytics.
-   *
-   * The fan used to catch this by accident (four rows typed, three arms drawn),
-   * and collapsing it would have taken that away. This is the same finding made
-   * deliberately: located on the row, in words, and impossible to read past.
-   * Derived here rather than in the sidecar because it is a statement about the
-   * definition on screen against the profile it just compiled to — both of
-   * which this page is holding.
+   * The generator's `_live_metrics` silently skips a trial type with a missing
+   * onset code or an unbound response channel, so a row can be typed, saved,
+   * flashed — and never appear as a condition anywhere. Derived here because it
+   * is a statement about the definition on screen against the profile it just
+   * compiled to, both of which this page is holding.
    */
   const unscoredTrials = useMemo<TaskDiagnostic[]>(() => {
     if (!definition || !session.profile) return [];
@@ -215,350 +191,271 @@ export function TaskEditor() {
     );
   }, [definition, session.profile]);
 
-  /* Saving a NEW task moves it to its own address. `replace`, so Back from the
-   * saved task returns to the landing rather than to the empty form that no
-   * longer exists — and only once, since after the swap `taskId` is set and
-   * `useTask` is loading the saved document. */
+  const diagnostics = useMemo(
+    () => [...session.diagnostics, ...unscoredTrials],
+    [session.diagnostics, unscoredTrials],
+  );
+
+  /* Saving a NEW task moves it to its own address, with `replace` so Back
+   * returns to the landing rather than to a form that no longer exists. */
   const save = useCallback(async () => {
     if (!definition) return;
     const ok = await session.save();
-    if (ok && taskId === undefined) {
-      navigate(`/task/${definition.id}`, { replace: true });
-    }
+    if (ok && taskId === undefined) navigate(`/task/${definition.id}`, { replace: true });
   }, [definition, navigate, session, taskId]);
-
-  // Scroll targets for the section spine.
-  const trialsRef = useRef<HTMLDivElement>(null);
-  const rampRef = useRef<HTMLDivElement>(null);
-  const paramsRef = useRef<HTMLDivElement>(null);
-  const detailsRef = useRef<HTMLDivElement>(null);
 
   const categories = useMemo(
     () => [...new Set(tasks.map((t) => t.category))].sort((a, b) => a.localeCompare(b)),
     [tasks],
   );
 
-  const errorCount = session.diagnostics.length;
+  const conditionOfRow = useCallback(
+    (row: number) => {
+      const onset = definition?.trials[row]?.onsetStrobe;
+      return onset ? (model.conditions.find((c) => c.strobeName === onset)?.id ?? null) : null;
+    },
+    [definition, model],
+  );
+
+  // --- jumps: a chip, a state, a problem ---------------------------------- #
+
+  const generationRef = useRef<HTMLDivElement>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  const markTimer = useRef<number | undefined>(undefined);
+  useEffect(
+    () => () => {
+      window.clearTimeout(flashTimer.current);
+      window.clearTimeout(markTimer.current);
+    },
+    [],
+  );
+
+  const showGeneration = useCallback(() => {
+    setFlashGeneration(true);
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlashGeneration(false), MARK_MS);
+    generationRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
+
+  /** Open a tab wherever it lives: the dial, the generation panel or the rows. */
+  const openTab = useCallback(
+    (tab: string) => {
+      if (tab === GENERATION_TAB) showGeneration();
+      else if (tab !== ROWS_TAB) setSelectedTab(tab);
+    },
+    [showGeneration],
+  );
+
+  const onNodeClick = useCallback(
+    (node: TaskNode) => {
+      const declared = new Set((session.profile?.config ?? []).map((f) => f.group ?? ""));
+      const dial = dialTabs(declared);
+      const homes = node.governedBy.map(tabOf);
+      const tab = homes.find((h) => dial.includes(h)) ?? homes.find((h) => h === GENERATION_TAB);
+      if (tab) openTab(tab);
+    },
+    [openTab, session.profile],
+  );
+
+  const onJump = useCallback(
+    (diagnostic: TaskDiagnostic) => {
+      const home = homeOf(diagnostic);
+      if (home.kind === "row") {
+        setMarkedRow(home.row);
+        window.clearTimeout(markTimer.current);
+        markTimer.current = window.setTimeout(() => setMarkedRow(null), MARK_MS);
+      } else if (home.kind === "holds") setSelectedTab(HOLDS_TAB);
+      else if (home.kind === "generation") showGeneration();
+    },
+    [showGeneration],
+  );
+
+  // --- layout -------------------------------------------------------------- #
 
   const [pageRef, pageWidth] = useElementWidth<HTMLDivElement>();
   const layout = editorLayout(pageWidth);
-  const sideRail = layout.rail > 0;
-  const compactSpine = layout.spine === SPINE_COMPACT;
-  const railInset = railInsetFor(layout.rail);
+  const split = layout.mode === "split";
 
-  const sections: SpineSection[] = definition
-    ? [
-        { id: "details", label: "Details", icon: FileText, ref: detailsRef },
-        {
-          id: "trials",
-          label: "Conditions",
-          icon: Split,
-          ref: trialsRef,
-          count: definition.trials.length,
-          // One dot per condition in its own colour — the spine shows the same
-          // set the glyph above it draws and the trial table below numbers.
-          swatches: definition.trials.map((_, i) => colorForIndex(i)),
-        },
-        { id: "ramp", label: "Shaping ramp", icon: TrendingUp, ref: rampRef, count: definition.stages.length },
-        { id: "params", label: "Parameters", icon: SlidersHorizontal, ref: paramsRef },
-      ]
-    : [];
+  const generationLit =
+    flashGeneration ||
+    hoverGroup === GENERATION_TAB ||
+    [...litGroups].some((g) => tabOf(g) === GENERATION_TAB);
 
-  /* The rail, wherever the layout puts it. One element under one `layoutId`,
-   * so when the page docks it under the diagram (or lifts it back to the side)
-   * it travels there rather than vanishing from one place and appearing in
-   * the other. */
-  const rail =
-    definition && session.profile ? (
-      // The rail's content needs the COMPILED profile, which lands one preview
-      // round trip after the definition — so it mounts a beat after the centre
-      // column. Animated for that reason: without an entrance of its own, this
-      // is the last tile to pop in.
-      <motion.div
-        key="param-rail"
-        layoutId="param-rail"
-        ref={paramsRef}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={springPanel}
-        className="pointer-events-auto flex min-h-0 flex-col gap-2"
-      >
-        {sideRail && (
-          <div className="flex items-baseline justify-between gap-3 px-1">
-            <h2 className="font-display text-[13px] font-medium uppercase tracking-wide text-static">
-              Parameters
-            </h2>
-            {errorCount > 0 && (
-              <span className="font-mono text-[10px] text-status-error">
-                {errorCount} problem{errorCount === 1 ? "" : "s"}
-              </span>
-            )}
-          </div>
-        )}
-        <ParameterInspector
-          profile={session.profile}
+  const machine = definition && (
+    <Panel
+      id="machine"
+      name="State machine"
+      note={
+        model.usable
+          ? `${model.conditions.length} condition${model.conditions.length === 1 ? "" : "s"} · derived from what this task presents`
+          : "derived from what this task presents"
+      }
+      className="shrink-0"
+    >
+      {model.usable ? (
+        <SketchStateMachine
           model={model}
-          config={config}
-          baseline={session.catalogueDefaults}
-          selected={selectedGroup}
-          // The four ramped holds are the StageRamp's, and a ramp only reads
-          // as a table. Offering them here too would be a second surface for
-          // one field. Reward volume is the trial table's for a stronger
-          // reason: the generator reads it off the ROW, so a rail edit into
-          // `params` would be accepted and ignored.
-          exclude={(group) => isRampGroup(group) || group === "Reward volume"}
-          onSelect={setSelectedGroup}
-          onChange={onParams}
+          profile={session.profile}
+          hoverGroup={hoverGroup}
           onHoverGroup={setHoverGroup}
-          litGroups={litGroups}
+          onHoverNode={setHoverNode}
+          onNodeClick={onNodeClick}
+          onSelectGroup={openTab}
+          hoverCondition={hoverCondition}
+          onHoverCondition={setHoverCondition}
+          conditionRail={false}
         />
-      </motion.div>
-    ) : null;
+      ) : (
+        <p className="py-6 text-[12px] leading-relaxed text-static">
+          {session.profile === null
+            ? "Deriving the machine from what this task presents…"
+            : "Nothing to draw yet — a trial type with an odor line, a response port and a reward line gives the machine its first arm."}
+        </p>
+      )}
+    </Panel>
+  );
+
+  const trials = definition && (
+    <TrialTypes
+      trials={definition.trials}
+      mode={definition.selectionMode}
+      rig={rig}
+      vocabulary={vocabulary}
+      diagnostics={diagnostics}
+      conditionOfRow={conditionOfRow}
+      litReward={hoverGroup === ROWS_TAB}
+      activeRow={markedRow}
+      onHoverRow={setHoverCondition}
+      onChange={(next) => setDefinition({ ...definition, trials: next })}
+    />
+  );
+
+  const params = definition && (
+    <ParameterOrrery
+      profile={session.profile}
+      model={model}
+      config={config}
+      baseline={session.catalogueDefaults}
+      mode={definition.selectionMode}
+      stages={definition.stages}
+      diagnostics={diagnostics}
+      selected={selectedTab}
+      litGroups={litGroups}
+      onSelect={setSelectedTab}
+      onParams={onParams}
+      onStages={(stages) => setDefinition({ ...definition, stages })}
+      onHoverGroup={setHoverGroup}
+    />
+  );
+
+  const generation = definition && (
+    <div ref={generationRef} className="flex min-h-0 flex-1 flex-col">
+      <GenerationPanel
+        profile={session.profile}
+        config={config}
+        baseline={session.catalogueDefaults}
+        trials={definition.trials}
+        mode={definition.selectionMode}
+        rig={rig}
+        diagnostics={diagnostics}
+        lit={generationLit}
+        onMode={(selectionMode) => setDefinition({ ...definition, selectionMode })}
+        onParams={onParams}
+        onHover={setHoverGroup}
+        onHoverCondition={setHoverCondition}
+        conditionOfRow={conditionOfRow}
+      />
+    </div>
+  );
 
   return (
-    // No `overflow-hidden`: the shared canvas reaches under the sidebar
-    // (`Scene.tsx`), exactly as on the Dashboard.
-    //
-    // Three regions over the sky, arranged by `editorLayout` for the page's
-    // width — the state machine keeps its floor and the page bends around it.
-    // Every boundary moves on `springPanel`, the same spring the drawing's own
-    // width glides on, so tiles and states arrive together.
+    // Every route sits on the rig's sky, dimmed here as on Analytics: this is
+    // a display surface, and the sky must not compete with the drawing.
     <div ref={pageRef} className="relative h-full">
-      <SkyBackdrop />
+      <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
 
-      <div className="pointer-events-none absolute inset-0">
-        {/* Left: the way back, this task's mark, and its sections — a strip
-            of marks when the page needs the room. */}
-        <motion.div
-          initial={{ opacity: 0, width: layout.spine }}
-          animate={{ opacity: 1, width: layout.spine }}
-          exit={{ opacity: 0 }}
-          transition={springPanel}
-          className={`scrollbar-none pointer-events-none absolute inset-y-0 left-0 overflow-x-hidden overflow-y-auto ${
-            compactSpine ? "px-3 py-4" : "p-4 pl-8"
-          }`}
-        >
-          <AnimatePresence mode="popLayout" initial={false}>
-            {compactSpine ? (
-              <motion.div
-                key="compact"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={springPanel}
-                className="pointer-events-auto flex flex-col items-center gap-3 pt-1"
-              >
-                <Button variant="ghost" onClick={() => navigate("/task")} title="Back to Task">
-                  <ArrowLeft size={13} strokeWidth={1.75} />
-                </Button>
-                {definition && (
-                  <>
-                    <motion.span layoutId={`task-glyph-${definition.id}`} className="flex">
-                      <TaskGlyph size={36} task={glyphTask(definition, errorCount)} />
-                    </motion.span>
-                    <SectionSpine compact sections={sections} problems={errorCount} />
-                  </>
-                )}
-              </motion.div>
-            ) : (
-              <motion.div
-                key="full"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={springPanel}
-                className="pointer-events-auto flex w-[252px] flex-col gap-3 pt-1"
-              >
-                <Button variant="ghost" onClick={() => navigate("/task")}>
-                  <ArrowLeft size={13} strokeWidth={1.75} />
-                  Task
-                </Button>
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        // Owns its own exit (`AppShell`): nothing else will fade this route.
+        exit={{ opacity: 0 }}
+        transition={springPanel}
+        className={`scrollbar-none absolute inset-0 flex flex-col gap-3 px-4 py-4 ${
+          split ? "overflow-hidden" : "overflow-y-auto"
+        }`}
+      >
+        {session.loadError ? (
+          <div
+            className="flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
+            style={{ color: "var(--color-status-error)" }}
+          >
+            <CircleAlert size={14} strokeWidth={1.75} />
+            {session.loadError}
+          </div>
+        ) : !definition ? (
+          // While the document is on its way in, show NOTHING — a prompt here
+          // flashed for a frame before the editor popped in over it.
+          connected ? null : (
+            <p className="max-w-prose pt-8 text-[13px] leading-relaxed text-static">
+              Waiting for the backend — the task library comes from it.
+            </p>
+          )
+        ) : (
+          <>
+            <EditorHeader
+              session={session}
+              saved={taskId !== undefined}
+              diagnostics={diagnostics}
+              categories={categories}
+              detailsOpen={detailsOpen}
+              onDetailsOpen={setDetailsOpen}
+              problemsOpen={problemsOpen}
+              onProblemsOpen={setProblemsOpen}
+              onJump={onJump}
+              onBack={() => navigate("/task")}
+              onSave={() => void save()}
+            />
+            {listError && <p className="text-[11px] text-status-error">{listError}</p>}
 
-                {definition && (
-                  <>
-                    <div className="flex items-center gap-3 px-1">
-                      {/* The shared element from the landing's card: the mark
-                          the eye picked out of the grid is still on screen
-                          after the route changes, so the two pages read as one
-                          gesture. */}
-                      <motion.span layoutId={`task-glyph-${definition.id}`} className="flex">
-                        <TaskGlyph size={44} task={glyphTask(definition, errorCount)} />
-                      </motion.span>
-                      <div className="min-w-0">
-                        <div className="truncate font-display text-[15px] text-starlight">
-                          {definition.name || "Untitled"}
-                        </div>
-                        <div className="truncate font-mono text-[10px] text-static/70">
-                          {taskId === undefined ? "unsaved" : definition.category}
-                        </div>
-                      </div>
-                    </div>
-
-                    <SectionSpine sections={sections} problems={errorCount} />
-                  </>
-                )}
-
-                {listError && <p className="px-1 text-[11px] text-status-error">{listError}</p>}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-
-        {/* Centre: the machine, then the editors. THIS column scrolls — the
-            page still does not, which is what keeps the rails in place. It
-            runs to the window's right edge: the blocks stop short of the side
-            rail, but the state machine's card runs on UNDER it, so the rail
-            reads as a panel set in front of the machine it tunes. */}
-        <motion.div
-          layoutScroll
-          initial={{ opacity: 0, left: layout.spine }}
-          animate={{ opacity: 1, left: layout.spine }}
-          exit={{ opacity: 0 }}
-          transition={springPanel}
-          className="scrollbar-none absolute inset-y-0 right-0 overflow-y-auto px-4 py-4"
-        >
-          <motion.div initial={false} animate={{ paddingRight: railInset }} transition={springPanel}>
-            {session.loadError ? (
-              <div
-                className="pointer-events-auto flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
-                style={{ color: "var(--color-status-error)" }}
-              >
-                <CircleAlert size={14} strokeWidth={1.75} />
-                {session.loadError}
-              </div>
-            ) : !definition ? (
-              // While the document is on its way in, show NOTHING. A prompt
-              // here used to flash for a frame and then have the whole editor
-              // pop in over it, which read as a broken render rather than a
-              // load.
-              connected ? null : (
-                <p className="pointer-events-auto max-w-prose pt-8 text-[13px] leading-relaxed text-static">
-                  Waiting for the backend — the task library comes from it.
-                </p>
-              )
-            ) : (
-              // The editor stack arrives as a CASCADE — each panel rising on
-              // the panel spring a beat after the one above it — so a finished
-              // page assembles top-down instead of slamming in as one frame.
+            {/* The panels assemble as a CASCADE, and move between the split
+                and stacked homes on their shared layout ids. */}
+            <LayoutGroup>
               <motion.div
                 variants={CASCADE}
                 initial="hidden"
                 animate="shown"
-                className="pointer-events-auto flex flex-col gap-3"
+                className={split ? "flex min-h-0 flex-1 gap-3" : "flex flex-col gap-3"}
               >
-                <motion.div variants={RISE}>
-                  <Header session={session} onSave={() => void save()} />
+                <motion.div
+                  variants={RISE}
+                  className={split ? "flex min-h-0 min-w-0 flex-1 flex-col gap-3" : "flex flex-col gap-3"}
+                >
+                  {machine}
+                  <div className={split ? "flex min-h-0 flex-1 flex-col" : "flex min-h-[260px] flex-col"}>
+                    {trials}
+                  </div>
                 </motion.div>
-
-                <motion.div variants={RISE} ref={detailsRef}>
-                  <TaskDetails
-                    definition={definition}
-                    categories={categories}
-                    startOpen={taskId === undefined}
-                    onChange={setDefinition}
-                  />
-                </motion.div>
-
-                <motion.section variants={RISE} className="relative">
-                  {/* The card's glass runs under the side rail; its content
-                      stops short of it, so no state is ever behind the rail. */}
-                  <motion.div
-                    initial={false}
-                    animate={{ marginRight: -railInset }}
-                    transition={springPanel}
-                    // Docked, the rail overlaps the card's foot by 20px; the
-                    // extra padding keeps that overlap off the condition list.
-                    className={`hud rounded-md p-4 transition-[padding] ${sideRail ? "" : "pb-9"}`}
-                  >
-                    <motion.div initial={false} animate={{ paddingRight: railInset }} transition={springPanel}>
-                      <div className="mb-2 flex items-center gap-3">
-                        <Workflow size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
-                        <span className="min-w-0 flex-1 text-[12px] font-medium text-starlight">
-                          State machine
-                          <span className="ml-2 font-normal text-static/70">{definition.name}</span>
-                        </span>
-                        {model.usable && (
-                          <span className="font-mono text-[10px] text-static/70">
-                            {model.conditions.length} condition
-                            {model.conditions.length === 1 ? "" : "s"} · derived from
-                            what this task presents
-                          </span>
-                        )}
-                      </div>
-                      {model.usable ? (
-                        <SketchStateMachine
-                          model={model}
-                          profile={session.profile}
-                          hoverGroup={hoverGroup}
-                          onHoverGroup={setHoverGroup}
-                          onHoverNode={setHoverNode}
-                          onNodeClick={() => undefined}
-                          onSelectGroup={setSelectedGroup}
-                        />
-                      ) : (
-                        <p className="text-[12px] leading-relaxed text-static">
-                          {session.profile === null
-                            ? "Deriving the machine from what this task presents…"
-                            : "Nothing to draw yet — a trial type with an odor, a response port and an onset code gives the machine its first arm."}
-                        </p>
-                      )}
-                    </motion.div>
-                  </motion.div>
-
-                  {/* Docked: the rail overlaps the card's foot, set in front of
-                      the machine rather than stacked after it. */}
-                  <AnimatePresence>
-                    {!sideRail && rail && (
-                      <div className="relative z-10 mx-4 -mt-5 flex max-h-[70vh] flex-col">{rail}</div>
-                    )}
-                  </AnimatePresence>
-                </motion.section>
-
-                <motion.div variants={RISE} ref={trialsRef}>
-                  <TrialTypeTable
-                    trials={definition.trials}
-                    mode={definition.selectionMode}
-                    rig={rig}
-                    vocabulary={vocabulary}
-                    diagnostics={[...session.diagnostics, ...unscoredTrials]}
-                    onChange={(trials) => setDefinition({ ...definition, trials })}
-                    onModeChange={(selectionMode) =>
-                      setDefinition({ ...definition, selectionMode })
-                    }
-                  />
-                </motion.div>
-
-                <motion.div variants={RISE} ref={rampRef}>
-                  <StageRamp
-                    stages={definition.stages}
-                    diagnostics={session.diagnostics}
-                    onChange={(stages) => setDefinition({ ...definition, stages })}
-                  />
+                <motion.div
+                  variants={RISE}
+                  className={
+                    split
+                      ? "flex min-h-0 shrink-0 flex-col gap-3"
+                      : "grid grid-cols-2 items-stretch gap-3 pb-2"
+                  }
+                  style={split ? { width: layout.aside } : {}}
+                >
+                  <div className={split ? "flex min-h-[300px] flex-[1.15] flex-col" : "flex min-h-[460px] flex-col"}>
+                    {params}
+                  </div>
+                  <div className={split ? "flex min-h-0 flex-1 flex-col" : "flex min-h-[460px] flex-col"}>
+                    {generation}
+                  </div>
                 </motion.div>
               </motion.div>
-            )}
-          </motion.div>
-        </motion.div>
-
-        {/* Right: the parameter rail, in front of the centre column. */}
-        <AnimatePresence>
-        {sideRail && (
-          <motion.div
-            layoutScroll
-            key="side-rail"
-            initial={{ opacity: 0, x: PANEL_TRAVEL, width: layout.rail }}
-            animate={{ opacity: 1, x: 0, width: layout.rail }}
-            exit={{ opacity: 0 }}
-            transition={springPanel}
-            className="scrollbar-none pointer-events-none absolute inset-y-0 right-0 z-10 flex flex-col overflow-y-auto p-4 pl-0"
-          >
-            <AnimatePresence>{rail}</AnimatePresence>
-          </motion.div>
+            </LayoutGroup>
+          </>
         )}
-        </AnimatePresence>
-      </div>
-
+      </motion.div>
     </div>
   );
 }
@@ -569,8 +466,7 @@ export function TaskEditor() {
  * Built in the frontend rather than fetched, because there is nothing to fetch:
  * every value here is either empty or the shape the firmware needs at minimum.
  * `params` is empty on purpose — a definition stores only what DIVERGES from
- * the field catalogue, so a new task pins nothing and inherits every default,
- * corrections included.
+ * the field catalogue, so a new task pins nothing and inherits every default.
  */
 function freshTask(): TaskDefinition {
   return {
@@ -584,214 +480,6 @@ function freshTask(): TaskDefinition {
     legacyNames: [],
     notes: "",
   };
-}
-
-/** One entry on the section spine. */
-interface SpineSection {
-  id: string;
-  label: string;
-  /** The section's mark on the compact spine. */
-  icon: LucideIcon;
-  ref: React.RefObject<HTMLElement | null>;
-  count?: number;
-  /** One colour per item in the section — the conditions' series slots. */
-  swatches?: string[];
-}
-
-/** What the task glyph draws, from the definition on screen. */
-function glyphTask(definition: TaskDefinition, problems: number) {
-  return {
-    id: definition.id,
-    trials: definition.trials.length,
-    stages: definition.stages.length,
-    selectionMode: definition.selectionMode,
-    problems,
-  };
-}
-
-/**
- * The section spine — where the centre column's four editors are.
- *
- * A scroll target list rather than tabs: all four are one document and one
- * scroll, and hiding three of them behind tabs would make "does this ramp match
- * that trial table" a navigation problem. The counts are the useful part —
- * "Conditions 4" answers at a glance what scrolling answers slowly.
- *
- * `compact` is the same list as a strip of marks, for a page that needs the
- * room (`editorLayout`): each section's icon, its count as a superscript, its
- * name as the tooltip and to assistive tech.
- */
-function SectionSpine({
-  sections,
-  problems,
-  compact = false,
-}: {
-  sections: SpineSection[];
-  problems: number;
-  compact?: boolean;
-}) {
-  const go = (section: SpineSection) =>
-    section.ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-
-  if (compact) {
-    return (
-      <nav className="hud flex flex-col items-center gap-0.5 rounded-md p-1">
-        {sections.map((section) => (
-          <button
-            key={section.id}
-            type="button"
-            aria-label={section.label}
-            // A native title, not a drawn label: the spine column scrolls, so
-            // it clips anything that would hang out beside it.
-            title={section.count !== undefined ? `${section.label} · ${section.count}` : section.label}
-            onClick={() => go(section)}
-            className="relative flex size-9 items-center justify-center rounded-sm text-static transition-colors hover:bg-halo/50 hover:text-starlight focus:outline-none focus-visible:ring-1 focus-visible:ring-pulsar"
-          >
-            <section.icon size={15} strokeWidth={1.75} />
-            {section.count !== undefined && (
-              <span className="absolute top-0.5 right-0.5 font-mono text-[8px] text-static/70">
-                {section.count}
-              </span>
-            )}
-          </button>
-        ))}
-        {problems > 0 && (
-          <span
-            className="mt-0.5 border-t border-halo px-1 pt-1 font-mono text-[10px] text-status-error"
-            title={`${problems} problem${problems === 1 ? "" : "s"} — it will still flash`}
-          >
-            {problems}!
-          </span>
-        )}
-      </nav>
-    );
-  }
-
-  return (
-    <nav className="hud flex flex-col rounded-md py-1">
-      {sections.map((section) => (
-        <button
-          key={section.id}
-          type="button"
-          onClick={() => go(section)}
-          className="flex items-center gap-2 px-3.5 py-1.5 text-left text-[12px] text-static transition-colors hover:text-starlight"
-        >
-          <span className="min-w-0 flex-1 truncate">{section.label}</span>
-          {section.swatches && section.swatches.length > 0 && (
-            <span className="flex shrink-0 items-center gap-0.5" aria-hidden>
-              {section.swatches.slice(0, 8).map((colour, i) => (
-                <span
-                  key={i}
-                  className="size-1.5 rounded-full"
-                  style={{ background: colour }}
-                />
-              ))}
-            </span>
-          )}
-          {section.count !== undefined && (
-            <span className="shrink-0 font-mono text-[10px] text-static/60">
-              {section.count}
-            </span>
-          )}
-        </button>
-      ))}
-      {problems > 0 && (
-        <div className="mt-1 border-t border-halo px-3.5 pb-1 pt-1.5 font-mono text-[10px] text-status-error">
-          {problems} problem{problems === 1 ? "" : "s"} — it will still flash
-        </div>
-      )}
-    </nav>
-  );
-}
-
-/**
- * Name, save state, and the `START` line meter.
- *
- * THE METER IS NOT DECORATION. `START_LINE_MAX` is the one budget an operator
- * can exhaust without noticing: the firmware truncates an overlong line in
- * silence and runs the session on whichever values happened to fit. Adding a
- * stage costs five tokens, so the number is worth watching while the ramp
- * grows rather than being explained afterward.
- *
- * There is no delete here any more. It was a trash icon reachable only from
- * inside the thing being deleted, and only while it had no unsaved edits;
- * deleting is a library gesture and lives on the landing's cards.
- */
-function Header({
-  session,
-  onSave,
-}: {
-  session: ReturnType<typeof useTask>;
-  onSave: () => void;
-}) {
-  const { definition, setDefinition, startLine } = session;
-  if (!definition) return null;
-  const used = startLine ? startLine.length / startLine.max : 0;
-
-  return (
-    <div className="hud flex items-center gap-3 rounded-md px-3.5 py-2.5">
-      <input
-        value={definition.name}
-        onChange={(e) => setDefinition({ ...definition, name: e.target.value })}
-        aria-label="Task name"
-        className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1.5 py-0.5 font-display text-[15px] text-starlight transition-colors hover:border-halo focus:border-pulsar focus:outline-none"
-      />
-
-      {startLine && (
-        <span
-          title={`The START line is ${startLine.length} of ${startLine.max} bytes. Over the cap, the firmware truncates it without saying so.`}
-          className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] text-static/70"
-        >
-          <span className="h-1 w-16 overflow-hidden rounded-full bg-nebula">
-            <span
-              className="block h-full rounded-full"
-              style={{
-                width: `${Math.min(100, used * 100)}%`,
-                background:
-                  used > 0.9 ? "var(--color-status-error)" : "var(--color-pulsar)",
-              }}
-            />
-          </span>
-          {startLine.length}/{startLine.max}
-        </span>
-      )}
-
-      {session.checking && (
-        <span className="shrink-0 text-[10px] text-static/60">checking…</span>
-      )}
-
-      {session.dirty && (
-        <>
-          {session.baseline && (
-            <button
-              type="button"
-              onClick={session.revert}
-              className="shrink-0 text-[11px] text-static transition-colors hover:text-starlight"
-            >
-              Revert
-            </button>
-          )}
-          {/* The page's ONE primary control — matte Pulsar fill, per the
-              Button primary variant. Everything else on the header is quiet,
-              which is what lets "there are unsaved edits" read at a glance. */}
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={session.saving}
-            className="shrink-0 rounded-sm bg-pulsar px-3 py-1 text-[11px] font-medium text-void transition-[filter] hover:brightness-108 disabled:opacity-50"
-          >
-            {session.saving ? "Saving…" : "Save"}
-          </button>
-        </>
-      )}
-
-      {session.actionError && (
-        <span className="shrink-0 text-[11px] text-status-error">
-          {session.actionError}
-        </span>
-      )}
-    </div>
-  );
 }
 
 /** A duplicated task handed over by the Task landing, if that is how we got here. */

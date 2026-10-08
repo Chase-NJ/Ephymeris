@@ -279,7 +279,7 @@ export const GROUP_ORDER: readonly string[] = [
 ];
 
 /**
- * Groups the parameter rail folds into ONE pill.
+ * How the task editor files a profile's groups (`TASKS.md#parameter-dial`).
  *
  * A tab is a *reading* of a profile, never a key in one. `group` rides in
  * `ConfigField.to_json`, so it is inside `profile_hash` — re-filing a field
@@ -288,31 +288,73 @@ export const GROUP_ORDER: readonly string[] = [
  * same reasoning `QUICK_TUNE_GROUPS` below rests on, and the reason both
  * registries live in the app rather than in `fields.py`.
  *
- * What is folded and why: a correction budget and a reward volume are both
- * *session* settings — set once for this cohort, unchanged trial to trial —
- * and each was one or four fields behind a pill of its own. The state machine's
- * chips keep the real group names, because a chip names the parameter family;
- * only the pill it opens is folded.
+ * Three homes besides a group's own dial stop:
+ *
+ * - **Holds & shaping** — the ramp's groups, edited as one stage list.
+ * - **Trial generation** — how the next trial is chosen: the anti-bias side
+ *   draw, the pool's block size, and the correction budgets, which the
+ *   firmware runs as selection policy (pool has none of them).
+ * - **Trial types** — reward volume, which the generator reads off each ROW.
+ *
+ * The state machine's chips keep the real group names, because a chip names
+ * the parameter family; only where it opens is folded.
  */
+export const HOLDS_TAB = "Holds & shaping";
+export const GENERATION_TAB = "Trial generation";
+export const ROWS_TAB = "Trial types";
+
 const TAB_OF: Record<string, string> = {
-  "Correction trials": "Session",
-  "Reward volume": "Session",
+  "Holds & windows": HOLDS_TAB,
+  "Anti-bias selection": GENERATION_TAB,
+  "Trial pool": GENERATION_TAB,
+  "Correction trials": GENERATION_TAB,
+  "Reward volume": ROWS_TAB,
 };
 
-/** Which rail pill a declared group appears under. Identity for most groups. */
+/** Which editor home a declared group appears under. Identity for most groups. */
 export function tabOf(group: string): string {
+  if (/^Stage \d+$/.test(group)) return HOLDS_TAB;
   return TAB_OF[group] ?? group;
 }
 
 /**
  * The groups one tab holds, in `GROUP_ORDER`, out of those a profile declares.
  *
- * Order matters here for the same reason it does in the rail: the fold renders
- * as stacked sub-sections, and "Session, then correction, then volumes" is the
- * order the values take effect in.
+ * Order matters for the same reason it does on the dial: a fold renders as
+ * stacked sub-sections, in the order the values take effect.
  */
 export function groupsOfTab(tab: string, declared: Iterable<string>): string[] {
   return orderGroups([...declared].filter((group) => tabOf(group) === tab));
+}
+
+/** Where each tab sits on the dial — trial order, the way `GROUP_ORDER` is. */
+const TAB_ORDER: readonly string[] = [
+  "Session",
+  GENERATION_TAB,
+  "Trial timing",
+  HOLDS_TAB,
+  "Abstention penalty",
+  ROWS_TAB,
+];
+
+/** Sort tabs into trial order, unknown ones last and alphabetically. */
+export function orderTabs(tabs: Iterable<string>): string[] {
+  const rank = new Map(TAB_ORDER.map((name, index) => [name, index]));
+  return [...new Set(tabs)].sort((a, b) => {
+    const ra = rank.get(a) ?? Number.MAX_SAFE_INTEGER;
+    const rb = rank.get(b) ?? Number.MAX_SAFE_INTEGER;
+    return ra !== rb ? ra - rb : a.localeCompare(b);
+  });
+}
+
+/**
+ * The dial's stops for a profile's declared groups: every tab except the two
+ * that have homes of their own on the page (generation, and the rows).
+ */
+export function dialTabs(declared: Iterable<string>): string[] {
+  return orderTabs([...declared].map(tabOf)).filter(
+    (tab) => tab !== GENERATION_TAB && tab !== ROWS_TAB,
+  );
 }
 
 /**
@@ -1014,6 +1056,40 @@ export function taskGraph(profile: TaskProfile | null): TaskGraphModel {
 export function nodesGovernedByTab(model: TaskGraphModel, tab: string | null): TaskNode[] {
   if (!tab) return [];
   return model.nodes.filter((node) => node.governedBy.some((g) => tabOf(g) === tab));
+}
+
+/**
+ * The rewarded trial, start to ITI — the path the editor's transit token rides.
+ *
+ * Greedy over forward edges (never an abort, an error or a return), preferring
+ * the edge into `reward` where the trial branches and the first arm where the
+ * odor fans. Ends at the ITI, or wherever forward edges run out, and never
+ * revisits a node.
+ */
+export function happyPath(model: TaskGraphModel): TaskNode[] {
+  const byId = new Map(model.nodes.map((n) => [n.id, n]));
+  const start = byId.get("start");
+  if (!start) return [];
+  const path: TaskNode[] = [start];
+  const seen = new Set([start.id]);
+  let at = start;
+  while (at.id !== "iti") {
+    const forward = model.edges.filter(
+      (e) =>
+        e.from === at.id &&
+        e.kind !== "abort" &&
+        e.kind !== "error" &&
+        e.kind !== "return" &&
+        !seen.has(e.to),
+    );
+    const next = forward.find((e) => e.to === "reward") ?? forward[0];
+    const node = next ? byId.get(next.to) : undefined;
+    if (!node) break;
+    path.push(node);
+    seen.add(node.id);
+    at = node;
+  }
+  return path;
 }
 
 // --- live mode -------------------------------------------------------------

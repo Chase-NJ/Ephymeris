@@ -37,6 +37,9 @@ export function ConfigFields({
   only,
   exclude,
   quiet = false,
+  fieldFilter,
+  inactive,
+  isAdvanced,
 }: {
   profile: TaskProfile | null;
   config: Record<string, unknown>;
@@ -73,6 +76,23 @@ export function ConfigFields({
    * tooltip. The mapping step stays captioned.
    */
   quiet?: boolean;
+  /**
+   * Drop individual fields. The task editor uses it to keep row-owned fields
+   * (`pool_weight_N`) off every surface but the row they belong to.
+   */
+  fieldFilter?: (field: ConfigField) => boolean;
+  /**
+   * Why a field does nothing right now, or null — drawn dimmed with the note
+   * beside it, and still editable, so its value survives the change that made
+   * it inert (a switch of selection mode, `lib/taskdef/selection.ts`).
+   */
+  inactive?: (field: ConfigField) => string | null;
+  /**
+   * Which fields go behind the "N advanced" disclosure; the field's own flag
+   * by default. The task editor promotes the block size while the pool is
+   * the mode that reads it.
+   */
+  isAdvanced?: (field: ConfigField) => boolean;
 }) {
   const [openAdvanced, setOpenAdvanced] = useState<Record<string, boolean>>({});
 
@@ -89,6 +109,7 @@ export function ConfigFields({
   const sections = useMemo(() => {
     const bySection = new Map<string, ConfigField[]>();
     for (const field of profile?.config ?? []) {
+      if (fieldFilter && !fieldFilter(field)) continue;
       const key = field.group ?? "";
       const existing = bySection.get(key);
       if (existing) existing.push(field);
@@ -105,7 +126,7 @@ export function ConfigFields({
     }
     if (exclude !== undefined) return all.filter(([name]) => !exclude.includes(name));
     return all;
-  }, [profile, wanted, exclude]);
+  }, [profile, wanted, exclude, fieldFilter]);
 
   if (!profile || profile.config.length === 0) return null;
 
@@ -125,8 +146,9 @@ export function ConfigFields({
     // one place, and it is the pattern the Config page already uses.
     <fieldset disabled={disabled} className="flex flex-col gap-3">
       {sections.map(([section, fields]) => {
-        const plain = fields.filter((f) => !f.advanced);
-        const advanced = fields.filter((f) => f.advanced);
+        const behind = (f: ConfigField) => (isAdvanced ? isAdvanced(f) : Boolean(f.advanced));
+        const plain = fields.filter((f) => !behind(f));
+        const advanced = fields.filter(behind);
         const changed = fields.filter(
           (f) => f.metadataKey in config && !Object.is(config[f.metadataKey], baseline[f.metadataKey]),
         );
@@ -159,6 +181,7 @@ export function ConfigFields({
                 value={config[field.metadataKey] ?? field.default}
                 baseline={baseline[field.metadataKey]}
                 quiet={quiet}
+                inactive={inactive?.(field) ?? null}
                 onChange={(v) => set(field.metadataKey, v)}
               />
             ))}
@@ -196,7 +219,8 @@ export function ConfigFields({
                           field={field}
                           value={config[field.metadataKey] ?? field.default}
                           baseline={baseline[field.metadataKey]}
-                                    quiet={quiet}
+                          quiet={quiet}
+                          inactive={inactive?.(field) ?? null}
                           onChange={(v) => set(field.metadataKey, v)}
                         />
                       ))}
@@ -217,15 +241,17 @@ function Field({
   value,
   baseline,
   quiet,
+  inactive,
   onChange,
 }: {
   field: ConfigField;
   value: unknown;
   baseline: unknown;
   quiet: boolean;
+  inactive: string | null;
   onChange: (next: unknown) => void;
 }) {
-  return (
+  const row = (
     <FieldRow
       label={field.label}
       help={quiet ? undefined : field.help}
@@ -238,5 +264,12 @@ function Field({
       max={field.max}
       onChange={onChange}
     />
+  );
+  if (!inactive) return row;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="opacity-45 transition-opacity focus-within:opacity-100 hover:opacity-80">{row}</div>
+      <span className="self-end font-mono text-[9px] tracking-wide text-static/70">{inactive}</span>
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, Trash2, TrendingUp, TriangleAlert } from "lucide-react";
+import { Plus, Trash2, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { NumberInput } from "@/components/common/controls";
@@ -8,7 +8,9 @@ import { diagnosticsAt, nextStage } from "@/lib/taskdef/types";
 import type { StageRow, TaskDiagnostic } from "@/lib/taskdef/types";
 
 /**
- * The shaping ramp — how strictness arrives, and over how many trials.
+ * The shaping ramp — how strictness arrives, and over how many trials. The
+ * parameter dial's "Holds & shaping" stop (`TASKS.md#parameter-dial`), drawn
+ * as a compact row per stage to fit the dial's column.
  *
  * FOUR VALUES, DECLARED PER ROW, NEVER ONCE. The firmware rewrites all four
  * from `stage[]` on every completed trial, so a single field per value would
@@ -37,7 +39,7 @@ import type { StageRow, TaskDiagnostic } from "@/lib/taskdef/types";
  * operator's job is then to spot which of four values is wrong rather than to
  * change the one they meant to.
  */
-export function StageRamp({
+export function StageList({
   stages,
   diagnostics,
   onChange,
@@ -73,42 +75,36 @@ export function StageRamp({
   };
 
   return (
-    <div className="hud flex min-h-0 flex-col rounded-md">
-      <header className="flex items-center justify-between gap-3 border-b border-halo px-3.5 py-2.5">
-        <TrendingUp size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
-        <div className="min-w-0 flex-1">
-          <div className="text-[12px] font-medium text-starlight">
-            {ramped ? `Shaping ramp — ${stages.length} stages` : "Holds & windows"}
-          </div>
-          <div className="mt-0.5 text-[10px] text-static/70">
-            {ramped
-              ? "Each row takes over at its trial count and stays until the next one does."
-              : "One row: the task starts at full strictness and never eases."}
-          </div>
-        </div>
+    <div className="flex min-h-0 flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-static">
+          {ramped
+            ? `${stages.length} stages — each takes over at its trial count`
+            : "One stage: full strictness from the first trial"}
+        </span>
         <button
           type="button"
           onClick={add}
-          className="flex shrink-0 items-center gap-1 rounded-md border border-halo px-2.5 py-1 text-[10px] text-static transition-colors hover:border-pulsar hover:text-starlight"
+          className="flex shrink-0 items-center gap-1 rounded-sm border border-halo px-2 py-0.5 text-[10px] text-static transition-colors hover:border-pulsar hover:text-starlight"
         >
           <Plus size={11} strokeWidth={1.75} />
-          Add stage
+          Stage
         </button>
-      </header>
+      </div>
 
       {ramped && <Timeline stages={stages} hot={hot} onHot={setHot} />}
 
-      <div className="scrollbar-none min-h-0 overflow-y-auto px-2 pb-1 pt-2">
-        <div className={GRID}>
-          <span className="px-1.5 text-[10px] text-static/70">stage</span>
-          <span className="px-1 text-[10px] text-static/70">engages at</span>
-          <ColumnHead label="odor hold" />
-          <ColumnHead label="well hold" />
-          <ColumnHead label="response window" />
-          <ColumnHead label="odor port window" />
-          <span />
-        </div>
+      <div className={`${GRID} items-end pb-0.5`}>
+        <span />
+        <ColumnHead top="from" bottom="trial" />
+        <ColumnHead top="odor" bottom="hold" />
+        <ColumnHead top="well" bottom="hold" />
+        <ColumnHead top="resp." bottom="window" />
+        <ColumnHead top="port" bottom="window" />
+        <span />
+      </div>
 
+      <div className="flex flex-col gap-1">
         <AnimatePresence initial={false}>
           {stages.map((stage, index) => {
             const problems = diagnosticsAt(diagnostics, `stages[${index}]`);
@@ -123,19 +119,17 @@ export function StageRamp({
                 transition={springSnappy}
                 onMouseEnter={() => setHot(index)}
                 onMouseLeave={() => setHot(null)}
-                className={`${GRID} group rounded-md py-1 transition-colors ${
+                className={`${GRID} group rounded-sm py-0.5 transition-colors ${
                   hot === index ? "bg-halo/25" : ""
                 }`}
               >
-                <span className="px-1.5 font-mono text-[10px] text-static/60">
-                  {index}
-                </span>
+                <span className="font-mono text-[10px] text-static/60">S{index}</span>
                 {index === 0 ? (
                   <span
-                    className="px-1 text-[10px] text-static/60"
-                    title="Row 0 is live from trial 0 — the firmware never reads its count"
+                    className="px-1 text-right font-mono text-[10px] text-static/50"
+                    title="Stage 0 is live from trial 0 — the firmware never reads its count"
                   >
-                    trial 0
+                    0
                   </span>
                 ) : (
                   <Cell
@@ -166,15 +160,15 @@ export function StageRamp({
                   label={`Stage ${index} odor port window`}
                   onChange={(odorPortTimeout) => update(index, { odorPortTimeout })}
                 />
-                <span className="flex justify-end pr-1">
+                <span className="flex justify-end">
                   {index > 0 && (
                     <button
                       type="button"
                       onClick={() => remove(index)}
-                      title="Remove this stage"
+                      aria-label={`Remove stage ${index}`}
                       className="text-static/40 transition-colors hover:text-status-error group-hover:text-static"
                     >
-                      <Trash2 size={12} strokeWidth={1.75} />
+                      <Trash2 size={11} strokeWidth={1.75} />
                     </button>
                   )}
                 </span>
@@ -182,25 +176,20 @@ export function StageRamp({
             );
           })}
         </AnimatePresence>
-
-        {diagnosticsAt(diagnostics, "stages").map((problem, i) => (
-          <p
-            key={i}
-            className="flex items-start gap-1.5 px-1.5 py-2 text-[10px] text-status-error"
-          >
-            <TriangleAlert size={11} strokeWidth={1.75} className="mt-px shrink-0" />
-            <span>
-              <span className="font-mono opacity-70">{problem.code}</span>{" "}
-              {problem.message}
-            </span>
-          </p>
-        ))}
       </div>
 
-      <p className="border-t border-halo px-3.5 py-2 text-[10px] text-static/70">
-        All four are milliseconds. Every value here also travels on the{" "}
-        <span className="font-mono">START</span> line, so tuning one per box at
-        mapping costs no rebuild — only the number of stages does.
+      {diagnosticsAt(diagnostics, "stages").map((problem, i) => (
+        <p key={i} className="flex items-start gap-1.5 text-[10px] text-status-error">
+          <TriangleAlert size={11} strokeWidth={1.75} className="mt-px shrink-0" />
+          <span>
+            <span className="font-mono opacity-70">{problem.code}</span> {problem.message}
+          </span>
+        </p>
+      ))}
+
+      <p className="text-[10px] leading-relaxed text-static/70">
+        Milliseconds. Every value rides the <span className="font-mono">START</span> line, so a
+        box can be tuned at mapping without a rebuild — each stage costs five of its tokens.
       </p>
     </div>
   );
@@ -208,12 +197,14 @@ export function StageRamp({
 
 /** One row's shape, shared by the header and every stage. */
 const GRID =
-  "grid grid-cols-[2.5rem_5.5rem_repeat(4,minmax(0,1fr))_2rem] items-center gap-x-2 px-1.5";
+  "grid grid-cols-[1.25rem_repeat(5,minmax(0,1fr))_0.875rem] items-center gap-x-1";
 
-function ColumnHead({ label }: { label: string }) {
+function ColumnHead({ top, bottom }: { top: string; bottom: string }) {
   return (
-    <span className="px-1 text-[10px] text-static/70">
-      {label} <span className="font-mono text-[9px] text-static/40">ms</span>
+    <span className="px-1 text-right font-mono text-[8.5px] leading-tight tracking-wide text-static/60 uppercase">
+      {top}
+      <br />
+      {bottom}
     </span>
   );
 }
@@ -246,8 +237,8 @@ function Timeline({
   });
 
   return (
-    <div className="border-b border-halo/60 px-3.5 pb-2.5 pt-2">
-      <div className="flex h-[30px] gap-px overflow-hidden rounded-sm">
+    <div>
+      <div className="flex h-[22px] gap-px overflow-hidden rounded-sm">
         {stages.map((stage, index) => {
           // 12% → 34% Pulsar across the ramp: later is stricter is deeper.
           const tint =
@@ -316,7 +307,7 @@ function Cell({
       align="right"
       invalid={invalid ?? false}
       autoFocus={autoFocus ?? false}
-      className="w-full px-2 py-1 text-[11px]"
+      className="w-full px-1.5 py-0.5 text-[11px]"
       onChange={onChange}
     />
   );

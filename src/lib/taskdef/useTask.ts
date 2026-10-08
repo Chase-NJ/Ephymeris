@@ -22,7 +22,7 @@ import type { TaskDefinition, TaskDiagnostic } from "./types";
  * the frontend has no copy of it.
  *
  * THE PREVIEW ALSO CARRIES THE COMPILED PROFILE, which is what the state
- * machine and the parameter rail draw. So one round trip per edit redraws the
+ * machine and the parameter dial draw. So one round trip per edit redraws the
  * whole page, and the diagram an operator is looking at is always the one their
  * current document produces rather than the last saved one.
  *
@@ -122,7 +122,7 @@ export function useTask(
    *
    * THE FIRST PREVIEW OF A FRESHLY OPENED DEFINITION SKIPS THE DEBOUNCE. The
    * wait exists to coalesce keystrokes; on open there are no keystrokes to
-   * coalesce, and it only held the diagram and the parameter rail back a
+   * coalesce, and it only held the diagram and the parameter dial back a
    * quarter second after the rest of the page — which is what made the Task
    * tab land in two visible pops. Reference equality is the load signal: a
    * load sets `definition === baseline` (a seeded open, `=== seed`), and any

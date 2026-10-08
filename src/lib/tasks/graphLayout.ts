@@ -266,3 +266,26 @@ export function frameFor(
   };
 }
 
+
+/**
+ * One continuous SVG path through a sequence of nodes, centre to centre — the
+ * transit token's track. Between nodes it follows the same lateral Bézier the
+ * drawing uses for an edge (rim to rim, `dx = max(Δx/2, 20)`), so the token
+ * rides ON the edges rather than beside them.
+ */
+export function spinePath(nodes: readonly TaskNode[], frame: Frame): string {
+  const first = nodes[0];
+  if (!first) return "";
+  let d = `M ${frame.x(first)} ${frame.y(first)}`;
+  for (let i = 1; i < nodes.length; i++) {
+    const a = nodes[i - 1] as TaskNode;
+    const b = nodes[i] as TaskNode;
+    const x1 = frame.x(a);
+    const y1 = frame.y(a);
+    const x2 = frame.x(b);
+    const y2 = frame.y(b);
+    const dx = Math.max((x2 - x1) / 2, 20);
+    d += ` L ${x1 + R} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2 - R} ${y2} L ${x2} ${y2}`;
+  }
+  return d;
+}

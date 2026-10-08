@@ -16,10 +16,14 @@ import { code, STROBES, tail } from "./__fixtures__/vocabulary";
 import {
   armsCongruent,
   correctWellOf,
+  dialTabs,
+  GENERATION_TAB,
   groupsOfTab,
+  happyPath,
+  HOLDS_TAB,
   liveConditionId,
   nodesGovernedByTab,
-  orderGroups,
+  ROWS_TAB,
   tabOf,
   taskGraph,
   type Condition,
@@ -325,20 +329,20 @@ describe("quick tune", () => {
 });
 
 describe("parameter tabs", () => {
-  it("folds correction trials and reward volume under Session", () => {
-    expect(tabOf("Correction trials")).toBe("Session");
-    expect(tabOf("Reward volume")).toBe("Session");
+  it("files the ramp, the selection policy and the row-owned volume in their own homes", () => {
+    expect(tabOf("Holds & windows")).toBe(HOLDS_TAB);
+    expect(tabOf("Stage 3")).toBe(HOLDS_TAB);
+    expect(tabOf("Anti-bias selection")).toBe(GENERATION_TAB);
+    expect(tabOf("Trial pool")).toBe(GENERATION_TAB);
+    expect(tabOf("Correction trials")).toBe(GENERATION_TAB);
+    expect(tabOf("Reward volume")).toBe(ROWS_TAB);
   });
 
   it("leaves every other group as its own tab", () => {
     for (const group of [
       "Session",
-      "Trial pool",
       "Trial timing",
-      "Holds & windows",
-      "Stage 3",
       "Abstention penalty",
-      "Anti-bias selection",
       "Something a future profile invents",
     ]) {
       expect(tabOf(group)).toBe(group);
@@ -346,27 +350,35 @@ describe("parameter tabs", () => {
   });
 
   it("orders a folded tab's members the way the trial takes them", () => {
-    // Declaration order is the profile's; the rail renders them stacked, and
-    // "the session, then the correction budget, then the volumes" is the order
-    // they take effect in — which is what GROUP_ORDER already encodes.
-    const declared = ["Reward volume", "Correction trials", "Session", "Trial timing"];
-    expect(groupsOfTab("Session", declared)).toEqual([
-      "Session",
+    const declared = ["Correction trials", "Anti-bias selection", "Trial pool", "Session"];
+    expect(groupsOfTab(GENERATION_TAB, declared)).toEqual([
+      "Trial pool",
       "Correction trials",
-      "Reward volume",
+      "Anti-bias selection",
     ]);
-    expect(groupsOfTab("Trial timing", declared)).toEqual(["Trial timing"]);
+    expect(groupsOfTab("Session", declared)).toEqual(["Session"]);
   });
 
-  it("keeps Session first once the folded names are ordered as tabs", () => {
-    const tabs = orderGroups(
-      new Set(
-        ["Reward volume", "Anti-bias selection", "Correction trials", "Trial timing"].map(
-          tabOf,
-        ),
-      ),
-    );
-    expect(tabs).toEqual(["Session", "Trial timing", "Anti-bias selection"]);
+  it("gives the dial the four stops a generated profile declares, in trial order", () => {
+    const declared = [
+      "Anti-bias selection",
+      "Stage 1",
+      "Reward volume",
+      "Abstention penalty",
+      "Correction trials",
+      "Trial timing",
+      "Stage 0",
+      "Trial pool",
+      "Session",
+      "Something a future profile invents",
+    ];
+    expect(dialTabs(declared)).toEqual([
+      "Session",
+      "Trial timing",
+      HOLDS_TAB,
+      "Abstention penalty",
+      "Something a future profile invents",
+    ]);
   });
 
   it("lights a folded tab from any of the groups it swallowed", () => {
@@ -375,16 +387,27 @@ describe("parameter tabs", () => {
     const model = taskGraph(profile(2));
     const exact = (group: string) =>
       model.nodes.filter((n) => n.governedBy.includes(group)).map((n) => n.id);
-    const byTab = nodesGovernedByTab(model, "Session").map((n) => n.id);
+    const byTab = nodesGovernedByTab(model, GENERATION_TAB).map((n) => n.id);
     const correction = exact("Correction trials");
-    const session = exact("Session");
+    const antibias = exact("Anti-bias selection");
 
     expect(correction.length).toBeGreaterThan(0);
-    expect(session.length).toBeGreaterThan(0);
-    for (const id of [...correction, ...session]) expect(byTab).toContain(id);
+    expect(antibias.length).toBeGreaterThan(0);
+    for (const id of [...correction, ...antibias]) expect(byTab).toContain(id);
     // And the fold adds something: at least one correction-governed state is
-    // NOT a Session-governed state.
-    expect(correction.some((id) => !session.includes(id))).toBe(true);
-    expect(byTab.length).toBeGreaterThan(session.length);
+    // NOT an anti-bias-governed state.
+    expect(correction.some((id) => !antibias.includes(id))).toBe(true);
+    expect(byTab.length).toBeGreaterThan(antibias.length);
+  });
+});
+
+describe("happyPath", () => {
+  it("runs the rewarded trial from start to the ITI, forward edges only", () => {
+    const path = happyPath(taskGraph(profile(2))).map((n) => n.id);
+    expect(path[0]).toBe("start");
+    expect(path.at(-1)).toBe("iti");
+    expect(path).toContain("reward");
+    expect(path).not.toContain("lazy");
+    expect(new Set(path).size).toBe(path.length);
   });
 });

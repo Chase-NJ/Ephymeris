@@ -119,6 +119,23 @@ the top left.
 a task makes a program that can be put on a box. Usually managed by the lab manager. The landing page
 lists each saved task with its number of conditions, its stages and whether it is **ready**.
 
+Opening a task shows everything about it on one screen:
+
+- **The state machine** across the top: every step of a trial, drawn from what the task presents.
+  Hover a step to see what tunes it; click it to jump to those settings.
+- **Trial types** below it, one row per condition. Pick the **odor line** and its code fills itself in
+  — the code belongs to the line and is set on the Rig tab. A line another row already uses is greyed
+  out. Name every condition; the name titles its charts.
+- **Trial generation** on the right: how the next trial is chosen. **Anti-bias** balances the sides
+  against the animal's recent choices. **Weighted** does the same but shows heavier rows more often on
+  their side. **Pool** deals the whole session from the row weights at the start and never reacts to
+  the animal — it is the only one that presents no-go trials. Settings a mode does not use are greyed
+  out, and the bar shows the share of trials each condition would get.
+- **Parameters**, the dial above it: click a planet, use the arrow keys or scroll to turn it, and that
+  category's settings appear below. **Holds** is the shaping ramp.
+- At the top: **Problems** (click one to go to it), the **START** meter (keep it out of the red), and
+  **Details** (category, older names, notes). Save when done; a task saves even with problems.
+
 The **Strobes** tile opens the list of every event a box can report and the number it is recorded as.
 The band across the top shows all the numbers from 0 to 999: purple ones are in use, grey ones are
 retired, and the faint stretches are free. Click a code to see what it means, which programs use it,

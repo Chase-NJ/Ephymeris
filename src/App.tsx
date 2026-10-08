@@ -32,7 +32,7 @@ export default function App() {
         <Route path="/cohorts/:id" element={<CohortEditor />} />
         <Route path="/debug" element={<DebugMode />} />
         {/* Task is a landing over an editor. `/task` lists this rig's saved
-            profiles; the editor (`TASKS.md#editor` — the trial table, the ramp,
+            profiles; the editor (`TASKS.md#editor` — the trial types, the ramp,
             the parameters) opens on one of them, or on nothing at `/task/new`.
             Saving generates a sketch that discovery finds, so `port.flash`
             takes it like any other.

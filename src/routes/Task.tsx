@@ -11,7 +11,7 @@ import { NewTaskRow } from "@/components/task/NewTaskRow";
 import { StrobeDoor } from "@/components/task/StrobeDoor";
 import { TaskRow } from "@/components/task/TaskRow";
 import { errorMessage } from "@/lib/cohorts/commands";
-import { CASCADE, RISE, springPanel, springSnappy } from "@/lib/motion";
+import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import {
   deleteTask,
   getTask,
@@ -37,9 +37,9 @@ import { EVT } from "@/lib/ws/protocol";
  *
  * The layout is the RIG landing's, not the Dashboard's: a centred scrolling
  * column of tiles over the sky. Both pages answer "what is set up here, and
- * where do I go to change it" — and the two doors at the foot of this one are
- * literally the pair Rig used to carry, since the strobe vocabulary moved with
- * the subject it belongs to (`TASKS.md#strobe-vocabulary`).
+ * where do I go to change it" — and the door at the foot of this one is the
+ * one Rig used to carry, since the strobe vocabulary moved with the subject it
+ * belongs to (`TASKS.md#strobe-vocabulary`).
  *
  * The saved tasks are a LIST, most recently edited first, not a grid of cards:
  * a shelf of near-identical variants is compared column by column, and a grid
@@ -230,13 +230,10 @@ export function Task() {
               </motion.div>
             )}
 
-            {/* The two reference doors, side by side: one is where a trial
-                row's onset code comes from, the other is the way back into the
-                walkthrough. A pair of half-width doors reads as a pair —
-                stacked full-width they read as two more forms. */}
-            <motion.div variants={RISE} className="grid grid-cols-2 items-stretch gap-5">
+            {/* The reference door: where every onset code a trial row records
+                is defined. */}
+            <motion.div variants={RISE}>
               <StrobeDoor onOpen={() => navigate("/task/strobes")} />
-              <WalkthroughDoor onOpen={() => navigate("/task/new?guide=1")} />
             </motion.div>
 
             {/* The library's health. A task is GENERATED from the bundled root
@@ -293,10 +290,8 @@ function FirstTask({ onStart }: { onStart: () => void }) {
         </h2>
         <p className="mt-1.5 text-[12px] leading-relaxed text-static">
           A task is built here from scratch: name it, add a trial type for each
-          stimulus you present, ease it in with a ramp if the animal needs one,
-          then set the numbers. The first one comes with a walkthrough that
-          points at each step in turn — it assumes the wiring and the strobe
-          codes are already set up on Rig.
+          odor line you present, choose how trials are drawn, then set the
+          numbers. It reads the wiring from the Rig tab, so set that up first.
         </p>
       </div>
       <Button variant="primary" onClick={onStart}>
@@ -304,88 +299,6 @@ function FirstTask({ onStart }: { onStart: () => void }) {
         <ArrowRight size={13} strokeWidth={1.75} />
       </Button>
     </div>
-  );
-}
-
-/**
- * The way back into the walkthrough once it has been dismissed.
- *
- * The coach shows itself unasked exactly once — on a rig with no tasks — and
- * then never again, which is right for something that would otherwise be in the
- * way every morning. But "never again" needs a handle, or the one person who
- * skipped it on their first day can never get it back. Same door grammar as
- * Strobes beside it; the motif is the coach's own step rail.
- */
-function WalkthroughDoor({ onOpen }: { onOpen: () => void }) {
-  return (
-    <motion.button
-      type="button"
-      onClick={onOpen}
-      initial="idle"
-      animate="idle"
-      whileHover="hover"
-      whileTap={{ scale: 0.995 }}
-      variants={{ idle: { y: 0 }, hover: { y: -2 } }}
-      transition={springSnappy}
-      className="hud group relative flex h-full w-full items-center gap-4 overflow-hidden rounded-md py-3.5 pl-4 pr-0 text-left transition-colors hover:border-static/40"
-    >
-      <Compass size={18} strokeWidth={1.75} className="shrink-0 self-start text-pulsar" />
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1 text-[13px] font-medium text-starlight">
-          Walkthrough
-          <ArrowRight
-            size={11}
-            strokeWidth={2}
-            className="text-static transition-transform group-hover:translate-x-0.5"
-          />
-        </span>
-        <span className="mt-0.5 block text-[11px] leading-snug text-static">
-          Build a task with each step called out in turn. Opens a new, unsaved
-          task.
-        </span>
-      </span>
-      <span
-        aria-hidden
-        className="pointer-events-none -my-3.5 shrink-0 self-center opacity-70 transition-opacity group-hover:opacity-100"
-      >
-        <WalkthroughMotif />
-      </span>
-    </motion.button>
-  );
-}
-
-/** The Walkthrough door's motif: the coach's own step rail, the middle stop
- *  taking the accent and the spotlight arriving on it. */
-function WalkthroughMotif() {
-  const dots = [16, 34, 52, 70, 88];
-  return (
-    <svg width="104" height="62" viewBox="0 0 104 62" fill="none" aria-hidden>
-      <path d="M16 31 H88" stroke="var(--color-halo)" strokeWidth="1" />
-      {dots.map((x) => (
-        <circle key={x} cx={x} cy={31} r={2.5} fill="var(--color-halo)" />
-      ))}
-      <motion.circle
-        cx={52}
-        cy={31}
-        r={3.5}
-        variants={{
-          idle: { fill: "var(--color-static)", opacity: 0.5 },
-          hover: { fill: "var(--color-pulsar)", opacity: 1 },
-        }}
-        transition={springSnappy}
-      />
-      {/* A flat expanding ring and no blur — the no-glow rule, and the same
-          figure `SessionJourney`'s active step draws. */}
-      <motion.circle
-        cx={52}
-        cy={31}
-        fill="none"
-        stroke="var(--color-pulsar)"
-        strokeWidth="1"
-        variants={{ idle: { r: 4, opacity: 0 }, hover: { r: 9, opacity: 0.45 } }}
-        transition={springSnappy}
-      />
-    </svg>
   );
 }
 

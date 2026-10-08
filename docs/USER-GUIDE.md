@@ -119,8 +119,6 @@ the top left.
 a task makes a program that can be put on a box. Usually managed by the lab manager. The landing page
 lists each saved task with its number of conditions, its stages and whether it is **ready**.
 
-![The Task tab: a + New task row, then three saved tasks (4-Odor Discrimination, Shaping - Both Sides, 2-Odor Discrimination), each marked ready, with Strobes and Walkthrough tiles below](images/task-landing.webp)
-
 The **Strobes** tile opens the list of every event a box can report and the number it is recorded as.
 The band across the top shows all the numbers from 0 to 999: purple ones are in use, grey ones are
 retired, and the faint stretches are free. Click a code to see what it means, which programs use it,

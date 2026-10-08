@@ -72,7 +72,6 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [Trial table](#trial-table)
   - [Ramp and START meter](#ramp-and-start-meter)
   - [Parameter rail](#parameter-rail)
-  - [Walkthrough](#walkthrough)
 - [Writing a new sketch](#writing-a-new-sketch)
   - [Authoring steps](#authoring-steps)
   - [Verify](#verify)
@@ -873,9 +872,7 @@ The Task tab answers *what the animal does*; the Rig tab answers *what this box 
 
 ### Landing
 
-`/task` (`routes/Task.tsx`) lists this rig's saved tasks (`TaskRow`), with open, **Duplicate**, delete and create; doors to the strobe vocabulary and the walkthrough; and `LibraryStatusNote`, since a damaged install is the one thing that stops a task existing at all. Duplicate opens an **unsaved** copy named clear of every saved task (`GRGL copy`, `GRGL copy 2`) and **drops `legacyNames`**: a legacy name resolves to one sketch, so a copy carrying it would silently take over or lose the historical runs it decodes.
-
-![The Task landing: a New task row ("from scratch — or duplicate one below"), three saved tasks (4-Odor Discrimination, weighted; Shaping - Both Sides, pool; 2-Odor Discrimination, anti-bias) each with its conditions, stages and a ready dot, the Strobes and Walkthrough doors, and a library note that six sketches ship with this version](images/task-landing.webp)
+`/task` (`routes/Task.tsx`) lists this rig's saved tasks (`TaskRow`), with open, **Duplicate**, delete and create; a door to the strobe vocabulary; and `LibraryStatusNote`, since a damaged install is the one thing that stops a task existing at all. Duplicate opens an **unsaved** copy named clear of every saved task (`GRGL copy`, `GRGL copy 2`) and **drops `legacyNames`**: a legacy name resolves to one sketch, so a copy carrying it would silently take over or lose the historical runs it decodes.
 
 ### Editor
 
@@ -917,10 +914,6 @@ which is what stops the firmware's stage boundaries overwriting a single value
 > **The fold is the app's, never the profile's.** `group` rides in `ConfigField.to_json` and therefore inside `profile_hash`, so re-filing a field in `fields.py` would give every regenerated `task.json` a new hash and split each task's runs. `QUICK_TUNE_GROUPS` (the groups the mapping step promotes) rests on the same reasoning, and both registries live in `topology.ts`. Anything comparing a rail tab against a node's `governedBy` folds through `tabOf` first (`nodesGovernedByTab`); the diagram's chips keep the real group names.
 
 `settings.taskDefaults` has no editor here or anywhere; a profile's own values are edited on this tab.
-
-### Walkthrough
-
-`TaskGuide` is a **coach over the real editor, not a wizard**: it spotlights the control the current step is about while the operator edits the real document, and a step ticks itself off when the *definition* satisfies it. A wizard would be a second form over the same document, and the copy used twice a year is the one that drifts. **Nothing is blocked**: only the step card takes clicks, every control stays live, and working ahead ticks the steps behind you. The spotlight rectangle is measured from the target element on scroll, resize and `ResizeObserver`, never remembered. It opens unasked once — `/task/new` on a rig with no saved tasks, unless `localStorage` has `ephymeris:taskGuideSeen` — and the landing's Walkthrough door (`/task/new?guide=1`) reopens it regardless.
 
 ## Writing a new sketch
 

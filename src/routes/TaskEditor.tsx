@@ -10,7 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
@@ -18,7 +18,6 @@ import { ParameterInspector } from "@/components/task/ParameterInspector";
 import { StageRamp } from "@/components/task/StageRamp";
 import { TaskDetails } from "@/components/task/TaskDetails";
 import { TaskGlyph } from "@/components/task/TaskGlyph";
-import { TaskGuide, type GuideStep } from "@/components/task/TaskGuide";
 import { TrialTypeTable } from "@/components/task/TrialTypeTable";
 import { SketchStateMachine } from "@/components/task/SketchStateMachine";
 import { colorForIndex } from "@/lib/analytics/view";
@@ -68,12 +67,10 @@ import { EVT } from "@/lib/ws/protocol";
 export function TaskEditor() {
   const navigate = useNavigate();
   const { taskId } = useParams();
-  const [search] = useSearchParams();
   const { client, status } = useSidecar();
   const connected = status === "connected";
 
   const [tasks, setTasks] = useState<TaskEntry[]>([]);
-  const [tasksLoaded, setTasksLoaded] = useState(false);
   const [rig, setRig] = useState<RigDocument | null>(null);
   // Kept current across edits on the Strobes page: a code retired there must
   // leave the onset picker here without a reload.
@@ -107,8 +104,7 @@ export function TaskEditor() {
     if (!connected) return;
     void listTasks(client)
       .then((r) => setTasks(r.tasks))
-      .catch((err) => setListError(errorMessage(err)))
-      .finally(() => setTasksLoaded(true));
+      .catch((err) => setListError(errorMessage(err)));
     // The wiring is what the trial table's channel dropdowns offer, fetched
     // here rather than per-row so a rig with twelve odor lines costs one round
     // trip. The vocabulary arrives from `useStrobeVocabulary` above.
@@ -231,38 +227,11 @@ export function TaskEditor() {
     }
   }, [definition, navigate, session, taskId]);
 
-  // --- the guide ---------------------------------------------------------- #
-
-  const nameRef = useRef<HTMLDivElement>(null);
+  // Scroll targets for the section spine.
   const trialsRef = useRef<HTMLDivElement>(null);
   const rampRef = useRef<HTMLDivElement>(null);
   const paramsRef = useRef<HTMLDivElement>(null);
   const detailsRef = useRef<HTMLDivElement>(null);
-
-  /* Shown unasked exactly once: on a rig with no tasks, opening a new one. The
-   * `?guide=1` escape hatch is the landing's Walkthrough door, which is the only
-   * way back in after a dismissal — and it ignores both conditions, because
-   * somebody asking for it has answered the question the conditions ask. */
-  const forced = search.get("guide") === "1";
-  const [guiding, setGuiding] = useState(forced);
-  useEffect(() => {
-    if (forced || taskId !== undefined || !tasksLoaded) return;
-    if (tasks.length > 0) return;
-    if (window.localStorage.getItem(GUIDE_SEEN_KEY) === "1") return;
-    setGuiding(true);
-  }, [forced, taskId, tasksLoaded, tasks.length]);
-
-  const dismissGuide = useCallback(() => {
-    window.localStorage.setItem(GUIDE_SEEN_KEY, "1");
-    setGuiding(false);
-  }, []);
-
-  const steps = useMemo<GuideStep[]>(
-    () => guideSteps({ definition, saved: taskId !== undefined || !session.dirty, refs: {
-      nameRef, trialsRef, rampRef, paramsRef,
-    } }),
-    [definition, taskId, session.dirty],
-  );
 
   const categories = useMemo(
     () => [...new Set(tasks.map((t) => t.category))].sort((a, b) => a.localeCompare(b)),
@@ -478,7 +447,7 @@ export function TaskEditor() {
                 animate="shown"
                 className="pointer-events-auto flex flex-col gap-3"
               >
-                <motion.div variants={RISE} ref={nameRef}>
+                <motion.div variants={RISE}>
                   <Header session={session} onSave={() => void save()} />
                 </motion.div>
 
@@ -590,7 +559,6 @@ export function TaskEditor() {
         </AnimatePresence>
       </div>
 
-      {guiding && definition && <TaskGuide steps={steps} onClose={dismissGuide} />}
     </div>
   );
 }
@@ -616,93 +584,6 @@ function freshTask(): TaskDefinition {
     legacyNames: [],
     notes: "",
   };
-}
-
-/**
- * The steps, and what makes each one done.
- *
- * A step's `done` is a statement about the DOCUMENT, never about whether the
- * operator clicked through — which is what lets the coach be ignored and still
- * be right: doing the work in a different order ticks the steps behind you.
- */
-function guideSteps({
-  definition,
-  saved,
-  refs,
-}: {
-  definition: TaskDefinition | null;
-  saved: boolean;
-  refs: {
-    nameRef: React.RefObject<HTMLDivElement | null>;
-    trialsRef: React.RefObject<HTMLDivElement | null>;
-    rampRef: React.RefObject<HTMLDivElement | null>;
-    paramsRef: React.RefObject<HTMLDivElement | null>;
-  };
-}): GuideStep[] {
-  const named =
-    definition !== null &&
-    definition.name.trim().length > 0 &&
-    definition.name.trim() !== "New task";
-
-  /** A row that will actually present something. The same conditions
-   *  `_live_metrics` applies before it will score a type — a row missing any of
-   *  them compiles and then never appears as a condition anywhere. */
-  const usableRows =
-    definition?.trials.filter(
-      (t) =>
-        t.odorChannel &&
-        t.onsetStrobe &&
-        t.label.trim() &&
-        (!t.isGo || (t.responseChannel && t.rewardChannel)),
-    ).length ?? 0;
-
-  return [
-    {
-      id: "name",
-      title: "Name the task",
-      body: "This becomes the sketch folder and the name every recorded session stores — so it wants to say what the animal does, not which cohort runs it.",
-      target: refs.nameRef,
-      done: named,
-    },
-    {
-      id: "trials",
-      title: "Add a condition for each stimulus",
-      body: "One row per odor you present: which line carries it, which port answers it, which reward line pays and for how long, and what you call it. The name is the only one you cannot derive — every chart downstream is titled from it.",
-      target: refs.trialsRef,
-      done: usableRows > 0,
-    },
-    {
-      id: "mode",
-      title: "Choose how the next trial is drawn",
-      body: "Anti-bias picks a side against the animal's recent bias and then a type from that side. Weighted draws the side the same way but picks within it by a weight column — give a new odor a larger weight to show it more often while it is being learned. Pool draws from a weighted, block-shuffled bag — pick it if you want the proportions fixed.",
-      target: refs.trialsRef,
-      done: usableRows > 0,
-      optional: true,
-    },
-    {
-      id: "ramp",
-      title: "Ease it in, if the animal needs it",
-      body: "Most tasks start with one row and stay there. Add stages only to shorten the holds early and grow them as the animal settles — each row takes over at its trial count.",
-      target: refs.rampRef,
-      done: (definition?.stages.length ?? 0) > 1,
-      optional: true,
-    },
-    {
-      id: "params",
-      title: "Set the numbers",
-      body: "Session holds the trial count and the correction budget; each condition's reward volume lives on its row in the trial table. The rest are grouped by when they take effect during a trial — hover a state on the diagram and the groups that tune it light up. Every value here can be overridden per box at mapping.",
-      target: refs.paramsRef,
-      done: true,
-      optional: true,
-    },
-    {
-      id: "save",
-      title: "Check the problems, then save",
-      body: "A task saves with problems outstanding — the gate is flashing, not saving. But the three worth reading first are a reward line serving the other well, two conditions sharing an onset code, and an all-zero pool: each of those runs and produces wrong data rather than an error.",
-      target: refs.nameRef,
-      done: saved,
-    },
-  ];
 }
 
 /** One entry on the section spine. */
@@ -912,10 +793,6 @@ function Header({
     </div>
   );
 }
-
-/** Per machine, not per store: whether someone has been walked through this
- *  rig's task editor is a fact about the person at the bench. */
-const GUIDE_SEEN_KEY = "ephymeris:taskGuideSeen";
 
 /** A duplicated task handed over by the Task landing, if that is how we got here. */
 function seedFrom(state: unknown): TaskDefinition | null {

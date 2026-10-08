@@ -17,7 +17,7 @@ import { springSnappy } from "@/lib/motion";
  * these have nothing to read out. They are the entrance.
  *
  * So the shape is different on purpose — squarer, paired, a motif instead of
- * rows — while the material is the same `.hud` glass every tile on this page
+ * rows — while the material is the same telemetry glass every panel on this page
  * floats in, because they sit in the same column over the same sky.
  *
  * Three things happen on hover, on one spring: the tile lifts, its rule
@@ -54,7 +54,7 @@ export function EntranceTile({
 }) {
   return (
     <motion.div
-      className="hud group relative flex flex-col overflow-hidden rounded-md transition-colors hover:border-static/40"
+      className="telemetry group relative flex flex-col overflow-hidden transition-colors hover:border-static/40"
       initial="idle"
       animate="idle"
       whileHover="hover"

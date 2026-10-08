@@ -307,7 +307,7 @@ function ChannelGrid({
  * the app claiming a valve state it does not know. So the knob follows `on`,
  * which follows the sketch's `STATUS`.
  */
-function ChannelSwitch({
+export function ChannelSwitch({
   on,
   colour,
   disabled,
@@ -345,7 +345,7 @@ function ChannelSwitch({
 }
 
 /** A `select` control: choosing an option sends that option's command. */
-function SelectControl({
+export function SelectControl({
   control,
   disabled,
   onSend,
@@ -388,7 +388,7 @@ function SelectControl({
  * Rig page — `TASKS.md#the-box-utility`); the key-shape guess is for a
  * hand-written profile that predates it.
  */
-function familyOf(ch: ControlChannel): keyof typeof KIND_COLOR | undefined {
+export function familyOf(ch: ControlChannel): keyof typeof KIND_COLOR | undefined {
   if (ch.kind && ch.kind in KIND_COLOR) return ch.kind as keyof typeof KIND_COLOR;
   const key = ch.state?.toLowerCase() ?? "";
   if (/^f\d+$/.test(key)) return "reward";
@@ -398,7 +398,7 @@ function familyOf(ch: ControlChannel): keyof typeof KIND_COLOR | undefined {
   return undefined;
 }
 
-function isAllOff(c: Control): boolean {
+export function isAllOff(c: Control): boolean {
   return c.id === "alloff" || /^ALLOFF$/i.test(c.command ?? "");
 }
 
@@ -411,7 +411,7 @@ function hasAnyField(status: Record<string, string> | null, telemetry: Telemetry
  * Parse the most recent received `STATUS` line into `key → value` pairs. Scans
  * from the newest line back so a burst of updates always shows the latest.
  */
-function parseLatestStatus(
+export function parseLatestStatus(
   lines: ConsoleLine[],
   telemetry: TelemetrySpec | null,
 ): Record<string, string> | null {

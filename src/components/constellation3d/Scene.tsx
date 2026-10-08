@@ -83,6 +83,10 @@ export function ConstellationScene({
   docksPanel = true,
   frameShift = 0,
   interactive = true,
+  highlightId = null,
+  onHover,
+  ringIds,
+  frameAll = false,
 }: {
   nodes: SceneNode[];
   links: SceneLink[];
@@ -105,6 +109,18 @@ export function ConstellationScene({
   frameShift?: number;
   /** False where the sky is backdrop, not instrument — see `SceneIntent`. */
   interactive?: boolean;
+  /**
+   * A star lit from OUTSIDE the scene — a list row under the pointer on the
+   * Dashboard. It wears exactly the hover treatment (swell, reticle, plate), so
+   * a row and its star read as one thing.
+   */
+  highlightId?: string | null;
+  /** Reports the star under the pointer, so a list can light its row. */
+  onHover?: ((id: string | null) => void) | undefined;
+  /** Stars marked as targets — the arrival rings, on several at once. */
+  ringIds?: ReadonlySet<string> | undefined;
+  /** The whole asterism is the subject (`SceneIntent.frameAll`). */
+  frameAll?: boolean;
 }) {
   /*
    * **Tell the permanent camera what this view is** (`sceneIntent.ts`).
@@ -119,11 +135,13 @@ export function ConstellationScene({
    */
   const focused =
     focusedId === null ? undefined : nodes.find((n) => n.id === focusedId);
-  const focusKey = focused ? `${focusedId}@${focused.position.join(",")}` : "";
+  // "all" is a destination of its own: arriving at it flies the camera home
+  // even from an unfocused view, which an empty key would not.
+  const focusKey = focused ? `${focusedId}@${focused.position.join(",")}` : frameAll ? "all" : "";
 
   useLayoutEffect(() => {
     setSceneIntent(
-      { attached: true, focusKey, focusedId, docksPanel, frameShift, interactive },
+      { attached: true, focusKey, focusedId, docksPanel, frameShift, interactive, frameAll },
       nodes,
     );
   });
@@ -148,7 +166,10 @@ export function ConstellationScene({
           key={node.id}
           node={node}
           focused={focusedId === node.id}
+          lit={highlightId === node.id}
+          ringed={ringIds?.has(node.id) ?? false}
           onSelect={() => onFocus(node.id)}
+          onHover={onHover}
         />
       ))}
 
@@ -343,24 +364,33 @@ function PanButton({
 function StarNode({
   node,
   focused,
+  lit,
+  ringed,
   onSelect,
+  onHover,
 }: {
   node: SceneNode;
   focused: boolean;
+  /** Lit from outside the scene — treated exactly as a hover. */
+  lit: boolean;
+  /** Marked as a target: the arrival rings without a focus. */
+  ringed: boolean;
   onSelect: () => void;
+  onHover: ((id: string | null) => void) | undefined;
 }) {
-  const [hovered, setHovered] = useState(false);
+  const [pointerOver, setHovered] = useState(false);
+  const hovered = pointerOver || lit;
   const visual = useRef<THREE.Group>(null);
   const reduceMotion = useReduceMotion();
   const { active, radius } = node;
 
   useEffect(() => {
-    if (!hovered) return;
+    if (!pointerOver) return;
     document.body.style.cursor = "pointer";
     return () => {
       document.body.style.cursor = "";
     };
-  }, [hovered]);
+  }, [pointerOver]);
 
   // The swell is eased rather than snapped — a star that jumps size on
   // pointer-over reads as a glitch, and the cursor crossing a 4×-radius hit
@@ -402,8 +432,14 @@ function StarNode({
         <mesh
           visible={false}
           onClick={onSelect}
-          onPointerOver={() => setHovered(true)}
-          onPointerOut={() => setHovered(false)}
+          onPointerOver={() => {
+            setHovered(true);
+            onHover?.(node.id);
+          }}
+          onPointerOut={() => {
+            setHovered(false);
+            onHover?.(null);
+          }}
         >
           <sphereGeometry args={[radius * 4, 8, 8]} />
         </mesh>
@@ -422,7 +458,7 @@ function StarNode({
         />
       )}
 
-      {focused && <ArrivalRings radius={radius} />}
+      {(focused || ringed) && <ArrivalRings radius={radius} />}
     </group>
   );
 }

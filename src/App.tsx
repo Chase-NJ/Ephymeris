@@ -7,6 +7,7 @@ import { CohortEditor } from "./routes/CohortEditor";
 import { Cohorts } from "./routes/Cohorts";
 import { Dashboard } from "./routes/Dashboard";
 import { DebugMode } from "./routes/DebugMode";
+import { DebugAll } from "./routes/DebugAll";
 import { Log } from "./routes/Log";
 import { MissionControl } from "./routes/MissionControl";
 import { Recording } from "./routes/Recording";
@@ -31,6 +32,9 @@ export default function App() {
         <Route path="/cohorts/new" element={<CohortEditor />} />
         <Route path="/cohorts/:id" element={<CohortEditor />} />
         <Route path="/debug" element={<DebugMode />} />
+        {/* Every box at once — its own view rather than a selection, because
+            nothing in it is about one box (`ARCHITECTURE.md#routes`). */}
+        <Route path="/debug/all" element={<DebugAll />} />
         {/* Task is a landing over an editor. `/task` lists this rig's saved
             profiles; the editor (`TASKS.md#editor` — the trial types, the ramp,
             the parameters) opens on one of them, or on nothing at `/task/new`.

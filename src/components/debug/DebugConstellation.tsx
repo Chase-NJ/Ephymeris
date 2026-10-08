@@ -60,6 +60,10 @@ export function DebugConstellation({
   docksPanel = true,
   frameShift = 0,
   interactive = true,
+  highlight = null,
+  onHover,
+  ringed,
+  frameAll = false,
 }: {
   selected: number | null;
   onSelect: (box: number | null) => void;
@@ -86,6 +90,14 @@ export function DebugConstellation({
    * temperatures. It just isn't a control.
    */
   interactive?: boolean;
+  /** A box lit from a list — its star wears the hover treatment. */
+  highlight?: number | null;
+  /** The box under the pointer, for a list to light its row. */
+  onHover?: (box: number | null) => void;
+  /** Boxes ringed as targets — Debug's all-boxes view. */
+  ringed?: ReadonlySet<number>;
+  /** The whole constellation is the subject (`SceneIntent.frameAll`). */
+  frameAll?: boolean;
 }) {
   const { settings } = useSettings();
   const bound = useBoundBoxes();
@@ -195,6 +207,10 @@ export function DebugConstellation({
       docksPanel={docksPanel}
       frameShift={frameShift}
       interactive={interactive}
+      highlightId={highlight === null ? null : String(highlight)}
+      onHover={onHover ? (id) => onHover(id === null ? null : Number(id)) : undefined}
+      ringIds={ringed ? new Set([...ringed].map(String)) : undefined}
+      frameAll={frameAll}
     />
   );
 }

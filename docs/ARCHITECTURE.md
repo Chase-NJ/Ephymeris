@@ -950,8 +950,9 @@ All routes are children of `components/chrome/AppShell.tsx` in `src/App.tsx`; fi
 
 | Route | File | Notes |
 |---|---|---|
-| `/` | `Dashboard.tsx` | The rig's sky, the session dock, summary tiles |
+| `/` | `Dashboard.tsx` | The rig's sky, the session dock, the box roster (linked to the sky) and the observatory |
 | `/debug` | `DebugMode.tsx` | Per-box instrument panel. No nav entry: reached by selecting a box; redirects to `/` when none is selected |
+| `/debug/all` | `DebugAll.tsx` | Every box at once: the per-box commands fanned out to the targeted boxes. Reached from the roster's **Command all boxes** |
 | `/cohorts`, `/cohorts/new`, `/cohorts/:id` | `Cohorts.tsx`, `CohortEditor.tsx` | Cohort browser; create and manage |
 | `/task`, `/task/new`, `/task/:taskId`, `/task/strobes` | `Task.tsx`, `TaskEditor.tsx`, `TaskStrobes.tsx` | Saved tasks, the editor, the read-only strobe vocabulary |
 | `/analytics` | `Analytics.tsx` | Its cold landing is the cohort list (`CohortManifest`, [Cohort browser](#cohort-browser)) |
@@ -1048,8 +1049,13 @@ through `useRigSky`.*
   only chrome fades; a sky route must fade its own chrome on exit, since the shell holds it opaque.
 - **A star is the box, not the animal**, so the session view mirrors the rig. Star size and rotation are
   seeded per star, never per occupant, or a star changes size between views.
-- **A focused star is framed by a projection shift** (`setViewOffset`, `STAR_FRAME_BIAS` in `CameraRig.tsx`),
+- **A focused star is framed by a projection shift** (`setViewOffset`, `STAR_FRAME_BIAS_MAX` in `CameraRig.tsx`),
   not by aiming past it, which puts the orbit pivot beside the star and swings it behind the panel.
+- **The whole asterism has a pose of its own** (`SceneIntent.frameAll`, `ALL_POSITION`/`ALL_TARGET`):
+  Debug's all-boxes view publishes the focus key `"all"`, so arriving flies the camera there — pulled
+  back and aimed low, so the asterism rises above the panel docked along the bottom — and leaving flies
+  it home. Its bias may shift either way, since sideways there is only the sidebar to clear. A list can
+  light a star (`highlightId`/`onHover`) and ring several (`ringIds`) without focusing any.
 - **A cage-ship crew is keyed by cohort and cage.** Cage numbers restart in every cohort and the rig pools
   every active cohort's fleet; keying on cage alone merges unrelated cohorts onto one hull.
 
@@ -1178,8 +1184,9 @@ setting, and reduced motion stills things rather than removing them. Icons are L
 
 ### Telemetry panels
 
-Analytics — and, in the same idiom, the Recording tab, the task editor and the cohort list Analytics and
-Log open on — is drawn as one large translucent display rather than a page of cards. Its panels are
+Analytics — and, in the same idiom, the Dashboard, Debug's all-boxes view, the Recording tab, the task
+editor and the cohort list Analytics and Log open on — is drawn as one large translucent display rather
+than a page of cards. Outside Analytics a panel is usually `TelemetryPanel` (`components/common/`). Its panels are
 `.telemetry` (`styles/index.css`): the `.hud` glass, thinner, with a 3px radius, **corner brackets**
 where a card would have a rounded edge, and a faint **dot reticle**, so the sky reads as behind a display
 surface. Panel names are `PanelTitle` (`components/charts/PanelTitle.tsx`): the subject in tracked mono
@@ -1288,12 +1295,12 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `lib/constellations/` | `zodiac.ts`, `slots.ts`, `ships.ts`, `cohortSky.ts`, `viewMemory.ts` | [One sky](#one-sky) |
 | `lib/prng.ts`, `lib/motion.ts`, `lib/useReduceMotion.ts` | Seeded PRNG behind every procedural visual; springs; reduced motion | [Theme](#theme) |
 | `components/chrome/`, `components/constellation3d/` | Shell, status constellation and export cards; the shared canvas, scene, camera, backdrop, shaders, `ProgramWarmth` | [One sky](#one-sky), [Shaders and lights](#shaders-and-lights), [Export progress](#export-progress) |
-| `components/sessions/`, `components/debug/` | Mission Control and the session flow; Debug Mode, flash dialog, Prime | [Session lifecycle](#session-lifecycle) |
+| `components/sessions/`, `components/debug/` | Mission Control and the session flow; Debug Mode, flash dialog, Prime; `debug/all/`, the all-boxes panel (broadcast controls, merged console, one-at-a-time flash) | [Session lifecycle](#session-lifecycle), [One sky](#one-sky) |
 | `components/cohorts/`, `components/task/`, `components/hardware/`, `components/strobes/` | Cohort browser and editor; task editor (`task/editor/`) and landing; board map and wiring editor; the strobe vocabulary page (code band, table, detail, dialogs) | [Cohort browser](#cohort-browser), [TASKS.md](TASKS.md#the-task-tab), [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `components/recording/`, `routes/scope/` | Recording tab, rail and pop-up windows | [RECORDING.md](RECORDING.md) |
 | `components/analytics/`, `components/charts/` | Observatory panels, PNG report, chart primitives | [DATA.md](DATA.md#analytics-views) |
 | `lib/logbook/`, `components/logbook/` | Session-log store and commands, `rail.ts` (the time rail's layout), `clock.ts`; the rail, readout and note components | [DATA.md](DATA.md#the-session-log) |
-| `components/{config,settings,dashboard,common}/` | Rig and Settings parts, Dashboard tiles, shared HUD and form pieces | |
+| `components/{config,settings,dashboard,common}/` | Rig and Settings parts; Dashboard tiles, `BoxRoster` and `Observatory`; shared HUD, `TelemetryPanel` and form pieces | |
 | `styles/` | `index.css` theme, fonts | [Theme](#theme) |
 
 ### Rust shell

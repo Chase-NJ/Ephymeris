@@ -36,6 +36,7 @@ The screenshots come from a demo rig of six boxes running a cohort called *Odor 
   - [Do not touch during a session](#do-not-touch-during-a-session)
 - [Recording with Intan](#recording-with-intan)
 - [Checking a box](#checking-a-box)
+  - [Commanding every box](#commanding-every-box)
 - [Looking at results](#looking-at-results)
   - [Where files are saved](#where-files-are-saved)
   - [Analytics](#analytics)
@@ -86,14 +87,17 @@ animal in it), and red when it has a fault. You can check it from any screen.
 
 <img src="images/sidebar-status.webp" alt="The sidebar's star figure: six lit stars joined by lines, one per box, with '6/6 boxes' underneath" width="280">
 
-**Dashboard.** The home screen. The big button is **Start a Session** (or **Resume Session** while one is
-running). Below it is **Start a Recording**, for sessions recorded with Intan. Below that, the session
-dock lists anything that needs you: a running session, a set-up you left half-done, or a session that
-ended unexpectedly. The tiles on the right show the rig, the task, your cohorts, the boxes (with how many
-are connected), and recent results. The 3D sky behind everything is the rig: click a box's star, or its
-row in the **Boxes** tile, to open that box's panel (see [Checking a box](#checking-a-box)).
+**Dashboard.** The home screen. On the left, the big button is **Start a Session** (or **Resume
+Session** while one is running). Below it are **Start a Recording**, for sessions recorded with Intan;
+the session dock, which lists anything that needs you (a running session, a set-up you left half-done,
+or a session that ended unexpectedly); and doors to the **Rig** and **Task** tabs.
 
-![The Dashboard: Start a Session and Start a Recording on the left, the rig drawn as a 3D sky of box stars in the middle, and tiles for Rig, Task, Cohorts, Boxes (6/6 connected) and Analytics on the right](images/dashboard.webp)
+The 3D sky behind everything is the rig. On the right, **Boxes** lists every box with what its port is
+doing and what program it rests on. The list and the sky are linked: point at a row and its star lights
+up, point at a star and its row lights up. Click either to open that box's panel (see [Checking a
+box](#checking-a-box)). At the foot of the list, **Command all boxes** opens one panel for the whole rig
+(see [Commanding every box](#commanding-every-box)). Below it, the **Observatory** switches between your
+cohorts, their reward accuracy over sessions, and the most recent sessions; click any row to open it.
 
 While a session is running, the big button reads **Resume Session** and the dock shows the session: its
 name, which boxes are recording, and **Open Mission Control** and **End Session** buttons.
@@ -614,6 +618,28 @@ READY received*. During animal placement the app lights each box for you.
 > [!WARNING]
 > **`GRGL_Sim` really opens the fluid lines.** It runs a whole session with no animal in the box. Run it
 > dry (no water in the reservoirs) unless you mean to dispense.
+
+### Commanding every box
+
+**Command all boxes**, at the foot of the Dashboard's **Boxes** list, opens Debug Mode for the whole rig.
+The view pulls back to show every box's star above a panel along the bottom. **Nothing here is recorded
+as data.** Press Esc or click **← Constellation** to go back.
+
+- **Targets.** Every command goes to the *targeted* boxes, which are ringed in the sky. Boxes that are
+  on the bus start targeted. Click a box's star, or its card, to take it in or out; **all**, **detected**
+  and **none** set them in one go.
+- **Connection.** **Open** connects to every targeted box's console at the chosen speed. **Close**,
+  **Reset** and **Acknowledge** do the same for each box. The line underneath says how many boxes did
+  it and names any box that refused.
+- **Controls.** With the consoles open on boxes resting on the utility sketch, every button, the pulse
+  width, **Prime**, and the switch and pulse for each line reach all of them at once. Each line shows one
+  small light per box, so you can see which boxes have it open; its switch turns the line on for every
+  box, or off once it is on everywhere. The table below lists each box's beams and test status.
+- **Sketch.** **Flash…** puts one program on every targeted box, one box at a time, and opens each
+  console afterwards. **Return to baseline** puts them all back on the utility sketch. When every open
+  box carries the same task, **Start** and **End** start and stop it on all of them.
+- **Console.** Every targeted box's output in one stream, each line marked with its box number. Typing a
+  line sends it to every open console. Tick **status** to show the utility sketch's status lines too.
 
 ## Looking at results
 

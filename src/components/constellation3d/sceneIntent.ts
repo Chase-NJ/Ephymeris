@@ -74,6 +74,14 @@ export interface SceneIntent {
    * control, and the operator is meant to be looking at the form.
    */
   interactive: boolean;
+  /**
+   * The whole constellation is the subject — Debug's all-boxes view
+   * (`ARCHITECTURE.md#one-sky`). The camera flies to its own pose
+   * (`ALL_POSITION`, the overview pulled back and aimed low so the asterism
+   * rises above a bottom-docked panel) and, with `docksPanel`, applies
+   * `frameShift` with nothing focused — in either direction.
+   */
+  frameAll: boolean;
 }
 
 const EMPTY: SceneIntent = {
@@ -83,6 +91,7 @@ const EMPTY: SceneIntent = {
   docksPanel: true,
   frameShift: 0,
   interactive: true,
+  frameAll: false,
 };
 
 let intent: SceneIntent = EMPTY;
@@ -112,7 +121,8 @@ export function setSceneIntent(next: SceneIntent, liveNodes: SceneNode[]): void 
     intent.focusedId === next.focusedId &&
     intent.docksPanel === next.docksPanel &&
     intent.frameShift === next.frameShift &&
-    intent.interactive === next.interactive
+    intent.interactive === next.interactive &&
+    intent.frameAll === next.frameAll
   ) {
     return;
   }

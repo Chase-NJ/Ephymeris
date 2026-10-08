@@ -9,7 +9,7 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * The Dashboard's second way in: a session that is also an Intan recording
  * (`RECORDING.md#recording-walkthrough`).
  *
- * A `.hud` tile, NOT a second solid button. The solid Pulsar tile above it is
+ * A telemetry panel, NOT a second solid button. The solid Pulsar tile above it is
  * the primary action and the one opaque thing in the column on purpose
  * (`LaunchButton`); two of them would be two primaries. This one is glass like
  * everything else over the sky, and earns its place with what it knows: the
@@ -49,7 +49,7 @@ export function RecordingTile({
       whileHover={disabled ? "idle" : "hover"}
       variants={{ idle: { y: 0 }, hover: { y: -2 } }}
       transition={springSnappy}
-      className={`hud group flex flex-col rounded-lg transition-colors ${
+      className={`telemetry group flex flex-col transition-colors ${
         disabled ? "" : "hover:border-static/40"
       }`}
     >

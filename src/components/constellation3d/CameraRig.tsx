@@ -27,6 +27,16 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
 export const OVERVIEW_POSITION = new THREE.Vector3(0, 4, 18);
 export const OVERVIEW_TARGET = new THREE.Vector3(0, 0, 0);
 /**
+ * Where the camera sits when the whole asterism is the subject — Debug's
+ * all-boxes view, whose panel docks along the bottom (`SceneIntent.frameAll`).
+ * The overview's own heading, pulled back, and aimed below the asterism so it
+ * rises into the open sky above the panel rather than sitting behind it.
+ */
+export const ALL_TARGET = new THREE.Vector3(0, -6.4, 0);
+export const ALL_POSITION = ALL_TARGET.clone().add(
+  OVERVIEW_POSITION.clone().sub(OVERVIEW_TARGET).multiplyScalar(1.95),
+);
+/**
  * How close to the overview counts as *being* at the overview, in world units.
  *
  * The scene spans roughly ±10, so this is a small fraction of a star's spacing —
@@ -86,7 +96,7 @@ interface FlightMove {
  * > reach for a mount effect.
  */
 export function CameraRig() {
-  const { attached, focusKey, focusedId, docksPanel, frameShift } = useSceneIntent();
+  const { attached, focusKey, focusedId, docksPanel, frameShift, frameAll } = useSceneIntent();
   const { camera, controls, size } = useThree();
   const reduceMotion = useReduceMotion();
 
@@ -105,6 +115,8 @@ export function CameraRig() {
 
   const focusedIdRef = useRef(focusedId);
   focusedIdRef.current = focusedId;
+  const frameAllRef = useRef(frameAll);
+  frameAllRef.current = frameAll;
 
   // The orbit controls, readable from effects that must not re-run when drei
   // swaps them in — `makeDefault` publishes them from a *passive* effect, so
@@ -203,6 +215,12 @@ export function CameraRig() {
     const arrived = attached && !wasAttached.current;
     wasAttached.current = attached;
     if (!arrived || focusedIdRef.current !== null) return;
+    // The all-boxes view has a home of its own, which its `focusKey` ("all")
+    // already flies to — the overview is not where it should arrive.
+    if (frameAllRef.current) {
+      everAttached.current = true;
+      return;
+    }
 
     if (!everAttached.current) {
       // **Cold start.** The camera is still on r3f's default pose, which is not
@@ -255,10 +273,15 @@ export function CameraRig() {
    * reactive; the restatement effect below keeps the *animated* value pinned
    * to pixels through the resize itself.
    */
+  // `frameAll` composes the whole asterism the same way a focused star is
+  // composed — and may shift either way, since its panel docks along the
+  // bottom and the only chrome to clear sideways is the sidebar on the left.
   const biasTarget =
-    focusedId !== null && docksPanel
-      ? Math.min(STAR_FRAME_BIAS_MAX, Math.max(0, (2 * frameShift) / size.width))
-      : 0;
+    frameAll && docksPanel
+      ? Math.min(STAR_FRAME_BIAS_MAX, Math.max(-STAR_FRAME_BIAS_MAX, (2 * frameShift) / size.width))
+      : focusedId !== null && docksPanel
+        ? Math.min(STAR_FRAME_BIAS_MAX, Math.max(0, (2 * frameShift) / size.width))
+        : 0;
 
   useEffect(() => {
     if (reduceMotion) {
@@ -335,7 +358,8 @@ export function CameraRig() {
         orbit?.update?.();
       },
       recenter() {
-        flyTo(OVERVIEW_POSITION.clone(), OVERVIEW_TARGET.clone());
+        if (frameAllRef.current) flyTo(ALL_POSITION.clone(), ALL_TARGET.clone());
+        else flyTo(OVERVIEW_POSITION.clone(), OVERVIEW_TARGET.clone());
       },
     });
     return () => setViewApi(null);
@@ -361,17 +385,20 @@ export function CameraRig() {
     const approach = starPoint
       ? camera.position.clone().sub(starPoint).normalize()
       : null;
+    const home = frameAllRef.current ? ALL_POSITION : OVERVIEW_POSITION;
     const toPosition =
       starPoint && approach
         ? starPoint
             .clone()
             .add(approach.clone().multiplyScalar(ARRIVAL_DISTANCE))
-        : OVERVIEW_POSITION.clone();
+        : home.clone();
 
     // Aim at the star itself. The star is placed left of frame by shifting the
     // *projection* instead (see the view-offset effect above), which is what
     // lets the orbit pivot stay exactly on it.
-    const toTarget = starPoint ? starPoint.clone() : OVERVIEW_TARGET.clone();
+    const toTarget = starPoint
+      ? starPoint.clone()
+      : (frameAllRef.current ? ALL_TARGET : OVERVIEW_TARGET).clone();
 
     flyTo(toPosition, toTarget);
     // eslint-disable-next-line react-hooks/exhaustive-deps

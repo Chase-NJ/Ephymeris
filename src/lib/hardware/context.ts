@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useSyncExternalStore } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useReducer,
+  useSyncExternalStore,
+} from "react";
 
 import type {
   ConsoleLine,
@@ -75,4 +83,43 @@ export function useUtilityStatus(): UtilityStatus {
   const store = useHardwareStore();
   const subscribe = useCallback((cb: () => void) => store.subscribe("utility", cb), [store]);
   return useSyncExternalStore(subscribe, () => store.getUtility());
+}
+
+/**
+ * Several boxes' scrollback at once — Debug's all-boxes view, which reads every
+ * targeted box's `STATUS` lines and merges their consoles. A hook per box
+ * cannot be called in a loop over a changing set, so this subscribes to each
+ * box's key and re-reads them all on any change. Each array keeps its own
+ * identity until its box's output moves, as `useBoxOutput`'s does.
+ */
+export function useBoxOutputs(boxes: readonly number[]): ReadonlyMap<number, ConsoleLine[]> {
+  return useKeyed(boxes, "output", (store, box) => store.getLines(box));
+}
+
+/** The client-tracked flash for several boxes — see `useBoxOutputs`. */
+export function useFlashedSketches(
+  boxes: readonly number[],
+): ReadonlyMap<number, FlashedSketch | null> {
+  return useKeyed(boxes, "flashed", (store, box) => store.getFlashed(box));
+}
+
+function useKeyed<T>(
+  boxes: readonly number[],
+  prefix: string,
+  read: (store: HardwareStore, box: number) => T,
+): ReadonlyMap<number, T> {
+  const store = useHardwareStore();
+  const [tick, bump] = useReducer((x: number) => x + 1, 0);
+  const key = boxes.join(",");
+  useEffect(() => {
+    const offs = boxes.map((box) => store.subscribe(`${prefix}:${box}`, bump));
+    return () => offs.forEach((off) => off());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, key, prefix]);
+  return useMemo(
+    () => new Map(boxes.map((box) => [box, read(store, box)])),
+    // `tick` stands in for the store's contents behind stable references.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [store, key, tick],
+  );
 }

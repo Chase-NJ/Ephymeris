@@ -1022,7 +1022,7 @@ writes settings **once per completed drag**.
 There is **one app-wide WebGL canvas** (`components/constellation3d/SharedCanvas.tsx`) that views adopt in
 turn — never a canvas per view.
 
-![The Dashboard's 3D sky: box stars labelled Box 1 to Box 5 joined by lines, with each box's animals named beside its star](images/dashboard.webp)
+![The Dashboard over the rig's 3D sky: six box stars labelled with their box number and bench name (1 Left bench to 6 Back wall), with the launch column on the left and the Boxes list and Observatory on the right](images/dashboard.webp)
 
 *The rig's sky on the Dashboard. Compare it with Mission Control under [Running boxes](#running-boxes): the
 same stars sit in the same places, relabelled with the animals they hold, because both views resolve

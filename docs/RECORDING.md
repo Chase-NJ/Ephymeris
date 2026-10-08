@@ -317,6 +317,8 @@ Link is the left column and Defaults the right. Rows are `SettingRow` at **compa
 (`SettingRowDensityContext`): label and control on one line, the explanation behind an ⓘ `InfoHint`. The
 Record step renders the same rows at full density.
 
+![The Recording tab: a readout strip (not connected, sync 6/6 wired); Link on the left with Connection, its "How to connect" disclosure and the three TCP ports, and Sync inputs mapping boxes 1 to 6 to DIN 1 to 6; Defaults on the right with Saving and Spike thresholds as compact rows](images/recording-tab.webp)
+
 ### Record step
 
 The Dashboard's Start Recording tile opens `/session/new?mode=recording`, which creates the session with

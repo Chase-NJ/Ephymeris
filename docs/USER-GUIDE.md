@@ -99,6 +99,8 @@ box](#checking-a-box)). At the foot of the list, **Command all boxes** opens one
 (see [Commanding every box](#commanding-every-box)). Below it, the **Observatory** switches between your
 cohorts, their reward accuracy over sessions, and the most recent sessions; click any row to open it.
 
+![The Dashboard: Start a Session and Start a Recording ("RHX not connected") with the Rig and Task doors on the left; the rig's six boxes as labelled stars in the 3D sky; the Boxes list on the right with each box's label, port and resting program and Command all boxes at its foot; and the Observatory below it listing four cohorts](images/dashboard.webp)
+
 While a session is running, the big button reads **Resume Session** and the dock shows the session: its
 name, which boxes are recording, and **Open Mission Control** and **End Session** buttons.
 
@@ -123,6 +125,8 @@ the top left.
 a task makes a program that can be put on a box. Usually managed by the lab manager. The landing page
 lists each saved task with its number of conditions, its stages and whether it is **ready**.
 
+![The Task tab: a + New task row, then three saved tasks — 4-Odor Discrimination (weighted, 4 conditions, no ramp), Shaping - Both Sides (pool, 5 stages) and 2-Odor Discrimination (anti-bias, 5 stages) — each marked ready, with the Strobes door below](images/task-landing.webp)
+
 Opening a task shows everything about it on one screen:
 
 - **The state machine** across the top: every step of a trial, drawn from what the task presents.
@@ -139,6 +143,8 @@ Opening a task shows everything about it on one screen:
   category's settings appear below. **Holds** is the shaping ramp.
 - At the top: **Problems** (click one to go to it), the **START** meter (keep it out of the red), and
   **Details** (category, older names, notes). Save when done; a task saves even with problems.
+
+![The task editor for 4-Odor Discrimination: the START meter and Details at the top, the state machine across the left, four trial types below it (Sandalwood, Orange, Cedar and Lemon, each with its odor line, well, fluid line, reward and weight), the Parameters dial on Session at the top right, and Trial generation set to Weighted below it](images/task-editor.webp)
 
 The **Strobes** tile opens the list of every event a box can report and the number it is recorded as.
 The band across the top shows all the numbers from 0 to 999: purple ones are in use, grey ones are
@@ -162,6 +168,8 @@ and the default recording settings. See [Recording with Intan](#recording-with-i
 **Analytics.** Results. Pick a cohort from the list to see its sessions, animals and learning curves.
 Each row shows the cohort's planet, its animals, groups and cages, how many sessions it has and when it
 last ran. The most recently run cohort is at the top.
+
+![The Analytics landing: "Pick a cohort to study its recorded sessions" above a list of four cohorts, each with its planet, its animals and groups, its session count and when it last ran](images/analytics-landing.webp)
 
 **Log.** The lab notebook: every session of a cohort on a timeline, with its start, end and elapsed
 time, notes anyone wrote, and what changed since the last session. See [Keeping the log](#keeping-the-log).
@@ -624,6 +632,8 @@ READY received*. During animal placement the app lights each box for you.
 **Command all boxes**, at the foot of the Dashboard's **Boxes** list, opens Debug Mode for the whole rig.
 The view pulls back to show every box's star above a panel along the bottom. **Nothing here is recorded
 as data.** Press Esc or click **← Constellation** to go back.
+
+![Command all boxes: the sky pulled back to all six stars, each ringed as targeted, above a bottom panel with Targets (a card per box), Connection (baud rate and Open consoles), Controls and the merged Console](images/debug-all.webp)
 
 - **Targets.** Every command goes to the *targeted* boxes, which are ringed in the sky. Boxes that are
   on the bus start targeted. Click a box's star, or its card, to take it in or out; **all**, **detected**

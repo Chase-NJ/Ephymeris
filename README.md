@@ -7,7 +7,7 @@ bookkeeping around it: cohorts, animals, groups, session prefixes and session re
 reads the recorded archive back and draws learning curves, per-condition accuracy and strategy plots.
 A session can also drive an Intan RHX electrophysiology recording alongside the behaviour.
 
-![The Ephymeris Dashboard on a six-box rig: Start a Session and Start a Recording at the top left, the rig's boxes drawn as stars in a 3D sky, and tiles for the Rig, Task, Cohorts, Boxes (6/6 connected) and Analytics with recent sessions](docs/images/dashboard.webp)
+![The Ephymeris Dashboard on a six-box rig: Start a Session and Start a Recording at the top left, the rig's boxes drawn as labelled stars in a 3D sky, the Boxes list with Command all boxes on the right, and the Observatory listing the lab's cohorts](docs/images/dashboard.webp)
 
 *The Dashboard. Each star in the sky is a behaviour box; the figure in the sidebar's corner is the same six boxes as a status readout, on every screen.*
 

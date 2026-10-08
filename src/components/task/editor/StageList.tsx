@@ -197,7 +197,7 @@ export function StageList({
 
 /** One row's shape, shared by the header and every stage. */
 const GRID =
-  "grid grid-cols-[1.25rem_repeat(5,minmax(0,1fr))_0.875rem] items-center gap-x-1";
+  "grid grid-cols-[1.25rem_repeat(5,minmax(0,1fr))_0.75rem] items-center gap-x-0.5";
 
 function ColumnHead({ top, bottom }: { top: string; bottom: string }) {
   return (
@@ -307,7 +307,7 @@ function Cell({
       align="right"
       invalid={invalid ?? false}
       autoFocus={autoFocus ?? false}
-      className="w-full px-1.5 py-0.5 text-[11px]"
+      className="w-full px-1 py-0.5 text-[10.5px] tabular-nums"
       onChange={onChange}
     />
   );

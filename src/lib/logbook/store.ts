@@ -29,6 +29,12 @@ export interface LogbookEntry {
   notesBySession: Map<string, SessionNote[]>;
   logs: Map<string, SessionLog>;
   changesBySession: Map<string, RunChange[]>;
+  /**
+   * Runs set aside as false starts (`DATA.md#false-starts`), per session —
+   * kept out of `changesBySession` so nothing that counts changes can count
+   * one, and named under the list so nothing hides one either.
+   */
+  falseStartsBySession: Map<string, RunChange[]>;
   /** Unresolved carry-forward notes, oldest first. */
   openFlags: SessionNote[];
 }
@@ -40,6 +46,7 @@ const EMPTY: LogbookEntry = {
   notesBySession: new Map(),
   logs: new Map(),
   changesBySession: new Map(),
+  falseStartsBySession: new Map(),
   openFlags: [],
 };
 
@@ -54,16 +61,19 @@ export function indexLogbook(
     notesBySession.set(note.sessionId, list);
   }
   const changesBySession = new Map<string, RunChange[]>();
+  const falseStartsBySession = new Map<string, RunChange[]>();
   for (const change of data.changes) {
-    const list = changesBySession.get(change.sessionId) ?? [];
+    const into = change.falseStart ? falseStartsBySession : changesBySession;
+    const list = into.get(change.sessionId) ?? [];
     list.push(change);
-    changesBySession.set(change.sessionId, list);
+    into.set(change.sessionId, list);
   }
   return {
     sessions,
     notesBySession,
     logs: new Map(data.logs.map((log) => [log.sessionId, log])),
     changesBySession,
+    falseStartsBySession,
     openFlags: data.notes.filter((n) => n.carryForward && n.resolvedAt === null),
   };
 }

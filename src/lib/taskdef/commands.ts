@@ -4,7 +4,7 @@ import type { SidecarClient } from "@/lib/ws/client";
 import type { TaskDefinition } from "./types";
 
 /**
- * The `tasks.*` and `rig.strobes` calls.
+ * The `tasks.*` calls. The strobe vocabulary has its own (`lib/strobes`).
  *
  * `preview` and `save` take the whole definition rather than a patch, for the
  * reason `hardware.preview` does: the checks that matter run over the document
@@ -35,10 +35,6 @@ export async function saveTask(client: SidecarClient, definition: TaskDefinition
 
 export async function deleteTask(client: SidecarClient, taskId: string) {
   return client.call(CMD.TASKS_DELETE, { taskId });
-}
-
-export async function getStrobes(client: SidecarClient) {
-  return client.call(CMD.RIG_STROBES, {});
 }
 
 /**

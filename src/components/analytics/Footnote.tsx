@@ -26,6 +26,13 @@ export function Footnote({
       {cohortName} · {summary.counts.decoded} of {summary.counts.runs} runs scored ·{" "}
       {scope === ALL_SESSIONS ? "all sessions" : "one session"} · fewer than{" "}
       {summary.minCountedTrials} scored trials shows as a count, not a probability
+      {summary.counts.falseStarts > 0 && (
+        <>
+          {" · "}
+          {summary.counts.falseStarts} false start{summary.counts.falseStarts === 1 ? "" : "s"}{" "}
+          set aside, counted nowhere
+        </>
+      )}
       {fallback > 0 && (
         <>
           {" · "}

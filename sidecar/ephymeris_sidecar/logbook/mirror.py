@@ -69,6 +69,11 @@ def change_lines(changes: Iterable[dict[str, Any]], names: dict[str, str]) -> li
     for change in changes:
         box = "recovered" if change["box"] is None else f"box {change['box']}"
         who = f"{names.get(change['animalId'], change['animalId'])} ({box})"
+        if change.get("falseStart"):
+            # Listed, not compared (`DATA.md#false-starts`).
+            how = "marked by hand" if change.get("falseStartSource") == "marked" else "restarted"
+            lines.append(f"- **{who}**: false start, set aside ({how})")
+            continue
         parts = []
         if change["first"]:
             parts.append(f"first run — {change['task']}")
@@ -140,7 +145,10 @@ def render_markdown(
         out += ["## Summary", "", *("\n\n".join(summaries).splitlines()), ""]
 
     lines = change_lines(changes, animal_names)
-    unknown = sum(1 for c in changes if not c["first"] and not c.get("paramsKnown", True))
+    unknown = sum(
+        1 for c in changes
+        if not c["first"] and not c.get("falseStart") and not c.get("paramsKnown", True)
+    )
     if unknown:
         lines.append(
             f"_Parameters aren't on record for {unknown} of these runs, so only the task "

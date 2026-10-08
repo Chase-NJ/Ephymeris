@@ -18,6 +18,8 @@ function change(over: Partial<RunChange> = {}): RunChange {
     boxChange: null,
     params: [],
     paramsKnown: true,
+    falseStart: false,
+    falseStartSource: null,
     ...over,
   };
 }

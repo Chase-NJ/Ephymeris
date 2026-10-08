@@ -5,10 +5,10 @@
  * views of the one trial record this builds, so they can never disagree with
  * each other about what happened.
  *
- * **Keyed off strobe *names*, never raw codes.** `BehaviorBox.h` defines one
- * shared `BF_*` vocabulary and every `task.json` mirrors it by name, so
- * resolving `WATER_POKE_L` → whatever code this sketch assigned keeps the app
- * free of per-sketch knowledge (the rule in CLAUDE.md). A sketch that declares
+ * **Keyed off strobe *names*, never raw codes.** Every profile's `strobes` map
+ * is the machine's one vocabulary (`TASKS.md#strobe-vocabulary`), so resolving
+ * `WATER_POKE_L` → whatever code it carries keeps the app free of per-sketch
+ * knowledge (the rule in CLAUDE.md). A sketch that declares
  * none of these names simply yields no trials, and the panels say so rather
  * than inventing structure.
  *

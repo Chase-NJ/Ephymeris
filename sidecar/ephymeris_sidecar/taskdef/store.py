@@ -249,11 +249,11 @@ class TaskStore:
         return target
 
     def regenerate_all(self) -> int:
-        """Rewrite every stored profile. Called after a wiring change.
+        """Rewrite every stored profile. Called after a wiring or vocabulary change.
 
-        A pin number is compiled into `TaskPins.h`, so a saved profile whose
-        folder was generated under the old wiring would flash the old pins —
-        silently, since it still compiles. This is what stops that.
+        Pin numbers and strobe codes are compiled into `TaskPins.h`, so a saved
+        profile whose folder was generated under the old wiring would flash the
+        old pins — silently, since it still compiles. This is what stops that.
         """
         count = 0
         for definition in self.list_definitions():

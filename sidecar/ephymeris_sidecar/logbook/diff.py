@@ -17,11 +17,12 @@ that both know theirs. A file too old to carry its parameters says so
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Any
 
+from ..analytics.false_starts import Verdict
 from ..sessions.models import SessionAnimalRun
 
 
@@ -89,11 +90,39 @@ def param_changes(before: dict[str, Any], after: dict[str, Any]) -> list[dict[st
     return changes
 
 
-def compare(runs: Iterable[ComparedRun]) -> dict[str, dict[str, Any]]:
-    """`RunChange` payloads keyed by run id (`PROTOCOL.md#shape-runchange`)."""
+def compare(
+    runs: Iterable[ComparedRun], verdicts: Mapping[str, Verdict] | None = None
+) -> dict[str, dict[str, Any]]:
+    """`RunChange` payloads keyed by run id (`PROTOCOL.md#shape-runchange`).
+
+    A false start (`verdicts`, `DATA.md#false-starts`) is compared with nothing
+    and is nobody's previous run: the run that restarted it is compared with
+    the animal's run before it, which is the change that actually happened.
+    """
+    verdicts = verdicts or {}
     previous: dict[str, ComparedRun] = {}
     out: dict[str, dict[str, Any]] = {}
     for run in runs:
+        verdict = verdicts.get(run.id)
+        if verdict is not None and verdict.false_start:
+            out[run.id] = {
+                "runId": run.id,
+                "sessionId": run.session_id,
+                "animalId": run.animal_id,
+                "box": run.box,
+                "task": run.task,
+                "recovered": run.recovered,
+                "previousRunId": None,
+                "previousSessionId": None,
+                "first": False,
+                "taskChange": None,
+                "boxChange": None,
+                "params": [],
+                "paramsKnown": True,
+                "falseStart": True,
+                "falseStartSource": verdict.source,
+            }
+            continue
         prior = previous.get(run.animal_id)
         previous[run.animal_id] = run
         change: dict[str, Any] = {
@@ -110,6 +139,8 @@ def compare(runs: Iterable[ComparedRun]) -> dict[str, dict[str, Any]]:
             "boxChange": None,
             "params": [],
             "paramsKnown": True,
+            "falseStart": False,
+            "falseStartSource": verdict.source if verdict is not None else None,
         }
         if prior is not None:
             if not same_task(prior, run):

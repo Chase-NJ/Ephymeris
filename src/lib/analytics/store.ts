@@ -234,6 +234,20 @@ export class AnalyticsStore {
     }
   }
 
+  /**
+   * Replace a loaded summary in place, without passing through "loading" —
+   * after a false-start ruling, which changes which list a run is in but not
+   * whether the cohort is readable. A blank page between two near-identical
+   * summaries would be the larger change on screen.
+   */
+  async refreshSummary(client: SidecarClient, cohortId: string): Promise<void> {
+    const started = this.version;
+    const summary = await getSummary(client, cohortId);
+    if (this.version !== started) return;
+    this.summaries.set(cohortId, summary);
+    this.notify("data");
+  }
+
   /** Drop a cohort's cache so the next load refetches — after a rescan. */
   invalidate(cohortId: string): void {
     this.summaries.delete(cohortId);

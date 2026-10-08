@@ -17,13 +17,14 @@ import { errorMessage } from "@/lib/cohorts/commands";
 import { getRig } from "@/lib/hardware/commands";
 import type { RigDocument } from "@/lib/hardware/types";
 import { CASCADE, PANEL_TRAVEL, RISE, springPanel } from "@/lib/motion";
-import { getStrobes, idFromName, listTasks } from "@/lib/taskdef/commands";
+import { idFromName, listTasks } from "@/lib/taskdef/commands";
+import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
 import { blankTrial, isRampGroup, nextStage } from "@/lib/taskdef/types";
 import type { TaskDefinition, TaskDiagnostic, TaskEntry } from "@/lib/taskdef/types";
 import { useTask } from "@/lib/taskdef/useTask";
 import { taskGraph, type TaskNode } from "@/lib/tasks/topology";
 import { useSidecar } from "@/lib/ws/context";
-import { EVT, type StrobeVocabulary } from "@/lib/ws/protocol";
+import { EVT } from "@/lib/ws/protocol";
 
 /**
  * The task-profile editor — one task, open.
@@ -63,7 +64,9 @@ export function TaskEditor() {
   const [tasks, setTasks] = useState<TaskEntry[]>([]);
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [rig, setRig] = useState<RigDocument | null>(null);
-  const [vocabulary, setVocabulary] = useState<StrobeVocabulary | null>(null);
+  // Kept current across edits on the Strobes page: a code retired there must
+  // leave the onset picker here without a reload.
+  const { vocabulary } = useStrobeVocabulary();
   const [hoverGroup, setHoverGroup] = useState<string | null>(null);
   const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
@@ -95,11 +98,10 @@ export function TaskEditor() {
       .then((r) => setTasks(r.tasks))
       .catch((err) => setListError(errorMessage(err)))
       .finally(() => setTasksLoaded(true));
-    // The wiring and the vocabulary are what the trial table's dropdowns offer.
-    // Fetched here rather than per-row so a rig with twelve odor lines costs one
-    // round trip, and so the two can never disagree within one render.
+    // The wiring is what the trial table's channel dropdowns offer, fetched
+    // here rather than per-row so a rig with twelve odor lines costs one round
+    // trip. The vocabulary arrives from `useStrobeVocabulary` above.
     void getRig(client).then((r) => setRig(r.document as RigDocument));
-    void getStrobes(client).then(setVocabulary);
   }, [client, connected]);
 
   // A rewiring changes what the dropdowns may offer, and can break a task that

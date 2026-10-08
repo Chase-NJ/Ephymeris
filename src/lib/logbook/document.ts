@@ -10,6 +10,7 @@ import {
   conditionFor,
   conditionName,
   runEnd,
+  sessionFalseStartsOf,
   sessionRunsOf,
 } from "../analytics/session";
 import type { AnalyticsSummary, SessionListItem, TrialOutcomes } from "../analytics/types";
@@ -174,9 +175,13 @@ export function performanceOf(
   sessionId: string,
   names: Map<string, string>,
 ): DocPerformance | null {
-  const runs = sessionRunsOf(summary, sessionId);
+  const counted = sessionRunsOf(summary, sessionId);
+  // Printed after the counted runs and labelled, as on screen: set aside,
+  // never dropped (`DATA.md#false-starts`).
+  const setAside = sessionFalseStartsOf(summary, sessionId);
+  const runs = [...counted, ...setAside];
   if (runs.length === 0) return null;
-  const columns = conditionColumns(runs, summary.profileGroups);
+  const columns = conditionColumns(counted, summary.profileGroups);
   const min = summary.minCountedTrials;
   const animalNames = new Map(summary.animals.map((a) => [a.id, a.name]));
   return {
@@ -194,7 +199,11 @@ export function performanceOf(
         cell(run.outcomes, min),
         ...columns.map((column) => cell(conditionFor(run, column)?.outcomes ?? null, min)),
       ],
-      note: run.status === "ok" ? null : (run.detail ?? "not scored"),
+      note: run.falseStart
+        ? "false start — set aside, counted nowhere"
+        : run.status === "ok"
+          ? null
+          : (run.detail ?? "not scored"),
     })),
   };
 }
@@ -230,6 +239,13 @@ function sessionModel(
       box: boxText(change.box),
       parts: changeParts(change).map((p) => p.text),
     }))
+    .concat(
+      (entry.falseStartsBySession.get(session.id) ?? []).map((change) => ({
+        animal: names.get(change.animalId) ?? change.animalId,
+        box: boxText(change.box),
+        parts: ["false start — set aside, compared with nothing"],
+      })),
+    )
     .sort((a, b) => collator.compare(a.animal, b.animal));
   return {
     id: session.id,

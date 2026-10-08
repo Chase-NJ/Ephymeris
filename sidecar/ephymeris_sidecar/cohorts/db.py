@@ -66,7 +66,11 @@ DB_FILENAME = "ephymeris.db"
 #: v12 added run_metrics_cache.config_json (`DATA.md#what-changed`) — the
 #: parameter values a recovered run's own file records, so the session log can
 #: compare a run this database never recorded.
-SCHEMA_VERSION = 12
+#: v13 re-keyed every stored profile hash (`TASKS.md#profile-and-params-hashes`)
+#: — `profile_hash` stopped covering the `strobes` map once every profile's map
+#: became the machine's whole vocabulary — and added `strobe_scan_cache`
+#: (`TASKS.md#strobe-vocabulary`) and `run_flags` (`DATA.md#false-starts`).
+SCHEMA_VERSION = 13
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -213,6 +217,28 @@ CREATE TABLE IF NOT EXISTS run_metrics_cache (
     status         TEXT NOT NULL,   -- 'ok' | 'no-metrics' | 'missing' | 'unreadable'
     detail         TEXT,
     summary_json   TEXT NOT NULL
+);
+
+-- Which strobe codes each recorded file contains (TASKS.md#strobe-vocabulary),
+-- for the scan that decides whether a code may be removed. Pure cache keyed
+-- on the same (path, mtime, size) freshness key as run_metrics_cache: a row
+-- whose file changed is simply re-read.
+CREATE TABLE IF NOT EXISTS strobe_scan_cache (
+    file_path     TEXT PRIMARY KEY,
+    file_mtime_ns INTEGER NOT NULL,
+    file_size     INTEGER NOT NULL,
+    codes_json    TEXT NOT NULL      -- sorted JSON array of distinct codes
+);
+
+-- A person's word on one run, overriding the false-start rule
+-- (DATA.md#false-starts): 1 = set it aside, 0 = count it whatever the rule
+-- says. No row means the rule decides. Keyed by run id, which for an adopted
+-- run is the identity-keyed synthetic id, so the decision survives a rescan.
+-- No FK, like run_metrics_cache: an adopted run has no run record.
+CREATE TABLE IF NOT EXISTS run_flags (
+    run_id      TEXT PRIMARY KEY,
+    false_start INTEGER NOT NULL,
+    set_at      TEXT NOT NULL
 );
 
 -- Orphans adopted by the archive walk (DATA.md#orphan-adoption) — files no
@@ -458,6 +484,66 @@ def _to_v10(conn: sqlite3.Connection) -> None:
     add_column(conn, "sessions", "recording_json", "TEXT")
 
 
+def _to_v13(conn: sqlite3.Connection) -> None:
+    """v12 → v13: every stored profile hash, recomputed without `strobes`
+    (`TASKS.md#profile-and-params-hashes`).
+
+    WHY THE HASH MOVED. A profile's `strobes` map is now filled from the
+    machine's whole vocabulary at load time, so hashing it would have split
+    every task's history in Analytics the first time anyone added a code. Codes
+    are never renumbered or repurposed, so the map never said anything about
+    comparability that the rest of the profile did not.
+
+    Rows re-keyed in place: each stored profile is re-parsed and re-hashed, and
+    every column holding the old digest follows it. Two profiles that differed
+    ONLY in their strobe maps collapse to one, which is the point — they were
+    the same task split by a map that differed between generator versions. The
+    first-seen date of the merged row is the earlier of the two.
+    """
+    import json
+
+    from ..tasks.profile import TaskProfileError, parse_profile, profile_hash
+
+    rows = conn.execute(
+        "SELECT hash, task_name, kind, profile_json, first_seen_at FROM task_profiles"
+    ).fetchall()
+    remap: dict[str, str] = {}
+    for old, task_name, kind, profile_json, first_seen in rows:
+        try:
+            new = profile_hash(parse_profile(json.loads(profile_json)))
+        except (ValueError, TaskProfileError) as exc:
+            # Unparseable rows were already unusable; leaving them keyed as
+            # they were costs nothing and invents nothing.
+            log.warning("v13: stored profile %s left as it was: %s", old, exc)
+            continue
+        if new == old:
+            continue
+        remap[old] = new
+        conn.execute(
+            "INSERT OR IGNORE INTO task_profiles"
+            " (hash, task_name, kind, profile_json, first_seen_at) VALUES (?, ?, ?, ?, ?)",
+            (new, task_name, kind, profile_json, first_seen),
+        )
+        conn.execute(
+            "UPDATE task_profiles SET first_seen_at = MIN(first_seen_at, ?) WHERE hash = ?",
+            (first_seen, new),
+        )
+        conn.execute("DELETE FROM task_profiles WHERE hash = ?", (old,))
+    for old, new in remap.items():
+        conn.execute(
+            "UPDATE session_animal_runs SET profile_hash = ? WHERE profile_hash = ?", (new, old)
+        )
+        conn.execute(
+            "UPDATE run_metrics_cache SET profile_hash = ? WHERE profile_hash = ?", (new, old)
+        )
+        conn.execute(
+            "UPDATE run_metrics_cache SET scored_profile_hash = ? WHERE scored_profile_hash = ?",
+            (new, old),
+        )
+    if remap:
+        log.info("v13: re-keyed %d stored task profile(s)", len(remap))
+
+
 #: Migrations, keyed by the version they upgrade **to**, applied in ascending
 #: order.
 #:
@@ -477,6 +563,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     9: _to_v9,
     10: _to_v10,
     12: _to_v12,
+    13: _to_v13,
 }
 
 

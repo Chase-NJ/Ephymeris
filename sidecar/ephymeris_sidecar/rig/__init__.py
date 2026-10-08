@@ -8,7 +8,8 @@ Two registries and one operator-owned document:
     edited one. It REPLACES the shipped pair rather than merging with it
     (`hardware/store.py` says why), and is composed here by `channels()`.
 
-Plus `schema/strobe_vocab.v1.json`, the append-only strobe registry.
+Plus the strobe vocabulary: `<data_dir>/strobes/vocabulary.json`, seeded from
+`schema/strobe_vocab.default.json` and read through `vocabulary()`.
 
 This package was extracted from the task-spec compiler (`taskgraph/registries.py`)
 when that system was removed. The registries survived because they describe the

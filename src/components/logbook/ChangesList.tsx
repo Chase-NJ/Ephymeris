@@ -31,6 +31,41 @@ const KIND_COL = "76px";
  */
 export function ChangesList({
   changes,
+  setAside = [],
+  names,
+  colors,
+}: {
+  changes: RunChange[];
+  /** Runs set aside as false starts — compared with nothing, named once below. */
+  setAside?: RunChange[];
+  names: Map<string, string>;
+  colors: Map<string, string>;
+}) {
+  return (
+    <div>
+      {(changes.length > 0 || setAside.length === 0) && (
+        <Changes changes={changes} names={names} colors={colors} />
+      )}
+      {setAside.length > 0 && (
+        <p className="border-t border-halo/70 px-4 py-2.5 text-[11px] leading-relaxed text-static/80">
+          Set aside as false start{setAside.length === 1 ? "" : "s"}, compared with nothing:{" "}
+          {setAside
+            .map(
+              (change) =>
+                `${names.get(change.animalId) ?? change.animalId}${
+                  change.falseStartSource === "marked" ? " (by hand)" : ""
+                }`,
+            )
+            .join(", ")}
+          . The run after each is compared with the animal's previous session.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Changes({
+  changes,
   names,
   colors,
 }: {

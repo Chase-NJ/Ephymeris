@@ -17,6 +17,8 @@ import { describe, expect, it } from "vitest";
 
 import type { TaskProfile } from "@/lib/ws/protocol";
 
+import { code, STROBES } from "./__fixtures__/vocabulary";
+
 import {
   BAND_GAP,
   LIVE_GEOMETRY,
@@ -27,47 +29,22 @@ import {
 } from "./graphLayout";
 import { taskGraph, type TaskNode } from "./topology";
 
-const STROBES: Record<string, string> = {
-  "220": "LIGHTS_ON",
-  "221": "LAZY_RAT",
-  "222": "ODOR_POKE",
-  "223": "ODOR_UNPOKE_EARLY",
-  "224": "ODOR_UNPOKE",
-  "225": "LIGHTS_OFF",
-  "226": "INVALID_TRIAL",
-  "227": "END_CORRECT_ITI",
-  "228": "END_INCORRECT_ITI",
-  "244": "WATER_POKE_NONE",
-  "246": "END_SESSION",
-  "248": "WATER_POKE_L",
-  "249": "WATER_POKE_R",
-  "250": "WATER_POKE_ERROR_L",
-  "251": "WATER_POKE_ERROR_R",
-  "252": "WATER_UNPOKE_EARLY_L",
-  "253": "WATER_UNPOKE_EARLY_R",
-  "254": "FLUID_L",
-  "255": "FLUID_R",
-  "101": "ODOR_1_ON",
-  "102": "ODOR_2_ON",
-  "103": "ODOR_3_ON",
-  "104": "ODOR_4_ON",
-  "105": "ODOR_5_ON",
-  "106": "ODOR_6_ON",
-};
 
 function profile(n: number, { noGo = false } = {}): TaskProfile {
-  const onsets = [101, 102, 103, 104, 105, 106];
+  const onsets = [1, 2, 3, 4, 5, 6].map((n) => code(`ODOR_${n}_ON`));
   return {
     taskName: `GRGL ${n}-Odor`,
     kind: "behavior",
     config: [],
     strobes: STROBES,
-    liveMetrics: onsets.slice(0, n).map((code, i) => ({
+    liveMetrics: onsets.slice(0, n).map((onset, i) => ({
       id: `p_correct_${i + 1}`,
       label: `P(x | odor ${i + 1})`,
-      triggerCode: code,
-      successCode: noGo && i === n - 1 ? 244 : i % 2 ? 248 : 249,
-      alternateCode: i % 2 ? 249 : 248,
+      triggerCode: onset,
+      successCode: noGo && i === n - 1
+        ? code("WATER_POKE_NONE")
+        : code(i % 2 ? "WATER_POKE_L" : "WATER_POKE_R"),
+      alternateCode: code(i % 2 ? "WATER_POKE_R" : "WATER_POKE_L"),
       windowSize: 20,
     })),
     controls: [],

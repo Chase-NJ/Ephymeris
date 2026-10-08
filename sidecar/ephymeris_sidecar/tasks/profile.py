@@ -8,7 +8,7 @@ profile-less.
 Two sketch *kinds* share this file (`TASKS.md#top-level-keys`):
 
 * ``behavior`` (the default) — a scored ``IN_SESSION`` task, described by
-  ``config`` / ``strobes`` / ``liveMetrics``.
+  ``config`` / ``liveMetrics``, decoded through the strobe vocabulary.
 * ``utility`` — a ``PASSTHROUGH`` tool (priming, box self-test) the app drives
   with ``controls`` (each maps to a serial command sent over ``port.send``) and
   reads back through ``telemetry`` (how to parse the sketch's non-persisted
@@ -23,7 +23,10 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
+
+if TYPE_CHECKING:
+    from ..rig.registry import Vocabulary
 
 log = logging.getLogger(__name__)
 
@@ -310,8 +313,17 @@ def profile_hash(profile: TaskProfile) -> str:
 
     Hashing the *serialized* form is deliberate: `TaskProfile` is `frozen` but
     holds a `dict` and lists, so the object itself is unhashable.
+
+    **`strobes` is left out.** A loaded profile's map is the machine's whole
+    vocabulary (`TASKS.md#strobe-vocabulary`), so hashing it would split every
+    task's history the first time anyone added a code. Codes are never
+    renumbered or repurposed, so the map says nothing about whether two runs
+    are comparable. Stored hashes were re-keyed once when this changed
+    (`cohorts/db.py` `_to_v13`).
     """
-    canonical = json.dumps(profile.to_json(), sort_keys=True, separators=(",", ":"))
+    declaration = profile.to_json()
+    declaration.pop("strobes", None)
+    canonical = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
@@ -408,7 +420,15 @@ def load_profile(sketch_dir: str | Path) -> TaskProfile | None:
     """Return the parsed profile, or `None` when the sketch has no `task.json`.
 
     Raises `TaskProfileError` only when the file exists but is broken.
+
+    **The strobe map comes from the vocabulary, never from the file**
+    (`TASKS.md#strobes`). A sketch's `task.json` used to carry its own copy,
+    and a copy is a thing that drifts: GRGL_Sim's once declared 23 of the 31
+    codes it emitted. A `strobes` key still found in one is ignored, and said
+    so once per file.
     """
+    from ..rig.registry import vocabulary
+
     path = profile_path(sketch_dir)
     if not path.is_file():
         return None
@@ -416,7 +436,19 @@ def load_profile(sketch_dir: str | Path) -> TaskProfile | None:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (ValueError, OSError) as exc:
         raise TaskProfileError(f"couldn't read {path.name}: {exc}") from exc
-    return parse_profile(raw)
+    if isinstance(raw, dict) and "strobes" in raw and str(path) not in _WARNED_STROBES:
+        _WARNED_STROBES.add(str(path))
+        log.warning(
+            "%s declares a strobes map; it is ignored — codes come from the strobe "
+            "vocabulary (TASKS.md#strobes)",
+            path,
+        )
+    return parse_profile(raw, vocabulary=vocabulary())
+
+
+#: Files already warned about a stale `strobes` key. `load_profile` runs on
+#: every rescan, and once is enough to tell a firmware author.
+_WARNED_STROBES: set[str] = set()
 
 
 def build_legacy_name_index(
@@ -447,7 +479,20 @@ def build_legacy_name_index(
     return index
 
 
-def parse_profile(raw: Any) -> TaskProfile:
+def parse_profile(raw: Any, vocabulary: Vocabulary | None = None) -> TaskProfile:
+    """A profile from its JSON form.
+
+    Two callers, and `vocabulary` is what tells them apart:
+
+    * **A sketch's own `task.json`** (`load_profile`, a generated profile) passes
+      the vocabulary in force. The `strobes` map is filled from it and any in
+      the file is ignored, and `liveMetrics` may name its codes
+      (`"trigger": "ODOR_1_ON"`) rather than number them.
+    * **A snapshot** — a session file's embedded profile, a stored row — passes
+      none, and its own `strobes` map is kept verbatim. That map is the record
+      of what decoded the run, not a copy of anything, and it must survive the
+      vocabulary changing after the run was recorded.
+    """
     if not isinstance(raw, dict):
         raise TaskProfileError("task.json must be a JSON object")
 
@@ -459,8 +504,11 @@ def parse_profile(raw: Any) -> TaskProfile:
         task_name=task_name,
         kind=_parse_kind(raw.get("kind")),
         config=_parse_config(raw.get("config")),
-        strobes=_parse_strobes(raw.get("strobes")),
-        live_metrics=_parse_metrics(raw.get("liveMetrics")),
+        strobes=(
+            vocabulary.code_map() if vocabulary is not None
+            else _parse_strobes(raw.get("strobes"))
+        ),
+        live_metrics=_parse_metrics(raw.get("liveMetrics"), vocabulary),
         controls=_parse_controls(raw.get("controls")),
         telemetry=_parse_telemetry(raw.get("telemetry")),
         identify=_parse_identify(raw.get("identify")),
@@ -624,7 +672,7 @@ def _parse_strobes(raw: Any) -> dict[int, str]:
     return out
 
 
-def _parse_metrics(raw: Any) -> list[LiveMetric]:
+def _parse_metrics(raw: Any, vocabulary: Vocabulary | None = None) -> list[LiveMetric]:
     if raw is None:
         return []
     if not isinstance(raw, list):
@@ -638,15 +686,38 @@ def _parse_metrics(raw: Any) -> list[LiveMetric]:
                 LiveMetric(
                     id=str(entry["id"]),
                     label=str(entry.get("label") or entry["id"]),
-                    trigger_code=int(entry["triggerCode"]),
-                    success_code=int(entry["successCode"]),
-                    alternate_code=int(entry["alternateCode"]),
+                    trigger_code=_metric_code(entry, "trigger", vocabulary),
+                    success_code=_metric_code(entry, "success", vocabulary),
+                    alternate_code=_metric_code(entry, "alternate", vocabulary),
                     window_size=int(entry.get("windowSize", 20)),
                 )
             )
         except (KeyError, ValueError, TypeError) as exc:
             raise TaskProfileError(f"liveMetrics entry is malformed: {exc}") from exc
     return metrics
+
+
+def _metric_code(entry: dict[str, Any], role: str, vocabulary: Vocabulary | None) -> int:
+    """One of a metric's three codes, by name (`"trigger"`) or number (`"triggerCode"`).
+
+    BY NAME is how a profile should say it: a number written into `task.json`
+    is one more copy of the vocabulary. The numeric key stays readable because
+    every snapshot already recorded carries it, and `to_json` writes numbers so
+    a name-form and a number-form profile that mean the same thing hash the same.
+    """
+    name = entry.get(role)
+    if name is not None:
+        if vocabulary is None:
+            raise TaskProfileError(
+                f"liveMetrics names its {role} code ({name!r}) but nothing resolved it"
+            )
+        entry_ = vocabulary.get(str(name))
+        if entry_ is None:
+            raise TaskProfileError(
+                f"liveMetrics {role} {name!r} is not a live code in the strobe vocabulary"
+            )
+        return entry_.code
+    return int(entry[f"{role}Code"])
 
 
 def _parse_controls(raw: Any) -> list[Control]:

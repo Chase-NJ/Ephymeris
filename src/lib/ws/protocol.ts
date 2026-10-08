@@ -40,7 +40,17 @@ export const CMD = {
   HARDWARE_PREVIEW: "hardware.preview",
   HARDWARE_SAVE: "hardware.save",
   HARDWARE_RESET: "hardware.reset",
-  RIG_STROBES: "rig.strobes",
+
+  // Strobe vocabulary
+  STROBES_GET: "strobes.get",
+  STROBES_USAGE: "strobes.usage",
+  STROBES_ADD: "strobes.add",
+  STROBES_EDIT: "strobes.edit",
+  STROBES_RETIRE: "strobes.retire",
+  STROBES_REINSTATE: "strobes.reinstate",
+  STROBES_REMOVE: "strobes.remove",
+  STROBES_EXPORT: "strobes.export",
+  STROBES_IMPORT: "strobes.import",
 
   // Cohorts
   COHORTS_LIST: "cohorts.list",
@@ -82,6 +92,7 @@ export const CMD = {
   // Analytics
   SESSIONS_LIST: "sessions.list",
   ANALYTICS_SUMMARY: "analytics.summary",
+  ANALYTICS_SET_FALSE_START: "analytics.setFalseStart",
   ANALYTICS_SERIES: "analytics.series",
   ANALYTICS_RESCAN: "analytics.rescan",
   ANALYTICS_RECENT_SESSIONS: "analytics.recentSessions",
@@ -130,6 +141,8 @@ export const EVT = {
   LOGBOOK_UPDATED: "logbook.updated",
   SESSION_LIFECYCLE: "session.lifecycle",
   HARDWARE_UPDATED: "hardware.updated",
+  STROBES_UPDATED: "strobes.updated",
+  STROBES_SCAN_PROGRESS: "strobes.scanProgress",
   UTILITY_UPDATED: "utility.updated",
   BACKUP_STATUS: "backup.status",
   ANALYTICS_PROGRESS: "analytics.progress",
@@ -167,6 +180,13 @@ export const ERR = {
   UTILITY_UNAVAILABLE: "UTILITY_UNAVAILABLE",
   RIG_INVALID: "RIG_INVALID",
   RIG_WOULD_BREAK_TASKS: "RIG_WOULD_BREAK_TASKS",
+  STROBE_INVALID: "STROBE_INVALID",
+  STROBE_REQUIRED: "STROBE_REQUIRED",
+  STROBE_IN_RECORDED_SESSION: "STROBE_IN_RECORDED_SESSION",
+  STROBE_WOULD_BREAK_TASKS: "STROBE_WOULD_BREAK_TASKS",
+  STROBE_IMPORT_CONFLICT: "STROBE_IMPORT_CONFLICT",
+  STROBE_VOCABULARY_UNREADABLE: "STROBE_VOCABULARY_UNREADABLE",
+  STROBE_SESSION_RUNNING: "STROBE_SESSION_RUNNING",
   TASK_NOT_FOUND: "TASK_NOT_FOUND",
   TASK_INVALID: "TASK_INVALID",
   INTAN_UNAVAILABLE: "INTAN_UNAVAILABLE",
@@ -1046,6 +1066,18 @@ export interface RunSummary {
   profileSource: ProfileSource;
   /** The file is gone but this is its last known-good summary. */
   stale: boolean;
+  /**
+   * Set aside as a false start (`DATA.md#false-starts`): restarted and short, or ruled so by
+   * hand. Such a run arrives in `AnalyticsSummary.falseStarts`, never in `runs`.
+   */
+  falseStart: boolean;
+  /**
+   * Why: `automatic` (the rule), `marked` (a person set it aside), `restored` (the rule would, a
+   * person said count it). Null for an ordinary run.
+   */
+  falseStartSource: "automatic" | "marked" | "restored" | null;
+  /** The next run of the same animal in the same session, if any. */
+  restartedBy: string | null;
   status: RunStatus;
   metrics: MetricSummary[];
   /**
@@ -1130,6 +1162,8 @@ export interface AnalyticsCounts {
   noProfile: number;
   missing: number;
   unreadable: number;
+  /** Runs set aside; not included in the other counts. */
+  falseStarts: number;
 }
 
 /** The whole cohort table in one call; selections filter it client-side. */
@@ -1144,8 +1178,16 @@ export interface AnalyticsSummary {
   sessions: SessionListItem[];
   animals: AnalyticsAnimal[];
   groups: Group[];
-  /** Flat, not a matrix — two runs really can share one (animal, session). */
+  /**
+   * Flat, not a matrix — two runs really can share one (animal, session). False starts excluded:
+   * every metric reads this list.
+   */
   runs: RunSummary[];
+  /**
+   * Runs set aside as false starts (`DATA.md#false-starts`). Listed where runs are listed, muted;
+   * counted nowhere.
+   */
+  falseStarts: RunSummary[];
   profileGroups: ProfileGroup[];
   counts: AnalyticsCounts;
   warnings: AnalyticsWarning[];
@@ -1315,7 +1357,8 @@ export interface RecoveredTsv {
   nEvents: number;
   /**
    * The footer's recorded reason when the .tsv has one (a finalized run whose best-effort .json
-   * write failed); 'recovered after crash' for a footer-less log. Null on failure.
+   * write failed); 'recovered after crash' for a footer-less log; 'recovered from a legacy log'
+   * for the pre-Ephymeris dialect, which never had a footer. Null on failure.
    */
   stopReason: string | null;
   /** Why recovery failed, when it did. */
@@ -1572,38 +1615,138 @@ export interface TasksUpdatedData {
 export interface StrobeCode {
   name: string;
   code: number;
-  /** `firmware` (transcribed from BehaviorBox.h) or `ephymeris`. */
+  /**
+   * History, not authority: `firmware` (numbered by the lab's recorded sessions before the app),
+   * `ephymeris` (declared by the app), `operator` (added on the Strobes page).
+   */
   origin: string;
   emittedOn?: string;
   rationale?: string;
+  /**
+   * The response-port slot that reports with this code. Such a code can be neither retired nor
+   * removed.
+   */
+  portSlot?: number;
 }
 
 /**
- * A code whose emitter is gone but which recorded sessions contain. Reserved forever: reissuing
+ * A code a recorded session contains and nothing may emit any more. Reserved forever: reissuing
  * one would merge two unrelated event types in any analysis spanning the change.
  */
 export interface RetiredStrobe {
   name: string;
   code: number;
+  rationale?: string;
+  seenIn?: string;
+  /** ISO-8601 UTC; absent on codes retired before the app recorded it. */
+  retiredAt?: string;
 }
 
 /**
- * The append-only strobe registry (`TASKS.md#strobe-vocabulary`). Codes are never renumbered or
- * repurposed: recorded sessions carry them, and reissuing one silently merges two unrelated event
- * types in any analysis spanning the change. A code whose emitter is gone moves to `retired` and
- * stays reserved — a third state, neither declared nor free, which `freeRanges` excludes.
+ * This machine's strobe vocabulary (`TASKS.md#strobe-vocabulary`) — the one source of every code.
+ * Codes are never renumbered or repurposed: recorded sessions carry them, and reissuing one
+ * silently merges two unrelated event types in any analysis spanning the change.
  */
 export interface StrobeVocabulary {
   version: number;
   codeMin: number;
   /** 999 — a wire-format limit. The host parser is ^\d{1,3}\t\d+$. */
   codeMax: number;
-  /** Inclusive [lo, hi] pairs a new code may come from. */
+  /** Inclusive [lo, hi] pairs inside the bounds that are never issued. */
+  reserved: number[][];
+  /** Inclusive [lo, hi] pairs a new code may come from. Derived, never stored. */
   freeRanges: number[][];
+  nextFree: number | null;
+  /** Digest of names, codes and slots — what the generated headers are stamped with. */
+  contentHash: string;
   codes: StrobeCode[];
   retired: RetiredStrobe[];
   /** Slot number → its six per-port code names. */
   portSlots: Record<string, Record<string, string>>;
+  /**
+   * False when this machine's document is unreadable: the app decodes with the shipped default
+   * and refuses every edit, since a code issued against the default could reissue one this
+   * machine added.
+   */
+  editable: boolean;
+  /** Why `editable` is false. */
+  problem: string | null;
+}
+
+export interface StrobeFirmwareRef {
+  /** Relative to the root it was found under. */
+  path: string;
+  /**
+   * `library`: a shared library every sketch includes — retiring or removing the code would stop
+   * every sketch compiling, so both are refused.
+   */
+  kind: "library" | "sketch" | "task";
+}
+
+/**
+ * What the archive scan could see. Only this machine: another rig's archive is never checked, and
+ * the UI says so.
+ */
+export interface StrobeArchiveCoverage {
+  /** Recorded files read (or answered from the scan cache). */
+  files: number;
+  unreadable: number;
+  /** Every cohort data folder the scan was pointed at. */
+  roots: string[];
+  /** Of those, the ones that could not be reached. */
+  unreachableRoots: string[];
+}
+
+export interface StrobeSessions {
+  /** Recorded files containing the code. */
+  count: number;
+  /** Up to five of them. */
+  sample: string[];
+  scanned: StrobeArchiveCoverage;
+}
+
+/**
+ * Everything a retire or remove is judged against, computed by the sidecar so the page never
+ * predicts a refusal.
+ */
+export interface StrobeUsage {
+  name: string;
+  code: number;
+  status: "live" | "retired";
+  firmware: StrobeFirmwareRef[];
+  portSlot: number | null;
+  /** Saved tasks that generate today and would not with the code retired or removed. */
+  breaks: RigImpact[];
+  /** Null unless `scan` was asked for. */
+  sessions: StrobeSessions | null;
+  /**
+   * Why `strobes.retire` would refuse outright; null when it would proceed (with `confirm` if
+   * `breaks` or `firmware` is non-empty).
+   */
+  retireBlocker: string | null;
+  /**
+   * Why `strobes.remove` would refuse outright. Always set when `sessions.count` > 0. Null with
+   * `sessions` null means not yet known — the scan decides.
+   */
+  removeBlocker: string | null;
+}
+
+/**
+ * What importing another machine's vocabulary would do. A union, never a replacement; any
+ * conflict refuses the whole import.
+ */
+export interface StrobeImportPlan {
+  adds: Array<{ name: string; code: number; retired: boolean }>;
+  /** Live here, retired there — retired here too. */
+  retires: Array<{ name: string; code: number }>;
+  conflicts: Array<{ name: string; code: number; message: string }>;
+  /** Codes this machine has and the file does not. Never removed by an import. */
+  onlyHere: string[];
+}
+
+export interface StrobeScanProgress {
+  done: number;
+  total: number;
 }
 
 export interface RecordingBox {
@@ -1843,6 +1986,13 @@ export interface RunChange {
    * never reported as changed.
    */
   paramsKnown: boolean;
+  /**
+   * Set aside (`DATA.md#false-starts`): compared with nothing and never the previous run of the
+   * next one, which is compared with the run before this instead.
+   */
+  falseStart: boolean;
+  /** As `RunSummary.falseStartSource`. */
+  falseStartSource: "automatic" | "marked" | "restored" | null;
 }
 
 /**
@@ -1886,7 +2036,15 @@ export interface CommandArgsMap {
   "hardware.preview": { document: unknown };
   "hardware.save": { document: unknown; confirm: boolean };
   "hardware.reset": Record<string, never>;
-  "rig.strobes": Record<string, never>;
+  "strobes.get": Record<string, never>;
+  "strobes.usage": { name: string; scan?: boolean };
+  "strobes.add": { name: string; code: number; rationale: string; emittedOn?: string };
+  "strobes.edit": { name: string; rationale: string; emittedOn?: string };
+  "strobes.retire": { name: string; confirm: boolean };
+  "strobes.reinstate": { name: string };
+  "strobes.remove": { name: string; confirm: boolean };
+  "strobes.export": Record<string, never>;
+  "strobes.import": { document: unknown; apply: boolean };
   "cohorts.list": Record<string, never>;
   "cohorts.get": { id: string };
   "cohorts.create": { name: string; dataFolder?: string; animals?: Animal[]; groups?: Group[] };
@@ -1918,6 +2076,7 @@ export interface CommandArgsMap {
   "backup.syncNow": Record<string, never>;
   "sessions.list": { cohortId: string; includeAborted?: boolean };
   "analytics.summary": { cohortId: string; sessionIds?: string[]; animalIds?: string[]; minCountedTrials?: number };
+  "analytics.setFalseStart": { cohortId: string; runId: string; falseStart: boolean | null };
   "analytics.series": { runIds: string[]; mode?: "rolling" | "cumulative"; metricIds?: string[] };
   "analytics.rescan": { cohortId: string; adoptOrphans?: boolean };
   "analytics.recentSessions": { limit?: number };
@@ -1963,7 +2122,15 @@ export interface CommandResultMap {
   "hardware.preview": RigSaved;
   "hardware.save": RigSaved;
   "hardware.reset": RigDocument;
-  "rig.strobes": StrobeVocabulary;
+  "strobes.get": StrobeVocabulary;
+  "strobes.usage": StrobeUsage;
+  "strobes.add": StrobeVocabulary;
+  "strobes.edit": StrobeVocabulary;
+  "strobes.retire": StrobeVocabulary;
+  "strobes.reinstate": StrobeVocabulary;
+  "strobes.remove": StrobeVocabulary;
+  "strobes.export": { document: unknown; filename: string };
+  "strobes.import": { plan: StrobeImportPlan; vocabulary: StrobeVocabulary | null };
   "cohorts.list": { cohorts: CohortSummary[] };
   "cohorts.get": { cohort: Cohort };
   "cohorts.create": { cohort: Cohort };
@@ -1995,6 +2162,7 @@ export interface CommandResultMap {
   "backup.syncNow": SyncResult;
   "sessions.list": { sessions: SessionListItem[] };
   "analytics.summary": AnalyticsSummary;
+  "analytics.setFalseStart": { runId: string };
   "analytics.series": SeriesResult;
   "analytics.rescan": RescanResult;
   "analytics.recentSessions": { sessions: DiskSession[] };
@@ -2036,6 +2204,8 @@ export interface EventDataMap {
   "logbook.updated": LogbookUpdated;
   "session.lifecycle": ActiveSessions;
   "hardware.updated": RigStatus;
+  "strobes.updated": StrobeVocabulary;
+  "strobes.scanProgress": StrobeScanProgress;
   "utility.updated": UtilityStatus;
   "backup.status": BackupStatus;
   "analytics.progress": AnalyticsProgress;

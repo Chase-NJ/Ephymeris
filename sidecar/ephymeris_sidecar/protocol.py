@@ -52,7 +52,17 @@ class Cmd:
     HARDWARE_PREVIEW: Final = "hardware.preview"
     HARDWARE_SAVE: Final = "hardware.save"
     HARDWARE_RESET: Final = "hardware.reset"
-    RIG_STROBES: Final = "rig.strobes"
+
+    # Strobe vocabulary
+    STROBES_GET: Final = "strobes.get"
+    STROBES_USAGE: Final = "strobes.usage"
+    STROBES_ADD: Final = "strobes.add"
+    STROBES_EDIT: Final = "strobes.edit"
+    STROBES_RETIRE: Final = "strobes.retire"
+    STROBES_REINSTATE: Final = "strobes.reinstate"
+    STROBES_REMOVE: Final = "strobes.remove"
+    STROBES_EXPORT: Final = "strobes.export"
+    STROBES_IMPORT: Final = "strobes.import"
 
     # Cohorts
     COHORTS_LIST: Final = "cohorts.list"
@@ -94,6 +104,7 @@ class Cmd:
     # Analytics
     SESSIONS_LIST: Final = "sessions.list"
     ANALYTICS_SUMMARY: Final = "analytics.summary"
+    ANALYTICS_SET_FALSE_START: Final = "analytics.setFalseStart"
     ANALYTICS_SERIES: Final = "analytics.series"
     ANALYTICS_RESCAN: Final = "analytics.rescan"
     ANALYTICS_RECENT_SESSIONS: Final = "analytics.recentSessions"
@@ -145,6 +156,8 @@ class Evt:
     LOGBOOK_UPDATED: Final = "logbook.updated"
     SESSION_LIFECYCLE: Final = "session.lifecycle"
     HARDWARE_UPDATED: Final = "hardware.updated"
+    STROBES_UPDATED: Final = "strobes.updated"
+    STROBES_SCAN_PROGRESS: Final = "strobes.scanProgress"
     UTILITY_UPDATED: Final = "utility.updated"
     BACKUP_STATUS: Final = "backup.status"
     ANALYTICS_PROGRESS: Final = "analytics.progress"
@@ -185,6 +198,13 @@ class ErrCode:
     UTILITY_UNAVAILABLE: Final = "UTILITY_UNAVAILABLE"
     RIG_INVALID: Final = "RIG_INVALID"
     RIG_WOULD_BREAK_TASKS: Final = "RIG_WOULD_BREAK_TASKS"
+    STROBE_INVALID: Final = "STROBE_INVALID"
+    STROBE_REQUIRED: Final = "STROBE_REQUIRED"
+    STROBE_IN_RECORDED_SESSION: Final = "STROBE_IN_RECORDED_SESSION"
+    STROBE_WOULD_BREAK_TASKS: Final = "STROBE_WOULD_BREAK_TASKS"
+    STROBE_IMPORT_CONFLICT: Final = "STROBE_IMPORT_CONFLICT"
+    STROBE_VOCABULARY_UNREADABLE: Final = "STROBE_VOCABULARY_UNREADABLE"
+    STROBE_SESSION_RUNNING: Final = "STROBE_SESSION_RUNNING"
     TASK_NOT_FOUND: Final = "TASK_NOT_FOUND"
     TASK_INVALID: Final = "TASK_INVALID"
     INTAN_UNAVAILABLE: Final = "INTAN_UNAVAILABLE"
@@ -265,14 +285,14 @@ SHAPES: Final[dict[str, Any]] = {
     "ConditionOutcomes": ('obj', (('metricId', 'str', False), ('label', 'str', False), ('triggerCode', 'int', False), ('outcomes', ('ref', 'TrialOutcomes'), False))),
     "RunStatus": ('lit', ('ok', 'no-metrics', 'missing', 'unreadable')),
     "ProfileSource": ('lit', ('snapshot', 'sketch-current', 'inferred', 'unavailable')),
-    "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('sketchName', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('paramsHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False))),
+    "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('sketchName', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('paramsHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('falseStart', 'bool', False), ('falseStartSource', ('union', (('lit', ('automatic', 'marked', 'restored')), 'null')), False), ('restartedBy', ('union', ('str', 'null')), False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False))),
     "AnalyticsAnimal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('cage', ('union', ('int', 'null')), False))),
     "AnswerSide": ('lit', ('left', 'right', 'withhold', 'port')),
     "ProfileMetricInfo": ('obj', (('id', 'str', False), ('label', 'str', False), ('windowSize', 'int', False), ('answerSide', ('union', (('ref', 'AnswerSide'), 'null')), False))),
     "ProfileGroup": ('obj', (('hash', 'str', False), ('taskName', ('union', ('str', 'null')), False), ('kind', ('union', ('str', 'null')), False), ('metrics', ('list', ('ref', 'ProfileMetricInfo')), False), ('runCount', 'int', False))),
     "AnalyticsWarning": ('obj', (('code', 'str', False), ('runId', 'str', False), ('message', 'str', False))),
-    "AnalyticsCounts": ('obj', (('runs', 'int', False), ('decoded', 'int', False), ('noProfile', 'int', False), ('missing', 'int', False), ('unreadable', 'int', False))),
-    "AnalyticsSummary": ('obj', (('cohortId', 'str', False), ('dataFolder', 'str', False), ('sessions', ('list', ('ref', 'SessionListItem')), False), ('animals', ('list', ('ref', 'AnalyticsAnimal')), False), ('groups', ('list', ('ref', 'Group')), False), ('runs', ('list', ('ref', 'RunSummary')), False), ('profileGroups', ('list', ('ref', 'ProfileGroup')), False), ('counts', ('ref', 'AnalyticsCounts'), False), ('warnings', ('list', ('ref', 'AnalyticsWarning')), False), ('minCountedTrials', 'int', False))),
+    "AnalyticsCounts": ('obj', (('runs', 'int', False), ('decoded', 'int', False), ('noProfile', 'int', False), ('missing', 'int', False), ('unreadable', 'int', False), ('falseStarts', 'int', False))),
+    "AnalyticsSummary": ('obj', (('cohortId', 'str', False), ('dataFolder', 'str', False), ('sessions', ('list', ('ref', 'SessionListItem')), False), ('animals', ('list', ('ref', 'AnalyticsAnimal')), False), ('groups', ('list', ('ref', 'Group')), False), ('runs', ('list', ('ref', 'RunSummary')), False), ('falseStarts', ('list', ('ref', 'RunSummary')), False), ('profileGroups', ('list', ('ref', 'ProfileGroup')), False), ('counts', ('ref', 'AnalyticsCounts'), False), ('warnings', ('list', ('ref', 'AnalyticsWarning')), False), ('minCountedTrials', 'int', False))),
     "MetricSeries": ('obj', (('id', 'str', False), ('label', 'str', False), ('values', ('list', 'float'), False), ('n', ('list', 'int'), False), ('windowSize', 'int', False))),
     "StrategyPoint": ('obj', (('trial', 'int', False), ('x', 'float', False), ('y', 'float', False), ('n', 'int', False))),
     "TrialRecord": ('obj', (('index', 'int', False), ('triggerCode', 'int', False), ('outcome', ('lit', ('rewarded', 'hold-failed', 'wrong-well', 'no-response', 'aborted')), False), ('atMs', ('union', ('int', 'null')), False), ('latencyMs', ('union', ('int', 'null')), False))),
@@ -307,9 +327,15 @@ SHAPES: Final[dict[str, Any]] = {
     "TaskSaved": ('obj', (('entry', ('ref', 'TaskEntry'), False), ('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('sketchPath', ('union', ('str', 'null')), False))),
     "TaskPreview": ('obj', (('diagnostics', ('list', ('ref', 'TaskDiagnostic')), False), ('startLineLength', 'int', False), ('startLineMax', 'int', False), ('profile', ('ref', 'TaskProfile'), False), ('catalogueDefaults', ('map', 'any'), False))),
     "TasksUpdatedData": ('obj', (('tasks', ('list', ('ref', 'TaskEntry')), False),)),
-    "StrobeCode": ('obj', (('name', 'str', False), ('code', 'int', False), ('origin', 'str', False), ('emittedOn', 'str', True), ('rationale', 'str', True))),
-    "RetiredStrobe": ('obj', (('name', 'str', False), ('code', 'int', False))),
-    "StrobeVocabulary": ('obj', (('version', 'int', False), ('codeMin', 'int', False), ('codeMax', 'int', False), ('freeRanges', ('list', ('list', 'int')), False), ('codes', ('list', ('ref', 'StrobeCode')), False), ('retired', ('list', ('ref', 'RetiredStrobe')), False), ('portSlots', ('map', ('map', 'str')), False))),
+    "StrobeCode": ('obj', (('name', 'str', False), ('code', 'int', False), ('origin', 'str', False), ('emittedOn', 'str', True), ('rationale', 'str', True), ('portSlot', 'int', True))),
+    "RetiredStrobe": ('obj', (('name', 'str', False), ('code', 'int', False), ('rationale', 'str', True), ('seenIn', 'str', True), ('retiredAt', 'str', True))),
+    "StrobeVocabulary": ('obj', (('version', 'int', False), ('codeMin', 'int', False), ('codeMax', 'int', False), ('reserved', ('list', ('list', 'int')), False), ('freeRanges', ('list', ('list', 'int')), False), ('nextFree', ('union', ('int', 'null')), False), ('contentHash', 'str', False), ('codes', ('list', ('ref', 'StrobeCode')), False), ('retired', ('list', ('ref', 'RetiredStrobe')), False), ('portSlots', ('map', ('map', 'str')), False), ('editable', 'bool', False), ('problem', ('union', ('str', 'null')), False))),
+    "StrobeFirmwareRef": ('obj', (('path', 'str', False), ('kind', ('lit', ('library', 'sketch', 'task')), False))),
+    "StrobeArchiveCoverage": ('obj', (('files', 'int', False), ('unreadable', 'int', False), ('roots', ('list', 'str'), False), ('unreachableRoots', ('list', 'str'), False))),
+    "StrobeSessions": ('obj', (('count', 'int', False), ('sample', ('list', 'str'), False), ('scanned', ('ref', 'StrobeArchiveCoverage'), False))),
+    "StrobeUsage": ('obj', (('name', 'str', False), ('code', 'int', False), ('status', ('lit', ('live', 'retired')), False), ('firmware', ('list', ('ref', 'StrobeFirmwareRef')), False), ('portSlot', ('union', ('int', 'null')), False), ('breaks', ('list', ('ref', 'RigImpact')), False), ('sessions', ('union', (('ref', 'StrobeSessions'), 'null')), False), ('retireBlocker', ('union', ('str', 'null')), False), ('removeBlocker', ('union', ('str', 'null')), False))),
+    "StrobeImportPlan": ('obj', (('adds', ('list', ('obj', (('name', 'str', False), ('code', 'int', False), ('retired', 'bool', False)))), False), ('retires', ('list', ('obj', (('name', 'str', False), ('code', 'int', False)))), False), ('conflicts', ('list', ('obj', (('name', 'str', False), ('code', 'int', False), ('message', 'str', False)))), False), ('onlyHere', ('list', 'str'), False))),
+    "StrobeScanProgress": ('obj', (('done', 'int', False), ('total', 'int', False))),
     "RecordingBox": ('obj', (('box', 'int', False), ('digitalIn', 'int', False), ('port', 'str', False), ('channels', ('list', 'str'), False), ('probeMap', ('union', ('str', 'null')), False))),
     "RecordingRun": ('obj', (('groupId', 'str', False), ('path', 'str', False), ('baseFilename', 'str', False), ('fileTimestamp', ('union', ('str', 'null')), False), ('fileFormat', 'str', False), ('sampleRate', 'int', False), ('startedAt', ('union', ('str', 'null')), False), ('endedAt', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'RecordingBox')), False))),
     "SessionRecording": ('obj', (('runs', ('list', ('ref', 'RecordingRun')), False),)),
@@ -327,7 +353,7 @@ SHAPES: Final[dict[str, Any]] = {
     "SessionLog": ('obj', (('sessionId', 'str', False), ('operator', ('union', ('str', 'null')), False), ('summary', ('union', ('str', 'null')), False), ('updatedAt', ('union', ('str', 'null')), False))),
     "ValueChange": ('obj', (('from', 'any', False), ('to', 'any', False))),
     "ParamChange": ('obj', (('key', 'str', False), ('from', 'any', False), ('to', 'any', False))),
-    "RunChange": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('box', ('union', ('int', 'null')), False), ('task', 'str', False), ('recovered', 'bool', False), ('previousRunId', ('union', ('str', 'null')), False), ('previousSessionId', ('union', ('str', 'null')), False), ('first', 'bool', False), ('taskChange', ('union', (('ref', 'ValueChange'), 'null')), False), ('boxChange', ('union', (('ref', 'ValueChange'), 'null')), False), ('params', ('list', ('ref', 'ParamChange')), False), ('paramsKnown', 'bool', False))),
+    "RunChange": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('box', ('union', ('int', 'null')), False), ('task', 'str', False), ('recovered', 'bool', False), ('previousRunId', ('union', ('str', 'null')), False), ('previousSessionId', ('union', ('str', 'null')), False), ('first', 'bool', False), ('taskChange', ('union', (('ref', 'ValueChange'), 'null')), False), ('boxChange', ('union', (('ref', 'ValueChange'), 'null')), False), ('params', ('list', ('ref', 'ParamChange')), False), ('paramsKnown', 'bool', False), ('falseStart', 'bool', False), ('falseStartSource', ('union', (('lit', ('automatic', 'marked', 'restored')), 'null')), False))),
     "LogbookCohort": ('obj', (('cohortId', 'str', False), ('logs', ('list', ('ref', 'SessionLog')), False), ('notes', ('list', ('ref', 'SessionNote')), False), ('changes', ('list', ('ref', 'RunChange')), False))),
     "LogbookUpdated": ('obj', (('cohortId', 'str', False), ('sessionIds', ('list', 'str'), False))),
 }
@@ -351,7 +377,15 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "hardware.preview": ('obj', (('document', 'any', False),)),
     "hardware.save": ('obj', (('document', 'any', False), ('confirm', 'bool', False))),
     "hardware.reset": ('obj', ()),
-    "rig.strobes": ('obj', ()),
+    "strobes.get": ('obj', ()),
+    "strobes.usage": ('obj', (('name', 'str', False), ('scan', 'bool', True))),
+    "strobes.add": ('obj', (('name', 'str', False), ('code', 'int', False), ('rationale', 'str', False), ('emittedOn', 'str', True))),
+    "strobes.edit": ('obj', (('name', 'str', False), ('rationale', 'str', False), ('emittedOn', 'str', True))),
+    "strobes.retire": ('obj', (('name', 'str', False), ('confirm', 'bool', False))),
+    "strobes.reinstate": ('obj', (('name', 'str', False),)),
+    "strobes.remove": ('obj', (('name', 'str', False), ('confirm', 'bool', False))),
+    "strobes.export": ('obj', ()),
+    "strobes.import": ('obj', (('document', 'any', False), ('apply', 'bool', False))),
     "cohorts.list": ('obj', ()),
     "cohorts.get": ('obj', (('id', 'str', False),)),
     "cohorts.create": ('obj', (('name', 'str', False), ('dataFolder', 'str', True), ('animals', ('list', ('ref', 'Animal')), True), ('groups', ('list', ('ref', 'Group')), True))),
@@ -383,6 +417,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "backup.syncNow": ('obj', ()),
     "sessions.list": ('obj', (('cohortId', 'str', False), ('includeAborted', 'bool', True))),
     "analytics.summary": ('obj', (('cohortId', 'str', False), ('sessionIds', ('list', 'str'), True), ('animalIds', ('list', 'str'), True), ('minCountedTrials', 'int', True))),
+    "analytics.setFalseStart": ('obj', (('cohortId', 'str', False), ('runId', 'str', False), ('falseStart', ('union', ('bool', 'null')), False))),
     "analytics.series": ('obj', (('runIds', ('list', 'str'), False), ('mode', ('lit', ('rolling', 'cumulative')), True), ('metricIds', ('list', 'str'), True))),
     "analytics.rescan": ('obj', (('cohortId', 'str', False), ('adoptOrphans', 'bool', True))),
     "analytics.recentSessions": ('obj', (('limit', 'int', True),)),
@@ -427,7 +462,15 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "hardware.preview": ('ref', 'RigSaved'),
     "hardware.save": ('ref', 'RigSaved'),
     "hardware.reset": ('ref', 'RigDocument'),
-    "rig.strobes": ('ref', 'StrobeVocabulary'),
+    "strobes.get": ('ref', 'StrobeVocabulary'),
+    "strobes.usage": ('ref', 'StrobeUsage'),
+    "strobes.add": ('ref', 'StrobeVocabulary'),
+    "strobes.edit": ('ref', 'StrobeVocabulary'),
+    "strobes.retire": ('ref', 'StrobeVocabulary'),
+    "strobes.reinstate": ('ref', 'StrobeVocabulary'),
+    "strobes.remove": ('ref', 'StrobeVocabulary'),
+    "strobes.export": ('obj', (('document', 'any', False), ('filename', 'str', False))),
+    "strobes.import": ('obj', (('plan', ('ref', 'StrobeImportPlan'), False), ('vocabulary', ('union', (('ref', 'StrobeVocabulary'), 'null')), False))),
     "cohorts.list": ('obj', (('cohorts', ('list', ('ref', 'CohortSummary')), False),)),
     "cohorts.get": ('obj', (('cohort', ('ref', 'Cohort'), False),)),
     "cohorts.create": ('obj', (('cohort', ('ref', 'Cohort'), False),)),
@@ -459,6 +502,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "backup.syncNow": ('ref', 'SyncResult'),
     "sessions.list": ('obj', (('sessions', ('list', ('ref', 'SessionListItem')), False),)),
     "analytics.summary": ('ref', 'AnalyticsSummary'),
+    "analytics.setFalseStart": ('obj', (('runId', 'str', False),)),
     "analytics.series": ('ref', 'SeriesResult'),
     "analytics.rescan": ('ref', 'RescanResult'),
     "analytics.recentSessions": ('obj', (('sessions', ('list', ('ref', 'DiskSession')), False),)),
@@ -499,6 +543,8 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "logbook.updated": ('ref', 'LogbookUpdated'),
     "session.lifecycle": ('ref', 'ActiveSessions'),
     "hardware.updated": ('ref', 'RigStatus'),
+    "strobes.updated": ('ref', 'StrobeVocabulary'),
+    "strobes.scanProgress": ('ref', 'StrobeScanProgress'),
     "utility.updated": ('ref', 'UtilityStatus'),
     "backup.status": ('ref', 'BackupStatus'),
     "analytics.progress": ('ref', 'AnalyticsProgress'),

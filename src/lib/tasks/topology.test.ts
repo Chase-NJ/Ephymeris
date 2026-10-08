@@ -11,6 +11,8 @@ import { describe, expect, it } from "vitest";
 
 import type { TaskProfile } from "@/lib/ws/protocol";
 
+import { code, STROBES, tail } from "./__fixtures__/vocabulary";
+
 import {
   armsCongruent,
   correctWellOf,
@@ -24,49 +26,25 @@ import {
   QUICK_TUNE_GROUPS,
 } from "./topology";
 
-/** The shared BF_* vocabulary, as every profile in the lab mirrors it. */
-const STROBES: Record<string, string> = {
-  "220": "LIGHTS_ON",
-  "221": "LAZY_RAT",
-  "222": "ODOR_POKE",
-  "223": "ODOR_UNPOKE_EARLY",
-  "224": "ODOR_UNPOKE",
-  "225": "LIGHTS_OFF",
-  "226": "INVALID_TRIAL",
-  "227": "END_CORRECT_ITI",
-  "228": "END_INCORRECT_ITI",
-  "244": "WATER_POKE_NONE",
-  "246": "END_SESSION",
-  "248": "WATER_POKE_L",
-  "249": "WATER_POKE_R",
-  "250": "WATER_POKE_ERROR_L",
-  "251": "WATER_POKE_ERROR_R",
-  "252": "WATER_UNPOKE_EARLY_L",
-  "253": "WATER_UNPOKE_EARLY_R",
-  "254": "FLUID_L",
-  "255": "FLUID_R",
-  "101": "ODOR_1_ON",
-  "102": "ODOR_2_ON",
-  "103": "ODOR_3_ON",
-  "104": "ODOR_4_ON",
-};
 
 /** A profile presenting `n` conditions; `noGo` makes the LAST one a withhold. */
 function profile(n: number, { noGo = false } = {}): TaskProfile {
-  const onsets = [101, 102, 103, 104];
+  const onsets = [1, 2, 3, 4].map((n) => code(`ODOR_${n}_ON`));
   return {
     taskName: `GRGL ${n}-Odor`,
     kind: "behavior",
     config: [],
     strobes: STROBES,
-    liveMetrics: onsets.slice(0, n).map((code, i) => ({
+    liveMetrics: onsets.slice(0, n).map((onset, i) => ({
       id: `p_correct_${i + 1}`,
       label: `P(x | odor ${i + 1})`,
-      triggerCode: code,
+      triggerCode: onset,
       // Alternating sides, so "differing wells" is the normal case rather than
       // a contrived one.
-      successCode: noGo && i === n - 1 ? 244 : i % 2 ? 248 : 249,
-      alternateCode: i % 2 ? 249 : 248,
+      successCode: noGo && i === n - 1
+        ? code("WATER_POKE_NONE")
+        : code(i % 2 ? "WATER_POKE_L" : "WATER_POKE_R"),
+      alternateCode: code(i % 2 ? "WATER_POKE_R" : "WATER_POKE_L"),
       windowSize: 20,
     })),
     controls: [],
@@ -135,17 +113,17 @@ describe("correctWellOf", () => {
         {
           id: "m",
           label: "P(? | odor 1)",
-          triggerCode: 101,
-          successCode: 254, // FLUID_L — a real code, but not an answer
-          alternateCode: 249, // WATER_POKE_R — very readable, and wrong
+          triggerCode: code("ODOR_1_ON"),
+          successCode: code("FLUID_L"), // a real code, but not an answer
+          alternateCode: code("WATER_POKE_R"), // very readable, and wrong
           windowSize: 20,
         },
         {
           id: "m2",
           label: "P(? | odor 2)",
-          triggerCode: 102,
+          triggerCode: code("ODOR_2_ON"),
           successCode: 9999, // not in the strobes map at all
-          alternateCode: 248,
+          alternateCode: code("WATER_POKE_L"),
           windowSize: 20,
         },
       ],
@@ -253,16 +231,16 @@ describe("taskGraph", () => {
 
 describe("liveConditionId", () => {
   const model = taskGraph(profile(4));
-  const read = (...codes: string[]) => liveConditionId(model, STROBES, codes);
+  const read = (...names: string[]) => liveConditionId(model, STROBES, tail(...names));
 
   it("names the condition the current trial opened", () => {
-    expect(read("220", "222", "103")).toEqual({ kind: "condition", id: "odor-3" });
+    expect(read("LIGHTS_ON", "ODOR_POKE", "ODOR_3_ON")).toEqual({ kind: "condition", id: "odor-3" });
   });
 
   it("keeps naming it for the rest of the trial", () => {
     // The condition is a fact about the whole trial, not only about the moment
     // the odor arrives — the answer window is still an odor-3 trial.
-    expect(read("220", "222", "103", "224", "225", "248")).toEqual({
+    expect(read("LIGHTS_ON", "ODOR_POKE", "ODOR_3_ON", "ODOR_UNPOKE", "LIGHTS_OFF", "WATER_POKE_L")).toEqual({
       kind: "condition",
       id: "odor-3",
     });
@@ -271,21 +249,21 @@ describe("liveConditionId", () => {
   it("stops at the trial boundary instead of inheriting the last odor", () => {
     // THE LEAK THIS EXISTS TO PREVENT: without the boundary, the pre-odor phase
     // of every trial would state the condition of the trial before it.
-    expect(read("103", "224", "227", "220", "222")).toBeNull();
-    expect(read("103", "226", "220")).toBeNull();
-    expect(read("103", "228", "220", "222")).toBeNull();
+    expect(read("ODOR_3_ON", "ODOR_UNPOKE", "END_CORRECT_ITI", "LIGHTS_ON", "ODOR_POKE")).toBeNull();
+    expect(read("ODOR_3_ON", "INVALID_TRIAL", "LIGHTS_ON")).toBeNull();
+    expect(read("ODOR_3_ON", "END_INCORRECT_ITI", "LIGHTS_ON", "ODOR_POKE")).toBeNull();
   });
 
   it("is null before the first odor, and on an abort that never got one", () => {
     expect(read()).toBeNull();
-    expect(read("220")).toBeNull();
-    expect(read("220", "222", "223", "226")).toBeNull();
+    expect(read("LIGHTS_ON")).toBeNull();
+    expect(read("LIGHTS_ON", "ODOR_POKE", "ODOR_UNPOKE_EARLY", "INVALID_TRIAL")).toBeNull();
   });
 
   it("never falls back to the first condition", () => {
     // A wrong condition looks exactly like a right one, so there is no safe
     // default to reach for.
-    expect(read("220", "222", "224")).toBeNull();
+    expect(read("LIGHTS_ON", "ODOR_POKE", "ODOR_UNPOKE")).toBeNull();
   });
 
   it("reports an odor the profile does not declare, rather than swallowing it", () => {
@@ -296,14 +274,16 @@ describe("liveConditionId", () => {
      * type, which is the most useful thing this readout can catch.
      */
     const twoOdor = taskGraph(profile(2));
-    expect(liveConditionId(twoOdor, STROBES, ["220", "222", "104"])).toEqual({
+    expect(liveConditionId(twoOdor, STROBES, tail("LIGHTS_ON", "ODOR_POKE", "ODOR_4_ON"))).toEqual({
       kind: "unlisted",
       strobeName: "ODOR_4_ON",
     });
   });
 
   it("ignores codes the profile's strobe map cannot name", () => {
-    expect(read("220", "222", "999", "103")).toEqual({
+    expect(
+      liveConditionId(model, STROBES, [...tail("LIGHTS_ON", "ODOR_POKE"), "999", ...tail("ODOR_3_ON")]),
+    ).toEqual({
       kind: "condition",
       id: "odor-3",
     });

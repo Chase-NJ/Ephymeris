@@ -2,6 +2,7 @@ import { CircleAlert, Hand, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button, Select } from "@/components/common/controls";
+import { Callout } from "@/components/common/Callout";
 import { FieldRow } from "@/components/common/FieldRow";
 import { RowDensityContext } from "@/components/common/rowDensity";
 import { BoardMap } from "@/components/hardware/BoardMap";
@@ -255,7 +256,7 @@ export function RigWiringEditor({
             </div>
 
             {rig.problems.length > 0 && (
-              <Section title="Problems">
+              <Callout title="Problems">
                 {rig.problems.map((p, i) => (
                   <div key={i} className="flex gap-2 text-[11px] leading-relaxed">
                     <span
@@ -273,11 +274,11 @@ export function RigWiringEditor({
                     </span>
                   </div>
                 ))}
-              </Section>
+              </Callout>
             )}
 
             {rig.breaks.length > 0 && (
-              <Section
+              <Callout
                 title={`${rig.breaks.length} task${rig.breaks.length === 1 ? "" : "s"} would stop compiling`}
                 tone="warning"
                 why="A spec names channels, so this wiring is what resolves them. These bind something this change removes or moves."
@@ -300,7 +301,7 @@ export function RigWiringEditor({
                     happen unnoticed.
                   </span>
                 </div>
-              </Section>
+              </Callout>
             )}
 
             {rig.actionError && (
@@ -349,34 +350,6 @@ function Legend() {
           <span className="font-mono text-[10px] text-static">{kind}</span>
         </span>
       ))}
-    </div>
-  );
-}
-
-function Section({
-  title,
-  why,
-  tone,
-  children,
-}: {
-  title: string;
-  why?: string;
-  tone?: "warning";
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="flex flex-col gap-1.5 rounded-sm border px-2.5 py-2"
-      style={{
-        borderColor:
-          tone === "warning" ? "var(--color-status-warning)" : "var(--color-halo)",
-      }}
-    >
-      <div className="font-mono text-[10px] tracking-wider text-static uppercase">
-        {title}
-      </div>
-      {why && <p className="text-[10.5px] leading-relaxed text-static">{why}</p>}
-      {children}
     </div>
   );
 }

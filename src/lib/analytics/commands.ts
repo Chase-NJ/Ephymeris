@@ -34,6 +34,19 @@ export async function listSessions(
 }
 
 /**
+ * A ruling on one run (`DATA.md#false-starts`): true sets it aside, false
+ * counts it whatever the rule says, null hands it back to the rule.
+ */
+export async function setFalseStart(
+  client: SidecarClient,
+  cohortId: string,
+  runId: string,
+  falseStart: boolean | null,
+): Promise<void> {
+  await client.call(CMD.ANALYTICS_SET_FALSE_START, { cohortId, runId, falseStart });
+}
+
+/**
  * The whole cohort table in one call. Every session and animal selection
  * filters this client-side rather than re-querying.
  */

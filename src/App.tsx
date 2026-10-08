@@ -41,10 +41,10 @@ export default function App() {
             only — the router ranks a static segment above a dynamic one
             regardless of order, so there is no task whose id shadows it. */}
         <Route path="/task" element={<Task />} />
-        {/* The strobe vocabulary, read-only. A Task page and not a Rig one: a
-            pin is compile-time input to the firmware a task generates, while a
-            code is what a condition is NAMED by, and the trial table's onset
-            picker one page away is the only thing that reads this table. */}
+        {/* The strobe vocabulary, where codes are added and retired. A Task
+            page and not a Rig one: a pin is compile-time input to the firmware
+            a task generates, while a code is what a condition is NAMED by, and
+            the trial table's onset picker one page away is its main reader. */}
         <Route path="/task/strobes" element={<TaskStrobes />} />
         <Route path="/task/new" element={<TaskEditor />} />
         <Route path="/task/:taskId" element={<TaskEditor />} />

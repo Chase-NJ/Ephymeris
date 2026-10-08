@@ -28,7 +28,7 @@ from ..sessions.paths import parse_name_date, parse_name_time, parse_session_fol
 from ..sessions.tidy import session_key
 from ..tasks import profile as task_profile
 from ..tasks.profile import TaskProfile
-from . import derive, infer, reader
+from . import derive, false_starts, infer, reader
 from .repository import AdoptedRun, AnalyticsRepository, CachedRun, CacheKey
 
 log = logging.getLogger(__name__)
@@ -158,12 +158,41 @@ class AnalyticsService:
             ),
         )
 
-        counts = {"runs": len(runs), "decoded": 0, "noProfile": 0, "missing": 0, "unreadable": 0}
+        # False starts (`DATA.md#false-starts`): judged over the same runs the
+        # index just scored, with whatever a person has ruled. Set aside, not
+        # dropped — they ride in their own list, so no metric below can count
+        # one by forgetting to filter it.
+        overrides = await asyncio.to_thread(self._repo.false_start_overrides)
+        verdicts = false_starts.classify(
+            (
+                false_starts.RunFacts(
+                    run_id=run.id,
+                    session_id=run.session_id,
+                    animal_id=run.animal_id,
+                    order=false_starts.order_key(run.file_path, run.started_at),
+                    trials=false_starts.trials_of(entry.summary),
+                )
+                for run, entry in zip(runs, summaries)
+            ),
+            overrides,
+        )
+
+        counts = {
+            "runs": 0, "decoded": 0, "noProfile": 0, "missing": 0, "unreadable": 0,
+            "falseStarts": 0,
+        }
         warnings: list[dict[str, Any]] = []
         payload_runs: list[dict[str, Any]] = []
+        set_aside: list[dict[str, Any]] = []
         hashes: list[str] = []
 
         for run, entry in zip(runs, summaries):
+            verdict = verdicts[run.id]
+            if verdict.false_start:
+                counts["falseStarts"] += 1
+                set_aside.append(self._run_payload(run, entry, verdict))
+                continue
+            counts["runs"] += 1
             status = entry.status
             if status == "ok":
                 counts["decoded"] += 1
@@ -177,28 +206,7 @@ class AnalyticsService:
                 )
             if entry.profile_hash and entry.profile_hash not in hashes:
                 hashes.append(entry.profile_hash)
-            payload_runs.append(
-                {
-                    "runId": run.id,
-                    "sessionId": run.session_id,
-                    "animalId": run.animal_id,
-                    "boxNumber": run.box_number,
-                    "startedAt": run.started_at,
-                    "endedAt": run.ended_at,
-                    "sketchPath": run.sketch_path,
-                    "sketchName": _program_name(run),
-                    "profileHash": entry.profile_hash,
-                    # The row's own record wins; the file's copy answers for a
-                    # run this machine never recorded
-                    # (`DATA.md#the-embedded-task-profile`). Comparability is
-                    # the pair, and an adopted run used to be able to offer only
-                    # half of it.
-                    "paramsHash": run.params_hash or entry.params_hash,
-                    "profileSource": entry.profile_source,
-                    "stale": entry.stale,
-                    **entry.summary,
-                }
-            )
+            payload_runs.append(self._run_payload(run, entry, verdict))
 
         # A cohort pointing at a folder that isn't there returns a perfectly
         # well-formed empty result, which reads as "this cohort has no data"
@@ -240,11 +248,52 @@ class AnalyticsService:
             ],
             "groups": [{"id": g.id, "name": g.name, "order": g.order} for g in cohort.groups],
             "runs": payload_runs,
+            "falseStarts": set_aside,
             "profileGroups": groups,
             "counts": counts,
             "warnings": warnings,
             "minCountedTrials": threshold,
         }
+
+    @staticmethod
+    def _run_payload(
+        run: SessionAnimalRun, entry: CachedRun, verdict: false_starts.Verdict
+    ) -> dict[str, Any]:
+        return {
+            "runId": run.id,
+            "sessionId": run.session_id,
+            "animalId": run.animal_id,
+            "boxNumber": run.box_number,
+            "startedAt": run.started_at,
+            "endedAt": run.ended_at,
+            "sketchPath": run.sketch_path,
+            "sketchName": _program_name(run),
+            "profileHash": entry.profile_hash,
+            # The row's own record wins; the file's copy answers for a
+            # run this machine never recorded
+            # (`DATA.md#the-embedded-task-profile`). Comparability is
+            # the pair, and an adopted run used to be able to offer only
+            # half of it.
+            "paramsHash": run.params_hash or entry.params_hash,
+            "profileSource": entry.profile_source,
+            "stale": entry.stale,
+            **verdict.to_json(),
+            **entry.summary,
+        }
+
+    # --- false starts (DATA.md#false-starts) -------------------------------
+
+    def set_false_start(self, cohort_id: str, run_id: str, value: bool | None) -> None:
+        """Rule on one run of this cohort; None hands it back to the rule.
+
+        Refuses a run the cohort does not hold, so a stale page cannot write
+        an override nothing will ever read.
+        """
+        recorded = {run.id for run in self._sessions.runs_for_cohort(cohort_id)}
+        adopted = {entry.id for entry in self._repo.adopted_for_cohort(cohort_id)}
+        if run_id not in recorded | adopted:
+            raise KeyError(run_id)
+        self._repo.set_false_start(run_id, value)
 
     # --- series ------------------------------------------------------------
 
@@ -1567,6 +1616,34 @@ def adopted_runs(adopted: list[AdoptedRun], recorded: list[Session]) -> list[Ses
     what-changed (`DATA.md#what-changed`), which reads the database only."""
     owners = _adoption_owners(adopted, recorded)
     return [_adopted_to_run(entry, owners) for entry in adopted]
+
+
+def false_start_verdicts(
+    repo: AnalyticsRepository, runs: list[SessionAnimalRun]
+) -> dict[str, false_starts.Verdict]:
+    """The verdicts `AnalyticsService.summary` would reach, from the cache alone.
+
+    For the session log, which must agree with Analytics about which runs
+    count but must not read the archive to do it. A run the index has never
+    scored has no cached trial count, so the rule leaves it counted — the same
+    "couldn't tell, so count it" answer an unscorable run gets.
+    """
+    cached = repo.load_cached([run.id for run in runs])
+    return false_starts.classify(
+        (
+            false_starts.RunFacts(
+                run_id=run.id,
+                session_id=run.session_id,
+                animal_id=run.animal_id,
+                order=false_starts.order_key(run.file_path, run.started_at),
+                trials=false_starts.trials_of(
+                    cached[run.id].summary if run.id in cached else None
+                ),
+            )
+            for run in runs
+        ),
+        repo.false_start_overrides(),
+    )
 
 
 def _adopted_to_run(

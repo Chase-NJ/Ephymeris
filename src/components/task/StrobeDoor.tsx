@@ -11,8 +11,9 @@ import { springSnappy } from "@/lib/motion";
  * operator who learned this motif on the other page should recognise the same
  * door in its new room rather than hunt for a redesigned one.
  *
- * The destination is a reference table rather than a workbench, so the fact
- * line stays off — but it carries a motif for parity with its neighbour: a
+ * The destination is where this machine's codes are added, retired and
+ * removed; the fact line stays off, and it carries a motif for parity with
+ * its neighbour: a
  * strobe train, one pulse picking up the accent on hover. Matte, single accent,
  * movement only (`ARCHITECTURE.md#theme`), same as everything else on the
  * glass.
@@ -42,7 +43,7 @@ export function StrobeDoor({ onOpen }: { onOpen: () => void }) {
         </span>
         <span className="mt-0.5 block text-[11px] leading-snug text-static">
           Every event a box can report, and the number it reports it with.
-          Append-only — the recorded archive carries these.
+          Add and retire codes here — the recorded archive carries them.
         </span>
       </span>
       <span

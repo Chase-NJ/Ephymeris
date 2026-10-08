@@ -302,12 +302,131 @@ Discard this rig's document and go back to the shipped wiring. A wiring change l
 
 **Result:** [RigDocument](#shape-rigdocument)
 
-<a id="cmd-rig.strobes"></a>
-#### `rig.strobes`
+### Strobe vocabulary
 
-The whole append-only strobe registry (`TASKS.md#strobe-vocabulary`), for the Task tab's viewer and the trial table's onset-code picker. Static unless a code is added. Named `rig.` because the registry belongs to the hardware.
+<a id="cmd-strobes.get"></a>
+#### `strobes.get`
+
+This machine's vocabulary (`TASKS.md#strobe-vocabulary`), for the Strobes page and the trial table's onset-code picker.
 
 **Result:** [StrobeVocabulary](#shape-strobevocabulary)
+
+<a id="cmd-strobes.usage"></a>
+#### `strobes.usage`
+
+Where a live or retired code is used, and whether retiring or removing it would be refused. Writes nothing except the scan cache. `STROBE_INVALID` for a name the vocabulary does not hold.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string |  |
+| `scan` *(optional)* | boolean | Also scan every recorded session this machine can reach. Long-running on a cold cache; publishes `strobes.scanProgress`, and the client raises its reply timeout. |
+
+**Result:** [StrobeUsage](#shape-strobeusage)
+
+<a id="cmd-strobes.add"></a>
+#### `strobes.add`
+
+Issue a new live code. `STROBE_INVALID` when the name or number cannot be issued.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | Upper snake case, no `BF_` prefix; new across live AND retired. |
+| `code` | number | Must be free: in bounds, unreserved, neither live nor retired. |
+| `rationale` | string | What the code means. Required. |
+| `emittedOn` *(optional)* | string |  |
+
+**Result:** [StrobeVocabulary](#shape-strobevocabulary)
+
+<a id="cmd-strobes.edit"></a>
+#### `strobes.edit`
+
+Reword a live code's meaning. The name and number never change.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string |  |
+| `rationale` | string |  |
+| `emittedOn` *(optional)* | string |  |
+
+**Result:** [StrobeVocabulary](#shape-strobevocabulary)
+
+<a id="cmd-strobes.retire"></a>
+#### `strobes.retire`
+
+Move a live code to `retired`: reserved forever, defined by no header. `STROBE_REQUIRED` for a port-slot code or one the shared firmware library names.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string |  |
+| `confirm` | boolean | False ⇒ `STROBE_WOULD_BREAK_TASKS` if a saved task or a bundled sketch names the code. True ⇒ retire anyway. |
+
+**Result:** [StrobeVocabulary](#shape-strobevocabulary)
+
+<a id="cmd-strobes.reinstate"></a>
+#### `strobes.reinstate`
+
+A retired code back to live under its own name, number and meaning.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string |  |
+
+**Result:** [StrobeVocabulary](#shape-strobevocabulary)
+
+<a id="cmd-strobes.remove"></a>
+#### `strobes.remove`
+
+Delete a code, returning its number to the free pool. Scans every recorded session this machine can reach first (publishes `strobes.scanProgress`; long-running on a cold cache), and refuses with `STROBE_IN_RECORDED_SESSION` if any contains it — the bar is not 'unused', it is 'never recorded'. `STROBE_REQUIRED` as for `strobes.retire`.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string |  |
+| `confirm` | boolean | As `strobes.retire`'s. |
+
+**Result:** [StrobeVocabulary](#shape-strobevocabulary)
+
+<a id="cmd-strobes.export"></a>
+#### `strobes.export`
+
+The vocabulary as it travels to another machine, without this machine's stamps.
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `document` | unknown |  |
+| `filename` | string |  |
+
+<a id="cmd-strobes.import"></a>
+#### `strobes.import`
+
+Merge another machine's codes into this one. `STROBE_INVALID` for a file that is not a vocabulary; `STROBE_IMPORT_CONFLICT` when applying a plan with conflicts (`detail.conflicts`).
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `document` | unknown | Another machine's exported vocabulary (v2 or v3). |
+| `apply` | boolean | False ⇒ plan only, write nothing. |
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `plan` | [StrobeImportPlan](#shape-strobeimportplan) |  |
+| `vocabulary` | [StrobeVocabulary](#shape-strobevocabulary) \| null | Null unless applied. |
 
 ### Cohorts
 
@@ -812,6 +931,25 @@ The whole cohort table in **one** call (`DATA.md#analytics-views`): sessions, an
 
 **Result:** [AnalyticsSummary](#shape-analyticssummary)
 
+<a id="cmd-analytics.setfalsestart"></a>
+#### `analytics.setFalseStart`
+
+A person's ruling on one run (`DATA.md#false-starts`), stored in `run_flags`. Broadcasts `logbook.updated` for the run's session, since what changed is recomputed around it; the client refetches `analytics.summary`. `BAD_MESSAGE` for a run the cohort does not hold.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `cohortId` | string |  |
+| `runId` | string |  |
+| `falseStart` | boolean \| null | True sets the run aside, false counts it whatever the rule says, null hands it back to the rule. |
+
+**Result**
+
+| Field | Type | Notes |
+|---|---|---|
+| `runId` | string |  |
+
 <a id="cmd-analytics.series"></a>
 #### `analytics.series`
 
@@ -861,7 +999,7 @@ The N most recent session folders across every active cohort's archive, by folde
 <a id="cmd-sessions.recover"></a>
 #### `sessions.recover`
 
-The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds `.json`/`.mat` from orphaned write-ahead `.tsv` files, using the same traversal as `analytics.rescan` and the same explicit-action discipline. A `.tsv` with a footer keeps its recorded stop reason; a footer-less (crashed) one gets 'recovered after crash'. `SESSION_INVALID` while any box is running — a live run's `.tsv` has no `.json` yet and is not an orphan. Long-running; the client raises its reply timeout.
+The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds `.json`/`.mat` from orphaned write-ahead `.tsv` files, using the same traversal as `analytics.rescan` and the same explicit-action discipline. A `.tsv` with a footer keeps its recorded stop reason; a footer-less (crashed) one gets 'recovered after crash'; a pre-Ephymeris log, which never had a footer, gets 'recovered from a legacy log'. `SESSION_INVALID` while any box is running — a live run's `.tsv` has no `.json` yet and is not an orphan. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -1272,6 +1410,20 @@ Broadcast after a successful `hardware.save` or `hardware.reset`. Every client m
 
 **Data:** [RigStatus](#shape-rigstatus)
 
+<a id="evt-strobes.updated"></a>
+#### `strobes.updated`
+
+Broadcast after every successful vocabulary edit. Clients drop any cached copy; task profiles arrive separately on `tasks.updated`.
+
+**Data:** [StrobeVocabulary](#shape-strobevocabulary)
+
+<a id="evt-strobes.scanprogress"></a>
+#### `strobes.scanProgress`
+
+Progress of an archive scan for `strobes.usage` or `strobes.remove`, every few dozen files.
+
+**Data:** [StrobeScanProgress](#shape-strobescanprogress)
+
 <a id="evt-utility.updated"></a>
 #### `utility.updated`
 
@@ -1348,6 +1500,13 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `UTILITY_UNAVAILABLE` | A `utility.*` command with no `utilitySketchName` set, or one that can't be used at all — not among the bundled sketches, or not a utility profile; for `utility.identify`, also a profile with no `identify` pair. A box-level problem never raises this: it is that box's `state` in the snapshot, because 'box 4 has no board' is a fact about the rig, not a failure of the command. |
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
 | `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail.breaks` lists them. Retry with `confirm: true` to proceed — the app does not veto a rewiring, it refuses to let one happen unnoticed. |
+| `STROBE_INVALID` | A strobe edit the vocabulary cannot take: a malformed or duplicate name, a code that is not free, a blank meaning, an unknown name, or an import file that is not a vocabulary. |
+| `STROBE_REQUIRED` | Retiring or removing a code a response-port slot reports with, or one the shared firmware library names. Never passable with `confirm`. |
+| `STROBE_IN_RECORDED_SESSION` | `strobes.remove` on a code a recorded session contains. Never passable: retire it instead. `detail` carries `count`, `sample` and `scanned`. |
+| `STROBE_WOULD_BREAK_TASKS` | `strobes.retire` / `strobes.remove` without `confirm` on a code a saved task or bundled sketch names. `detail.breaks` and `detail.firmware` list them. |
+| `STROBE_IMPORT_CONFLICT` | `strobes.import` applied with a plan that has conflicts. Nothing was written; `detail.conflicts` lists them. |
+| `STROBE_VOCABULARY_UNREADABLE` | This machine's vocabulary document will not read. Every edit is refused until it is repaired: one issued against the shipped default could reissue a code this machine added. |
+| `STROBE_SESSION_RUNNING` | A vocabulary edit while a session is running. Every edit regenerates the sketches a running box was flashed from. |
 | `TASK_NOT_FOUND` | No task profile with that id on this rig. |
 | `TASK_INVALID` | The definition is not a definition — wrong shape, too large, an unusable id or name, or a name that collides with a bundled sketch or another saved task. NOT the same as a task that will not run: a well-formed definition describing an impossible task is a successful reply carrying located diagnostics, exactly as a wiring document is. |
 | `INTAN_UNAVAILABLE` | RHX is not reachable: not running, its Remote TCP Control command server not opened, or the socket died. The message says what to click. |
@@ -1389,6 +1548,7 @@ Everything unfinished, discoverable with no prior knowledge of ids. Also the ses
 | `noProfile` | number |  |
 | `missing` | number |  |
 | `unreadable` | number |  |
+| `falseStarts` | number | Runs set aside; not included in the other counts. |
 
 <a id="shape-analyticsprogress"></a>
 #### AnalyticsProgress
@@ -1412,7 +1572,8 @@ The whole cohort table in one call; selections filter it client-side.
 | `sessions` | [SessionListItem](#shape-sessionlistitem)[] |  |
 | `animals` | [AnalyticsAnimal](#shape-analyticsanimal)[] |  |
 | `groups` | [Group](#shape-group)[] |  |
-| `runs` | [RunSummary](#shape-runsummary)[] | Flat, not a matrix — two runs really can share one (animal, session). |
+| `runs` | [RunSummary](#shape-runsummary)[] | Flat, not a matrix — two runs really can share one (animal, session). False starts excluded: every metric reads this list. |
+| `falseStarts` | [RunSummary](#shape-runsummary)[] | Runs set aside as false starts (`DATA.md#false-starts`). Listed where runs are listed, muted; counted nowhere. |
 | `profileGroups` | [ProfileGroup](#shape-profilegroup)[] |  |
 | `counts` | [AnalyticsCounts](#shape-analyticscounts) |  |
 | `warnings` | [AnalyticsWarning](#shape-analyticswarning)[] |  |
@@ -2093,7 +2254,7 @@ One orphaned write-ahead log the crash-recovery backfill processed.
 | `jsonPath` | string \| null | Null when recovery failed. |
 | `status` | "recovered" \| "failed" |  |
 | `nEvents` | number | Recomputed from the lines actually parsed, never copied from a footer. |
-| `stopReason` | string \| null | The footer's recorded reason when the .tsv has one (a finalized run whose best-effort .json write failed); 'recovered after crash' for a footer-less log. Null on failure. |
+| `stopReason` | string \| null | The footer's recorded reason when the .tsv has one (a finalized run whose best-effort .json write failed); 'recovered after crash' for a footer-less log; 'recovered from a legacy log' for the pre-Ephymeris dialect, which never had a footer. Null on failure. |
 | `reason` | string \| null | Why recovery failed, when it did. |
 
 <a id="shape-recoverresult"></a>
@@ -2150,12 +2311,15 @@ What the rescan removed because the disk no longer has it (`DATA.md#reading-the-
 <a id="shape-retiredstrobe"></a>
 #### RetiredStrobe
 
-A code whose emitter is gone but which recorded sessions contain. Reserved forever: reissuing one would merge two unrelated event types in any analysis spanning the change.
+A code a recorded session contains and nothing may emit any more. Reserved forever: reissuing one would merge two unrelated event types in any analysis spanning the change.
 
 | Field | Type | Notes |
 |---|---|---|
 | `name` | string |  |
 | `code` | number |  |
+| `rationale` *(optional)* | string |  |
+| `seenIn` *(optional)* | string |  |
+| `retiredAt` *(optional)* | string | ISO-8601 UTC; absent on codes retired before the app recorded it. |
 
 <a id="shape-rigdocument"></a>
 #### RigDocument
@@ -2230,6 +2394,8 @@ What differs between a run and the same animal's previous run, recorded and reco
 | `boxChange` | [ValueChange](#shape-valuechange) \| null | Only between two runs that both know their box. |
 | `params` | [ParamChange](#shape-paramchange)[] |  |
 | `paramsKnown` | boolean | False when either run carries no parameters — a run from before they were recorded, or a recovered file too old to hold them, or one the analytics index has not read yet. Unknown, never reported as changed. |
+| `falseStart` | boolean | Set aside (`DATA.md#false-starts`): compared with nothing and never the previous run of the next one, which is compared with the run before this instead. |
+| `falseStartSource` | "automatic" \| "marked" \| "restored" \| null | As `RunSummary.falseStartSource`. |
 
 <a id="shape-runnersession"></a>
 #### RunnerSession
@@ -2275,6 +2441,9 @@ The runner-held session — the same shape a sessions.status reply carries.
 | `paramsHash` | string \| null | Hash of the task parameters this run used (`TASKS.md#profile-and-params-hashes`). Comparability is the PAIR with `profileHash` — that one covers the profile declaration, which is identical across every run of a sketch however it was tuned. Null when the run recorded no parameters. |
 | `profileSource` | [ProfileSource](#shape-profilesource) |  |
 | `stale` | boolean | The file is gone but this is its last known-good summary. |
+| `falseStart` | boolean | Set aside as a false start (`DATA.md#false-starts`): restarted and short, or ruled so by hand. Such a run arrives in `AnalyticsSummary.falseStarts`, never in `runs`. |
+| `falseStartSource` | "automatic" \| "marked" \| "restored" \| null | Why: `automatic` (the rule), `marked` (a person set it aside), `restored` (the rule would, a person said count it). Null for an ordinary run. |
+| `restartedBy` | string \| null | The next run of the same animal in the same session, if any. |
 | `status` | [RunStatus](#shape-runstatus) |  |
 | `metrics` | [MetricSummary](#shape-metricsummary)[] |  |
 | `overall` | [MetricSummary](#shape-metricsummary) \| null | Accuracy pooled across every metric — the only single number that can tell learning from a side bias (`DATA.md#derived-metrics`). |
@@ -2509,6 +2678,18 @@ One sample of the within-session strategy walk (`DATA.md#analytics-views`).
 | `y` | number | The same for the conditions answered at the other well. |
 | `n` | number | The smaller of the two rolling window lengths. |
 
+<a id="shape-strobearchivecoverage"></a>
+#### StrobeArchiveCoverage
+
+What the archive scan could see. Only this machine: another rig's archive is never checked, and the UI says so.
+
+| Field | Type | Notes |
+|---|---|---|
+| `files` | number | Recorded files read (or answered from the scan cache). |
+| `unreadable` | number |  |
+| `roots` | string[] | Every cohort data folder the scan was pointed at. |
+| `unreachableRoots` | string[] | Of those, the ones that could not be reached. |
+
 <a id="shape-strobecode"></a>
 #### StrobeCode
 
@@ -2516,24 +2697,84 @@ One sample of the within-session strategy walk (`DATA.md#analytics-views`).
 |---|---|---|
 | `name` | string |  |
 | `code` | number |  |
-| `origin` | string | `firmware` (transcribed from BehaviorBox.h) or `ephymeris`. |
+| `origin` | string | History, not authority: `firmware` (numbered by the lab's recorded sessions before the app), `ephymeris` (declared by the app), `operator` (added on the Strobes page). |
 | `emittedOn` *(optional)* | string |  |
 | `rationale` *(optional)* | string |  |
+| `portSlot` *(optional)* | number | The response-port slot that reports with this code. Such a code can be neither retired nor removed. |
+
+<a id="shape-strobefirmwareref"></a>
+#### StrobeFirmwareRef
+
+| Field | Type | Notes |
+|---|---|---|
+| `path` | string | Relative to the root it was found under. |
+| `kind` | "library" \| "sketch" \| "task" | `library`: a shared library every sketch includes — retiring or removing the code would stop every sketch compiling, so both are refused. |
+
+<a id="shape-strobeimportplan"></a>
+#### StrobeImportPlan
+
+What importing another machine's vocabulary would do. A union, never a replacement; any conflict refuses the whole import.
+
+| Field | Type | Notes |
+|---|---|---|
+| `adds` | ({ name: string; code: number; retired: boolean })[] |  |
+| `retires` | ({ name: string; code: number })[] | Live here, retired there — retired here too. |
+| `conflicts` | ({ name: string; code: number; message: string })[] |  |
+| `onlyHere` | string[] | Codes this machine has and the file does not. Never removed by an import. |
+
+<a id="shape-strobescanprogress"></a>
+#### StrobeScanProgress
+
+| Field | Type | Notes |
+|---|---|---|
+| `done` | number |  |
+| `total` | number |  |
+
+<a id="shape-strobesessions"></a>
+#### StrobeSessions
+
+| Field | Type | Notes |
+|---|---|---|
+| `count` | number | Recorded files containing the code. |
+| `sample` | string[] | Up to five of them. |
+| `scanned` | [StrobeArchiveCoverage](#shape-strobearchivecoverage) |  |
+
+<a id="shape-strobeusage"></a>
+#### StrobeUsage
+
+Everything a retire or remove is judged against, computed by the sidecar so the page never predicts a refusal.
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string |  |
+| `code` | number |  |
+| `status` | "live" \| "retired" |  |
+| `firmware` | [StrobeFirmwareRef](#shape-strobefirmwareref)[] |  |
+| `portSlot` | number \| null |  |
+| `breaks` | [RigImpact](#shape-rigimpact)[] | Saved tasks that generate today and would not with the code retired or removed. |
+| `sessions` | [StrobeSessions](#shape-strobesessions) \| null | Null unless `scan` was asked for. |
+| `retireBlocker` | string \| null | Why `strobes.retire` would refuse outright; null when it would proceed (with `confirm` if `breaks` or `firmware` is non-empty). |
+| `removeBlocker` | string \| null | Why `strobes.remove` would refuse outright. Always set when `sessions.count` > 0. Null with `sessions` null means not yet known — the scan decides. |
 
 <a id="shape-strobevocabulary"></a>
 #### StrobeVocabulary
 
-The append-only strobe registry (`TASKS.md#strobe-vocabulary`). Codes are never renumbered or repurposed: recorded sessions carry them, and reissuing one silently merges two unrelated event types in any analysis spanning the change. A code whose emitter is gone moves to `retired` and stays reserved — a third state, neither declared nor free, which `freeRanges` excludes.
+This machine's strobe vocabulary (`TASKS.md#strobe-vocabulary`) — the one source of every code. Codes are never renumbered or repurposed: recorded sessions carry them, and reissuing one silently merges two unrelated event types in any analysis spanning the change.
 
 | Field | Type | Notes |
 |---|---|---|
 | `version` | number |  |
 | `codeMin` | number |  |
 | `codeMax` | number | 999 — a wire-format limit. The host parser is ^\d{1,3}\t\d+$. |
-| `freeRanges` | number[][] | Inclusive [lo, hi] pairs a new code may come from. |
+| `reserved` | number[][] | Inclusive [lo, hi] pairs inside the bounds that are never issued. |
+| `freeRanges` | number[][] | Inclusive [lo, hi] pairs a new code may come from. Derived, never stored. |
+| `nextFree` | number \| null |  |
+| `contentHash` | string | Digest of names, codes and slots — what the generated headers are stamped with. |
 | `codes` | [StrobeCode](#shape-strobecode)[] |  |
 | `retired` | [RetiredStrobe](#shape-retiredstrobe)[] |  |
 | `portSlots` | map&lt;string, map&lt;string, string&gt;&gt; | Slot number → its six per-port code names. |
+| `editable` | boolean | False when this machine's document is unreadable: the app decodes with the shipped default and refuses every edit, since a code issued against the default could reissue one this machine added. |
+| `problem` | string \| null | Why `editable` is false. |
 
 <a id="shape-syncresult"></a>
 #### SyncResult

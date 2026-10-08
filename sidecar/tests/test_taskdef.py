@@ -706,55 +706,67 @@ def library(tmp_path_factory):
 # --------------------------------------------------------------------------- #
 
 
-def _firmware_codes() -> dict[str, int] | None:
-    """Every `BF_*` the staged firmware defines, or None outside a checkout.
+def _firmware_names() -> set[str] | None:
+    """Every `BF_*` the staged firmware NAMES, or None outside a checkout.
 
     Read from `sketches/`, which `npm run stage:sketches` writes from the
     behaviour firmware repo. Skipped rather than failed when it is absent: a
     packaged sidecar has no library beside it, and this is a developer guard.
+    The firmware holds no numbers any more — `BoxStrobes.h` refuses to compile
+    without the generated ones — so names are all there is to compare.
     """
-    import re
-    from pathlib import Path
+    from ephymeris_sidecar import discovery
+    from ephymeris_sidecar.strobes.usage import firmware_refs
 
+    root, _ = discovery.library_root()
+    if root is None or not (root / "libraries" / "BehaviorBox" / "BoxStrobes.h").is_file():
+        return None
+    return set(firmware_refs([(root, "sketch")]))
+
+
+def test_the_firmware_defines_no_strobe_code_of_its_own():
+    """ONE SOURCE. `BoxStrobes.h` used to hold a hand-written copy of every
+    number, kept in step with the app's by a test; now it holds none, and stops
+    the build when the generated header has not supplied them."""
     from ephymeris_sidecar import discovery
 
     root, _ = discovery.library_root()
-    if root is None:
-        return None
-    header = Path(root) / "libraries" / "BehaviorBox" / "BoxStrobes.h"
-    if not header.is_file():
-        return None
-    return {
-        m.group(1)[3:]: int(m.group(2))
-        for m in re.finditer(r"^#define (BF_[A-Z0-9_]+) +(\d+)", header.read_text(encoding="utf-8"), re.M)
-    }
-
-
-def test_the_vocabulary_declares_exactly_what_the_firmware_emits():
-    """DECLARED MEANS EMITTABLE, checked rather than asserted in prose.
-
-    Both directions fail silently without this. A code the vocabulary declares
-    and the firmware cannot produce is a name in every picker that no session
-    will ever contain — thirty of them sat here describing response ports 3-7
-    that a two-port trial runner has no way to poll. A code the FIRMWARE emits
-    and the vocabulary does not declare is worse: it arrives in the data as an
-    unlabelled number, and `docs/tasks.md` records a real instance.
-
-    Cross-repo, so it is a guard rather than a gate — the firmware can be edited
-    without this suite running. It is still the only thing that compares them.
-    """
-    firmware = _firmware_codes()
-    if firmware is None:
+    header = (root / "libraries" / "BehaviorBox" / "BoxStrobes.h") if root else None
+    if header is None or not header.is_file():
         pytest.skip("no staged sketch library (run `npm run stage:sketches`)")
+    text = header.read_text(encoding="utf-8")
+    assert "#define BF_" not in text
+    assert "#error" in text
 
-    vocab = registry.vocabulary()
-    declared = {e.name: e.code for e in vocab}
 
-    assert set(declared) == set(firmware), (
-        f"only in the vocabulary: {sorted(set(declared) - set(firmware))}; "
-        f"only in the firmware: {sorted(set(firmware) - set(declared))}"
-    )
-    assert declared == firmware, "a code number disagrees across the two repos"
+def test_everything_the_firmware_emits_is_in_the_default_vocabulary():
+    """EMITTED MEANS DECLARED. A code the firmware names and the default
+    vocabulary lacks would stop every fresh machine compiling — the generated
+    header would not define it."""
+    names = _firmware_names()
+    if names is None:
+        pytest.skip("no staged sketch library (run `npm run stage:sketches`)")
+    vocab = registry.Vocabulary(registry.default_vocabulary_document())
+    assert names <= vocab.names(), f"named in firmware, not in the vocabulary: {sorted(names - vocab.names())}"
+
+
+def test_every_default_code_has_a_mechanism_that_emits_it():
+    """DECLARED MEANS EMITTABLE. Thirty codes once sat in the vocabulary for
+    response ports 3-7 that a two-port trial runner has no way to poll — names
+    in every picker that no session would ever contain. A default code must be
+    named by the firmware, or be a stimulus onset the trial-table editor can
+    bind to a line (which is how ODOR_7_ON..ODOR_12_ON reach a sketch: through
+    a generated `TaskTrials.h`, never by name in the library)."""
+    import re
+
+    names = _firmware_names()
+    if names is None:
+        pytest.skip("no staged sketch library (run `npm run stage:sketches`)")
+    vocab = registry.Vocabulary(registry.default_vocabulary_document())
+    orphaned = {
+        n for n in vocab.names() - names if not re.search(r"_\d+_ON$", n)
+    }
+    assert not orphaned, f"declared with nothing to emit them: {sorted(orphaned)}"
 
 
 def test_a_retired_code_is_never_reissued_and_never_free():
@@ -791,13 +803,15 @@ def test_the_odor_onsets_step_over_the_retired_block():
 
 
 def test_the_free_ranges_are_exactly_what_is_unallocated():
-    """A number that is neither used, retired, nor listed free is LOST — nothing
-    will ever issue it. One was (259), until the ranges were recomputed rather
-    than hand-maintained."""
+    """A number that is neither used, retired, reserved nor free is LOST —
+    nothing will ever issue it. One was (259) while the ranges were stored;
+    they are derived now, and this pins the derivation."""
     vocab = registry.vocabulary()
     allocated = {e.code for e in vocab} | set(vocab.retired)
-    for code in range(min(allocated), vocab.code_max + 1):
-        assert vocab.is_free(code) == (code not in allocated), code
+    for code in range(vocab.code_min, vocab.code_max + 1):
+        expected = code not in allocated and not vocab.is_reserved(code)
+        assert vocab.is_free(code) == expected, code
+    assert vocab.free_ranges()[0] == (117, 220)
 
 
 # --------------------------------------------------------------------------- #

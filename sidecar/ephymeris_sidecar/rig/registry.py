@@ -1,9 +1,10 @@
-"""The two frozen registries: strobes and channels.
+"""The two registries: strobes and channels.
 
 Loaded once, cached, and shared by the rig wiring editor and the task-profile
-code generator. Each mirrors a JSON file under `schema/`, and nothing here
-invents a value -- if a number is not in `schema/` or in the active pinout, it
-does not exist.
+code generator. Each reads one document -- the machine's own when it has one
+(`set_rig_source`, `set_vocabulary_source`), the shipped seed under `schema/`
+otherwise -- and nothing here invents a value: if a number is not in that
+document, it does not exist.
 
 That discipline is the whole point. `START_LINE_MAX` is mirrored across two
 repositories with nothing keeping it in sync and `baudRate` across nine files;
@@ -24,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -72,43 +74,72 @@ class StrobeEntry:
     emitted_by: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class RetiredEntry:
+    name: str
+    code: int
+    rationale: str = ""
+    seen_in: str = ""
+    retired_at: str = ""
+
+
+#: A code name. Upper snake case, because it becomes `BF_<NAME>` in a C header
+#: and the analysis side matches names with anchored patterns; and never
+#: prefixed `BF_` itself, or the header would define `BF_BF_...`.
+STROBE_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
 class Vocabulary:
-    """The append-only strobe registry.
+    """The strobe vocabulary in force: one document, read-only here.
 
     APPEND-ONLY IS A DATA GUARANTEE, not a style. Tens of thousands of recorded
     events carry these numbers, so a code is never renumbered and never
     repurposed -- reissuing one would silently merge two unrelated event types in
-    any analysis spanning the change. New codes come from `free_ranges`; codes
-    whose emitter is gone move to `retired` and stay reserved forever.
+    any analysis spanning the change. Codes whose emitter is gone move to
+    `retired` and stay reserved forever. Editing the document is
+    `strobes/store.py`'s job; this class only answers questions about one.
     """
 
     def __init__(self, raw: dict) -> None:
         self.version: int = raw["vocab_version"]
         self.code_min: int = raw.get("code_min", 0)
         self.code_max: int = raw["code_max"]
-        self.free_ranges: list[tuple[int, int]] = [tuple(r) for r in raw["free_ranges"]]
+        #: Inside the bounds and still never issuable. Listed rather than
+        #: implied by a raised `code_min`, so the bounds stay the wire limit
+        #: they are documented as.
+        self.reserved: list[tuple[int, int]] = [
+            (int(lo), int(hi)) for lo, hi in raw.get("reserved", [])
+        ]
         self._by_name: dict[str, StrobeEntry] = {
             name: StrobeEntry(
                 name=name,
-                code=e["code"],
+                code=int(e["code"]),
                 origin=e.get("origin", "firmware"),
                 rationale=e.get("rationale", ""),
                 emitted_on=e.get("emitted_on", ""),
                 emitted_by=tuple(e.get("emitted_by", ())),
             )
             for name, e in raw["codes"].items()
+            if not name.startswith("_")
         }
         self._by_code = {e.code: e for e in self._by_name.values()}
-        #: Codes emitted by firmware this repository no longer contains. NOT in
-        #: `codes` -- nothing can produce them any more -- and NOT free, because
-        #: reissuing one would merge two event types in any analysis spanning the
-        #: boundary. This is the third state, and it is why `is_free()` below
-        #: consults both.
-        self._retired = {
-            e["code"]: name
+        #: Codes a recorded session contains and nothing may emit any more. NOT
+        #: in `codes` -- the generated header does not define them -- and NOT
+        #: free, because reissuing one would merge two event types in any
+        #: analysis spanning the boundary. This is the third state, and it is
+        #: why `is_free()` below consults both.
+        self._retired_entries: dict[str, RetiredEntry] = {
+            name: RetiredEntry(
+                name=name,
+                code=int(e["code"]),
+                rationale=e.get("rationale", ""),
+                seen_in=e.get("seen_in", ""),
+                retired_at=e.get("retired_at", ""),
+            )
             for name, e in raw.get("retired", {}).items()
             if isinstance(e, dict) and "code" in e
         }
+        self._retired = {e.code: e.name for e in self._retired_entries.values()}
         #: Slot number -> its six per-port code names. Keys arrive as JSON
         #: strings; they are the one thing here that is genuinely numeric, since
         #: a channel declares `port_slot: 3` as an integer.
@@ -124,6 +155,9 @@ class Vocabulary:
     @property
     def retired(self) -> dict[int, str]:
         return dict(self._retired)
+
+    def retired_entry(self, name: str) -> RetiredEntry | None:
+        return self._retired_entries.get(name)
 
     def __contains__(self, name: object) -> bool:
         return name in self._by_name
@@ -144,24 +178,54 @@ class Vocabulary:
     def names(self) -> set[str]:
         return set(self._by_name)
 
+    def code_map(self) -> dict[int, str]:
+        """`code -> name` for every code that has ever meant something.
+
+        Live AND retired, sorted by code: this is what a task profile's
+        `strobes` map is filled from, and a legacy run replayed through a
+        current profile should read "DUMMY_SOLENOID_CLICK_1", which is an
+        explanation, rather than "Strobe 110", which is a question.
+        """
+        merged = {e.code: e.name for e in self._by_name.values()}
+        merged.update(self._retired)
+        return dict(sorted(merged.items()))
+
+    def is_reserved(self, code: int) -> bool:
+        return any(lo <= code <= hi for lo, hi in self.reserved)
+
     def is_free(self, code: int) -> bool:
         """Whether `code` may be issued to a new name.
 
-        Three conditions, and dropping any one of them reissues a number that is
-        already in the archive: it must fall inside a declared free range, it
-        must not already be taken, and it must not be retired.
+        Four conditions, and dropping any one of them reissues a number that is
+        already in the archive or puts one on the wire the host cannot parse:
+        inside the bounds, not reserved, not already taken, not retired.
         """
         if code in self._by_code or code in self._retired:
             return False
-        return any(lo <= code <= hi for lo, hi in self.free_ranges)
+        if not self.code_min <= code <= self.code_max:
+            return False
+        return not self.is_reserved(code)
+
+    def free_ranges(self) -> list[tuple[int, int]]:
+        """Every issuable code, as inclusive runs. Derived, never stored.
+
+        It used to be stored, beside the codes it was the complement of, and a
+        test existed only to keep the two in step. A derived list cannot drift.
+        """
+        out: list[list[int]] = []
+        for code in range(self.code_min, self.code_max + 1):
+            if not self.is_free(code):
+                continue
+            if out and out[-1][1] == code - 1:
+                out[-1][1] = code
+            else:
+                out.append([code, code])
+        return [(lo, hi) for lo, hi in out]
 
     def next_free(self) -> int | None:
         """The lowest issuable code, for an editor that offers one."""
-        for lo, hi in self.free_ranges:
-            for code in range(lo, hi + 1):
-                if self.is_free(code):
-                    return code
-        return None
+        ranges = self.free_ranges()
+        return ranges[0][0] if ranges else None
 
     def port_slot(self, slot: int) -> dict[str, str] | None:
         """The six per-port code names a response port on `slot` reports with.
@@ -181,8 +245,33 @@ class Vocabulary:
     def port_slots(self) -> dict[int, dict[str, str]]:
         return {n: dict(fields) for n, fields in self._slots.items()}
 
+    def slot_of(self, name: str) -> int | None:
+        """The port slot that reports with `name`, if any does."""
+        for slot, fields in sorted(self._slots.items()):
+            if name in fields.values():
+                return slot
+        return None
+
+    def content_hash(self) -> str:
+        """A short digest of what the firmware compiles: names, codes, slots.
+
+        Meanings are left out on purpose. Rewording a rationale changes no byte
+        of any generated header, and stamping it in would rebuild every bundled
+        sketch for a change no box can observe.
+        """
+        canonical = json.dumps(
+            {
+                "codes": {e.name: e.code for e in self._by_name.values()},
+                "retired": {n: e.code for n, e in self._retired_entries.items()},
+                "slots": {str(n): f for n, f in self._slots.items()},
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+
     def to_json(self) -> dict:
-        """The whole vocabulary, for the Rig tab's viewer.
+        """The whole vocabulary, for the Strobes page and the onset picker.
 
         Retired codes ride along as their own section rather than being folded
         into `codes`: a reader looking at a legacy session needs to be told
@@ -193,7 +282,10 @@ class Vocabulary:
             "version": self.version,
             "codeMin": self.code_min,
             "codeMax": self.code_max,
-            "freeRanges": [list(r) for r in self.free_ranges],
+            "reserved": [list(r) for r in self.reserved],
+            "freeRanges": [list(r) for r in self.free_ranges()],
+            "nextFree": self.next_free(),
+            "contentHash": self.content_hash(),
             "codes": [
                 {
                     "name": e.name,
@@ -201,12 +293,23 @@ class Vocabulary:
                     "origin": e.origin,
                     **({"emittedOn": e.emitted_on} if e.emitted_on else {}),
                     **({"rationale": e.rationale} if e.rationale else {}),
+                    **(
+                        {"portSlot": slot}
+                        if (slot := self.slot_of(e.name)) is not None
+                        else {}
+                    ),
                 }
                 for e in sorted(self._by_name.values(), key=lambda e: e.code)
             ],
             "retired": [
-                {"name": name, "code": code}
-                for code, name in sorted(self._retired.items())
+                {
+                    "name": e.name,
+                    "code": e.code,
+                    **({"rationale": e.rationale} if e.rationale else {}),
+                    **({"seenIn": e.seen_in} if e.seen_in else {}),
+                    **({"retiredAt": e.retired_at} if e.retired_at else {}),
+                }
+                for e in sorted(self._retired_entries.values(), key=lambda e: e.code)
             ],
             "portSlots": {str(n): dict(f) for n, f in sorted(self._slots.items())},
         }
@@ -561,9 +664,57 @@ class ChannelMap:
 # --------------------------------------------------------------------------- #
 
 
+DEFAULT_VOCABULARY = "strobe_vocab.default.json"
+
+
+def default_vocabulary_document() -> dict:
+    """The shipped seed (`schema/strobe_vocab.default.json`), as a fresh dict.
+
+    Read once per machine, by `strobes/store.py`, to write the first copy of the
+    vocabulary that machine then owns. Never the answer to "what is code 222?"
+    once that copy exists.
+    """
+    return _load(DEFAULT_VOCABULARY)
+
+
+#: The machine's own vocabulary document. Set at startup and again after every
+#: edit by `strobes/store.py`, via `set_vocabulary_source` -- the same shape as
+#: `_rig_source` below, for the same reason.
+_vocab_source: Callable[[], dict | None] | None = None
+
+
+def current_vocabulary_source() -> Callable[[], dict | None] | None:
+    """Whatever is installed, so a caller can put it back (see `impact_of`)."""
+    return _vocab_source
+
+
+def set_vocabulary_source(source: Callable[[], dict | None] | None) -> None:
+    """Point `vocabulary()` at a document, and drop what it cached."""
+    global _vocab_source
+    _vocab_source = source
+    vocabulary.cache_clear()
+
+
 @lru_cache(maxsize=1)
 def vocabulary() -> Vocabulary:
-    return Vocabulary(_load("strobe_vocab.v1.json"))
+    """The strobe vocabulary in force: the machine's own, else the seed.
+
+    The seed is the fallback only for a process that never installed a source
+    (tests, a tool) or whose document will not compose. The second case is
+    logged loudly, and `strobes/store.py` refuses every edit while it lasts:
+    issuing a code against the seed could reissue one this machine added.
+    """
+    doc = _vocab_source() if _vocab_source is not None else None
+    if doc is not None:
+        try:
+            return Vocabulary(doc)
+        except (KeyError, TypeError, ValueError) as exc:
+            log.error(
+                "the strobe vocabulary could not be read (%s); decoding with the "
+                "shipped default until it is repaired",
+                exc,
+            )
+    return Vocabulary(default_vocabulary_document())
 
 
 #: The rig's own wiring document, when it has one. Set once at startup and again

@@ -22,6 +22,11 @@ Two honesty rules:
   lines actually read, never copied from a footer, so the document can't
   claim more events than it holds.
 
+Two dialects, told apart by the first line (`DATA.md#crash-recovery`): this
+app's own log, and the lab's pre-Ephymeris `recovery_tsv/` log, which opens
+with an `event_code\tevent_ms\tevent_name` header, writes `# key\tvalue`
+comments and a third (name) column on every strobe, and never wrote a footer.
+
 Discovery reuses the same archive walker as orphan adoption
 (`DATA.md#orphan-adoption`, `reader.walk_orphaned_tsvs`) — both must see every legacy layout a
 real archive has, so they are one traversal by decision (`DATA.md#crash-recovery`).
@@ -45,10 +50,24 @@ log = logging.getLogger(__name__)
 #: The stop reason a footer-less (crashed) recovery records (`DATA.md#crash-recovery`).
 RECOVERED_STOP_REASON = "recovered after crash"
 
+#: The stop reason a recovered LEGACY log records. Not "after crash": the old
+#: software never wrote a footer, so its absence says nothing about how the run
+#: ended — and claiming a crash would be the invention the footer rule forbids.
+RECOVERED_LEGACY_STOP_REASON = "recovered from a legacy log"
+
 #: The board's exact line format — the same strict rule the live session
 #: parser applies (`ARCHITECTURE.md#entering-in_session`), so recovery can't admit a
 #: line the session wouldn't have.
-_STROBE = re.compile(r"^(\d{1,3})\t(\d+)$")
+STROBE = re.compile(r"^(\d{1,3})\t(\d+)$")
+
+#: The pre-Ephymeris log's first line, which is what identifies the dialect.
+LEGACY_HEADER = re.compile(r"^event_code\tevent_ms\tevent_name$")
+
+#: A strobe line in the pre-Ephymeris log: the same two columns, then the
+#: firmware's name for the code. The name is dropped — the strobe vocabulary
+#: decodes the number (`TASKS.md#strobe-vocabulary`). Admitted ONLY in a file
+#: that opened with `LEGACY_HEADER`, so this app's own logs keep the strict rule.
+LEGACY_STROBE = re.compile(r"^(\d{1,3})\t(\d+)\t[A-Z][A-Z0-9_]*$")
 
 #: Core fields (`DATA.md#the-json-document`) that are always strings, exempt from value coercion — an
 #: animal named "123" must not come back as an integer.
@@ -80,6 +99,8 @@ class ParsedTsv:
     #: The footer's recorded reason, when the file has one — its presence is
     #: what distinguishes "finalized but the .json write failed" from "crashed".
     stop_reason: str | None
+    #: `ephymeris` or `legacy` — which writer produced the file.
+    dialect: str = "ephymeris"
 
 
 def parse_tsv(path: Path) -> ParsedTsv:
@@ -90,12 +111,20 @@ def parse_tsv(path: Path) -> ParsedTsv:
     nothing, costing at most the one strobe the guarantee already declares at risk.
     Everything else is strict — a line is a `# key: value` comment or a
     board-format strobe, and anything unrecognized is skipped, not guessed at.
+
+    A file whose first line is `LEGACY_HEADER` is read by the pre-Ephymeris
+    rules instead: `# key\tvalue` comments and `code\tms\tNAME` strobes. Text
+    mode's universal newlines take care of its CRLF.
     """
     metadata: dict[str, Any] = {}
     events: list[list[int]] = []
     stop_reason: str | None = None
 
     with open(path, encoding="utf-8", errors="replace") as fh:
+        first = fh.readline().rstrip("\r\n")
+        if LEGACY_HEADER.match(first):
+            return _parse_legacy(fh)
+        fh.seek(0)
         for raw in fh:
             line = raw.rstrip("\r\n")
             if line.startswith("# "):
@@ -116,11 +145,35 @@ def parse_tsv(path: Path) -> ParsedTsv:
                 elif key not in _FOOTER_KEYS:
                     metadata[key] = _coerce(key, value)
                 continue
-            match = _STROBE.match(line)
+            match = STROBE.match(line)
             if match is not None:
                 events.append([int(match.group(1)), int(match.group(2))])
 
     return ParsedTsv(metadata=metadata, events=events, stop_reason=stop_reason)
+
+
+def _parse_legacy(fh: Any) -> ParsedTsv:
+    """The rest of a pre-Ephymeris log, after its header line.
+
+    Its comments are the run's parameters (`# trial_seed\t93518744`), read into
+    the document flat as the app's own header fields are. It names no animal:
+    the filename does, and orphan adoption already reads it from there
+    (`DATA.md#orphan-adoption`) — recovery records what the log holds and
+    invents nothing.
+    """
+    metadata: dict[str, Any] = {}
+    events: list[list[int]] = []
+    for raw in fh:
+        line = raw.rstrip("\r\n")
+        if line.startswith("# "):
+            key, sep, value = line[2:].partition("\t")
+            if sep and key:
+                metadata[key] = _coerce(key, value)
+            continue
+        match = LEGACY_STROBE.match(line)
+        if match is not None:
+            events.append([int(match.group(1)), int(match.group(2))])
+    return ParsedTsv(metadata=metadata, events=events, stop_reason=None, dialect="legacy")
 
 
 def recover_file(tsv_path: Path) -> dict[str, Any]:
@@ -148,10 +201,19 @@ def recover_file(tsv_path: Path) -> dict[str, Any]:
     if not parsed.metadata and not parsed.events:
         # Nothing recognizable — a stray .tsv someone dropped in the folder,
         # not a session log. Refuse rather than minting an empty document.
-        entry["reason"] = "no header or strobe lines — not a session .tsv"
+        # A legacy log that is only its column header is common (the old
+        # software opened one for every run, started or not) and is named as
+        # what it is.
+        entry["reason"] = (
+            "a legacy log with only its column header — the run never recorded a strobe"
+            if parsed.dialect == "legacy"
+            else "no header or strobe lines — not a session .tsv"
+        )
         return entry
 
-    stop_reason = parsed.stop_reason or RECOVERED_STOP_REASON
+    stop_reason = parsed.stop_reason or (
+        RECOVERED_LEGACY_STOP_REASON if parsed.dialect == "legacy" else RECOVERED_STOP_REASON
+    )
     document = dict(parsed.metadata)
     document["stop_reason"] = stop_reason
     document["n_events"] = len(parsed.events)

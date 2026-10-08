@@ -71,6 +71,7 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
   - [Run-level scalars](#run-level-scalars)
   - [Uncertainty](#uncertainty)
   - [Edge cases](#edge-cases)
+  - [False starts](#false-starts)
   - [Pooled accuracy](#pooled-accuracy)
   - [Rewarded and response accuracy](#rewarded-and-response-accuracy)
   - [Per-condition tally](#per-condition-tally)
@@ -406,6 +407,8 @@ scipy is imported on first use, never at module scope, so a broken install costs
 - **The snapshot names which fields are parameters.** The values are already flat in the document, but only the profile says which keys are declared fields (`recorded_config`). With it, a copied run recomputes the same `params_hash` its own rig did; without it, two differently-tuned runs of one task would pool silently. `trial_seed`/`host_seed` describe the run, not its tuning, and are never hashed.
 - **It costs roughly 10–15 KB per file**, a fraction of `ts_data`, and buys independence from the machine that wrote it.
 
+- **Its `strobes` map is the record, not a copy.** A loaded profile's map is the machine's whole [strobe vocabulary](TASKS.md#strobe-vocabulary) at the moment the run started; the snapshot keeps it verbatim, so an edit to the vocabulary afterwards never changes how this file decodes. `profile_hash` does not cover the map ([TASKS.md](TASKS.md#profile-and-params-hashes)), so two files whose maps differ only because a code was added between them still share a group.
+
 A profile-less sketch writes no snapshot: an empty one would claim a declaration that never existed.
 
 ## Crash safety
@@ -457,6 +460,8 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 - **`n_events` is recomputed** from the lines actually parsed, never copied from a footer.
 - **Header values are coerced** to numbers and bools except the always-string fields (`_STRING_FIELDS`: names, port, `intan_*` text). `task_profile` is decoded as JSON; a line torn by the crash is **dropped**, not kept as text — half a snapshot every reader must defend against is worse than none.
 - Strobe lines must match the live parser's strict `^\d{1,3}\t\d+$`, so a torn final line costs only itself.
+- **The lab's pre-Ephymeris logs are a second dialect**, recognised by their first line, `event_code\tevent_ms\tevent_name` (`LEGACY_HEADER`). After it come `# key\tvalue` comments (the run's parameters, read in flat and coerced as above), strobe lines with a third column naming the code (`code\tms\tBF_NAME` — the name is dropped; the [strobe vocabulary](TASKS.md#strobe-vocabulary) decodes the number) and CRLF line endings. The third column is admitted **only** in such a file; this app's own logs keep the strict rule.
+- **A legacy log never had a footer**, so its absence says nothing about how the run ended: a recovered legacy run records `stop_reason: "recovered from a legacy log"` (`RECOVERED_LEGACY_STOP_REASON`), never "after crash". It names no animal or sketch either, and recovery adds neither — adoption reads the animal from the filename ([below](#orphan-adoption)) and Analytics infers the conditions from the strobes. A legacy log that is only its header line — the old software opened one for every run, started or not — is refused rather than recovered as an empty run.
 - **Rejected while any box is running:** a live run's `.tsv` legitimately has no `.json` yet.
 
 The Recover button chains an `analytics.rescan`, so recovered files are adopted in the same click. It is a `sessions.*` command because it **writes** session files; analytics never writes the archive.
@@ -559,6 +564,7 @@ erDiagram
 | `adopted_runs` | `id`, `cohort_id`, `animal_id`, `file_path`, `prefix_name`, `session_number`, `date`, `started_at`, `sketch_name`, `sketch_path`, `adopted_at`, `file_mtime_ns`, `file_size` | Files the archive walk matched to an animal. Deliberately separate from `sessions`/`session_animal_runs` |
 | `session_notes` | `id`, `session_id`, `cohort_id`, `at`, `created_at`, `edited_at`, `deleted_at`, `tag`, `scope_kind`, `animal_id`, `box_number`, `body`, `carry_forward`, `resolved_at`, `resolved_in_session` | [The session log](#notes). Cascades from `sessions` and `cohorts`; **no FK on `animal_id`** (the caution below) or `resolved_in_session` |
 | `session_logs` | `session_id`, `operator`, `summary`, `updated_at` | One per session that has one. Cascades from `sessions` |
+| `strobe_scan_cache` | `file_path`, `file_mtime_ns`, `file_size`, `codes_json` | A pure cache: the distinct strobe codes each recorded file contains, for the scan that decides whether a code may be removed ([TASKS.md](TASKS.md#editing-the-vocabulary)). Keyed on the same freshness triple as `run_metrics_cache` |
 
 ### Indexes
 
@@ -591,6 +597,7 @@ Plus plain lookup indexes on each table's parent id.
 - **`add_column` is idempotent** (it checks `PRAGMA table_info`), so a migration interrupted by a power loss re-runs safely. New columns must be nullable or have a constant default.
 - **Startup commits once**, because every commit marks the database dirty for [backup](#the-database-copy).
 - **A newer database still opens**, with a loud error rather than a refusal: every change is additive, and refusing would strand a machine that merely ran an older installer.
+- **A migration may re-key, never reinterpret.** v13 recomputed every stored `profile_hash` once `strobes` left the hash: each `task_profiles` row is re-parsed and re-hashed, and `session_animal_runs.profile_hash`, `run_metrics_cache.profile_hash` and `.scored_profile_hash` follow it. Profiles that differed only in their strobe maps collapse into one row (the earlier `first_seen_at` wins) — they were one task split by a map. Unparseable rows are left as they were.
 - **A migration may repair a cache**, never data: the v8 step deletes `inferred` cache rows that would otherwise never recompute ([below](#which-profile-decodes-a-run)), and the v12 step deletes adopted runs' rows so their recorded parameters are read into the new `config_json` ([What changed](#what-changed)).
 
 > [!TIP]
@@ -891,7 +898,29 @@ Every probability carries `counted` and a **95% Wilson score interval** (`wilson
 | **Board disconnected mid-run** | Finalized with `stop_reason: "board disconnected"`. **Include it**, show the reason; a drop at trial 180 of 200 is good data. Distinct from an `aborted` session, which wrote nothing |
 | **No file path recorded** | The writer never opened (handshake failed, or the exclusive open collided): `missing` |
 | **Path recorded, file absent** | `missing` — and if the sibling `.tsv` exists, say so: that is the disk-full case [recovery](#crash-recovery) fixes |
-| **Two runs for one (animal, session)** | Real (a restart after a board drop, a same-day prefix+number reuse). Both are runs and both are listed; no view may silently keep whichever came last |
+| **Two runs for one (animal, session)** | Real (a restart after a board drop, a same-day prefix+number reuse). Both are runs and both are listed; no view may silently keep whichever came last. A short first run is a [false start](#false-starts): still listed, but counted nowhere |
+
+### False starts
+
+A box is started, something is wrong, it is stopped within a minute and started again. Both runs are real files, but counting the first adds a second strategy point, a second learning curve, a session mean dragged by a run of three trials, and a what-changed that compares the real run with the aborted one and calls it unchanged. So a false start is **set aside, never hidden** (`analytics/false_starts.py`).
+
+**The rule needs both conditions:**
+
+1. **Restarted:** a later run of the same animal exists in the same session. Order is by the start time in each run's file name (`order_key`), because a recorded run stamps UTC and an adopted one a naive local time, and a session can hold both.
+2. **Short:** fewer than `MAX_TRIALS` (10) trials, counted as odor onsets (`TrialOutcomes.trials`, or the live metrics' `triggered` counts summed when the profile cannot tally outcomes).
+
+A run nobody restarted is never a false start, however short; an animal that quit after four trials is data. A run whose trials are unknown, because no profile could score it or the index has not read it yet, is never set aside by the rule: "couldn't tell" fails toward counting.
+
+**A person can overrule it either way.** `analytics.setFalseStart` writes `run_flags`: `true` sets a run aside, `false` counts it whatever the rule says ("restored"), `null` hands it back to the rule. Overrides are keyed by run id, which for an adopted run is the identity-keyed synthetic id, so a decision survives a rescan.
+
+| Where | What a false start does there |
+|---|---|
+| `analytics.summary` | Moved from `runs` to `falseStarts`, so every metric, curve, strategy point, profile group and parameter check ignores it **by construction**. Counted in `counts.falseStarts` and in none of the other counts |
+| Session table, log readout, printed log | Listed below the session's runs, muted, labelled *false start* with why (rule or marked by hand) |
+| What changed | Compared with nothing and nobody's previous run: the run that restarted it is compared with the animal's previous session (`diff.compare` takes the verdicts). Listed under the changes as set aside |
+| The session clock | Unchanged: the time it took is real elapsed time |
+
+The log computes the same verdicts from the analytics cache (`false_start_verdicts`), never from the archive, so the two agree once Analytics has read the session.
 
 ### Pooled accuracy
 

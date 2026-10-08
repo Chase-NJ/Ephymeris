@@ -12,10 +12,11 @@ lands under
 
     <data_dir>/rig/sketches/<category>/<name>/
 
-with a generated `TaskPins.h`, and `discovery` serves that copy IN PLACE OF the
-bundled original. It is the same sketch — same source, same name, same category
-— compiled against the pins this rig actually has, so nothing downstream learns
-a new state.
+with a generated `TaskPins.h` — this rig's pins and this machine's strobe
+vocabulary — and `discovery` serves that copy IN PLACE OF the bundled original.
+It is the same sketch — same source, same name, same category — compiled against
+the pins and codes this rig actually has, so nothing downstream learns a new
+state.
 
 **A sketch opts in by including the header.** `#include "TaskPins.h"` in its
 `.ino` is the whole signal: a sketch that includes it is saying "override my
@@ -24,10 +25,11 @@ the opt-in from the source rather than from a manifest means there is no second
 declaration to fall out of sync — and it is greppable.
 
 **It degrades rather than disappearing.** If a copy cannot be written — a full
-disk, a locked directory — the bundled entry stands and the rig runs the shipped
-pins, which is what it did before any of this existed. A rig that cannot flash
-at all would be a far worse failure than one flashing the wrong pin, and the
-wrong pin is visible the moment someone watches the box.
+disk, a locked directory — the bundled entry stands and is offered as it ships.
+That original FAILS TO COMPILE, loudly: `BoxStrobes.h` defines no codes and
+`#error`s without this header's vocabulary block
+(`TASKS.md#strobe-vocabulary`). That is the intended trade — a flash refused with
+a reason beats firmware strobing numbers the machine decodes differently.
 """
 
 from __future__ import annotations
@@ -145,5 +147,5 @@ def repin_all(root: Path) -> int:
 
 
 def stamp() -> str:
-    """The wiring the copies were last built against."""
-    return registry.channels().content_hash()
+    """The wiring and strobe vocabulary the copies were last built against."""
+    return f"{registry.channels().content_hash()}+{registry.vocabulary().content_hash()}"

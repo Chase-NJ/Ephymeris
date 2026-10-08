@@ -1,65 +1,56 @@
 {
-  "vocab_version": 2,
+  "vocab_version": 3,
   "append_only": true,
   "_readme": [
-    "THE strobe registry. Every strobe name a task profile may reference is declared",
-    "here, and names resolve to numbers against this file and nothing else.",
+    "THE DEFAULT strobe vocabulary -- a seed, not the registry.",
+    "",
+    "The first time the app starts on a machine it copies this file to",
+    "<data_dir>/strobes/vocabulary.json, and from then on THAT document is the one",
+    "source of every strobe code: the generated TaskPins.h defines BF_* from it, every",
+    "task profile's strobes map is filled from it at load time, and the Strobes page",
+    "on the Task tab edits it. This file is never read again on that machine. Edit",
+    "a vocabulary in the app (TASKS.md#strobe-vocabulary), never here: a change here",
+    "reaches only machines that have not started yet.",
     "",
     "APPEND-ONLY IS A HARD RULE, NOT A CONVENTION. Downstream analysis depends on codes",
     "and their ordering, and historical comparability is a hard requirement. A code is",
-    "never repurposed and never renumbered. Adding one means: pick the next free number",
-    "from `free_ranges`, give it a `rationale`, and bump nothing -- adding a code does",
-    "not bump `vocab_version`, because additions cannot break an existing task.",
-    "`vocab_version` bumps only if this file's SHAPE changes.",
+    "never repurposed and never renumbered, and a name is never reissued with a",
+    "different number. Free codes are not listed: a code is free when it lies inside",
+    "`code_min`..`code_max`, outside `reserved`, and is neither live nor retired.",
     "",
-    "THE ONE TIME CODES WERE DELETED, and the test that has to be met before it",
-    "happens again. On 2026-08-09 thirty-four numbers were reclaimed: the port-slot",
-    "families for response ports 3-7, and three codes belonging to a task-graph",
-    "interpreter that was removed. Deleting from an append-only registry is normally",
-    "the exact mistake this file exists to prevent -- so the bar was not 'nothing uses",
-    "them now', it was NO RECORDED SESSION HAS EVER CONTAINED THEM. Every one was",
-    "declared for firmware that never ran an animal, and the archive was checked",
-    "rather than assumed. A code that has been emitted ONCE, to a file that still",
-    "exists, can never be reclaimed on any argument at all -- it goes to `retired`",
-    "instead, which is what happened to the dummy-solenoid clicks below.",
+    "DELETING IS POSSIBLE, AND THE BAR IS NOT 'UNUSED'. It is NO RECORDED SESSION HAS",
+    "EVER CONTAINED IT, checked against the archive rather than assumed -- the app",
+    "scans every cohort folder before it will remove a code. On 2026-08-09 thirty-four",
+    "numbers were reclaimed that way: the port-slot families for response ports 3-7,",
+    "and three codes belonging to a task-graph interpreter that was removed. A code",
+    "emitted ONCE, to a file that still exists, can never be reclaimed on any argument",
+    "at all -- it goes to `retired` instead, which is what happened to the",
+    "dummy-solenoid clicks below.",
     "",
-    "SOURCE OF TRUTH. Codes with origin 'firmware' mirror BehaviorBox.h and their",
-    "numbers are fixed by ~4 years of recorded sessions. Codes with origin 'ephymeris'",
-    "were declared by this app: the app's code generator writes them into the firmware",
-    "header and into a profile's strobes{} map from this one file, which is what",
-    "retires the three-way hand-mirroring the numbers used to live in (BehaviorBox.h,",
-    "each sketch's task.json, and a generated C header).",
+    "ORIGIN. 'firmware' codes were numbered by ~4 years of this lab's recorded",
+    "sessions before the app existed; 'ephymeris' codes were declared by the app;",
+    "'operator' codes were added on the Strobes page. Origin is history, not",
+    "authority -- every code is resolved from this one document the same way.",
     "",
-    "DECLARED MEANS EMITTABLE. Ephymeris docs/tasks.md records a real bug where",
-    "GRGL_Sim declared 23 of 31 codes and emitted codes it had not declared; nothing",
-    "errored and each layer degraded silently. The inverse is equally a bug, and it is",
-    "what the reclamation above corrected: thirty numbers sat here describing ports a",
-    "two-port trial runner has no way to poll. Do not add a code on a hunch that",
-    "something might want it one day.",
-    "",
-    "The test is whether a code has a MECHANISM that produces it, not whether a task",
-    "already does. ODOR_7_ON..ODOR_12_ON are the live example: BoxStrobes.h defines",
-    "them, the trial-table editor offers all twelve lines, and a profile that binds",
-    "line 7 emits one the moment it runs. Twelve odor lines have always existed in the",
-    "pinout and for years only six could announce an onset, which made lines 7-12",
-    "plumbed and unusable as discriminanda.",
+    "DECLARED MEANS EMITTABLE. A real bug: GRGL_Sim declared 23 of 31 codes and",
+    "emitted codes it had not declared; nothing errored and each layer degraded",
+    "silently. The inverse is equally a bug, and it is what the reclamation above",
+    "corrected: thirty numbers sat here describing ports a two-port trial runner has",
+    "no way to poll. The test is whether a code has a MECHANISM that produces it --",
+    "ODOR_7_ON..ODOR_12_ON qualify because the trial-table editor offers all twelve",
+    "lines and a profile that binds line 7 emits one the moment it runs.",
     "",
     "ODOR ONSETS RUN 101-109 AND THEN 114-116, and the jump is the sharpest reason",
     "nothing may compute a code from an index. 110-113 are retired -- the dummy",
     "solenoid clicks, in 29 recorded sessions -- so odor 9 is 109 and odor 10 is 114.",
-    "The first six were 101-106 from the beginning and the rest were numbered to",
-    "continue that run as closely as the reserved block allows; they briefly sat at",
-    "400-405, which no session ever recorded.",
     "",
     "PORT SLOTS. `port_slots` below maps a response port's slot number to the six",
-    "codes it reports with. There are TWO, because the trial runner has two: ",
+    "codes it reports with. There are TWO, because the trial runner has two:",
     "`checkResponse()` in BehaviorBox.h polls `rightWell` and `leftWell` and nothing",
     "else. Slots 1 and 2 are the historical _L and _R families, so the recorded",
     "archive decodes unchanged. A response channel declares its slot in",
-    "channels.v1.json, which is what lets everything downstream stop knowing about",
-    "left and right -- and a third port declared in the wiring editor is refused by",
-    "RIG104 rather than silently reporting nothing, which is the honest answer while",
-    "the firmware cannot poll it."
+    "channels.v1.json, and a third port declared in the wiring editor is refused by",
+    "RIG104 rather than silently reporting nothing."
   ],
   "code_min": 0,
   "code_max": 999,
@@ -72,41 +63,17 @@
     "Six codes already exceed 255 (256, 257, 258, 262, 357, 369), so nothing may store",
     "a strobe in a uint8."
   ],
-  "free_ranges": [
+  "reserved": [
     [
-      117,
-      220
-    ],
-    [
-      227,
-      232
-    ],
-    [
-      235,
-      241
-    ],
-    [
-      244,
-      245
-    ],
-    [
-      259,
-      261
-    ],
-    [
-      263,
-      356
-    ],
-    [
-      358,
-      368
-    ],
-    [
-      370,
-      999
+      0,
+      100
     ]
   ],
-  "_free_ranges_why": "Gaps in the firmware numbering. Non-contiguous and non-patterned, which is why the compiler must look codes up rather than compute them. NOTE the 107-220 gap is split around 110-113: those are retired, not free -- see `retired` below.",
+  "_reserved_why": [
+    "Never issued. 0-100 sit below the first code this lab's firmware ever used,",
+    "and keeping them out of the free pool means a low number in a stream is",
+    "always a fault to investigate, never a code someone added last week."
+  ],
   "codes": {
     "START_SESSION": {
       "code": 221,
@@ -421,42 +388,34 @@
   },
   "retired": {
     "_readme": [
-      "Codes that were emitted by firmware this repository no longer contains, and",
-      "which MUST NOT be reused. This is the third state: neither declared (nothing",
-      "emits them) nor free (`free_ranges` excludes them), and `is_free()` consults",
-      "both.",
+      "Codes that some recorded session contains and nothing may emit any more. This",
+      "is the third state: not live (the generated TaskPins.h does not define them, so",
+      "firmware that still emits one fails to compile) and not free (reissuing one",
+      "would silently merge two unrelated event types in any analysis spanning the",
+      "change). A retired code may be reinstated under its own name and meaning;",
+      "it can never be removed while a file that contains it exists.",
       "",
-      "THE ENTRY CONDITION IS THAT A REAL SESSION CONTAINS THEM. That is what",
-      "separates this section from deletion -- 24,600 recorded events carry the codes",
-      "below, and reissuing one would silently merge two unrelated event types in any",
-      "analysis that spans the boundary. A code declared for firmware that never ran",
-      "was reclaimed instead; see the note in the file's own readme.",
-      "",
-      "The replay validator recognises them by name so a legacy session reports",
-      "'retired code' rather than 'unknown code' -- a distinction that matters,",
-      "because one is explained and the other is a question."
+      "Task profiles decode them by name, so a legacy session reports 'retired code'",
+      "rather than 'unknown code' -- a distinction that matters, because one is",
+      "explained and the other is a question."
     ],
     "DUMMY_SOLENOID_CLICK_1": {
       "code": 110,
-      "retired": true,
       "seen_in": "GRGL_2-Odor, June 2026, 29 sessions",
       "rationale": "Dummy solenoid click. Emitted between a terminal and the next LIGHTS_ON to mask the audible cue of the real odor valve, so a subject could not use valve noise to predict the trial."
     },
     "DUMMY_SOLENOID_CLICK_2": {
       "code": 111,
-      "retired": true,
       "seen_in": "as above",
       "rationale": "See DUMMY_SOLENOID_CLICK_1."
     },
     "DUMMY_SOLENOID_CLICK_3": {
       "code": 112,
-      "retired": true,
       "seen_in": "as above",
       "rationale": "See DUMMY_SOLENOID_CLICK_1."
     },
     "DUMMY_SOLENOID_CLICK_4": {
       "code": 113,
-      "retired": true,
       "seen_in": "as above",
       "rationale": "See DUMMY_SOLENOID_CLICK_1."
     }

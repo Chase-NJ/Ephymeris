@@ -617,12 +617,12 @@ def test_a_withhold_condition_is_not_an_axis() -> None:
     do", which is precisely the value a careless axis would pick up."""
     with_nogo = parse_profile({
         **GRGL,
-        "strobes": {**GRGL["strobes"], "244": "WATER_POKE_NONE"},
+        "strobes": {**GRGL["strobes"], "256": "WATER_POKE_NONE"},
         "liveMetrics": [
             *GRGL["liveMetrics"],
             {
                 "id": "p_withhold", "label": "P(withhold | Odor 5)",
-                "triggerCode": 105, "successCode": 244, "alternateCode": 248,
+                "triggerCode": 105, "successCode": 256, "alternateCode": 248,
                 "windowSize": 20,
             },
         ],

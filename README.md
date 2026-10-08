@@ -184,7 +184,7 @@ The guards that matter most:
 - `test_analytics_infer.py`: inference from the strobe stream scores identically to the declared GRGL
   profile. Extend it before touching either side.
 - `test_analytics_derive.py`: the metric definitions, and the payload's field names against `CODEC_VERSION`.
-- `test_taskdef.py`: the strobe vocabulary against the firmware's `BoxStrobes.h`, in both directions.
+- `test_taskdef.py`: the default strobe vocabulary against the names the staged firmware emits, in both directions; `test_strobes.py`: vocabulary edits, the archive scan, and the v13 hash re-key.
 - `test_debug_flash.py`: a Debug Mode flash survives the utility baseline, and Debug scoring matches a session's.
 - `test_writer.py`: kills a child mid-write to prove the `.tsv` crash guarantee.
 - `test_doc_links.py`: every `FILE.md#anchor` cited anywhere in the repo exists.

@@ -30,8 +30,9 @@ const collator = new Intl.Collator(undefined, {
 });
 
 /**
- * Every run in the session — **no profile filter, no status filter** — sorted
- * by animal name, then start time so a restart pair keeps its own order.
+ * Every counted run in the session — **no profile filter, no status filter** —
+ * sorted by animal name, then start time so a restart pair keeps its own order.
+ * False starts are not here; `sessionFalseStartsOf` lists them.
  *
  * The strategy planes stay profile-scoped internally, because metrics from
  * different tasks are not comparable. This panel is a roll call, not a
@@ -43,16 +44,60 @@ export function sessionRunsOf(
   summary: AnalyticsSummary,
   sessionId: string,
 ): RunSummary[] {
+  return sortRuns(
+    summary,
+    summary.runs.filter((run) => run.sessionId === sessionId),
+  );
+}
+
+/**
+ * The session's runs set aside as false starts (`DATA.md#false-starts`), in
+ * the same order as `sessionRunsOf`. Never mixed into that list: every panel
+ * that reads it would otherwise have to remember to skip them.
+ */
+export function sessionFalseStartsOf(
+  summary: AnalyticsSummary,
+  sessionId: string,
+): RunSummary[] {
+  return sortRuns(
+    summary,
+    summary.falseStarts.filter((run) => run.sessionId === sessionId),
+  );
+}
+
+/**
+ * Per animal, every run of the session — counted and set aside, in start
+ * order — for each animal that ran more than once or has a run set aside.
+ * The rows the false-start ruling is made on.
+ */
+export function restartsOf(
+  summary: AnalyticsSummary,
+  sessionId: string,
+): { animalId: string; runs: RunSummary[] }[] {
+  const all = sortRuns(summary, [
+    ...summary.runs.filter((run) => run.sessionId === sessionId),
+    ...summary.falseStarts.filter((run) => run.sessionId === sessionId),
+  ]);
+  const byAnimal = new Map<string, RunSummary[]>();
+  for (const run of all) {
+    const list = byAnimal.get(run.animalId) ?? [];
+    list.push(run);
+    byAnimal.set(run.animalId, list);
+  }
+  return [...byAnimal.entries()]
+    .filter(([, runs]) => runs.length > 1 || runs.some((run) => run.falseStart))
+    .map(([animalId, runs]) => ({ animalId, runs }));
+}
+
+function sortRuns(summary: AnalyticsSummary, runs: RunSummary[]): RunSummary[] {
   const names = new Map(summary.animals.map((animal) => [animal.id, animal.name]));
-  return summary.runs
-    .filter((run) => run.sessionId === sessionId)
-    .sort((a, b) => {
-      const byName = collator.compare(
-        names.get(a.animalId) ?? a.animalId,
-        names.get(b.animalId) ?? b.animalId,
-      );
-      return byName !== 0 ? byName : a.startedAt.localeCompare(b.startedAt);
-    });
+  return [...runs].sort((a, b) => {
+    const byName = collator.compare(
+      names.get(a.animalId) ?? a.animalId,
+      names.get(b.animalId) ?? b.animalId,
+    );
+    return byName !== 0 ? byName : a.startedAt.localeCompare(b.startedAt);
+  });
 }
 
 /** One condition column of the session table — Go-R, Go-L, or whatever the

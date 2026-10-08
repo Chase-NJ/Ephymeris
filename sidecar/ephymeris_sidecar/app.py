@@ -52,6 +52,8 @@ from .logbook.service import LogbookService
 from .rig import registry as rig_registry
 from .sessions.repository import SessionRepository
 from .sessions.runner import ActiveRun, BoxConfig, SessionRunner
+from .strobes import store as strobe_store
+from .strobes.usage import ArchiveScanner, firmware_refs
 from .taskdef import bundled as bundled_sketches
 from .taskdef import store as taskdef_store
 from .taskdef.model import TaskDefinition, TaskDefinitionError
@@ -165,6 +167,17 @@ class Application:
         #: rather than read by them, so `rig` never learns about data_dir.
         self.hardware_store = hardware_store.HardwareStore(data_dir)
         self._install_rig_wiring()
+        #: This machine's strobe vocabulary — the one source of every code
+        #: (`TASKS.md#strobe-vocabulary`). Seeded from the shipped default on
+        #: first start, then pointed at the registry exactly as the wiring is.
+        self.vocab_store = strobe_store.VocabularyStore(data_dir)
+        try:
+            self.vocab_store.ensure_seeded()
+        except OSError as exc:
+            log.error("could not seed the strobe vocabulary (%s); decoding with the default", exc)
+        rig_registry.set_vocabulary_source(self.vocab_store.load)
+        #: Which recorded files contain which codes, for `strobes.remove`.
+        self.strobe_scanner = ArchiveScanner(self.db)
         #: `hardware.preview`/`save` ask it which profiles a rewiring would
         #: newly break — before the write, which is the whole point of asking.
         self._task_store: Any = self.task_store
@@ -206,7 +219,15 @@ class Application:
         self.server.register(Cmd.TASKS_PREVIEW, self._tasks_preview)
         self.server.register(Cmd.TASKS_SAVE, self._tasks_save)
         self.server.register(Cmd.TASKS_DELETE, self._tasks_delete)
-        self.server.register(Cmd.RIG_STROBES, self._rig_strobes)
+        self.server.register(Cmd.STROBES_GET, self._strobes_get)
+        self.server.register(Cmd.STROBES_USAGE, self._strobes_usage)
+        self.server.register(Cmd.STROBES_ADD, self._strobes_add)
+        self.server.register(Cmd.STROBES_EDIT, self._strobes_edit)
+        self.server.register(Cmd.STROBES_RETIRE, self._strobes_retire)
+        self.server.register(Cmd.STROBES_REINSTATE, self._strobes_reinstate)
+        self.server.register(Cmd.STROBES_REMOVE, self._strobes_remove)
+        self.server.register(Cmd.STROBES_EXPORT, self._strobes_export)
+        self.server.register(Cmd.STROBES_IMPORT, self._strobes_import)
         self.server.register(Cmd.COHORTS_SUGGEST_GROUPS, self._cohorts_suggest_groups)
 
         self.server.register(Cmd.SESSIONS_SUGGEST_NUMBER, self._sessions_suggest_number)
@@ -226,6 +247,7 @@ class Application:
         self.server.register(Cmd.SESSIONS_LIST, self._sessions_list)
         self.server.register(Cmd.ANALYTICS_SUMMARY, self._analytics_summary)
         self.server.register(Cmd.ANALYTICS_SERIES, self._analytics_series)
+        self.server.register(Cmd.ANALYTICS_SET_FALSE_START, self._analytics_set_false_start)
         self.server.register(Cmd.ANALYTICS_RESCAN, self._analytics_rescan)
         self.server.register(Cmd.ANALYTICS_RECENT_SESSIONS, self._analytics_recent_sessions)
         self.server.register(Cmd.SESSIONS_RECOVER, self._sessions_recover)
@@ -381,15 +403,17 @@ class Application:
 
         registry.set_rig_source(self.hardware_store.load)
 
-    async def _rebuild_for_wiring(self) -> None:
-        """Everything that carries a pin number, rebuilt. THE one call site.
+    async def _rebuild_generated(self) -> None:
+        """Everything that carries a pin number or a strobe code, rebuilt. THE
+        one call site, for a wiring change and a vocabulary edit alike.
 
-        Two outputs and one trigger, deliberately. A pin is compiled into every
+        Two outputs, deliberately. Pins and codes are compiled into every
         generated `TaskPins.h` — a task profile's and a bundled sketch's alike —
-        so a wiring change that rebuilt only one of them would leave the other
-        flashing the old pins. It would still compile, still run, and the only
-        symptom would be a valve that never fires. Splitting this into two calls
-        is how one of them eventually gets forgotten.
+        so a change that rebuilt only one of them would leave the other flashing
+        the old pins or the old codes. It would still compile, still run, and
+        the only symptom would be a valve that never fires or an event decoded
+        under the wrong name. Splitting this into two calls is how one of them
+        eventually gets forgotten.
 
         Ordering: rebuild first, then rescan, so discovery sees the new folders
         rather than reporting the ones it is about to replace.
@@ -1111,10 +1135,273 @@ class Application:
             event(Evt.TASKS_UPDATED, {"tasks": self.task_store.list_entries()})
         )
 
-    async def _rig_strobes(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        from .rig import registry
+    # -- strobe vocabulary (TASKS.md#strobe-vocabulary) ------------------- #
+    #
+    # Every edit takes `_rig_gate` — it rebuilds the same generated folders a
+    # wiring change does, and `_strobe_impact` installs a hypothetical
+    # vocabulary exactly as `impact_of` installs a hypothetical wiring — then
+    # leaves it for `_rebuild_generated`, which rescans and so cannot run inside.
 
-        return await asyncio.to_thread(lambda: registry.vocabulary().to_json())
+    def _vocabulary_payload(self) -> dict[str, Any]:
+        payload = rig_registry.vocabulary().to_json()
+        try:
+            self.vocab_store.load_strict()
+            payload["editable"], payload["problem"] = True, None
+        except strobe_store.StrobeRefused as exc:
+            payload["editable"], payload["problem"] = False, str(exc)
+        return payload
+
+    async def _strobes_get(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        return await asyncio.to_thread(self._vocabulary_payload)
+
+    async def _strobes_usage(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        name = self._strobe_name_arg(args)
+        scan = bool(args.get("scan"))
+        async with self._rig_gate:
+            usage = await asyncio.to_thread(self._strobe_impact, name)
+        if scan:
+            index = await self._scan_archive()
+            sessions = index.usage_of(usage["code"])
+            usage["sessions"] = sessions
+            if sessions["count"] and usage["removeBlocker"] is None:
+                usage["removeBlocker"] = (
+                    f"{name} is in {sessions['count']} recorded "
+                    f"session{'' if sessions['count'] == 1 else 's'}; retire it instead."
+                )
+        return usage
+
+    async def _strobes_add(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        name = self._strobe_name_arg(args)
+        code = args.get("code")
+        return await self._edit_vocabulary(
+            lambda doc: strobe_store.add(
+                doc,
+                name,
+                code,
+                rationale=str(args.get("rationale") or ""),
+                emitted_on=str(args.get("emittedOn") or ""),
+            )
+        )
+
+    async def _strobes_edit(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        name = self._strobe_name_arg(args)
+        return await self._edit_vocabulary(
+            lambda doc: strobe_store.edit(
+                doc,
+                name,
+                rationale=str(args.get("rationale") or ""),
+                emitted_on=str(args.get("emittedOn") or ""),
+            )
+        )
+
+    async def _strobes_retire(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        name = self._strobe_name_arg(args)
+        confirm = bool(args.get("confirm"))
+
+        def check(usage: dict[str, Any]) -> None:
+            self._refuse_unconfirmed(usage, confirm, "Retiring")
+
+        return await self._edit_vocabulary(
+            lambda doc: strobe_store.retire(doc, name), name=name, check=check
+        )
+
+    async def _strobes_reinstate(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        name = self._strobe_name_arg(args)
+        return await self._edit_vocabulary(lambda doc: strobe_store.reinstate(doc, name))
+
+    async def _strobes_remove(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        name = self._strobe_name_arg(args)
+        confirm = bool(args.get("confirm"))
+        # The scan runs BEFORE the gate: it can take minutes on a cold cache
+        # over a share, and holding the gate that long would stall the wiring
+        # editor's previews. It is re-checked against the document inside the
+        # gate by code, and a file recorded in the gap is the one race left —
+        # which is why a running session refuses every edit outright.
+        index = await self._scan_archive()
+
+        def check(usage: dict[str, Any]) -> None:
+            sessions = index.usage_of(usage["code"])
+            if sessions["count"]:
+                raise CommandError(
+                    ErrCode.STROBE_IN_RECORDED_SESSION,
+                    f"{name} is in {sessions['count']} recorded "
+                    f"session{'' if sessions['count'] == 1 else 's'}, so its number can "
+                    "never be reissued. Retire it instead.",
+                    sessions,
+                )
+            self._refuse_unconfirmed(usage, confirm, "Removing")
+
+        return await self._edit_vocabulary(
+            lambda doc: strobe_store.remove(
+                doc, name, sessions_containing=index.count(_code_in(doc, name))
+            ),
+            name=name,
+            check=check,
+        )
+
+    async def _strobes_export(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        doc = await asyncio.to_thread(self._load_vocabulary_strict)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return {
+            "document": strobe_store.export_document(doc),
+            "filename": f"strobe-vocabulary-{stamp}.json",
+        }
+
+    async def _strobes_import(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        other = args.get("document")
+        if not isinstance(other, dict):
+            raise CommandError(ErrCode.STROBE_INVALID, "That file is not a strobe vocabulary.")
+        if len(json.dumps(other).encode()) > strobe_store.MAX_VOCAB_BYTES:
+            raise CommandError(ErrCode.STROBE_INVALID, "That file is too large to be a vocabulary.")
+        doc = await asyncio.to_thread(self._load_vocabulary_strict)
+        try:
+            plan = strobe_store.plan_merge(doc, other)
+        except strobe_store.StrobeRefused as exc:
+            raise _strobe_error(exc) from exc
+        if not args.get("apply"):
+            return {"plan": plan.to_json(), "vocabulary": None}
+        vocabulary = await self._edit_vocabulary(
+            lambda current: strobe_store.apply_merge(
+                current, other, strobe_store.plan_merge(current, other)
+            )
+        )
+        return {"plan": plan.to_json(), "vocabulary": vocabulary}
+
+    # -- strobe helpers ---------------------------------------------------- #
+
+    async def _edit_vocabulary(
+        self,
+        edit: Any,
+        *,
+        name: str | None = None,
+        check: Any = None,
+    ) -> dict[str, Any]:
+        """Load, judge, edit, write, install, rebuild, announce — in that order.
+
+        `check` sees the code's usage under the gate, so a task saved a moment
+        after the page last looked is still counted. Nothing is written on any
+        refusal path.
+        """
+        if self._running_session_id is not None:
+            raise CommandError(
+                ErrCode.STROBE_SESSION_RUNNING,
+                "A session is running. Edit the vocabulary between sessions: every "
+                "edit regenerates the sketches the boxes were flashed from.",
+            )
+        async with self._rig_gate:
+            doc = await asyncio.to_thread(self._load_vocabulary_strict)
+            if name is not None and check is not None:
+                check(await asyncio.to_thread(self._strobe_impact, name))
+            try:
+                updated = edit(doc)
+                await asyncio.to_thread(self.vocab_store.save, updated)
+            except strobe_store.StrobeRefused as exc:
+                raise _strobe_error(exc) from exc
+            rig_registry.set_vocabulary_source(self.vocab_store.load)
+            payload = await asyncio.to_thread(self._vocabulary_payload)
+        await self._rebuild_generated()
+        await self.server.broadcast(event(Evt.STROBES_UPDATED, payload))
+        return payload
+
+    def _load_vocabulary_strict(self) -> dict[str, Any]:
+        try:
+            return self.vocab_store.load_strict()
+        except strobe_store.StrobeRefused as exc:
+            raise _strobe_error(exc) from exc
+
+    def _strobe_impact(self, name: str) -> dict[str, Any]:
+        """`StrobeUsage` minus the archive: firmware, slots, tasks it would break.
+
+        The task half is `impact_of`'s method with a vocabulary in place of a
+        wiring: every saved task validated with and without the code, and only
+        what is NEWLY broken reported. The hypothetical vocabulary is installed
+        and restored in a `finally`, for the reason `impact_of` gives.
+        """
+        vocab = rig_registry.vocabulary()
+        live = vocab.get(name)
+        retired = vocab.retired_entry(name)
+        if live is None and retired is None:
+            raise CommandError(ErrCode.STROBE_INVALID, f"{name} is not in the strobe vocabulary.")
+        code = live.code if live is not None else retired.code
+
+        library_root, _source = discovery.library_root()
+        refs = firmware_refs([
+            (library_root, "sketch"),
+            (self.task_store.root, "task"),
+        ]).get(name, [])
+        slot = vocab.slot_of(name)
+
+        breaks: list[dict[str, Any]] = []
+        if live is not None:
+            doc = self._load_vocabulary_strict()
+            try:
+                hypothetical = strobe_store.retire(doc, name)
+            except strobe_store.StrobeRefused:
+                hypothetical = None
+            if hypothetical is not None:
+                breaks = _impact_under_vocabulary(hypothetical, self._task_store)
+
+        blocker: str | None = None
+        if slot is not None:
+            blocker = (
+                f"{name} is how a response port on slot {slot} reports; a port with "
+                "a missing code records nothing, silently."
+            )
+        elif any(r.kind == "library" for r in refs):
+            blocker = (
+                f"the shared firmware library emits BF_{name}, so every sketch would "
+                "stop compiling. Remove it from the library first."
+            )
+        return {
+            "name": name,
+            "code": code,
+            "status": "live" if live is not None else "retired",
+            "firmware": [r.to_json() for r in refs],
+            "portSlot": slot,
+            "breaks": breaks,
+            "sessions": None,
+            "retireBlocker": blocker if live is not None else f"{name} is already retired.",
+            "removeBlocker": blocker,
+        }
+
+    def _refuse_unconfirmed(self, usage: dict[str, Any], confirm: bool, verb: str) -> None:
+        name = usage["name"]
+        blocker = usage["retireBlocker"] if verb == "Retiring" else usage["removeBlocker"]
+        if blocker is not None:
+            raise CommandError(ErrCode.STROBE_REQUIRED, f"{verb} {name} is refused: {blocker}")
+        named_by = usage["breaks"] or usage["firmware"]
+        if named_by and not confirm:
+            raise CommandError(
+                ErrCode.STROBE_WOULD_BREAK_TASKS,
+                f"{verb} {name} would stop firmware that names it compiling.",
+                {"breaks": usage["breaks"], "firmware": usage["firmware"]},
+            )
+
+    async def _scan_archive(self):  # noqa: ANN202
+        """Every recorded file this machine can reach, reduced to code sets.
+
+        Off the loop, progress broadcast every few dozen files so a cold scan
+        over a share reads as working rather than hung.
+        """
+        loop = asyncio.get_running_loop()
+
+        def progress(done: int, total: int) -> None:
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(
+                    self.server.broadcast(
+                        event(Evt.STROBES_SCAN_PROGRESS, {"done": done, "total": total})
+                    )
+                )
+            )
+
+        roots = self._cohort_roots()
+        return await asyncio.to_thread(self.strobe_scanner.scan, roots, progress)
+
+    def _strobe_name_arg(self, args: dict[str, Any]) -> str:
+        name = args.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise CommandError(ErrCode.STROBE_INVALID, "`name` must be a code name.")
+        return name.strip()
 
     # -- rig wiring -------------------------------------------------------- #
     #
@@ -1175,10 +1462,10 @@ class Application:
             )
             payload["breaks"] = breaks
 
-        # EVERY GENERATED SKETCH IS NOW STALE -- see `_rebuild_for_wiring`. This
+        # EVERY GENERATED SKETCH IS NOW STALE -- see `_rebuild_generated`. This
         # is what makes "a pin change applies to everything" true rather than a
         # claim, and it runs outside the gate because a rescan takes it.
-        await self._rebuild_for_wiring()
+        await self._rebuild_generated()
         await self._announce_rig(payload["status"])
         return payload
 
@@ -1190,7 +1477,7 @@ class Application:
                 hardware_service.document_payload, self.hardware_store
             )
         # Reset is a wiring change like any other -- see `_hardware_save`.
-        await self._rebuild_for_wiring()
+        await self._rebuild_generated()
         await self._announce_rig(payload["status"])
         return payload
 
@@ -1317,6 +1604,28 @@ class Application:
                 animal_ids=_opt_str_list(args.get("animalIds")),
                 min_counted=_opt_int(args.get("minCountedTrials")),
             )
+
+    async def _analytics_set_false_start(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """A person's ruling on one run (`DATA.md#false-starts`)."""
+        cohort_id = _str_arg(args, "cohortId")
+        run_id = _str_arg(args, "runId")
+        value = args.get("falseStart")
+        if value is not None and not isinstance(value, bool):
+            raise CommandError(ErrCode.BAD_MESSAGE, "`falseStart` must be true, false or null")
+        analytics = self._require_analytics()
+        with _cohort_errors():
+            try:
+                await asyncio.to_thread(analytics.set_false_start, cohort_id, run_id, value)
+            except KeyError as exc:
+                raise CommandError(
+                    ErrCode.BAD_MESSAGE, f"run {run_id} is not in this cohort"
+                ) from exc
+        # The log's what-changed is recomputed around the run — the run after
+        # it now compares with a different predecessor — so every session of
+        # the cohort's log is re-announced, not only this one.
+        if self.logbook is not None:
+            await self.logbook.refresh(cohort_id)
+        return {"runId": run_id}
 
     async def _analytics_series(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         run_ids = _opt_str_list(args.get("runIds")) or []
@@ -2280,3 +2589,49 @@ class _mapped_errors:
         if isinstance(exc, OSError):
             raise CommandError(ErrCode.PORT_OPEN_FAILED, str(exc), {"box": self.box}) from exc
         return False
+
+
+def _strobe_error(exc: strobe_store.StrobeRefused) -> CommandError:
+    code = {
+        "invalid": ErrCode.STROBE_INVALID,
+        "required": ErrCode.STROBE_REQUIRED,
+        "in_recorded_session": ErrCode.STROBE_IN_RECORDED_SESSION,
+        "would_break_tasks": ErrCode.STROBE_WOULD_BREAK_TASKS,
+        "import_conflict": ErrCode.STROBE_IMPORT_CONFLICT,
+        "unreadable": ErrCode.STROBE_VOCABULARY_UNREADABLE,
+    }.get(exc.reason, ErrCode.STROBE_INVALID)
+    return CommandError(code, str(exc), exc.detail or None)
+
+
+def _code_in(doc: dict[str, Any], name: str) -> int:
+    entry = doc.get("codes", {}).get(name) or doc.get("retired", {}).get(name) or {}
+    return int(entry.get("code", -1))
+
+
+def _impact_under_vocabulary(document: dict[str, Any], tasks: Any) -> list[dict[str, Any]]:
+    """`hardware/service.impact_of`, for a hypothetical vocabulary.
+
+    Which saved tasks generate today and would not under `document` — NEWLY,
+    so a task already failing for its own reasons is not blamed on this edit.
+    """
+    import copy
+
+    if tasks is None:
+        return []
+    entries = list(tasks.list_entries())
+    if not entries:
+        return []
+    before = {e["id"]: tasks.failures(e["id"]) for e in entries}
+    saved = rig_registry.current_vocabulary_source()
+    try:
+        rig_registry.set_vocabulary_source(lambda: copy.deepcopy(document))
+        after = {e["id"]: tasks.failures(e["id"]) for e in entries}
+    finally:
+        rig_registry.set_vocabulary_source(saved)
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        gained = sorted(after[entry["id"]] - before[entry["id"]])
+        if gained:
+            out.append({"specId": entry["id"], "label": entry.get("label"), "codes": gained})
+    return out
+

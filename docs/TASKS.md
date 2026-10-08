@@ -42,6 +42,8 @@ Everything between "a box runs firmware that emits strobes" and "the app draws i
   - [The sync channel](#the-sync-channel)
 - [Strobe vocabulary](#strobe-vocabulary)
   - [Append only](#append-only)
+  - [Editing the vocabulary](#editing-the-vocabulary)
+  - [Moving codes between machines](#moving-codes-between-machines)
   - [Every declared code is emitted](#every-declared-code-is-emitted)
   - [Port slots](#port-slots)
 - [Live metrics](#live-metrics)
@@ -91,7 +93,7 @@ Everything an experiment varies reaches the firmware one of two ways. Which way 
 
 | | Arrives at | Carries | Changing it costs |
 |---|---|---|---|
-| **Generated headers** (`TaskPins.h`, `TaskTrials.h`) | compile time | channel→pin map, strobe selection, the trial table, how many ramp stages and trial types exist, which selector runs | a rebuild and reflash |
+| **Generated headers** (`TaskPins.h`, `TaskTrials.h`) | compile time | channel→pin map, the strobe vocabulary, the trial table, how many ramp stages and trial types exist, which selector runs | a rebuild and reflash |
 | **The `START` line** | run time | every timing, hold, window, penalty, per-condition reward volume (`RW<n>`), pool weight (`PW<n>`), anti-bias clamp and stage threshold | one serial line |
 
 The two roads to the board. The left one runs once per save or rewiring; the right one runs at every start:
@@ -125,13 +127,13 @@ The dividing line is [`START_LINE_MAX`](#the-length-cap): a trial table and a pi
 
 The firmware lives in the sibling repo `../Arduino` (override with `EPHYMERIS_FIRMWARE_REPO`). `scripts/stage-sketches.mjs` copies it into this repo's gitignored `sketches/` (`npm run stage:sketches`; `npm run predev` runs it too). **Edit firmware in the Arduino repo and commit it there** — an edit under `sketches/` is discarded at the next stage.
 
-All trial logic lives in `libraries/BehaviorBox/BehaviorBox.h`: the serial helpers (strobe emitter, `START` reader, `STOP` poll), `TaskParams` and the one declarative wire-key list `TASK_PARAM_LIST` the `START` parser is generated from, the trial primitives (`TrialType`, `generateTrials`), the selection policies, and one `runTrial()` loop. That shared loop is why the state machine can be [derived](#derived-state-machine) rather than declared. The pinout is in `BoxPins.h` and the strobe codes in `BoxStrobes.h`.
+All trial logic lives in `libraries/BehaviorBox/BehaviorBox.h`: the serial helpers (strobe emitter, `START` reader, `STOP` poll), `TaskParams` and the one declarative wire-key list `TASK_PARAM_LIST` the `START` parser is generated from, the trial primitives (`TrialType`, `generateTrials`), the selection policies, and one `runTrial()` loop. That shared loop is why the state machine can be [derived](#derived-state-machine) rather than declared. The pinout is in `BoxPins.h`; the strobe codes are in no file of the firmware repo — the app generates them into `TaskPins.h`, and `BoxStrobes.h` only refuses to build without them.
 
 `emitStrobe()` also pulses a sync pin for electrophysiology alignment; see [RECORDING.md](RECORDING.md#the-sync-line).
 
 ### Guarded defaults
 
-Every definition in `BoxPins.h` and `BoxStrobes.h` is `#ifndef`-guarded. A sketch includes the generated headers around the library:
+Every pin in `BoxPins.h` is `#ifndef`-guarded. Strobe codes are not defaults at all: `BoxStrobes.h` defines none and stops the build with an `#error` unless the generated `TaskPins.h` has already defined them ([Strobe vocabulary](#strobe-vocabulary)). A sketch includes the generated headers around the library:
 
 ```cpp
 #include "TaskPins.h"    // pure preprocessor: pins, strobes, counts, selection mode
@@ -139,7 +141,7 @@ Every definition in `BoxPins.h` and `BoxStrobes.h` is `#ifndef`-guarded. A sketc
 #include "TaskTrials.h"  // constructs TrialType, so it must come after
 ```
 
-Whatever `TaskPins.h` declares wins; everything else falls back to the box as built. `TaskPins.h` must stay pure preprocessor — it is read before `BehaviorBox.h` has defined any type.
+Whatever `TaskPins.h` declares wins; an unmentioned pin falls back to the box as built. A sketch built bare from the firmware repo therefore does not compile — build the folder the app generated. `TaskPins.h` must stay pure preprocessor — it is read before `BehaviorBox.h` has defined any type.
 
 ### Counts that move with their key lists
 
@@ -251,7 +253,7 @@ Skip reasons, each reported with its path:
 | `taskName` | non-empty string | **required** | Display name |
 | `kind` | `"behavior"` \| `"utility"` | `"behavior"` | Anything else raises |
 | `config` | array | `[]` | Fields for the form, the `START` line and the session file |
-| `strobes` | object, integer-string keys → names | `{}` | Code→name map |
+| `strobes` | object, integer-string keys → names | — | **Ignored** in a sketch's `task.json`: filled from the [strobe vocabulary](#strobe-vocabulary) at load. Kept verbatim in a session snapshot |
 | `liveMetrics` | array | `[]` | Rolling P metrics, and the gate on the diagram's condition rows |
 | `controls` | array | `[]` | Utility profiles: Debug Mode widgets |
 | `telemetry` | object | absent | Utility profiles: how to parse `STATUS` lines |
@@ -301,24 +303,28 @@ Each ramp row is a group of ordinary `int` fields with wire keys `S<n>P` (odor-p
 
 ### Strobes
 
-`strobes` maps code → name. Keys are coerced with `int()` (a non-integer raises); values are taken verbatim. The end-of-session code is found by **name** — the first entry whose name contains `END_SESSION` — which is how the runner knows to finalize.
+A profile does not declare strobe codes. `load_profile` fills `TaskProfile.strobes` with the machine's whole [strobe vocabulary](#strobe-vocabulary) — every live code and every retired one, code → name — and a `strobes` key still found in a sketch's `task.json` is ignored with a warning, once per file. The end-of-session code is found by **name**: the first entry whose name contains `END_SESSION`, which is how the runner knows to finalize.
 
-> [!WARNING]
-> **Declare the whole shared `BF_*` vocabulary, not the subset this sketch happens to emit.** Three consumers key entirely off this map: Mission Control's strobe console decodes through it, `liveTrials.ts`'s `vocabFrom` builds its recogniser from it, and the [state machine](#derived-state-machine) is derived from it. A partial map degrades all three silently — the console shows `Strobe 233`, the diagram loses a state, the live token strands — and nothing errors. What a sketch *presents* is stated by `liveMetrics`, never by which codes it lists here, so declaring the full set costs nothing.
+Mission Control's strobe console, `liveTrials.ts`'s `vocabFrom` and the [state machine](#derived-state-machine) all key off this map, so it is always the full set. It used to be a hand-maintained copy in each `task.json`, and a partial copy degraded all three silently. What a sketch *presents* is stated by `liveMetrics`, never by which codes the map holds.
+
+> [!IMPORTANT]
+> **A session snapshot keeps its own map.** `parse_profile` without a vocabulary — an embedded profile in a session file, a stored `task_profiles` row — reads `strobes` verbatim, because that map is the record of what decoded the run and must survive the vocabulary being edited afterwards ([DATA.md](DATA.md#the-embedded-task-profile)).
 
 ### Live metric entries
 
 ```jsonc
 { "id": "p_r_odor1", "label": "P(R | Odor 1)",
-  "triggerCode": 101, "successCode": 249, "alternateCode": 248, "windowSize": 20 }
+  "trigger": "ODOR_1_ON", "success": "WATER_POKE_R", "alternate": "WATER_POKE_L", "windowSize": 20 }
 ```
+
+Each code is named, and resolved against the vocabulary at load; a name that is not a live code raises. The numeric keys (`triggerCode`, `successCode`, `alternateCode`) still parse, because every recorded snapshot carries them, and `to_json` always writes numbers — so the two spellings of one metric hash the same.
 
 | Key | Required | Notes |
 |---|:---:|---|
 | `id` | yes | A stable identifier only. A generated profile numbers them (`p_correct_1`), which names no condition |
-| `triggerCode` | yes | Opens a trial for this metric |
-| `successCode` | yes | Scores a hit |
-| `alternateCode` | yes | Scores a miss (still in the denominator) |
+| `trigger` (or `triggerCode`) | yes | Opens a trial for this metric |
+| `success` (or `successCode`) | yes | Scores a hit |
+| `alternate` (or `alternateCode`) | yes | Scores a miss (still in the denominator) |
 | `label` | | What every readout titles the metric with. Falls back to `id`; a generated profile builds it from the trial type's required name |
 | `windowSize` | | Default 20, matching the firmware's anti-bias `biasWindow` default |
 
@@ -441,13 +447,13 @@ A definition with diagnostics **still saves, and still generates a flashable ske
 
 ### Saving and regeneration
 
-A saved task's folder is regenerated on `tasks.save`, at **every sidecar start**, and on every `hardware.save`/`hardware.reset`.
+A saved task's folder is regenerated on `tasks.save`, at **every sidecar start**, on every `hardware.save`/`hardware.reset`, and on every [vocabulary edit](#editing-the-vocabulary).
 
 - **At start**, because a folder written by an older generator either stops compiling (loud — `TrialType` grew an argument) or sends keys the firmware no longer parses (silent).
-- **On a wiring change**, because pins are compiled into `TaskPins.h`.
+- **On a wiring change or a vocabulary edit**, because pins and strobe codes are compiled into `TaskPins.h`.
 
 A wiring change, from the Rig tab's save to the rescan (`_hardware_save`, `_hardware_reset`,
-`_rebuild_for_wiring` in `app.py`). Startup runs the same two rebuilds inline, before anything can flash:
+`_rebuild_generated` in `app.py`). A vocabulary edit joins at `_rebuild_generated` after installing its document. Startup runs the same two rebuilds inline, before anything can flash:
 
 ```mermaid
 flowchart TD
@@ -457,7 +463,9 @@ flowchart TD
     write -->|"not a rig document"| invalid["RIG_INVALID<br/>nothing written"]
     reset["hardware.reset"] --> install
     write -->|"written"| install["set_rig_source:<br/>ChannelMap cache cleared"]
-    install --> rebuild["_rebuild_for_wiring"]
+    install --> rebuild["_rebuild_generated"]
+    vocab["strobes.add / retire / remove …"] --> vinstall["set_vocabulary_source:<br/>vocabulary cache cleared"]
+    vinstall --> rebuild
     rebuild --> tasks["Regenerate every saved task"]
     rebuild --> bundled["Rebuild every bundled sketch<br/>that includes TaskPins.h"]
     tasks --> rescan["Rescan the library"]
@@ -465,7 +473,7 @@ flowchart TD
 ```
 
 > [!CAUTION]
-> **A wiring change must rebuild every stored profile AND every bundled sketch, and the failure is invisible if it does not.** A stale folder still compiles and runs; the only symptom is a valve that never fires. Both rebuilds go through the one call site `Application._rebuild_for_wiring` (rebuild, then rescan), because splitting it into two calls is how one eventually gets forgotten.
+> **A wiring change or a vocabulary edit must rebuild every stored profile AND every bundled sketch, and the failure is invisible if it does not.** A stale folder still compiles and runs; the only symptom is a valve that never fires or an event decoded under the wrong name. Both rebuilds go through the one call site `Application._rebuild_generated` (rebuild, then rescan), because splitting it into two calls is how one eventually gets forgotten.
 
 ### Rebuilt bundled sketches
 
@@ -474,9 +482,9 @@ The shipped sketches compile against `BoxPins.h`'s defaults — the box as built
 | Rule | Why |
 |---|---|
 | **Opt in by `#include "TaskPins.h"`** in the `.ino` | Read from the source, so there is no manifest to drift. A test asserts every bundled sketch that drives a pin opts in. |
-| **Pins only** (`bundled_pins_h`) | No counts, trial table or strobe overrides — a bundled sketch only references codes its own `BoxStrobes.h` defines. |
+| **Pins and the vocabulary** (`bundled_pins_h`) | No counts or trial table — those are what a task adds — but every live code, since `BoxStrobes.h` defines none. |
 | **Always rebuilt from the bundle** | `repin` refuses a source inside the rebuild root, since it clears the target before copying. |
-| **On failure the bundled entry stands** | A rig that cannot flash at all is worse than one flashing a wrong pin, which is visible the moment someone watches the box. |
+| **On failure the bundled entry stands** | And refuses to compile at `BoxStrobes.h`, loudly — a refused flash with a reason beats firmware strobing numbers the machine decodes differently. |
 
 ### Order is meaning
 
@@ -552,29 +560,63 @@ A well-formed document describing an impossible box is a successful reply carryi
 
 ## Strobe vocabulary
 
-`rig/schema/strobe_vocab.v1.json` is the registry of every `BF_*` code (`rig.strobes` over the wire), read by `registry.vocabulary()`. It is shown read-only at `/task/strobes`. The page lives on the Task tab rather than Rig because a code is what a *condition is named by* — the trial table's onset picker is its only consumer — while a pin is compile-time input that belongs to the box.
+Each machine owns one vocabulary document, `<data_dir>/strobes/vocabulary.json`, and it is **the only place a strobe code is defined**. Everything else derives from it:
 
-![The Strobe vocabulary page: a summary line (38 codes in use, 4 retired and reserved, the free ranges to issue from), the In use table listing each code, its BF name and meaning, and below it the Retired table starting with 110 DUMMY_SOLENOID_CLICK_1](images/task-strobes.webp)
+| Consumer | How it gets the codes |
+|---|---|
+| Firmware | `TaskPins.h` defines `BF_<NAME> <code>` for every live code, in every generated task folder and every rebuilt bundled sketch (`generate._strobe_lines`). `BoxStrobes.h` defines none and `#error`s without them |
+| Task profiles | `load_profile` fills `strobes` from it ([Strobes](#strobes)); `liveMetrics` name their codes |
+| The app | `registry.vocabulary()`, over the wire as `strobes.get` and `strobes.updated` |
 
-*The odor onsets run 101–109 then 114–116, stepping over the retired 110–113, which is why a code is always
-looked up by name.*
+The first start on a machine seeds the document from the shipped default, `rig/schema/strobe_vocab.default.json`; after that the default is never read there. There is deliberately **no reset**: a reset could drop a code this machine added and then reissue its number. A document that will not read is decoded with the default, logged, flagged on the page, and **every edit is refused** until it is repaired, for the same reason.
+
+The page is `/task/strobes`. It lives on the Task tab rather than Rig because a code is what a *condition is named by* — the trial table's onset picker is its main consumer — while a pin is compile-time input that belongs to the box.
+
+![The Strobe vocabulary page: a code band from 0 to 999 showing the reserved range, the live onset run 101–116 with the retired 110–113 gap, and the live codes from 221 to 369; below it the filtered code table with ODOR_3_ON selected, and a detail panel giving its meaning, the two sketches that name it, the archive check, and Retire and Remove](images/task-strobes.webp)
+
+*The band makes the numbering visible: the odor onsets run 101–109 then 114–116, stepping over the
+retired 110–113, which is why a code is always looked up by name.*
 
 ### Append only
 
 > [!CAUTION]
-> **A code is never renumbered and never repurposed.** Tens of thousands of recorded events carry these numbers; reissuing one silently merges two unrelated event types in any analysis spanning the change.
+> **A code is never renumbered and never repurposed, and a name is never reissued with a different number.** Tens of thousands of recorded events carry these numbers; reissuing one silently merges two unrelated event types in any analysis spanning the change.
 
-- New codes come from `free_ranges`.
-- A code whose emitter is gone but which a **real session** contains moves to `retired` and stays reserved forever. Retired is a third state — neither live nor free — and `Vocabulary.is_free()` consults all three.
-- **Deleting a code is possible exactly once, and the bar is not "unused".** It is "no recorded session has ever contained it", checked against the archive rather than assumed. A code emitted even once, to a file that still exists, can never be reclaimed; it goes to `retired`.
+- A code is **free** when it lies in `code_min`..`code_max` (999 — the host parses three digits), outside `reserved` (0–100), and is neither live nor retired. Free ranges are derived, never stored.
+- A code whose emitter is gone but which a **real session** contains moves to `retired` and stays reserved forever. Retired is a third state — neither live nor free — and the generated header does not define it, so firmware that still emits it fails to compile.
+- **Removing a code is possible, and the bar is not "unused".** It is "no recorded session has ever contained it", checked against the archive rather than assumed. A code emitted once, to a file that still exists, can never be removed; retire it.
 
-Resolution is always **by name**: codes are non-contiguous (the odor onsets step over a retired block), so anything that computes a code rather than looking it up is wrong by construction. The viewer is read-only on purpose; the only safe future edit is *adding* a code from a free range.
+### Editing the vocabulary
+
+Every edit is a `strobes.*` command (`app.py`, rules in `strobes/store.py`, evidence in `strobes/usage.py`). The sidecar computes the blockers (`strobes.usage`) so the page never predicts one, checks them again inside `_rig_gate` when the edit is made, and refuses every edit while a session is running.
+
+| Edit | Refused outright | Needs `confirm` |
+|---|---|---|
+| **Add** | malformed name (`^[A-Z][A-Z0-9_]*$`, no `BF_`), a name already live **or retired**, a number that is not free, a blank meaning | never |
+| **Edit meaning** | a retired code; any change to the name or number (not offered) | never |
+| **Retire** | a [port-slot](#port-slots) code; a code the shared firmware library names (every sketch would stop compiling) | a saved task or bundled sketch names it (`STROBE_WOULD_BREAK_TASKS`) |
+| **Reinstate** | — | never; the name and number were never reissued |
+| **Remove** | **any recorded session contains it** (`STROBE_IN_RECORDED_SESSION`); the retire refusals above | as for retire |
+
+**Where a code is used** has three answers, all computed per request:
+
+- **Firmware:** a regex for `BF_<NAME>` over every source file under the sketch library and the saved-task folders, comments stripped, the generated `TaskPins.h` and any `extras/` folder (a library's host tests) excluded. A hit under `libraries/` is a `library` reference.
+- **Tasks:** `impact_of`'s method with a hypothetical vocabulary in place of a wiring — every saved task validated with and without the code, only what is *newly* broken reported.
+- **Sessions:** `ArchiveScanner` walks every cohort's data folder (archived ones included) plus every file the database lists, reading each `.json` and each `.tsv` with no `.json` beside it — a crashed or running session is a recorded session. Results are cached per file in `strobe_scan_cache` on (path, mtime, size), so only the first scan reads everything; it publishes `strobes.scanProgress`.
+
+> [!WARNING]
+> **The scan sees only this machine.** Another rig's archive, an unmounted drive, a folder no cohort points at — none is checked. The reply reports what was (`scanned`: files, roots, unreachable roots, unreadable files) and the Remove dialog says so. If a code may have been recorded elsewhere, retire it instead.
+
+### Moving codes between machines
+
+Vocabularies are per machine, so a lab with two rigs keeps them in step by **Export** and **Import** on the page (`strobes.export`, `strobes.import`). An import is a **union**: it adds codes this machine lacks, and a code retired there and live here is retired here too (some session there contains it). It never removes a code, and never reinstates one. Any **conflict** — one name with two numbers, or one number with two names — refuses the whole import: picking a winner would relabel one machine's recorded data. `strobes.import` with `apply: false` returns the plan and writes nothing; the dialog shows it before applying. A v2 export (stored `free_ranges`) is read as v3.
 
 ### Every declared code is emitted
 
-Every `BF_*` code the vocabulary declares is emitted somewhere in the firmware. If you add a code, emit it; a declared code that is never strobed is a bug, not a convention. The two deliberate non-emitters in `BehaviorBox.h` — `shutdownHardware()` (runs before the clock is stamped and in utility sketches) and `flashLight()` (one `LIGHTS_OFF` per blink would bury the real light edges) — carry comments saying why.
+A declared code that nothing can emit is a name in every picker that no session will contain; an emitted code the vocabulary lacks would arrive as an unlabelled number. The second is now impossible for named codes — the generated header is the only definition, so firmware naming an undeclared code does not compile. The first is checked two ways:
 
-`tests/test_taskdef.py` pins the vocabulary to `BoxStrobes.h` in **both directions**: a declared code the firmware cannot emit is a name in every picker that no session will contain, and an emitted code the vocabulary omits arrives in the data as an unlabelled number.
+- **The shipped default** is pinned by `tests/test_taskdef.py` against the staged firmware: every `BF_*` the library and bundled sketches name is a live default code, and every default code is either named there or is a stimulus onset (`_<n>_ON`) the trial table can bind to a line. The two deliberate non-emitters in `BehaviorBox.h` — `shutdownHardware()` (runs before the clock is stamped and in utility sketches) and `flashLight()` (one `LIGHTS_OFF` per blink would bury the real light edges) — carry comments saying why.
+- **A code added on a machine** cannot be tested; its detail panel says "nothing on this machine names it — no firmware emits it yet" until a sketch does. Add the code first, then write `BF_<NAME>` into the firmware.
 
 ### Port slots
 
@@ -664,7 +706,7 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 
 | | `profile_hash` | `params_hash` |
 |---|---|---|
-| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `strobes`, `liveMetrics`, `controls`, `legacyNames`, and `telemetry`/`identify` when present | one run's merged parameter values, keyed by `metadataKey` |
+| Input | the serialized profile — `taskName`, `kind`, the full `config` array **including presentation keys** (`group`, `label`, `unit`, `help`, ranges), `liveMetrics` (as codes), `controls`, `legacyNames`, and `telemetry`/`identify` when present — **not** `strobes` | one run's merged parameter values, keyed by `metadataKey` |
 | `None` input | n/a | returns `None` — a run with no recorded parameters is not a run recorded with none |
 | Stored on | `task_profiles.hash` (content-addressed) | `session_animal_runs.params_hash`, beside `config_json` |
 
@@ -674,6 +716,7 @@ Both are SHA-256 over canonical JSON (`sort_keys`, compact separators), truncate
 What this rests on:
 
 - **Anything in `to_json` moves `profile_hash`**, and a moved hash permanently splits a task's runs in Analytics (old hashes cannot be recomputed). This is why the diagram is derived rather than declared, why the parameter rail's tab fold is the app's rather than the profile's ([Parameter rail](#parameter-rail)), and why `group` must not be re-filed in `fields.py` casually. Editing a saved task — renaming a condition, which renames its metric label — is a new declaration and correctly a new hash. So is a generator change that alters what every regenerated `task.json` contains; earlier runs then group separately and still decode by their own snapshot.
+- **`strobes` is left out** because a loaded profile's map is the machine's whole vocabulary: hashing it would split every task's history the first time anyone added a code, and codes are never renumbered, so the map says nothing about comparability. Stored hashes were re-keyed once when this changed (`cohorts/db.py` `_to_v13`, [DATA.md](DATA.md#changing-the-schema)).
 - **`to_json` must round-trip through `parse_profile` byte-for-byte.** A finalized session file embeds its profile ([DATA.md](DATA.md#per-animal-files)); if the round trip drifts, a copied run lands under a different hash than its origin.
 - **`intan_*` fields are core, not config** (`CORE_METADATA_KEYS`), so they stay out of `params_hash`: two runs of one tuning are comparable whether or not one was recorded.
 
@@ -842,11 +885,11 @@ For a firmware author adding a sketch to the bundle with its own hand-written `t
 
 ### Authoring steps
 
-1. **Write the sketch in `../Arduino`**, inside a category folder, with `<Name>/<Name>.ino`. If it drives any pin, `#include "TaskPins.h"` before `<BehaviorBox.h>` (and ship a `TaskPins.h` that declares nothing) so the app rebuilds it against each rig's wiring. A name must not collide with a saved task.
+1. **Write the sketch in `../Arduino`**, inside a category folder, with `<Name>/<Name>.ino`. `#include "TaskPins.h"` before `<BehaviorBox.h>` (and ship a `TaskPins.h` that declares nothing) so the app rebuilds it against each rig's wiring and vocabulary — a `BehaviorBox` sketch without it does not compile. A name must not collide with a saved task.
 2. **Minimum profile:** `{ "taskName": "My Task" }`. This alone gives a bare `START`, no form, a raw log and no diagram.
-3. **Declare the whole `BF_*` vocabulary** in `strobes` ([Strobes](#strobes)). Which names you declare unlocks each part of the diagram ([Nodes and outcomes](#nodes-and-outcomes)); `END_SESSION` is what lets the runner finalize cleanly.
+3. **Emit only codes the vocabulary holds.** Add any new one on the Strobes page first ([Editing the vocabulary](#editing-the-vocabulary)), then emit `BF_<NAME>`. Don't declare `strobes` in `task.json`; the vocabulary fills it. Which names the vocabulary holds unlocks each part of the diagram ([Nodes and outcomes](#nodes-and-outcomes)); `END_SESSION` is what lets the runner finalize cleanly.
 4. **Declare every operator-tunable parameter** in `config`, with `wireKey`s that `TASK_PARAM_LIST` parses, a `metadataKey` you want in the data file, a `group` from `GROUP_ORDER` (unknown groups sort last), and ramped values **per stage**. Mind the [length cap](#the-length-cap).
-5. **Declare `liveMetrics`**, one per presented condition. A metric whose `triggerCode` is an `ODOR_<n>_ON` code is what draws that condition; one scoring `WATER_POKE_NONE` draws the withhold arm.
+5. **Declare `liveMetrics`**, one per presented condition, naming its codes. A metric whose `trigger` is an `ODOR_<n>_ON` code is what draws that condition; one scoring `WATER_POKE_NONE` draws the withhold arm.
 6. **Optional:** `legacyNames`; `identify` (a baseline candidate); `kind: "utility"` with `controls` and `telemetry` for a Debug Mode tool.
 7. **Stage and rebuild:** `npm run stage:sketches`, restart the app (a bundled sketch change ships only with a new build).
 
@@ -863,11 +906,13 @@ For a firmware author adding a sketch to the bundle with its own hand-written `t
 |---|---|
 | Sketch missing from the picker | `.ino` doesn't match the folder name, or the sketch sits at the root; check `skipped` |
 | No diagram, just prose | `usable` is false: `LIGHTS_ON` or all three water-poke codes undeclared |
-| A condition is missing | No `liveMetrics` entry has that odor's code as its `triggerCode` |
+| A condition is missing | No `liveMetrics` entry has that odor's code as its `trigger` |
 | "Withheld" never appears | `WATER_POKE_NONE` declared but not scored by any metric |
 | Token sticks on Reward for the ITI | `WATER_UNPOKE_L`/`_R` undeclared |
 | Token jumps straight to Answer | `LIGHTS_OFF` undeclared |
-| Console shows `Strobe <n>` | That code isn't in `strobes` |
+| Console shows `Strobe <n>` | The firmware emitted a raw number the vocabulary never issued |
+| `#error "No strobe codes…"` | Built bare — compile the folder the app generated |
+| Compile error naming a `BF_` code | The code is retired or was never added; reinstate or add it on the Strobes page |
 | Mapping refused, `TASK_PROFILE_INVALID` | `START` line over the cap |
 | A value ignored by the board | `wireKey` not parsed by `TASK_PARAM_LIST` |
 | A value reverts mid-session | A ramped value declared once instead of per stage |
@@ -878,7 +923,7 @@ For a firmware author adding a sketch to the bundle with its own hand-written `t
 
 All raise `TaskProfileError`, surfaced as `TASK_PROFILE_INVALID` ([PROTOCOL.md](PROTOCOL.md#error-codes)):
 
-- **Parse:** a non-object root; missing `taskName`; unknown `kind`; malformed `config` (missing keys, unknown type, reserved `SEED`, a core-field collision, duplicates, a default of the wrong type, whitespace in a string default, non-string `group`/`unit`/`help`, non-numeric `min`/`max`/`step`, `min > max`); non-object `strobes` or a non-integer key; a `liveMetrics` entry missing a required key; malformed `controls` or `telemetry`; `identify` missing a half; `legacyNames` not a list of strings.
+- **Parse:** a non-object root; missing `taskName`; unknown `kind`; malformed `config` (missing keys, unknown type, reserved `SEED`, a core-field collision, duplicates, a default of the wrong type, whitespace in a string default, non-string `group`/`unit`/`help`, non-numeric `min`/`max`/`step`, `min > max`); non-object `strobes` or a non-integer key (snapshots only); a `liveMetrics` entry missing a required key, or naming a code that is not live; malformed `controls` or `telemetry`; `identify` missing a half; `legacyNames` not a list of strings.
 - **Load:** unreadable or invalid JSON (`couldn't read task.json: …`). A missing file is not an error.
 - **Build:** the `START` line plus the seed budget over `START_LINE_MAX`.
 
@@ -888,7 +933,7 @@ All raise `TaskProfileError`, surfaced as `TASK_PROFILE_INVALID` ([PROTOCOL.md](
 
 | Situation | Result |
 |---|---|
-| Incomplete `strobes` | Lost diagram states, undecoded console lines, a stranded live token |
+| A vocabulary without a name the diagram gates on | Lost diagram states, a stranded live token |
 | An odor code no metric scores | Dropped from the diagram (`TSK112` on a saved task; `unlisted` live) |
 | Unknown top-level keys or `group` names | Ignored; unknown groups sort last |
 | Out-of-range number in the form | Clamped, never rejected |

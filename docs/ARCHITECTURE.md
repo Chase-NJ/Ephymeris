@@ -1235,9 +1235,10 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `cohorts/` | `db.py` (SQLite, schema, migrations), `models.py`, `repository.py`, `folders.py`, `grouping.py` | [DATA.md](DATA.md#cohorts-animals-and-groups) |
 | `tasks/` | `profile.py` (`task.json`, hashes), `start_command.py`, `metrics.py` (`MetricSet`), `seed.py` | [TASKS.md](TASKS.md#task-profile) |
 | `taskdef/` | Task definitions: `model.py`, `fields.py`, `validate.py`, `generate.py`, `store.py`, `bundled.py` | [TASKS.md](TASKS.md#task-definitions) |
-| `rig/` | Channel and strobe registries: `registry.py`, `schema/`, `hardware/` pinouts, `paths.py` | [TASKS.md](TASKS.md#rig-wiring) |
+| `rig/` | Channel and strobe registries: `registry.py`, `schema/` (including the default vocabulary seed), `hardware/` pinouts, `paths.py` | [TASKS.md](TASKS.md#rig-wiring) |
+| `strobes/` | The machine's strobe vocabulary: `store.py` (`<data_dir>/strobes/vocabulary.json`, seeding, every edit, import merge), `usage.py` (firmware references, the cached archive scan) | [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `hardware/` | The operator's `rig.json`: `store.py` (load, validate, save), `service.py` (located problems) | [TASKS.md](TASKS.md#rig-wiring) |
-| `analytics/` | `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#derived-metrics) |
+| `analytics/` | `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `false_starts.py` (which runs are set aside), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#derived-metrics), [DATA.md](DATA.md#false-starts) |
 | `backup/` | `manager.py` (the mirror), `paths.py` (cohort-anchored paths) | [DATA.md](DATA.md#backup-mirroring) |
 | `logbook/` | The session log: `models.py`, `repository.py`, `service.py`, `diff.py` (what changed), `mirror.py` (`notes.md`) | [DATA.md](DATA.md#the-session-log) |
 | `intan/` | `client.py`, `streams.py`, `analysis.py`, `probemap.py`, `service.py` | [RECORDING.md](RECORDING.md) |
@@ -1254,12 +1255,12 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `main.tsx`, `App.tsx` | Provider trees (main, scope) and the router | [Routes](#routes) |
 | `lib/ws/`, `lib/settings/`, `lib/hardware/` | Client and protocol; settings `schema.ts`; hardware store, `useHandshakeTest.ts`, `useRig.ts` | [Wire protocol](#wire-protocol), [Settings](#settings) |
 | `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
-| `lib/tasks/`, `lib/taskdef/` | `topology.ts`, `graphLayout.ts`, `useLiveNode.ts`; task commands | [TASKS.md](TASKS.md#derived-state-machine) |
+| `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `useLiveNode.ts`; task commands; vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine) |
 | `lib/constellations/` | `zodiac.ts`, `slots.ts`, `ships.ts`, `cohortSky.ts`, `viewMemory.ts` | [One sky](#one-sky) |
 | `lib/prng.ts`, `lib/motion.ts`, `lib/useReduceMotion.ts` | Seeded PRNG behind every procedural visual; springs; reduced motion | [Theme](#theme) |
 | `components/chrome/`, `components/constellation3d/` | Shell and status constellation; the shared canvas, scene, camera, backdrop, shaders, `ProgramWarmth` | [One sky](#one-sky), [Shaders and lights](#shaders-and-lights) |
 | `components/sessions/`, `components/debug/` | Mission Control and the session flow; Debug Mode, flash dialog, Prime | [Session lifecycle](#session-lifecycle) |
-| `components/cohorts/`, `components/task/`, `components/hardware/` | Cohort browser and editor; task editor and landing; board map and wiring editor | [Cohort browser](#cohort-browser), [TASKS.md](TASKS.md#the-task-tab) |
+| `components/cohorts/`, `components/task/`, `components/hardware/`, `components/strobes/` | Cohort browser and editor; task editor and landing; board map and wiring editor; the strobe vocabulary page (code band, table, detail, dialogs) | [Cohort browser](#cohort-browser), [TASKS.md](TASKS.md#the-task-tab), [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `components/recording/`, `routes/scope/` | Recording tab, rail and pop-up windows | [RECORDING.md](RECORDING.md) |
 | `components/analytics/`, `components/charts/` | Observatory panels, PNG report, chart primitives | [DATA.md](DATA.md#analytics-views) |
 | `lib/logbook/`, `components/logbook/` | Session-log store and commands, `rail.ts` (the time rail's layout), `clock.ts`; the rail, readout and note components | [DATA.md](DATA.md#the-session-log) |

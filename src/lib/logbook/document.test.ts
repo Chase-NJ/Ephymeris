@@ -67,6 +67,8 @@ describe("buildSession", () => {
             boxChange: null,
             params: [{ key: "rewardUl", from: 20, to: 25 }],
             paramsKnown: true,
+            falseStart: false,
+            falseStartSource: null,
           },
         ],
       }),
@@ -108,6 +110,7 @@ describe("changeParts", () => {
       runId: "r", sessionId: "s", animalId: "a", box: null, task: "6-Odor", recovered: true,
       previousRunId: "p", previousSessionId: "ps", first: false,
       taskChange: { from: "4-Odor", to: "6-Odor" }, boxChange: null, paramsKnown: true,
+      falseStart: false, falseStartSource: null,
       params: [
         { key: "holdMs", from: 200, to: 300 },
         { key: "odor5", from: null, to: 1 },

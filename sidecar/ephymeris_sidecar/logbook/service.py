@@ -119,6 +119,12 @@ class LogbookService:
             for digest, meta in self._profiles.profile_meta(hashes).items()
         }
 
+        # Set aside before comparing, not after (`DATA.md#false-starts`): the
+        # run after a false start must be compared with the animal's previous
+        # SESSION, and dropping the false start's row afterwards would lose
+        # that change rather than recover it.
+        verdicts = analytics_service.false_start_verdicts(self._profiles, recorded + adopted)
+
         timeline: list[tuple[tuple[str, str], diff.ComparedRun]] = []
         for run in recorded:
             session = sessions.get(run.session_id)
@@ -145,7 +151,7 @@ class LogbookService:
                 )
             )
         timeline.sort(key=lambda item: item[0])
-        return diff.compare(run for _, run in timeline)
+        return diff.compare((run for _, run in timeline), verdicts)
 
     @staticmethod
     def _note_json(note: SessionNote, session: Session | None, now: datetime) -> dict[str, Any]:

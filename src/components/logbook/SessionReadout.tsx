@@ -12,7 +12,12 @@ import {
   useLoadState,
   useSummary,
 } from "@/lib/analytics/context";
-import { conditionColumns, sessionRunsOf } from "@/lib/analytics/session";
+import {
+  conditionColumns,
+  sessionFalseStartsOf,
+  sessionRunsOf,
+} from "@/lib/analytics/session";
+import { RestartedRuns } from "@/components/analytics/session/RestartedRuns";
 import type { SessionListItem } from "@/lib/analytics/types";
 import { buildAnimalColors } from "@/lib/analytics/view";
 import { addNote, deleteNote, editNote, resolveFlag, setSessionLog } from "@/lib/logbook/commands";
@@ -79,6 +84,7 @@ export function SessionReadout({
 
   const notes = entry.notesBySession.get(session.id) ?? NONE;
   const changes = entry.changesBySession.get(session.id) ?? [];
+  const setAsideChanges = entry.falseStartsBySession.get(session.id) ?? [];
   const log = entry.logs.get(session.id) ?? null;
   const readOnly = session.id.startsWith("adopted:");
 
@@ -186,17 +192,27 @@ export function SessionReadout({
             </Button>
           }
         >
-          {summary && runs.length > 0 ? (
+          {summary && (runs.length > 0 || sessionFalseStartsOf(summary, session.id).length > 0) ? (
             <div className="p-3">
-              <SessionTable
-                runs={runs}
-                columns={columns}
+              {runs.length > 0 && (
+                <>
+                  <SessionTable
+                    runs={runs}
+                    columns={columns}
+                    names={tableNames}
+                    colors={colors}
+                    minCounted={summary.minCountedTrials}
+                    onSelect={null}
+                  />
+                  <TableKey />
+                </>
+              )}
+              <RestartedRuns
+                summary={summary}
+                sessionId={session.id}
                 names={tableNames}
-                colors={colors}
-                minCounted={summary.minCountedTrials}
-                onSelect={null}
+                interactive={!readOnly}
               />
-              <TableKey />
             </div>
           ) : (
             <p className="flex items-center gap-2 px-4 py-4 text-[12px] text-static">
@@ -221,7 +237,12 @@ export function SessionReadout({
           label="What changed"
           status={<ChangesStatus changes={changes} />}
         >
-          <ChangesList changes={changes} names={tableNames} colors={colors} />
+          <ChangesList
+            changes={changes}
+            setAside={setAsideChanges}
+            names={tableNames}
+            colors={colors}
+          />
         </HudTile>
 
         <HudTile icon={UserRound} label="Operator and summary">

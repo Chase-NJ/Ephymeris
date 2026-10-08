@@ -98,6 +98,27 @@ class AnalyticsRepository:
             )
         return digest
 
+    # --- false-start overrides (DATA.md#false-starts) -----------------------
+
+    def false_start_overrides(self) -> dict[str, bool]:
+        """Every run a person has ruled on: run id -> set aside or not."""
+        with self._db.lock:
+            rows = self._db.conn.execute("SELECT run_id, false_start FROM run_flags").fetchall()
+        return {row["run_id"]: bool(row["false_start"]) for row in rows}
+
+    def set_false_start(self, run_id: str, value: bool | None) -> None:
+        """Record a person's ruling, or with None hand the run back to the rule."""
+        with self._db.lock:
+            if value is None:
+                self._db.conn.execute("DELETE FROM run_flags WHERE run_id = ?", (run_id,))
+            else:
+                self._db.conn.execute(
+                    "INSERT OR REPLACE INTO run_flags (run_id, false_start, set_at)"
+                    " VALUES (?, ?, ?)",
+                    (run_id, int(value), _now()),
+                )
+            self._db.conn.commit()
+
     def flush(self) -> None:
         """Commit whatever `remember_profile` left pending.
 

@@ -39,6 +39,7 @@ The screenshots come from a demo rig of six boxes running a cohort called *Odor 
 - [Looking at results](#looking-at-results)
   - [Where files are saved](#where-files-are-saved)
   - [Analytics](#analytics)
+  - [Restarted runs](#restarted-runs)
   - [Exporting a sheet](#exporting-a-sheet)
   - [Rescan Recover and Tidy records](#rescan-recover-and-tidy-records)
 - [Keeping the log](#keeping-the-log)
@@ -117,6 +118,22 @@ a task makes a program that can be put on a box. Usually managed by the lab mana
 lists each saved task with its number of conditions, its stages and whether it is **ready**.
 
 ![The Task tab: a + New task row, then three saved tasks (4-Odor Discrimination, Shaping - Both Sides, 2-Odor Discrimination), each marked ready, with Strobes and Walkthrough tiles below](images/task-landing.webp)
+
+The **Strobes** tile opens the list of every event a box can report and the number it is recorded as.
+The band across the top shows all the numbers from 0 to 999: purple ones are in use, grey ones are
+retired, and the faint stretches are free. Click a code to see what it means, which programs use it,
+and (with **Check the archive**) whether any recorded session contains it.
+
+- **Add code** gives a new event a free number. Once a session records it, that number belongs to it
+  for good.
+- **Retire** stops a code being used while keeping its number reserved, so old files still read
+  correctly. **Reinstate** brings it back.
+- **Remove** is only allowed for a code that no recorded session on this computer contains. The app
+  checks every session first and refuses otherwise; retire the code instead.
+- **Export** and **Import** copy codes between the lab's computers. Do this whenever a code is added on
+  one of them, so both give the same number the same meaning.
+
+![The Strobe vocabulary page: the code band, the table of codes with ODOR_3_ON selected, and its detail panel with Retire and Remove](images/task-strobes.webp)
 
 **Recording.** The link to the Intan RHX recording software, which digital input each box is wired to,
 and the default recording settings. See [Recording with Intan](#recording-with-intan).
@@ -640,6 +657,17 @@ one condition and terrible on the other; pooled, it correctly sits at chance (0.
 separate *rewarded* accuracy (the animal earned the water) from *response* accuracy (it chose the right
 side, even if it let go too early). Full definitions are in [Derived metrics](DATA.md#derived-metrics).
 
+### Restarted runs
+
+If a box was stopped and started again for the same animal in one session, the first run is a
+**false start** when it got fewer than 10 trials in. It stays listed under **Restarts** below the
+session table, greyed out, but no number, curve or chart counts it, and **What changed** in the log
+compares the real run with the animal's previous session instead.
+
+You can overrule the app: **Set aside** marks any run as a false start (a wrong animal, say), and
+**Count it** puts one back. **Use the rule** lets the app decide again. Your choice is saved and shows
+in the log.
+
 ### Exporting a sheet
 
 **Export cohort PNG** (or **Export session PNG** when one session is selected) saves the charts on
@@ -769,6 +797,8 @@ PDF's fonts don't have, such as Chinese or emoji, print as `?`. Accented letters
   same database.
 - **Follow the box order when placing animals**, and check the number on each box. A wrong placement
   cannot be detected later.
+- **Add strobe codes on one computer and import them on the other**, rather than adding the same event
+  on both: two computers can give one number two meanings, and Import refuses to merge them.
 - **Do not reuse a session number by accident.** If the configure step warns that the number already has
   data today, stop and check.
 

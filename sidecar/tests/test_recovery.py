@@ -262,3 +262,81 @@ def test_a_snapshot_torn_by_the_crash_is_dropped_not_kept_as_text(
     assert "task_profile" not in document
     # The data itself is untouched by any of this.
     assert document["n_events"] == len(STROBES)
+
+
+# --- the pre-Ephymeris dialect ---------------------------------------------
+#
+# The lab's older software wrote `recovery_tsv/` logs of its own: a column
+# header, `# key\tvalue` comments, a name column on every strobe, CRLF, and no
+# footer. Byte-for-byte the shape of a real orphan in the lab's archive
+# (`Shaping/shaping_43_06_12_26/recovery_tsv/remy2_…_121104.tsv`), shortened.
+
+LEGACY_LOG = (
+    b"event_code\tevent_ms\tevent_name\r\n"
+    b"# correction_left\t0\r\n"
+    b"# lazy_escalation\t1\r\n"
+    b"# trial_seed\t93518744\r\n"
+    b"221\t0\tBF_START_SESSION\r\n"
+    b"222\t999\tBF_LIGHTS_ON\r\n"
+    b"223\t5002\tBF_LAZY_RAT\r\n"
+    b"234\t9002\tBF_INVALID_TRIAL\r\n"
+    b"246\t106721\tBF_END_SESSION\r\n"
+)
+
+
+def write_legacy(session_folder: Path, stem: str = "remy2_shaping_43_06_12_26_121104") -> Path:
+    tsv = session_folder / "recovery_tsv" / f"{stem}.tsv"
+    tsv.parent.mkdir(parents=True)
+    tsv.write_bytes(LEGACY_LOG)
+    return tsv
+
+
+def test_a_legacy_log_is_read_not_refused(tmp_path: Path) -> None:
+    """Read by this app's rules it holds no header and no strobes, so recovery
+    refused it as 'not a session .tsv' and its run could never come back."""
+    parsed = recovery.parse_tsv(write_legacy(tmp_path / "shaping_43_06_12_26"))
+    assert parsed.dialect == "legacy"
+    assert parsed.events == [[221, 0], [222, 999], [223, 5002], [234, 9002], [246, 106721]]
+    assert parsed.metadata == {"correction_left": 0, "lazy_escalation": 1, "trial_seed": 93518744}
+    assert parsed.stop_reason is None
+
+
+def test_a_recovered_legacy_run_lands_in_the_legacy_folder_and_claims_no_crash(
+    tmp_path: Path,
+) -> None:
+    tsv = write_legacy(tmp_path / "shaping_43_06_12_26")
+    entry = recovery.recover_file(tsv)
+
+    assert entry["status"] == "recovered" and entry["nEvents"] == 5
+    # The old software wrote no footer, so its absence is not evidence of a crash.
+    assert entry["stopReason"] == recovery.RECOVERED_LEGACY_STOP_REASON
+    json_path = Path(entry["jsonPath"])
+    assert json_path.parent.name == "behavior_json", "layout-preserving, as for any legacy file"
+    document = json.loads(json_path.read_text(encoding="utf-8"))
+    assert document["ts_data"][-1] == [246, 106721]
+    # Nothing the log does not hold: the animal is in the filename, and
+    # adoption reads it from there.
+    assert "rat" not in document and "sketch" not in document
+
+
+def test_a_legacy_header_with_no_strobes_is_still_refused(tmp_path: Path) -> None:
+    """129 of the archive's legacy logs are a header line and nothing else —
+    runs that never produced a strobe. Recovering one would mint an empty run."""
+    tsv = tmp_path / "S" / "recovery_tsv" / "remy5_S_125345.tsv"
+    tsv.parent.mkdir(parents=True)
+    tsv.write_bytes(b"event_code\tevent_ms\tevent_name\r\n")
+    entry = recovery.recover_file(tsv)
+    assert entry["status"] == "failed"
+    assert "never recorded a strobe" in entry["reason"]
+
+
+def test_the_name_column_is_admitted_only_in_a_legacy_file(tmp_path: Path) -> None:
+    """This app's own log keeps the strict two-column rule the live session
+    parser applies: a three-column line there is not a strobe it would have
+    written, so recovery must not admit it either."""
+    tsv = crash_a_run(tmp_path)
+    with open(tsv, "a", encoding="utf-8") as fh:
+        fh.write("246\t9000\tBF_END_SESSION\n")
+    parsed = recovery.parse_tsv(tsv)
+    assert parsed.dialect == "ephymeris"
+    assert [246, 9000] not in parsed.events

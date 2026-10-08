@@ -1048,6 +1048,25 @@ SHAPES = (
             ),
             f("profileSource", Ref("ProfileSource")),
             f("stale", BOOL, doc="The file is gone but this is its last known-good summary."),
+            f(
+                "falseStart",
+                BOOL,
+                doc="Set aside as a false start (`DATA.md#false-starts`): restarted "
+                "and short, or ruled so by hand. Such a run arrives in "
+                "`AnalyticsSummary.falseStarts`, never in `runs`.",
+            ),
+            f(
+                "falseStartSource",
+                nullable(lit("automatic", "marked", "restored")),
+                doc="Why: `automatic` (the rule), `marked` (a person set it aside), "
+                "`restored` (the rule would, a person said count it). Null for an "
+                "ordinary run.",
+            ),
+            f(
+                "restartedBy",
+                nullable(STR),
+                doc="The next run of the same animal in the same session, if any.",
+            ),
             f("status", Ref("RunStatus")),
             f("metrics", ListOf(Ref("MetricSummary"))),
             f(
@@ -1141,6 +1160,7 @@ SHAPES = (
             f("noProfile", INT),
             f("missing", INT),
             f("unreadable", INT),
+            f("falseStarts", INT, doc="Runs set aside; not included in the other counts."),
         ),
     ),
     Shape(
@@ -1162,7 +1182,14 @@ SHAPES = (
             f(
                 "runs",
                 ListOf(Ref("RunSummary")),
-                doc="Flat, not a matrix — two runs really can share one (animal, session).",
+                doc="Flat, not a matrix — two runs really can share one (animal, "
+                "session). False starts excluded: every metric reads this list.",
+            ),
+            f(
+                "falseStarts",
+                ListOf(Ref("RunSummary")),
+                doc="Runs set aside as false starts (`DATA.md#false-starts`). Listed "
+                "where runs are listed, muted; counted nowhere.",
             ),
             f("profileGroups", ListOf(Ref("ProfileGroup"))),
             f("counts", Ref("AnalyticsCounts")),
@@ -1371,7 +1398,9 @@ SHAPES = (
                 nullable(STR),
                 doc="The footer's recorded reason when the .tsv has one (a "
                 "finalized run whose best-effort .json write failed); "
-                "'recovered after crash' for a footer-less log. Null on failure.",
+                "'recovered after crash' for a footer-less log; 'recovered from a "
+                "legacy log' for the pre-Ephymeris dialect, which never had a "
+                "footer. Null on failure.",
             ),
             f("reason", nullable(STR), doc="Why recovery failed, when it did."),
         ),
@@ -1656,15 +1685,34 @@ SHAPES = (
         obj(
             f("name", STR),
             f("code", INT),
-            f("origin", STR, doc="`firmware` (transcribed from BehaviorBox.h) or `ephymeris`."),
+            f(
+                "origin",
+                STR,
+                doc="History, not authority: `firmware` (numbered by the lab's "
+                "recorded sessions before the app), `ephymeris` (declared by the "
+                "app), `operator` (added on the Strobes page).",
+            ),
             f("emittedOn", STR, optional=True),
             f("rationale", STR, optional=True),
+            f(
+                "portSlot",
+                INT,
+                optional=True,
+                doc="The response-port slot that reports with this code. Such a "
+                "code can be neither retired nor removed.",
+            ),
         ),
     ),
     Shape(
         "RetiredStrobe",
-        obj(f("name", STR), f("code", INT)),
-        doc="A code whose emitter is gone but which recorded sessions contain. "
+        obj(
+            f("name", STR),
+            f("code", INT),
+            f("rationale", STR, optional=True),
+            f("seenIn", STR, optional=True),
+            f("retiredAt", STR, optional=True, doc="ISO-8601 UTC; absent on codes retired before the app recorded it."),
+        ),
+        doc="A code a recorded session contains and nothing may emit any more. "
         "Reserved forever: reissuing one would merge two unrelated event types "
         "in any analysis spanning the change.",
     ),
@@ -1674,17 +1722,107 @@ SHAPES = (
             f("version", INT),
             f("codeMin", INT),
             f("codeMax", INT, doc="999 — a wire-format limit. The host parser is ^\\d{1,3}\\t\\d+$."),
-            f("freeRanges", ListOf(ListOf(INT)), doc="Inclusive [lo, hi] pairs a new code may come from."),
+            f("reserved", ListOf(ListOf(INT)), doc="Inclusive [lo, hi] pairs inside the bounds that are never issued."),
+            f("freeRanges", ListOf(ListOf(INT)), doc="Inclusive [lo, hi] pairs a new code may come from. Derived, never stored."),
+            f("nextFree", nullable(INT)),
+            f("contentHash", STR, doc="Digest of names, codes and slots — what the generated headers are stamped with."),
             f("codes", ListOf(Ref("StrobeCode"))),
             f("retired", ListOf(Ref("RetiredStrobe"))),
             f("portSlots", MapOf(MapOf(STR)), doc="Slot number → its six per-port code names."),
+            f(
+                "editable",
+                BOOL,
+                doc="False when this machine's document is unreadable: the app "
+                "decodes with the shipped default and refuses every edit, since "
+                "a code issued against the default could reissue one this "
+                "machine added.",
+            ),
+            f("problem", nullable(STR), doc="Why `editable` is false."),
         ),
-        doc="The append-only strobe registry (`TASKS.md#strobe-vocabulary`). "
-        "Codes are never renumbered or repurposed: recorded sessions carry "
-        "them, and reissuing one silently merges two unrelated event types in "
-        "any analysis spanning the change. A code whose emitter is gone moves "
-        "to `retired` and stays reserved — a third state, neither declared "
-        "nor free, which `freeRanges` excludes.",
+        doc="This machine's strobe vocabulary (`TASKS.md#strobe-vocabulary`) — "
+        "the one source of every code. Codes are never renumbered or "
+        "repurposed: recorded sessions carry them, and reissuing one silently "
+        "merges two unrelated event types in any analysis spanning the change.",
+    ),
+    Shape(
+        "StrobeFirmwareRef",
+        obj(
+            f("path", STR, doc="Relative to the root it was found under."),
+            f(
+                "kind",
+                lit("library", "sketch", "task"),
+                doc="`library`: a shared library every sketch includes — retiring "
+                "or removing the code would stop every sketch compiling, so both "
+                "are refused.",
+            ),
+        ),
+    ),
+    Shape(
+        "StrobeArchiveCoverage",
+        obj(
+            f("files", INT, doc="Recorded files read (or answered from the scan cache)."),
+            f("unreadable", INT),
+            f("roots", ListOf(STR), doc="Every cohort data folder the scan was pointed at."),
+            f("unreachableRoots", ListOf(STR), doc="Of those, the ones that could not be reached."),
+        ),
+        doc="What the archive scan could see. Only this machine: another rig's "
+        "archive is never checked, and the UI says so.",
+    ),
+    Shape(
+        "StrobeSessions",
+        obj(
+            f("count", INT, doc="Recorded files containing the code."),
+            f("sample", ListOf(STR), doc="Up to five of them."),
+            f("scanned", Ref("StrobeArchiveCoverage")),
+        ),
+    ),
+    Shape(
+        "StrobeUsage",
+        obj(
+            f("name", STR),
+            f("code", INT),
+            f("status", lit("live", "retired")),
+            f("firmware", ListOf(Ref("StrobeFirmwareRef"))),
+            f("portSlot", nullable(INT)),
+            f(
+                "breaks",
+                ListOf(Ref("RigImpact")),
+                doc="Saved tasks that generate today and would not with the "
+                "code retired or removed.",
+            ),
+            f("sessions", nullable(Ref("StrobeSessions")), doc="Null unless `scan` was asked for."),
+            f(
+                "retireBlocker",
+                nullable(STR),
+                doc="Why `strobes.retire` would refuse outright; null when it "
+                "would proceed (with `confirm` if `breaks` or `firmware` is "
+                "non-empty).",
+            ),
+            f(
+                "removeBlocker",
+                nullable(STR),
+                doc="Why `strobes.remove` would refuse outright. Always set "
+                "when `sessions.count` > 0. Null with `sessions` null means "
+                "not yet known — the scan decides.",
+            ),
+        ),
+        doc="Everything a retire or remove is judged against, computed by the "
+        "sidecar so the page never predicts a refusal.",
+    ),
+    Shape(
+        "StrobeImportPlan",
+        obj(
+            f("adds", ListOf(obj(f("name", STR), f("code", INT), f("retired", BOOL)))),
+            f("retires", ListOf(obj(f("name", STR), f("code", INT))), doc="Live here, retired there — retired here too."),
+            f("conflicts", ListOf(obj(f("name", STR), f("code", INT), f("message", STR)))),
+            f("onlyHere", ListOf(STR), doc="Codes this machine has and the file does not. Never removed by an import."),
+        ),
+        doc="What importing another machine's vocabulary would do. A union, "
+        "never a replacement; any conflict refuses the whole import.",
+    ),
+    Shape(
+        "StrobeScanProgress",
+        obj(f("done", INT), f("total", INT)),
     ),
     # Intan recording (RECORDING.md)
     Shape(
@@ -1942,6 +2080,18 @@ SHAPES = (
                 "before they were recorded, or a recovered file too old to hold "
                 "them, or one the analytics index has not read yet. Unknown, never "
                 "reported as changed.",
+            ),
+            f(
+                "falseStart",
+                BOOL,
+                doc="Set aside (`DATA.md#false-starts`): compared with nothing and "
+                "never the previous run of the next one, which is compared with "
+                "the run before this instead.",
+            ),
+            f(
+                "falseStartSource",
+                nullable(lit("automatic", "marked", "restored")),
+                doc="As `RunSummary.falseStartSource`.",
             ),
         ),
         doc="What differs between a run and the same animal's previous run, "
@@ -2240,13 +2390,112 @@ COMMANDS = (
         "broadcasts `hardware.updated`, as `hardware.save` does. Replies in "
         "`hardware.get`'s shape so the editor re-renders from one shape.",
     ),
+    # ------------------------------------------------------- strobe vocabulary
+    #
+    # Every mutating command below refuses while a session is running, writes
+    # the machine's vocabulary document, regenerates every stored task profile
+    # and bundled sketch (their `TaskPins.h` carries the codes), and broadcasts
+    # `strobes.updated` with `sketches.updated` / `tasks.updated` from the
+    # rebuild. `STROBE_VOCABULARY_UNREADABLE` from any of them while the
+    # document is damaged.
     Command(
-        "rig.strobes",
+        "strobes.get",
         result=Ref("StrobeVocabulary"),
-        doc="The whole append-only strobe registry (`TASKS.md#strobe-vocabulary`), "
-        "for the Task tab's viewer and the trial table's onset-code picker. "
-        "Static unless a code is added. Named `rig.` because the registry "
-        "belongs to the hardware.",
+        doc="This machine's vocabulary (`TASKS.md#strobe-vocabulary`), for the "
+        "Strobes page and the trial table's onset-code picker.",
+        section="Strobe vocabulary",
+    ),
+    Command(
+        "strobes.usage",
+        args=obj(
+            f("name", STR),
+            f(
+                "scan",
+                BOOL,
+                optional=True,
+                doc="Also scan every recorded session this machine can reach. "
+                "Long-running on a cold cache; publishes `strobes.scanProgress`, "
+                "and the client raises its reply timeout.",
+            ),
+        ),
+        result=Ref("StrobeUsage"),
+        doc="Where a live or retired code is used, and whether retiring or "
+        "removing it would be refused. Writes nothing except the scan cache. "
+        "`STROBE_INVALID` for a name the vocabulary does not hold.",
+    ),
+    Command(
+        "strobes.add",
+        args=obj(
+            f("name", STR, doc="Upper snake case, no `BF_` prefix; new across live AND retired."),
+            f("code", INT, doc="Must be free: in bounds, unreserved, neither live nor retired."),
+            f("rationale", STR, doc="What the code means. Required."),
+            f("emittedOn", STR, optional=True),
+        ),
+        result=Ref("StrobeVocabulary"),
+        doc="Issue a new live code. `STROBE_INVALID` when the name or number "
+        "cannot be issued.",
+    ),
+    Command(
+        "strobes.edit",
+        args=obj(f("name", STR), f("rationale", STR), f("emittedOn", STR, optional=True)),
+        result=Ref("StrobeVocabulary"),
+        doc="Reword a live code's meaning. The name and number never change.",
+    ),
+    Command(
+        "strobes.retire",
+        args=obj(
+            f("name", STR),
+            f(
+                "confirm",
+                BOOL,
+                doc="False ⇒ `STROBE_WOULD_BREAK_TASKS` if a saved task or a "
+                "bundled sketch names the code. True ⇒ retire anyway.",
+            ),
+        ),
+        result=Ref("StrobeVocabulary"),
+        doc="Move a live code to `retired`: reserved forever, defined by no "
+        "header. `STROBE_REQUIRED` for a port-slot code or one the shared "
+        "firmware library names.",
+    ),
+    Command(
+        "strobes.reinstate",
+        args=obj(f("name", STR)),
+        result=Ref("StrobeVocabulary"),
+        doc="A retired code back to live under its own name, number and meaning.",
+    ),
+    Command(
+        "strobes.remove",
+        args=obj(
+            f("name", STR),
+            f("confirm", BOOL, doc="As `strobes.retire`'s."),
+        ),
+        result=Ref("StrobeVocabulary"),
+        doc="Delete a code, returning its number to the free pool. Scans every "
+        "recorded session this machine can reach first (publishes "
+        "`strobes.scanProgress`; long-running on a cold cache), and refuses "
+        "with `STROBE_IN_RECORDED_SESSION` if any contains it — the bar is "
+        "not 'unused', it is 'never recorded'. `STROBE_REQUIRED` as for "
+        "`strobes.retire`.",
+    ),
+    Command(
+        "strobes.export",
+        result=obj(f("document", ANY), f("filename", STR)),
+        doc="The vocabulary as it travels to another machine, without this "
+        "machine's stamps.",
+    ),
+    Command(
+        "strobes.import",
+        args=obj(
+            f("document", ANY, doc="Another machine's exported vocabulary (v2 or v3)."),
+            f("apply", BOOL, doc="False ⇒ plan only, write nothing."),
+        ),
+        result=obj(
+            f("plan", Ref("StrobeImportPlan")),
+            f("vocabulary", nullable(Ref("StrobeVocabulary")), doc="Null unless applied."),
+        ),
+        doc="Merge another machine's codes into this one. `STROBE_INVALID` for "
+        "a file that is not a vocabulary; `STROBE_IMPORT_CONFLICT` when "
+        "applying a plan with conflicts (`detail.conflicts`).",
     ),
     # ----------------------------------------------------------------- cohorts
     #
@@ -2667,6 +2916,24 @@ COMMANDS = (
         "failed command. `COHORT_NOT_FOUND` for an unknown cohort.",
     ),
     Command(
+        "analytics.setFalseStart",
+        args=obj(
+            f("cohortId", STR),
+            f("runId", STR),
+            f(
+                "falseStart",
+                nullable(BOOL),
+                doc="True sets the run aside, false counts it whatever the rule "
+                "says, null hands it back to the rule.",
+            ),
+        ),
+        result=obj(f("runId", STR)),
+        doc="A person's ruling on one run (`DATA.md#false-starts`), stored in "
+        "`run_flags`. Broadcasts `logbook.updated` for the run's session, since "
+        "what changed is recomputed around it; the client refetches "
+        "`analytics.summary`. `BAD_MESSAGE` for a run the cohort does not hold.",
+    ),
+    Command(
         "analytics.series",
         args=obj(
             f(
@@ -2736,7 +3003,9 @@ COMMANDS = (
         "`.json`/`.mat` from orphaned write-ahead `.tsv` files, using the same "
         "traversal as `analytics.rescan` and the same explicit-action "
         "discipline. A `.tsv` with a footer keeps its recorded stop reason; a "
-        "footer-less (crashed) one gets 'recovered after crash'. "
+        "footer-less (crashed) one gets 'recovered after crash'; a "
+        "pre-Ephymeris log, which never had a footer, gets 'recovered from a "
+        "legacy log'. "
         "`SESSION_INVALID` while any box is running — a live run's `.tsv` has "
         "no `.json` yet and is not an orphan. Long-running; the client raises "
         "its reply timeout.",
@@ -3068,6 +3337,18 @@ EVENTS = (
         "reads, not a fact about the build.",
     ),
     Event(
+        "strobes.updated",
+        Ref("StrobeVocabulary"),
+        doc="Broadcast after every successful vocabulary edit. Clients drop any "
+        "cached copy; task profiles arrive separately on `tasks.updated`.",
+    ),
+    Event(
+        "strobes.scanProgress",
+        Ref("StrobeScanProgress"),
+        doc="Progress of an archive scan for `strobes.usage` or `strobes.remove`, "
+        "every few dozen files.",
+    ),
+    Event(
         "utility.updated",
         Ref("UtilityStatus"),
         doc="The utility baseline's whole picture, on connect and whenever any "
@@ -3238,6 +3519,44 @@ ERRORS = (
         "task profile generating. `detail.breaks` lists them. Retry with "
         "`confirm: true` to proceed — the app does not veto a rewiring, it "
         "refuses to let one happen unnoticed.",
+    ),
+    ErrorCode(
+        "STROBE_INVALID",
+        "A strobe edit the vocabulary cannot take: a malformed or duplicate "
+        "name, a code that is not free, a blank meaning, an unknown name, or "
+        "an import file that is not a vocabulary.",
+    ),
+    ErrorCode(
+        "STROBE_REQUIRED",
+        "Retiring or removing a code a response-port slot reports with, or one "
+        "the shared firmware library names. Never passable with `confirm`.",
+    ),
+    ErrorCode(
+        "STROBE_IN_RECORDED_SESSION",
+        "`strobes.remove` on a code a recorded session contains. Never passable: "
+        "retire it instead. `detail` carries `count`, `sample` and `scanned`.",
+    ),
+    ErrorCode(
+        "STROBE_WOULD_BREAK_TASKS",
+        "`strobes.retire` / `strobes.remove` without `confirm` on a code a saved "
+        "task or bundled sketch names. `detail.breaks` and `detail.firmware` "
+        "list them.",
+    ),
+    ErrorCode(
+        "STROBE_IMPORT_CONFLICT",
+        "`strobes.import` applied with a plan that has conflicts. Nothing was "
+        "written; `detail.conflicts` lists them.",
+    ),
+    ErrorCode(
+        "STROBE_VOCABULARY_UNREADABLE",
+        "This machine's vocabulary document will not read. Every edit is "
+        "refused until it is repaired: one issued against the shipped default "
+        "could reissue a code this machine added.",
+    ),
+    ErrorCode(
+        "STROBE_SESSION_RUNNING",
+        "A vocabulary edit while a session is running. Every edit regenerates "
+        "the sketches a running box was flashed from.",
     ),
     ErrorCode(
         "TASK_NOT_FOUND",

@@ -3,10 +3,11 @@ import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
 
 import { AnimalCard } from "@/components/analytics/session/AnimalCard";
+import { RestartedRuns } from "@/components/analytics/session/RestartedRuns";
 import { SessionTable, TableKey } from "@/components/analytics/session/SessionTable";
 import { PanelTitle } from "@/components/charts/PanelTitle";
 import { FolderButton } from "@/components/common/FolderButton";
-import { conditionColumns } from "@/lib/analytics/session";
+import { conditionColumns, sessionFalseStartsOf } from "@/lib/analytics/session";
 import type {
   AnalyticsSummary,
   RunSeries,
@@ -106,14 +107,15 @@ export function SessionSummary({
   }
 
   if (runs.length === 0) {
+    const setAside = sessionFalseStartsOf(summary, session.id).length;
     return (
       <div className="telemetry flex flex-wrap items-center justify-between gap-3 p-4">
         <p className="text-[12px] leading-relaxed text-static">
-          No runs recorded in{" "}
+          {setAside > 0 ? "Every run in " : "No runs recorded in "}
           <span className="font-mono text-starlight">
             {session.prefixName}_{session.sessionNumber}
           </span>
-          .
+          {setAside > 0 ? " is set aside as a false start." : "."}
         </p>
         {/* Still offered: a session with no readable runs is exactly the one
             whose folder someone wants to look inside. */}
@@ -123,6 +125,16 @@ export function SessionSummary({
             label="Session folder"
             size="sm"
           />
+        )}
+        {setAside > 0 && (
+          <div className="w-full">
+            <RestartedRuns
+              summary={summary}
+              sessionId={session.id}
+              names={names}
+              interactive={interactive}
+            />
+          </div>
         )}
       </div>
     );
@@ -173,6 +185,12 @@ export function SessionSummary({
           onSelect={interactive ? toggleCard : null}
         />
         <TableKey />
+        <RestartedRuns
+          summary={summary}
+          sessionId={session.id}
+          names={names}
+          interactive={interactive}
+        />
       </div>
 
       <div

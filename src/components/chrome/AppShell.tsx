@@ -2,6 +2,7 @@ import { AnimatePresence, MotionConfig, motion } from "framer-motion";
 import { useRef } from "react";
 import { Outlet, useLocation, useOutlet } from "react-router";
 
+import { ExportProgress } from "./ExportProgress";
 import { Sidebar } from "./Sidebar";
 import { Starfield } from "./Starfield";
 import { SvgDefs } from "./SvgDefs";
@@ -73,6 +74,9 @@ export function AppShell() {
             {/* Last, and above both: the overlay is what makes the sky read
                 through the glass. */}
             <Sidebar />
+            {/* Above every route, and outliving them: an export started on
+                one tab is still reporting when the operator is on another. */}
+            <ExportProgress />
           </div>
         </div>
       </ConstellationStageProvider>

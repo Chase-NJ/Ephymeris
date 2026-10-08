@@ -140,9 +140,9 @@ and (with **Check the archive**) whether any recorded session contains it.
 **Recording.** The link to the Intan RHX recording software, which digital input each box is wired to,
 and the default recording settings. See [Recording with Intan](#recording-with-intan).
 
-**Analytics.** Results. Pick a cohort to see its sessions, animals and learning curves.
-
-![The Analytics landing: the same cohort planets as the Cohorts screen, under the heading "Pick a cohort to study its recorded sessions"](images/analytics-landing.webp)
+**Analytics.** Results. Pick a cohort from the list to see its sessions, animals and learning curves.
+Each row shows the cohort's planet, its animals, groups and cages, how many sessions it has and when it
+last ran. The most recently run cohort is at the top.
 
 **Log.** The lab notebook: every session of a cohort on a timeline, with its start, end and elapsed
 time, notes anyone wrote, and what changed since the last session. See [Keeping the log](#keeping-the-log).
@@ -620,7 +620,7 @@ is saved in an `ephys` folder in the session folder, unless the Recording defaul
 
 ### Analytics
 
-1. Open **Analytics** and click a cohort's planet.
+1. Open **Analytics** and click a cohort in the list (or move with the arrow keys and press Enter).
 2. The **Sessions** rail places sessions by date, so a gap in training shows as a gap. Under it, in one
    row: the **Animals** list, **Strategy space**, and the **Accuracy** chart with the **Task** strip
    above it, showing which task each stretch of sessions was running. Below them are the **Effort** and
@@ -674,6 +674,11 @@ in the log.
 **Export cohort PNG** (or **Export session PNG** when one session is selected) saves the charts on
 screen as one image, with the cohort, task and dates written on it.
 
+Every export (the PNG, the log PDFs, the strobe list) shows a card in the bottom-right corner while it
+works: each step in turn, then where the file was saved, with a **Show** button that opens its folder. The
+card goes away on its own a few seconds later. If an export fails, its card stays and says why until you
+close it. You can switch tabs while an export runs.
+
 ### Rescan Recover and Tidy records
 
 These buttons are at the top of Analytics. Use them when the lab manager asks, or as described here.
@@ -691,7 +696,7 @@ These buttons are at the top of Analytics. Use them when the lab manager asks, o
 
 ## Keeping the log
 
-The **Log** tab is the cohort's lab notebook. Open it and click a cohort's planet. The left column is the
+The **Log** tab is the cohort's lab notebook. Open it and click a cohort in the list. The left column is the
 cohort's sessions; the right is the selected session's page.
 
 ### Moving through sessions
@@ -763,8 +768,8 @@ settings, so only their task is compared.
 ### Saving the log as a PDF
 
 At the top right of the Log, **Session PDF** saves the selected session's page, and **Logbook PDF**
-saves every session of the cohort, oldest first, after a cover page listing any open flags. Choose where
-to save it. The PDF is printed on white, and its text can be searched and copied.
+saves every session of the cohort, oldest first, after a cover page listing any open flags. A card in the
+bottom-right corner shows the progress; choose where to save it when it asks. The PDF is printed on white, and its text can be searched and copied.
 
 Notes print as written, except that a few symbols are spelled out (`≥` becomes `>=`), and characters the
 PDF's fonts don't have, such as Chinese or emoji, print as `?`. Accented letters and Greek print normally.

@@ -20,7 +20,7 @@ import { useLocation } from "react-router";
 
 import { AnimalRail } from "@/components/analytics/AnimalRail";
 import { ChangeCohort } from "@/components/analytics/ChangeCohort";
-import { CohortSky } from "@/components/cohorts/CohortSky";
+import { CohortManifest } from "@/components/cohorts/CohortManifest";
 import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import type { ReportInput } from "@/components/analytics/report/ReportSheet";
 import {
@@ -84,7 +84,7 @@ export function Analytics() {
   const store = useAnalyticsStore();
   const cohorts = useCohorts();
   /** What the landing can offer: an archived cohort is not a study you pick up
-   *  again, and the browser has no archived branch of its own. */
+   *  again. */
   const pickable = useMemo(() => cohorts.filter((c) => !c.archived), [cohorts]);
   const location = useLocation();
 
@@ -330,42 +330,18 @@ export function Analytics() {
   }
 
   /*
-   * The picker is the landing state; a cohort is only chosen deliberately.
+   * The cohort list is the landing state; a cohort is only chosen deliberately.
    *
-   * The SAME browser `/cohorts` uses, differing only in what a pick does —
-   * there it opens the cohort, here it reveals the dashboard. Two grids that
-   * chose a cohort in near-identical ways is exactly what this replaced, and
-   * rebuilding one of them as a quieter variant would have recreated the split.
-   *
-   * The dim-sky rule still stands and is not being
-   * relaxed: it protects a *chart* from competing motion, and there is no chart
-   * on this branch. The moment one appears, the branch below drops back to
-   * `SkyBackdrop` at `DENSE_SKY_OPACITY`.
+   * A list, not the 3D browser `/cohorts` uses: picking which cohort to read is
+   * a list choice, and the world disc on each row keeps the identity. Tuning a
+   * world belongs where the library is managed, one tab over. The sky stays
+   * dimmed (`DENSE_SKY_OPACITY`) — the landing is a display surface like the
+   * dashboard it opens.
    */
   if (!cohortId) {
     return (
       <div className="relative h-full">
-        {!connected ? (
-          // With no backend there are no cohorts to draw, and a route that
-          // mounts no constellation at all is the one thing that releases the
-          // shared canvas — so the inert sky stands in. The notice itself is
-          // in the rail below, where the page's other lines are; a second
-          // column at the same corner printed the two through each other.
-          <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
-        ) : (
-          <CohortSky
-            cohorts={pickable}
-            focusedId={null}
-            // No panel here: a pick IS the action, so there is nothing to dock
-            // and nothing to tune. Tuning a world belongs where the library is
-            // managed, one tab over.
-            onFocus={(next) => {
-              if (next === null) return;
-              setReveal((n) => n + 1);
-              store.selectCohort(next);
-            }}
-          />
-        )}
+        <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
 
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -374,11 +350,10 @@ export function Analytics() {
           transition={springPanel}
           className="pointer-events-none absolute inset-0"
         >
-          <div className="pointer-events-auto absolute left-8 top-4 max-w-[420px]">
+          <div className="pointer-events-auto absolute inset-x-8 top-4 bottom-6 flex max-w-[820px] flex-col">
             <h1 className="font-display text-[22px] text-starlight">Analytics</h1>
             <p className="mt-1 text-[12px] leading-relaxed text-static">
-              Pick a cohort to study its recorded sessions. Every world is a
-              cohort — click one.
+              Pick a cohort to study its recorded sessions.
             </p>
             {!connected && (
               <Notice>
@@ -390,6 +365,17 @@ export function Analytics() {
               <Notice>
                 No cohorts yet — Analytics reads sessions recorded against one.
               </Notice>
+            )}
+            {connected && pickable.length > 0 && (
+              <div className="mt-5 flex min-h-0 flex-col">
+                <CohortManifest
+                  cohorts={pickable}
+                  onPick={(id) => {
+                    setReveal((n) => n + 1);
+                    store.selectCohort(id);
+                  }}
+                />
+              </div>
             )}
           </div>
         </motion.div>
@@ -452,7 +438,7 @@ export function Analytics() {
                 </h1>
                 <ChangeCohort
                   name={active?.name ?? "All cohorts"}
-                  // The cohort's world, as the browser drew it — so the
+                  // The cohort's world, as the list drew it — so the
                   // breadcrumb reads "you are on this planet" and not just
                   // a name.
                   disc={
@@ -589,16 +575,6 @@ export function Analytics() {
           {rescanNote && (
             <Strip tone="neutral" icon={Info} onDismiss={() => setRescanNote(null)}>
               {rescanNote}
-            </Strip>
-          )}
-
-          {exporter.note && (
-            <Strip
-              tone="neutral"
-              icon={Download}
-              onDismiss={() => exporter.setNote(null)}
-            >
-              {exporter.note}
             </Strip>
           )}
 

@@ -24,14 +24,33 @@ import type { TaskGraphModel, TaskNode } from "./topology";
  */
 
 /** The width band the fluid layout serves. Below MIN_W the narrowest column
- *  gap (~18/134 of the span) no longer clears a centred chip, so the whole
- *  drawing scales down uniformly instead — the HUD's fixed columns leave the
- *  machine ~(window − 990px), so that regime is real on a 1280-wide window
- *  and the honest answer there is a smaller correct drawing, not colliding
- *  labels. Above MAX_W added width is only longer edges, so the drawing
- *  centres instead. Between them, rendering is 1:1. */
+ *  gap (~18/134 of the span) no longer clears a centred chip, so Mission
+ *  Control's live panel scales the MIN_W drawing down uniformly instead — a
+ *  smaller correct drawing, not colliding labels. The editor has its own,
+ *  higher floor and never scales (`EDITOR_MIN_W`). Above MAX_W added width is
+ *  only longer edges, so the drawing centres instead. Between them, rendering
+ *  is 1:1. */
 export const MIN_W = 460;
 export const MAX_W = 1000;
+/** The task editor's floor, above `MIN_W`. The editor never draws below it and
+ *  never scales: its page rearranges (`editorLayout`) so the diagram's host is
+ *  always at least this wide, and on the rare host that is not, the drawing
+ *  scrolls sideways rather than shrinking its type. */
+export const EDITOR_MIN_W = 560;
+/** Layout widths move in steps of this many pixels, so a window drag re-spaces
+ *  the machine a few times rather than on every pixel — and each step glides
+ *  (`useGlidingWidth`) instead of jumping. */
+export const WIDTH_STEP = 40;
+
+/**
+ * The width the machine is laid out at for a host this wide: clamped to the
+ * band, then snapped down to a `WIDTH_STEP` (never below the floor). Null — not
+ * yet measured — is `FALLBACK_W`.
+ */
+export function layoutWidthFor(host: number | null, min: number = MIN_W, max: number = MAX_W): number {
+  const clamped = Math.min(Math.max(host ?? FALLBACK_W, min), max);
+  return Math.max(min, Math.floor(clamped / WIDTH_STEP) * WIDTH_STEP);
+}
 /** Pre-measurement layout width. One frame at most — the tile fades in over
  *  it, so a settle from here is never visible. */
 export const FALLBACK_W = 720;

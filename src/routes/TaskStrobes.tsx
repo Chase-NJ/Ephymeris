@@ -23,6 +23,7 @@ import {
   type StrobeFilter,
 } from "@/components/strobes/StrobeTable";
 import { errorMessage } from "@/lib/cohorts/commands";
+import { SAVE_STEPS, trackExport } from "@/lib/exports/jobs";
 import { springPanel } from "@/lib/motion";
 import { exportVocabulary } from "@/lib/strobes/commands";
 import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
@@ -46,6 +47,8 @@ import type { StrobeUsage } from "@/lib/ws/protocol";
  * not offered at all. The sidecar enforces every rule; this page shows its
  * reasons rather than predicting them.
  */
+const FETCHING = "Fetching the vocabulary";
+
 export function TaskStrobes() {
   const { client } = useSidecar();
   const navigate = useNavigate();
@@ -58,7 +61,6 @@ export function TaskStrobes() {
   const [retiring, setRetiring] = useState<StrobeUsage | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   const rows = useMemo(() => (vocabulary ? rowsOf(vocabulary) : []), [vocabulary]);
   const row = rows.find((r) => r.name === selected) ?? null;
@@ -78,20 +80,23 @@ export function TaskStrobes() {
 
   const editable = vocabulary?.editable ?? false;
 
-  const doExport = async () => {
-    setActionError(null);
-    try {
-      const reply = await exportVocabulary(client);
+  // Reported on the export card (`ARCHITECTURE.md#export-progress`), like the
+  // app's other exports — including its failures.
+  const doExport = () =>
+    trackExport("Strobe vocabulary", "json", [FETCHING, ...SAVE_STEPS], async (tracker) => {
+      const reply = await exportVocabulary(client).catch((err: unknown) => {
+        throw new Error(errorMessage(err));
+      });
+      tracker.step(SAVE_STEPS[0]);
       const path = await save({
         defaultPath: reply.filename,
         filters: [{ name: "Strobe vocabulary", extensions: ["json"] }],
       });
-      if (!path) return;
+      if (!path) return null;
+      tracker.step(SAVE_STEPS[1]);
       await writeTextFile(path, `${JSON.stringify(reply.document, null, 2)}\n`);
-    } catch (err) {
-      setActionError(errorMessage(err));
-    }
-  };
+      return path;
+    }).catch(() => undefined);
 
   return (
     <div className="relative h-full">
@@ -136,7 +141,6 @@ export function TaskStrobes() {
         </div>
 
         {error && <p className="text-[12px] text-status-error">{error}</p>}
-        {actionError && <p className="text-[12px] text-status-error">{actionError}</p>}
         {vocabulary && !vocabulary.editable && (
           <Callout
             title="This machine's vocabulary cannot be read"

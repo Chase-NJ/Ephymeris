@@ -9,7 +9,6 @@ import { AppearancePanel } from "@/components/cohorts/AppearancePanel";
 import { CohortSky } from "@/components/cohorts/CohortSky";
 import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
-import { HowToRead } from "@/components/charts/HowToRead";
 import {
   deleteCohort,
   errorMessage,
@@ -341,20 +340,6 @@ export function Cohorts() {
               the first one.
             </Notice>
           ) : null}
-
-          {/* The reading key, folded away until asked — a world carries three
-              readings and nobody should have to guess them, but nobody needs
-              telling twice either (`HowToRead`'s reasoning). */}
-          <div className="hud max-w-[360px] rounded-md px-3 pb-2 pt-1">
-            <HowToRead>
-              <span className="text-starlight">Size</span> is the roster.{" "}
-              <span className="text-starlight">Brightness and spin</span> are how
-              recently anyone worked on it — a dormant cohort sits in its own
-              shadow. <span className="text-starlight">Ships</span> are its home
-              cages. Type, colour and ring are yours to set: focus a world and
-              open its panel.
-            </HowToRead>
-          </div>
         </div>
 
         {focused && shown && (

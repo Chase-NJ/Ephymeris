@@ -1,5 +1,14 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, CircleAlert, Workflow } from "lucide-react";
+import {
+  ArrowLeft,
+  CircleAlert,
+  FileText,
+  SlidersHorizontal,
+  Split,
+  TrendingUp,
+  Workflow,
+  type LucideIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
@@ -22,7 +31,9 @@ import { useStrobeVocabulary } from "@/lib/strobes/useStrobeVocabulary";
 import { blankTrial, isRampGroup, nextStage } from "@/lib/taskdef/types";
 import type { TaskDefinition, TaskDiagnostic, TaskEntry } from "@/lib/taskdef/types";
 import { useTask } from "@/lib/taskdef/useTask";
+import { SPINE_COMPACT, editorLayout, railInset as railInsetFor } from "@/lib/tasks/editorLayout";
 import { taskGraph, type TaskNode } from "@/lib/tasks/topology";
+import { useElementWidth } from "@/lib/useElementWidth";
 import { useSidecar } from "@/lib/ws/context";
 import { EVT } from "@/lib/ws/protocol";
 
@@ -260,241 +271,323 @@ export function TaskEditor() {
 
   const errorCount = session.diagnostics.length;
 
+  const [pageRef, pageWidth] = useElementWidth<HTMLDivElement>();
+  const layout = editorLayout(pageWidth);
+  const sideRail = layout.rail > 0;
+  const compactSpine = layout.spine === SPINE_COMPACT;
+  const railInset = railInsetFor(layout.rail);
+
+  const sections: SpineSection[] = definition
+    ? [
+        { id: "details", label: "Details", icon: FileText, ref: detailsRef },
+        {
+          id: "trials",
+          label: "Conditions",
+          icon: Split,
+          ref: trialsRef,
+          count: definition.trials.length,
+          // One dot per condition in its own colour — the spine shows the same
+          // set the glyph above it draws and the trial table below numbers.
+          swatches: definition.trials.map((_, i) => colorForIndex(i)),
+        },
+        { id: "ramp", label: "Shaping ramp", icon: TrendingUp, ref: rampRef, count: definition.stages.length },
+        { id: "params", label: "Parameters", icon: SlidersHorizontal, ref: paramsRef },
+      ]
+    : [];
+
+  /* The rail, wherever the layout puts it. One element under one `layoutId`,
+   * so when the page docks it under the diagram (or lifts it back to the side)
+   * it travels there rather than vanishing from one place and appearing in
+   * the other. */
+  const rail =
+    definition && session.profile ? (
+      // The rail's content needs the COMPILED profile, which lands one preview
+      // round trip after the definition — so it mounts a beat after the centre
+      // column. Animated for that reason: without an entrance of its own, this
+      // is the last tile to pop in.
+      <motion.div
+        key="param-rail"
+        layoutId="param-rail"
+        ref={paramsRef}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={springPanel}
+        className="pointer-events-auto flex min-h-0 flex-col gap-2"
+      >
+        {sideRail && (
+          <div className="flex items-baseline justify-between gap-3 px-1">
+            <h2 className="font-display text-[13px] font-medium uppercase tracking-wide text-static">
+              Parameters
+            </h2>
+            {errorCount > 0 && (
+              <span className="font-mono text-[10px] text-status-error">
+                {errorCount} problem{errorCount === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+        )}
+        <ParameterInspector
+          profile={session.profile}
+          model={model}
+          config={config}
+          baseline={session.catalogueDefaults}
+          selected={selectedGroup}
+          // The four ramped holds are the StageRamp's, and a ramp only reads
+          // as a table. Offering them here too would be a second surface for
+          // one field. Reward volume is the trial table's for a stronger
+          // reason: the generator reads it off the ROW, so a rail edit into
+          // `params` would be accepted and ignored.
+          exclude={(group) => isRampGroup(group) || group === "Reward volume"}
+          onSelect={setSelectedGroup}
+          onChange={onParams}
+          onHoverGroup={setHoverGroup}
+          litGroups={litGroups}
+        />
+      </motion.div>
+    ) : null;
+
   return (
     // No `overflow-hidden`: the shared canvas reaches under the sidebar
     // (`Scene.tsx`), exactly as on the Dashboard.
-    <div className="relative h-full">
+    //
+    // Three regions over the sky, arranged by `editorLayout` for the page's
+    // width — the state machine keeps its floor and the page bends around it.
+    // Every boundary moves on `springPanel`, the same spring the drawing's own
+    // width glides on, so tiles and states arrive together.
+    <div ref={pageRef} className="relative h-full">
       <SkyBackdrop />
 
       <div className="pointer-events-none absolute inset-0">
-        {/* Left: the way back, this task's mark, and its sections. */}
+        {/* Left: the way back, this task's mark, and its sections — a strip
+            of marks when the page needs the room. */}
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          initial={{ opacity: 0, width: layout.spine }}
+          animate={{ opacity: 1, width: layout.spine }}
           exit={{ opacity: 0 }}
           transition={springPanel}
-          className="scrollbar-none pointer-events-none absolute inset-y-0 left-0 w-[300px] overflow-y-auto p-4 pl-8"
+          className={`scrollbar-none pointer-events-none absolute inset-y-0 left-0 overflow-x-hidden overflow-y-auto ${
+            compactSpine ? "px-3 py-4" : "p-4 pl-8"
+          }`}
         >
-          <div className="pointer-events-auto flex flex-col gap-3 pt-1">
-            <Button variant="ghost" onClick={() => navigate("/task")}>
-              <ArrowLeft size={13} strokeWidth={1.75} />
-              Task
-            </Button>
-
-            {definition && (
-              <>
-                <div className="flex items-center gap-3 px-1">
-                  {/* The shared element from the landing's card: the mark the
-                      eye picked out of the grid is still on screen after the
-                      route changes, so the two pages read as one gesture. */}
-                  <motion.span layoutId={`task-glyph-${definition.id}`} className="flex">
-                    <TaskGlyph
-                      size={44}
-                      task={{
-                        id: definition.id,
-                        trials: definition.trials.length,
-                        stages: definition.stages.length,
-                        selectionMode: definition.selectionMode,
-                        problems: errorCount,
-                      }}
-                    />
-                  </motion.span>
-                  <div className="min-w-0">
-                    <div className="truncate font-display text-[15px] text-starlight">
-                      {definition.name || "Untitled"}
-                    </div>
-                    <div className="truncate font-mono text-[10px] text-static/70">
-                      {taskId === undefined ? "unsaved" : definition.category}
-                    </div>
-                  </div>
-                </div>
-
-                <SectionSpine
-                  sections={[
-                    { id: "details", label: "Details", ref: detailsRef },
-                    {
-                      id: "trials",
-                      label: "Conditions",
-                      ref: trialsRef,
-                      count: definition.trials.length,
-                      // One dot per condition in its own colour — the spine
-                      // shows the same set the glyph above it draws and the
-                      // trial table below numbers.
-                      swatches: definition.trials.map((_, i) => colorForIndex(i)),
-                    },
-                    { id: "ramp", label: "Shaping ramp", ref: rampRef, count: definition.stages.length },
-                    { id: "params", label: "Parameters", ref: paramsRef },
-                  ]}
-                  problems={errorCount}
-                />
-              </>
-            )}
-
-            {listError && <p className="px-1 text-[11px] text-status-error">{listError}</p>}
-          </div>
-        </motion.div>
-
-        {/* Centre: the machine, then the editors. THIS column scrolls — the
-            page still does not, which is what keeps the rails in place. */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={springPanel}
-          className="scrollbar-none absolute inset-y-0 left-[300px] right-[384px] overflow-y-auto px-4 py-4 xl:right-[416px]"
-        >
-          {session.loadError ? (
-            <div
-              className="pointer-events-auto flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
-              style={{ color: "var(--color-status-error)" }}
-            >
-              <CircleAlert size={14} strokeWidth={1.75} />
-              {session.loadError}
-            </div>
-          ) : !definition ? (
-            // While the document is on its way in, show NOTHING. A prompt here
-            // used to flash for a frame and then have the whole editor pop in
-            // over it, which read as a broken render rather than a load.
-            connected ? null : (
-              <p className="pointer-events-auto max-w-prose pt-8 text-[13px] leading-relaxed text-static">
-                Waiting for the backend — the task library comes from it.
-              </p>
-            )
-          ) : (
-            // The editor stack arrives as a CASCADE — each panel rising on the
-            // panel spring a beat after the one above it — so a finished page
-            // assembles top-down instead of slamming in as one frame.
-            <motion.div
-              variants={CASCADE}
-              initial="hidden"
-              animate="shown"
-              className="pointer-events-auto flex flex-col gap-3"
-            >
-              <motion.div variants={RISE} ref={nameRef}>
-                <Header session={session} onSave={() => void save()} />
-              </motion.div>
-
-              <motion.div variants={RISE} ref={detailsRef}>
-                <TaskDetails
-                  definition={definition}
-                  categories={categories}
-                  startOpen={taskId === undefined}
-                  onChange={setDefinition}
-                />
-              </motion.div>
-
-              <motion.section variants={RISE} className="hud rounded-md p-4">
-                <div className="mb-2 flex items-center gap-3">
-                  <Workflow size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
-                  <span className="min-w-0 flex-1 text-[12px] font-medium text-starlight">
-                    State machine
-                    <span className="ml-2 font-normal text-static/70">{definition.name}</span>
-                  </span>
-                  {model.usable && (
-                    <span className="font-mono text-[10px] text-static/70">
-                      {model.conditions.length} condition
-                      {model.conditions.length === 1 ? "" : "s"} · derived from
-                      what this task presents
-                    </span>
-                  )}
-                </div>
-                {model.usable ? (
-                  <SketchStateMachine
-                    model={model}
-                    profile={session.profile}
-                    hoverGroup={hoverGroup}
-                    onHoverGroup={setHoverGroup}
-                    onHoverNode={setHoverNode}
-                    onNodeClick={() => undefined}
-                    onSelectGroup={setSelectedGroup}
-                  />
-                ) : (
-                  <p className="text-[12px] leading-relaxed text-static">
-                    {session.profile === null
-                      ? "Deriving the machine from what this task presents…"
-                      : "Nothing to draw yet — a trial type with an odor, a response port and an onset code gives the machine its first arm."}
-                  </p>
-                )}
-              </motion.section>
-
-              <motion.div variants={RISE} ref={trialsRef}>
-                <TrialTypeTable
-                  trials={definition.trials}
-                  mode={definition.selectionMode}
-                  rig={rig}
-                  vocabulary={vocabulary}
-                  diagnostics={[...session.diagnostics, ...unscoredTrials]}
-                  onChange={(trials) => setDefinition({ ...definition, trials })}
-                  onModeChange={(selectionMode) =>
-                    setDefinition({ ...definition, selectionMode })
-                  }
-                />
-              </motion.div>
-
-              <motion.div variants={RISE} ref={rampRef}>
-                <StageRamp
-                  stages={definition.stages}
-                  diagnostics={session.diagnostics}
-                  onChange={(stages) => setDefinition({ ...definition, stages })}
-                />
-              </motion.div>
-            </motion.div>
-          )}
-        </motion.div>
-
-        {/* Right: the parameter rail. */}
-        <motion.div
-          initial={{ opacity: 0, x: PANEL_TRAVEL }}
-          animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0 }}
-          transition={springPanel}
-          className="scrollbar-none pointer-events-none absolute inset-y-0 right-0 flex w-[384px] flex-col overflow-y-auto p-4 pl-0 xl:w-[416px]"
-        >
-          <AnimatePresence>
-            {definition && session.profile && (
-              // The rail's content needs the COMPILED profile, which lands one
-              // preview round trip after the definition — so it mounts a beat
-              // after the centre column. Animated for that reason: without an
-              // entrance of its own, this is the last tile to pop in.
+          <AnimatePresence mode="popLayout" initial={false}>
+            {compactSpine ? (
               <motion.div
-                ref={paramsRef}
-                initial={{ opacity: 0, x: 12 }}
-                animate={{ opacity: 1, x: 0 }}
+                key="compact"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={springPanel}
-                className="pointer-events-auto flex min-h-0 flex-col gap-2"
+                className="pointer-events-auto flex flex-col items-center gap-3 pt-1"
               >
-                <div className="flex items-baseline justify-between gap-3 px-1">
-                  <h2 className="font-display text-[13px] font-medium uppercase tracking-wide text-static">
-                    Parameters
-                  </h2>
-                  {errorCount > 0 && (
-                    <span className="font-mono text-[10px] text-status-error">
-                      {errorCount} problem{errorCount === 1 ? "" : "s"}
-                    </span>
-                  )}
-                </div>
-                <ParameterInspector
-                  profile={session.profile}
-                  model={model}
-                  config={config}
-                  baseline={session.catalogueDefaults}
-                  selected={selectedGroup}
-                  // The four ramped holds are the StageRamp's, and a ramp only
-                  // reads as a table. Offering them here too would be a second
-                  // surface for one field. Reward volume is the trial table's
-                  // for a stronger reason: the generator reads it off the ROW,
-                  // so a rail edit into `params` would be accepted and ignored.
-                  exclude={(group) => isRampGroup(group) || group === "Reward volume"}
-                  onSelect={setSelectedGroup}
-                  onChange={onParams}
-                  onHoverGroup={setHoverGroup}
-                  litGroups={litGroups}
-                />
+                <Button variant="ghost" onClick={() => navigate("/task")} title="Back to Task">
+                  <ArrowLeft size={13} strokeWidth={1.75} />
+                </Button>
+                {definition && (
+                  <>
+                    <motion.span layoutId={`task-glyph-${definition.id}`} className="flex">
+                      <TaskGlyph size={36} task={glyphTask(definition, errorCount)} />
+                    </motion.span>
+                    <SectionSpine compact sections={sections} problems={errorCount} />
+                  </>
+                )}
+              </motion.div>
+            ) : (
+              <motion.div
+                key="full"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={springPanel}
+                className="pointer-events-auto flex w-[252px] flex-col gap-3 pt-1"
+              >
+                <Button variant="ghost" onClick={() => navigate("/task")}>
+                  <ArrowLeft size={13} strokeWidth={1.75} />
+                  Task
+                </Button>
+
+                {definition && (
+                  <>
+                    <div className="flex items-center gap-3 px-1">
+                      {/* The shared element from the landing's card: the mark
+                          the eye picked out of the grid is still on screen
+                          after the route changes, so the two pages read as one
+                          gesture. */}
+                      <motion.span layoutId={`task-glyph-${definition.id}`} className="flex">
+                        <TaskGlyph size={44} task={glyphTask(definition, errorCount)} />
+                      </motion.span>
+                      <div className="min-w-0">
+                        <div className="truncate font-display text-[15px] text-starlight">
+                          {definition.name || "Untitled"}
+                        </div>
+                        <div className="truncate font-mono text-[10px] text-static/70">
+                          {taskId === undefined ? "unsaved" : definition.category}
+                        </div>
+                      </div>
+                    </div>
+
+                    <SectionSpine sections={sections} problems={errorCount} />
+                  </>
+                )}
+
+                {listError && <p className="px-1 text-[11px] text-status-error">{listError}</p>}
               </motion.div>
             )}
           </AnimatePresence>
         </motion.div>
+
+        {/* Centre: the machine, then the editors. THIS column scrolls — the
+            page still does not, which is what keeps the rails in place. It
+            runs to the window's right edge: the blocks stop short of the side
+            rail, but the state machine's card runs on UNDER it, so the rail
+            reads as a panel set in front of the machine it tunes. */}
+        <motion.div
+          layoutScroll
+          initial={{ opacity: 0, left: layout.spine }}
+          animate={{ opacity: 1, left: layout.spine }}
+          exit={{ opacity: 0 }}
+          transition={springPanel}
+          className="scrollbar-none absolute inset-y-0 right-0 overflow-y-auto px-4 py-4"
+        >
+          <motion.div initial={false} animate={{ paddingRight: railInset }} transition={springPanel}>
+            {session.loadError ? (
+              <div
+                className="pointer-events-auto flex items-center gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
+                style={{ color: "var(--color-status-error)" }}
+              >
+                <CircleAlert size={14} strokeWidth={1.75} />
+                {session.loadError}
+              </div>
+            ) : !definition ? (
+              // While the document is on its way in, show NOTHING. A prompt
+              // here used to flash for a frame and then have the whole editor
+              // pop in over it, which read as a broken render rather than a
+              // load.
+              connected ? null : (
+                <p className="pointer-events-auto max-w-prose pt-8 text-[13px] leading-relaxed text-static">
+                  Waiting for the backend — the task library comes from it.
+                </p>
+              )
+            ) : (
+              // The editor stack arrives as a CASCADE — each panel rising on
+              // the panel spring a beat after the one above it — so a finished
+              // page assembles top-down instead of slamming in as one frame.
+              <motion.div
+                variants={CASCADE}
+                initial="hidden"
+                animate="shown"
+                className="pointer-events-auto flex flex-col gap-3"
+              >
+                <motion.div variants={RISE} ref={nameRef}>
+                  <Header session={session} onSave={() => void save()} />
+                </motion.div>
+
+                <motion.div variants={RISE} ref={detailsRef}>
+                  <TaskDetails
+                    definition={definition}
+                    categories={categories}
+                    startOpen={taskId === undefined}
+                    onChange={setDefinition}
+                  />
+                </motion.div>
+
+                <motion.section variants={RISE} className="relative">
+                  {/* The card's glass runs under the side rail; its content
+                      stops short of it, so no state is ever behind the rail. */}
+                  <motion.div
+                    initial={false}
+                    animate={{ marginRight: -railInset }}
+                    transition={springPanel}
+                    // Docked, the rail overlaps the card's foot by 20px; the
+                    // extra padding keeps that overlap off the condition list.
+                    className={`hud rounded-md p-4 transition-[padding] ${sideRail ? "" : "pb-9"}`}
+                  >
+                    <motion.div initial={false} animate={{ paddingRight: railInset }} transition={springPanel}>
+                      <div className="mb-2 flex items-center gap-3">
+                        <Workflow size={18} strokeWidth={1.75} className="shrink-0 text-pulsar" />
+                        <span className="min-w-0 flex-1 text-[12px] font-medium text-starlight">
+                          State machine
+                          <span className="ml-2 font-normal text-static/70">{definition.name}</span>
+                        </span>
+                        {model.usable && (
+                          <span className="font-mono text-[10px] text-static/70">
+                            {model.conditions.length} condition
+                            {model.conditions.length === 1 ? "" : "s"} · derived from
+                            what this task presents
+                          </span>
+                        )}
+                      </div>
+                      {model.usable ? (
+                        <SketchStateMachine
+                          model={model}
+                          profile={session.profile}
+                          hoverGroup={hoverGroup}
+                          onHoverGroup={setHoverGroup}
+                          onHoverNode={setHoverNode}
+                          onNodeClick={() => undefined}
+                          onSelectGroup={setSelectedGroup}
+                        />
+                      ) : (
+                        <p className="text-[12px] leading-relaxed text-static">
+                          {session.profile === null
+                            ? "Deriving the machine from what this task presents…"
+                            : "Nothing to draw yet — a trial type with an odor, a response port and an onset code gives the machine its first arm."}
+                        </p>
+                      )}
+                    </motion.div>
+                  </motion.div>
+
+                  {/* Docked: the rail overlaps the card's foot, set in front of
+                      the machine rather than stacked after it. */}
+                  <AnimatePresence>
+                    {!sideRail && rail && (
+                      <div className="relative z-10 mx-4 -mt-5 flex max-h-[70vh] flex-col">{rail}</div>
+                    )}
+                  </AnimatePresence>
+                </motion.section>
+
+                <motion.div variants={RISE} ref={trialsRef}>
+                  <TrialTypeTable
+                    trials={definition.trials}
+                    mode={definition.selectionMode}
+                    rig={rig}
+                    vocabulary={vocabulary}
+                    diagnostics={[...session.diagnostics, ...unscoredTrials]}
+                    onChange={(trials) => setDefinition({ ...definition, trials })}
+                    onModeChange={(selectionMode) =>
+                      setDefinition({ ...definition, selectionMode })
+                    }
+                  />
+                </motion.div>
+
+                <motion.div variants={RISE} ref={rampRef}>
+                  <StageRamp
+                    stages={definition.stages}
+                    diagnostics={session.diagnostics}
+                    onChange={(stages) => setDefinition({ ...definition, stages })}
+                  />
+                </motion.div>
+              </motion.div>
+            )}
+          </motion.div>
+        </motion.div>
+
+        {/* Right: the parameter rail, in front of the centre column. */}
+        <AnimatePresence>
+        {sideRail && (
+          <motion.div
+            layoutScroll
+            key="side-rail"
+            initial={{ opacity: 0, x: PANEL_TRAVEL, width: layout.rail }}
+            animate={{ opacity: 1, x: 0, width: layout.rail }}
+            exit={{ opacity: 0 }}
+            transition={springPanel}
+            className="scrollbar-none pointer-events-none absolute inset-y-0 right-0 z-10 flex flex-col overflow-y-auto p-4 pl-0"
+          >
+            <AnimatePresence>{rail}</AnimatePresence>
+          </motion.div>
+        )}
+        </AnimatePresence>
       </div>
 
       {guiding && definition && <TaskGuide steps={steps} onClose={dismissGuide} />}
@@ -612,6 +705,29 @@ function guideSteps({
   ];
 }
 
+/** One entry on the section spine. */
+interface SpineSection {
+  id: string;
+  label: string;
+  /** The section's mark on the compact spine. */
+  icon: LucideIcon;
+  ref: React.RefObject<HTMLElement | null>;
+  count?: number;
+  /** One colour per item in the section — the conditions' series slots. */
+  swatches?: string[];
+}
+
+/** What the task glyph draws, from the definition on screen. */
+function glyphTask(definition: TaskDefinition, problems: number) {
+  return {
+    id: definition.id,
+    trials: definition.trials.length,
+    stages: definition.stages.length,
+    selectionMode: definition.selectionMode,
+    problems,
+  };
+}
+
 /**
  * The section spine — where the centre column's four editors are.
  *
@@ -619,30 +735,64 @@ function guideSteps({
  * scroll, and hiding three of them behind tabs would make "does this ramp match
  * that trial table" a navigation problem. The counts are the useful part —
  * "Conditions 4" answers at a glance what scrolling answers slowly.
+ *
+ * `compact` is the same list as a strip of marks, for a page that needs the
+ * room (`editorLayout`): each section's icon, its count as a superscript, its
+ * name as the tooltip and to assistive tech.
  */
 function SectionSpine({
   sections,
   problems,
+  compact = false,
 }: {
-  sections: Array<{
-    id: string;
-    label: string;
-    ref: React.RefObject<HTMLElement | null>;
-    count?: number;
-    /** One colour per item in the section — the conditions' series slots. */
-    swatches?: string[];
-  }>;
+  sections: SpineSection[];
   problems: number;
+  compact?: boolean;
 }) {
+  const go = (section: SpineSection) =>
+    section.ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  if (compact) {
+    return (
+      <nav className="hud flex flex-col items-center gap-0.5 rounded-md p-1">
+        {sections.map((section) => (
+          <button
+            key={section.id}
+            type="button"
+            aria-label={section.label}
+            // A native title, not a drawn label: the spine column scrolls, so
+            // it clips anything that would hang out beside it.
+            title={section.count !== undefined ? `${section.label} · ${section.count}` : section.label}
+            onClick={() => go(section)}
+            className="relative flex size-9 items-center justify-center rounded-sm text-static transition-colors hover:bg-halo/50 hover:text-starlight focus:outline-none focus-visible:ring-1 focus-visible:ring-pulsar"
+          >
+            <section.icon size={15} strokeWidth={1.75} />
+            {section.count !== undefined && (
+              <span className="absolute top-0.5 right-0.5 font-mono text-[8px] text-static/70">
+                {section.count}
+              </span>
+            )}
+          </button>
+        ))}
+        {problems > 0 && (
+          <span
+            className="mt-0.5 border-t border-halo px-1 pt-1 font-mono text-[10px] text-status-error"
+            title={`${problems} problem${problems === 1 ? "" : "s"} — it will still flash`}
+          >
+            {problems}!
+          </span>
+        )}
+      </nav>
+    );
+  }
+
   return (
     <nav className="hud flex flex-col rounded-md py-1">
       {sections.map((section) => (
         <button
           key={section.id}
           type="button"
-          onClick={() =>
-            section.ref.current?.scrollIntoView({ behavior: "smooth", block: "start" })
-          }
+          onClick={() => go(section)}
           className="flex items-center gap-2 px-3.5 py-1.5 text-left text-[12px] text-static transition-colors hover:text-starlight"
         >
           <span className="min-w-0 flex-1 truncate">{section.label}</span>

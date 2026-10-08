@@ -302,18 +302,20 @@ surface owns.
 
 ### Recording tab
 
-`/recording` (`routes/Recording.tsx`), four tiles:
+`/recording` (`routes/Recording.tsx`) is a [telemetry display](ARCHITECTURE.md#telemetry-panels) sized to
+fit one screen without scrolling:
 
-| Tile | Holds |
+| Part | Holds |
 |---|---|
+| Readout strip | Link state, controller (and the `synthetic` flag), RHX version, sample rate, headstage ports, and boxes wired / whether the wiring declares a sync channel |
 | Live (only while a recording exists) | `RecordingStatus`, the same block as Mission Control's rail, and a link to Mission Control |
-| Connection | `IntanConnectionPanel`: Connect/Disconnect, controller, version, rate, the `synthetic` flag, `confirmsWrites`, and the three TCP ports (`settings.intan`) |
-| Sync inputs | `SyncInputsTable`: box → `DIN n`, and whether the wiring declares a sync channel |
-| Defaults | `settings.recordingDefaults` (shaped in `lib/intan/defaults.ts`), edited outright via `RecordingConfigRows` |
+| Link — Connection | `IntanConnectionPanel`: Connect/Disconnect, `confirmsWrites`, the one RHX click as a disclosure (open while there is no link), and the three TCP ports (`settings.intan`) |
+| Link — Sync inputs | `SyncInputsTable`: box → `DIN n` |
+| Defaults — Saving, Spike thresholds | `settings.recordingDefaults` (shaped in `lib/intan/defaults.ts`), edited outright via `RecordingConfigRows` |
 
-![The Recording tab: Connection (connected to ControllerRecordUSB3, RHX 3.5.0, 30 kS/s, headstage A:64, with Disconnect and the commands, waveform and spike port fields), Sync inputs mapping boxes 1 to 6 to DIN 1 to DIN 6 with "This rig's wiring has a sync channel" and Open wiring, and the start of Defaults](images/recording-tab.webp)
-
-*The ports here (5100–5102) belong to the demo setup the screenshot was taken on; RHX's defaults are 5000–5002.*
+Link is the left column and Defaults the right. Rows are `SettingRow` at **compact** density
+(`SettingRowDensityContext`): label and control on one line, the explanation behind an ⓘ `InfoHint`. The
+Record step renders the same rows at full density.
 
 ### Record step
 

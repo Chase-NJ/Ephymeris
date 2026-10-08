@@ -5,7 +5,7 @@ import { useLocation } from "react-router";
 
 import { ChangeCohort } from "@/components/analytics/ChangeCohort";
 import { FolderButton } from "@/components/common/FolderButton";
-import { CohortSky } from "@/components/cohorts/CohortSky";
+import { CohortManifest } from "@/components/cohorts/CohortManifest";
 import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import { DENSE_SKY_OPACITY, SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { CarryForwardPanel } from "@/components/logbook/CarryForwardPanel";
@@ -26,8 +26,8 @@ import { useSidecar } from "@/lib/ws/context";
  * The lab notebook (`USER-GUIDE.md#keeping-the-log`, `DATA.md#the-session-log`).
  *
  * A cohort's sessions on the flight-recorder rail at the left; the selected
- * one's page on the right. Picking a cohort is the same 3D browser Analytics
- * opens on — one way to choose a cohort across the app.
+ * one's page on the right. Picking a cohort is the same list Analytics opens
+ * on (`CohortManifest`) — one way to choose a cohort across the app.
  *
  * The keyboard is first-class because a notebook is used with hands full:
  * j / k (or the arrows, on the rail) step through sessions from anywhere on
@@ -55,7 +55,7 @@ export function Log() {
 
   // Arriving with a cohort and session (the wrap-up, a carry-forward link)
   // goes straight there; arriving cold picks up whichever cohort Analytics
-  // was last looking at, else the browser.
+  // was last looking at, else the cohort list.
   const landing = location.state as { cohortId?: string; sessionId?: string } | null;
   const handled = useRef<string | null>(null);
   useEffect(() => {
@@ -117,24 +117,14 @@ export function Log() {
   if (!cohortId) {
     return (
       <div className="relative h-full">
-        {connected ? (
-          <CohortSky
-            cohorts={pickable}
-            focusedId={null}
-            onFocus={(next) => {
-              if (next !== null) store.selectCohort(next);
-            }}
-          />
-        ) : (
-          <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
-        )}
+        <SkyBackdrop opacity={DENSE_SKY_OPACITY} />
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={springPanel}
           className="pointer-events-none absolute inset-0"
         >
-          <div className="pointer-events-auto absolute top-4 left-8 max-w-[420px]">
+          <div className="pointer-events-auto absolute inset-x-8 top-4 bottom-6 flex max-w-[820px] flex-col">
             <h1 className="font-display text-[22px] text-starlight">Log</h1>
             <p className="mt-1 text-[12px] leading-relaxed text-static">
               Pick a cohort to open its lab notebook — every session, its notes, and what
@@ -149,6 +139,11 @@ export function Log() {
               <p className="mt-4 text-[13px] text-static">
                 No cohorts yet — the log keeps sessions recorded against one.
               </p>
+            )}
+            {connected && pickable.length > 0 && (
+              <div className="mt-5 flex min-h-0 flex-col">
+                <CohortManifest cohorts={pickable} onPick={(id) => store.selectCohort(id)} />
+              </div>
             )}
           </div>
         </motion.div>

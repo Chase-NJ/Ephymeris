@@ -1,4 +1,21 @@
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
+
+import { InfoHint } from "@/components/common/InfoHint";
+
+/**
+ * How much room a `SettingRow` spends on its explanation — set by the surface,
+ * read by the row.
+ *
+ * `"full"` prints the description under the label: the settings screens and
+ * the Record step, where a row is read once, carefully. `"compact"` keeps it
+ * behind an `InfoHint` and tightens the row, for a display that has to fit on
+ * one screen (the Recording tab). A context rather than a prop for the reason
+ * `rowDensity.ts` gives: the row groups between surface and row
+ * (`RecordingConfigRows`) need no changes.
+ */
+export type SettingRowDensity = "full" | "compact";
+
+export const SettingRowDensityContext = createContext<SettingRowDensity>("full");
 
 export function SettingRow({
   label,
@@ -9,6 +26,20 @@ export function SettingRow({
   description?: string;
   children: ReactNode;
 }) {
+  const density = useContext(SettingRowDensityContext);
+  if (density === "compact") {
+    return (
+      // The label never truncates — it is short, and the only thing naming the
+      // control. A wide control wraps under it instead.
+      <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-b border-halo/70 px-4 py-1.5 last:border-b-0">
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="text-[13px] font-medium whitespace-nowrap text-starlight">{label}</span>
+          {description && <InfoHint label={`About ${label}`}>{description}</InfoHint>}
+        </div>
+        <div className="ml-auto">{children}</div>
+      </div>
+    );
+  }
   return (
     <div className="flex items-start justify-between gap-8 border-b border-halo px-4 py-3.5 last:border-b-0">
       <div className="min-w-0 pt-0.5">

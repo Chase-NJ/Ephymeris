@@ -108,7 +108,9 @@ export function ParameterInspector({
   );
 
   return (
-    <div className="hud flex min-h-0 flex-col rounded-md">
+    // `hud-front`: the rail sits IN FRONT of the state machine it tunes
+    // (`TASKS.md#editor`) — denser glass and a flat drop shadow.
+    <div className="hud-front flex min-h-0 flex-col rounded-md">
       <div className="flex flex-wrap gap-1 border-b border-halo p-2.5">
         {tabs.map((name) => {
           const active = name === tab;

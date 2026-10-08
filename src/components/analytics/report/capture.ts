@@ -2,6 +2,8 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import { domToBlob } from "modern-screenshot";
 
+import { SAVE_STEPS, type ExportTracker } from "@/lib/exports/jobs";
+
 import { REPORT_FONT_CSS } from "./fonts";
 
 /**
@@ -31,7 +33,11 @@ const SCALE = 1;
 /** The sheet's right-hand padding, restored when it is widened to fit. */
 const GUTTER = 32;
 
-export async function captureSheet(node: HTMLElement): Promise<Blob> {
+export async function captureSheet(
+  node: HTMLElement,
+  /** The rasterizer's own progress (resources embedded so far), as a fraction. */
+  onProgress?: (fraction: number) => void,
+): Promise<Blob> {
   // The faces have to be resident before the clone measures text, or the
   // layout is taken against a fallback metric.
   await document.fonts.ready;
@@ -62,6 +68,11 @@ export async function captureSheet(node: HTMLElement): Promise<Blob> {
     // between the cards.
     backgroundColor: getComputedStyle(node).backgroundColor || "#0b0b10",
     font: { cssText: REPORT_FONT_CSS },
+    progress: onProgress
+      ? (current, total) => {
+          if (total > 0) onProgress(current / total);
+        }
+      : null,
   });
 }
 
@@ -74,15 +85,19 @@ export async function saveFile(
   blob: Blob,
   defaultName: string,
   filter: { name: string; extensions: string[] },
+  /** Told when the dialog opens and when the write starts (`SAVE_STEPS`). */
+  tracker?: ExportTracker,
 ): Promise<string | null> {
+  tracker?.step(SAVE_STEPS[0]);
   const path = await save({ defaultPath: defaultName, filters: [filter] });
   if (!path) return null;
+  tracker?.step(SAVE_STEPS[1]);
   await writeFile(path, new Uint8Array(await blob.arrayBuffer()));
   return path;
 }
 
-export function saveSheet(blob: Blob, defaultName: string): Promise<string | null> {
-  return saveFile(blob, defaultName, { name: "PNG image", extensions: ["png"] });
+export function saveSheet(blob: Blob, defaultName: string, tracker?: ExportTracker): Promise<string | null> {
+  return saveFile(blob, defaultName, { name: "PNG image", extensions: ["png"] }, tracker);
 }
 
 /**

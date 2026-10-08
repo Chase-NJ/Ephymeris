@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom";
 
 import { useAnalyticsStore } from "@/lib/analytics/context";
+import { SAVE_STEPS, trackExport } from "@/lib/exports/jobs";
 
 import { captureSheet, saveSheet, slug } from "./capture";
 import { ReportSheet, type ReportInput } from "./ReportSheet";
@@ -11,13 +12,17 @@ import { ReportSheet, type ReportInput } from "./ReportSheet";
  * (`DATA.md#exporting-a-sheet`).
  *
  * Returns the portal to render and a `run` to call. The caller renders
- * `portal` unconditionally; it is `null` except during an export.
+ * `portal` unconditionally; it is `null` except during an export. Progress,
+ * the saved path and any failure are reported on the export card
+ * (`ARCHITECTURE.md#export-progress`), not here.
  */
+const PREPARING = "Preparing the sheet";
+const RENDERING = "Rendering";
+
 export function useExportReport() {
   const store = useAnalyticsStore();
   const [pending, setPending] = useState<ReportInput | null>(null);
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const readyRef = useRef<(() => void) | null>(null);
   // Guards a second click while the first export is still in the air, and
@@ -37,7 +42,6 @@ export function useExportReport() {
       if (runningRef.current) return;
       runningRef.current = true;
       setBusy(true);
-      setNote(null);
 
       // A pinned animal dims every other one to near-invisibility across the
       // strategy planes, the learning curves and both accuracy trends — it is
@@ -48,19 +52,25 @@ export function useExportReport() {
       if (pinned) store.selectAnimal(null);
 
       try {
-        await new Promise<void>((resolve) => {
-          readyRef.current = resolve;
-          setPending(input);
-        });
-        const node = sheetRef.current;
-        if (!node) throw new Error("the report sheet did not mount");
+        await trackExport(
+          input.session ? "Session PNG" : "Cohort PNG",
+          "image",
+          [PREPARING, RENDERING, ...SAVE_STEPS],
+          async (tracker) => {
+            await new Promise<void>((resolve) => {
+              readyRef.current = resolve;
+              setPending(input);
+            });
+            const node = sheetRef.current;
+            if (!node) throw new Error("the report sheet did not mount");
 
-        const blob = await captureSheet(node);
-        const path = await saveSheet(blob, filename);
-        // Cancelling the dialog is an outcome, not a failure: say nothing.
-        setNote(path ? `Saved ${path}` : null);
-      } catch (error) {
-        setNote(error instanceof Error ? error.message : String(error));
+            tracker.step(RENDERING);
+            const blob = await captureSheet(node, (fraction) => tracker.progress(fraction));
+            return saveSheet(blob, filename, tracker);
+          },
+        );
+      } catch {
+        // On the card already; nothing more to say here.
       } finally {
         setPending(null);
         if (pinned) store.selectAnimal(pinned);
@@ -97,7 +107,7 @@ export function useExportReport() {
       )
     : null;
 
-  return { run, portal, busy, note, setNote };
+  return { run, portal, busy };
 }
 
 /**

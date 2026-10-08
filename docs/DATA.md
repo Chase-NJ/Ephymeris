@@ -314,7 +314,7 @@ Each session folder that has a log gets a `notes.md` beside its format folders: 
 
 ### Exporting a log
 
-**Session PDF** and **Logbook PDF** (the Log header) write a vector PDF with selectable text: one session's page, or the whole cohort oldest-first behind a cover that lists the open flags. Rendered in the webview by `@react-pdf/renderer` (`components/logbook/pdf/`), loaded by dynamic `import()` on the first export only, and saved through the shell like the [PNG sheet](#exporting-a-sheet). Every string comes from `lib/logbook/document.ts`, built from the same helpers as the screen — the performance table from `sessionRunsOf` and `conditionColumns`, what changed from `changeParts` — and is unit-tested there; the renderer only lays it out. Printed in the paper palette ([ARCHITECTURE.md](ARCHITECTURE.md#printed-documents)).
+**Session PDF** and **Logbook PDF** (the Log header) write a vector PDF with selectable text: one session's page, or the whole cohort oldest-first behind a cover that lists the open flags. Rendered in the webview by `@react-pdf/renderer` (`components/logbook/pdf/`), loaded by dynamic `import()` on the first export only, and saved through the shell like the [PNG sheet](#exporting-a-sheet), reporting to the same export card. Every string comes from `lib/logbook/document.ts`, built from the same helpers as the screen — the performance table from `sessionRunsOf` and `conditionColumns`, what changed from `changeParts` — and is unit-tested there; the renderer only lays it out. Printed in the paper palette ([ARCHITECTURE.md](ARCHITECTURE.md#printed-documents)).
 
 > [!CAUTION]
 > Each of these, done wrong, yields a **plausible-looking wrong PDF**, or none:
@@ -1117,7 +1117,7 @@ Per-animal identity uses a six-colour series ramp (`--color-series-1`…`6` in `
 
 ### Exporting a sheet
 
-**Export PNG** saves the panels in scope as one image. The sheets (`components/analytics/report/`) **mount the existing panel components with their existing props** — there is no second chart implementation to drift from the screen. Both carry a masthead and `summary.warnings`: a sheet made while the data folder was unreachable shows the last good read and must say so. Saving is shell-side (`plugin-dialog` + `plugin-fs`).
+**Export PNG** saves the panels in scope as one image. The sheets (`components/analytics/report/`) **mount the existing panel components with their existing props** — there is no second chart implementation to drift from the screen. Both carry a masthead and `summary.warnings`: a sheet made while the data folder was unreachable shows the last good read and must say so. Saving is shell-side (`plugin-dialog` + `plugin-fs`). Progress, the saved path and any failure are on the export card ([ARCHITECTURE.md](ARCHITECTURE.md#export-progress)); the rasterizer's own progress fills its Rendering step.
 
 > [!CAUTION]
 > Each of these, done wrong, yields a **plausible-looking wrong picture**, not an error:

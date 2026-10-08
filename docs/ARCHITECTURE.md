@@ -73,6 +73,7 @@ are [DATA.md](DATA.md); Intan recording is [RECORDING.md](RECORDING.md).
   - [Shaders and lights](#shaders-and-lights)
   - [Live session views](#live-session-views)
   - [Drag and drop](#drag-and-drop)
+  - [Export progress](#export-progress)
 - [Theme](#theme)
   - [Telemetry panels](#telemetry-panels)
   - [Printed documents](#printed-documents)
@@ -953,7 +954,7 @@ All routes are children of `components/chrome/AppShell.tsx` in `src/App.tsx`; fi
 | `/debug` | `DebugMode.tsx` | Per-box instrument panel. No nav entry: reached by selecting a box; redirects to `/` when none is selected |
 | `/cohorts`, `/cohorts/new`, `/cohorts/:id` | `Cohorts.tsx`, `CohortEditor.tsx` | Cohort browser; create and manage |
 | `/task`, `/task/new`, `/task/:taskId`, `/task/strobes` | `Task.tsx`, `TaskEditor.tsx`, `TaskStrobes.tsx` | Saved tasks, the editor, the read-only strobe vocabulary |
-| `/analytics` | `Analytics.tsx` | Its cold landing is the cohort browser |
+| `/analytics` | `Analytics.tsx` | Its cold landing is the cohort list (`CohortManifest`, [Cohort browser](#cohort-browser)) |
 | `/log` | `Log.tsx` | The lab notebook ([DATA.md](DATA.md#the-session-log)). Same cold landing as Analytics |
 | `/config`, `/config/wiring` | `Config.tsx`, `RigWiring.tsx` | Rig tab and wiring editor |
 | `/recording`, `/settings` | `Recording.tsx`, `Settings.tsx` | |
@@ -1056,7 +1057,11 @@ through `useRigSky`.*
 
 `components/cohorts/CohortSky.tsx` makes each cohort a `SceneNode` whose `body` is a procedural planet, so
 hover, reticle, nameplate, arrival rings and flight are `ConstellationScene`'s (`Scene.tsx`) and not
-reimplemented; home cages ride `SceneNode.orbiters`.
+reimplemented; home cages ride `SceneNode.orbiters`. It is the **Cohorts tab only**, where the library is
+managed. Analytics and Log choose a cohort from `CohortManifest`, a [telemetry panel](#telemetry-panels) of
+rows over the dimmed sky: each row is the world's `PlanetDisc`, the roster, and the session count and last
+run read through the shared analytics cache (`useCohortSessionStats`, quiet like `useLastRuns`: a dash until
+a summary lands). Rows sort by most recent run, then by last edit — instants, never names.
 
 ![The Cohorts browser: three procedural planets labelled Batch A — Spring, Batch B — Summer and Odor Discrimination 2026, a dust disc labelled New cohort, and Search, a Recent sort and Show archived (1) over the scene](images/cohorts.webp)
 
@@ -1129,6 +1134,23 @@ condition can't tell learning from a side bias ([DATA.md](DATA.md#derived-metric
 > springs back, so it looks like a CSS or React bug; click-to-carry still works. JSON can't carry a
 > comment — if drag silently stops working, check that key first.
 
+### Export progress
+
+Every file written for the operator — the Analytics report PNG, the session and logbook PDFs, the strobe
+vocabulary JSON — reports to one module-level store, `lib/exports/jobs.ts` (`trackExport`), and
+`components/chrome/ExportProgress.tsx`, mounted once in `AppShell` and portalled to `body`, draws a card per
+job in the bottom-right corner. Module-level rather than a provider's because an export outlives the route
+that started it.
+
+- **A job declares its steps up front** — ending in `SAVE_STEPS`, which `saveFile` reports — so the card can
+  say "2 of 4" and draw one segment per step. A step that knows its own fraction fills (the PNG's
+  `modern-screenshot` progress); one that cannot breathes instead.
+- **Done lingers five seconds** (not while hovered) with the file name and its folder; **a failure stays**
+  until dismissed and fills the bar only to the step that failed; **a cancelled save dialog removes the
+  card**, since not choosing a place is an outcome, not news.
+- The expensive work runs **before** the save dialog in both renderers, so "Choosing where to save" is a
+  step of its own rather than part of "Exporting…".
+
 ## Theme
 
 Every token is declared once, in `src/styles/index.css`'s Tailwind v4 `@theme` block; there is no
@@ -1148,13 +1170,16 @@ ramps are in [DATA.md](DATA.md#analytics-views).
 
 **Typefaces have fixed roles:** Space Grotesk for **headers only** (in body text it dilutes into just
 another sans), Inter for all UI text, JetBrains Mono for all data — timestamps, IDs, port names, console
-text. **Motion** is Framer Motion spring physics everywhere except the 3D camera's zoom-to-star flight, the
+text. A panel set **in front of** another (the task editor's parameter rail over its state machine, a hint
+over its row, an export card) is `.hud-front`: a denser glass and a flat, dark drop shadow — depth, never
+glow. **Motion** is Framer Motion spring physics everywhere except the 3D camera's zoom-to-star flight, the
 one deliberate cubic-eased move. Ambient motion respects `prefers-reduced-motion` and the `reducedMotion`
 setting, and reduced motion stills things rather than removing them. Icons are Lucide, outline only.
 
 ### Telemetry panels
 
-Analytics is drawn as one large translucent display rather than a page of cards. Its panels are
+Analytics — and, in the same idiom, the Recording tab and the cohort list Analytics and Log open on — is
+drawn as one large translucent display rather than a page of cards. Its panels are
 `.telemetry` (`styles/index.css`): the `.hud` glass, thinner, with a 3px radius, **corner brackets**
 where a card would have a rounded edge, and a faint **dot reticle**, so the sky reads as behind a display
 surface. Panel names are `PanelTitle` (`components/charts/PanelTitle.tsx`): the subject in tracked mono
@@ -1258,10 +1283,11 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `main.tsx`, `App.tsx` | Provider trees (main, scope) and the router | [Routes](#routes) |
 | `lib/ws/`, `lib/settings/`, `lib/hardware/` | Client and protocol; settings `schema.ts`; hardware store, `useHandshakeTest.ts`, `useRig.ts` | [Wire protocol](#wire-protocol), [Settings](#settings) |
 | `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
-| `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `useLiveNode.ts`; task commands; vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine) |
+| `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `editorLayout.ts`, `useGlidingWidth.ts`, `useLiveNode.ts`; task commands; vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine) |
+| `lib/exports/` | `jobs.ts`, the export progress store | [Export progress](#export-progress) |
 | `lib/constellations/` | `zodiac.ts`, `slots.ts`, `ships.ts`, `cohortSky.ts`, `viewMemory.ts` | [One sky](#one-sky) |
 | `lib/prng.ts`, `lib/motion.ts`, `lib/useReduceMotion.ts` | Seeded PRNG behind every procedural visual; springs; reduced motion | [Theme](#theme) |
-| `components/chrome/`, `components/constellation3d/` | Shell and status constellation; the shared canvas, scene, camera, backdrop, shaders, `ProgramWarmth` | [One sky](#one-sky), [Shaders and lights](#shaders-and-lights) |
+| `components/chrome/`, `components/constellation3d/` | Shell, status constellation and export cards; the shared canvas, scene, camera, backdrop, shaders, `ProgramWarmth` | [One sky](#one-sky), [Shaders and lights](#shaders-and-lights), [Export progress](#export-progress) |
 | `components/sessions/`, `components/debug/` | Mission Control and the session flow; Debug Mode, flash dialog, Prime | [Session lifecycle](#session-lifecycle) |
 | `components/cohorts/`, `components/task/`, `components/hardware/`, `components/strobes/` | Cohort browser and editor; task editor and landing; board map and wiring editor; the strobe vocabulary page (code band, table, detail, dialogs) | [Cohort browser](#cohort-browser), [TASKS.md](TASKS.md#the-task-tab), [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `components/recording/`, `routes/scope/` | Recording tab, rail and pop-up windows | [RECORDING.md](RECORDING.md) |

@@ -5,13 +5,8 @@ import type { ReactNode } from "react";
 import { springSnappy } from "@/lib/motion";
 
 /**
- * The way back from a chosen cohort to the browser.
- *
- * All that is left of `CohortLanding`. The landing itself was a card grid that
- * duplicated the one on `/cohorts`; both were replaced by the shared 3D browser
- * (`CohortSky`), which Analytics now mounts directly. This breadcrumb survived
- * because it is the one piece that was never about the grid — it is about
- * getting out of a chosen cohort.
+ * The way back from a chosen cohort to the cohort list (`CohortManifest`),
+ * which Analytics and Log open on.
  */
 
 /**
@@ -22,7 +17,7 @@ import { springSnappy } from "@/lib/motion";
  * nothing on screen said where clicking would go. An affordance is only as
  * good as the destination it names, so the clickable part now says
  * **All cohorts** — the same wording the cohort editor's back button uses —
- * with the orbit mark of the browser it returns to, and the current
+ * with the orbit mark of the cohort list it returns to, and the current
  * cohort's name follows as plain text. `[◍ All cohorts] / The Remy's` is the
  * standard breadcrumb grammar: the link goes up, the label states where you
  * are.
@@ -34,7 +29,7 @@ export function ChangeCohort({
 }: {
   name: string;
   /** The cohort's world, small — `PlanetDisc` at 16px — so the breadcrumb
-   *  names the cohort the way the browser it returns to does. */
+   *  names the cohort the way the list it returns to does. */
   disc?: ReactNode;
   onBack: () => void;
 }) {
@@ -49,7 +44,7 @@ export function ChangeCohort({
         // The group class carries the hover to the arrow: the chip brightens
         // and the arrow leans into the direction travel will happen.
         className="group flex items-center gap-1.5 rounded-sm border border-halo bg-nebula px-2 py-1 text-static transition-colors hover:border-static/70 hover:bg-halo/50 hover:text-starlight"
-        title="Back to the cohort browser"
+        title="Back to the cohort list"
       >
         <ArrowLeft
           size={12}

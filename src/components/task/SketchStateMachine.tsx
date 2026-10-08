@@ -18,13 +18,11 @@ import {
   CHIP_ABOVE_DY,
   CHIP_GAP,
   CHIP_RIGHT_DY,
-  FALLBACK_W,
+  EDITOR_MIN_W,
   LABEL_ABOVE_DY,
   LABEL_BELOW_DY,
   LABEL_RIGHT_DY,
   LIVE_GEOMETRY,
-  MAX_W,
-  MIN_W,
   R,
   TICK_ACTIVE_H,
   TICK_H,
@@ -34,8 +32,10 @@ import {
   TICK_W,
   VIEWER_GEOMETRY,
   frameFor,
+  layoutWidthFor,
   type Frame,
 } from "@/lib/tasks/graphLayout";
+import { useGlidingWidth } from "@/lib/tasks/useGlidingWidth";
 import { useElementWidth } from "@/lib/useElementWidth";
 
 /**
@@ -70,8 +70,9 @@ import { useElementWidth } from "@/lib/useElementWidth";
  * type, node radii and strokes are constant, and the measured width goes into
  * the *layout*: columns spread to fill what the tile has, clamped to a band
  * (see the geometry section) so labels never collide at the narrow end and
- * edges never sprawl at the wide one. Resizing the window now slides states
- * closer or further apart; it never changes what a label reads like.
+ * edges never sprawl at the wide one. The width moves in steps and glides
+ * between them (`useGlidingWidth`), so a resize slides the states to their new
+ * places together; it never changes what a label reads like.
  */
 
 /** Node fill by kind, with outcomes borrowing the analytics palette so the
@@ -100,7 +101,6 @@ export function SketchStateMachine({
   onHoverNode,
   onNodeClick,
   onSelectGroup,
-  maxHeight = "60vh",
 }: {
   model: TaskGraphModel;
   profile: TaskProfile | null;
@@ -113,10 +113,6 @@ export function SketchStateMachine({
   onNodeClick: (node: TaskNode) => void;
   /** A chip click selects exactly the group it names. */
   onSelectGroup: (group: string) => void;
-  /** Safety cap on rendered height. The drawing's height is fixed by its
-      content now, so this only bites on unusually short windows — where the
-      whole drawing shrinks uniformly rather than overflowing the tile. */
-  maxHeight?: string;
 }) {
   const [hoverNode, setHoverNode] = useState<TaskNode | null>(null);
   /**
@@ -164,7 +160,7 @@ export function SketchStateMachine({
   }, [model, hoverGroup, hoverNode]);
 
   const [host, hostWidth] = useElementWidth<HTMLDivElement>();
-  const layoutWidth = Math.min(Math.max(hostWidth ?? FALLBACK_W, MIN_W), MAX_W);
+  const layoutWidth = useGlidingWidth(layoutWidthFor(hostWidth, EDITOR_MIN_W), hostWidth !== null);
   const frame = useMemo(
     // The chip count is the whole reason the band can be derived — see
     // `measureNode`.
@@ -191,16 +187,16 @@ export function SketchStateMachine({
 
   return (
     <div ref={host}>
-      {/* Three regimes off two style rules: inside the clamp band the drawing
-          is 1:1 (width = layout width = host width); on a tile wider than
-          MAX_W it stops growing and centres; on one narrower than MIN_W the
-          MIN_W layout shrinks uniformly via maxWidth — the one place viewBox
-          scaling survives, as graceful degradation below the supported band
-          rather than as the sizing model. */}
+      {/* Always 1:1 — the drawing is never scaled. Inside the band its layout
+          width follows the host in `WIDTH_STEP`s, gliding between them; wider
+          than MAX_W it stops growing and centres. The page keeps the host at
+          least EDITOR_MIN_W wide (`editorLayout`); on a host that somehow is
+          not, the drawing scrolls sideways rather than shrinking its type. */}
+      <div className="scrollbar-slim overflow-x-auto">
       <svg
         viewBox={`0 0 ${frame.width} ${frame.height}`}
         className="mx-auto block"
-        style={{ width: frame.width, maxWidth: "100%", maxHeight }}
+        style={{ width: frame.width, height: frame.height, maxWidth: "none" }}
         role="img"
         aria-label="The task's state machine, derived from its strobe vocabulary"
       >
@@ -235,6 +231,7 @@ export function SketchStateMachine({
           />
         ))}
       </svg>
+      </div>
 
       {/* The caption strip: the hovered relationship, in words. A fixed slot
           rather than a tooltip so the eye learns one place to read and the
@@ -384,7 +381,7 @@ export function LiveStateMachine({
   );
 
   const [host, hostWidth] = useElementWidth<HTMLDivElement>();
-  const layoutWidth = Math.min(Math.max(hostWidth ?? FALLBACK_W, MIN_W), MAX_W);
+  const layoutWidth = useGlidingWidth(layoutWidthFor(hostWidth), hostWidth !== null);
   // No chip argument: this panel draws none, and the band is derived against
   // that fact rather than against the viewer's.
   const frame = useMemo(
@@ -402,7 +399,10 @@ export function LiveStateMachine({
 
   return (
     <div ref={host}>
-      {/* The same three sizing regimes as the viewer — see the note there. */}
+      {/* Like the viewer, but with the original floor regime: on a panel
+          narrower than MIN_W the MIN_W layout shrinks uniformly via maxWidth
+          — Mission Control's rail is narrow, and there a smaller correct
+          drawing beats a sideways scroll. */}
       <svg
         viewBox={`0 0 ${frame.width} ${frame.height}`}
         className="mx-auto block"

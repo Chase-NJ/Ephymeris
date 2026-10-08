@@ -1,11 +1,13 @@
-import { PlugZap, Unplug } from "lucide-react";
-import { useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ChevronRight, PlugZap, Unplug } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { Button, NumberInput } from "@/components/common/controls";
 import { SettingRow } from "@/components/settings/SettingRow";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { useIntanStatus } from "@/lib/intan/context";
 import { useSettings } from "@/lib/settings/context";
+import { springSnappy } from "@/lib/motion";
 import { DEFAULT_INTAN } from "@/lib/settings/schema";
 import { useSidecar } from "@/lib/ws/context";
 import { CMD } from "@/lib/ws/protocol";
@@ -99,21 +101,7 @@ export function IntanConnectionPanel() {
         </span>
       </SettingRow>
 
-      {!intan.connected && (
-        <ol className="flex flex-col gap-1 border-b border-halo px-4 py-3 text-[12px] leading-relaxed text-static">
-          <Step n={1}>
-            In RHX, open <span className="text-starlight">Network → Remote TCP Control</span>.
-          </Step>
-          <Step n={2}>
-            On the <span className="text-starlight">Commands</span> tab, press{" "}
-            <span className="text-starlight">Connect</span>. That is the only manual step.
-          </Step>
-          <Step n={3}>
-            Ephymeris opens RHX's two data sockets itself. RHX closes its door whenever a client
-            leaves, so the click is needed again after every disconnect.
-          </Step>
-        </ol>
-      )}
+      <SetupSteps defaultOpen={!intan.connected} />
 
       {error && (
         <p className="border-b border-halo px-4 py-2.5 text-[12px]" style={{ color: "var(--color-status-error)" }}>
@@ -168,6 +156,55 @@ export function IntanConnectionPanel() {
         </span>
       </SettingRow>
     </>
+  );
+}
+
+/**
+ * The one manual step in RHX, folded into a disclosure: open while there is no
+ * link (that is when it is needed), closed once RHX answers — and it follows
+ * the link, so a dropped connection brings it back.
+ */
+function SetupSteps({ defaultOpen }: { defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => setOpen(defaultOpen), [defaultOpen]);
+  return (
+    <div className="border-b border-halo/70">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 px-4 py-2 text-left font-mono text-[10px] tracking-[0.14em] text-static uppercase transition-colors hover:text-starlight"
+      >
+        <motion.span animate={{ rotate: open ? 90 : 0 }} transition={springSnappy} className="flex">
+          <ChevronRight size={12} strokeWidth={1.75} />
+        </motion.span>
+        How to connect
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.ol
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={springSnappy}
+            className="flex flex-col gap-1 overflow-hidden px-4 text-[12px] leading-relaxed text-static"
+          >
+            <Step n={1}>
+              In RHX, open <span className="text-starlight">Network → Remote TCP Control</span>.
+            </Step>
+            <Step n={2}>
+              On the <span className="text-starlight">Commands</span> tab, press{" "}
+              <span className="text-starlight">Connect</span>. That is the only manual step.
+            </Step>
+            <Step n={3}>
+              Ephymeris opens RHX's two data sockets itself. RHX closes its door whenever a client
+              leaves, so the click is needed again after every disconnect.
+            </Step>
+            <li aria-hidden className="h-2" />
+          </motion.ol>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 

@@ -10,6 +10,7 @@
 import { createElement } from "react";
 
 import { saveFile, slug } from "@/components/analytics/report/capture";
+import type { ExportTracker } from "@/lib/exports/jobs";
 import type { DocCohort, DocSession } from "@/lib/logbook/document";
 
 const PDF = { name: "PDF document", extensions: ["pdf"] };
@@ -40,12 +41,13 @@ export async function exportSessionPdf(
   session: DocSession,
   cohortName: string,
   exportedAt: string,
+  tracker?: ExportTracker,
 ): Promise<string | null> {
   const blob = await renderSessionPdf(session, cohortName, exportedAt);
-  return saveFile(blob, `${slug(cohortName)}_${slug(session.title)}_${session.date}_log.pdf`, PDF);
+  return saveFile(blob, `${slug(cohortName)}_${slug(session.title)}_${session.date}_log.pdf`, PDF, tracker);
 }
 
-export async function exportCohortPdf(cohort: DocCohort): Promise<string | null> {
+export async function exportCohortPdf(cohort: DocCohort, tracker?: ExportTracker): Promise<string | null> {
   const blob = await renderCohortPdf(cohort);
-  return saveFile(blob, `${slug(cohort.cohortName)}_logbook.pdf`, PDF);
+  return saveFile(blob, `${slug(cohort.cohortName)}_logbook.pdf`, PDF, tracker);
 }

@@ -351,6 +351,20 @@
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--color-halo);
   }
+
+  /* A HUD panel set IN FRONT of another — the task editor's parameter rail over
+     its state machine, a hint over its row. Depth comes from a denser glass
+     and a flat dark drop shadow, never a coloured one: the theme forbids glow
+     (`ARCHITECTURE.md#theme`). */
+  .hud-front {
+    background-color: color-mix(in srgb, var(--color-nebula) 72%, transparent);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--color-halo);
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.35),
+      0 12px 32px rgb(0 0 0 / 0.45);
+  }
 }
 
 @keyframes attention-border {

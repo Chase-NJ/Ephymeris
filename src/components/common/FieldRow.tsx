@@ -147,7 +147,7 @@ export function FieldRow({
       <span className="min-w-0 pt-1">{caption}</span>
       <span className="flex shrink-0 items-center gap-1.5">
         {control}
-        <span className="w-6 shrink-0 font-mono text-[10px] text-static/70">
+        <span className="w-[34px] shrink-0 font-mono text-[10px] text-static/70">
           {unit ?? ""}
         </span>
       </span>

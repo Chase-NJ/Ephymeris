@@ -444,10 +444,12 @@ export function TaskEditor() {
                   }
                   style={split ? { width: layout.aside } : {}}
                 >
-                  <div className={split ? "flex min-h-[300px] flex-[1.15] flex-col" : "flex min-h-[460px] flex-col"}>
+                  {/* Generation gets the larger share: it is the core choice and
+                      its panel carries more; the dial's fields scroll. */}
+                  <div className={split ? "flex min-h-[240px] flex-1 basis-0 flex-col" : "flex min-h-[460px] flex-col"}>
                     {params}
                   </div>
-                  <div className={split ? "flex min-h-0 flex-1 flex-col" : "flex min-h-[460px] flex-col"}>
+                  <div className={split ? "flex min-h-0 flex-[1.3] basis-0 flex-col" : "flex min-h-[460px] flex-col"}>
                     {generation}
                   </div>
                 </motion.div>

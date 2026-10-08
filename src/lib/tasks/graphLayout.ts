@@ -109,8 +109,8 @@ export const PAD_R = 30;
  * different tenants below the nodes:
  *
  *  - `rowPx` — px per model row unit. The sketch viewer's is sized so the
- *    deepest chip stack (an odor arm's four) clears the next fan-out row; the
- *    live view draws no chips, so its rows sit closer.
+ *    deepest chip stack (an odor arm's) clears the next fan-out row; the live
+ *    view draws no chips, so its rows sit closer.
  *  - `padT` — above the top row: room for an `above`-anchored label when the
  *    top row is the spine.
  *  - `returnDepth` — how far the deepest return arc sweeps below the lowest
@@ -124,7 +124,7 @@ export interface Geometry {
 }
 
 /** The sketch viewer's geometry — chips under every node. */
-export const VIEWER_GEOMETRY: Geometry = { rowPx: 52, padT: 30, returnDepth: 62 };
+export const VIEWER_GEOMETRY: Geometry = { rowPx: 52, padT: 26, returnDepth: 54 };
 /** The live panel's — no chips, and every vertical px competes with the
  *  charts below it in a view that must fit the window without scrolling. */
 export const LIVE_GEOMETRY: Geometry = { rowPx: 34, padT: 24, returnDepth: 48 };

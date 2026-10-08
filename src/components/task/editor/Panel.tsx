@@ -43,13 +43,13 @@ export function Panel({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     >
-      <header className="flex shrink-0 items-center gap-3 px-4 pt-3 pb-2">
+      <header className="flex shrink-0 items-center gap-3 px-4 pt-2.5 pb-1.5">
         <span className="min-w-0 flex-1">
           <PanelTitle name={name} note={note} />
         </span>
         {right}
       </header>
-      <div className={`flex min-h-0 flex-1 flex-col px-4 pb-3 ${bodyClassName}`}>{children}</div>
+      <div className={`flex min-h-0 flex-1 flex-col px-4 pb-2.5 ${bodyClassName}`}>{children}</div>
     </motion.section>
   );
 }

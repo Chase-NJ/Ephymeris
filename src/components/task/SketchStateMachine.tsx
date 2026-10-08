@@ -280,7 +280,7 @@ export function SketchStateMachine({
       {/* The caption strip: the hovered relationship, in words. A fixed slot
           rather than a tooltip so the eye learns one place to read and the
           diagram never reflows under the pointer. */}
-      <p className="mt-2 min-h-[2.25em] border-t border-halo/60 pt-2 font-mono text-[11px] leading-snug text-static">
+      <p className="mt-1.5 truncate border-t border-halo/60 pt-1.5 font-mono text-[11px] leading-snug text-static">
         {/* Group first, node second: on a chip both hovers are live and the
             highlight is already showing the group's territory — the sentence
             has to describe the same thing the geometry does. */}
@@ -309,8 +309,7 @@ export function SketchStateMachine({
           </>
         ) : (
           <span className="text-static/60">
-            Hover a state or a parameter group — each lights the other. Click
-            either to jump to the parameters.
+            Hover a state or a parameter group — each lights the other; click to jump.
           </span>
         )}
       </p>
@@ -489,7 +488,7 @@ export function LiveStateMachine({
           is in, said in words under the drawing that shows it. A hover
           overrides it — the operator asking about a state outranks the
           narration — and it returns the moment the pointer leaves. */}
-      <p className="mt-2 min-h-[2.25em] border-t border-halo/60 pt-2 font-mono text-[11px] leading-snug text-static">
+      <p className="mt-1.5 truncate border-t border-halo/60 pt-1.5 font-mono text-[11px] leading-snug text-static">
         {hoverNode ? (
           <>
             <span className="text-starlight">{hoverNode.label}</span>

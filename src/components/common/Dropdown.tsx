@@ -236,8 +236,11 @@ export function Dropdown({
               transition={springSnappy}
               style={{
                 position: "fixed",
-                left: rect.left,
-                width: Math.max(rect.width, 176),
+                // Never narrower than a label and its detail need — a compact
+                // trigger in a dense row is narrower than its own options —
+                // and kept on screen when that makes it wider than the room.
+                left: Math.max(8, Math.min(rect.left, window.innerWidth - Math.max(rect.width, 224) - 8)),
+                width: Math.max(rect.width, 224),
                 maxHeight: MAX_LIST_HEIGHT,
                 ...(dropUp
                   ? { bottom: window.innerHeight - rect.top + 4 }

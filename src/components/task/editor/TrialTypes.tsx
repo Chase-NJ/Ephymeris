@@ -137,7 +137,7 @@ export function TrialTypes({
         </button>
       }
     >
-      <div className={`${grid} sticky top-0 border-b border-halo/70 pb-1 font-mono text-[8.5px] tracking-[0.14em] text-static/60 uppercase`}>
+      <div className={`${grid} border-b border-halo/70 pb-1 font-mono text-[8.5px] tracking-[0.14em] text-static/60 uppercase`}>
         <span />
         <span>condition</span>
         <span>odor line</span>
@@ -351,9 +351,9 @@ export function TrialTypes({
 }
 
 const GRID =
-  "grid grid-cols-[18px_minmax(0,1fr)_112px_84px_84px_46px_58px_12px] gap-x-1.5";
+  "grid grid-cols-[18px_minmax(0,1fr)_112px_84px_84px_46px_70px_12px] gap-x-1.5";
 const GRID_WEIGHTED =
-  "grid grid-cols-[18px_minmax(0,1fr)_112px_84px_84px_46px_40px_58px_12px] gap-x-1.5";
+  "grid grid-cols-[18px_minmax(0,1fr)_112px_84px_84px_46px_40px_70px_12px] gap-x-1.5";
 
 function channelsOf(rig: RigDocument | null, kind: string): DropdownOption[] {
   return Object.entries(rig?.channels ?? {})
@@ -494,11 +494,13 @@ function Chip({ children, error = false }: { children: ReactNode; error?: boolea
   );
 }
 
+/** A table-level problem, on one line — the full sentence is its tooltip and
+ *  sits in the header's Problems list. */
 function Problem({ diagnostic }: { diagnostic: TaskDiagnostic }) {
   return (
-    <p className="mt-1 flex items-start gap-1.5 text-[10px] text-status-error">
-      <TriangleAlert size={11} strokeWidth={1.75} className="mt-px shrink-0" />
-      <span>
+    <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-status-error" title={diagnostic.message}>
+      <TriangleAlert size={11} strokeWidth={1.75} className="shrink-0" />
+      <span className="truncate">
         <span className="font-mono opacity-70">{diagnostic.code}</span> {diagnostic.message}
       </span>
     </p>
@@ -520,7 +522,7 @@ function GoToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) => vo
           type="button"
           aria-pressed={on === value}
           onClick={() => onChange(value)}
-          className={`flex-1 px-1 py-0.5 text-[9.5px] transition-colors ${
+          className={`flex-1 px-1 py-0.5 text-[9.5px] whitespace-nowrap transition-colors ${
             on === value ? "bg-pulsar/18 text-starlight" : "text-static hover:text-starlight"
           }`}
         >

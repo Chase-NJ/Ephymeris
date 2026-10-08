@@ -30,7 +30,7 @@ import { Panel } from "./Panel";
 import { StageList } from "./StageList";
 
 /** The dial's drawn height. */
-const DIAL_H = 112;
+const DIAL_H = 104;
 /** Wheel steps are locked this long after one lands, against trackpad inertia. */
 const WHEEL_LOCK_MS = 220;
 
@@ -354,7 +354,7 @@ function OrreryDial({
         {/* The planets, placed from the spring's current phase. */}
         {tabs.map((tab, i) => {
           const at = planetAt(i, now, n, orbit);
-          const r = 3 + 4 * at.height;
+          const r = 3.5 + 5 * at.height;
           const isActive = i === index;
           const lit = hover === i || [...litGroups].some((g) => tabOf(g) === tab);
           const labelOpacity = isActive ? 1 : Math.max(0, Math.min(1, at.height * 1.4 - 0.25));

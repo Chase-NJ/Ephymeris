@@ -26,6 +26,7 @@
 #include <string>
 
 // The sketch under test, compiled as a translation unit.
+#include "strobe_fixture.h"  // arbitrary codes; the real ones are generated
 #include "../../../../Utility/BOX_Utility/BOX_Utility.ino"
 
 static int failures = 0;

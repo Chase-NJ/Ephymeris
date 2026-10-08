@@ -2,17 +2,17 @@
   TaskPins.h -- GENERATED, or the shipped default when nothing generated it.
 
   Ephymeris writes this file when it materialises a task profile: the operator's
-  channel->pin map from the Rig tab, the profile's strobe selection, its stage
-  count and its trial-type count, all as plain preprocessor definitions. It is
-  included BEFORE <BehaviorBox.h>, whose own BoxPins.h / BoxStrobes.h guard every
-  definition, so whatever is set here wins and everything else falls back to the
-  box as built.
+  channel->pin map from the Rig tab, the machine's strobe vocabulary, the
+  profile's stage count and its trial-type count, all as plain preprocessor
+  definitions. It is included BEFORE <BehaviorBox.h>: BoxPins.h guards every pin,
+  so whatever is set here wins, and BoxStrobes.h defines no codes at all -- the
+  generated vocabulary block is the only place a sketch gets them.
 
-  THIS COPY IS THE DEFAULT. It declares only the two counts, so a checkout
-  compiles and runs the historical GRGL 2-odor task with no app involved. Every
-  pin and strobe below is therefore inherited, and that is deliberate: a second
-  transcription of the pinout is exactly the mirroring this arrangement exists
-  to end.
+  THIS COPY IS THE DEFAULT, and on its own it does not compile: it declares the
+  two counts and no strobe codes, so BoxStrobes.h stops the build. That is
+  deliberate. A transcription of the vocabulary here would be a second copy of
+  the numbers four years of sessions depend on -- exactly the mirroring this
+  arrangement exists to end. Build from the folder Ephymeris generates.
 
   Pure preprocessor. No types, no includes -- it is read before BehaviorBox.h has
   defined anything, and a `TrialType` here would not compile. The trial table

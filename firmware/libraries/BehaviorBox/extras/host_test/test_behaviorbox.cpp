@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include "strobe_fixture.h"  // arbitrary codes; the real ones are generated
 #include "BehaviorBox.h"
 
 /*  parseStartCommand() parses IN PLACE (it strtok's the caller's buffer), which

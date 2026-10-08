@@ -23,11 +23,11 @@
       live anti-bias selection run the same trial and differ only in which
       policies they hand it, which is why GRGL.ino covers both in ~110 lines.
 
-  It pulls the box's PINOUT and STROBE VOCABULARY in from BoxPins.h and
-  BoxStrobes.h. Both are guarded, so a sketch that includes a GENERATED
-  `TaskPins.h` first compiles against this rig's own wiring -- that is how a
-  task profile authored in Ephymeris reaches the firmware, and it is the reason
-  neither is a `const int` here any more.
+  It pulls the box's PINOUT in from BoxPins.h, guarded, so a sketch that
+  includes a GENERATED `TaskPins.h` first compiles against this rig's own
+  wiring -- that is how a task profile authored in Ephymeris reaches the
+  firmware. The STROBE VOCABULARY comes from that generated header and nowhere
+  else: BoxStrobes.h defines no codes and stops the build without them.
 
   WHAT IS DELIBERATELY NOT HERE: the trial table. Trial types name pins and
   strobe codes and are per-profile, so they live in the sketch (generated as
@@ -63,10 +63,11 @@
 /* ============================================================= *
  *  1. THE BOX ITSELF -- pins and strobe codes
  * ============================================================= *
- *  Both are guarded definitions in their own headers so a GENERATED header can
- *  override them. A sketch that includes `TaskPins.h` before this file compiles
- *  against this rig's own wiring and vocabulary; one that includes nothing gets
- *  the box as built. See BoxPins.h.
+ *  Pins are guarded definitions in BoxPins.h so a GENERATED header can override
+ *  them; strobe codes exist ONLY in that generated header, and BoxStrobes.h
+ *  stops the build without them. A sketch that includes `TaskPins.h` before
+ *  this file compiles against this rig's own wiring and this machine's
+ *  vocabulary. See BoxPins.h and BoxStrobes.h.
  *
  *  Included here rather than left to each sketch so that a sketch cannot get
  *  half of it -- the trial runner below reads `odorPort`, `Fluids[]` and the

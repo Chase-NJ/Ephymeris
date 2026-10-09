@@ -166,8 +166,13 @@ export function DebugMode() {
       {/* No empty state: an unselected Debug redirects to the Dashboard above,
           and an unbound rig can never have a selection to arrive with. The
           Dashboard's Rig tile is where a rig with nothing bound gets told so,
-          and where it gets the Config link to fix it. */}
-      <AnimatePresence>
+          and where it gets the Config link to fix it.
+
+          `propagate`: a nested `AnimatePresence` starts its own presence scope,
+          so without it leaving the route (by the sidebar, say) never ran the
+          panel's `exit` — it sat opaque until the route's other exits settled,
+          then vanished in one frame. */}
+      <AnimatePresence propagate>
         {selected !== null && (
           <NodeDetail
             key={selected}

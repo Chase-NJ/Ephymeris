@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 
@@ -114,19 +114,21 @@ export function DebugAll() {
         </span>
       </motion.div>
 
-      <AnimatePresence>
-        <AllBoxesPanel
-          key="all"
-          bound={bound}
-          health={health}
-          targets={targets}
-          hovered={hovered}
-          onToggle={toggle}
-          onTargets={(boxes) => setTargets(new Set(boxes))}
-          onHover={setHovered}
-          onBack={back}
-        />
-      </AnimatePresence>
+      {/* Not wrapped in an `AnimatePresence` of its own: a nested one starts a
+          fresh presence scope, so when the route left, the panel's `exit` never
+          ran — it sat fully opaque until the header's fade finished, then
+          vanished in one frame. Under the route's presence it leaves with the
+          header (`AppShell`'s "every route must own its exit"). */}
+      <AllBoxesPanel
+        bound={bound}
+        health={health}
+        targets={targets}
+        hovered={hovered}
+        onToggle={toggle}
+        onTargets={(boxes) => setTargets(new Set(boxes))}
+        onHover={setHovered}
+        onBack={back}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useFrame } from "@react-three/fiber";
 import { MAX_FRAME_SECONDS } from "./CameraRig";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
 import {
@@ -93,6 +93,38 @@ export function StellarSurface({
     [uniforms],
   );
 
+  /*
+   * Materials as objects, handed over with `material={…}` — not JSX
+   * `<shaderMaterial uniforms={…}>`, which r3f copies entry by entry into the
+   * material, so the frame callback's `uTime`/`uActivity` writes never reached
+   * the GPU and every surface sat frozen (`ARCHITECTURE.md#one-sky`).
+   */
+  const surfaceMaterial = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: STAR_VERTEX,
+        fragmentShader: STAR_FRAGMENT,
+        uniforms,
+      }),
+    [uniforms],
+  );
+  const coronaMaterial = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: CORONA_VERTEX,
+        fragmentShader: CORONA_FRAGMENT,
+        uniforms: coronaUniforms,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    [coronaUniforms],
+  );
+  useEffect(() => () => {
+    surfaceMaterial.dispose();
+    coronaMaterial.dispose();
+  }, [surfaceMaterial, coronaMaterial]);
+
   const target = useMemo(() => brightened(accuracy, dim), [accuracy, dim]);
 
   const rotation = useMemo(() => rotationFor(seed), [seed]);
@@ -162,29 +194,16 @@ export function StellarSurface({
           toward the camera as it turns. */}
       <group rotation={[rotation.tiltX, 0, rotation.tiltZ]}>
         <group ref={spin}>
-          <mesh>
+          <mesh material={surfaceMaterial}>
             <sphereGeometry args={[radius, 48, 48]} />
-            <shaderMaterial
-              vertexShader={STAR_VERTEX}
-              fragmentShader={STAR_FRAGMENT}
-              uniforms={uniforms}
-            />
           </mesh>
         </group>
       </group>
 
       {/* Outside the spin deliberately: the corona is a rotationally symmetric
           fresnel rim, so turning it is work with nothing to show for it. */}
-      <mesh scale={1.35}>
+      <mesh scale={1.35} material={coronaMaterial}>
         <sphereGeometry args={[radius, 32, 32]} />
-        <shaderMaterial
-          vertexShader={CORONA_VERTEX}
-          fragmentShader={CORONA_FRAGMENT}
-          uniforms={coronaUniforms}
-          transparent
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
       </mesh>
     </group>
   );

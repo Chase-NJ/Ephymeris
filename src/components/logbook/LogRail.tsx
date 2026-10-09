@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Flag } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { SessionListItem } from "@/lib/analytics/types";
 import { springSnappy } from "@/lib/motion";
@@ -27,8 +27,16 @@ const SPINE_X = 64;
  * A listbox to assistive tech: one focus stop, `aria-activedescendant` for
  * the current session, arrows and j/k to step, Page Up/Down by month,
  * Home/End to the ends.
+ *
+ * **A step must stay cheap**, because a trackpad flick fires dozens of them.
+ * The rail is memoized (the Log's deferred render of the session page passes
+ * it the same props, so it is skipped), every tick is memoized against a
+ * stable `onSelect` (a step re-renders only the two ticks whose selection
+ * changed), and dates go through formatters built once — `toLocaleDateString`
+ * with options builds a fresh `Intl.DateTimeFormat` on every call, and a
+ * hundred of those per step was most of the stutter.
  */
-export function LogRail({
+export const LogRail = memo(function LogRail({
   sessions,
   selectedId,
   onSelect,
@@ -107,6 +115,12 @@ export function LogRail({
   function jump(id: string | null) {
     if (id && id !== selectedId) onSelect(id);
   }
+
+  // One identity for the life of the rail, so the memoized ticks never see a
+  // new handler just because the Log re-rendered.
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const select = useCallback((id: string) => onSelectRef.current(id), []);
 
   return (
     <div
@@ -199,27 +213,27 @@ export function LogRail({
               selected={item.id === selectedId}
               notes={noteCounts.get(item.id) ?? 0}
               flagged={flagged.has(item.id)}
-              onSelect={() => onSelect(item.id)}
+              onSelect={select}
             />
           );
         })}
       </motion.div>
     </div>
   );
-}
+});
 
 function tickId(sessionId: string): string {
   return `log-tick-${sessionId.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 }
 
+const WEEKDAY = new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "UTC" });
+const MONTH = new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: "UTC" });
+
 function weekdayShort(day: number): string {
-  return new Date(day * 86_400_000).toLocaleDateString("en-GB", {
-    weekday: "short",
-    timeZone: "UTC",
-  });
+  return WEEKDAY.format(new Date(day * 86_400_000));
 }
 
-function Tick({
+const Tick = memo(function Tick({
   session,
   y,
   labelsDay,
@@ -236,7 +250,7 @@ function Tick({
   selected: boolean;
   notes: number;
   flagged: boolean;
-  onSelect: () => void;
+  onSelect: (id: string) => void;
 }) {
   const running = session.status === "running" || session.status === "configuring";
   const aborted = session.status === "aborted";
@@ -268,7 +282,7 @@ function Tick({
       ]
         .filter(Boolean)
         .join(", ")}
-      onClick={onSelect}
+      onClick={() => onSelect(session.id)}
       className="group absolute inset-x-0 flex cursor-pointer items-center"
       style={{ top: y, height: ROW_PX }}
     >
@@ -324,11 +338,8 @@ function Tick({
       </span>
     </div>
   );
-}
+});
 
 function monthShort(month: number): string {
-  return new Date(Date.UTC(2000, month - 1, 1)).toLocaleDateString("en-GB", {
-    month: "short",
-    timeZone: "UTC",
-  });
+  return MONTH.format(new Date(Date.UTC(2000, month - 1, 1)));
 }

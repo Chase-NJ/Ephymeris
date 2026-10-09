@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Keyboard, NotebookPen } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "react-router";
 
 import { ChangeCohort } from "@/components/analytics/ChangeCohort";
@@ -52,6 +52,9 @@ export function Log() {
   const roster = useRoster(cohortId);
   const names = useAnimalNames(roster);
   const composer = useRef<HTMLTextAreaElement>(null);
+  // Stable, so the memoized rail and month strip skip the renders a step
+  // causes elsewhere on the page (`LogRail`).
+  const selectSession = useCallback((id: string) => store.selectSession(id), [store]);
 
   // Arriving with a cohort and session (the wrap-up, a carry-forward link)
   // goes straight there; arriving cold picks up whichever cohort Analytics
@@ -113,6 +116,13 @@ export function Log() {
     [entry.openFlags],
   );
   const selected = sessions.find((s) => s.id === selectedId) ?? null;
+  // The page follows the rail a beat behind. Stepping is the urgent update: the
+  // rail's tape moves at once, and the session page (memoized) is skipped by
+  // that render. React then renders the page from the deferred id at low
+  // priority, abandoning it if another step lands first — so a trackpad flick
+  // across a dozen days renders one page, where it stops, not a dozen.
+  const shownId = useDeferredValue(selectedId);
+  const shown = sessions.find((s) => s.id === shownId) ?? selected;
 
   if (!cohortId) {
     return (
@@ -203,7 +213,7 @@ export function Log() {
             <MonthStrip
               sessions={sessions}
               selectedId={selectedId}
-              onSelect={(id) => store.selectSession(id)}
+              onSelect={selectSession}
             />
             {entry.state === "loading" && sessions.length === 0 ? (
               <p className="p-4 text-[12px] text-static">Reading the log…</p>
@@ -215,7 +225,7 @@ export function Log() {
               <LogRail
                 sessions={sessions}
                 selectedId={selectedId}
-                onSelect={(id) => store.selectSession(id)}
+                onSelect={selectSession}
                 noteCounts={noteCounts}
                 flagged={flagged}
               />
@@ -237,10 +247,10 @@ export function Log() {
                   await resolveFlag(client, note.id, true, null);
                 }}
               />
-              {selected && (
+              {shown && (
                 <SessionReadout
                   cohortId={cohortId}
-                  session={selected}
+                  session={shown}
                   entry={entry}
                   roster={roster}
                   names={names}

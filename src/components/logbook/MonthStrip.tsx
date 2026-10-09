@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 
 import type { SessionListItem } from "@/lib/analytics/types";
 import { monthBins } from "@/lib/logbook/rail";
@@ -13,7 +13,7 @@ const BAR_MAX = 12;
  * empty cell rather than a missing one. Clicking a month jumps the rail to
  * its newest session.
  */
-export function MonthStrip({
+export const MonthStrip = memo(function MonthStrip({
   sessions,
   selectedId,
   onSelect,
@@ -81,4 +81,4 @@ export function MonthStrip({
       })}
     </div>
   );
-}
+});

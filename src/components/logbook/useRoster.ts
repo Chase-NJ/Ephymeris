@@ -45,11 +45,14 @@ export function useRoster(cohortId: string | null): RosterAnimal[] {
 }
 
 const NONE: RosterAnimal[] = [];
+const NO_FALLBACK: ReadonlyArray<{ id: string; name: string }> = [];
 
 /** id → name, the runs' own names filling in for animals since removed. */
 export function useAnimalNames(
   roster: RosterAnimal[],
-  fallback: ReadonlyArray<{ id: string; name: string }> = [],
+  // A shared empty default, not `= []`: a fresh array every render would make
+  // a fresh Map every render, and the Log's memoized session page with it.
+  fallback: ReadonlyArray<{ id: string; name: string }> = NO_FALLBACK,
 ): Map<string, string> {
   return useMemo(() => {
     const names = new Map(fallback.map((a) => [a.id, a.name]));

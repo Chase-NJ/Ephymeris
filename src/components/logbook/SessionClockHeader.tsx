@@ -11,6 +11,7 @@ import {
 } from "@/lib/logbook/clock";
 import type { SessionNote } from "@/lib/logbook/types";
 
+import { ReadoutFade } from "./ReadoutFade";
 import { tagOf } from "./tags";
 
 const STATUS: Record<SessionListItem["status"], { label: string; tone: string }> = {
@@ -65,69 +66,72 @@ export function SessionClockHeader({
 
   return (
     <section className="hud overflow-hidden rounded-lg">
-      <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-4">
-        <div className="min-w-0">
-          <h2 className="truncate font-display text-[24px] leading-tight text-starlight" data-selectable>
-            {session.prefixName}_{session.sessionNumber}
-          </h2>
-          <p className="mt-0.5 text-[12px] text-static">{longDate(session.date)}</p>
+      {/* The glass stays; its contents change channel (`ReadoutFade`). */}
+      <ReadoutFade key={session.id}>
+        <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-4">
+          <div className="min-w-0">
+            <h2 className="truncate font-display text-[24px] leading-tight text-starlight" data-selectable>
+              {session.prefixName}_{session.sessionNumber}
+            </h2>
+            <p className="mt-0.5 text-[12px] text-static">{longDate(session.date)}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {session.folderPath && (
+              <FolderButton path={session.folderPath} label="Session folder" size="sm" />
+            )}
+            <span
+              className={`flex items-center gap-1.5 rounded-sm border border-halo px-2 py-1 font-mono text-[10px] tracking-[0.12em] uppercase ${status.tone}`}
+            >
+              {live && <span className="size-1.5 rounded-full bg-status-ok" aria-hidden />}
+              {recovered ? "Recovered from files" : status.label}
+            </span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {session.folderPath && (
-            <FolderButton path={session.folderPath} label="Session folder" size="sm" />
-          )}
-          <span
-            className={`flex items-center gap-1.5 rounded-sm border border-halo px-2 py-1 font-mono text-[10px] tracking-[0.12em] uppercase ${status.tone}`}
-          >
-            {live && <span className="size-1.5 rounded-full bg-status-ok" aria-hidden />}
-            {recovered ? "Recovered from files" : status.label}
-          </span>
-        </div>
-      </div>
 
-      <dl className="mt-4 grid grid-cols-[1fr_1fr_1fr_1.35fr] border-y border-halo">
-        <Readout label="Date" value={`${day} ${monthOf(session.date)}`} sub={session.date.slice(0, 4)} />
-        <Readout
-          label="Start"
-          value={wallClock(session.clockStartedAt)}
-          sub={ran ? "first group" : recovered ? "first file" : "record created"}
-        />
-        <Readout
-          label="End"
-          value={open ? (live ? "Live" : "—") : wallClock(session.clockEndedAt)}
-          sub={
-            open
-              ? live
-                ? "still running"
-                : recovered
-                  ? "not recorded"
-                  : "not ended"
-              : derived
-                ? "last stream ended"
-                : ran
-                  ? "last group"
-                  : "record closed"
-          }
-          approx={derived}
-          tone={live ? "text-status-ok" : undefined}
-        />
-        <Readout
-          label="Elapsed"
-          value={elapsed === null || (open && !live) ? "—" : formatDuration(elapsed)}
-          sub={live ? "and counting" : `${animalCount} animal${animalCount === 1 ? "" : "s"}`}
-          approx={derived}
-          large
-        />
-      </dl>
+        <dl className="mt-4 grid grid-cols-[1fr_1fr_1fr_1.35fr] border-y border-halo">
+          <Readout label="Date" value={`${day} ${monthOf(session.date)}`} sub={session.date.slice(0, 4)} />
+          <Readout
+            label="Start"
+            value={wallClock(session.clockStartedAt)}
+            sub={ran ? "first group" : recovered ? "first file" : "record created"}
+          />
+          <Readout
+            label="End"
+            value={open ? (live ? "Live" : "—") : wallClock(session.clockEndedAt)}
+            sub={
+              open
+                ? live
+                  ? "still running"
+                  : recovered
+                    ? "not recorded"
+                    : "not ended"
+                : derived
+                  ? "last stream ended"
+                  : ran
+                    ? "last group"
+                    : "record closed"
+            }
+            approx={derived}
+            tone={live ? "text-status-ok" : undefined}
+          />
+          <Readout
+            label="Elapsed"
+            value={elapsed === null || (open && !live) ? "—" : formatDuration(elapsed)}
+            sub={live ? "and counting" : `${animalCount} animal${animalCount === 1 ? "" : "s"}`}
+            approx={derived}
+            large
+          />
+        </dl>
 
-      <FlightStrip session={session} notes={notes} now={now} onNote={onNote} />
+        <FlightStrip session={session} notes={notes} now={now} onNote={onNote} />
 
-      {session.startedAt !== session.clockStartedAt && (
-        <p className="px-5 pb-3 font-mono text-[10px] text-static/80">
-          Set-up began {wallClock(session.startedAt)} ·{" "}
-          {session.groupRuns.length} group run{session.groupRuns.length === 1 ? "" : "s"}
-        </p>
-      )}
+        {session.startedAt !== session.clockStartedAt && (
+          <p className="px-5 pb-3 font-mono text-[10px] text-static/80">
+            Set-up began {wallClock(session.startedAt)} ·{" "}
+            {session.groupRuns.length} group run{session.groupRuns.length === 1 ? "" : "s"}
+          </p>
+        )}
+      </ReadoutFade>
     </section>
   );
 }

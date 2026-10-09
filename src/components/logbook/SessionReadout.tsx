@@ -1,6 +1,5 @@
-import { motion } from "framer-motion";
 import { ChartLine, ClipboardList, GitCompareArrows, Loader2, NotebookPen, UserRound } from "lucide-react";
-import { useEffect, useMemo, type Ref } from "react";
+import { memo, useEffect, useMemo, type Ref } from "react";
 import { useNavigate } from "react-router";
 
 import { SessionTable, TableKey } from "@/components/analytics/session/SessionTable";
@@ -23,13 +22,13 @@ import { buildAnimalColors } from "@/lib/analytics/view";
 import { addNote, deleteNote, editNote, resolveFlag, setSessionLog } from "@/lib/logbook/commands";
 import { useLogbookStore } from "@/lib/logbook/context";
 import type { LogbookEntry } from "@/lib/logbook/store";
-import { springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useSidecar } from "@/lib/ws/context";
 
 import { ChangesList, ChangesStatus } from "./ChangesList";
 import { NoteComposer } from "./NoteComposer";
 import { NotesTimeline, noteAnchor } from "./NotesTimeline";
+import { ReadoutFade } from "./ReadoutFade";
 import { SessionClockHeader } from "./SessionClockHeader";
 import { SessionLogForm } from "./SessionLogForm";
 import type { RosterAnimal } from "./tags";
@@ -37,13 +36,18 @@ import type { RosterAnimal } from "./tags";
 /**
  * One session's page of the log: its clock, its notes, how each animal did,
  * what changed since last time, and who ran it. The selected tick on the rail
- * opens this; switching sessions fades the new page in over the same place, so
- * it reads as one readout changing channel rather than a new page.
+ * opens this; switching sessions fades each tile's contents in over the same
+ * glass, so it reads as one readout changing channel rather than a new page.
+ * The tiles stay mounted across sessions (`ReadoutFade` says why).
+ *
+ * Memoized: the Log renders it from a *deferred* selection, so while the rail
+ * steps, the urgent render skips this page entirely and the page renders once
+ * the tape comes to rest (`routes/Log.tsx`).
  *
  * Everything shown is what the sidecar reported — a note appears when the
  * `logbook.updated` it caused comes back, never optimistically.
  */
-export function SessionReadout({
+export const SessionReadout = memo(function SessionReadout({
   cohortId,
   session,
   entry,
@@ -119,27 +123,20 @@ export function SessionReadout({
   }
 
   return (
-    // Keyed, entering only — no exit. Stepping the rail quickly must never
-    // show an empty page between two sessions, which a wait-for-exit would.
-    <motion.div
-        key={session.id}
-        initial={reduce ? false : { opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={springSnappy}
-        className="flex flex-col gap-4"
-      >
-        <SessionClockHeader
-          session={session}
-          notes={notes}
-          animalCount={animalCount}
-          onNote={focusNote}
-        />
+    <div className="flex flex-col gap-4">
+      <SessionClockHeader
+        session={session}
+        notes={notes}
+        animalCount={animalCount}
+        onNote={focusNote}
+      />
 
-        <HudTile
-          icon={NotebookPen}
-          label="Notes"
-          status={`${notes.length} note${notes.length === 1 ? "" : "s"}`}
-        >
+      <HudTile
+        icon={NotebookPen}
+        label="Notes"
+        status={`${notes.length} note${notes.length === 1 ? "" : "s"}`}
+      >
+        <ReadoutFade key={session.id}>
           {readOnly ? (
             <p className="border-b border-halo px-4 py-3 text-[12px] text-static">
               This session was recovered from files and has no record to write notes against.
@@ -175,23 +172,25 @@ export function SessionReadout({
               await resolveFlag(client, note.id, resolved, null);
             }}
           />
-        </HudTile>
+        </ReadoutFade>
+      </HudTile>
 
-        <HudTile
-          icon={ClipboardList}
-          label="Performance"
-          status={
-            <Button
-              variant="ghost"
-              onClick={() =>
-                navigate("/analytics", { state: { cohortId, sessionId: session.id } })
-              }
-            >
-              <ChartLine size={12} strokeWidth={1.75} />
-              Open in Analytics
-            </Button>
-          }
-        >
+      <HudTile
+        icon={ClipboardList}
+        label="Performance"
+        status={
+          <Button
+            variant="ghost"
+            onClick={() =>
+              navigate("/analytics", { state: { cohortId, sessionId: session.id } })
+            }
+          >
+            <ChartLine size={12} strokeWidth={1.75} />
+            Open in Analytics
+          </Button>
+        }
+      >
+        <ReadoutFade key={session.id}>
           {summary && (runs.length > 0 || sessionFalseStartsOf(summary, session.id).length > 0) ? (
             <div className="p-3">
               {runs.length > 0 && (
@@ -230,22 +229,26 @@ export function SessionReadout({
               )}
             </p>
           )}
-        </HudTile>
+        </ReadoutFade>
+      </HudTile>
 
-        <HudTile
-          icon={GitCompareArrows}
-          label="What changed"
-          status={<ChangesStatus changes={changes} />}
-        >
+      <HudTile
+        icon={GitCompareArrows}
+        label="What changed"
+        status={<ChangesStatus changes={changes} />}
+      >
+        <ReadoutFade key={session.id}>
           <ChangesList
             changes={changes}
             setAside={setAsideChanges}
             names={tableNames}
             colors={colors}
           />
-        </HudTile>
+        </ReadoutFade>
+      </HudTile>
 
-        <HudTile icon={UserRound} label="Operator and summary">
+      <HudTile icon={UserRound} label="Operator and summary">
+        <ReadoutFade key={session.id}>
           <SessionLogForm
             key={session.id}
             log={log}
@@ -254,9 +257,10 @@ export function SessionReadout({
               await setSessionLog(client, session.id, fields);
             }}
           />
-        </HudTile>
-      </motion.div>
+        </ReadoutFade>
+      </HudTile>
+    </div>
   );
-}
+});
 
 const NONE: never[] = [];

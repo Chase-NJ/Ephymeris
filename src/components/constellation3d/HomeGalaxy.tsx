@@ -4,9 +4,9 @@ import * as THREE from "three";
 
 import { GL } from "@/components/chrome/constellationStyle";
 import { mulberry32 } from "@/lib/prng";
-import { useReduceMotion } from "@/lib/useReduceMotion";
 
 import { MAX_FRAME_SECONDS } from "./CameraRig";
+import { AT_INFINITY, makeFarSpriteMaterial } from "./farMaterials";
 import { makeSpiralTexture } from "./skyTextures";
 
 /**
@@ -16,28 +16,25 @@ import { makeSpiralTexture } from "./skyTextures";
  * It is the thing the rest of the sky is arranged around and the one piece of
  * scenery with a shape the eye can hold: a bright bulge low in the frame, two
  * arms winding out of it with star-forming knots along them, dust lanes as the
- * gaps between. Points rather than a painted sprite because a disc this near
- * has parallax — the near arm slides against the far one as the camera orbits
- * — and a sprite would turn with the camera and give that away.
+ * gaps between.
  *
- * Not a band we are *inside*. That was the first cut, and a disc through the
- * origin sweeps its near arm through the camera's data volume, which nothing
- * in the sky may enter. A great neighbour, seen from just outside its rim, is
- * the reading "orbiting a galaxy" can honestly have.
+ * Part of the sky at infinity (`FarSky.tsx`): it rides with the camera and is
+ * drawn at the far plane, so it is the landmark the drifting stars slide
+ * across and never itself drifts. Points rather than baked into the dome
+ * because the disc turns, and a turning disc is a live draw either way.
  *
  * It turns. Imperceptibly, at a rate that moves the bulge a few degrees over
  * an hour's session, which is the difference between a picture of a galaxy
- * and being somewhere. Still under reduced motion.
+ * and being somewhere. Held when `still`.
  *
  * One `Points` draw; the only per-frame cost is one rotation and a time
  * uniform for the faint shimmer of the arm knots.
  */
-export function HomeGalaxy({ seed }: { seed: number }) {
-  const reduceMotion = useReduceMotion();
+export function HomeGalaxy({ seed, still }: { seed: number; still: boolean }) {
   const dpr = useThree((state) => state.gl.getPixelRatio());
   const disc = useRef<THREE.Points>(null);
 
-  const { geometry, uniforms } = useMemo(() => {
+  const { geometry, uniforms, material } = useMemo(() => {
     const rand = mulberry32(seed);
     const positions = new Float32Array(GALAXY_COUNT * 3);
     const sizes = new Float32Array(GALAXY_COUNT);
@@ -87,13 +84,24 @@ export function HomeGalaxy({ seed }: { seed: number }) {
     g.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
     g.setAttribute("aColor", new THREE.BufferAttribute(colors, 3));
     g.setAttribute("aPhase", new THREE.BufferAttribute(phases, 1));
-    return {
-      geometry: g,
-      uniforms: { uTime: { value: 0 }, uPixelRatio: { value: 1 } },
-    };
+    const u = { uTime: { value: 0 }, uPixelRatio: { value: 1 } };
+    // An object, not JSX, so the shimmer's `uTime` writes reach the GPU
+    // (`makePointsMaterial`, `farMaterials.ts`).
+    const m = new THREE.ShaderMaterial({
+      uniforms: u,
+      vertexShader: GALAXY_VERTEX,
+      fragmentShader: GALAXY_FRAGMENT,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    return { geometry: g, uniforms: u, material: m };
   }, [seed]);
 
-  useEffect(() => () => geometry.dispose(), [geometry]);
+  useEffect(() => () => {
+    geometry.dispose();
+    material.dispose();
+  }, [geometry, material]);
   uniforms.uPixelRatio.value = dpr;
 
   /* The disc's body: one painted spiral haze lying in the disc plane under
@@ -102,12 +110,22 @@ export function HomeGalaxy({ seed }: { seed: number }) {
    * galaxies use, seeded from this one, so near and far agree on what a
    * spiral looks like. One quad. */
   const haze = useMemo(() => makeSpiralTexture(seed ^ 0x99, "#6f66b8", 2, 0.24), [seed]);
-  useEffect(() => () => haze.dispose(), [haze]);
+  /* Faint on purpose — an underglow the points sit on, not a picture the
+   * points decorate. At a third of this it read as a grey smudge with a
+   * scatter across it. */
+  const hazeMaterial = useMemo(
+    () => makeFarSpriteMaterial(haze, 0.13, { additive: true, doubleSide: true }),
+    [haze],
+  );
+  useEffect(() => () => {
+    haze.dispose();
+    hazeMaterial.dispose();
+  }, [haze, hazeMaterial]);
   const glow = useRef<THREE.Mesh>(null);
 
   useFrame((_state, raw) => {
     const delta = Math.min(raw, MAX_FRAME_SECONDS);
-    if (reduceMotion) return;
+    if (still) return;
     uniforms.uTime.value += delta;
     if (disc.current) disc.current.rotation.y += delta * GALAXY_SPIN;
     // The haze turns with the points, or the arms would slide off their glow.
@@ -116,42 +134,26 @@ export function HomeGalaxy({ seed }: { seed: number }) {
 
   return (
     // Deep, below the default eye-line and inclined toward us: the bulge sits
-    // low in the default frame with the arms sweeping up and across it. Not a
-    // band we are inside — a disc we are inside would sweep its near arm
-    // through the camera's data volume, which nothing in the sky may enter
-    // (`GALAXY_DISTANCE`). A great neighbour, close enough to fill a third of
-    // the sky, is the reading "orbiting a galaxy" can honestly have.
+    // low in the default frame with the arms sweeping up and across it — a
+    // great neighbour, close enough to fill a third of the sky.
     <group rotation={[GALAXY_TILT, 0, GALAXY_ROLL]} position={[0, -46, -GALAXY_DISTANCE]}>
       {/* Lies in the disc plane (the points' x-z), not billboarded. */}
-      {/* Faint on purpose — an underglow the points sit on, not a picture
-          the points decorate. At a third of this it read as a grey smudge
-          with a scatter across it. */}
-      <mesh ref={glow} rotation={[-Math.PI / 2, 0, 0]} scale={GALAXY_RADIUS * 1.9} renderOrder={-4}>
+      <mesh
+        ref={glow}
+        rotation={[-Math.PI / 2, 0, 0]}
+        scale={GALAXY_RADIUS * 1.9}
+        renderOrder={-8}
+        material={hazeMaterial}
+      >
         <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial
-          map={haze}
-          transparent
-          opacity={0.13}
-          depthWrite={false}
-          side={THREE.DoubleSide}
-          blending={THREE.AdditiveBlending}
-        />
       </mesh>
       <points
         ref={disc}
         geometry={geometry}
-        renderOrder={-3}
+        material={material}
+        renderOrder={-7}
         frustumCulled={false}
-      >
-        <shaderMaterial
-          vertexShader={GALAXY_VERTEX}
-          fragmentShader={GALAXY_FRAGMENT}
-          uniforms={uniforms}
-          transparent
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
-      </points>
+      />
     </group>
   );
 }
@@ -172,6 +174,7 @@ const GALAXY_VERTEX = /* glsl */ `
     vColor = aColor;
     gl_PointSize = aSize * uPixelRatio * (420.0 / -mv.z);
     gl_Position = projectionMatrix * mv;
+    ${AT_INFINITY}
   }
 `;
 
@@ -192,10 +195,9 @@ const GALAXY_FRAGMENT = /* glsl */ `
 const GALAXY_COUNT = 4200;
 /** World units. */
 const GALAXY_RADIUS = 150;
-/** How far the disc's centre sits from the origin along the default view.
- *  With the radius above, the nearest point of the disc is 65 units out —
- *  well past `maxDistance` (40), so the camera can never reach the near arm
- *  and no piece of it can occlude a box or a world. */
+/** How far the disc's centre sits from the camera along the default view.
+ *  With the radius above, the nearest point of the disc is 65 units out, so
+ *  the near arm never balloons into the frame. */
 const GALAXY_DISTANCE = 215;
 /** Radians the arms wind over the radius. */
 const ARM_WIND = 2.6;
@@ -206,3 +208,9 @@ const GALAXY_SPIN = 0.0022;
  *  ellipse — and not a line. */
 const GALAXY_TILT = -0.95;
 const GALAXY_ROLL = 0.32;
+
+/** The disc's normal — the plane the dome's galactic band is painted in
+ *  (`farSkyBake.ts`), so the band's haze lies where the disc does. */
+export const GALAXY_PLANE = new THREE.Vector3(0, 1, 0)
+  .applyEuler(new THREE.Euler(GALAXY_TILT, 0, GALAXY_ROLL))
+  .normalize();

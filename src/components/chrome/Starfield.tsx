@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { mulberry32 } from "@/lib/prng";
 import { useReduceMotion } from "@/lib/useReduceMotion";
+import { useWindowFocus } from "@/lib/useWindowFocus";
 
 /**
  * Ambient drifting starfield (`ARCHITECTURE.md#theme`).
@@ -12,8 +13,12 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  * focus**, because this app is watched during live data collection and ambient
  * effects must never compete for attention.
  *
+ * It drifts the way the 3D sky's stars do from the default view — left and a
+ * little up (`skyDrift.ts`) — because the sidebar shows this beside the canvas,
+ * and two skies flowing different ways would read as two places.
+ *
  * Plain CSS rather than Framer Motion: the spring physics of the theme govern
- * UI transitions, whereas this is a continuous linear drift, and a 90s CSS
+ * UI transitions, whereas this is a continuous linear drift, and a CSS
  * animation costs nothing per frame in JS.
  */
 
@@ -57,20 +62,52 @@ function StarLayer({ stars, opacity }: { stars: Star[]; opacity: number }) {
   );
 }
 
+/**
+ * One parallax layer. The stars are tiled 2×2 and the two axes loop on their
+ * own periods — the vertical about three times slower, which on a landscape
+ * frame tilts the flow about twelve degrees above leftward — so each axis
+ * wraps seamlessly whatever the direction.
+ */
+function DriftLayer({
+  stars,
+  opacity,
+  periodX,
+  periodY,
+  playState,
+}: {
+  stars: Star[];
+  opacity: number;
+  periodX: number;
+  periodY: number;
+  playState: "running" | "paused";
+}) {
+  return (
+    <div
+      className="absolute inset-x-0 top-0 h-[200%]"
+      style={{ animation: `ephymeris-drift-y ${periodY}s linear infinite`, animationPlayState: playState }}
+    >
+      {[0, 1].map((row) => (
+        <div key={row} className="relative h-1/2 w-full">
+          <div
+            className="absolute inset-y-0 left-0 flex w-[200%]"
+            style={{ animation: `ephymeris-drift-x ${periodX}s linear infinite`, animationPlayState: playState }}
+          >
+            <div className="relative h-full w-1/2">
+              <StarLayer stars={stars} opacity={opacity} />
+            </div>
+            <div className="relative h-full w-1/2">
+              <StarLayer stars={stars} opacity={opacity} />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Starfield() {
   const reduceMotion = useReduceMotion();
-  const [focused, setFocused] = useState(true);
-
-  useEffect(() => {
-    const onFocus = () => setFocused(true);
-    const onBlur = () => setFocused(false);
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, []);
+  const focused = useWindowFocus();
 
   const far = useMemo(() => makeStars(90, 0x5eed1), []);
   const near = useMemo(() => makeStars(38, 0x5eed2), []);
@@ -82,37 +119,18 @@ export function Starfield() {
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
       <style>{`
-        @keyframes ephymeris-drift {
+        @keyframes ephymeris-drift-x {
+          from { transform: translate3d(0, 0, 0); }
+          to   { transform: translate3d(-50%, 0, 0); }
+        }
+        @keyframes ephymeris-drift-y {
           from { transform: translate3d(0, 0, 0); }
           to   { transform: translate3d(0, -50%, 0); }
         }
       `}</style>
 
-      {/* Each layer renders its stars twice, stacked, so the -50% translate
-          loops seamlessly. */}
-      <div
-        className="absolute inset-x-0 top-0 h-[200%]"
-        style={{ animation: "ephymeris-drift 140s linear infinite", animationPlayState: playState }}
-      >
-        <div className="relative h-1/2 w-full">
-          <StarLayer stars={far} opacity={0.3} />
-        </div>
-        <div className="relative h-1/2 w-full">
-          <StarLayer stars={far} opacity={0.3} />
-        </div>
-      </div>
-
-      <div
-        className="absolute inset-x-0 top-0 h-[200%]"
-        style={{ animation: "ephymeris-drift 90s linear infinite", animationPlayState: playState }}
-      >
-        <div className="relative h-1/2 w-full">
-          <StarLayer stars={near} opacity={0.45} />
-        </div>
-        <div className="relative h-1/2 w-full">
-          <StarLayer stars={near} opacity={0.45} />
-        </div>
-      </div>
+      <DriftLayer stars={far} opacity={0.3} periodX={240} periodY={720} playState={playState} />
+      <DriftLayer stars={near} opacity={0.45} periodX={160} periodY={480} playState={playState} />
     </div>
   );
 }

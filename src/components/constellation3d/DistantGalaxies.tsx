@@ -4,14 +4,15 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
 import { mulberry32 } from "@/lib/prng";
-import { useReduceMotion } from "@/lib/useReduceMotion";
 
 import { MAX_FRAME_SECONDS } from "./CameraRig";
+import { makeFarSpriteMaterial } from "./farMaterials";
 import { makeEllipticalTexture, makeSpiralTexture } from "./skyTextures";
 
 /**
- * Other galaxies, far off — a dozen small sprites hung on the outermost
- * shell, each a painted spiral or elliptical at its own roll and squash.
+ * Other galaxies, far off — a dozen small sprites in the sky at infinity
+ * (`FarSky.tsx`), each a painted spiral or elliptical at its own roll and
+ * squash.
  *
  * They are what makes the home galaxy a galaxy *among* galaxies rather than
  * the whole sky: small, faint, and unmistakably the same kind of thing as the
@@ -19,13 +20,12 @@ import { makeEllipticalTexture, makeSpiralTexture } from "./skyTextures";
  * parallax worth drawing and a sprite is one quad.
  *
  * Each rolls very slowly about its own axis — a spiral's arms creep — so a
- * long look catches motion. Still under reduced motion.
+ * long look catches motion. Held when `still`.
  */
-export function DistantGalaxies({ seed }: { seed: number }) {
-  const reduceMotion = useReduceMotion();
+export function DistantGalaxies({ seed, still }: { seed: number; still: boolean }) {
   const meshes = useRef<THREE.Mesh[]>([]);
 
-  const { textures, placements } = useMemo(() => {
+  const { textures, placements, materials } = useMemo(() => {
     const made = [
       makeSpiralTexture(seed ^ 0x11, "#b9c4ff", 2, 0.22),
       makeSpiralTexture(seed ^ 0x12, "#d7c4ff", 3, 0.17),
@@ -53,14 +53,20 @@ export function DistantGalaxies({ seed }: { seed: number }) {
         textureIndex: i % made.length,
       };
     });
-    return { textures: made, placements: placed };
+    const materials = placed.map((p) =>
+      makeFarSpriteMaterial(made[p.textureIndex]!, p.opacity, { additive: true }),
+    );
+    return { textures: made, placements: placed, materials };
   }, [seed]);
 
-  useEffect(() => () => textures.forEach((t) => t.dispose()), [textures]);
+  useEffect(() => () => {
+    textures.forEach((t) => t.dispose());
+    materials.forEach((m) => m.dispose());
+  }, [textures, materials]);
 
   useFrame((_state, raw) => {
     const delta = Math.min(raw, MAX_FRAME_SECONDS);
-    if (reduceMotion) return;
+    if (still) return;
     placements.forEach((p, i) => {
       const mesh = meshes.current[i];
       if (mesh) mesh.rotation.z += delta * p.spin;
@@ -77,16 +83,10 @@ export function DistantGalaxies({ seed }: { seed: number }) {
             }}
             rotation={[0, 0, p.roll]}
             scale={[p.scale, p.scale * p.squash, 1]}
-            renderOrder={-4}
+            renderOrder={-9}
+            material={materials[i]!}
           >
             <planeGeometry args={[1, 1]} />
-            <meshBasicMaterial
-              map={textures[p.textureIndex]!}
-              transparent
-              opacity={p.opacity}
-              depthWrite={false}
-              blending={THREE.AdditiveBlending}
-            />
           </mesh>
         </Billboard>
       ))}
@@ -95,6 +95,7 @@ export function DistantGalaxies({ seed }: { seed: number }) {
 }
 
 const GALAXY_SIGHTINGS = 12;
-/** The outermost shell — behind the nebulae, behind everything. */
+/** Distance from the camera. Immaterial to depth (they are drawn at the far
+ *  plane), but it sets their scale against the home galaxy. */
 const SHELL_NEAR = 138;
 const SHELL_FAR = 160;

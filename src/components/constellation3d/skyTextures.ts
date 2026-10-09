@@ -43,56 +43,6 @@ function rimFade(ctx: CanvasRenderingContext2D, size: number, inner = 0.1) {
 }
 
 /**
- * A nebula bank: clustered translucent blobs, a few bright filaments laid
- * across them, then the rim fade. The filaments are what the first version
- * lacked — without them a bank is fog, and fog does not read as a place where
- * stars are being made.
- */
-export function makeNebulaTexture(seed: number, core: string, edge: string): THREE.CanvasTexture {
-  const size = 256;
-  const [c, ctx] = canvas(size);
-  const rand = mulberry32(seed);
-
-  ctx.globalCompositeOperation = "lighter";
-  for (let i = 0; i < 30; i += 1) {
-    const angle = rand() * Math.PI * 2;
-    const spread = rand() ** 1.6 * size * 0.34;
-    const x = size / 2 + Math.cos(angle) * spread;
-    const y = size / 2 + Math.sin(angle) * spread * 0.7;
-    const radius = size * (0.08 + rand() * 0.22) * (1 - spread / size);
-    const g = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    const hue = rand() > 0.4 ? core : edge;
-    g.addColorStop(0, `${hue}1a`);
-    g.addColorStop(0.55, `${hue}0d`);
-    g.addColorStop(1, `${hue}00`);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, size, size);
-  }
-  // Filaments: a handful of soft strokes along seeded curves.
-  ctx.lineCap = "round";
-  for (let i = 0; i < 6; i += 1) {
-    const x0 = size * (0.25 + rand() * 0.5);
-    const y0 = size * (0.25 + rand() * 0.5);
-    const len = size * (0.15 + rand() * 0.25);
-    const a = rand() * Math.PI * 2;
-    const bend = (rand() - 0.5) * 60;
-    ctx.strokeStyle = `${core}14`;
-    ctx.lineWidth = 2 + rand() * 5;
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.quadraticCurveTo(
-      x0 + Math.cos(a + 0.5) * len * 0.5 + bend,
-      y0 + Math.sin(a + 0.5) * len * 0.5,
-      x0 + Math.cos(a) * len,
-      y0 + Math.sin(a) * len,
-    );
-    ctx.stroke();
-  }
-  rimFade(ctx, size);
-  return upload(c);
-}
-
-/**
  * A distant spiral galaxy, seen at some inclination: a bright bulge, two or
  * three log-spiral arms dotted with knots, and a faint disc haze.
  *

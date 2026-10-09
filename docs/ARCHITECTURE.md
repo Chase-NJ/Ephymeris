@@ -1059,6 +1059,32 @@ through `useRigSky`.*
 - **A cage-ship crew is keyed by cohort and cage.** Cage numbers restart in every cohort and the rig pools
   every active cohort's fleet; keying on cage alone merges unrelated cohorts onto one hull.
 
+**The backdrop** (`constellation3d/Backdrop.tsx`, permanent in `SharedCanvas`) is three depths, so the sky
+reads as drifting through space rather than turning around us:
+
+- **The far sky** (`FarSky.tsx`) is the home galaxy, the distant galaxies, faint fixed stars, and a dome of
+  nebulae and a galactic band. The dome is baked once into a cube map on the first frame
+  (`farSkyBake.ts`). The far sky rides with the camera's position and is drawn at the far plane, so it never
+  drifts and never wins a depth test against a box or a world. The dome's noise lattice is seeded on the
+  CPU, because a GLSL `sin` hash differs between ANGLE and Metal.
+- **Two drifting layers** (`DriftField.tsx`) slide past along one direction at one speed
+  (`lib/constellations/skyDrift.ts`), so nearer stars crossing faster is pure parallax. The 2D `Starfield`
+  drifts the same way on screen.
+- All of it holds while the window is unfocused: an event already under way finishes, and no new one
+  starts. Reduced motion holds everything still and stops `SkyEvents`.
+
+> [!CAUTION]
+> **`DRIFT_CLEARANCE` must stay above `OrbitControls`' `maxDistance`.** Drifting stars fade out inside it.
+> Outside the ball the camera lives in, a star can never pass between the camera and a box, so the drift
+> layers can depth-test normally. Shrink the clearance below 40 and a star can sit in front of the data
+> an operator is reading. `skyDrift.test.ts` pins it.
+
+> [!WARNING]
+> **Hand a shader's uniforms to the material as an object, not as a JSX `uniforms` prop.** r3f copies each
+> entry of that prop into the material, so a per-frame `uniform.value = …` reassignment never reaches the
+> GPU; only an in-place mutation, such as `.lerp()` on a shared vector, does. The backdrop builds its
+> materials in `useMemo` and passes `material={…}` (`makePointsMaterial`).
+
 ### Cohort browser
 
 `components/cohorts/CohortSky.tsx` makes each cohort a `SceneNode` whose `body` is a procedural planet, so

@@ -2,8 +2,8 @@
  * The cohort browser's placement.
  *
  * Two of these guard invariants that live in a *different* file and have no
- * type connecting them: `OrbitControls`' `maxDistance` of 40 and the backdrop
- * shell at 58–92 (`CameraRig.tsx`, `Backdrop.tsx`). Nothing stops a future span
+ * type connecting them: `OrbitControls`' `maxDistance` of 40 and the drifting
+ * backdrop's clearance (`CameraRig.tsx`, `skyDrift.ts`). Nothing stops a future span
  * change from pushing worlds past the point the camera can dolly to, and the
  * symptom would be a planet you can see and never reach.
  */
@@ -11,11 +11,12 @@
 import { describe, expect, it } from "vitest";
 
 import { planetSlots } from "./cohortSky";
+import { DRIFT_CLEARANCE } from "./skyDrift";
 
 /** `OrbitControls` will not let the camera further out than this. */
 const MAX_DISTANCE = 40;
-/** The nearest layer of the deep-sky backdrop. */
-const BACKDROP_NEAR = 58;
+/** The nearest the deep-sky backdrop comes to the origin. */
+const BACKDROP_NEAR = DRIFT_CLEARANCE;
 
 function reach(position: [number, number, number]): number {
   return Math.hypot(...position);

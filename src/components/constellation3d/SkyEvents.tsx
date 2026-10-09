@@ -27,7 +27,19 @@ import { makeFlashTexture, makeStreakTexture } from "./skyTextures";
  * supernova permanently (the note that used to live on it is now the note on
  * this scheduler).
  */
-export function SkyEvents({ seed, shellNear, shellFar }: { seed: number; shellNear: number; shellFar: number }) {
+export function SkyEvents({
+  seed,
+  shellNear,
+  shellFar,
+  paused,
+}: {
+  seed: number;
+  shellNear: number;
+  shellFar: number;
+  /** The window is unfocused: a running event plays out, but the lull's
+   *  clock holds, so nothing new ignites behind it. */
+  paused: boolean;
+}) {
   const reduceMotion = useReduceMotion();
 
   const flashTexture = useMemo(() => makeFlashTexture(), []);
@@ -55,7 +67,7 @@ export function SkyEvents({ seed, shellNear, shellFar }: { seed: number; shellNe
   useFrame((_state, raw) => {
     const delta = Math.min(raw, MAX_FRAME_SECONDS);
     const s = state.current;
-    s.elapsed += delta;
+    if (!(paused && s.current === null)) s.elapsed += delta;
     const now = s.elapsed;
 
     const hide = () => {
@@ -72,7 +84,7 @@ export function SkyEvents({ seed, shellNear, shellFar }: { seed: number; shellNe
 
     // Ignite the next event when its time comes.
     if (s.current === null) {
-      if (now < s.nextAt) return;
+      if (paused || now < s.nextAt) return;
       s.current = ignite(s.rand, now, shellNear, shellFar);
     }
 

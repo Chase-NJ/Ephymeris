@@ -1,7 +1,7 @@
 /**
  * The arithmetic behind the four recording windows.
  *
- * Pure on purpose (`CLAUDE.md`, "Vitest covers `src/lib/**` only"): every
+ * Pure on purpose (`README.md#tests`: Vitest covers `src/lib/**` only): every
  * function here can be wrong in a way that still draws a confident picture — a
  * spike a third of a millisecond off its crossing, a probe drawn upside down, a
  * histogram whose tallest bar is not its largest count — and none of that

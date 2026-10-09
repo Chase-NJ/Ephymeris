@@ -28,7 +28,6 @@ DOCS = REPO_ROOT / "docs"
 DOC_FILES = {
     **{p.name: p for p in DOCS.glob("*.md")},
     "README.md": REPO_ROOT / "README.md",
-    "CLAUDE.md": REPO_ROOT / "CLAUDE.md",
 }
 
 #: Documents that no longer exist; a reference to one is a stale citation.

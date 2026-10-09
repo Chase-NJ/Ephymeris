@@ -1,5 +1,11 @@
 .DS_Store
 
+# Claude Code: agent instructions, settings and local memory stay on this machine.
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.mcp.json
+
 # Frontend
 node_modules/
 dist/

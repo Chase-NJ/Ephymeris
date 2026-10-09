@@ -32,7 +32,6 @@ unsigned and there is no CI.
 | [docs/DATA.md](docs/DATA.md) | touch anything written to disk or analysed: file layout, crash safety and recovery, SQLite, backup, the archive walk, metric definitions |
 | [docs/RECORDING.md](docs/RECORDING.md) | work on the Intan RHX integration |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | need the exact shape of a command, event or error code. **Generated** from `protocol/schema.py`; never edit it by hand |
-| [CLAUDE.md](CLAUDE.md) | are an AI coding agent: the load-bearing invariants in brief |
 
 ## Installing on a lab machine
 
@@ -278,7 +277,6 @@ These were decided, not missed.
 
 Work on a branch off `main` and open a pull request. Commit messages are a short imperative summary
 ("Echo the flash command from the arguments actually sent"), with detail in the body when it helps.
-Read [CLAUDE.md](CLAUDE.md) before a non-trivial change: it lists the invariants that bite.
 
 Three rules cover most of the risk:
 

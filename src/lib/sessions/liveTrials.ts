@@ -8,7 +8,7 @@
  * **Keyed off strobe *names*, never raw codes.** Every profile's `strobes` map
  * is the machine's one vocabulary (`TASKS.md#strobe-vocabulary`), so resolving
  * `WATER_POKE_L` → whatever code it carries keeps the app free of per-sketch
- * knowledge (the rule in CLAUDE.md). A sketch that declares
+ * knowledge (`TASKS.md#profile-and-params-hashes`). A sketch that declares
  * none of these names simply yields no trials, and the panels say so rather
  * than inventing structure.
  *

@@ -627,7 +627,7 @@ box's restore state, which is where a failed restore stays visible.*
 | Startup | When the first presence poll reports the rig |
 | A board appears | Replugged, or newly bound |
 | A port falls back to `IDLE` | Hooked on the **transition**, so every path to idleness is covered by one rule — including a Debug Mode flash, which is why the pin exists |
-| A session lets go | `sessions.end`, `sessions.endGroup`, `sessions.abandon` (`_release_baseline`, `app.py`). `endGroup` restores at once because the operator's next act is walking the rig, which wants the lights |
+| A session lets go | `sessions.end`, `sessions.endGroup`, `sessions.abandon` (`SessionLifecycle`, `sessions/lifecycle.py`). `endGroup` restores at once because the operator's next act is walking the rig, which wants the lights |
 | On demand | `utility.ensure`: the Rig tab's **Reflash boxes** (the only caller passing `force`), the placement walk, Debug Mode's **Return to baseline** |
 
 What a trigger does to one box (`UtilityBaseline.ensure` and `_restore`). A `utility.ensure` that arrives
@@ -740,6 +740,23 @@ possible without a flash. They act only while the console is open in `PASSTHROUG
 
 The operator's view is [USER-GUIDE.md](USER-GUIDE.md#running-a-session); session records, runs and their
 files are [DATA.md](DATA.md#sessions-and-runs).
+
+One module owns the [held session](../GLOSSARY.md#held-session) and every ordering rule below:
+`SessionLifecycle` (`sessions/lifecycle.py`). It holds the rig at `sessions.confirmMapping`, starts the
+recording before any box, stops the boxes before RHX, and ends, clears and releases in that order. Its
+transitions are serialized, so a second lifecycle command waits for the first rather than landing inside a
+recording start or a graceful end. The `sessions.*` and `port.startSession`/`port.stopSession` handlers
+only parse arguments and map its refusals onto wire codes. Anything else that needs to know whether a
+session is in progress asks it, and it answers three different questions:
+
+| Question | True when | Asked by |
+|---|---|---|
+| `held` | A session holds the rig, from its mapping's confirmation or a resume until it ends or is abandoned | `sessions.tidy`, which never touches it |
+| `in_use` | A session is held, or any box is running | every rig definition write, the data-folder relocate, moving animals |
+| `writing` | Any box is running, so a live `.tsv` has no `.json` yet | `sessions.recover` |
+
+A finished run records against the session it was started under (`ActiveRun.session_id`), not against
+whichever session is held when it lands.
 
 ### The flow
 
@@ -1348,7 +1365,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `boards/` | `BoardTool`, the gRPC and subprocess backends, generated `rpc/` stubs | [Flashing](#flashing) |
 | `utility.py` | The utility baseline and `identify` | [Hardware utility baseline](#hardware-utility-baseline) |
 | `debug_run.py` | Live scoring for a task started from Debug Mode | [Running a task from Debug Mode](#running-a-task-from-debug-mode) |
-| `sessions/` | `runner.py`, `writer.py` (write-ahead `.tsv`), `matwriter.py`, `models.py`, `repository.py`, `paths.py` (`parse_name_date`), `recovery.py`, `tidy.py` | [Session lifecycle](#session-lifecycle), [DATA.md](DATA.md#per-animal-files) |
+| `sessions/` | `lifecycle.py` (the held session and its ordering), `runner.py`, `writer.py` (write-ahead `.tsv`), `matwriter.py`, `models.py`, `repository.py`, `paths.py` (`parse_name_date`), `recovery.py`, `tidy.py` | [Session lifecycle](#session-lifecycle), [DATA.md](DATA.md#per-animal-files) |
 | `cohorts/` | `db.py` (SQLite, schema, migrations), `models.py`, `repository.py`, `folders.py`, `grouping.py`, `members.py` (former members), `move.py` / `move_apply.py` (moving animals between cohorts: plan, then journal, copy, commit, clean up), `relocate.py` (moving a data folder with its records' paths) | [DATA.md](DATA.md#cohorts-animals-and-groups), [DATA.md](DATA.md#moving-animals-between-cohorts) |
 | `tasks/` | `profile.py` (`task.json`, hashes), `start_command.py`, `metrics.py` (`MetricSet`), `seed.py` | [TASKS.md](TASKS.md#task-profile) |
 | `taskdef/` | Task definitions: `model.py`, `fields.py`, `validate.py`, `generate.py`, `store.py`, `bundled.py` | [TASKS.md](TASKS.md#task-definitions) |

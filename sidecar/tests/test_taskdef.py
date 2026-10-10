@@ -1120,8 +1120,7 @@ def _tasks_app(tmp_path, library):
     app = SimpleNamespace(
         discovery=SimpleNamespace(sketches=[]),
         task_store=task_store,
-        _running_session_id=None,
-        runner=None,
+        lifecycle=SimpleNamespace(in_use=False),
         _rescan=nothing,
         _broadcast_tasks=nothing,
     )
@@ -1130,7 +1129,7 @@ def _tasks_app(tmp_path, library):
         vocabulary=vocabulary,
         tasks=task_store,
         repin=lambda: 0,
-        in_use=lambda: Application._rig_in_use(app),
+        in_use=lambda: app.lifecycle.in_use,
         rescan=nothing,
         after_rebuild=nothing,
         broadcast=nothing,
@@ -1166,7 +1165,7 @@ async def test_no_task_is_saved_or_deleted_while_a_session_is_set_up(tmp_path, l
 
     app = _tasks_app(tmp_path, library)
     app.task_store.save(presets.instantiate("grgl_2odor", "probe", "Probe Task"))
-    app._running_session_id = "s1"
+    app.lifecycle.in_use = True
 
     edited = presets.instantiate("grgl_2odor", "probe", "Probe Task")
     with pytest.raises(CommandError) as refused:

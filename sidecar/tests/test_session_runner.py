@@ -106,6 +106,7 @@ def make_runner(tmp_path: Path, profile_json=GRGL, duration_s=None):
             )
         ],
         duration_s=duration_s,
+        session_id="s1",
     )
     return runner, ports, events, ended
 
@@ -202,9 +203,11 @@ async def test_the_end_code_finalizes_the_run_cleanly(tmp_path: Path) -> None:
     await wait_until(lambda: bool(ended))
 
     assert ended, "expected the run to finalize"
-    _run, reason = ended[-1]
+    run, reason = ended[-1]
     assert reason == CLEAN_STOP_REASON
     assert ports.ended == [(1, CLEAN_STOP_REASON)]
+    # The run names its own session record, whatever is held by the time it lands.
+    assert run.session_id == "s1"
 
     # `DATA.md#built-once-at-the-end` — .json and .mat built once at the end, from the same in-memory list.
     doc = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text(encoding="utf-8"))
@@ -311,7 +314,7 @@ async def test_a_new_mapping_forgets_finished_boxes(tmp_path: Path) -> None:
     ports.on_strobe(246, 100)
     await wait_until(lambda: bool(ended))
 
-    runner.configure(tmp_path, "2O-Bdisc_25", "g2", runner.box_configs())
+    runner.configure(tmp_path, "2O-Bdisc_25", "g2", runner.box_configs(), session_id="s1")
     assert runner.snapshot()[0]["ended"] is False
 
 

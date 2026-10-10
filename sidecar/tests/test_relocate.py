@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 
 import pytest
@@ -304,3 +305,45 @@ def test_rehome_leaves_a_healthy_cohort_alone(archive: Archive) -> None:
     before = archive.stored_paths()
     assert relocate.rehome(archive.db, archive.cohort.id) == 0
     assert archive.stored_paths() == before
+
+
+def test_a_summary_waiting_on_a_relocate_reads_the_new_paths(
+    archive: Archive, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A summary that arrives mid-relocate waits for it, then reads the records
+    the relocate left — not the ones it found before waiting, whose files
+    have just left."""
+    gate = threading.Event()
+    real = relocate.relocate_cohort
+
+    def held_open(*args: object) -> Path:
+        gate.wait(timeout=5)
+        return real(*args)
+
+    monkeypatch.setattr(relocate, "relocate_cohort", held_open)
+
+    async def broadcast(_message: dict) -> None:
+        return None
+
+    service = AnalyticsService(
+        db=archive.db, cohorts=archive.cohorts, sessions=archive.sessions, broadcast=broadcast
+    )
+
+    async def scenario() -> dict:
+        moving = asyncio.create_task(service.relocate(archive.cohort.id, str(archive.new), True))
+        await asyncio.sleep(0.05)  # the relocate holds the lock
+        summary = asyncio.create_task(service.summary(archive.cohort.id))
+        await asyncio.sleep(0.2)  # long enough for any read taken before waiting
+        gate.set()
+        await moving
+        return await summary
+
+    result = asyncio.run(scenario())
+
+    assert result["dataFolder"] == str(archive.new)
+    assert result["warnings"] == []
+    # The earlier run is set aside as a false start; staleness is the point.
+    runs = result["runs"] + result["falseStarts"]
+    assert len(runs) == 2
+    assert not any(run["stale"] for run in runs)
+    assert archive.all_under(archive.new), archive.stored_paths()

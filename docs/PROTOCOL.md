@@ -193,7 +193,7 @@ DTR toggle through `RESETTING`, with the same passthrough release-and-resume as 
 <a id="cmd-port.startsession"></a>
 #### `port.startSession`
 
-Start one box of the confirmed mapping: open the port (the Mega DTR-resets), await `READY`, send the `START` line built at `sessions.confirmMapping`, capture an optional `SEED`, then parse strobes (`ARCHITECTURE.md#session-lifecycle`). Requires `IDLE`. On a recording session RHX recording begins first and an `INTAN_*` refusal comes before the box starts. Opens the group's run and marks the session `running` if this is the group's first box. `SESSION_INVALID` for a box with no confirmed mapping. Long-running on a recording session; the client raises its reply timeout.
+Start one box of the confirmed mapping: open the port (the Mega DTR-resets), await `READY`, send the `START` line built at `sessions.confirmMapping`, capture an optional `SEED`, then parse strobes (`ARCHITECTURE.md#session-lifecycle`). Requires `IDLE`. On a recording session RHX recording begins first and an `INTAN_*` refusal comes before the box starts. Opens the group's run and marks the session `running` if this is the group's first box. `SESSION_INVALID` for a box with no confirmed mapping, and, with `detail.boxes`, for a box whose board does not carry its mapped sketch's current build (`ARCHITECTURE.md#what-a-board-carries`); both come before RHX or the box starts. Long-running on a recording session; the client raises its reply timeout.
 
 **Args**
 
@@ -744,7 +744,7 @@ What Mission Control renders. The runner is the authority on the confirmed mappi
 <a id="cmd-sessions.startall"></a>
 #### `sessions.startAll`
 
-Enter `IN_SESSION` on every box of the confirmed mapping not already running, open the group's run, and mark the session `running`. On a recording session RHX recording begins **before any box starts**, and an `INTAN_*` refusal (no recording configured for this group, RHX unreachable) leaves every box untouched — a session quietly missing its electrophysiology cannot be re-run. Broadcasts `session.lifecycle`. Long-running on a recording session; the client raises its reply timeout.
+Enter `IN_SESSION` on every box of the confirmed mapping not already running, open the group's run, and mark the session `running`. On a recording session RHX recording begins **before any box starts**, and an `INTAN_*` refusal (no recording configured for this group, RHX unreachable) leaves every box untouched — a session quietly missing its electrophysiology cannot be re-run. Every box not running must carry its mapped sketch's current build first (`ARCHITECTURE.md#what-a-board-carries`): otherwise `SESSION_INVALID` with `detail.boxes` naming each one, before RHX or any box starts. Broadcasts `session.lifecycle`. Long-running on a recording session; the client raises its reply timeout.
 
 **Args**
 

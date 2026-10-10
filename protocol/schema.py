@@ -2447,8 +2447,11 @@ COMMANDS = (
         "recording session RHX recording begins first and an `INTAN_*` "
         "refusal comes before the box starts. Opens the group's run and marks "
         "the session `running` if this is the group's first box. "
-        "`SESSION_INVALID` for a box with no confirmed mapping. Long-running "
-        "on a recording session; the client raises its reply timeout.",
+        "`SESSION_INVALID` for a box with no confirmed mapping, and, with "
+        "`detail.boxes`, for a box whose board does not carry its mapped "
+        "sketch's current build (`ARCHITECTURE.md#what-a-board-carries`); "
+        "both come before RHX or the box starts. Long-running on a recording "
+        "session; the client raises its reply timeout.",
     ),
     Command(
         "port.stopSession",
@@ -2964,8 +2967,11 @@ COMMANDS = (
         "`running`. On a recording session RHX recording begins **before any "
         "box starts**, and an `INTAN_*` refusal (no recording configured for "
         "this group, RHX unreachable) leaves every box untouched — a session "
-        "quietly missing its electrophysiology cannot be re-run. Broadcasts "
-        "`session.lifecycle`. Long-running on a recording session; the client "
+        "quietly missing its electrophysiology cannot be re-run. Every box not "
+        "running must carry its mapped sketch's current build first "
+        "(`ARCHITECTURE.md#what-a-board-carries`): otherwise `SESSION_INVALID` "
+        "with `detail.boxes` naming each one, before RHX or any box starts. "
+        "Broadcasts `session.lifecycle`. Long-running on a recording session; the client "
         "raises its reply timeout.",
     ),
     Command(

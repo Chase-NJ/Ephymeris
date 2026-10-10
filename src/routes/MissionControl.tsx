@@ -32,6 +32,7 @@ import { springPanel } from "@/lib/motion";
 import { useDeparture } from "@/lib/nav/departure";
 import {
   abandonSession,
+  boxesNeedingFlash,
   endSession,
   startAll,
   startBox,
@@ -105,6 +106,8 @@ export function MissionControl() {
   const sessionStore = useSessionStore();
 
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Boxes the last start was refused for, unflashed (`ARCHITECTURE.md#what-a-board-carries`). */
+  const [needFlash, setNeedFlash] = useState<number[] | null>(null);
   const [busy, setBusy] = useState(false);
 
   const connected = status === "connected";
@@ -295,11 +298,13 @@ export function MissionControl() {
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
     setActionError(null);
+    setNeedFlash(null);
     try {
       await action();
       await refresh();
     } catch (err) {
       setActionError(errorMessage(err));
+      setNeedFlash(boxesNeedingFlash(err));
     } finally {
       setBusy(false);
     }
@@ -473,6 +478,19 @@ export function MissionControl() {
                 <CircleAlert size={14} strokeWidth={1.75} className="mt-px shrink-0" />
                 {error}
               </div>
+            )}
+            {/* A start refused because a board doesn't carry its mapped sketch
+                (`ARCHITECTURE.md#what-a-board-carries`). Mission Control is
+                where set-up ends, so nothing else leads back to the step that
+                flashes. Not while a box runs: re-confirming there would reset
+                the mapping under it. */}
+            {needFlash && actionError && rigGroupId && flow.progress.running === 0 && (
+              <Button
+                disabled={busy || !connected}
+                onClick={() => navigate(stepUrl.boxes(sessionId!, rigGroupId))}
+              >
+                Back to Boxes
+              </Button>
             )}
 
             <div className="flex flex-wrap items-center gap-2">

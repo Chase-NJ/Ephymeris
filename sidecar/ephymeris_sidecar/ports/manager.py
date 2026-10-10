@@ -16,8 +16,12 @@ wire messages themselves.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import os
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import serial
@@ -47,6 +51,47 @@ OutputCallback = Callable[[int, list[OutputLine]], Awaitable[None]]
 PresenceCallback = Callable[[list[dict[str, object]]], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class CarriedSketch:
+    """What the app last flashed to the board bound to a box
+    (`ARCHITECTURE.md#what-a-board-carries`).
+
+    `fingerprint` is the folder's content as it was compiled. A folder rebuilt
+    since (a wiring save, a vocabulary edit, a task save) still has the same
+    path, but the board carries the old build of it.
+    """
+
+    path: str
+    fingerprint: str
+
+    def is_of(self, sketch_dir: str) -> bool:
+        """The same folder by path, whatever the spelling a caller sent."""
+        return _normalized(self.path) == _normalized(sketch_dir)
+
+
+def sketch_fingerprint(sketch_dir: str) -> str:
+    """Every file a compile of this folder could read, by relative path and content.
+
+    Hidden files are skipped: a `.DS_Store` is not firmware. A folder that does
+    not exist hashes as an empty one. Blocking file I/O; call it off the loop.
+    """
+    root = Path(sketch_dir)
+    digest = hashlib.sha256()
+    if root.is_dir():
+        for path in sorted(p for p in root.rglob("*") if p.is_file()):
+            relative = path.relative_to(root)
+            if any(part.startswith(".") for part in relative.parts):
+                continue
+            data = path.read_bytes()
+            digest.update(f"{relative.as_posix()}\0{len(data)}\0".encode())
+            digest.update(data)
+    return digest.hexdigest()
+
+
+def _normalized(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path))
+
+
 class PortNotBound(Exception):
     """No board is bound to that box number."""
 
@@ -74,6 +119,9 @@ class PortManager:
         }
         self._settings = SidecarSettings()
         self._presence: dict[str, DetectedBoard] = {}
+        #: What each box's board carries, as far as this process flashed it.
+        #: Memory only: after a restart nothing is known until the next flash.
+        self._carried: dict[int, CarriedSketch] = {}
         self._tasks: list[asyncio.Task[None]] = []
         self._poll_failures = 0
 
@@ -98,7 +146,13 @@ class PortManager:
             handler.shutdown()
 
     def update_settings(self, settings: SidecarSettings) -> None:
+        previous = self._settings
         self._settings = settings
+        # A box bound to another board now answers with that board's firmware,
+        # which this process never flashed.
+        for box in self._handlers:
+            if settings.hardware_id_for(box) != previous.hardware_id_for(box):
+                self.forget(box)
 
     # --- lookups ----------------------------------------------------------
 
@@ -126,6 +180,15 @@ class PortManager:
 
     def current_states(self) -> dict[int, PortState]:
         return {box: handler.state for box, handler in sorted(self._handlers.items())}
+
+    def carried(self, box: int) -> CarriedSketch | None:
+        """The sketch this process last flashed to the board now bound to `box`,
+        or None when that is not known (`ARCHITECTURE.md#what-a-board-carries`)."""
+        return self._carried.get(box)
+
+    def forget(self, box: int) -> None:
+        """Stop claiming to know what `box`'s board carries."""
+        self._carried.pop(box, None)
 
     def presence_json(self) -> list[dict[str, object]]:
         bound: dict[str, int] = {
@@ -182,8 +245,14 @@ class PortManager:
         )
         # The session flow wants IDLE regardless of the pre-flash state.
         resume = was_passthrough and not suppress_passthrough_resume
+        # From here the board is being overwritten; a failure anywhere below
+        # leaves it carrying something nobody can name.
+        self.forget(box)
 
         try:
+            # Before the compile reads the folder. Every caller holds the rig
+            # definition's read side, so nothing rewrites it in between.
+            fingerprint = await asyncio.to_thread(sketch_fingerprint, sketch_dir)
             # No command echo here. This layer knows neither which backend will
             # run (daemon or subprocess) nor the arguments it will send, so
             # anything written here is a guess that drifts — and did: the old
@@ -203,6 +272,7 @@ class PortManager:
             handler.force_error(f"flash failed: {exc}")
             raise
 
+        self._carried[box] = CarriedSketch(sketch_dir, fingerprint)
         return self._conclude(handler, address, prior_baud, resume,
                               f"flashed {sketch_name}")
 
@@ -303,6 +373,10 @@ class PortManager:
             log.info("board appeared: %s at %s", hardware_id, latest[hardware_id].address)
         for hardware_id in vanished:
             log.info("board vanished: %s", hardware_id)
+            # The board that next answers to this box may not be this one.
+            for box in self._handlers:
+                if self._settings.hardware_id_for(box) == hardware_id:
+                    self.forget(box)
 
         self._presence = latest
         return True

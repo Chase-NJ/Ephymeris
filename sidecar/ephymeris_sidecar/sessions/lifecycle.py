@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable
 
 from ..intan.service import IntanNotReady
+from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
 from ..tasks import profile as task_profile
 from ..tasks.start_command import build_start_command
@@ -49,6 +50,15 @@ RECORDING_GRACE_S = 45.0
 
 class SessionRefused(Exception):
     """The session can't make this transition now. The message says why."""
+
+
+class SketchNotCarried(SessionRefused):
+    """A box's board does not carry the sketch its mapping chose
+    (`ARCHITECTURE.md#what-a-board-carries`). Nothing was started."""
+
+    def __init__(self, message: str, boxes: list[int]) -> None:
+        super().__init__(message)
+        self.boxes = boxes
 
 
 class MappingRefused(Exception):
@@ -131,6 +141,7 @@ class SessionLifecycle:
         logbook: LogbookService | None,
         rig_reading: Callable[[], AsyncContextManager[None]],
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
+        carried: Callable[[int], CarriedSketch | None],
     ) -> None:
         self._sessions = sessions
         self._cohorts = cohorts
@@ -141,6 +152,7 @@ class SessionLifecycle:
         self._logbook = logbook
         self._rig_reading = rig_reading
         self._broadcast = broadcast
+        self._carried = carried
         self._held: str | None = None
         self._lock = asyncio.Lock()
 
@@ -270,6 +282,8 @@ class SessionLifecycle:
 
     async def start_all(self, session_id: str) -> Session:
         async with self._lock:
+            # Every box before any box, and before RHX: a refusal starts nothing.
+            await self._refuse_unless_carried(self._runner.configured_boxes())
             await self._begin_recording_if_any(session_id)
             for box in self._runner.configured_boxes():
                 # `start_box` is a no-op for a box already running
@@ -284,6 +298,7 @@ class SessionLifecycle:
         """Start one box of the held session's mapping (`port.startSession`)."""
         async with self._lock:
             session_id = self._held
+            await self._refuse_unless_carried([box])
             if session_id is not None:
                 await self._begin_recording_if_any(session_id)
             self._start_box(box)
@@ -484,6 +499,42 @@ class SessionLifecycle:
                 log.exception("logbook: couldn't announce box %d's run", run.box)
 
     # --- internals ----------------------------------------------------------
+
+    async def _refuse_unless_carried(self, boxes: list[int]) -> None:
+        """Refuse unless each box's board carries the build of its mapped sketch
+        (`ARCHITECTURE.md#what-a-board-carries`).
+
+        READY is all the handshake checks, and every sketch prints it -- the
+        utility, and last session's task. A box started on the wrong one
+        records no trials, or another task's trials under this one's profile.
+        A running box is skipped, since starting it is a no-op, and so is an
+        unmapped one, which the runner refuses by name.
+        """
+        configs = {config.box: config for config in self._runner.box_configs()}
+        running = set(self._runner.running_boxes())
+        problems: list[str] = []
+        refused: list[int] = []
+        for box in sorted(boxes):
+            config = configs.get(box)
+            if config is None or box in running:
+                continue
+            carried = self._carried(box)
+            if carried is None:
+                problem = "has not been flashed since the app started or its board was plugged in"
+            elif not carried.is_of(config.sketch_path):
+                problem = f"carries {Path(carried.path).name}, not {config.sketch_name}"
+            elif await asyncio.to_thread(sketch_fingerprint, config.sketch_path) != carried.fingerprint:
+                problem = f"carries an older build of {config.sketch_name}"
+            else:
+                continue
+            refused.append(box)
+            problems.append(f"box {box} {problem}")
+        if refused:
+            raise SketchNotCarried(
+                f"Nothing was started: {'; '.join(problems)}. Flash "
+                f"{'it' if len(refused) == 1 else 'them'} from the Boxes step, then start.",
+                refused,
+            )
 
     def _start_box(self, box: int) -> None:
         try:

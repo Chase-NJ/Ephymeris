@@ -409,6 +409,10 @@ On **Mission Control**, click **Start All** to start every box, or **Start** on 
 has started, every box tile says `IDLE` and *No live metrics yet*, and the second button reads
 **Discard session**. See [During a session](#during-a-session).
 
+If the message says a box *has not been flashed* or *carries* another program, nothing was started. A box
+only starts with the program its mapping chose. Click **Back to Boxes**, confirm the boxes again so they
+load their programs, then start.
+
 ![Mission Control before starting: the session name 2O-Bdisc_15, the clock, Start All and Discard session on the left, and six box tiles on the right, each IDLE with Start, Stop and Reset buttons](images/mission-control-ready.webp)
 
 ### Switching groups

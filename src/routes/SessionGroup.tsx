@@ -1,18 +1,18 @@
 import { motion } from "framer-motion";
 import { ArrowRight, CircleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { SkyBackdrop } from "@/components/constellation3d/SkyBackdrop";
 import { GroupPicker } from "@/components/sessions/GroupPicker";
 import { SessionJourney } from "@/components/sessions/SessionJourney";
 import { SettingGroup } from "@/components/settings/SettingRow";
-import { errorMessage, getCohort } from "@/lib/cohorts/commands";
-import type { Cohort } from "@/lib/cohorts/types";
+import { errorMessage } from "@/lib/cohorts/commands";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
-import { endSession, resumeSession, sessionStatus } from "@/lib/sessions/commands";
+import { endSession, resumeSession } from "@/lib/sessions/commands";
 import { useActiveSessions } from "@/lib/sessions/context";
+import { stepUrl } from "@/lib/sessions/flow";
 import { clearSetupResume } from "@/lib/sessions/setupResume";
 import {
   allGroupsRun,
@@ -20,8 +20,8 @@ import {
   isContinuable,
   localToday,
   populatedGroups,
-  type Session,
 } from "@/lib/sessions/types";
+import { useSessionFlow } from "@/lib/sessions/useSessionFlow";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -38,50 +38,23 @@ import { useSidecar } from "@/lib/ws/context";
  */
 export function SessionGroup() {
   const { id: sessionId } = useParams<{ id: string }>();
-  const [params] = useSearchParams();
   const navigate = useNavigate();
   const { client, status } = useSidecar();
   const active = useActiveSessions();
   const connected = status === "connected";
 
-  const [session, setSession] = useState<Session | null>(null);
-  const [cohort, setCohort] = useState<Cohort | null>(null);
+  // `groupRuns` is what the badges show; the flow re-reads it on every
+  // lifecycle change.
+  const { session, cohort, held, flow, error: loadError } = useSessionFlow(sessionId);
   const [groupId, setGroupId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const error = actionError ?? loadError;
   const [busy, setBusy] = useState(false);
-
-  const running = active?.running ?? null;
-  const held = running?.session.id === sessionId ? running : null;
-  // Re-read on every lifecycle change: `groupRuns` is what the badges show.
-  const lifecycleKey = held ? `${held.session.status}:${held.session.groupRuns.length}` : "";
-
-  useEffect(() => {
-    if (!connected || !sessionId) return;
-    let alive = true;
-    void sessionStatus(client, sessionId)
-      .then(async (snapshot) => {
-        if (!alive) return;
-        setSession(snapshot.session);
-        const loaded = await getCohort(
-          client,
-          params.get("cohort") || snapshot.session.cohortId,
-        );
-        if (alive) setCohort(loaded);
-      })
-      .catch((err) => alive && setError(errorMessage(err)));
-    return () => {
-      alive = false;
-    };
-  }, [client, connected, sessionId, params, lifecycleKey]);
 
   // A group is already mapped on the rig: this page is not the next step.
   useEffect(() => {
-    if (held && held.groupId) {
-      navigate(`/session/${sessionId}/control?cohort=${held.session.cohortId}`, {
-        replace: true,
-      });
-    }
-  }, [held, navigate, sessionId]);
+    if (flow.rigStep === "control") navigate(stepUrl.control(sessionId!), { replace: true });
+  }, [flow.rigStep, navigate, sessionId]);
 
   // Pre-select the first group that hasn't run, so the common case is one press.
   useEffect(() => {
@@ -92,9 +65,9 @@ export function SessionGroup() {
     else if (groups.length === 1) setGroupId(groups[0]!.id);
   }, [cohort, session, groupId]);
 
-  const name = session ? `${session.prefixName}_${session.sessionNumber}` : "";
+  const name = flow.name ?? "";
   const today = localToday();
-  const needsResume = session !== null && held === null;
+  const needsResume = session !== null && !held;
   const resumable = session !== null && isContinuable(session, today);
   const blocked = needsResume && !resumable;
   const otherHeld =
@@ -109,11 +82,11 @@ export function SessionGroup() {
 
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
-    setError(null);
+    setActionError(null);
     try {
       await action();
     } catch (err) {
-      setError(errorMessage(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -123,10 +96,7 @@ export function SessionGroup() {
     if (!session || !groupId) return;
     void run(async () => {
       if (needsResume) await resumeSession(client, session.id);
-      navigate(
-        `/session/${session.id}/mapping?cohort=${session.cohortId}&group=${groupId}` +
-          (session.recording != null ? "&recording=1" : ""),
-      );
+      navigate(stepUrl.boxes(session.id, groupId));
     });
   }
 
@@ -169,7 +139,7 @@ export function SessionGroup() {
           <SessionJourney
             step="configure"
             hint={hint}
-            recording={session?.recording != null}
+            recording={flow.isRecording}
           />
           <h1 className="font-display text-[22px] text-starlight">
             {needsResume ? "Continue a Session" : "Next Group"}

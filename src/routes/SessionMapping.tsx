@@ -20,8 +20,7 @@ import {
   SketchPicker,
   TaskConfigForm,
 } from "@/components/sessions/TaskConfigForm";
-import { errorMessage, getCohort } from "@/lib/cohorts/commands";
-import type { Cohort } from "@/lib/cohorts/types";
+import { errorMessage } from "@/lib/cohorts/commands";
 import { useAllPortStatuses, useUtilityStatus } from "@/lib/hardware/context";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
@@ -31,9 +30,9 @@ import {
   endSession,
   flashForSession,
   getTaskProfile,
-  sessionStatus,
 } from "@/lib/sessions/commands";
-import { useIsRecordingSession, useSessionStore } from "@/lib/sessions/context";
+import { useSessionStore } from "@/lib/sessions/context";
+import { stepUrl } from "@/lib/sessions/flow";
 import {
   clearSetupResume,
   getSetupDraft,
@@ -42,13 +41,11 @@ import {
 import {
   animalsInGroup,
   defaultConfig,
-  groupsRunCount,
-  populatedGroups,
   sketchName,
   type BoxMapping,
-  type Session,
   type TaskProfile,
 } from "@/lib/sessions/types";
+import { useSessionFlow } from "@/lib/sessions/useSessionFlow";
 import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 import {
@@ -102,7 +99,6 @@ export function SessionMapping() {
   const { id: sessionId } = useParams<{ id: string }>();
   const [params] = useSearchParams();
   const groupId = params.get("group") ?? "";
-  const cohortId = params.get("cohort") ?? "";
   const navigate = useNavigate();
   const { client, status } = useSidecar();
   const { discovery, settings } = useSettings();
@@ -114,8 +110,7 @@ export function SessionMapping() {
   const draftKey = `boxes:${sessionId ?? ""}:${groupId}`;
   const [draft] = useState(() => getSetupDraft<BoxMapping[]>(draftKey));
 
-  const [cohort, setCohort] = useState<Cohort | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const { session, cohort, flow, error: loadError } = useSessionFlow(sessionId, groupId);
   const [mappings, setMappings] = useState<BoxMapping[]>([]);
   const [profiles, setProfiles] = useState<Record<string, TaskProfile | null>>(
     {},
@@ -147,54 +142,45 @@ export function SessionMapping() {
     [settings.boxes],
   );
 
-  // Seed the mapping from the cohort's standing box assignments.
+  // Seed the mapping from the cohort's standing box assignments — once per
+  // group, so a reconnect that reloads the cohort never undoes the operator's
+  // edits.
+  const seeded = useRef<string | null>(null);
   useEffect(() => {
-    if (!connected || !cohortId) return;
-    let active = true;
-    void (async () => {
-      try {
-        const loaded = await getCohort(client, cohortId);
-        if (!active) return;
-        setCohort(loaded);
-        // A draft is only trusted while it still describes this group: an
-        // animal moved or removed in Cohorts meanwhile starts the step over.
-        const animals = animalsInGroup(loaded, groupId);
-        const sameAnimals =
-          draft !== undefined &&
-          draft.length === animals.length &&
-          draft.every((m) => animals.some((a) => a.id === m.animalId));
-        if (sameAnimals) {
-          setMappings(draft);
-          // The chosen sketches' profiles, for their config forms — fetched
-          // without re-seeding, which would undo the operator's edits.
-          const paths = [...new Set(draft.flatMap((m) => (m.sketchPath ? [m.sketchPath] : [])))];
-          for (const path of paths) {
-            void getTaskProfile(client, path)
-              .catch(() => null)
-              .then((profile) => {
-                if (active) setProfiles((prev) => ({ ...prev, [path]: profile }));
-              });
-          }
-          return;
-        }
-        setMappings(
-          animals.map((a) => ({
-            box: a.boxNumber as number,
-            animalId: a.id,
-            sketchPath: null,
-            config: {},
-          })),
-        );
-      } catch (err) {
-        if (active) setError(errorMessage(err));
+    if (!cohort) return;
+    const seedKey = `${cohort.id}:${groupId}`;
+    if (seeded.current === seedKey) return;
+    seeded.current = seedKey;
+    // A draft is only trusted while it still describes this group: an
+    // animal moved or removed in Cohorts meanwhile starts the step over.
+    const animals = animalsInGroup(cohort, groupId);
+    const sameAnimals =
+      draft !== undefined &&
+      draft.length === animals.length &&
+      draft.every((m) => animals.some((a) => a.id === m.animalId));
+    if (sameAnimals) {
+      setMappings(draft);
+      // The chosen sketches' profiles, for their config forms — fetched
+      // without re-seeding, which would undo the operator's edits.
+      const paths = [...new Set(draft.flatMap((m) => (m.sketchPath ? [m.sketchPath] : [])))];
+      for (const path of paths) {
+        void getTaskProfile(client, path)
+          .catch(() => null)
+          .then((profile) => setProfiles((prev) => ({ ...prev, [path]: profile })));
       }
-    })();
-    return () => {
-      active = false;
-    };
+      return;
+    }
+    setMappings(
+      animals.map((a) => ({
+        box: a.boxNumber as number,
+        animalId: a.id,
+        sketchPath: null,
+        config: {},
+      })),
+    );
     // The draft is read once, at mount, as a starting point.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, connected, cohortId, groupId]);
+  }, [client, cohort, groupId]);
 
   // Kept current, so a sidebar click at any moment leaves nothing behind.
   useEffect(() => {
@@ -204,17 +190,6 @@ export function SessionMapping() {
   // What "back" means depends on whether the session has run yet (`ARCHITECTURE.md#mapping-and-the-placement-walk`): the
   // record's status distinguishes first entry (`configuring`) from re-entry
   // from the group step (`running` — between groups, or continued).
-  useEffect(() => {
-    if (!connected || !sessionId) return;
-    let active = true;
-    void sessionStatus(client, sessionId)
-      .then((snapshot) => active && setSession(snapshot.session))
-      .catch(() => undefined); // non-blocking — worst case Back behaves as before
-    return () => {
-      active = false;
-    };
-  }, [client, connected, sessionId]);
-
   const midSession = session?.status === "running";
 
   // First entry: abandon the never-run record rather than stranding it in
@@ -223,7 +198,7 @@ export function SessionMapping() {
   async function backToConfig() {
     if (sessionId)
       await abandonSession(client, sessionId).catch(() => undefined);
-    navigate("/session/new");
+    navigate(stepUrl.configure());
   }
 
   /*
@@ -615,10 +590,10 @@ export function SessionMapping() {
   // A recording session has one more step before Mission Control: the boxes
   // are mapped and flashed now, which is exactly what the recording setup
   // needs in order to ask which headstage port each one is on.
-  const isRecording = useIsRecordingSession(sessionId);
-  const controlUrl =
-    `/session/${sessionId}/${isRecording ? "recording" : "control"}` +
-    `?cohort=${cohort?.id ?? ""}&group=${groupId}`;
+  const isRecording = flow.isRecording;
+  const controlUrl = isRecording
+    ? stepUrl.record(sessionId!, groupId)
+    : stepUrl.control(sessionId!);
   const flashedCount = mappings.filter((m) => flashStates[m.box] === "done").length;
   const allFlashed = mappings.length > 0 && flashedCount === mappings.length;
   const flashPending = mappings.some((m) => {
@@ -632,15 +607,6 @@ export function SessionMapping() {
     if (phase !== "placed" || !allFlashed) return;
     navigate(controlUrl);
   }, [phase, allFlashed, controlUrl, navigate]);
-
-  // Which group this is, for the rail's chip — only meaningful multi-group.
-  const groupInfo = useMemo(() => {
-    if (!cohort) return null;
-    const groups = populatedGroups(cohort);
-    const found = groups.find((g) => g.id === groupId);
-    if (!found || groups.length < 2) return null;
-    return { name: found.name, ran: groupsRunCount(cohort, session), count: groups.length };
-  }, [cohort, groupId, session]);
 
   const hint = busy
     ? "Confirming the boxes…"
@@ -683,7 +649,7 @@ export function SessionMapping() {
           <SessionJourney
             step="boxes"
             hint={hint}
-            group={groupInfo}
+            group={flow.group}
             recording={isRecording}
           />
           <h1 className="font-display text-[22px] text-starlight">
@@ -701,7 +667,7 @@ export function SessionMapping() {
                 : "Changes here apply to this run only."}
           </p>
 
-          {error && (
+          {(error ?? loadError) && (
             <div
               className="mt-4 flex items-start gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
               style={{ color: "var(--color-status-error)" }}
@@ -711,7 +677,7 @@ export function SessionMapping() {
                 strokeWidth={1.75}
                 className="mt-px shrink-0"
               />
-              {error}
+              {error ?? loadError}
             </div>
           )}
 
@@ -1154,7 +1120,7 @@ export function SessionMapping() {
                       variant="ghost"
                       disabled={busy}
                       onClick={() =>
-                        navigate(`/session/${sessionId}/group?cohort=${cohortId}`)
+                        navigate(stepUrl.group(sessionId!))
                       }
                     >
                       Pick another group

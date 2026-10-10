@@ -15,7 +15,7 @@ import { useIntanStatus } from "@/lib/intan/context";
 import { summarizeRecordingConfig } from "@/lib/intan/defaults";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useRunningSession } from "@/lib/sessions/context";
-import { sessionDoor } from "@/lib/sessions/types";
+import { sessionDoor } from "@/lib/sessions/flow";
 import { useSettings } from "@/lib/settings/context";
 import { useRecordingDefaults } from "@/lib/settings/useRecordingDefaults";
 

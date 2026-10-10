@@ -15,7 +15,7 @@ import { useActiveCohorts } from "@/lib/cohorts/context";
 import { CASCADE, PANEL_TRAVEL, RISE, springPanel, springSnappy } from "@/lib/motion";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 import { useRunningSession } from "@/lib/sessions/context";
-import { sessionDoor } from "@/lib/sessions/types";
+import { sessionDoor } from "@/lib/sessions/flow";
 import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
 

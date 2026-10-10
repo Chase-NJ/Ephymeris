@@ -799,6 +799,17 @@ stateDiagram-v2
     completed --> running: sessions.resume, same day only
 ```
 
+Every step, and the dock's running card, reads its session through one hook, `useSessionFlow`
+(`lib/sessions/useSessionFlow.ts`). It asks `sessions.status` on connect, on every `session.lifecycle` and
+on every `session.animalEnded`, loads the session's cohort, and hands the facts to `sessionFlow`
+(`lib/sessions/flow.ts`), which answers the flow's questions: has the session run, is this group done, is it
+the last group, where does a held session belong. Those answers are pure and unit-tested; a route renders
+them and never derives its own. `sessions.status` reports the rig's group and boxes only to the session
+holding it, so no step can show another session's animals.
+
+Step URLs come from `stepUrl` in the same file. They carry no cohort, since the record has it; Boxes and
+Record carry `?group=`, the operator's choice before a mapping is confirmed.
+
 Mission Control's End Session on a session where no box ever ran calls `sessions.abandon` instead, and
 returns to the Dashboard.
 
@@ -840,7 +851,7 @@ ending instead.
 Every set-up step — Configure, the group step, Boxes, Record — can be left for any tab and resumed where it
 was. `lib/sessions/setupResume.ts` remembers two things:
 
-- **the step** — the last set-up URL, pathname *and* search, since Boxes carries its cohort and group there.
+- **the step** — the last set-up URL, pathname *and* search, since Boxes carries its group there.
   While one is held, the sidebar's Dashboard row opens it instead of `/` and reads *Resume · <step>* (with a
   waveform mark for a recording). From inside the flow the row still goes to `/`, which is the way to the
   Dashboard itself while a set-up is pending.
@@ -897,9 +908,9 @@ re-enters the between-groups state. **Same day only**, because the session folde
 | **Reset** | The DTR reset; the box returns to waiting at `READY` |
 | **End Session** | `sessions.end`: `STOP` every box, wait `graceful_timeout_s` (`SessionRunner.end_all`), force-finalize the rest, close the group run, mark `completed`, release the baseline. The UI abandons a session still `configuring` instead (`sessions.abandon`, which refuses any other status) |
 
-Mission Control's flow rests on runner facts, never on events it happened to see, because live session
-events are [not replayed](#replay-on-connect). Run clocks come from the runner's per-box `startedAt`, never
-a client stopwatch, so a reload resumes mid-count. Whether a box has finished this group is the runner's
+Mission Control's flow rests on runner facts (`sessionFlow`, [The flow](#the-flow)), never on events it
+happened to see, because live session events are [not replayed](#replay-on-connect). Run clocks come
+from the runner's per-box `startedAt`, never a client stopwatch, so a reload resumes mid-count. Whether a box has finished this group is the runner's
 per-box `ended`, re-asked with `sessions.status` on each `session.animalEnded`, so a reload over a finished
 group still opens the wrap-up. Whether the session has run at all is its status: any box's start, by Start
 All or one at a time, moves it to `running`. A per-box write failure is pushed as `sidecar.error`.
@@ -1388,7 +1399,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 |---|---|---|
 | `main.tsx`, `App.tsx` | Provider trees (main, scope) and the router | [Routes](#routes) |
 | `lib/ws/`, `lib/settings/`, `lib/hardware/` | Client and protocol; settings `schema.ts`; hardware store, `useHandshakeTest.ts`, `useRig.ts` | [Wire protocol](#wire-protocol), [Settings](#settings) |
-| `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
+| `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `flow.ts` and `useSessionFlow`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
 | `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `editorLayout.ts`, `orrery.ts`, `useGlidingWidth.ts`, `useLiveNode.ts`; task commands, `lines.ts` (odor lines and onsets), `selection.ts` (mode scope); vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine), [TASKS.md](TASKS.md#editor) |
 | `lib/exports/` | `jobs.ts`, the export progress store | [Export progress](#export-progress) |
 | `lib/updates/`, `components/settings/UpdatesTile.tsx` | The update store and checks, `installBlocker`, the Settings tile | [Updates](#updates) |

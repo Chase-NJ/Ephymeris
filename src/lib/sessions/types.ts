@@ -110,18 +110,6 @@ export function isContinuable(
   );
 }
 
-/**
- * Where the way back into a held session leads: Mission Control while a group
- * is on the rig, the group step while it is between groups
- * (`ARCHITECTURE.md#group-step`) — an empty cockpit is not the next step there.
- */
-export function sessionDoor(running: SessionSnapshot): string {
-  const { id, cohortId } = running.session;
-  return running.groupId
-    ? `/session/${id}/control?cohort=${cohortId}`
-    : `/session/${id}/group?cohort=${cohortId}`;
-}
-
 /** Local calendar date as `YYYY-MM-DD` — the sidecar writes `Session.date` this way. */
 export function localToday(now: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, "0");

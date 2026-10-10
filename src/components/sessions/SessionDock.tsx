@@ -1,24 +1,21 @@
 import { ArrowRight, CircleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
-import { errorMessage, getCohort } from "@/lib/cohorts/commands";
+import { errorMessage } from "@/lib/cohorts/commands";
 import { useAllPortStatuses } from "@/lib/hardware/context";
 import { abandonSession, endSession } from "@/lib/sessions/commands";
-import {
-  useActiveLoaded,
-  useActiveSessions,
-  useEndedCount,
-} from "@/lib/sessions/context";
+import { useActiveLoaded, useActiveSessions } from "@/lib/sessions/context";
+import { sessionDoor, stepUrl } from "@/lib/sessions/flow";
 import {
   isContinuable,
   localToday,
-  sessionDoor,
   type Session,
   type SessionSnapshot,
 } from "@/lib/sessions/types";
+import { useSessionFlow } from "@/lib/sessions/useSessionFlow";
 import { useSetupResume } from "@/lib/sessions/setupResume";
 import { useSidecar } from "@/lib/ws/context";
 
@@ -87,7 +84,7 @@ export function SessionDock() {
     navigate(
       resume?.sessionId === session.id
         ? resume.url
-        : `/session/${session.id}/group?cohort=${session.cohortId}`,
+        : stepUrl.group(session.id),
     );
   }
 
@@ -160,7 +157,7 @@ export function SessionDock() {
                     variant="primary"
                     disabled={busy || !connected}
                     onClick={() =>
-                      navigate(`/session/${session.id}/group?cohort=${session.cohortId}`)
+                      navigate(stepUrl.group(session.id))
                     }
                   >
                     Continue with another group
@@ -274,32 +271,16 @@ function RunningCard({
   onOpen: () => void;
   onEnd: () => void;
 }) {
-  const { client, status } = useSidecar();
   const portStates = useAllPortStatuses();
-  const endedCount = useEndedCount();
-  const [groupName, setGroupName] = useState<string | null>(null);
 
   const { session, groupId, boxes } = snapshot;
-
-  // The group's display name lives on the cohort; degrade to nothing if the
-  // fetch fails — the raw id would only be noise to a lab user.
-  useEffect(() => {
-    if (!groupId) {
-      setGroupName(null);
-      return;
-    }
-    if (status !== "connected") return;
-    let alive = true;
-    void getCohort(client, session.cohortId)
-      .then((cohort) => {
-        if (!alive) return;
-        setGroupName(cohort.groups.find((g) => g.id === groupId)?.name ?? null);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [client, status, session.cohortId, groupId]);
+  // The lifecycle snapshot above is not re-sent when a box finishes, so its
+  // per-box `ended` goes stale; the flow re-asks on each finished run, and a
+  // reload over finished boxes still counts them. The group's display name lives on the cohort; it degrades to nothing
+  // if that fetch fails — the raw id would only be noise to a lab user.
+  const { cohort, flow } = useSessionFlow(session.id);
+  const endedCount = flow.progress.ended;
+  const groupName = (groupId && cohort?.groups.find((g) => g.id === groupId)?.name) || null;
 
   const runningCount = boxes.filter(
     (b) => portStates[b.box]?.state === "IN_SESSION",

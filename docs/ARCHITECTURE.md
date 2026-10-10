@@ -608,7 +608,9 @@ box utility. That sketch is **not a setting**: it is the one bundled sketch that
 `UtilityChannels.h`, generated from this rig ([TASKS.md](TASKS.md#the-box-utility)), and a picker that
 could name any sketch — a behavior task included — was removed with that change. When the utility is
 rebuilt (a wiring change or a vocabulary edit), `rebuilt()` drops every belief and restores every idle,
-unpinned box, since each now carries an old build. With a known sketch on every free box, the app can ask a
+unpinned box, since each now carries an old build. A restore holds the rig definition's read side from
+choosing the sketch until it records the belief, so a write waits for it and it waits for a write
+([TASKS.md](TASKS.md#the-rig-definition)). With a known sketch on every free box, the app can ask a
 box to do things — light itself, prime a line — without first asking the operator to flash.
 
 ![The Rig tab: a Boxes table binding boxes 1 to 6 to boards DEMO-BOX-1 to 6 with a Test button each, and below it the Utility baseline section naming BOX_Utility, a Reflash boxes button and a Ready chip for every box](images/rig.webp)
@@ -1346,7 +1348,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `cohorts/` | `db.py` (SQLite, schema, migrations), `models.py`, `repository.py`, `folders.py`, `grouping.py`, `members.py` (former members), `move.py` / `move_apply.py` (moving animals between cohorts: plan, then journal, copy, commit, clean up), `relocate.py` (moving a data folder with its records' paths) | [DATA.md](DATA.md#cohorts-animals-and-groups), [DATA.md](DATA.md#moving-animals-between-cohorts) |
 | `tasks/` | `profile.py` (`task.json`, hashes), `start_command.py`, `metrics.py` (`MetricSet`), `seed.py` | [TASKS.md](TASKS.md#task-profile) |
 | `taskdef/` | Task definitions: `model.py`, `fields.py`, `validate.py`, `generate.py`, `store.py`, `bundled.py` | [TASKS.md](TASKS.md#task-definitions) |
-| `rig/` | Channel and strobe registries: `registry.py`, `schema/` (including the default vocabulary seed), `hardware/` pinouts, `paths.py` | [TASKS.md](TASKS.md#rig-wiring) |
+| `rig/` | The rig definition: `registry.py` (channel and strobe registries, context-local hypotheticals), `definition.py` (impact check, writes, the read/write lock), `schema/` (including the default vocabulary seed), `hardware/` pinouts, `paths.py` | [TASKS.md](TASKS.md#the-rig-definition) |
 | `strobes/` | The machine's strobe vocabulary: `store.py` (`<data_dir>/strobes/vocabulary.json`, seeding, every edit, import merge), `usage.py` (firmware references, the cached archive scan) | [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `hardware/` | The operator's `rig.json`: `store.py` (load, validate, save), `service.py` (located problems) | [TASKS.md](TASKS.md#rig-wiring) |
 | `analytics/` | `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `false_starts.py` (which runs are set aside), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#derived-metrics), [DATA.md](DATA.md#false-starts) |

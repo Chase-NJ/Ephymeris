@@ -453,7 +453,8 @@ def load_profile(sketch_dir: str | Path) -> TaskProfile | None:
 
 
 #: Files already warned about a stale `strobes` key. `load_profile` runs on
-#: every rescan, and once is enough to tell a firmware author.
+#: every mapping, every Send START and every analytics index, and once is
+#: enough to tell a firmware author.
 _WARNED_STROBES: set[str] = set()
 
 

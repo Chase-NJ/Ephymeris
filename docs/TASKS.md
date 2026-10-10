@@ -466,18 +466,19 @@ A saved task's folder is regenerated on `tasks.save`, at **every sidecar start**
 - **At start**, because a folder written by an older generator either stops compiling (loud — `TrialType` grew an argument) or sends keys the firmware no longer parses (silent).
 - **On a wiring change or a vocabulary edit**, because pins and strobe codes are compiled into `TaskPins.h`.
 
-A wiring change, from the Rig tab's save to the rescan (`_hardware_save`, `_hardware_reset`,
-`_rebuild_generated` in `app.py`). A vocabulary edit joins at `_rebuild_generated` after installing its document. Startup runs the same two rebuilds inline, before anything can flash:
+A wiring change, from the Rig tab's save to the rescan, all one [rig definition write](#the-rig-definition) (`RigDefinition.save_wiring` / `reset_wiring` in `rig/definition.py`). A vocabulary edit joins at the rebuild after installing its document. Startup runs the same two rebuilds (`rebuild_at_startup`), before anything can flash:
 
 ```mermaid
 flowchart TD
-    save["hardware.save"] --> impact{"Would it newly break<br/>a saved task?"}
+    save["hardware.save"] --> inuse{"Session set up<br/>or a box running?"}
+    inuse -->|yes| busy["RIG_IN_USE<br/>nothing written"]
+    inuse -->|no| impact{"Would it newly break<br/>a saved task?"}
     impact -->|"yes, without confirm"| refuse["RIG_WOULD_BREAK_TASKS<br/>nothing written"]
     impact -->|"no, or confirm: true"| write["Check the schema,<br/>write rig.json"]
     write -->|"not a rig document"| invalid["RIG_INVALID<br/>nothing written"]
-    reset["hardware.reset"] --> install
+    reset["hardware.reset"] --> inuse
     write -->|"written"| install["set_rig_source:<br/>ChannelMap cache cleared"]
-    install --> rebuild["_rebuild_generated"]
+    install --> rebuild["RigDefinition._rebuild"]
     vocab["strobes.add / retire / remove …"] --> vinstall["set_vocabulary_source:<br/>vocabulary cache cleared"]
     vinstall --> rebuild
     rebuild --> tasks["Regenerate every saved task"]
@@ -487,7 +488,7 @@ flowchart TD
 ```
 
 > [!CAUTION]
-> **A wiring change or a vocabulary edit must rebuild every stored profile AND every bundled sketch, and the failure is invisible if it does not.** A stale folder still compiles and runs; the only symptom is a valve that never fires or an event decoded under the wrong name. Both rebuilds go through the one call site `Application._rebuild_generated` (rebuild, then rescan), because splitting it into two calls is how one eventually gets forgotten.
+> **A wiring change or a vocabulary edit must rebuild every stored profile AND every bundled sketch, and the failure is invisible if it does not.** A stale folder still compiles and runs; the only symptom is a valve that never fires or an event decoded under the wrong name. Both rebuilds go through the one call site `RigDefinition._rebuild` (rebuild, then rescan), because splitting it into two calls is how one eventually gets forgotten.
 
 ### The rig definition
 
@@ -499,6 +500,15 @@ The [rig definition](../GLOSSARY.md#rig-definition) is the rig wiring plus the s
 > **Never answer "what if" with `set_rig_source` or `set_vocabulary_source`.** They change the definition every thread reads. A rebuild reading it then writes the previewed pins or codes into `TaskPins.h`, and the sketch compiles. The same holds for starting a plain `threading.Thread` inside `registry.hypothetical`: it begins with an empty context and reads the definition in force, so its answer is silently about the wrong rig.
 
 **The in-force values are cached, and a cache never keeps a value composed before a clear.** `set_rig_source` / `set_vocabulary_source` drop the cache and bump a generation; a reader that began composing from the old document returns its value without storing it.
+
+**A write runs end to end, alone.** Every command that rewrites a generated folder is a rig definition write: `hardware.save` and `hardware.reset`, every vocabulary edit, `tasks.save` and `tasks.delete`. Each takes `RigDefinition.writing()` and holds it through judge → store → install → rebuild → rescan → announce, so no second write, reset or task save interleaves with a rebuild.
+
+**Everything that uses a generated folder holds `RigDefinition.reading()`** for as long as it uses it, including any belief it records about what a board now carries: a flash from the discovery lookup through `utility.note_flashed`, a utility restore through `believed`, `port.sendStart`, confirm mapping from the first profile read until the rig is held, `tasks.getProfile`, `strobes.usage`, and every rescan outside a write. So a write waits for flashes already in progress (at most one per box, since utility restores run one at a time), and a flash, a `START` or a mapping waits for a write. A waiting write goes before readers that arrive after it, so a stream of restores cannot starve a save. Commands that may wait carry long client timeouts (`client.ts`). Reads of the registries alone — `tasks.list`, `tasks.get`, the previews — take nothing. **Analytics is the one reader that takes nothing**: a cold index runs for minutes and would stall every save; it decodes from each run's own profile snapshot first.
+
+**No write while a session is set up or a box is running** (`RIG_IN_USE`; `STROBE_SESSION_RUNNING` for the vocabulary). The session read its profiles from these folders at mapping and will flash from them; a running box was flashed from them. It is checked once before waiting and again once the write holds the lock — the check that counts, since a mapping confirmed while the write waited is exactly the case.
+
+> [!CAUTION]
+> **Never use a generated folder outside `reading()`, and never call `RigDefinition` writes or `reading()` from inside a write.** The first lets a rebuild delete a folder mid-compile or undo a box's belief about what it carries; the second waits on itself (the lock refuses re-entry rather than deadlock). `_rescan` takes no lock for that reason: writes call it.
 
 ### Rebuilt bundled sketches
 
@@ -639,7 +649,7 @@ retired 110–113, which is why a code is always looked up by name.*
 
 ### Editing the vocabulary
 
-Every edit is a `strobes.*` command (`app.py`, rules in `strobes/store.py`, evidence in `strobes/usage.py`). The sidecar computes the blockers (`strobes.usage`) so the page never predicts one, checks them again inside `_rig_gate` when the edit is made, and refuses every edit while a session is running.
+Every edit is a `strobes.*` command (`app.py`, rules in `strobes/store.py`, evidence in `strobes/usage.py`). The sidecar computes the blockers (`strobes.usage`) so the page never predicts one, checks them again inside the [rig definition write](#the-rig-definition) when the edit is made, and refuses every edit while a session is set up or a box is running.
 
 | Edit | Refused outright | Needs `confirm` |
 |---|---|---|

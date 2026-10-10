@@ -38,8 +38,11 @@ def document_payload(rig: store.HardwareStore) -> dict[str, Any]:
     }
 
 
-def preview_payload(rig: store.HardwareStore, document: Any, tasks: Any = None) -> dict[str, Any]:
-    """`RigSaved` without the save: what is wrong, and what it would cost.
+def preview_payload(
+    rig: store.HardwareStore, document: Any, breaks: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """`RigSaved` without the save: what is wrong, and what it would cost
+    (`breaks`, from the rig definition's impact check).
 
     `status` describes the wiring currently IN FORCE, not the one being
     previewed -- the operator is comparing a draft against what the rig is
@@ -49,7 +52,7 @@ def preview_payload(rig: store.HardwareStore, document: Any, tasks: Any = None) 
     return {
         "status": _status(rig, rig.load() or store.default_document()),
         "problems": problems_for(document),
-        "breaks": impact_of(document, tasks),
+        "breaks": breaks,
     }
 
 
@@ -88,13 +91,6 @@ def _rule_problems(document: Any) -> list[dict[str, Any]]:
         )
         for loc, msg in pairs
     ]
-
-
-def impact_of(document: Any, tasks: Any) -> list[dict[str, Any]]:
-    """Which stored task profiles this wiring would newly break (`rig/definition.py`)."""
-    from ephymeris_sidecar.rig import definition
-
-    return definition.impact_of(tasks, wiring=document)
 
 
 def _status(rig: store.HardwareStore, doc: dict) -> dict[str, Any]:

@@ -138,7 +138,8 @@ class TaskStore:
         return out
 
     def list_entries(self) -> list[dict[str, Any]]:
-        """Summaries for the profile list, and the shape `impact_of` reads.
+        """Summaries for the profile list, and the shape the rig definition's
+        impact check (`rig/definition.py::impact_of`) reads.
 
         `problems` is a COUNT rather than the diagnostics: the list is drawn on
         every route mount and validating each definition in full is cheap, but
@@ -163,7 +164,7 @@ class TaskStore:
                     trials=definition.trial_count,
                     stages=definition.stage_count,
                     selection_mode=definition.selection_mode,
-                    # `label` is what `impact_of` renders; the name is it.
+                    # `label` is what the impact check renders; the name is it.
                 ).to_json()
                 | {"label": definition.name}
             )
@@ -172,10 +173,10 @@ class TaskStore:
     def failures(self, task_id: str) -> set[str]:
         """The rule codes this profile trips right now, or an empty set.
 
-        Read by `hardware/service.py::impact_of` under a HYPOTHETICAL wiring, so
-        it must consult the registries live rather than anything cached — that
-        difference is the whole mechanism by which a rewiring's cost is
-        computed before the write.
+        Read by `rig/definition.py::impact_of` under a HYPOTHETICAL rig
+        definition, so it must consult the registries live rather than anything
+        cached — that difference is the whole mechanism by which an edit's cost
+        is computed before the write.
 
         A definition that will not even parse is not a wiring fault, and
         reporting it as one would make every rig edit look destructive on a rig

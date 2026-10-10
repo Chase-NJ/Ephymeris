@@ -160,15 +160,15 @@ class Application:
         self.intan: IntanService | None = None
         self.profiles = AnalyticsRepository(self.db)
         self._running_session_id: str | None = None
-        #: One rig operation at a time. `hardware.preview` fires on every
-        #: keystroke in the wiring editor and re-validates every stored task
-        #: profile; overlapping runs would also fight over the module-level rig
-        #: source `impact_of` installs and restores.
-        self._rig_gate = asyncio.Semaphore(1)
-        #: The rig's own wiring, if it has one. Pointed at the registries here
-        #: rather than read by them, so `rig` never learns about data_dir.
+        #: One preview at a time, for load alone: `hardware.preview` and
+        #: `tasks.preview` fire on every keystroke and re-validate every stored
+        #: task profile. Correctness needs no lock -- a hypothetical is
+        #: context-local (`TASKS.md#the-rig-definition`).
+        self._preview_gate = asyncio.Semaphore(1)
+        #: The rig's own wiring, if it has one. Pointed at the registries by
+        #: the rig definition rather than read by them, so `rig` never learns
+        #: about data_dir.
         self.hardware_store = hardware_store.HardwareStore(data_dir)
-        self._install_rig_wiring()
         #: This machine's strobe vocabulary — the one source of every code
         #: (`TASKS.md#strobe-vocabulary`). Seeded from the shipped default on
         #: first start, then pointed at the registry exactly as the wiring is.
@@ -177,12 +177,21 @@ class Application:
             self.vocab_store.ensure_seeded()
         except OSError as exc:
             log.error("could not seed the strobe vocabulary (%s); decoding with the default", exc)
-        rig_registry.set_vocabulary_source(self.vocab_store.load)
+        #: The rig wiring plus the vocabulary: installs both, and owns every
+        #: write to either and the lock generated-folder readers take
+        #: (`TASKS.md#the-rig-definition`).
+        self.rig_definition = rig_definition.RigDefinition(
+            hardware=self.hardware_store,
+            vocabulary=self.vocab_store,
+            tasks=self.task_store,
+            repin=lambda: bundled_sketches.repin_all(self.pinned_root),
+            in_use=self._rig_in_use,
+            rescan=self._rescan,
+            after_rebuild=self._after_rebuild,
+            broadcast=lambda message: self.server.broadcast(message),
+        )
         #: Which recorded files contain which codes, for `strobes.remove`.
         self.strobe_scanner = ArchiveScanner(self.db)
-        #: `hardware.preview`/`save` ask it which profiles a rewiring would
-        #: newly break — before the write, which is the whole point of asking.
-        self._task_store: Any = self.task_store
         #: hardware_id → detected interpreter baud. Detection costs a boot
         #: cycle per candidate rate, so the answer is kept for the app's
         #: lifetime — and invalidated on any flash to that box, since flashing
@@ -289,21 +298,9 @@ class Application:
         # parent-watch thread exists, and importing it any later than that
         # deadlocks the frozen build (`DATA.md#the-mat-mirror`).
         self._log_rig_wiring()
-        # Rebuild the bundled sketches against this rig's wiring before anything
-        # can flash one. Synchronous and on the startup path on purpose: it is a
-        # few small file copies, and doing it lazily would mean the FIRST flash
-        # after a launch could serve the shipped pins while every later one
-        # served the rig's -- a difference nobody would connect to a restart.
-        pinned = bundled_sketches.repin_all(self.pinned_root)
-        # The stored task profiles too, for a different reason: their folders
-        # were written by whichever version of the generator last saved them.
-        # When the generator's output changes shape -- the TrialType
-        # constructor grew a reward-volume argument, FL keys became RW keys --
-        # an old folder stops compiling (loud) or sends keys the firmware no
-        # longer parses (silent: the session runs on the compiled-in value).
-        # Regenerating on every start is a few file writes per profile and
-        # makes what is on disk always what THIS version would write.
-        regenerated = self.task_store.regenerate_all()
+        # Every generated folder rebuilt before anything can flash one
+        # (`RigDefinition.rebuild_at_startup` says why).
+        pinned, regenerated = self.rig_definition.rebuild_at_startup()
         if pinned or regenerated:
             self.discovery = discovery.discover(self.task_store.root, self.pinned_root)
             log.info(
@@ -363,6 +360,7 @@ class Application:
             ports=self.ports,
             discovery=lambda: self.discovery,
             broadcast=self.server.broadcast,
+            reading=self.rig_definition.reading,
         )
         self.runner = SessionRunner(
             loop=loop,
@@ -405,43 +403,14 @@ class Application:
             await self.backup.stop()
         self.db.close()
 
-    def _install_rig_wiring(self) -> None:
-        """Point the registries at this rig's wiring document.
+    def _rig_in_use(self) -> bool:
+        """A session set up, or any box running: when no rig definition write
+        may regenerate the folders the boxes were or will be flashed from."""
+        return self._running_session_id is not None or (
+            self.runner is not None and bool(self.runner.running_boxes())
+        )
 
-        Called once at construction and again after every `hardware.save`.
-        `set_rig_source` clears the channel cache, which is why this must NOT be
-        hung off `settings.push` -- that fires on every reconnect, and throwing
-        the registries away several times a session for no reason is a real cost
-        on a call that also does a library rescan.
-        """
-        from ephymeris_sidecar.rig import registry
-
-        registry.set_rig_source(self.hardware_store.load)
-
-    async def _rebuild_generated(self) -> None:
-        """Everything that carries a pin number or a strobe code, rebuilt. THE
-        one call site, for a wiring change and a vocabulary edit alike.
-
-        Two outputs, deliberately. Pins and codes are compiled into every
-        generated `TaskPins.h` — a task profile's and a bundled sketch's alike —
-        so a change that rebuilt only one of them would leave the other flashing
-        the old pins or the old codes. It would still compile, still run, and
-        the only symptom would be a valve that never fires or an event decoded
-        under the wrong name. Splitting this into two calls is how one of them
-        eventually gets forgotten.
-
-        Ordering: rebuild first, then rescan, so discovery sees the new folders
-        rather than reporting the ones it is about to replace.
-        """
-        tasks = await asyncio.to_thread(self.task_store.regenerate_all)
-        pinned = await asyncio.to_thread(bundled_sketches.repin_all, self.pinned_root)
-        if tasks or pinned:
-            log.info(
-                "wiring changed: rebuilt %d task profile(s) and %d bundled sketch(es)",
-                tasks,
-                pinned,
-            )
-        await self._rescan()
+    async def _after_rebuild(self, tasks: int, pinned: int) -> None:
         if tasks:
             await self._broadcast_tasks()
         # The box utility was rebuilt with the rest, so every idle box is
@@ -614,8 +583,9 @@ class Application:
 
         # Rescan unconditionally, even though the library path can't be
         # reconfigured: an install can still lose files underneath a running
-        # app, and a dev checkout restages between pushes.
-        await self._rescan()
+        # app, and a dev checkout restages between pushes. Not mid-rebuild.
+        async with self.rig_definition.reading():
+            await self._rescan()
         # After the rescan, so a newly-chosen utility sketch resolves against
         # the library as it is now rather than as it was one push ago.
         if self.intan is not None:
@@ -627,8 +597,9 @@ class Application:
         return {"library": self.discovery.library.to_json()}
 
     async def _sketches_refresh(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        await self._rescan()
-        return self.discovery.to_json()
+        async with self.rig_definition.reading():
+            await self._rescan()
+            return self.discovery.to_json()
 
     async def _passthrough_open(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         box = _box_arg(args)
@@ -673,31 +644,34 @@ class Application:
         """
         box = _box_arg(args)
         path = args.get("sketchPath")
-        sketch = next((s for s in self.discovery.sketches if s.path == path), None)
-        if sketch is None:
-            raise CommandError(
-                ErrCode.SKETCH_UNKNOWN,
-                "That sketch isn't in the sketch library — refresh the list and "
-                "flash it again.",
-                {"sketchPath": path},
-            )
-        config = args.get("config")
-        if config is None:
-            config = {}
-        if not isinstance(config, dict):
-            raise CommandError(ErrCode.BAD_MESSAGE, "`config` must be an object")
+        # The profile is read from a generated folder a rig definition write
+        # would rebuild (`TASKS.md#the-rig-definition`).
+        async with self.rig_definition.reading():
+            sketch = next((s for s in self.discovery.sketches if s.path == path), None)
+            if sketch is None:
+                raise CommandError(
+                    ErrCode.SKETCH_UNKNOWN,
+                    "That sketch isn't in the sketch library — refresh the list and "
+                    "flash it again.",
+                    {"sketchPath": path},
+                )
+            config = args.get("config")
+            if config is None:
+                config = {}
+            if not isinstance(config, dict):
+                raise CommandError(ErrCode.BAD_MESSAGE, "`config` must be an object")
 
-        try:
-            profile = await asyncio.to_thread(task_profile.load_profile, sketch.path)
-        except task_profile.TaskProfileError:
-            profile = None  # profile-less: bare START, as in a session
-        try:
-            command = build_start_command(profile, config)
-        except task_profile.TaskProfileError as exc:
-            raise CommandError(ErrCode.TASK_PROFILE_INVALID, str(exc), {"box": box}) from exc
+            try:
+                profile = await asyncio.to_thread(task_profile.load_profile, sketch.path)
+            except task_profile.TaskProfileError:
+                profile = None  # profile-less: bare START, as in a session
+            try:
+                command = build_start_command(profile, config)
+            except task_profile.TaskProfileError as exc:
+                raise CommandError(ErrCode.TASK_PROFILE_INVALID, str(exc), {"box": box}) from exc
 
-        with _mapped_errors(box):
-            written = self._require_ports().send(box, command, DEFAULT_LINE_ENDING)
+            with _mapped_errors(box):
+                written = self._require_ports().send(box, command, DEFAULT_LINE_ENDING)
         # Armed only once the line is really on the wire, and only here: this is
         # the one moment the sidecar knows which profile the strobes that follow
         # should be scored against (`debug_run.py`).
@@ -710,55 +684,59 @@ class Application:
         box = _box_arg(args)
         path = args.get("sketchPath")
 
-        # Only a discovered sketch is flashable (`TASKS.md#sketch-library`) —
-        # enforced here, not just by the picker only listing discovered sketches.
-        sketch = next((s for s in self.discovery.sketches if s.path == path), None)
-        if sketch is None:
-            raise CommandError(
-                ErrCode.SKETCH_UNKNOWN,
-                "That sketch isn't in the sketch library — "
-                "refresh the list and pick again.",
-                {"sketchPath": path},
-            )
+        # Held from the lookup through `note_flashed`: a rig definition write
+        # must not rebuild the folder mid-compile, nor land between the flash
+        # and the belief it records (`TASKS.md#the-rig-definition`).
+        async with self.rig_definition.reading():
+            # Only a discovered sketch is flashable (`TASKS.md#sketch-library`) —
+            # enforced here, not just by the picker only listing discovered sketches.
+            sketch = next((s for s in self.discovery.sketches if s.path == path), None)
+            if sketch is None:
+                raise CommandError(
+                    ErrCode.SKETCH_UNKNOWN,
+                    "That sketch isn't in the sketch library — "
+                    "refresh the list and pick again.",
+                    {"sketchPath": path},
+                )
 
-        def on_progress(phase: str, stream: str, text: str) -> None:
-            # Called from loop context; each line rides out as its own event,
-            # tagged with the command that caused it.
-            asyncio.create_task(
-                self.server.broadcast(
-                    event(
-                        Evt.FLASH_PROGRESS,
-                        {"box": box, "phase": phase, "stream": stream, "text": text},
-                        corr=corr,
+            def on_progress(phase: str, stream: str, text: str) -> None:
+                # Called from loop context; each line rides out as its own event,
+                # tagged with the command that caused it.
+                asyncio.create_task(
+                    self.server.broadcast(
+                        event(
+                            Evt.FLASH_PROGRESS,
+                            {"box": box, "phase": phase, "stream": stream, "text": text},
+                            corr=corr,
+                        )
                     )
                 )
-            )
 
-        # `ARCHITECTURE.md#exclusivity`: the session flash sequence needs every
-        # box to land in IDLE so the
-        # runner can claim it, overriding the usual passthrough auto-resume.
-        suppress = args.get("suppressPassthroughResume") is True
+            # `ARCHITECTURE.md#exclusivity`: the session flash sequence needs every
+            # box to land in IDLE so the
+            # runner can claim it, overriding the usual passthrough auto-resume.
+            suppress = args.get("suppressPassthroughResume") is True
 
-        with _mapped_errors(box):
-            state, resumed = await self._require_ports().flash(
-                box,
-                sketch.path,
-                sketch.name,
-                self.discovery.libraries_path,
-                on_progress,
-                suppress_passthrough_resume=suppress,
-            )
-        # Whatever the app just put on that board is now what's on it — the one
-        # place every deliberate flash passes through, so the baseline belief
-        # can't be left claiming a utility sketch a session flash overwrote.
-        #
-        # A flash that is NOT the session sequence is one the operator asked for
-        # by hand, and it is pinned (`utility.py`): this port is about to fall
-        # IDLE, the idle hook is about to ask for a restore, and without the pin
-        # that restore overwrote the task within seconds of it landing.
-        if self.utility is not None:
-            self.utility.note_flashed(box, sketch.path, pin=not suppress)
-            await self.utility.publish()
+            with _mapped_errors(box):
+                state, resumed = await self._require_ports().flash(
+                    box,
+                    sketch.path,
+                    sketch.name,
+                    self.discovery.libraries_path,
+                    on_progress,
+                    suppress_passthrough_resume=suppress,
+                )
+            # Whatever the app just put on that board is now what's on it — the one
+            # place every deliberate flash passes through, so the baseline belief
+            # can't be left claiming a utility sketch a session flash overwrote.
+            #
+            # A flash that is NOT the session sequence is one the operator asked for
+            # by hand, and it is pinned (`utility.py`): this port is about to fall
+            # IDLE, the idle hook is about to ask for a restore, and without the pin
+            # that restore overwrote the task within seconds of it landing.
+            if self.utility is not None:
+                self.utility.note_flashed(box, sketch.path, pin=not suppress)
+                await self.utility.publish()
         # Flashing is precisely what changes a board's interpreter baud, so the
         # cached detection result dies with the old firmware.
         hardware_id = self.settings.hardware_id_for(box)
@@ -1038,29 +1016,29 @@ class Application:
 
     async def _tasks_get_profile(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         sketch_path = _str_arg(args, "sketchPath")
-        try:
-            profile = await asyncio.to_thread(task_profile.load_profile, sketch_path)
-        except task_profile.TaskProfileError as exc:
-            # A malformed task.json is surfaced so it can be fixed; the sketch is
-            # otherwise treated as profile-less (bare START, raw strobe log).
-            raise CommandError(
-                ErrCode.TASK_PROFILE_INVALID,
-                f"This sketch's task.json couldn't be read: {exc}",
-                {"sketchPath": sketch_path},
-            ) from exc
-        return profile.to_json() if profile is not None else {"profile": None}
+        async with self.rig_definition.reading():
+            try:
+                profile = await asyncio.to_thread(task_profile.load_profile, sketch_path)
+            except task_profile.TaskProfileError as exc:
+                # A malformed task.json is surfaced so it can be fixed; the sketch is
+                # otherwise treated as profile-less (bare START, raw strobe log).
+                raise CommandError(
+                    ErrCode.TASK_PROFILE_INVALID,
+                    f"This sketch's task.json couldn't be read: {exc}",
+                    {"sketchPath": sketch_path},
+                ) from exc
+            return profile.to_json() if profile is not None else {"profile": None}
 
     # -- task profiles ------------------------------------------------------ #
     #
     # OFF-LOOP, because saving one writes four files and validating one composes
     # the whole channel map, and the event loop owns six serial ports and a
-    # 20 Hz output flush. They share the rig gate rather than taking their own:
-    # `hardware.preview` installs a hypothetical wiring at module scope, and a
-    # task validating against it at the same moment would read the wrong rig.
+    # 20 Hz output flush. Saving and deleting rewrite a sketch folder, so they
+    # are rig definition writes (`TASKS.md#the-rig-definition`); listing and
+    # validating read only the registries and need no lock.
 
     async def _tasks_list(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        async with self._rig_gate:
-            return {"tasks": await asyncio.to_thread(self.task_store.list_entries)}
+        return {"tasks": await asyncio.to_thread(self.task_store.list_entries)}
 
     async def _tasks_get(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         task_id = _str_arg(args, "taskId")
@@ -1071,8 +1049,7 @@ class Application:
                 f"No task profile called {task_id!r} on this rig.",
                 {"taskId": task_id},
             )
-        async with self._rig_gate:
-            diagnostics = await asyncio.to_thread(validate_task, definition)
+        diagnostics = await asyncio.to_thread(validate_task, definition)
         return {
             "definition": definition.to_json(),
             "diagnostics": [d.to_json() for d in diagnostics],
@@ -1080,7 +1057,7 @@ class Application:
 
     async def _tasks_preview(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         definition = self._definition_arg(args)
-        async with self._rig_gate:
+        async with self._preview_gate:
             return await asyncio.to_thread(self._preview_payload, definition)
 
     def _preview_payload(self, definition: TaskDefinition) -> dict[str, Any]:
@@ -1123,51 +1100,56 @@ class Application:
 
     async def _tasks_save(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         definition = self._definition_arg(args)
-        # A generated sketch and a bundled one sharing a name makes the picker
-        # ambiguous and the flash a coin flip, so this is refused rather than
-        # reported: it is the one problem saving cannot leave for later.
-        collision = next(
-            (s for s in self.discovery.sketches
-             if s.source == "bundled" and s.name == definition.name),
-            None,
-        )
-        if collision is not None:
-            raise CommandError(
-                ErrCode.TASK_INVALID,
-                f"A sketch that ships with Ephymeris is already called "
-                f"{definition.name!r}. Give this task another name.",
-                {"sketchPath": collision.path},
+        async with self.rig_definition.writing(ErrCode.RIG_IN_USE, rig_definition.TASKS_IN_USE):
+            # Checked inside the write, so two saves racing on one name cannot
+            # both pass.
+            #
+            # A generated sketch and a bundled one sharing a name makes the
+            # picker ambiguous and the flash a coin flip, so this is refused
+            # rather than reported: it is the one problem saving cannot leave
+            # for later.
+            collision = next(
+                (s for s in self.discovery.sketches
+                 if s.source == "bundled" and s.name == definition.name),
+                None,
             )
-        # Two saved tasks sharing a name share a sketch folder: saving one
-        # overwrites the other's firmware and deleting either removes both.
-        # Duplicating a task makes this the easy mistake, so it is refused too.
-        # Case-folded because the lab machines' filesystem is case-insensitive.
-        twin = next(
-            (e for e in await asyncio.to_thread(self.task_store.list_entries)
-             if e["id"] != definition.id
-             and str(e["name"]).casefold() == definition.name.casefold()),
-            None,
-        )
-        if twin is not None:
-            raise CommandError(
-                ErrCode.TASK_INVALID,
-                f"Another task is already called {twin['name']!r}. "
-                "Give this task another name.",
-                {"taskId": twin["id"]},
+            if collision is not None:
+                raise CommandError(
+                    ErrCode.TASK_INVALID,
+                    f"A sketch that ships with Ephymeris is already called "
+                    f"{definition.name!r}. Give this task another name.",
+                    {"sketchPath": collision.path},
+                )
+            # Two saved tasks sharing a name share a sketch folder: saving one
+            # overwrites the other's firmware and deleting either removes both.
+            # Duplicating a task makes this the easy mistake, so it is refused
+            # too. Case-folded because the lab machines' filesystem is
+            # case-insensitive.
+            twin = next(
+                (e for e in await asyncio.to_thread(self.task_store.list_entries)
+                 if e["id"] != definition.id
+                 and str(e["name"]).casefold() == definition.name.casefold()),
+                None,
             )
+            if twin is not None:
+                raise CommandError(
+                    ErrCode.TASK_INVALID,
+                    f"Another task is already called {twin['name']!r}. "
+                    "Give this task another name.",
+                    {"taskId": twin["id"]},
+                )
 
-        async with self._rig_gate:
             diagnostics = await asyncio.to_thread(self.task_store.save, definition)
-        # The folder is a sketch from this moment, so the library must be
-        # rescanned before anyone can flash it. `_rescan` broadcasts
-        # `sketches.updated`; the task list rides alongside it.
-        await self._rescan()
-        await self._broadcast_tasks()
+            # The folder is a sketch from this moment, so the library must be
+            # rescanned before anyone can flash it. `_rescan` broadcasts
+            # `sketches.updated`; the task list rides alongside it.
+            await self._rescan()
+            await self._broadcast_tasks()
 
-        entry = next(
-            (e for e in self.task_store.list_entries() if e["id"] == definition.id), None
-        )
-        sketch_dir = self.task_store.sketch_dir(definition)
+            entry = next(
+                (e for e in self.task_store.list_entries() if e["id"] == definition.id), None
+            )
+            sketch_dir = self.task_store.sketch_dir(definition)
         return {
             "entry": entry,
             "diagnostics": diagnostics,
@@ -1176,10 +1158,11 @@ class Application:
 
     async def _tasks_delete(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         task_id = _str_arg(args, "taskId")
-        deleted = await asyncio.to_thread(self.task_store.delete, task_id)
-        if deleted:
-            await self._rescan()
-            await self._broadcast_tasks()
+        async with self.rig_definition.writing(ErrCode.RIG_IN_USE, rig_definition.TASKS_IN_USE):
+            deleted = await asyncio.to_thread(self.task_store.delete, task_id)
+            if deleted:
+                await self._rescan()
+                await self._broadcast_tasks()
         return {"deleted": deleted}
 
     def _definition_arg(self, args: dict[str, Any]) -> TaskDefinition:
@@ -1211,27 +1194,17 @@ class Application:
 
     # -- strobe vocabulary (TASKS.md#strobe-vocabulary) ------------------- #
     #
-    # Every edit takes `_rig_gate` — it rebuilds the same generated folders a
-    # wiring change does, and `_strobe_impact` installs a hypothetical
-    # vocabulary exactly as `impact_of` installs a hypothetical wiring — then
-    # leaves it for `_rebuild_generated`, which rescans and so cannot run inside.
-
-    def _vocabulary_payload(self) -> dict[str, Any]:
-        payload = rig_registry.vocabulary().to_json()
-        try:
-            self.vocab_store.load_strict()
-            payload["editable"], payload["problem"] = True, None
-        except strobe_store.StrobeRefused as exc:
-            payload["editable"], payload["problem"] = False, str(exc)
-        return payload
+    # Every edit is a rig definition write (`TASKS.md#the-rig-definition`): it
+    # rebuilds the same generated folders a wiring change does.
 
     async def _strobes_get(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        return await asyncio.to_thread(self._vocabulary_payload)
+        return await asyncio.to_thread(self.rig_definition.vocabulary_payload)
 
     async def _strobes_usage(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         name = self._strobe_name_arg(args)
         scan = bool(args.get("scan"))
-        async with self._rig_gate:
+        # Reads the generated folders (`firmware_refs` over the task store).
+        async with self.rig_definition.reading():
             usage = await asyncio.to_thread(self._strobe_impact, name)
         if scan:
             index = await self._scan_archive()
@@ -1286,11 +1259,15 @@ class Application:
     async def _strobes_remove(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         name = self._strobe_name_arg(args)
         confirm = bool(args.get("confirm"))
-        # The scan runs BEFORE the gate: it can take minutes on a cold cache
-        # over a share, and holding the gate that long would stall the wiring
-        # editor's previews. It is re-checked against the document inside the
-        # gate by code, and a file recorded in the gap is the one race left —
-        # which is why a running session refuses every edit outright.
+        # Refused before the scan as well as inside the write: the scan can take
+        # minutes on a cold cache over a share. It runs outside the write so it
+        # never holds up a flash; it is re-checked against the document inside
+        # the write by code, and a file recorded in the gap is the one race
+        # left -- which is why a session set up or a box running refuses every
+        # edit outright.
+        self.rig_definition.refuse_if_in_use(
+            ErrCode.STROBE_SESSION_RUNNING, rig_definition.VOCABULARY_IN_USE
+        )
         index = await self._scan_archive()
 
         def check(usage: dict[str, Any]) -> None:
@@ -1314,7 +1291,7 @@ class Application:
         )
 
     async def _strobes_export(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        doc = await asyncio.to_thread(self._load_vocabulary_strict)
+        doc = await asyncio.to_thread(self.rig_definition.load_vocabulary_strict)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         return {
             "document": strobe_store.export_document(doc),
@@ -1327,11 +1304,11 @@ class Application:
             raise CommandError(ErrCode.STROBE_INVALID, "That file is not a strobe vocabulary.")
         if len(json.dumps(other).encode()) > strobe_store.MAX_VOCAB_BYTES:
             raise CommandError(ErrCode.STROBE_INVALID, "That file is too large to be a vocabulary.")
-        doc = await asyncio.to_thread(self._load_vocabulary_strict)
+        doc = await asyncio.to_thread(self.rig_definition.load_vocabulary_strict)
         try:
             plan = strobe_store.plan_merge(doc, other)
         except strobe_store.StrobeRefused as exc:
-            raise _strobe_error(exc) from exc
+            raise rig_definition.strobe_error(exc) from exc
         if not args.get("apply"):
             return {"plan": plan.to_json(), "vocabulary": None}
         vocabulary = await self._edit_vocabulary(
@@ -1350,38 +1327,14 @@ class Application:
         name: str | None = None,
         check: Any = None,
     ) -> dict[str, Any]:
-        """Load, judge, edit, write, install, rebuild, announce — in that order.
-
-        `check` sees the code's usage under the gate, so a task saved a moment
-        after the page last looked is still counted. Nothing is written on any
-        refusal path.
-        """
-        if self._running_session_id is not None:
-            raise CommandError(
-                ErrCode.STROBE_SESSION_RUNNING,
-                "A session is running. Edit the vocabulary between sessions: every "
-                "edit regenerates the sketches the boxes were flashed from.",
-            )
-        async with self._rig_gate:
-            doc = await asyncio.to_thread(self._load_vocabulary_strict)
-            if name is not None and check is not None:
-                check(await asyncio.to_thread(self._strobe_impact, name))
-            try:
-                updated = edit(doc)
-                await asyncio.to_thread(self.vocab_store.save, updated)
-            except strobe_store.StrobeRefused as exc:
-                raise _strobe_error(exc) from exc
-            rig_registry.set_vocabulary_source(self.vocab_store.load)
-            payload = await asyncio.to_thread(self._vocabulary_payload)
-        await self._rebuild_generated()
-        await self.server.broadcast(event(Evt.STROBES_UPDATED, payload))
-        return payload
-
-    def _load_vocabulary_strict(self) -> dict[str, Any]:
-        try:
-            return self.vocab_store.load_strict()
-        except strobe_store.StrobeRefused as exc:
-            raise _strobe_error(exc) from exc
+        """A vocabulary edit, as a rig definition write. `check` sees the code's
+        usage inside the write, so a task saved a moment after the page last
+        looked is still counted."""
+        judge = None
+        if name is not None and check is not None:
+            def judge() -> None:
+                check(self._strobe_impact(name))
+        return await self.rig_definition.edit_vocabulary(edit, check=judge)
 
     def _strobe_impact(self, name: str) -> dict[str, Any]:
         """`StrobeUsage` minus the archive: firmware, slots, tasks it would break.
@@ -1407,13 +1360,13 @@ class Application:
 
         breaks: list[dict[str, Any]] = []
         if live is not None:
-            doc = self._load_vocabulary_strict()
+            doc = self.rig_definition.load_vocabulary_strict()
             try:
                 hypothetical = strobe_store.retire(doc, name)
             except strobe_store.StrobeRefused:
                 hypothetical = None
             if hypothetical is not None:
-                breaks = _impact_under_vocabulary(hypothetical, self._task_store)
+                breaks = rig_definition.impact_of(self.task_store, vocabulary=hypothetical)
 
         blocker: str | None = None
         if slot is not None:
@@ -1479,81 +1432,34 @@ class Application:
 
     # -- rig wiring -------------------------------------------------------- #
     #
-    # OFF-LOOP, all four. Preview and save re-validate every stored task profile
+    # OFF-LOOP, all four: preview and save re-validate every stored task profile
     # against the proposed wiring, and the event loop also owns six serial ports
-    # and a 20 Hz output flush. They share one gate rather than taking one each,
-    # because they are the same work -- several at once.
+    # and a 20 Hz output flush. Save and reset are rig definition writes
+    # (`TASKS.md#the-rig-definition`).
 
     async def _hardware_get(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
         return await asyncio.to_thread(hardware_service.document_payload, self.hardware_store)
 
     async def _hardware_preview(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         document = self._rig_document_arg(args)
-        async with self._rig_gate:
-            return await asyncio.to_thread(
-                hardware_service.preview_payload,
-                self.hardware_store,
-                document,
-                self._task_store,
-            )
+
+        def preview() -> dict[str, Any]:
+            breaks = rig_definition.impact_of(self.task_store, wiring=document)
+            return hardware_service.preview_payload(self.hardware_store, document, breaks)
+
+        async with self._preview_gate:
+            return await asyncio.to_thread(preview)
 
     async def _hardware_save(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         document = self._rig_document_arg(args)
-        confirm = bool(args.get("confirm"))
-
-        async with self._rig_gate:
-            breaks = await asyncio.to_thread(
-                hardware_service.impact_of, document, self._task_store
-            )
-            if breaks and not confirm:
-                # Not an error the operator cannot pass -- it is the "shown
-                # loudly" half of "a pin change applies to everything". The app
-                # does not veto a rewiring; it refuses to let one happen
-                # unnoticed. Nothing is written on this path.
-                raise CommandError(
-                    ErrCode.RIG_WOULD_BREAK_TASKS,
-                    f"This wiring would stop {len(breaks)} saved "
-                    f"task{'' if len(breaks) == 1 else 's'} compiling.",
-                    {"breaks": breaks},
-                )
-            try:
-                stored = await asyncio.to_thread(self.hardware_store.save, document)
-            except hardware_store.RigInvalid as exc:
-                raise CommandError(
-                    ErrCode.RIG_INVALID,
-                    "This wiring document could not be saved.",
-                    {"problems": [
-                        {"location": loc, "message": msg} for loc, msg in exc.problems
-                    ]},
-                ) from exc
-
-            # The write landed, so every later read must see it. Ordering
-            # matters: install first, then report, or the reply would describe
-            # the wiring that was in force a moment ago.
-            self._install_rig_wiring()
-            payload = await asyncio.to_thread(
-                hardware_service.saved_payload, self.hardware_store, stored
-            )
-            payload["breaks"] = breaks
-
-        # EVERY GENERATED SKETCH IS NOW STALE -- see `_rebuild_generated`. This
-        # is what makes "a pin change applies to everything" true rather than a
-        # claim, and it runs outside the gate because a rescan takes it.
-        await self._rebuild_generated()
-        await self._announce_rig(payload["status"])
-        return payload
+        # EVERY GENERATED SKETCH IS STALE once this lands -- the rebuild inside
+        # the write is what makes "a pin change applies to everything" true
+        # rather than a claim.
+        return await self.rig_definition.save_wiring(document, confirm=bool(args.get("confirm")))
 
     async def _hardware_reset(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        async with self._rig_gate:
-            await asyncio.to_thread(self.hardware_store.reset)
-            self._install_rig_wiring()
-            payload = await asyncio.to_thread(
-                hardware_service.document_payload, self.hardware_store
-            )
-        # Reset is a wiring change like any other -- see `_hardware_save`.
-        await self._rebuild_generated()
-        await self._announce_rig(payload["status"])
-        return payload
+        # A wiring change like any other -- see `_hardware_save`.
+        return await self.rig_definition.reset_wiring()
 
     def _rig_document_arg(self, args: dict[str, Any]) -> dict[str, Any]:
         """`RIG_INVALID` is for a document that is not a document.
@@ -1571,15 +1477,6 @@ class Application:
                 "that is not a pin map.",
             )
         return document
-
-    async def _announce_rig(self, status: dict[str, Any]) -> None:
-        """Tell every client the wiring moved.
-
-        The composed channel map used to be a fact about the build, cached at
-        module scope on the frontend under a comment saying it could not change
-        while the app ran. It can now, and this is what keeps that cache honest.
-        """
-        await self.server.broadcast(event(Evt.HARDWARE_UPDATED, status))
 
     # --- backup (DATA.md#backup-mirroring) --------------------------
 
@@ -1891,70 +1788,75 @@ class Application:
         except (SessionNotFound, CohortNotFound) as exc:
             raise CommandError(ErrCode.SESSION_INVALID, str(exc)) from exc
 
-        names = {a.id: a.name for a in cohort.animals}
-        label = f"{session.prefix_name}_{session.session_number}"
-        box_configs: list[BoxConfig] = []
-        for entry in boxes:
-            if not isinstance(entry, dict):
-                continue
-            box = entry.get("box")
-            animal_id = str(entry.get("animalId") or "")
-            sketch_path = str(entry.get("sketchPath") or "")
-            config = entry.get("config") if isinstance(entry.get("config"), dict) else {}
-            if not isinstance(box, int) or animal_id not in names or not sketch_path:
-                raise CommandError(
-                    ErrCode.SESSION_INVALID,
-                    "A box mapping is missing its box, animal, or sketch.",
+        # Held from the first profile read until the rig is held: a rig
+        # definition write waiting meanwhile then sees the session and refuses,
+        # instead of rebuilding the folders these profiles were just read from
+        # (`TASKS.md#the-rig-definition`).
+        async with self.rig_definition.reading():
+            names = {a.id: a.name for a in cohort.animals}
+            label = f"{session.prefix_name}_{session.session_number}"
+            box_configs: list[BoxConfig] = []
+            for entry in boxes:
+                if not isinstance(entry, dict):
+                    continue
+                box = entry.get("box")
+                animal_id = str(entry.get("animalId") or "")
+                sketch_path = str(entry.get("sketchPath") or "")
+                config = entry.get("config") if isinstance(entry.get("config"), dict) else {}
+                if not isinstance(box, int) or animal_id not in names or not sketch_path:
+                    raise CommandError(
+                        ErrCode.SESSION_INVALID,
+                        "A box mapping is missing its box, animal, or sketch.",
+                    )
+                profile = None
+                try:
+                    profile = await asyncio.to_thread(task_profile.load_profile, sketch_path)
+                except task_profile.TaskProfileError:
+                    profile = None  # profile-less: bare START, raw log
+                try:
+                    start_command = build_start_command(profile, config)
+                except task_profile.TaskProfileError as exc:
+                    # The profile declares more than the firmware's line buffer can
+                    # hold. Refusing the mapping is the point: the board cannot
+                    # report a truncated START, so letting this through would run
+                    # the session on whichever parameters happened to fit.
+                    raise CommandError(
+                        ErrCode.TASK_PROFILE_INVALID, str(exc), {"box": box}
+                    ) from exc
+                box_configs.append(
+                    BoxConfig(
+                        box=box,
+                        animal_id=animal_id,
+                        animal_name=names[animal_id],
+                        sketch_path=sketch_path,
+                        sketch_name=Path(sketch_path).name,
+                        start_command=start_command,
+                        config_metadata=dict(config),
+                        profile=profile,
+                    )
                 )
-            profile = None
-            try:
-                profile = await asyncio.to_thread(task_profile.load_profile, sketch_path)
-            except task_profile.TaskProfileError:
-                profile = None  # profile-less: bare START, raw log
-            try:
-                start_command = build_start_command(profile, config)
-            except task_profile.TaskProfileError as exc:
-                # The profile declares more than the firmware's line buffer can
-                # hold. Refusing the mapping is the point: the board cannot
-                # report a truncated START, so letting this through would run
-                # the session on whichever parameters happened to fit.
-                raise CommandError(
-                    ErrCode.TASK_PROFILE_INVALID, str(exc), {"box": box}
-                ) from exc
-            box_configs.append(
-                BoxConfig(
-                    box=box,
-                    animal_id=animal_id,
-                    animal_name=names[animal_id],
-                    sketch_path=sketch_path,
-                    sketch_name=Path(sketch_path).name,
-                    start_command=start_command,
-                    config_metadata=dict(config),
-                    profile=profile,
-                )
-            )
 
-        self._require_runner().configure(
-            Path(session.folder_path),
-            label,
-            group_id,
-            box_configs,
-            duration_s=(
-                session.duration_minutes * 60.0
-                if session.duration_minutes is not None
-                else None
-            ),
-        )
-        self._running_session_id = session_id
-        # From here until the session ends the boxes belong to the runner: they
-        # will carry task sketches and fall idle between flashes, and a
-        # baseline restore landing in that window would erase the very sketch
-        # this mapping just chose
-        # (`ARCHITECTURE.md#three-rules-it-never-breaks`). Also extinguishes
-        # the placement walk's
-        # lights, in case the client didn't.
-        if self.utility is not None:
-            self.utility.hold()
+            self._require_runner().configure(
+                Path(session.folder_path),
+                label,
+                group_id,
+                box_configs,
+                duration_s=(
+                    session.duration_minutes * 60.0
+                    if session.duration_minutes is not None
+                    else None
+                ),
+            )
+            self._running_session_id = session_id
+            # From here until the session ends the boxes belong to the runner: they
+            # will carry task sketches and fall idle between flashes, and a
+            # baseline restore landing in that window would erase the very sketch
+            # this mapping just chose
+            # (`ARCHITECTURE.md#three-rules-it-never-breaks`). Also extinguishes
+            # the placement walk's
+            # lights, in case the client didn't.
+            if self.utility is not None:
+                self.utility.hold()
         await self._broadcast_lifecycle()
         return {"ok": True}
 
@@ -2058,21 +1960,24 @@ class Application:
                 "only today's sessions can be continued — its folder is named for "
                 f"{session.date}",
             )
-        held = self._running_session_id
-        if held is not None and held != session_id:
-            raise CommandError(
-                ErrCode.SESSION_INVALID,
-                "another session is open — end it before continuing this one",
-            )
-        if held == session_id and self._require_runner().configured_boxes():
-            # Already held with a mapping loaded: nothing to resume.
+        # Holding the rig again waits out a rig definition write in progress,
+        # which checked for a held session before this one existed.
+        async with self.rig_definition.reading():
+            held = self._running_session_id
+            if held is not None and held != session_id:
+                raise CommandError(
+                    ErrCode.SESSION_INVALID,
+                    "another session is open — end it before continuing this one",
+                )
+            if held == session_id and self._require_runner().configured_boxes():
+                # Already held with a mapping loaded: nothing to resume.
+                return {"session": session.to_json()}
+            await asyncio.to_thread(self._close_group_run, session_id)
+            session = await asyncio.to_thread(self.sessions.set_status, session_id, "running")
+            self._clear_runner()
+            self._running_session_id = session_id
+            await self._broadcast_lifecycle()
             return {"session": session.to_json()}
-        await asyncio.to_thread(self._close_group_run, session_id)
-        session = await asyncio.to_thread(self.sessions.set_status, session_id, "running")
-        self._clear_runner()
-        self._running_session_id = session_id
-        await self._broadcast_lifecycle()
-        return {"session": session.to_json()}
 
     def _clear_runner(self) -> None:
         """Drop the finished group's mapping so the runner holds no boxes.
@@ -2665,24 +2570,6 @@ class _mapped_errors:
         return False
 
 
-def _strobe_error(exc: strobe_store.StrobeRefused) -> CommandError:
-    code = {
-        "invalid": ErrCode.STROBE_INVALID,
-        "required": ErrCode.STROBE_REQUIRED,
-        "in_recorded_session": ErrCode.STROBE_IN_RECORDED_SESSION,
-        "would_break_tasks": ErrCode.STROBE_WOULD_BREAK_TASKS,
-        "import_conflict": ErrCode.STROBE_IMPORT_CONFLICT,
-        "unreadable": ErrCode.STROBE_VOCABULARY_UNREADABLE,
-    }.get(exc.reason, ErrCode.STROBE_INVALID)
-    return CommandError(code, str(exc), exc.detail or None)
-
-
 def _code_in(doc: dict[str, Any], name: str) -> int:
     entry = doc.get("codes", {}).get(name) or doc.get("retired", {}).get(name) or {}
     return int(entry.get("code", -1))
-
-
-def _impact_under_vocabulary(document: dict[str, Any], tasks: Any) -> list[dict[str, Any]]:
-    """Which saved tasks a hypothetical vocabulary would newly break (`rig/definition.py`)."""
-    return rig_definition.impact_of(tasks, vocabulary=document)
-

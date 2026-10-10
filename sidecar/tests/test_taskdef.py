@@ -749,7 +749,7 @@ def test_a_broken_definition_does_not_make_the_library_unlistable(tmp_path, libr
 
 
 def test_failures_reads_the_wiring_in_force(tmp_path, library):
-    """`impact_of` installs a HYPOTHETICAL wiring and asks again, so this must
+    """`impact_of` asks again under a HYPOTHETICAL wiring, so this must
     consult the registries live rather than anything cached — that difference is
     the entire mechanism by which a rewiring's cost is known before the write."""
     from ephymeris_sidecar.hardware import store as rig_store
@@ -1100,30 +1100,54 @@ def test_a_rebuild_refuses_to_be_its_own_source(tmp_path):
     assert (inside / "Probe.ino").is_file(), "it deleted the thing it refused to copy"
 
 
-async def test_saving_refuses_a_name_another_task_already_uses(tmp_path, library):
-    """Two saved tasks sharing a name share a sketch folder — saving one would
-    overwrite the other's firmware, and deleting either would remove both.
-    Duplicating a task makes that the easy mistake, so `tasks.save` refuses."""
-    import asyncio
+def _tasks_app(tmp_path, library):
+    """The slice of `Application` `tasks.save`/`tasks.delete` touch, over a
+    real task store and a real rig definition."""
     from types import SimpleNamespace
 
     from ephymeris_sidecar.app import Application
-    from ephymeris_sidecar.server import CommandError
+    from ephymeris_sidecar.hardware.store import HardwareStore
+    from ephymeris_sidecar.rig.definition import RigDefinition
+    from ephymeris_sidecar.strobes.store import VocabularyStore
 
     task_store = store.TaskStore(tmp_path, library_root=library)
-    task_store.save(presets.instantiate("grgl_2odor", "probe", "Probe Task"))
+    vocabulary = VocabularyStore(tmp_path)
+    vocabulary.ensure_seeded()
 
-    async def nothing() -> None:
+    async def nothing(*_args) -> None:
         return None
 
     app = SimpleNamespace(
         discovery=SimpleNamespace(sketches=[]),
         task_store=task_store,
-        _rig_gate=asyncio.Lock(),
+        _running_session_id=None,
+        runner=None,
         _rescan=nothing,
         _broadcast_tasks=nothing,
     )
+    app.rig_definition = RigDefinition(
+        hardware=HardwareStore(tmp_path),
+        vocabulary=vocabulary,
+        tasks=task_store,
+        repin=lambda: 0,
+        in_use=lambda: Application._rig_in_use(app),
+        rescan=nothing,
+        after_rebuild=nothing,
+        broadcast=nothing,
+    )
     app._definition_arg = Application._definition_arg.__get__(app)
+    return app
+
+
+async def test_saving_refuses_a_name_another_task_already_uses(tmp_path, library):
+    """Two saved tasks sharing a name share a sketch folder — saving one would
+    overwrite the other's firmware, and deleting either would remove both.
+    Duplicating a task makes that the easy mistake, so `tasks.save` refuses."""
+    from ephymeris_sidecar.app import Application
+    from ephymeris_sidecar.server import CommandError
+
+    app = _tasks_app(tmp_path, library)
+    app.task_store.save(presets.instantiate("grgl_2odor", "probe", "Probe Task"))
     copy = presets.instantiate("grgl_2odor", "probe_copy", "probe task")
     with pytest.raises(CommandError, match="already called"):
         await Application._tasks_save(app, None, None, {"definition": copy.to_json()}, None)
@@ -1132,3 +1156,23 @@ async def test_saving_refuses_a_name_another_task_already_uses(tmp_path, library
     same = presets.instantiate("grgl_2odor", "probe", "Probe Task")
     reply = await Application._tasks_save(app, None, None, {"definition": same.to_json()}, None)
     assert reply["entry"]["id"] == "probe"
+
+
+async def test_no_task_is_saved_or_deleted_while_a_session_is_set_up(tmp_path, library):
+    """A task's folder is what its box is flashed from, and the session read its
+    profile from that folder at mapping (`TASKS.md#the-rig-definition`)."""
+    from ephymeris_sidecar.app import Application
+    from ephymeris_sidecar.server import CommandError
+
+    app = _tasks_app(tmp_path, library)
+    app.task_store.save(presets.instantiate("grgl_2odor", "probe", "Probe Task"))
+    app._running_session_id = "s1"
+
+    edited = presets.instantiate("grgl_2odor", "probe", "Probe Task")
+    with pytest.raises(CommandError) as refused:
+        await Application._tasks_save(app, None, None, {"definition": edited.to_json()}, None)
+    assert refused.value.code == "RIG_IN_USE"
+    with pytest.raises(CommandError) as refused:
+        await Application._tasks_delete(app, None, None, {"taskId": "probe"}, None)
+    assert refused.value.code == "RIG_IN_USE"
+    assert app.task_store.get("probe") is not None

@@ -567,7 +567,8 @@ session and data is still saved locally. Tell the lab manager after the session.
 - Do not unplug a box or its USB cable.
 - Do not close Ephymeris. Closing it stops every box's recording.
 - Do not open the data folder and move or edit files.
-- Do not change the Rig, Task or Settings screens.
+- Do not change the Rig, Task or Settings screens. Saving the wiring, a strobe code or a task is refused
+  until the session ends, because each rebuilds the sketches the boxes are flashed from.
 
 ## Recording with Intan
 

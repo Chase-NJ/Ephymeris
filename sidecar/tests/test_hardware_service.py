@@ -32,35 +32,6 @@ def rig_store(tmp_path):
     return store.HardwareStore(tmp_path)
 
 
-class FakeTaskStore:
-    """The contract `impact_of` needs from a task-profile store.
-
-    Two methods: `list_entries()` and `failures(id)`. `failures` MUST read the
-    wiring currently in force rather than a cached answer — that is the whole
-    mechanism by which installing a hypothetical wiring and asking again
-    produces a before/after difference. Binding a set of channel names and
-    reporting the missing ones is exactly what the real store does, minus the
-    generation.
-    """
-
-    def __init__(self, tasks: dict[str, set[str]]) -> None:
-        self._tasks = tasks
-
-    def list_entries(self):
-        return [{"id": tid, "label": tid.upper()} for tid in sorted(self._tasks)]
-
-    def failures(self, task_id: str) -> set[str]:
-        bound = self._tasks.get(task_id, set())
-        present = registry.channels().names()
-        return {f"missing:{name}" for name in sorted(bound - present)}
-
-
-@pytest.fixture
-def tasks():
-    """A profile library with one task in it, saved against the shipped wiring."""
-    return FakeTaskStore({"grgl": {"odor_port", "left_well", "right_well", "fluid_2"}})
-
-
 def rig(**edits) -> dict:
     doc = store.default_document()
     for section, changes in edits.items():
@@ -137,18 +108,18 @@ def test_every_problem_is_reported_not_just_the_first():
 # --------------------------------------------------------------------------- #
 
 
-def test_preview_describes_the_wiring_in_force_not_the_draft(rig_store, tasks):
+def test_preview_describes_the_wiring_in_force_not_the_draft(rig_store):
     """The operator is comparing a draft against what the rig is doing now; a
     status echoing the draft back would answer a question nobody asked."""
-    payload = service.preview_payload(rig_store, rig(pins={"left_well": {"index": 12}}), tasks)
+    payload = service.preview_payload(rig_store, rig(pins={"left_well": {"index": 12}}), [])
     assert payload["status"]["custom"] is False
     assert payload["status"]["pinoutHash"] == registry.channels().content_hash()
     assert payload["problems"] == []
     assert payload["breaks"] == []
 
 
-def test_preview_writes_nothing(rig_store, tasks):
-    service.preview_payload(rig_store, rig(pins={"left_well": {"index": 12}}), tasks)
+def test_preview_writes_nothing(rig_store):
+    service.preview_payload(rig_store, rig(pins={"left_well": {"index": 12}}), [])
     assert not rig_store.exists()
 
 

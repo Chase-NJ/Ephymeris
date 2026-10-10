@@ -1,11 +1,11 @@
 {
-  "version": "1.1.2-alpha",
-  "notes": "Ephymeris v1.1.2-alpha",
-  "pub_date": "2026-10-10T07:15:39Z",
+  "version": "1.1.3-alpha",
+  "notes": "Ephymeris v1.1.3-alpha",
+  "pub_date": "2026-10-10T07:44:59Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTamJ1WThDd1BuejhYOEE2R0dnTUtpRTQzUTZpRUVnSWExaS8rVzZMRUovNk5uVjY2TVZseUx2WHNUL09jUUx6UEdqNnBmckJuVUZwd3FYdjNFbXhpb3F1MGJWc2xkUlE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNjE2MDg2CWZpbGU6RXBoeW1lcmlzXzEuMS4yLWFscGhhX3g2NC1zZXR1cC5leGUKZXpTWmhmaFZMOTIyUDVpUlVsODVzb2ZDYU9UZzkwRFowcFo5cWxvUnlHNU5QQllRMGlBamRnMVVxSEtFZFNqU1ZqS2JvcThaNzJLRlduYWE0RkZFQVE9PQo=",
-      "url": "https://github.com/Chase-NJ/Ephymeris/releases/download/v1.1.2-alpha/Ephymeris_1.1.2-alpha_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTamJ1WThDd1Buenhaajk4alJrWmFidW43ejF3NWRadDMrOXpCQ1drWGE1RFArZEtGWmZ6dW1XSGdURHg4SndibUY2N2U5cnVWR2pSajJSN1RZTzh5TllHanh6ZEdyaWc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNjE4MTIwCWZpbGU6RXBoeW1lcmlzXzEuMS4zLWFscGhhX3g2NC1zZXR1cC5leGUKdEk1WU1oVEZIdWxyV2FCMDFCcWVWZVZWUkJRZ1JUZEk0bnh1enl3bmRhcURqYTkzeEpWOHY2OEpzOERRQlFERjczMmRUSGRXTjJxL0Y2REozV0k2RFE9PQo=",
+      "url": "https://github.com/Chase-NJ/Ephymeris/releases/download/v1.1.3-alpha/Ephymeris_1.1.3-alpha_x64-setup.exe"
     }
   }
 }

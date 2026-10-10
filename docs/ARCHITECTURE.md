@@ -491,6 +491,13 @@ transition to the current state is a silent no-op.
 - A Debug Mode flash from `IDLE` lands in `IDLE`, and the **client** then opens passthrough, so the rules
   above hold and the operator gets a console. The open toggles DTR, so a behavior sketch reboots and
   prints `READY` into the console it will be started from.
+- **Leaving a state that holds the port closes it before the new state is announced.** Teardown stops
+  the port's reader thread and joins it while holding the handler lock, so **a reader thread never
+  blocks on that lock**: it takes it in `READ_TIMEOUT_S` slices and gives up once told to stop
+  (`_acquire_unless_stopped`). A stopped reader no longer owns the port: it closes a port whose open
+  finished too late, and its failures change no state (`_fail_from_worker`), so a box ended cleanly is
+  never turned into `ERROR` by its old thread. The join is bounded at a second; an open that outlasts
+  it holds the port past the announcement until it returns, then closes it.
 
 ## Flashing reset and passthrough
 

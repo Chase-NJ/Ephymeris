@@ -261,13 +261,60 @@ def test_stop_is_refused_when_not_in_session() -> None:
 def test_clean_end_returns_to_idle(fake_serial) -> None:
     handler, _ = make_handler()
     handler.start_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    # IN_SESSION is set before the port even opens, so it says nothing about the
+    # handshake; START going out does.
+    assert wait_for(lambda: ScriptedSerial.instances)
     port = ScriptedSerial.instances[0]
     port.feed("READY\n")
-    assert wait_for(lambda: handler.state is PortState.IN_SESSION)
+    assert wait_for(lambda: b"START" in port.written)
 
     handler.end_session("BF_END_SESSION received")
     assert handler.state is PortState.IDLE
     assert port.closed is True
+
+
+class SlowOpen(ScriptedSerial):
+    """A port whose open takes a while, as a COM port's can."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        time.sleep(0.2)
+
+
+class SlowFailingOpen(ScriptedSerial):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        time.sleep(0.2)
+        raise handler_module.serial.SerialException("could not open port")
+
+
+def test_ending_while_the_port_opens_neither_stalls_nor_leaves_it_open(monkeypatch) -> None:
+    """Teardown joins the session thread while holding the handler lock. A
+    thread that blocked on that lock to publish its port would hold teardown
+    for the whole join timeout, and return IDLE with the port still open."""
+    monkeypatch.setattr(handler_module.serial, "Serial", SlowOpen)
+    handler, _ = make_handler()
+    handler.start_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    assert wait_for(lambda: SlowOpen.instances)
+
+    started = time.monotonic()
+    handler.end_session("operator ended")
+    assert time.monotonic() - started < 0.6
+    assert handler.state is PortState.IDLE
+    assert SlowOpen.instances[0].closed is True
+
+
+def test_a_failure_after_the_session_ended_changes_nothing(monkeypatch) -> None:
+    """The thread no longer owns the port once told to stop, so an open that
+    fails late must not turn a cleanly ended box into ERROR."""
+    monkeypatch.setattr(handler_module.serial, "Serial", SlowFailingOpen)
+    handler, _ = make_handler()
+    handler.start_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
+    assert wait_for(lambda: SlowFailingOpen.instances)
+
+    handler.end_session("operator ended")
+    time.sleep(0.4)  # past the failing open
+    assert handler.state is PortState.IDLE
 
 
 # --- board drop = hard stop (`ARCHITECTURE.md#board-drop`) ---------------

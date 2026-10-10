@@ -135,6 +135,33 @@ class PortHandler:
             self._teardown_serial()
             self._set_state(PortState.ERROR, reason)
 
+    def _acquire_unless_stopped(self, stop: threading.Event) -> bool:
+        """Take the lock from a worker thread, or give up once told to stop.
+
+        Teardown holds the lock while it joins the worker, so a worker blocked
+        on it would stall teardown for the whole join timeout and then act on a
+        port that has since moved on. True means the lock is held and `stop` is
+        clear; the caller must release it.
+        """
+        while not stop.is_set():
+            if self._lock.acquire(timeout=READ_TIMEOUT_S):
+                if not stop.is_set():
+                    return True
+                self._lock.release()
+        return False
+
+    def _fail_from_worker(self, stop: threading.Event, reason: str) -> None:
+        """`force_error` for a reader thread. A worker that has been told to
+        stop no longer owns the port, so its failure changes nothing."""
+        if not self._acquire_unless_stopped(stop):
+            return
+        try:
+            if self._state != PortState.ERROR:
+                self._teardown_serial()
+                self._set_state(PortState.ERROR, reason)
+        finally:
+            self._lock.release()
+
     def acknowledge_error(self) -> PortState:
         """ERROR → IDLE on user acknowledgement (`ARCHITECTURE.md#transitions`)."""
         with self._lock:
@@ -274,14 +301,19 @@ class PortHandler:
                 write_timeout=WRITE_TIMEOUT_S,
             )
         except (serial.SerialException, OSError) as exc:
-            self.force_error(f"couldn't open {address}: {exc}")
+            self._fail_from_worker(stop, f"couldn't open {address}: {exc}")
             return
 
-        with self._lock:
-            if stop.is_set():
-                port.close()
-                return
+        # Publish the port, unless the session ended while it was opening: then
+        # nobody else will close it. Opening can outlast teardown's join, so
+        # this is also where a late open is put right.
+        if not self._acquire_unless_stopped(stop):
+            port.close()
+            return
+        try:
             self._serial = port
+        finally:
+            self._lock.release()
 
         buf = bytearray()
         phase = "ready"
@@ -294,9 +326,8 @@ class PortHandler:
                 waiting = port.in_waiting
                 chunk = port.read(waiting if waiting else 1)
             except Exception as exc:  # noqa: BLE001 - board yanked mid-session
-                if not stop.is_set():
-                    # Hard stop (`ARCHITECTURE.md#board-drop`): a drop is exactly what ERROR exists for.
-                    self.force_error(f"board disconnected or unreadable: {exc}")
+                # Hard stop (`ARCHITECTURE.md#board-drop`): a drop is exactly what ERROR exists for.
+                self._fail_from_worker(stop, f"board disconnected or unreadable: {exc}")
                 return
 
             if chunk:
@@ -308,7 +339,7 @@ class PortHandler:
 
             now = time.monotonic()
             if phase == "ready" and now > ready_deadline:
-                self.force_error("board never reported READY")
+                self._fail_from_worker(stop, "board never reported READY")
                 return
             if phase == "seed":
                 if seed_deadline == 0.0:
@@ -403,7 +434,7 @@ class PortHandler:
             except Exception as exc:  # noqa: BLE001 - board yanked, port revoked, …
                 if not stop.is_set():
                     log.warning("box %d: read failed: %s", self.box, exc)
-                    self.force_error(f"board disconnected or unreadable: {exc}")
+                self._fail_from_worker(stop, f"board disconnected or unreadable: {exc}")
                 return
             if chunk:
                 self._ingest(chunk)

@@ -290,16 +290,20 @@ async def test_hold_suspends_restores_until_released() -> None:
 
 
 async def test_a_session_flash_invalidates_the_belief() -> None:
-    baseline, _manager, tool, _ = make_baseline()
+    baseline, manager, tool, _ = make_baseline()
     baseline.ensure()
     await settle(baseline)
 
+    # As `port.flash` does it: the flash records what the board carries, then
+    # the baseline hears of it.
+    await manager.flash(1, TASK_PATH, "GRGL", None, lambda *a: None,
+                        suppress_passthrough_resume=True)
     baseline.note_flashed(1, TASK_PATH)
     assert box_state(baseline)["state"] == "unknown"
 
     baseline.ensure()
     await settle(baseline)
-    assert tool.uploads == [UTILITY_PATH, UTILITY_PATH]
+    assert tool.uploads == [UTILITY_PATH, TASK_PATH, UTILITY_PATH]
 
 
 async def test_a_failed_restore_clears_the_error_and_stops_retrying() -> None:
@@ -326,13 +330,17 @@ async def test_a_failed_restore_clears_the_error_and_stops_retrying() -> None:
 
 
 async def test_a_vanished_board_drops_the_belief() -> None:
-    baseline, _manager, tool, _ = make_baseline()
+    baseline, manager, tool, _ = make_baseline()
     baseline.ensure()
     await settle(baseline)
 
+    # As the presence poll does it: the manager notices, then the baseline.
+    board = manager._presence[HWID]
+    manager._update_presence([])
     baseline.note_presence([])
     assert box_state(baseline)["state"] == "unavailable"
 
+    manager._update_presence([board])
     baseline.note_presence([HWID])
     baseline.ensure()
     await settle(baseline)

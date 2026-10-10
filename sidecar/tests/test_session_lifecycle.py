@@ -19,12 +19,14 @@ import pytest
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.intan.service import IntanNotReady
+from ephymeris_sidecar.ports.manager import CarriedSketch, sketch_fingerprint
 from ephymeris_sidecar.rig.definition import _ReadWriteLock
 from ephymeris_sidecar.sessions.lifecycle import (
     BoxRefused,
     MappingEntry,
     SessionLifecycle,
     SessionRefused,
+    SketchNotCarried,
 )
 from ephymeris_sidecar.sessions.models import GroupRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
@@ -50,6 +52,9 @@ class FakeRunner:
 
     def configured_boxes(self) -> list[int]:
         return sorted(self.configs)
+
+    def box_configs(self) -> list[BoxConfig]:
+        return [self.configs[box] for box in sorted(self.configs)]
 
     def running_boxes(self) -> list[int]:
         return sorted(self.running)
@@ -142,6 +147,8 @@ class Rig:
         self.runner = FakeRunner(self.log)
         self.intan = FakeIntan(self.log) if intan else None
         self.utility = FakeUtility(self.log)
+        #: What each box's board carries -- `PortManager.carried`'s record.
+        self.carried: dict[int, CarriedSketch] = {}
 
         async def broadcast(message: dict) -> None:
             self.events.append(message)
@@ -156,6 +163,7 @@ class Rig:
             logbook=None,
             rig_reading=_ReadWriteLock().reading,
             broadcast=broadcast,
+            carried=self.carried.get,
         )
         self._cohorts = 0
 
@@ -176,17 +184,31 @@ class Rig:
             cohort.id, prefix, "12", day, str(self.root / name / "s"), recording=recording
         )
 
+    def sketch(self, name: str = "sketch") -> Path:
+        folder = self.root / name
+        if not folder.is_dir():
+            folder.mkdir()
+            (folder / f"{name}.ino").write_text(f"// {name}\n")
+        return folder
+
     def mapping(self, session) -> list[MappingEntry]:  # noqa: ANN001
         cohort = self.cohorts.get(session.cohort_id)
-        sketch = self.root / "sketch"
-        sketch.mkdir(exist_ok=True)
         return [
-            MappingEntry(box=a.box_number, animal_id=a.id, sketch_path=str(sketch), config={})
+            MappingEntry(box=a.box_number, animal_id=a.id, sketch_path=str(self.sketch()), config={})
             for a in cohort.animals
         ]
 
-    async def confirm(self, session, group_id: str = "g-a") -> None:  # noqa: ANN001
-        await self.lifecycle.confirm_mapping(session.id, group_id, self.mapping(session))
+    def flash(self, box: int, folder: Path) -> None:
+        """What a successful `PortManager.flash` records."""
+        self.carried[box] = CarriedSketch(str(folder), sketch_fingerprint(str(folder)))
+
+    async def confirm(self, session, group_id: str = "g-a", *, flash: bool = True) -> None:  # noqa: ANN001
+        """Confirm, then flash every mapped box as the placement walk does."""
+        entries = self.mapping(session)
+        await self.lifecycle.confirm_mapping(session.id, group_id, entries)
+        if flash:
+            for entry in entries:
+                self.flash(entry.box, Path(entry.sketch_path))
 
     async def run_group(self, session, group_id: str = "g-a") -> None:  # noqa: ANN001
         await self.confirm(session, group_id)
@@ -284,6 +306,87 @@ async def test_starting_a_box_with_no_mapping_names_the_box(rig) -> None:
         await rig.lifecycle.start_box(5)
     assert refused.value.box == 5
     assert isinstance(refused.value.__cause__, KeyError)
+
+
+# --- what the boards carry (ARCHITECTURE.md#what-a-board-carries) ------------
+
+
+async def test_start_all_refuses_a_box_never_flashed_and_starts_nothing(rig) -> None:
+    session = rig.session()
+    await rig.confirm(session, flash=False)
+    rig.flash(1, rig.sketch())
+
+    with pytest.raises(SketchNotCarried) as refused:
+        await rig.lifecycle.start_all(session.id)
+
+    assert refused.value.boxes == [2]
+    assert "box 2 has not been flashed" in str(refused.value)
+    # Box 1 was fine, and still did not start: a half-started group is worse.
+    assert rig.log == ["hold"]
+    stored = rig.sessions.get_session(session.id)
+    assert (stored.status, stored.group_runs) == ("configuring", [])
+
+
+async def test_the_refusal_comes_before_the_recording_starts(recording_rig) -> None:
+    session = recording_rig.session(recording=True)
+    await recording_rig.confirm(session, flash=False)
+
+    with pytest.raises(SketchNotCarried) as refused:
+        await recording_rig.lifecycle.start_all(session.id)
+
+    assert refused.value.boxes == [1, 2]
+    assert "rhx start" not in recording_rig.log
+
+
+async def test_a_box_carrying_another_sketch_is_refused_by_name(rig) -> None:
+    session = rig.session()
+    await rig.confirm(session)
+    rig.flash(1, rig.sketch("BOX_Utility"))
+
+    with pytest.raises(SketchNotCarried, match="box 1 carries BOX_Utility, not sketch"):
+        await rig.lifecycle.start_box(1)
+    assert "start 1" not in rig.log
+
+    await rig.lifecycle.start_box(2)
+    assert "start 2" in rig.log
+
+
+async def test_a_folder_rebuilt_since_the_flash_is_refused_until_reflashed(rig) -> None:
+    """A wiring save or a task save rewrites the folder in place: same path, and
+    the board still runs the old pins."""
+    session = rig.session()
+    await rig.confirm(session)
+    (rig.sketch() / "TaskPins.h").write_text("#define VALVE 7\n")
+
+    with pytest.raises(SketchNotCarried, match="older build of sketch"):
+        await rig.lifecycle.start_box(1)
+
+    rig.flash(1, rig.sketch())
+    await rig.lifecycle.start_box(1)
+    assert rig.log[-1] == "start 1"
+
+
+async def test_the_same_folder_spelled_differently_is_the_same_sketch(rig) -> None:
+    session = rig.session()
+    await rig.confirm(session)
+    folder = rig.sketch()
+    spelled = f"{folder.parent}/./{folder.name}/"
+    rig.carried[1] = CarriedSketch(spelled, sketch_fingerprint(str(folder)))
+
+    await rig.lifecycle.start_box(1)
+    assert rig.log[-1] == "start 1"
+
+
+async def test_a_running_box_is_not_checked_again(rig) -> None:
+    """Start All after a per-box start must not refuse the box already running
+    because its board has since been forgotten -- starting it is a no-op."""
+    session = rig.session()
+    await rig.confirm(session)
+    await rig.lifecycle.start_box(1)
+    rig.carried.pop(1)
+
+    await rig.lifecycle.start_all(session.id)
+    assert "start 2" in rig.log
 
 
 # --- abandon ------------------------------------------------------------------
@@ -558,6 +661,7 @@ def test_each_refusal_reaches_the_wire_with_its_code() -> None:
         (MappingRefused(3, "too long"), "TASK_PROFILE_INVALID", {"box": 3}),
         (IntanNotReady("set it up"), "INTAN_NOT_READY", None),
         (_box_refused(4, KeyError(4)), "SESSION_INVALID", {"box": 4}),
+        (SketchNotCarried("flash them", [2, 5]), "SESSION_INVALID", {"boxes": [2, 5]}),
     ]
     for exc, code, data in cases:
         mapped = _mapped(exc)

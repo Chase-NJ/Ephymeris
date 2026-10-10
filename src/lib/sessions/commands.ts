@@ -4,7 +4,7 @@
  */
 
 import type { SidecarClient } from "../ws/client";
-import { CMD } from "../ws/protocol";
+import { CMD, ERR, SidecarCommandError } from "../ws/protocol";
 import type {
   BoxMapping,
   Prefix,
@@ -160,6 +160,19 @@ export async function endSession(client: SidecarClient, sessionId: string): Prom
 /** Per-box Start — the command itself comes from the confirmed mapping. */
 export async function startBox(client: SidecarClient, box: number): Promise<void> {
   await client.call(CMD.PORT_START_SESSION, { box });
+}
+
+/**
+ * The boxes a Start or Start All was refused for because their boards don't
+ * carry the mapped sketch (`ARCHITECTURE.md#what-a-board-carries`); null for
+ * any other failure. Nothing started, and the way on is to flash them.
+ */
+export function boxesNeedingFlash(err: unknown): number[] | null {
+  if (!(err instanceof SidecarCommandError) || err.code !== ERR.SESSION_INVALID) return null;
+  const boxes = (err.detail as { boxes?: unknown } | null | undefined)?.boxes;
+  return Array.isArray(boxes) && boxes.length > 0 && boxes.every((b) => typeof b === "number")
+    ? boxes
+    : null;
 }
 
 /** Per-box Stop — sends `STOP`; the board's end strobe ends the run (`ARCHITECTURE.md#running-boxes`). */

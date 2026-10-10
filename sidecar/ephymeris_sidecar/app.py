@@ -55,6 +55,7 @@ from .sessions.lifecycle import (
     MappingRefused,
     SessionLifecycle,
     SessionRefused,
+    SketchNotCarried,
 )
 from .sessions.runner import SessionRunner
 from .strobes import store as strobe_store
@@ -356,6 +357,7 @@ class Application:
             logbook=self.logbook,
             rig_reading=self.rig_definition.reading,
             broadcast=self.server.broadcast,
+            carried=self.ports.carried,
         )
 
     async def stop(self) -> None:
@@ -2008,6 +2010,8 @@ class _lifecycle_errors:
     def __exit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
         if exc is None:
             return False
+        if isinstance(exc, SketchNotCarried):
+            raise CommandError(ErrCode.SESSION_INVALID, str(exc), {"boxes": exc.boxes}) from exc
         if isinstance(exc, (SessionRefused, SessionNotFound, CohortNotFound)):
             raise CommandError(ErrCode.SESSION_INVALID, str(exc)) from exc
         if isinstance(exc, MappingRefused):

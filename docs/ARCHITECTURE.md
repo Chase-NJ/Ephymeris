@@ -565,6 +565,27 @@ vendored in `sidecar/proto/` by `sidecar/scripts/gen_grpc.py`; re-vendor at the 
 > because no such process runs. A hand-composed echo once omitted `--libraries` and sent an investigation
 > after a missing path instead of the malformed one. Echo from the arguments, or don't echo.
 
+### What a board carries
+
+`PortManager` records, per box, the sketch folder its last successful flash compiled and a fingerprint of
+that folder's files (`CarriedSketch`, `sketch_fingerprint` in `ports/manager.py`). The record is forgotten
+when a flash starts, when one fails, when the bound board vanishes, and when the box is bound to another
+board. It lives in memory only, so after a restart no box is known to carry anything until it is flashed.
+The utility baseline reads it to decide whether a box is ready
+([Hardware utility baseline](#hardware-utility-baseline)), and the session lifecycle reads it before any
+box starts.
+
+> [!CAUTION]
+> **A box starts only on the current build of its mapped sketch.** The handshake checks only for `READY`,
+> and every sketch prints it: the box utility and last session's task alike. A box started on the utility
+> sketch records a run with no trials. One started on another task records that task's trials under this
+> mapping's profile. `sessions.startAll` and `port.startSession` therefore refuse with `SESSION_INVALID`
+> (`detail.boxes`) unless each box not already running carries its mapped folder and the folder's
+> fingerprint still matches. The fingerprint catches a folder rebuilt in place since the flash, by a wiring
+> save, a vocabulary edit or a task save. Start All checks every box before RHX or any box starts, so a
+> refusal starts nothing. Mission Control then offers **Back to Boxes**, where re-confirming flashes the
+> boxes again. A sketch uploaded from outside the app (the Arduino IDE) is invisible to the record.
+
 ### Reset
 
 A serial-layer operation, not an `arduino-cli` one: close the port if open, DTR low, about 100 ms, DTR
@@ -607,9 +628,10 @@ maintains it:** every bound box that isn't flashing, in a console or in a sessio
 box utility. That sketch is **not a setting**: it is the one bundled sketch that includes
 `UtilityChannels.h`, generated from this rig ([TASKS.md](TASKS.md#the-box-utility)), and a picker that
 could name any sketch — a behavior task included — was removed with that change. When the utility is
-rebuilt (a wiring change or a vocabulary edit), `rebuilt()` drops every belief and restores every idle,
-unpinned box, since each now carries an old build. A restore holds the rig definition's read side from
-choosing the sketch until it records the belief, so a write waits for it and it waits for a write
+rebuilt (a wiring change or a vocabulary edit), `rebuilt()` forgets what every box
+[carries](#what-a-board-carries) and restores every idle, unpinned box, since each now carries an old
+build. A restore holds the rig definition's read side from choosing the sketch until its flash records
+what the board carries, so a write waits for it and it waits for a write
 ([TASKS.md](TASKS.md#the-rig-definition)). With a known sketch on every free box, the app can ask a
 box to do things — light itself, prime a line — without first asking the operator to flash.
 
@@ -873,7 +895,8 @@ Closing an enclosure queues that box; boxes flash **one at a time, in the order 
 confirmed first because the hold is what stops a freshly flashed, idle box being restored to baseline. A
 queued flash waits up to `PORT_WAIT_MS` (`routes/SessionMapping.tsx`) for its port. A failed flash leaves
 its box in `ERROR`; the acknowledgement is offered on that box's card, and flashing stays disabled while
-any mapped box is faulted.
+any mapped box is faulted. The sidecar does not trust this sequence to have run: a box is started only if
+its board [carries](#what-a-board-carries) the mapped sketch.
 
 ### Recording step
 
@@ -904,7 +927,7 @@ re-enters the between-groups state. **Same day only**, because the session folde
 
 | Action | Sidecar behaviour |
 |---|---|
-| **Start All** / **Start** | `sessions.startAll` / `port.startSession`: [IN_SESSION entry](#entering-in_session) for each box not running. A recording session starts RHX first and refuses before any box starts if it can't ([RECORDING.md](RECORDING.md#start-and-end)) |
+| **Start All** / **Start** | `sessions.startAll` / `port.startSession`: [IN_SESSION entry](#entering-in_session) for each box not running, refused first if a box does not [carry its mapped sketch](#what-a-board-carries). A recording session starts RHX first and refuses before any box starts if it can't ([RECORDING.md](RECORDING.md#start-and-end)) |
 | **Stop** | Writes the literal `STOP`. The firmware honours it at the next trial boundary — firmware behaviour the app relies on, not enforces |
 | **Reset** | The DTR reset; the box returns to waiting at `READY` |
 | **End Session** | `sessions.end`: `STOP` every box, wait `graceful_timeout_s` (`SessionRunner.end_all`), force-finalize the rest, close the group run, mark `completed`, release the baseline. The UI abandons a session still `configuring` instead (`sessions.abandon`, which refuses any other status) |
@@ -920,7 +943,8 @@ All or one at a time, moves it to `running`. A per-box write failure is pushed a
 
 Per box (`ports/handler.py`, `sessions/runner.py`):
 
-1. `IDLE → IN_SESSION`, refused from any other state.
+1. `IDLE → IN_SESSION`, refused from any other state. Before it, `SessionLifecycle` refuses a box whose
+   board does not [carry](#what-a-board-carries) the mapped sketch's current build.
 2. Open the port, which pulls DTR and resets the Mega.
 3. Wait `SESSION_READY_TIMEOUT_S` for `READY`, else `ERROR`.
 4. Send the built `START … SEED=<n>`. **The seed is drawn at the click**, not at mapping, or every box in a

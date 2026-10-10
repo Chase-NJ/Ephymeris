@@ -208,7 +208,7 @@ class RigDefinition:
 
     def reading(self):  # noqa: ANN201 - an async context manager
         """Hold while using a generated folder, through any belief recorded
-        about it (a flash through `note_flashed`, a restore through `believed`).
+        about it (what `PortManager.flash` records, and `note_flashed` after it).
         Waits for a write in progress; a write waits for it."""
         return self._lock.reading()
 

@@ -81,19 +81,15 @@ class BoxBaseline:
     state: str = "unknown"
     detail: str | None = None
     identifying: bool = False
-    #: The sketch path believed to be *on the board*. Set by our own restores
-    #: and by `note_flashed` for every other flash the app performs, so a
-    #: session flash immediately invalidates the baseline belief rather than
-    #: leaving us convinced the utility sketch is still there.
-    believed: str | None = None
     #: A restore that failed. Sticky, so the ERROR→IDLE acknowledgement we
     #: perform below can't bounce straight back into another doomed flash;
     #: cleared only by a new board, new settings, or an explicit `force`.
     failed: bool = False
     #: The operator flashed something other than the baseline here ON PURPOSE
     #: (Debug Mode), so no automatic trigger may take it back. Not the same
-    #: fact as `believed`: a session flash also moves `believed`, and that one
-    #: the baseline is *supposed* to reclaim once the session lets go.
+    #: fact as what the board carries (`PortManager.carried`): a session flash
+    #: changes that too, and that one the baseline is *supposed* to reclaim
+    #: once the session lets go.
     pinned: bool = False
 
     def to_json(self) -> dict[str, Any]:
@@ -153,12 +149,12 @@ class UtilityBaseline:
     def rebuilt(self) -> None:
         """The utility was just regenerated — a wiring change or a vocabulary
         edit (`RigDefinition._rebuild`). What is on every box is now an OLD
-        build of it, with the old pins, codes and channel names, so no belief
-        survives and every idle box is restored. Pins stay: a box the operator
+        build of it, with the old pins, codes and channel names, so what every
+        box carries is forgotten and every idle box is restored. Pins stay: a box the operator
         deliberately flashed with something else keeps it."""
         self._profile_cache = None
-        for state in self._boxes.values():
-            state.believed = None
+        for box, state in self._boxes.items():
+            self._ports.forget(box)
             state.failed = False
         self.ensure()
 
@@ -199,7 +195,10 @@ class UtilityBaseline:
     # --- beliefs ----------------------------------------------------------
 
     def note_flashed(self, box: int, sketch_path: str, *, pin: bool = False) -> None:
-        """Record what a flash — any flash, from anywhere — actually put on a board.
+        """Take a flash — any flash, from anywhere — into this box's state.
+
+        What the board now carries is the port manager's record, written by the
+        flash itself; this decides only what that means for the baseline.
 
         `pin` marks a flash the operator asked for by hand (Debug Mode), as
         opposed to the session flash sequence. A pinned box is left alone by
@@ -210,7 +209,6 @@ class UtilityBaseline:
         state = self._boxes.get(box)
         if state is None:
             return
-        state.believed = sketch_path
         entry = self._sketch_entry()
         if entry is not None and sketch_path == entry.path:
             state.state, state.detail, state.failed = "ready", None, False
@@ -230,9 +228,9 @@ class UtilityBaseline:
         for box, state in self._boxes.items():
             bound = self._settings.hardware_id_for(box)
             if bound is not None and bound not in present:
-                # A board that leaves takes our belief with it: the next one to
-                # answer to this box number may be a different board entirely.
-                state.believed = None
+                # A board that leaves takes its pin and its failure with it: the
+                # next one to answer to this box number may be a different board
+                # entirely. The port manager forgets what it carried.
                 state.failed = False
                 state.pinned = False
                 if state.state in ("ready", "failed", "busy", "pinned"):
@@ -296,9 +294,10 @@ class UtilityBaseline:
             self._worker = None
 
     async def _restore(self, box: int, force: bool) -> None:
-        # Held for the whole restore, belief included: a rig definition write
-        # landing between the flash and `believed = entry.path` would have its
-        # `rebuilt()` undone, leaving the box marked ready on the old build.
+        # Held for the whole restore, record included: a rig definition write
+        # landing between the compile and the port manager recording what it
+        # flashed would have its `rebuilt()` undone, leaving the box marked
+        # ready on the old build.
         async with self._reading():
             await self._restore_holding(box, force)
 
@@ -329,9 +328,9 @@ class UtilityBaseline:
         if state.pinned and not force:
             # Not a fault either: the operator put this sketch here by hand.
             # The idle transition that follows their flash lands exactly here.
-            state.state, state.detail = "pinned", _pinned_detail(state.believed)
+            state.state, state.detail = "pinned", _pinned_detail(self._carried_path(box))
             return
-        if state.believed == entry.path and not force:
+        if self._carries(box, entry.path) and not force:
             state.state, state.detail = "ready", None
             return
 
@@ -353,7 +352,6 @@ class UtilityBaseline:
         except Exception as exc:  # noqa: BLE001 - compile, upload, missing cli
             state.state = "failed"
             state.detail = str(exc)
-            state.believed = None
             state.failed = True
             log.warning("box %d: utility baseline restore failed: %s", box, exc)
             # A failed flash leaves the port in ERROR, which the operator would
@@ -364,9 +362,16 @@ class UtilityBaseline:
             self._clear_error(box)
             return
 
-        state.believed = entry.path
         state.state, state.detail, state.failed = "ready", None, False
         state.pinned = False
+
+    def _carries(self, box: int, sketch_path: str) -> bool:
+        carried = self._ports.carried(box)
+        return carried is not None and carried.is_of(sketch_path)
+
+    def _carried_path(self, box: int) -> str | None:
+        carried = self._ports.carried(box)
+        return carried.path if carried is not None else None
 
     def _clear_error(self, box: int) -> None:
         try:
@@ -422,7 +427,7 @@ class UtilityBaseline:
             state.identifying = False
             return delivered
 
-        if state.believed != entry.path:
+        if not self._carries(box, entry.path):
             state.detail = state.detail or "box isn't at the utility baseline yet"
             return False
 

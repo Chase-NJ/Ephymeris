@@ -10,8 +10,14 @@ from ephymeris_sidecar.boards.cli_tool import _failure_message
 from ephymeris_sidecar.boards.tool import BoardTool, DetectedBoard, FlashFailed
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.ports import manager as manager_module
-from ephymeris_sidecar.ports.manager import FQBN, PortManager, PortNotBound
-from ephymeris_sidecar.ports.states import PortState
+from ephymeris_sidecar.ports.manager import (
+    FQBN,
+    CarriedSketch,
+    PortManager,
+    PortNotBound,
+    sketch_fingerprint,
+)
+from ephymeris_sidecar.ports.states import IllegalTransition, PortState
 from ephymeris_sidecar.settings import SidecarSettings
 
 HWID = "TESTBOARD01"
@@ -223,6 +229,103 @@ async def test_flash_on_unbound_box_is_rejected_before_touching_state() -> None:
     with pytest.raises(PortNotBound):
         await manager.flash(4, "/sk/clean", "clean", None, lambda *a: None)
     assert manager.handler(4).state is PortState.IDLE
+
+
+# --- what a board carries (ARCHITECTURE.md#what-a-board-carries) -----------
+
+
+def _sketch(root, name: str = "GRGL"):  # noqa: ANN001, ANN202
+    folder = root / name
+    folder.mkdir()
+    (folder / f"{name}.ino").write_text("void setup() {}\n")
+    (folder / "TaskPins.h").write_text("#define VALVE 4\n")
+    return folder
+
+
+async def test_a_flash_records_the_folder_it_compiled(tmp_path) -> None:  # noqa: ANN001
+    manager, _tool, _, _ = make_manager()
+    folder = _sketch(tmp_path)
+    assert manager.carried(1) is None
+
+    await manager.flash(1, str(folder), "GRGL", None, lambda *a: None)
+
+    assert manager.carried(1) == CarriedSketch(str(folder), sketch_fingerprint(str(folder)))
+
+
+@pytest.mark.parametrize("phase", ["compile", "upload"])
+async def test_a_failed_flash_leaves_nothing_known(tmp_path, phase: str) -> None:  # noqa: ANN001
+    """An upload that died halfway leaves a board nobody can name, and one
+    whose compile failed is not worth trusting either."""
+    manager, tool, _, _ = make_manager()
+    first, second = _sketch(tmp_path), _sketch(tmp_path, "BOX_Utility")
+    await manager.flash(1, str(first), "GRGL", None, lambda *a: None)
+    setattr(tool, f"fail_{phase}", FlashFailed(phase, f"{phase} failed"))
+
+    with pytest.raises(FlashFailed):
+        await manager.flash(1, str(second), "BOX_Utility", None, lambda *a: None)
+
+    assert manager.carried(1) is None
+
+
+async def test_a_flash_refused_by_a_busy_port_keeps_the_record(tmp_path) -> None:  # noqa: ANN001
+    manager, _tool, _, _ = make_manager()
+    folder = _sketch(tmp_path)
+    await manager.flash(1, str(folder), "GRGL", None, lambda *a: None)
+    manager.handler(1).release_for(PortState.RESETTING, "a reset in progress")
+
+    with pytest.raises(IllegalTransition):
+        await manager.flash(1, str(_sketch(tmp_path, "Other")), "Other", None, lambda *a: None)
+
+    # The board was never touched.
+    assert manager.carried(1) is not None and manager.carried(1).is_of(str(folder))
+
+
+async def test_a_vanished_board_takes_the_record_with_it(tmp_path) -> None:  # noqa: ANN001
+    manager, _tool, _, _ = make_manager()
+    await manager.flash(1, str(_sketch(tmp_path)), "GRGL", None, lambda *a: None)
+
+    manager._update_presence([])
+    assert manager.carried(1) is None
+
+
+async def test_rebinding_a_box_forgets_it_and_only_it(tmp_path) -> None:  # noqa: ANN001
+    manager, _tool, _, _ = make_manager()
+    other = DetectedBoard(hardware_id="TESTBOARD02", address="/dev/cu.other", fqbn=FQBN)
+    manager._presence[other.hardware_id] = other
+    manager.update_settings(
+        SidecarSettings.from_payload({
+            "defaultBaud": 115200,
+            "boxes": [{"box": 1, "hardwareId": HWID}, {"box": 2, "hardwareId": "TESTBOARD02"}],
+        })
+    )
+    await manager.flash(1, str(_sketch(tmp_path)), "GRGL", None, lambda *a: None)
+    await manager.flash(2, str(_sketch(tmp_path, "Other")), "Other", None, lambda *a: None)
+
+    # Box 2 now answers with box 1's old board; box 1 is unchanged.
+    manager.update_settings(
+        SidecarSettings.from_payload({
+            "defaultBaud": 9600,
+            "boxes": [{"box": 1, "hardwareId": HWID}, {"box": 2, "hardwareId": "TESTBOARD03"}],
+        })
+    )
+    assert manager.carried(1) is not None
+    assert manager.carried(2) is None
+
+
+def test_the_fingerprint_follows_content_not_noise(tmp_path) -> None:  # noqa: ANN001
+    folder = _sketch(tmp_path)
+    before = sketch_fingerprint(str(folder))
+
+    (folder / ".DS_Store").write_bytes(b"\0finder")
+    assert sketch_fingerprint(str(folder)) == before
+
+    (folder / "TaskPins.h").write_text("#define VALVE 5\n")
+    assert sketch_fingerprint(str(folder)) != before
+
+    # So does a file going away; a folder that is not there hashes as empty.
+    (folder / "TaskPins.h").unlink()
+    assert sketch_fingerprint(str(folder)) != before
+    assert sketch_fingerprint(str(tmp_path / "missing")) == sketch_fingerprint(str(tmp_path / "gone"))
 
 
 # --- reset ----------------------------------------------------------------

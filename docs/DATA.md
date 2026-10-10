@@ -308,7 +308,7 @@ Recorded runs' entries appear as each run is recorded at finalization; recovered
 Each session folder that has a log gets a `notes.md` beside its format folders: header times, operator, summary, what changed, and the notes in time order. The database is the source of truth; the file is **derived**, rewritten whole, never read back. It exists so the log travels with the data — to the backup mirror, a colleague's copy, whoever opens the folder without Ephymeris.
 
 - **One file per folder, not per record.** Split records share a folder ([Tidy records](#tidy-records)), so the file covers every record pointing at it.
-- **Written about a second after the last change** (debounced per session), in a worker thread, via `notes.md.part` and an atomic replace, then queued for [backup](#session-files). A command reply never waits on it and the runner never calls it, so a slow share costs only a stale copy.
+- **Written about a second after the last change** (debounced per session), in a worker thread, via `notes.md.part` and an atomic replace, then queued for [backup](#session-files). Folder-mates debounce separately, so writes to one folder hold a per-folder lock across render and replace: Windows refuses a replace while another is in flight, and an earlier render must never land last. A command reply never waits on it and the runner never calls it, so a slow share costs only a stale copy.
 - **A missing session folder is created; a missing parent is not.** A missing prefix folder means an unmounted or moved archive, and recreating its path would scatter notes away from their data. Any failure is logged; the database copy is intact.
 - **Invisible to the archive walk**, which only reads inside the format folders.
 

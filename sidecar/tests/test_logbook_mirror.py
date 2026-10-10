@@ -6,7 +6,10 @@ invisible to everything that reads the archive.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -179,3 +182,38 @@ async def test_folder_mates_share_one_file(rig: Rig) -> None:
         encoding="utf-8"
     )
     assert "morning note" in text and "afternoon note" in text
+
+
+async def test_folder_mates_never_write_at_once(rig: Rig, monkeypatch) -> None:
+    """Folder-mates debounce separately, so their mirrors can run together. Two
+    replaces of one `notes.md` at once fail on Windows, and an earlier render
+    landing last leaves the file stale anywhere — so writes to a folder queue."""
+    logbook = _service(rig, [])
+    first = rig.add_session("12", DAY)
+    second = rig.add_session("12", DAY)
+    rig.add_run(first, "a1", HIT_1 * 3)
+    await logbook.add_note(first, {"tag": "observation", "body": "morning note"})
+    await logbook.add_note(second, {"tag": "observation", "body": "afternoon note"})
+
+    inside, most = 0, 0
+    guard = threading.Lock()
+    real_write = mirror.write_mirror
+
+    def slow_write(folder: Path, text: str) -> Path | None:
+        nonlocal inside, most
+        with guard:
+            inside += 1
+            most = max(most, inside)
+        time.sleep(0.05)
+        try:
+            return real_write(folder, text)
+        finally:
+            with guard:
+                inside -= 1
+
+    monkeypatch.setattr(mirror, "write_mirror", slow_write)
+    await asyncio.gather(
+        asyncio.to_thread(logbook.write_mirror, first),
+        asyncio.to_thread(logbook.write_mirror, second),
+    )
+    assert most == 1

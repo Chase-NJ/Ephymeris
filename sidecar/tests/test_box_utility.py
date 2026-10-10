@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -145,11 +146,14 @@ def test_a_generated_table_compiles_against_the_engine(tmp_path):
         encoding="utf-8",
     )
     compiler = shutil.which("clang++") or shutil.which("g++")
-    binary = tmp_path / "utility"
-    subprocess.run(
+    # Windows will not launch a binary without its .exe.
+    binary = tmp_path / ("utility.exe" if os.name == "nt" else "utility")
+    built = subprocess.run(
         [compiler, "-std=c++11", "-Wall", "-Werror", "-Wno-unused-function",
          f"-I{host / 'box_shim'}", f"-I{host}", f"-I{host.parents[1]}",
          "-x", "c++", str(source), "-o", str(binary)],
-        check=True, capture_output=True,
+        capture_output=True, text=True,
     )
-    assert subprocess.run([str(binary)], capture_output=True).returncode == 0
+    assert built.returncode == 0, f"{compiler} failed:\n{built.stdout}{built.stderr}"
+    ran = subprocess.run([str(binary)], capture_output=True, text=True)
+    assert ran.returncode == 0, ran.stdout + ran.stderr

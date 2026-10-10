@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +59,12 @@ class LogbookService:
         self._enqueue_backup = enqueue_backup
         self._pending: dict[str, asyncio.TimerHandle] = {}
         self._writes: set[asyncio.Task[None]] = set()
+        # One lock per session folder, held across render and replace. Folder-mates
+        # debounce separately, so two writes of one notes.md can overlap: Windows
+        # refuses the second replace outright, and on any OS the earlier render
+        # could land last.
+        self._folder_locks: dict[str, threading.Lock] = {}
+        self._folder_locks_guard = threading.Lock()
 
     # --- reads ------------------------------------------------------------
 
@@ -310,6 +317,15 @@ class LogbookService:
             return None
         if not session.folder_path:
             return None
+        with self._folder_lock(session.folder_path):
+            return self._write_folder_mirror(session)
+
+    def _folder_lock(self, folder_path: str) -> threading.Lock:
+        key = _folder_key(folder_path)
+        with self._folder_locks_guard:
+            return self._folder_locks.setdefault(key, threading.Lock())
+
+    def _write_folder_mirror(self, session: Session) -> Path | None:
         folder = Path(session.folder_path).expanduser()
         mates = [
             s
@@ -396,11 +412,12 @@ def _moment(value: Any) -> str | None:
     return parsed.astimezone(timezone.utc).isoformat(timespec="milliseconds")
 
 
-def _same_folder(a: str, b: str) -> bool:
-    def norm(path: str) -> str:
-        try:
-            return str(Path(path).expanduser().resolve()).casefold()
-        except OSError:  # pragma: no cover
-            return path.casefold()
+def _folder_key(path: str) -> str:
+    try:
+        return str(Path(path).expanduser().resolve()).casefold()
+    except OSError:  # pragma: no cover
+        return path.casefold()
 
-    return norm(a) == norm(b)
+
+def _same_folder(a: str, b: str) -> bool:
+    return _folder_key(a) == _folder_key(b)

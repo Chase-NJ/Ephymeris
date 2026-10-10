@@ -1365,6 +1365,12 @@ export interface RescanResult {
    */
   pruned: RescanPruned;
   /**
+   * Records re-pointed, before the prune, from a folder this cohort was moved out of to the files
+   * now under its own (`DATA.md#data-folder`) — the repair for a relocate that once moved the
+   * files and left the records behind.
+   */
+  rehomed: number;
+  /**
    * Extra copies of an already-seen run, skipped. A hand-managed archive often keeps a
    * consolidated copy beside the per-prefix originals; adopting both would double every animal.
    */

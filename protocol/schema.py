@@ -1415,6 +1415,14 @@ SHAPES = (
                 "left alone, so an unplugged drive can't erase history.",
             ),
             f(
+                "rehomed",
+                INT,
+                doc="Records re-pointed, before the prune, from a folder this "
+                "cohort was moved out of to the files now under its own "
+                "(`DATA.md#data-folder`) — the repair for a relocate that once "
+                "moved the files and left the records behind.",
+            ),
+            f(
                 "duplicates",
                 INT,
                 doc="Extra copies of an already-seen run, skipped. A hand-managed "
@@ -2747,7 +2755,11 @@ COMMANDS = (
         ),
         result=_COHORT,
         doc="The explicit relocate, distinct from renaming "
-        "(`DATA.md#cohorts-animals-and-groups`).",
+        "(`DATA.md#data-folder`). Moving the contents moves the records' "
+        "stored paths with the files, journalled so a crash is finished or "
+        "undone at the next start; refused (`DATA_FOLDER_INVALID`) while a "
+        "session is set up or running, and `INTERNAL` while an analytics walk "
+        "runs. Long-running; the client raises its reply timeout.",
     ),
     Command(
         "cohorts.moveAnimals",
@@ -3153,7 +3165,9 @@ COMMANDS = (
         "expensive reconciliation is a deliberate user action, never a side "
         "effect of opening a view. Reconciles **both ways**: files no record "
         "points at are adopted, and records pointing at files the disk no "
-        "longer has are pruned. Publishes `analytics.progress`. `INTERNAL` "
+        "longer has are pruned — after records an earlier relocate left at "
+        "the old folder are re-pointed (`rehomed`). Publishes "
+        "`analytics.progress`. `INTERNAL` "
         "when another analytics walk is already running. Long-running; the "
         "client raises its reply timeout.",
     ),

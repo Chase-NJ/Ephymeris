@@ -288,8 +288,14 @@ Use **Move history…** on each, choosing the other cohort: their history joins 
 
 The cohort's data folder is fixed when the cohort is made. **Renaming a cohort does not move or rename
 its folder.** To move it, use **Change data folder…**: with **Move existing contents to the new location**
-ticked, the files are moved and the new folder must be empty. With it unticked, nothing is moved; the
-cohort is simply pointed at a folder that already holds its data.
+ticked, the files are moved and the new folder must be empty. Ephymeris's own records of every session
+move with them, so Analytics and the Log carry on as before. This waits until no session is set up or
+running, and if Ephymeris closes partway through, it finishes or undoes the move the next time it starts.
+With the box unticked, nothing is moved; the cohort is simply pointed at a folder that already holds its
+data.
+
+If a cohort's folder was moved with an older version of Ephymeris, click **Rescan** in Analytics once:
+it finds the records still naming the old folder and points them at the files in the new one.
 
 ### Archive and delete
 

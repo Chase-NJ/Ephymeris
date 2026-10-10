@@ -551,7 +551,7 @@ Permanent delete of the bookkeeping only. `COHORT_NOT_ARCHIVED` unless archived 
 <a id="cmd-cohorts.setdatafolder"></a>
 #### `cohorts.setDataFolder`
 
-The explicit relocate, distinct from renaming (`DATA.md#cohorts-animals-and-groups`).
+The explicit relocate, distinct from renaming (`DATA.md#data-folder`). Moving the contents moves the records' stored paths with the files, journalled so a crash is finished or undone at the next start; refused (`DATA_FOLDER_INVALID`) while a session is set up or running, and `INTERNAL` while an analytics walk runs. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -985,7 +985,7 @@ Per-run learning-curve data (`DATA.md#derived-metrics`), plus each run's strateg
 <a id="cmd-analytics.rescan"></a>
 #### `analytics.rescan`
 
-The explicit archive walk (`DATA.md#reading-the-archive`) — expensive reconciliation is a deliberate user action, never a side effect of opening a view. Reconciles **both ways**: files no record points at are adopted, and records pointing at files the disk no longer has are pruned. Publishes `analytics.progress`. `INTERNAL` when another analytics walk is already running. Long-running; the client raises its reply timeout.
+The explicit archive walk (`DATA.md#reading-the-archive`) — expensive reconciliation is a deliberate user action, never a side effect of opening a view. Reconciles **both ways**: files no record points at are adopted, and records pointing at files the disk no longer has are pruned — after records an earlier relocate left at the old folder are re-pointed (`rehomed`). Publishes `analytics.progress`. `INTERNAL` when another analytics walk is already running. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -2400,6 +2400,7 @@ What the rescan removed because the disk no longer has it (`DATA.md#reading-the-
 | `scanned` | number |  |
 | `adopted` | number | What this scan **decided** — not how many adopted rows the cohort has. A file already adopted from that same path and unchanged since is carried forward unread, so a rescan that changed nothing reports 0. |
 | `pruned` | [RescanPruned](#shape-rescanpruned) | Records reconciled away. Only ever counts paths that are **reachable and absent** — a path under an unreachable root is left alone, so an unplugged drive can't erase history. |
+| `rehomed` | number | Records re-pointed, before the prune, from a folder this cohort was moved out of to the files now under its own (`DATA.md#data-folder`) — the repair for a relocate that once moved the files and left the records behind. |
 | `duplicates` | number | Extra copies of an already-seen run, skipped. A hand-managed archive often keeps a consolidated copy beside the per-prefix originals; adopting both would double every animal. |
 | `orphans` | [RescanOrphan](#shape-rescanorphan)[] |  |
 | `cohortId` | string |  |

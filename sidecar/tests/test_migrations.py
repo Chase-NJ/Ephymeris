@@ -1076,7 +1076,7 @@ def test_an_older_database_gains_the_former_member_and_move_tables(tmp_path: Pat
     db.close()
 
     assert user_version(path) == SCHEMA_VERSION
-    assert {"former_animals", "animal_moves"} <= tables(path)
+    assert {"former_animals", "animal_moves", "folder_moves"} <= tables(path)
     conn = sqlite3.connect(path)
     try:
         assert conn.execute("SELECT name FROM cohorts").fetchall() == [("Batch A",)]

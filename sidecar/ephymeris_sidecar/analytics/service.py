@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from ..cohorts import relocate
 from ..logbook.repository import LogbookRepository
 from ..sessions import tidy as session_tidy
 from ..sessions.models import Session, SessionAnimalRun
@@ -445,6 +446,14 @@ class AnalyticsService:
             folder_exists = await asyncio.to_thread(
                 lambda: Path(cohort.data_folder).expanduser().is_dir()
             )
+            # Records an earlier relocate left at the old folder are re-pointed
+            # *before* the prune, which would otherwise read their files as
+            # deleted and drop them (`DATA.md#data-folder`).
+            rehomed = (
+                await asyncio.to_thread(relocate.rehome, self._db, cohort_id)
+                if adopt_orphans and folder_exists
+                else 0
+            )
             # Prune before the walk, so `known` is built from surviving records
             # and a run whose file *moved* is re-adopted in the same pass
             # rather than pruned on one scan and re-found on the next.
@@ -544,6 +553,7 @@ class AnalyticsService:
             "scanned": len(found),
             "adopted": adopted,
             "pruned": pruned,
+            "rehomed": rehomed,
             "duplicates": duplicates,
             "orphans": orphans,
             "cohortId": cohort_id,
@@ -714,6 +724,19 @@ class AnalyticsService:
         return session_tidy.plan_json(
             planned, merged_counts, cohort_id=cohort_id, applied=True
         )
+
+    # --- relocating a cohort's folder (DATA.md#data-folder) ---------------
+
+    async def relocate(self, cohort_id: str, destination: str, move_existing: bool) -> Path:
+        """Change a cohort's data folder, its records' paths following its
+        files, under the lock a rescan takes — a rescan reading the records
+        mid-move would prune every run whose file had just left."""
+        if self._lock.locked():
+            raise AnalyticsBusy("an analytics scan is running — try again when it finishes")
+        async with self._lock:
+            return await asyncio.to_thread(
+                relocate.relocate_cohort, self._db, cohort_id, destination, move_existing
+            )
 
     # --- moving animals (DATA.md#moving-animals-between-cohorts) ----------
 

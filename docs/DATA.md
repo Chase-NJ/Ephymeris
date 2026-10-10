@@ -231,6 +231,17 @@ Relocating is a separate action, `cohorts.setDataFolder` (`relocate`), with two 
 > [!WARNING]
 > **`moveExisting: false` is how a cohort attaches to an archive written before this app existed** — the reason [orphan adoption](#orphan-adoption) exists. Requiring an empty destination in both cases made that intent impossible to express. The empty rule protects against merge collisions, and there are none when nothing is written.
 
+**Moving the contents moves the records with them** (`cohorts/relocate.py`). Session records, run records and recovered runs store **absolute** paths, so a move that only repointed the cohort left every one of them at the old folder — and the next Rescan, finding those files gone with the storage reachable, [pruned](#pruning) the records, losing the box, stop reason and parameters only a recorded run carries. The stored paths (and the cache rows keyed by them) now move in the same operation, journalled in `folder_moves`:
+
+| Destination | How | A crash in between |
+|---|---|---|
+| Same volume | One atomic `rename` of the folder, then the records in one transaction | The folder is demonstrably at the target, so the records are rolled forward at the next start |
+| Another volume | Copy and size-check every file, commit the records, then delete each original whose copy is in place | Undone while copying (only copies whose original is still there are removed); finished after the commit |
+
+It runs under the analytics lock, so no rescan reads the records mid-move, and is refused while a session is set up or running — a session writing into the folder would be writing into one that moves. Pointing without moving rewrites nothing.
+
+**Rescan repairs a relocate from before this.** Before it prunes, it re-points (`rehomed`) records left at a folder the cohort was moved out of: a stale path is one outside the cohort's folder with nothing there; the old folder is the root most stale paths agree on, found by which tail of each exists under the cohort's folder; and only paths whose files (or, for a run, its write-ahead `.tsv`) are actually there are rewritten. Anything else is left to the prune's own rules.
+
 ### Moving animals between cohorts
 
 Splitting a cohort — two slow learners out of twelve into a cohort of their own — moves animals **and their history** (`cohorts.moveAnimals`; planned by `cohorts/move.py`, carried out by `cohorts/move_apply.py`). The two lab machines keep separate databases over one shared archive, so the files are the only fact both agree on: a move takes the animals' **files** into the destination's data folder, and their run records, recovered runs and notes follow. Afterwards the history is the destination's and none of it is the source's.
@@ -264,7 +275,7 @@ The session's operator and summary are copied too. A copied carry-forward flag i
 
 **Caches follow.** `run_metrics_cache` rows are re-keyed to the new path and stat — the content is hash-verified identical, so the cached summary is still right — and adoptions take the new stat, so neither re-reads anything. Copied files are queued for [backup](#backup-mirroring); the mirror is additive, so the old copies stay in the source's mirror folder.
 
-**Refused**, with nothing touched, when: a session is held or a box runs anywhere in the app (copying competes with the write-ahead log's fsync); either cohort has an open (`configuring`/`running`) session; either data folder is unreachable; the folders are the same or one is inside the other; a destination file exists **with different content**; a run file lies outside the source's folder (the gap a `setDataFolder` move leaves; rescan first); two moved animals share a name; or the destination is archived. An identical file already at the destination is not a refusal.
+**Refused**, with nothing touched, when: a session is held or a box runs anywhere in the app (copying competes with the write-ahead log's fsync); either cohort has an open (`configuring`/`running`) session; either data folder is unreachable; the folders are the same or one is inside the other; a destination file exists **with different content**; a run file lies outside the source's folder (left by a data-folder move from before records followed one; a rescan [re-points it](#data-folder)); two moved animals share a name; or the destination is archived. An identical file already at the destination is not a refusal.
 
 **Crash safety** — the order, and every step idempotent:
 
@@ -632,6 +643,7 @@ erDiagram
 | `animals` | `id`, `cohort_id`, `group_id`, `name`, `box_number`, `cage`, `sex`, `id_number`, `notes` | Cascades from `cohorts` and `groups` |
 | `former_animals` | `id`, `cohort_id`, `name`, `cage`, `sex`, `id_number`, `notes`, `group_name`, `removed_at` | [Former members](#former-members). Cascades from `cohorts` only — never from `groups` |
 | `animal_moves` | `id`, `source_cohort_id`, `dest_cohort_id`, `state`, `plan_json`, `created_at`, `updated_at`, `error` | The journal of a [move between cohorts](#moving-animals-between-cohorts). No foreign keys: the record of a move outlives either cohort |
+| `folder_moves` | `id`, `cohort_id`, `source`, `target`, `state`, `created_at`, `updated_at`, `error` | The journal of a [data-folder move](#data-folder) that carries the records' paths with it |
 | `prefixes` | `id`, `name` (`UNIQUE COLLATE NOCASE`) | Hard delete; nothing on disk depends on it |
 | `sessions` | `id`, `cohort_id`, `prefix_id`, `prefix_name`, `session_number`, `date`, `started_at`, `ended_at`, `status`, `folder_path`, `group_runs` (JSON), `duration_minutes`, `recording_json` | No FK on `prefix_id` |
 | `session_animal_runs` | `id`, `session_id`, `animal_id`, `box_number`, `sketch_path`, `file_path`, `started_at`, `ended_at`, `stop_reason`, `profile_hash`, `config_json`, `params_hash` | Cascades from `sessions`; **no FK on `animal_id`** |
@@ -875,6 +887,8 @@ Adoption fixes files with no record. The other direction — **a record with no 
 > **Absence is evidence only when the storage is reachable.** `exists() == False` means both *the operator deleted this* and *this volume isn't mounted today*. Acting on the second would let one rescan with the archive drive unplugged erase a cohort's history. So a path counts as gone only when **some ancestor of it is readable** (`_is_gone`, `_storage_is_reachable`): a deleted tree always leaves one, an unmounted volume leaves none.
 
 Also never pruned, preferring a stale record to a wrong deletion: a run with **no recorded path** (nothing was observed; it reports `missing`); a path whose `stat` fails **for any reason but absence**; a `.json` whose **`.tsv` survives** ([recovery](#crash-recovery) will rebuild it, and the record's `animal_id`/`profile_hash`/`config_json` are worth more than adoption could reconstruct); and a path that exists but is **the wrong kind of thing**.
+
+Before anything is removed, records a [data-folder move](#data-folder) left at the old folder are re-pointed to their files under the cohort's own — otherwise they would read as deleted.
 
 Order of removal:
 

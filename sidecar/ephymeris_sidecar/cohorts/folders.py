@@ -72,6 +72,32 @@ def ensure_folder(path: str | Path) -> Path:
     return target
 
 
+def resolved(path: str | Path) -> Path:
+    """`path` made absolute and normalized, whether or not it exists."""
+    try:
+        return Path(path).expanduser().resolve()
+    except OSError:  # pragma: no cover
+        return Path(path).expanduser()
+
+
+def relative_below(path: str | Path, root: str | Path) -> Path | None:
+    """`path` below `root`, compared the way the lab machines' filesystems do
+    — case-insensitively, separators and `..` resolved — with the original
+    spelling of the part below kept. None when it is not below.
+
+    Stored paths are strings written by whichever code recorded them, so the
+    same folder can come back with different separators or case; a literal
+    prefix test would miss exactly the paths that most need rewriting.
+    """
+    full = resolved(path).parts
+    base = resolved(root).parts
+    if len(full) <= len(base):
+        return None
+    if [p.casefold() for p in full[: len(base)]] != [p.casefold() for p in base]:
+        return None
+    return Path(*full[len(base) :])
+
+
 def _is_empty(path: Path) -> bool:
     try:
         return not any(path.iterdir())

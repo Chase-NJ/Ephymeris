@@ -22,7 +22,7 @@ from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager, BackupNotConfigured
 from .boards import create_board_tool
 from .boards.tool import FlashFailed
-from .cohorts import folders, grouping, move_apply
+from .cohorts import folders, grouping, move_apply, relocate
 from .cohorts.move import MoveRequest
 from .cohorts.db import DB_FILENAME, Database
 from .cohorts.folders import DataFolderError
@@ -336,6 +336,11 @@ class Application:
             move_apply.resume(self.db)
         except Exception:  # noqa: BLE001
             log.exception("couldn't finish an interrupted move of animals")
+        # Likewise a data-folder relocate (`DATA.md#data-folder`).
+        try:
+            relocate.resume(self.db)
+        except Exception:  # noqa: BLE001
+            log.exception("couldn't finish an interrupted data-folder move")
         self.logbook = LogbookService(
             db=self.db,
             cohorts=self.cohorts,
@@ -900,18 +905,26 @@ class Application:
         return {"deleted": True}
 
     async def _cohorts_set_data_folder(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """The explicit relocate (`DATA.md#data-folder`). Moving the contents
+        moves the records' paths with them, so it waits for an idle rig: a
+        session writing into the folder would be writing into one that moves."""
         cohort_id = _str_arg(args, "id")
         path = _str_arg(args, "path")
         move_existing = args.get("moveExisting") is True
+        if move_existing and (
+            self._running_session_id or (self.runner is not None and self.runner.running_boxes())
+        ):
+            raise CommandError(
+                ErrCode.DATA_FOLDER_INVALID,
+                "A session is set up or running. Finish it, then move the data folder.",
+            )
 
         with _cohort_errors():
+            try:
+                await self._require_analytics().relocate(cohort_id, path, move_existing)
+            except AnalyticsBusy as exc:
+                raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
             cohort = await asyncio.to_thread(self.cohorts.get, cohort_id)
-            target = await asyncio.to_thread(
-                folders.relocate, cohort.data_folder, path, move_existing
-            )
-            cohort = await asyncio.to_thread(
-                self.cohorts.set_data_folder, cohort_id, str(target)
-            )
         await self._broadcast_cohorts()
         return {"cohort": cohort.to_json()}
 

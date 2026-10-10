@@ -73,7 +73,9 @@ DB_FILENAME = "ephymeris.db"
 #: v14 added former_animals (`DATA.md#former-members`) and animal_moves
 #: (`DATA.md#moving-animals-between-cohorts`) — new tables only, so no
 #: migration, v11's pattern.
-SCHEMA_VERSION = 14
+#: v15 added folder_moves (`DATA.md#data-folder`) — the journal that lets a
+#: relocate move a cohort's files and its records' paths together. A table only.
+SCHEMA_VERSION = 15
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -135,6 +137,20 @@ CREATE TABLE IF NOT EXISTS animal_moves (
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
     error             TEXT
+);
+
+-- The journal of a "move existing contents" relocate (DATA.md#data-folder):
+-- written before the folder moves, so a crash between the files moving and
+-- the records following them is finished, or undone, at the next start.
+CREATE TABLE IF NOT EXISTS folder_moves (
+    id          TEXT PRIMARY KEY,
+    cohort_id   TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    target      TEXT NOT NULL,
+    state       TEXT NOT NULL,   -- moving | copying | committed | done | rolled-back
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    error       TEXT
 );
 
 -- Session prefixes (DATA.md#prefixes): global, shared across all cohorts.

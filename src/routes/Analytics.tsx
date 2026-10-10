@@ -701,6 +701,13 @@ function describeRescan(result: RescanResult): string {
   const parts = [
     `Scanned ${result.scanned} file${result.scanned === 1 ? "" : "s"}`,
   ];
+  // Records a past data-folder move left at the old folder, found and
+  // re-pointed rather than pruned (`DATA.md#data-folder`).
+  if (result.rehomed > 0) {
+    parts.push(
+      `re-pointed ${result.rehomed} record${result.rehomed === 1 ? "" : "s"} still naming the folder this cohort was moved out of`,
+    );
+  }
   if (result.adopted > 0) {
     parts.push(`adopted ${result.adopted} that no run record pointed at`);
   }

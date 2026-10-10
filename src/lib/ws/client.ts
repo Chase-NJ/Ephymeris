@@ -76,6 +76,9 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   // when that is where the archive lives (`DATA.md#moving-animals-between-cohorts`).
   // The preview hashes them too.
   [CMD.COHORTS_MOVE_ANIMALS]: 600_000,
+  // Moving a whole archive to another drive copies, checks and deletes every
+  // file in it (`DATA.md#data-folder`).
+  [CMD.COHORTS_SET_DATA_FOLDER]: 600_000,
   // A RECORDING session ends gracefully (`RECORDING.md#graceful-end`): every box is
   // allowed to finish the trial it is in — up to 45 s — before RHX is stopped.
   // A behavior-only session still answers in well under a second.

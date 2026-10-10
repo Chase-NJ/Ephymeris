@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 from ..sessions.models import GroupRun, Session
 from ..sessions.tidy import session_key
+from .folders import relative_below, resolved
 from .models import Cohort, CohortNotFound
 
 #: How a moved animal arrives. `joins` reuses a same-named animal the
@@ -689,27 +690,14 @@ def _is_dir(path: Path) -> bool:
 
 
 def _resolved(path: str | Path) -> Path:
-    try:
-        return Path(path).expanduser().resolve()
-    except OSError:  # pragma: no cover
-        return Path(path).expanduser()
+    return resolved(path)
 
 
 def _norm(path: str) -> str:
     return str(_resolved(path)).casefold()
 
 
-def _relative(path: str, root: Path) -> Path | None:
-    """`path` below `root`, compared the way the lab machines' filesystems do
-    — case-insensitively, separators and `..` resolved — with the original
-    spelling of the part below kept. None when it is not below."""
-    full = _resolved(path).parts
-    base = _resolved(root).parts
-    if len(full) <= len(base):
-        return None
-    if [p.casefold() for p in full[: len(base)]] != [p.casefold() for p in base]:
-        return None
-    return Path(*full[len(base) :])
+_relative = relative_below
 
 
 def _nested(a: Path, b: Path) -> bool:

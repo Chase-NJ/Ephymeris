@@ -111,6 +111,49 @@ class Animal:
 
 
 @dataclass
+class FormerAnimal:
+    """An animal that has history in a cohort but is no longer on its roster
+    (`DATA.md#former-members`).
+
+    Two sources, one shape. `removed` is a roster removal the cohort kept a row
+    for; `files` is an id the cohort's runs, adoptions or notes still name with
+    no row anywhere — a removal from before former members existed — named from
+    its files' stems and never stored. Either way the history behind it is
+    real, and a name is what lets every view show it as an animal rather than an
+    id.
+    """
+
+    id: str
+    #: Null only for a `files` id whose paths name no animal — a note-only id.
+    name: str | None
+    source: Literal["removed", "files"]
+    removed_at: str | None = None
+    #: Recorded plus adopted runs this cohort holds for the animal.
+    run_count: int = 0
+    sex: Sex | None = None
+    id_number: str | None = None
+    cage: int | None = None
+    notes: str | None = None
+    #: The group it was in, by name: groups are rewritten on every roster edit,
+    #: so an id would dangle by the next save.
+    group_name: str | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "source": self.source,
+            "removedAt": self.removed_at,
+            "runCount": self.run_count,
+            "sex": self.sex,
+            "idNumber": self.id_number,
+            "cage": self.cage,
+            "notes": self.notes,
+            "groupName": self.group_name,
+        }
+
+
+@dataclass
 class Cohort:
     id: str
     name: str
@@ -122,6 +165,10 @@ class Cohort:
     groups: list[Group] = field(default_factory=list)
     #: None means "derive from `id`" — see `Appearance`.
     appearance: Appearance | None = None
+    #: Animals with history here that are no longer on the roster. Filled only
+    #: when one cohort is loaded on its own (`CohortRepository.get`); a listing
+    #: never needs it and leaves it empty.
+    former_animals: list[FormerAnimal] = field(default_factory=list)
 
     @property
     def cage_count(self) -> int:
@@ -150,6 +197,7 @@ class Cohort:
             # Null on almost every cohort, and that is the answer rather than a
             # missing one: the client derives the world from `id` (`ARCHITECTURE.md#cohort-browser`).
             "appearance": self.appearance.to_json() if self.appearance else None,
+            "formerAnimals": [a.to_json() for a in self.former_animals],
         }
 
     def to_summary(self) -> dict[str, Any]:

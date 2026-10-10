@@ -6,20 +6,32 @@ import { useSidecar } from "@/lib/ws/context";
 
 import type { RosterAnimal } from "./tags";
 
+/** An animal with history in the cohort but off its roster, by name only. */
+export interface FormerName {
+  id: string;
+  name: string;
+}
+
+interface Members {
+  animals: RosterAnimal[];
+  former: ReadonlyArray<FormerName>;
+}
+
 /**
- * A cohort's animals, for naming a note's scope and offering it in a picker.
+ * A cohort's animals, for naming a note's scope and offering it in a picker —
+ * plus its former members (`DATA.md#former-members`), which name history but
+ * are never offered as a scope by this hook.
  *
  * Refetched when the cohort's `updatedAt` moves, so a roster edit in another
- * tab reaches an open Log. An animal since removed from the roster is not
- * here; callers fall back to whatever name the run itself carried.
+ * tab reaches an open Log.
  */
-export function useRoster(cohortId: string | null): RosterAnimal[] {
+export function useRoster(cohortId: string | null): Members {
   const { client, status } = useSidecar();
   const cohorts = useCohorts();
   const stamp = cohorts.find((c) => c.id === cohortId)?.updatedAt ?? null;
-  const [roster, setRoster] = useState<{ id: string | null; animals: RosterAnimal[] }>({
+  const [roster, setRoster] = useState<{ id: string | null } & Members>({
     id: null,
-    animals: [],
+    ...NONE,
   });
 
   useEffect(() => {
@@ -31,6 +43,9 @@ export function useRoster(cohortId: string | null): RosterAnimal[] {
         setRoster({
           id: cohortId,
           animals: cohort.animals.map((a) => ({ id: a.id, name: a.name, box: a.boxNumber })),
+          former: cohort.formerAnimals.flatMap((a) =>
+            a.name === null ? [] : [{ id: a.id, name: a.name }],
+          ),
         });
       })
       .catch(() => {
@@ -41,13 +56,12 @@ export function useRoster(cohortId: string | null): RosterAnimal[] {
     };
   }, [client, status, cohortId, stamp]);
 
-  return roster.id === cohortId ? roster.animals : NONE;
+  return roster.id === cohortId ? roster : NONE;
 }
 
-const NONE: RosterAnimal[] = [];
-const NO_FALLBACK: ReadonlyArray<{ id: string; name: string }> = [];
+const NONE: Members = { animals: [], former: [] };
 
-/** id → name, the runs' own names filling in for animals since removed. */
+/** id → name: the roster, with former members filling in for animals since removed. */
 export function useAnimalNames(
   roster: RosterAnimal[],
   // A shared empty default, not `= []`: a fresh array every render would make
@@ -60,3 +74,5 @@ export function useAnimalNames(
     return names;
   }, [roster, fallback]);
 }
+
+const NO_FALLBACK: ReadonlyArray<{ id: string; name: string }> = [];

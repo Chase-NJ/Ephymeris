@@ -29,6 +29,8 @@ import { AnimalTable } from "@/components/cohorts/AnimalTable";
 import { CageAssignment } from "@/components/cohorts/CageAssignment";
 import { PlanetDisc } from "@/components/cohorts/PlanetDisc";
 import { DataFolderField } from "@/components/cohorts/DataFolderField";
+import { FormerMembers } from "@/components/cohorts/FormerMembers";
+import { MoveAnimals } from "@/components/cohorts/MoveAnimals";
 import { GroupsPanel } from "@/components/cohorts/GroupsPanel";
 import {
   assignmentProblems,
@@ -95,6 +97,8 @@ export function CohortEditor() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** The animal whose move is being previewed (`DATA.md#moving-animals-between-cohorts`). */
+  const [moving, setMoving] = useState<{ id: string; name: string } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const connected = status === "connected";
@@ -371,8 +375,50 @@ export function CohortEditor() {
                 errors={errors}
                 attention={isNew && stage === 1}
                 onChange={setAnimals}
+                // Saved animals only, and only with nothing unsaved: the move
+                // acts on the roster the sidecar holds, not this draft.
+                onMove={
+                  !cohort
+                    ? undefined
+                    : !isDirty && connected
+                      ? (animal) => setMoving({ id: animal.id, name: animal.name })
+                      : null
+                }
               />
             </SettingGroup>
+            {cohort && cohort.formerAnimals.some((f) => !animals.some((a) => a.id === f.id)) && (
+              <SettingGroup title="Former members">
+                <FormerMembers
+                  former={cohort.formerAnimals}
+                  animals={animals}
+                  groups={groups}
+                  defaultGroupId={defaultGroupId}
+                  onRestore={(animal) => setAnimals((current) => [...current, animal])}
+                  onMove={
+                    isDirty || !connected
+                      ? undefined
+                      : (f) => setMoving({ id: f.id, name: f.name ?? f.id.slice(0, 6) })
+                  }
+                />
+              </SettingGroup>
+            )}
+            {cohort && (
+              <MoveAnimals
+                open={moving !== null}
+                sourceId={cohort.id}
+                sourceName={cohort.name}
+                animal={moving}
+                onClose={() => setMoving(null)}
+                onDone={(result, destination) => {
+                  setMoving(null);
+                  void getCohort(client, cohort.id).then(adopt);
+                  const animal = result.animals[0];
+                  setMessage(
+                    `Moved ${animal?.name ?? "the animal"} to ${destination}, with ${animal?.runs ?? 0} run${animal?.runs === 1 ? "" : "s"} of history.`,
+                  );
+                }}
+              />
+            )}
           </Reveal>
 
           <Reveal open={stage >= 2} still={reduceMotion}>

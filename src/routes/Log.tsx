@@ -49,8 +49,9 @@ export function Log() {
   // The data folder rides the Analytics summary, as on that page; the session
   // page asks for the summary, so it is here by the time anyone looks.
   const dataFolder = useSummary(cohortId)?.dataFolder ?? null;
-  const roster = useRoster(cohortId);
-  const names = useAnimalNames(roster);
+  const members = useRoster(cohortId);
+  const roster = members.animals;
+  const names = useAnimalNames(roster, members.former);
   const composer = useRef<HTMLTextAreaElement>(null);
   // Stable, so the memoized rail and month strip skip the renders a step
   // causes elsewhere on the page (`LogRail`).

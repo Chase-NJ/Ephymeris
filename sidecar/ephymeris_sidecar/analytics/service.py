@@ -236,16 +236,7 @@ class AnalyticsService:
             "cohortId": cohort_id,
             "dataFolder": cohort.data_folder,
             "sessions": [s.to_list_item(index + 1) for index, s in enumerate(sessions)],
-            "animals": [
-                {
-                    "id": a.id,
-                    "name": a.name,
-                    "groupId": a.group_id,
-                    "boxNumber": a.box_number,
-                    "cage": a.cage,
-                }
-                for a in cohort.animals
-            ],
+            "animals": _summary_animals(cohort, payload_runs),
             "groups": [{"id": g.id, "name": g.name, "order": g.order} for g in cohort.groups],
             "runs": payload_runs,
             "falseStarts": set_aside,
@@ -724,6 +715,29 @@ class AnalyticsService:
             planned, merged_counts, cohort_id=cohort_id, applied=True
         )
 
+    # --- moving animals (DATA.md#moving-animals-between-cohorts) ----------
+
+    async def move_animals(
+        self, request: Any, *, apply: bool, busy: str | None
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Preview or carry out a move, under the lock a rescan takes — a move
+        rewrites the records and the folders a walk reads, so neither may see
+        the other half-done.
+
+        Returns the plan's wire shape and, after an apply, the destination
+        files to queue for backup.
+        """
+        from ..cohorts import move_apply  # cohorts.move imports analytics.reader
+
+        if self._lock.locked():
+            raise AnalyticsBusy("an analytics scan is running — try again when it finishes")
+        async with self._lock:
+            if not apply:
+                plan = await asyncio.to_thread(move_apply.preview, self._db, request, busy=busy)
+                return plan.to_json(applied=False), []
+            plan = await asyncio.to_thread(move_apply.apply, self._db, request, busy=busy)
+        return plan.to_json(applied=True), [f.dst for f in plan.files]
+
     # --- carrying adoptions forward (DATA.md#carrying-adoptions-forward) --
 
     def _carry_over(
@@ -803,17 +817,16 @@ class AnalyticsService:
             rat = value if isinstance(value, str) else None
         match = None
         source = None
+        candidates = _adoptable_animals(cohort)
         if rat:
             folded = rat.casefold()
-            match = next(
-                (a.id for a in cohort.animals if a.name.casefold() == folded), None
-            )
+            match = next((a.id for a in candidates if a.name.casefold() == folded), None)
             if match is not None:
                 source = "document"
         if match is None:
             # The document's field is not the only place this run recorded its
             # animal — the filename did too, in the same breath.
-            match = _animal_from_filename(path, session_folder, cohort.animals)
+            match = _animal_from_filename(path, session_folder, candidates)
             if match is not None:
                 source = "filename"
         entry = {
@@ -1519,6 +1532,64 @@ def _prefer(candidate: AdoptedRun, incumbent: AdoptedRun) -> bool:
     return candidate.file_path < incumbent.file_path
 
 
+def _summary_animals(cohort: Any, payload_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The roster, then every former member whose runs are in this summary
+    (`DATA.md#former-members`).
+
+    Appended rather than interleaved: colours are assigned by position, and an
+    animal taken off the roster must not shift the colour of every animal after
+    it. A former member with no run here is left out — the rail would offer a
+    row with nothing behind it.
+    """
+    animals = [
+        {
+            "id": a.id,
+            "name": a.name,
+            "groupId": a.group_id,
+            "boxNumber": a.box_number,
+            "cage": a.cage,
+            "former": False,
+        }
+        for a in cohort.animals
+    ]
+    ran = {run["animalId"] for run in payload_runs}
+    for former in cohort.former_animals:
+        if former.id not in ran:
+            continue
+        animals.append(
+            {
+                "id": former.id,
+                # A note-only id has no files to name it; the short id at least
+                # tells two such animals apart.
+                "name": former.name or f"Unknown animal {former.id[:6]}",
+                "groupId": "",
+                "boxNumber": None,
+                "cage": former.cage,
+                "former": True,
+            }
+        )
+    return animals
+
+
+def _adoptable_animals(cohort: Any) -> list[Any]:
+    """Who a stray file may be matched to: the roster, then the cohort's
+    stored former members (`DATA.md#former-members`).
+
+    A file written while an animal was on the roster is still that animal's
+    after it comes off. But never a former member whose name an active animal
+    now holds — the file is a name, and that name means the animal on the
+    roster. Ids derived from files alone (`source == "files"`) are never
+    candidates: their name is itself a reading of the files.
+    """
+    active = {a.name.casefold() for a in cohort.animals}
+    former = [
+        f
+        for f in getattr(cohort, "former_animals", [])
+        if f.source == "removed" and f.name and f.name.casefold() not in active
+    ]
+    return [*cohort.animals, *former]
+
+
 def _animal_from_filename(
     path: Path, session_folder: Path, animals: list[Any]
 ) -> str | None:
@@ -1540,15 +1611,10 @@ def _animal_from_filename(
     survives all that must still match a roster name exactly, case-folded, the
     same test the document's field had to pass.
     """
-    stem = path.stem
-    marker = f"_{session_folder.name}_"
-    cut = stem.find(marker)
-    if cut <= 0:
+    token = reader.animal_token(path, session_folder)
+    if token is None:
         return None
-    tail = stem[cut + len(marker) :]
-    if len(tail) != 6 or not tail.isdigit():
-        return None
-    folded = stem[:cut].casefold()
+    folded = token.casefold()
     return next((a.id for a in animals if a.name.casefold() == folded), None)
 
 

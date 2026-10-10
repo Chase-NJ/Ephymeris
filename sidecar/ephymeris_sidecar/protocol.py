@@ -73,6 +73,7 @@ class Cmd:
     COHORTS_RESTORE: Final = "cohorts.restore"
     COHORTS_DELETE: Final = "cohorts.delete"
     COHORTS_SET_DATA_FOLDER: Final = "cohorts.setDataFolder"
+    COHORTS_MOVE_ANIMALS: Final = "cohorts.moveAnimals"
     COHORTS_SUGGEST_GROUPS: Final = "cohorts.suggestGroups"
 
     # Prefixes and sessions
@@ -189,6 +190,7 @@ class ErrCode:
     COHORT_NAME_TAKEN: Final = "COHORT_NAME_TAKEN"
     COHORT_INVALID: Final = "COHORT_INVALID"
     COHORT_NOT_ARCHIVED: Final = "COHORT_NOT_ARCHIVED"
+    ANIMAL_MOVE_REFUSED: Final = "ANIMAL_MOVE_REFUSED"
     DATA_FOLDER_INVALID: Final = "DATA_FOLDER_INVALID"
     PREFIX_NAME_TAKEN: Final = "PREFIX_NAME_TAKEN"
     SESSION_INVALID: Final = "SESSION_INVALID"
@@ -247,7 +249,8 @@ SHAPES: Final[dict[str, Any]] = {
     "Group": ('obj', (('id', 'str', False), ('name', 'str', False), ('order', 'int', False))),
     "Animal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('cage', ('union', ('int', 'null')), False), ('sex', ('union', (('ref', 'Sex'), 'null')), False), ('idNumber', ('union', ('str', 'null')), False), ('notes', ('union', ('str', 'null')), False))),
     "CohortAppearance": ('obj', (('type', 'str', False), ('hue', ('union', ('int', 'float')), False), ('ring', 'bool', False), ('seed', ('union', ('int', 'float')), False))),
-    "Cohort": ('obj', (('id', 'str', False), ('name', 'str', False), ('dataFolder', 'str', False), ('animals', ('list', ('ref', 'Animal')), False), ('groups', ('list', ('ref', 'Group')), False), ('archivedAt', ('union', ('str', 'null')), False), ('createdAt', 'str', False), ('updatedAt', 'str', False), ('appearance', ('union', (('ref', 'CohortAppearance'), 'null')), False))),
+    "Cohort": ('obj', (('id', 'str', False), ('name', 'str', False), ('dataFolder', 'str', False), ('animals', ('list', ('ref', 'Animal')), False), ('groups', ('list', ('ref', 'Group')), False), ('archivedAt', ('union', ('str', 'null')), False), ('createdAt', 'str', False), ('updatedAt', 'str', False), ('appearance', ('union', (('ref', 'CohortAppearance'), 'null')), False), ('formerAnimals', ('list', ('ref', 'FormerAnimal')), False))),
+    "FormerAnimal": ('obj', (('id', 'str', False), ('name', ('union', ('str', 'null')), False), ('source', ('lit', ('removed', 'files')), False), ('removedAt', ('union', ('str', 'null')), False), ('runCount', 'int', False), ('sex', ('union', (('ref', 'Sex'), 'null')), False), ('idNumber', ('union', ('str', 'null')), False), ('cage', ('union', ('int', 'null')), False), ('notes', ('union', ('str', 'null')), False), ('groupName', ('union', ('str', 'null')), False))),
     "CohortSummary": ('obj', (('id', 'str', False), ('name', 'str', False), ('animalCount', 'int', False), ('groupCount', 'int', False), ('assignedBoxes', ('list', 'int'), False), ('cageCount', 'int', False), ('archived', 'bool', False), ('createdAt', 'str', False), ('updatedAt', 'str', False), ('appearance', ('union', (('ref', 'CohortAppearance'), 'null')), False))),
     "CohortPatch": ('obj', (('name', 'str', True), ('animals', ('list', ('ref', 'Animal')), True), ('groups', ('list', ('ref', 'Group')), True), ('appearance', ('union', (('ref', 'CohortAppearance'), 'null')), True))),
     "ProposedAnimal": ('obj', (('animalId', 'str', False), ('boxNumber', 'int', False))),
@@ -286,7 +289,7 @@ SHAPES: Final[dict[str, Any]] = {
     "RunStatus": ('lit', ('ok', 'no-metrics', 'missing', 'unreadable')),
     "ProfileSource": ('lit', ('snapshot', 'sketch-current', 'inferred', 'unavailable')),
     "RunSummary": ('obj', (('runId', 'str', False), ('sessionId', 'str', False), ('animalId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('startedAt', 'str', False), ('endedAt', ('union', ('str', 'null')), False), ('sketchPath', 'str', False), ('sketchName', 'str', False), ('profileHash', ('union', ('str', 'null')), False), ('paramsHash', ('union', ('str', 'null')), False), ('profileSource', ('ref', 'ProfileSource'), False), ('stale', 'bool', False), ('falseStart', 'bool', False), ('falseStartSource', ('union', (('lit', ('automatic', 'marked', 'restored')), 'null')), False), ('restartedBy', ('union', ('str', 'null')), False), ('status', ('ref', 'RunStatus'), False), ('metrics', ('list', ('ref', 'MetricSummary')), False), ('overall', ('union', (('ref', 'MetricSummary'), 'null')), False), ('outcomes', ('union', (('ref', 'TrialOutcomes'), 'null')), False), ('conditions', ('list', ('ref', 'ConditionOutcomes')), False), ('engagement', ('union', (('ref', 'TrialEngagement'), 'null')), False), ('totalEvents', 'int', False), ('durationMs', ('union', ('float', 'null')), False), ('stopReason', ('union', ('str', 'null')), False), ('clean', 'bool', False), ('seed', ('union', ('int', 'null')), False), ('detail', ('union', ('str', 'null')), False), ('excludedByDefault', 'bool', False))),
-    "AnalyticsAnimal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('cage', ('union', ('int', 'null')), False))),
+    "AnalyticsAnimal": ('obj', (('id', 'str', False), ('name', 'str', False), ('groupId', 'str', False), ('boxNumber', ('union', ('int', 'null')), False), ('cage', ('union', ('int', 'null')), False), ('former', 'bool', False))),
     "AnswerSide": ('lit', ('left', 'right', 'withhold', 'port')),
     "ProfileMetricInfo": ('obj', (('id', 'str', False), ('label', 'str', False), ('windowSize', 'int', False), ('answerSide', ('union', (('ref', 'AnswerSide'), 'null')), False))),
     "ProfileGroup": ('obj', (('hash', 'str', False), ('taskName', ('union', ('str', 'null')), False), ('kind', ('union', ('str', 'null')), False), ('metrics', ('list', ('ref', 'ProfileMetricInfo')), False), ('runCount', 'int', False))),
@@ -309,6 +312,11 @@ SHAPES: Final[dict[str, Any]] = {
     "TidyEmpty": ('obj', (('session', ('ref', 'TidySession'), False), ('removesFolder', 'bool', False))),
     "TidySkipped": ('obj', (('session', ('ref', 'TidySession'), False), ('reason', 'str', False))),
     "TidyPlan": ('obj', (('cohortId', 'str', False), ('applied', 'bool', False), ('merges', ('list', ('ref', 'TidyMerge')), False), ('empty', ('list', ('ref', 'TidyEmpty')), False), ('skipped', ('list', ('ref', 'TidySkipped')), False))),
+    "AnimalMoveAnimal": ('obj', (('animalId', 'str', False), ('name', 'str', False), ('status', ('lit', ('active', 'former', 'files')), False), ('outcome', ('lit', ('joins', 'carried')), False), ('destinationAnimalId', 'str', False), ('runs', 'int', False), ('files', 'int', False))),
+    "AnimalMoveSession": ('obj', (('sessionId', 'str', False), ('label', 'str', False), ('date', 'str', False), ('kind', ('lit', ('whole', 'split')), False), ('joinsExisting', 'bool', False), ('notesMoved', 'int', False), ('notesCopied', 'int', False))),
+    "AnimalMoveFiles": ('obj', (('count', 'int', False), ('bytes', 'int', False), ('alreadyThere', 'int', False), ('missing', 'int', False))),
+    "AnimalMoveRefusal": ('obj', (('code', 'str', False), ('message', 'str', False))),
+    "AnimalMovePlan": ('obj', (('sourceCohortId', 'str', False), ('destinationCohortId', 'str', False), ('applied', 'bool', False), ('animals', ('list', ('ref', 'AnimalMoveAnimal')), False), ('sessions', ('list', ('ref', 'AnimalMoveSession')), False), ('recoveredSessions', 'int', False), ('files', ('ref', 'AnimalMoveFiles'), False), ('refused', ('list', ('ref', 'AnimalMoveRefusal')), False))),
     "ServerHello": ('obj', (('protocolVersion', 'int', False), ('sidecarVersion', 'str', False))),
     "PortStateData": ('obj', (('box', 'int', False), ('state', ('ref', 'PortStateName'), False), ('prev', ('ref', 'PortStateName'), False), ('reason', 'str', False))),
     "PortOutputData": ('obj', (('box', 'int', False), ('lines', ('list', ('ref', 'OutputLine')), False))),
@@ -394,6 +402,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "cohorts.restore": ('obj', (('id', 'str', False),)),
     "cohorts.delete": ('obj', (('id', 'str', False), ('confirm', 'bool', False))),
     "cohorts.setDataFolder": ('obj', (('id', 'str', False), ('path', 'str', False), ('moveExisting', 'bool', False))),
+    "cohorts.moveAnimals": ('obj', (('cohortId', 'str', False), ('animalIds', ('list', 'str'), False), ('destinationCohortId', 'str', False), ('destinationGroupId', 'str', True), ('apply', 'bool', True))),
     "cohorts.suggestGroups": ('obj', (('id', 'str', False), ('groupCount', 'int', True), ('maxGroupSize', 'int', True), ('balanceBySex', 'bool', True))),
     "prefixes.list": ('obj', ()),
     "prefixes.create": ('obj', (('name', 'str', False),)),
@@ -479,6 +488,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "cohorts.restore": ('obj', (('cohort', ('ref', 'Cohort'), False),)),
     "cohorts.delete": ('obj', (('deleted', 'bool', False),)),
     "cohorts.setDataFolder": ('obj', (('cohort', ('ref', 'Cohort'), False),)),
+    "cohorts.moveAnimals": ('ref', 'AnimalMovePlan'),
     "cohorts.suggestGroups": ('ref', 'GroupProposal'),
     "prefixes.list": ('obj', (('prefixes', ('list', ('ref', 'Prefix')), False),)),
     "prefixes.create": ('obj', (('prefix', ('ref', 'Prefix'), False),)),

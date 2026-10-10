@@ -341,7 +341,10 @@ class LogbookService:
             return None
         try:
             cohort = self._cohorts.get(session.cohort_id)
-            names = {animal.id: animal.name for animal in cohort.animals}
+            # Former members too (`DATA.md#former-members`): the file outlives
+            # the roster, and an id in it is a line nobody can read.
+            names = {f.id: f.name for f in cohort.former_animals if f.name}
+            names.update({animal.id: animal.name for animal in cohort.animals})
             cohort_name = cohort.name
         except Exception:  # noqa: BLE001
             names, cohort_name = {}, ""
@@ -383,6 +386,7 @@ class LogbookService:
             return
         cohort = self._cohorts.get(note.cohort_id)
         known = {animal.id for animal in cohort.animals}
+        known |= {f.id for f in cohort.former_animals}
         recorded = {
             run.animal_id for run in self._sessions.runs_for(note.session_id)
         }

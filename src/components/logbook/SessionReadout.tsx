@@ -115,6 +115,15 @@ export const SessionReadout = memo(function SessionReadout({
   }, [changes, runs]);
   const animalCount = new Set([...runs.map((r) => r.animalId), ...changes.map((c) => c.animalId)])
     .size;
+  // A former member who ran in this session can still be written about
+  // (`DATA.md#former-members`); one who didn't is not offered.
+  const pickable = useMemo(() => {
+    const ran = new Set(runs.map((r) => r.animalId));
+    const former = (summary?.animals ?? [])
+      .filter((a) => a.former && ran.has(a.id))
+      .map((a) => ({ id: a.id, name: a.name, box: null }));
+    return former.length > 0 ? [...roster, ...former] : roster;
+  }, [roster, runs, summary]);
 
   function focusNote(noteId: string) {
     document
@@ -146,7 +155,7 @@ export const SessionReadout = memo(function SessionReadout({
               <NoteComposer
                 key={session.id}
                 sessionDate={session.date}
-                roster={roster}
+                roster={pickable}
                 boxes={boxes}
                 textareaRef={composerRef}
                 onSubmit={async (draft) => {
@@ -159,7 +168,7 @@ export const SessionReadout = memo(function SessionReadout({
             notes={notes}
             names={tableNames}
             sessionDate={session.date}
-            roster={roster}
+            roster={pickable}
             boxes={boxes}
             readOnly={readOnly}
             onEdit={async (note, draft) => {

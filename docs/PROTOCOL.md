@@ -567,6 +567,23 @@ The explicit relocate, distinct from renaming (`DATA.md#cohorts-animals-and-grou
 |---|---|---|
 | `cohort` | [Cohort](#shape-cohort) |  |
 
+<a id="cmd-cohorts.moveanimals"></a>
+#### `cohorts.moveAnimals`
+
+Move animals, their files and their history to another cohort (`DATA.md#moving-animals-between-cohorts`). The files move into the destination's data folder; run records, recovered runs and notes about the animals follow, and notes about a session both cohorts ran are copied. An apply re-plans rather than replaying the preview, and is crash-safe: interrupted, it is finished or undone at the next start. `ANIMAL_MOVE_REFUSED` (with the plan in `detail`) when the apply's plan has refusals; `INTERNAL` while an analytics walk runs. Broadcasts `cohorts.updated` and `logbook.updated` after an apply. Long-running; the client raises its reply timeout.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `cohortId` | string | The source cohort. |
+| `animalIds` | string[] | Roster animals, former members, or ids known only from files (`Cohort.formerAnimals`). |
+| `destinationCohortId` | string |  |
+| `destinationGroupId` *(optional)* | string | Where an animal carried onto the destination's roster lands. Default: its first group. |
+| `apply` *(optional)* | boolean | Default false: a preview that changes nothing. |
+
+**Result:** [AnimalMovePlan](#shape-animalmoveplan)
+
 <a id="cmd-cohorts.suggestgroups"></a>
 #### `cohorts.suggestGroups`
 
@@ -1491,6 +1508,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `COHORT_NAME_TAKEN` | Name already used by an **active** cohort. Archived cohorts don't reserve names, so this can also reject a `cohorts.restore`. |
 | `COHORT_INVALID` | A cohort validation failure (`DATA.md#cohorts-animals-and-groups`). `detail` carries per-field errors so the editor can show them inline. |
 | `COHORT_NOT_ARCHIVED` | `cohorts.delete` on a cohort that wasn't archived first — the deliberate two-step guard. |
+| `ANIMAL_MOVE_REFUSED` | `cohorts.moveAnimals` with `apply` whose fresh plan can't go ahead, or whose records changed while the files were being copied. Nothing was moved. `detail` carries the `AnimalMovePlan` with its `refused` reasons. |
 | `DATA_FOLDER_INVALID` | A data folder couldn't be created, or a `cohorts.setDataFolder` destination isn't empty **while `moveExisting` is true**. A non-empty destination with `moveExisting: false` is legal and expected. |
 | `PREFIX_NAME_TAKEN` | A prefix with that name already exists. |
 | `SESSION_INVALID` | A session command that can't apply: unknown session, cohort, prefix or group; a mapping naming a box or animal outside the session; a box with no confirmed mapping; or a lifecycle step from the wrong state (abandoning a session that ran, resuming another day's, recovering while a box runs). |
@@ -1537,6 +1555,7 @@ Everything unfinished, discoverable with no prior knowledge of ids. Also the ses
 | `groupId` | string |  |
 | `boxNumber` | number \| null |  |
 | `cage` | number \| null | Home-cage number, same field as Animal.cage. |
+| `former` | boolean | A former member (`DATA.md#former-members`), listed after the roster and only when it has runs in this summary. Its `groupId` is empty and `boxNumber` null. |
 
 <a id="shape-analyticscounts"></a>
 #### AnalyticsCounts
@@ -1612,6 +1631,66 @@ The whole cohort table in one call; selections filter it client-side.
 | `stopReason` | string | One of the stop reasons in `ARCHITECTURE.md#session-lifecycle`. |
 | `filePath` | string \| null |  |
 
+<a id="shape-animalmoveanimal"></a>
+#### AnimalMoveAnimal
+
+| Field | Type | Notes |
+|---|---|---|
+| `animalId` | string | Its id in the source cohort. |
+| `name` | string |  |
+| `status` | "active" \| "former" \| "files" | On the source's roster, a former member, or an id known only from its files (`DATA.md#former-members`). |
+| `outcome` | "joins" \| "carried" | `joins`: the destination already has an animal of this name, and its history becomes that animal's. `carried`: it arrives under its own id — on the roster if it was on one, else as a former member. |
+| `destinationAnimalId` | string |  |
+| `runs` | number | Recorded plus recovered runs that move. |
+| `files` | number |  |
+
+<a id="shape-animalmovefiles"></a>
+#### AnimalMoveFiles
+
+| Field | Type | Notes |
+|---|---|---|
+| `count` | number | Files that move. |
+| `bytes` | number |  |
+| `alreadyThere` | number | An identical copy is already at the destination — moved on the other lab machine, or by an interrupted move. |
+| `missing` | number | Runs whose file is in neither folder. Their records move all the same; nothing is lost that wasn't already. |
+
+<a id="shape-animalmoveplan"></a>
+#### AnimalMovePlan
+
+What moving animals between cohorts does, or did (`DATA.md#moving-animals-between-cohorts`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `sourceCohortId` | string |  |
+| `destinationCohortId` | string |  |
+| `applied` | boolean | False for a preview; true once the move is made. |
+| `animals` | [AnimalMoveAnimal](#shape-animalmoveanimal)[] |  |
+| `sessions` | [AnimalMoveSession](#shape-animalmovesession)[] |  |
+| `recoveredSessions` | number | Sessions known only from files whose runs move; they need no record, so they are only counted. |
+| `files` | [AnimalMoveFiles](#shape-animalmovefiles) |  |
+| `refused` | [AnimalMoveRefusal](#shape-animalmoverefusal)[] | Why it can't be done. Empty means an apply would go ahead. |
+
+<a id="shape-animalmoverefusal"></a>
+#### AnimalMoveRefusal
+
+| Field | Type | Notes |
+|---|---|---|
+| `code` | string |  |
+| `message` | string | Says what to do about it. |
+
+<a id="shape-animalmovesession"></a>
+#### AnimalMoveSession
+
+| Field | Type | Notes |
+|---|---|---|
+| `sessionId` | string | The source record. |
+| `label` | string |  |
+| `date` | string |  |
+| `kind` | "whole" \| "split" | `whole`: only moved animals ran in it, so the record itself moves. `split`: animals that stay ran in it too, so the destination gets a record of its own. |
+| `joinsExisting` | boolean | The destination already has this prefix, number and date; the runs join that record. |
+| `notesMoved` | number |  |
+| `notesCopied` | number | Notes about the whole session, or a shared box. |
+
 <a id="shape-answerside"></a>
 #### AnswerSide
 
@@ -1678,12 +1757,13 @@ The full record, fetched only when a cohort is opened.
 | `id` | string |  |
 | `name` | string |  |
 | `dataFolder` | string | Resolved once at creation and persisted verbatim; renaming the cohort never moves it (`DATA.md#cohorts-animals-and-groups`). |
-| `animals` | [Animal](#shape-animal)[] |  |
+| `animals` | [Animal](#shape-animal)[] | The roster: active members only. |
 | `groups` | [Group](#shape-group)[] | Always ≥ 1 — a default group always exists. |
 | `archivedAt` | string \| null |  |
 | `createdAt` | string |  |
 | `updatedAt` | string |  |
 | `appearance` | [CohortAppearance](#shape-cohortappearance) \| null | Null until the operator tunes it, and null is not a gap: the whole record is derived from `id` when absent. |
+| `formerAnimals` | [FormerAnimal](#shape-formeranimal)[] | Animals with history in this cohort that are no longer on its roster (`DATA.md#former-members`). Never posted back: a former member is restored by posting its id in `animals`. |
 
 <a id="shape-cohortappearance"></a>
 #### CohortAppearance
@@ -1859,6 +1939,24 @@ The Tauri-side store's schema; the store is the source of truth (`ARCHITECTURE.m
 | `phase` | "compile" \| "upload" |  |
 | `stream` | "stdout" \| "stderr" |  |
 | `text` | string |  |
+
+<a id="shape-formeranimal"></a>
+#### FormerAnimal
+
+An animal with history in a cohort but no place on its roster (`DATA.md#former-members`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string |  |
+| `name` | string \| null | Null only for an id named by notes alone, with no file to read a name from. |
+| `source` | "removed" \| "files" | `removed`: taken off the roster and kept. `files`: an id this cohort's history names with no row anywhere — a removal from before former members were kept — named from its files' stems at read time and never stored. |
+| `removedAt` | string \| null | Null for `files`: nothing recorded when. |
+| `runCount` | number | Recorded plus adopted runs this cohort holds for it. |
+| `sex` | [Sex](#shape-sex) \| null |  |
+| `idNumber` | string \| null |  |
+| `cage` | number \| null |  |
+| `notes` | string \| null |  |
+| `groupName` | string \| null | The group it was in, by name — groups are rewritten on every roster edit, so an id would not survive. |
 
 <a id="shape-group"></a>
 #### Group

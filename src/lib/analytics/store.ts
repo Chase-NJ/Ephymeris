@@ -34,6 +34,9 @@ export class AnalyticsStore {
   private summaries = new Map<string, AnalyticsSummary>();
   private states = new Map<string, LoadState>();
   private errors = new Map<string, string>();
+  /** Each cohort's `updatedAt` as last broadcast — what tells a roster edit
+   *  apart from a broadcast about some other cohort. */
+  private stamps = new Map<string, string>();
   /** In-flight requests, so StrictMode's double-effect and a fast A→B→A
    *  cohort switch both coalesce onto one call rather than racing. */
   private inflight = new Map<string, Promise<unknown>>();
@@ -87,9 +90,25 @@ export class AnalyticsStore {
     // affordable precisely because the cache is only ever an optimisation and
     // invalidation is lazy: nothing refetches until a view asks.
     const offEnded = client.on(EVT.SESSION_ANIMAL_ENDED, () => this.invalidateAll());
+    // A roster edit changes who a summary names — a removal makes a former
+    // member (`DATA.md#former-members`), a move takes runs to another cohort —
+    // so a cached summary of a cohort that changed is stale. Only that
+    // cohort's: the broadcast carries every cohort's `updatedAt`.
+    const offCohorts = client.on(EVT.COHORTS_UPDATED, (data) => {
+      const cohorts = (data as { cohorts?: Array<{ id: string; updatedAt: string }> } | null)
+        ?.cohorts;
+      for (const cohort of cohorts ?? []) {
+        const seen = this.stamps.get(cohort.id);
+        this.stamps.set(cohort.id, cohort.updatedAt);
+        if (seen !== cohort.updatedAt && this.summaries.has(cohort.id)) {
+          this.invalidate(cohort.id);
+        }
+      }
+    });
     return () => {
       offProgress();
       offEnded();
+      offCohorts();
     };
   }
 

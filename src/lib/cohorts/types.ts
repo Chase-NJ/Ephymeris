@@ -15,6 +15,7 @@ export type {
   Group,
   Animal,
   Cohort,
+  FormerAnimal,
   CohortSummary,
   CohortPatch,
   ProposedAnimal,

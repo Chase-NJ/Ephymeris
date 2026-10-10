@@ -49,16 +49,26 @@ export function AnimalRail({
 
   const grouped = useMemo(() => {
     const order = new Map(summary.groups.map((g) => [g.id, g.order]));
-    return [...summary.groups]
+    const byName = (a: { name: string }, b: { name: string }) =>
+      // Numeric-aware, the session summary's rule: remy2 before remy10.
+      collator.compare(a.name, b.name);
+    const groups = [...summary.groups]
       .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
       .map((group) => ({
-        group,
+        key: group.id,
+        label: group.name,
         animals: summary.animals
-          .filter((animal) => animal.groupId === group.id)
-          // Numeric-aware, the session summary's rule: remy2 before remy10.
-          .sort((a, b) => collator.compare(a.name, b.name)),
+          .filter((animal) => !animal.former && animal.groupId === group.id)
+          .sort(byName),
       }))
       .filter((entry) => entry.animals.length > 0);
+    // Animals taken off the roster whose runs are still here
+    // (`DATA.md#former-members`), in a bucket of their own and always labelled:
+    // they belong to no group any more, and the label is what says why.
+    const former = summary.animals.filter((animal) => animal.former).sort(byName);
+    return former.length > 0
+      ? [...groups, { key: "former", label: "Former members", animals: former }]
+      : groups;
   }, [summary]);
 
   return (
@@ -85,10 +95,10 @@ export function AnimalRail({
           scroll ? "min-h-0 flex-1 overflow-y-auto pr-1" : ""
         }`}
       >
-        {grouped.map(({ group, animals }) => (
-          <div key={group.id} className="flex flex-col gap-0.5">
-            {grouped.length > 1 && (
-              <span className="mb-0.5 font-mono text-[10px] text-static/70">{group.name}</span>
+        {grouped.map(({ key, label, animals }) => (
+          <div key={key} className="flex flex-col gap-0.5">
+            {(grouped.length > 1 || key === "former") && (
+              <span className="mb-0.5 font-mono text-[10px] text-static/70">{label}</span>
             )}
             {animals.map((animal) => (
               <AnimalRow

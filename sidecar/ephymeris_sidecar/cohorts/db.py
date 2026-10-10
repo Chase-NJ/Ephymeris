@@ -70,7 +70,10 @@ DB_FILENAME = "ephymeris.db"
 #: — `profile_hash` stopped covering the `strobes` map once every profile's map
 #: became the machine's whole vocabulary — and added `strobe_scan_cache`
 #: (`TASKS.md#strobe-vocabulary`) and `run_flags` (`DATA.md#false-starts`).
-SCHEMA_VERSION = 13
+#: v14 added former_animals (`DATA.md#former-members`) and animal_moves
+#: (`DATA.md#moving-animals-between-cohorts`) — new tables only, so no
+#: migration, v11's pattern.
+SCHEMA_VERSION = 14
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohorts (
@@ -100,6 +103,38 @@ CREATE TABLE IF NOT EXISTS animals (
     sex         TEXT,
     id_number   TEXT,
     notes       TEXT
+);
+
+-- Animals taken off a roster that still have history in the cohort
+-- (DATA.md#former-members). A table of their own rather than a removed_at
+-- column on `animals`: that table's group_id cascades from `groups`, which
+-- every roster edit deletes and re-inserts, so a former member kept there
+-- would be deleted along with its old group. The group is kept by name.
+CREATE TABLE IF NOT EXISTS former_animals (
+    id          TEXT PRIMARY KEY,
+    cohort_id   TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    cage        INTEGER,
+    sex         TEXT,
+    id_number   TEXT,
+    notes       TEXT,
+    group_name  TEXT,
+    removed_at  TEXT NOT NULL
+);
+
+-- The journal of a move of animals between cohorts
+-- (DATA.md#moving-animals-between-cohorts): written before the first file is
+-- copied, so a move a crash interrupted is finished, or undone, at the next
+-- start. No foreign keys: the record of a move outlives either cohort.
+CREATE TABLE IF NOT EXISTS animal_moves (
+    id                TEXT PRIMARY KEY,
+    source_cohort_id  TEXT NOT NULL,
+    dest_cohort_id    TEXT NOT NULL,
+    state             TEXT NOT NULL,   -- copying | committed | done | rolled-back
+    plan_json         TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    error             TEXT
 );
 
 -- Session prefixes (DATA.md#prefixes): global, shared across all cohorts.
@@ -321,6 +356,7 @@ CREATE TABLE IF NOT EXISTS session_logs (
 INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_groups_cohort  ON groups(cohort_id);
 CREATE INDEX IF NOT EXISTS idx_animals_cohort ON animals(cohort_id);
+CREATE INDEX IF NOT EXISTS idx_former_cohort  ON former_animals(cohort_id);
 -- Name uniqueness applies to active cohorts only (DATA.md#validation):
 -- archived ones release
 -- their name. A partial index expresses that directly, so the database enforces

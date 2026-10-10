@@ -8,7 +8,7 @@
  */
 
 import type { SidecarClient } from "../ws/client";
-import { CMD, ERR, SidecarCommandError } from "../ws/protocol";
+import { CMD, ERR, SidecarCommandError, type AnimalMovePlan } from "../ws/protocol";
 import type {
   Animal,
   Cohort,
@@ -86,6 +86,34 @@ export async function setDataFolder(
     moveExisting,
   })) as { cohort: Cohort };
   return result.cohort;
+}
+
+/**
+ * Move animals, their files and their history to another cohort
+ * (`DATA.md#moving-animals-between-cohorts`). `apply: false` is the preview;
+ * the sidecar re-plans on apply rather than trusting the preview it sent. A
+ * refused apply rejects with `ANIMAL_MOVE_REFUSED` and the fresh plan as its
+ * detail — see `refusedPlan`.
+ */
+export async function moveAnimals(
+  client: SidecarClient,
+  args: {
+    cohortId: string;
+    animalIds: string[];
+    destinationCohortId: string;
+    destinationGroupId?: string;
+    apply: boolean;
+  },
+): Promise<AnimalMovePlan> {
+  return (await client.call(CMD.COHORTS_MOVE_ANIMALS, args)) as AnimalMovePlan;
+}
+
+/** The plan a refused apply carries, so the dialog can show why. */
+export function refusedPlan(err: unknown): AnimalMovePlan | null {
+  if (err instanceof SidecarCommandError && err.code === ERR.ANIMAL_MOVE_REFUSED) {
+    return (err.detail as AnimalMovePlan | null) ?? null;
+  }
+  return null;
 }
 
 /**

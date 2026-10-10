@@ -22,7 +22,8 @@ from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager, BackupNotConfigured
 from .boards import create_board_tool
 from .boards.tool import FlashFailed
-from .cohorts import folders, grouping
+from .cohorts import folders, grouping, move_apply
+from .cohorts.move import MoveRequest
 from .cohorts.db import DB_FILENAME, Database
 from .cohorts.folders import DataFolderError
 from .cohorts.models import (
@@ -210,6 +211,7 @@ class Application:
         self.server.register(Cmd.COHORTS_RESTORE, self._cohorts_restore)
         self.server.register(Cmd.COHORTS_DELETE, self._cohorts_delete)
         self.server.register(Cmd.COHORTS_SET_DATA_FOLDER, self._cohorts_set_data_folder)
+        self.server.register(Cmd.COHORTS_MOVE_ANIMALS, self._cohorts_move_animals)
         self.server.register(Cmd.PREFIXES_LIST, self._prefixes_list)
         self.server.register(Cmd.PREFIXES_CREATE, self._prefixes_create)
         self.server.register(Cmd.PREFIXES_DELETE, self._prefixes_delete)
@@ -327,6 +329,13 @@ class Application:
             broadcast=self.server.broadcast,
             sketch_lookup=self._sketch_path_for_name,
         )
+        # A move a crash interrupted is finished or undone before anything can
+        # read the archive (`DATA.md#moving-animals-between-cohorts`). Never
+        # fatal: the journal stays, and the next start tries again.
+        try:
+            move_apply.resume(self.db)
+        except Exception:  # noqa: BLE001
+            log.exception("couldn't finish an interrupted move of animals")
         self.logbook = LogbookService(
             db=self.db,
             cohorts=self.cohorts,
@@ -905,6 +914,54 @@ class Application:
             )
         await self._broadcast_cohorts()
         return {"cohort": cohort.to_json()}
+
+    async def _cohorts_move_animals(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """Move animals, their files and their history to another cohort
+        (`DATA.md#moving-animals-between-cohorts`). `apply` false is a preview.
+
+        Refused while the rig is in use anywhere, not just in these cohorts:
+        copying an archive competes with the write-ahead log's per-strobe
+        fsync, and one session runs at a time app-wide.
+        """
+        animal_ids = _opt_str_list(args.get("animalIds")) or []
+        request = MoveRequest(
+            source_id=_str_arg(args, "cohortId"),
+            animal_ids=animal_ids,
+            dest_id=_str_arg(args, "destinationCohortId"),
+            dest_group_id=args.get("destinationGroupId")
+            if isinstance(args.get("destinationGroupId"), str)
+            else None,
+        )
+        busy = None
+        if self._running_session_id or (self.runner is not None and self.runner.running_boxes()):
+            busy = "A session is set up or running. Finish it, then move the animals."
+        with _cohort_errors():
+            try:
+                result, copied = await self._require_analytics().move_animals(
+                    request, apply=args.get("apply") is True, busy=busy
+                )
+            except AnalyticsBusy as exc:
+                raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
+            except move_apply.MoveRefused as exc:
+                raise CommandError(
+                    ErrCode.ANIMAL_MOVE_REFUSED, str(exc), exc.plan.to_json(applied=False)
+                ) from exc
+        if result["applied"]:
+            if self.backup is not None and copied:
+                self.backup.enqueue(*copied)
+            await self._broadcast_cohorts()
+            await self._broadcast_lifecycle()
+            if self.logbook is not None:
+                # Notes moved and copied, and both folders' notes.md re-render —
+                # including a source session whose every note moved away, which
+                # has none left to be found by but still a stale notes.md.
+                annotated = await asyncio.to_thread(
+                    self.logbook.repo.annotated_session_ids, request.source_id
+                )
+                touched = {s["sessionId"] for s in result["sessions"]}
+                await self.logbook.refresh(request.source_id, sorted(set(annotated) | touched))
+                await self.logbook.refresh(request.dest_id)
+        return result
 
     async def _cohorts_suggest_groups(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         """Auto-Balance preview (`DATA.md#auto-balance`). Computes only — the

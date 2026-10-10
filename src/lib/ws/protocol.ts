@@ -61,6 +61,7 @@ export const CMD = {
   COHORTS_RESTORE: "cohorts.restore",
   COHORTS_DELETE: "cohorts.delete",
   COHORTS_SET_DATA_FOLDER: "cohorts.setDataFolder",
+  COHORTS_MOVE_ANIMALS: "cohorts.moveAnimals",
   COHORTS_SUGGEST_GROUPS: "cohorts.suggestGroups",
 
   // Prefixes and sessions
@@ -171,6 +172,7 @@ export const ERR = {
   COHORT_NAME_TAKEN: "COHORT_NAME_TAKEN",
   COHORT_INVALID: "COHORT_INVALID",
   COHORT_NOT_ARCHIVED: "COHORT_NOT_ARCHIVED",
+  ANIMAL_MOVE_REFUSED: "ANIMAL_MOVE_REFUSED",
   DATA_FOLDER_INVALID: "DATA_FOLDER_INVALID",
   PREFIX_NAME_TAKEN: "PREFIX_NAME_TAKEN",
   SESSION_INVALID: "SESSION_INVALID",
@@ -481,6 +483,7 @@ export interface Cohort {
    * (`DATA.md#cohorts-animals-and-groups`).
    */
   dataFolder: string;
+  /** The roster: active members only. */
   animals: Animal[];
   /** Always ≥ 1 — a default group always exists. */
   groups: Group[];
@@ -492,6 +495,38 @@ export interface Cohort {
    * `id` when absent.
    */
   appearance: CohortAppearance | null;
+  /**
+   * Animals with history in this cohort that are no longer on its roster
+   * (`DATA.md#former-members`). Never posted back: a former member is restored by posting its id
+   * in `animals`.
+   */
+  formerAnimals: FormerAnimal[];
+}
+
+/** An animal with history in a cohort but no place on its roster (`DATA.md#former-members`). */
+export interface FormerAnimal {
+  id: string;
+  /** Null only for an id named by notes alone, with no file to read a name from. */
+  name: string | null;
+  /**
+   * `removed`: taken off the roster and kept. `files`: an id this cohort's history names with no
+   * row anywhere — a removal from before former members were kept — named from its files' stems
+   * at read time and never stored.
+   */
+  source: "removed" | "files";
+  /** Null for `files`: nothing recorded when. */
+  removedAt: string | null;
+  /** Recorded plus adopted runs this cohort holds for it. */
+  runCount: number;
+  sex: Sex | null;
+  idNumber: string | null;
+  cage: number | null;
+  notes: string | null;
+  /**
+   * The group it was in, by name — groups are rewritten on every roster edit, so an id would not
+   * survive.
+   */
+  groupName: string | null;
 }
 
 /** Enough for the cohort browser and the dashboard tile, no per-animal detail. */
@@ -1118,6 +1153,11 @@ export interface AnalyticsAnimal {
   boxNumber: number | null;
   /** Home-cage number, same field as Animal.cage. */
   cage: number | null;
+  /**
+   * A former member (`DATA.md#former-members`), listed after the roster and only when it has runs
+   * in this summary. Its `groupId` is empty and `boxNumber` null.
+   */
+  former: boolean;
 }
 
 /**
@@ -1425,6 +1465,81 @@ export interface TidyPlan {
    * said so.
    */
   skipped: TidySkipped[];
+}
+
+export interface AnimalMoveAnimal {
+  /** Its id in the source cohort. */
+  animalId: string;
+  name: string;
+  /**
+   * On the source's roster, a former member, or an id known only from its files
+   * (`DATA.md#former-members`).
+   */
+  status: "active" | "former" | "files";
+  /**
+   * `joins`: the destination already has an animal of this name, and its history becomes that
+   * animal's. `carried`: it arrives under its own id — on the roster if it was on one, else as a
+   * former member.
+   */
+  outcome: "joins" | "carried";
+  destinationAnimalId: string;
+  /** Recorded plus recovered runs that move. */
+  runs: number;
+  files: number;
+}
+
+export interface AnimalMoveSession {
+  /** The source record. */
+  sessionId: string;
+  label: string;
+  date: string;
+  /**
+   * `whole`: only moved animals ran in it, so the record itself moves. `split`: animals that stay
+   * ran in it too, so the destination gets a record of its own.
+   */
+  kind: "whole" | "split";
+  /** The destination already has this prefix, number and date; the runs join that record. */
+  joinsExisting: boolean;
+  notesMoved: number;
+  /** Notes about the whole session, or a shared box. */
+  notesCopied: number;
+}
+
+export interface AnimalMoveFiles {
+  /** Files that move. */
+  count: number;
+  bytes: number;
+  /**
+   * An identical copy is already at the destination — moved on the other lab machine, or by an
+   * interrupted move.
+   */
+  alreadyThere: number;
+  /**
+   * Runs whose file is in neither folder. Their records move all the same; nothing is lost that
+   * wasn't already.
+   */
+  missing: number;
+}
+
+export interface AnimalMoveRefusal {
+  code: string;
+  /** Says what to do about it. */
+  message: string;
+}
+
+/** What moving animals between cohorts does, or did (`DATA.md#moving-animals-between-cohorts`). */
+export interface AnimalMovePlan {
+  sourceCohortId: string;
+  destinationCohortId: string;
+  /** False for a preview; true once the move is made. */
+  applied: boolean;
+  animals: AnimalMoveAnimal[];
+  sessions: AnimalMoveSession[];
+  /** Sessions known only from files whose runs move; they need no record, so they are only counted. */
+  recoveredSessions: number;
+  files: AnimalMoveFiles;
+  /** Why it can't be done. Empty means an apply would go ahead. */
+  refused: AnimalMoveRefusal[];
 }
 
 export interface ServerHello {
@@ -2052,6 +2167,7 @@ export interface CommandArgsMap {
   "cohorts.restore": { id: string };
   "cohorts.delete": { id: string; confirm: boolean };
   "cohorts.setDataFolder": { id: string; path: string; moveExisting: boolean };
+  "cohorts.moveAnimals": { cohortId: string; animalIds: string[]; destinationCohortId: string; destinationGroupId?: string; apply?: boolean };
   "cohorts.suggestGroups": { id: string; groupCount?: number; maxGroupSize?: number; balanceBySex?: boolean };
   "prefixes.list": Record<string, never>;
   "prefixes.create": { name: string };
@@ -2138,6 +2254,7 @@ export interface CommandResultMap {
   "cohorts.restore": { cohort: Cohort };
   "cohorts.delete": { deleted: boolean };
   "cohorts.setDataFolder": { cohort: Cohort };
+  "cohorts.moveAnimals": AnimalMovePlan;
   "cohorts.suggestGroups": GroupProposal;
   "prefixes.list": { prefixes: Prefix[] };
   "prefixes.create": { prefix: Prefix };

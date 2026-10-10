@@ -91,6 +91,8 @@ export function useBoxStellar(): RigStellar {
 
       const lastRuns = lastRunsByAnimal(summary.runs);
       for (const animal of summary.animals) {
+        // A former member is in no cage and holds no box any more.
+        if (animal.former) continue;
         const lastRun = lastRuns.get(animal.id);
         members.push({
           id: animal.id,

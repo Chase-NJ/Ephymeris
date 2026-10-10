@@ -1059,3 +1059,26 @@ def test_v12_caches_recorded_parameters_and_rereads_only_recovered_runs(tmp_path
         assert kept == ["recorded"]
     finally:
         conn.close()
+
+
+# --- v14: former members and the move journal -----------------------------
+
+
+def test_an_older_database_gains_the_former_member_and_move_tables(tmp_path: Path) -> None:
+    """v14 added tables only (`DATA.md#former-members`), so no migration runs:
+    `CREATE TABLE IF NOT EXISTS` makes them on an existing file, and the
+    cohort already in it is untouched."""
+    path = tmp_path / "ephymeris.db"
+    write_v1_database(path, version=13)
+
+    db = Database(path)
+    db.connect()
+    db.close()
+
+    assert user_version(path) == SCHEMA_VERSION
+    assert {"former_animals", "animal_moves"} <= tables(path)
+    conn = sqlite3.connect(path)
+    try:
+        assert conn.execute("SELECT name FROM cohorts").fetchall() == [("Batch A",)]
+    finally:
+        conn.close()

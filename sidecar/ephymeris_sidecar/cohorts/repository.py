@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import Database
+from .members import former_members, referenced_animal_ids
 from .models import (
     MAX_BOX,
     MIN_BOX,
@@ -95,6 +96,7 @@ class CohortRepository:
         with self._db.lock:
             conn = self._db.conn
             self._assert_name_free(conn, clean, exclude_id=None)
+            _assert_ids_free(conn, parsed_animals, cohort_id)
             try:
                 conn.execute(
                     "INSERT INTO cohorts (id, name, data_folder, created_at, updated_at)"
@@ -139,6 +141,13 @@ class CohortRepository:
 
         Animals and groups are replaced wholesale when present, which is what
         the editor sends and what Auto-Balance's apply step needs (`DATA.md#auto-balance`).
+
+        **An animal left out of the posted roster is not simply deleted**
+        (`DATA.md#former-members`). One with history here — a run, an adoption,
+        a note — becomes a former member, keeping its id and name so that
+        history still reads as an animal. One with none was a typo or a
+        placeholder and goes, as before. Posting a former member's id again
+        restores it, history and all.
         """
         with self._db.lock:
             conn = self._db.conn
@@ -160,6 +169,8 @@ class CohortRepository:
                 _parse_animals(patch["animals"]) if "animals" in patch else existing.animals
             )
             _validate(animals, groups)
+            if "animals" in patch:
+                _assert_ids_free(conn, animals, cohort_id)
 
             # Absent leaves it alone; an explicit null RESETS the world to the
             # one derived from the cohort's id. The two are different requests
@@ -180,6 +191,8 @@ class CohortRepository:
                         cohort_id,
                     ),
                 )
+                if "animals" in patch:
+                    _keep_former(conn, cohort_id, existing, animals)
                 if "groups" in patch or "animals" in patch:
                     # Animals reference groups, so clear animals first to avoid
                     # tripping the foreign key while groups are being rewritten.
@@ -307,8 +320,14 @@ class CohortRepository:
 
     @staticmethod
     def _load_one(conn: sqlite3.Connection, cohort_id: str) -> Cohort | None:
+        """One cohort, with its former members — which a listing never needs,
+        and which cost a pass over the cohort's history to find."""
         row = conn.execute("SELECT * FROM cohorts WHERE id = ?", (cohort_id,)).fetchone()
-        return None if row is None else CohortRepository._hydrate(conn, row)
+        if row is None:
+            return None
+        cohort = CohortRepository._hydrate(conn, row)
+        cohort.former_animals = former_members(conn, cohort.id, {a.id for a in cohort.animals})
+        return cohort
 
     @staticmethod
     def _hydrate(conn: sqlite3.Connection, row: sqlite3.Row) -> Cohort:
@@ -343,6 +362,69 @@ class CohortRepository:
             animals=animals,
             groups=groups,
             appearance=_parse_appearance_column(row["appearance_json"]),
+        )
+
+
+def _assert_ids_free(conn: sqlite3.Connection, animals: list[Animal], cohort_id: str) -> None:
+    """Refuse a posted animal id that is another cohort's, active or former.
+
+    Ids are global primary keys, so this used to surface as an integrity
+    error — "couldn't save" with no reason. An animal belongs to one cohort;
+    moving one is its own operation (`DATA.md#moving-animals-between-cohorts`)
+    because its files and history move with it.
+    """
+    errors: dict[str, str] = {}
+    for animal in animals:
+        row = conn.execute(
+            "SELECT c.name FROM animals a JOIN cohorts c ON c.id = a.cohort_id"
+            " WHERE a.id = ? AND a.cohort_id != ?"
+            " UNION ALL"
+            " SELECT c.name FROM former_animals f JOIN cohorts c ON c.id = f.cohort_id"
+            " WHERE f.id = ? AND f.cohort_id != ?",
+            (animal.id, cohort_id, animal.id, cohort_id),
+        ).fetchone()
+        if row is not None:
+            errors[f"animal:{animal.id}"] = (
+                f"This animal belongs to “{row[0]}”. Move it from there instead."
+            )
+    if errors:
+        raise ValidationError(errors)
+
+
+def _keep_former(
+    conn: sqlite3.Connection, cohort_id: str, existing: Cohort, posted: list[Animal]
+) -> None:
+    """Turn roster removals with history into former members, and posted
+    former members back into roster animals (`DATA.md#former-members`).
+
+    Runs inside `update`'s transaction, before the roster is rewritten.
+    """
+    posted_ids = {a.id for a in posted}
+    history = referenced_animal_ids(conn, cohort_id)
+    groups = {g.id: g.name for g in existing.groups}
+    now = _now()
+    for animal in existing.animals:
+        if animal.id in posted_ids or animal.id not in history:
+            continue
+        conn.execute(
+            "INSERT OR REPLACE INTO former_animals"
+            " (id, cohort_id, name, cage, sex, id_number, notes, group_name, removed_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                animal.id,
+                cohort_id,
+                animal.name,
+                animal.cage,
+                animal.sex,
+                animal.id_number,
+                animal.notes,
+                groups.get(animal.group_id),
+                now,
+            ),
+        )
+    for animal_id in posted_ids:
+        conn.execute(
+            "DELETE FROM former_animals WHERE id = ? AND cohort_id = ?", (animal_id, cohort_id)
         )
 
 

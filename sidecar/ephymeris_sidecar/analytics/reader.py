@@ -145,6 +145,31 @@ def run_identity(path: Path) -> str:
     return path.stem.casefold()
 
 
+def animal_token(path: Path, session_folder: Path | None = None) -> str | None:
+    """The animal a per-animal file's name records, as written — or None.
+
+    Only a stem with exactly the shape `DATA.md#names` prescribes counts:
+    `<animal>_<the session folder the file sits in>_<HHMMSS>`, checked against
+    the folder rather than assumed, so a file that doesn't follow the
+    convention contributes nothing. Pure string work on the path — nothing is
+    opened — which is what lets a stored `file_path` name an animal while the
+    archive is offline.
+
+    `session_folder` defaults to the one the path itself implies
+    (`session_folder_of`); the archive walk passes the folder it found on disk.
+    """
+    folder = session_folder if session_folder is not None else session_folder_of(path)
+    stem = path.stem
+    marker = f"_{folder.name}_"
+    cut = stem.find(marker)
+    if cut <= 0:
+        return None
+    tail = stem[cut + len(marker) :]
+    if len(tail) != 6 or not tail.isdigit():
+        return None
+    return stem[:cut]
+
+
 def session_folder_of(file_path: Path) -> Path:
     """The session folder a per-animal file belongs to.
 

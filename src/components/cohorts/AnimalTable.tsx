@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Minus, Plus } from "lucide-react";
+import { ArrowRightLeft, Minus, Plus } from "lucide-react";
 import { useState } from "react";
 
 import { Button, Select, TextInput } from "@/components/common/controls";
@@ -60,6 +60,7 @@ export function AnimalTable({
   errors,
   attention = false,
   onChange,
+  onMove,
 }: {
   animals: Animal[];
   /** Where a freshly-added animal lands; the user places it properly in Groups. */
@@ -68,6 +69,13 @@ export function AnimalTable({
   /** Pulses the bulk field when it's the one thing the create flow waits on. */
   attention?: boolean;
   onChange: (next: Animal[]) => void;
+  /**
+   * Move a saved animal, with its history, to another cohort
+   * (`DATA.md#moving-animals-between-cohorts`). Absent hides the column (a
+   * cohort not yet created); null shows it disabled while edits are unsaved,
+   * so the row doesn't reflow as the operator types.
+   */
+  onMove?: ((animal: Animal) => void) | null | undefined;
 }) {
   const [bulk, setBulk] = useState("");
 
@@ -96,7 +104,10 @@ export function AnimalTable({
     bulk,
     animals.map((a) => a.name),
   );
-  const columns = "grid-cols-[1.3fr_72px_1fr_1.4fr_28px]";
+  const columns =
+    onMove === undefined
+      ? "grid-cols-[1.3fr_72px_1fr_1.4fr_28px]"
+      : "grid-cols-[1.3fr_72px_1fr_1.4fr_28px_28px]";
 
   return (
     <div className="px-4 py-3.5">
@@ -136,6 +147,7 @@ export function AnimalTable({
           <span>ID number</span>
           <span>Notes</span>
           <span />
+          {onMove !== undefined && <span />}
         </div>
       )}
 
@@ -179,10 +191,28 @@ export function AnimalTable({
                   variant="outline"
                   shape="icon"
                   onClick={() => onChange(animals.filter((a) => a.id !== animal.id))}
-                  title={`Remove ${animal.name || "this animal"}`}
+                  // A removal keeps the animal's history under its name
+                  // (`DATA.md#former-members`); saying so is what stops a
+                  // removal being mistaken for a deletion, or avoided as one.
+                  title={`Remove ${animal.name || "this animal"} from the roster — any sessions it ran stay in this cohort's history`}
                 >
                   <Minus size={14} strokeWidth={2} />
                 </Button>
+                {onMove !== undefined && (
+                  <Button
+                    variant="outline"
+                    shape="icon"
+                    onClick={() => onMove?.(animal)}
+                    disabled={onMove === null}
+                    title={
+                      onMove === null
+                        ? "Save your changes first, then move"
+                        : `Move ${animal.name || "this animal"} and its history to another cohort`
+                    }
+                  >
+                    <ArrowRightLeft size={13} strokeWidth={1.75} />
+                  </Button>
+                )}
               </div>
               {error && (
                 <p

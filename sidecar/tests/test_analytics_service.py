@@ -193,6 +193,102 @@ async def test_summary_carries_the_roster_and_groups(rig: Rig) -> None:
     assert len(payload["groups"]) == 1
 
 
+async def test_a_removed_animal_with_runs_is_listed_as_a_former_member(rig: Rig) -> None:
+    """`DATA.md#former-members` — appended after the roster, so removing one
+    animal never shifts another's colour, and named rather than an id."""
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "a1", HIT_1 * 10)
+    rig.add_run(session, "a2", HIT_1 * 10)
+    group = rig.cohort.groups[0].id
+    rig.cohorts.update(
+        rig.cohort.id, {"animals": [{"id": "a2", "name": "remy2", "groupId": group}]}
+    )
+
+    payload = await rig.service.summary(rig.cohort.id)
+
+    assert [(a["id"], a["name"], a["former"]) for a in payload["animals"]] == [
+        ("a2", "remy2", False),
+        ("a1", "remy1", True),
+    ]
+    assert {r["animalId"] for r in payload["runs"]} == {"a1", "a2"}
+
+
+async def test_a_run_whose_animal_has_no_row_is_named_from_its_file(rig: Rig) -> None:
+    """The lab's split as it happened, before former members existed: the
+    row is gone, the run still carries the id, and the file names the rat."""
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "deleted-id", HIT_1 * 10, name="remy9_2O-Bdisc_1_2026-07-22_100000")
+
+    payload = await rig.service.summary(rig.cohort.id)
+
+    former = [a for a in payload["animals"] if a["former"]]
+    assert [(a["id"], a["name"]) for a in former] == [("deleted-id", "remy9")]
+
+
+async def test_a_former_member_with_no_runs_here_is_left_off(rig: Rig) -> None:
+    rig.add_session("1", "2026-07-22")
+    group = rig.cohort.groups[0].id
+    # A note-free, run-free removal is deleted outright, so give it a run in
+    # a session the summary is then filtered away from.
+    other = rig.add_session("2", "2026-07-23")
+    rig.add_run(other, "a1", HIT_1 * 10)
+    rig.cohorts.update(
+        rig.cohort.id, {"animals": [{"id": "a2", "name": "remy2", "groupId": group}]}
+    )
+    first = (await rig.service.summary(rig.cohort.id))["sessions"][0]["id"]
+
+    payload = await rig.service.summary(rig.cohort.id, session_ids=[first])
+
+    assert [a["id"] for a in payload["animals"]] == ["a2"]
+
+
+async def test_a_stray_file_is_adopted_for_a_former_member(rig: Rig) -> None:
+    """A file written while the animal was on the roster is still its file."""
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "a1", HIT_1 * 10)
+    group = rig.cohort.groups[0].id
+    rig.cohorts.update(
+        rig.cohort.id, {"animals": [{"id": "a2", "name": "remy2", "groupId": group}]}
+    )
+    stray = rig.root / "2O-Bdisc" / "2O-Bdisc_2_2026-07-23" / "behavior.json"
+    stray.mkdir(parents=True)
+    (stray / "remy1_2O-Bdisc_2_2026-07-23_100000.json").write_text(
+        json.dumps({"rat": "remy1", "sketch": "GRGL_2-Odor", "ts_data": [[101, 0]]}),
+        encoding="utf-8",
+    )
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert [o["animalId"] for o in result["orphans"]] == ["a1"]
+
+
+async def test_a_former_members_name_on_the_roster_wins_adoption(rig: Rig) -> None:
+    """Once the name is back on the roster under a new animal, a file with
+    that name means the animal on the roster."""
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "a1", HIT_1 * 10)
+    group = rig.cohort.groups[0].id
+    rig.cohorts.update(
+        rig.cohort.id,
+        {
+            "animals": [
+                {"id": "a2", "name": "remy2", "groupId": group},
+                {"id": "a1-new", "name": "remy1", "groupId": group},
+            ]
+        },
+    )
+    stray = rig.root / "2O-Bdisc" / "2O-Bdisc_2_2026-07-23" / "behavior.json"
+    stray.mkdir(parents=True)
+    (stray / "remy1_2O-Bdisc_2_2026-07-23_100000.json").write_text(
+        json.dumps({"rat": "remy1", "sketch": "GRGL_2-Odor", "ts_data": [[101, 0]]}),
+        encoding="utf-8",
+    )
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert [o["animalId"] for o in result["orphans"]] == ["a1-new"]
+
+
 async def test_sessions_are_chronological_with_a_1_based_ordinal(rig: Rig) -> None:
     rig.add_session("10", "2026-07-24")
     rig.add_session("9", "2026-07-22")

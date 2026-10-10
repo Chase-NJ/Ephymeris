@@ -830,7 +830,11 @@ function ArchiveFact({
   );
   const n = (count: number, word: string) =>
     `${count} ${word}${count === 1 ? "" : "s"}`;
-  const parts = [n(sessions.length, "session"), n(summary.animals.length, "animal")];
+  // The roster and its former members counted apart (`DATA.md#former-members`):
+  // "12 animals" for a cohort of ten would misreport the room.
+  const former = summary.animals.filter((animal) => animal.former).length;
+  const parts = [n(sessions.length, "session"), n(summary.animals.length - former, "animal")];
+  if (former > 0) parts.push(`${former} former`);
   if (summary.groups.length > 1) parts.push(n(summary.groups.length, "group"));
   parts.push(last ? `last ran ${last.date}` : "nothing recorded yet");
   if (folderMissing) parts.push("folder unreachable");

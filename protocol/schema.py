@@ -383,7 +383,7 @@ SHAPES = (
                 doc="Resolved once at creation and persisted verbatim; renaming the "
                 "cohort never moves it (`DATA.md#cohorts-animals-and-groups`).",
             ),
-            f("animals", ListOf(Ref("Animal"))),
+            f("animals", ListOf(Ref("Animal")), doc="The roster: active members only."),
             f("groups", ListOf(Ref("Group")), doc="Always ≥ 1 — a default group always exists."),
             f("archivedAt", nullable(STR)),
             f("createdAt", STR),
@@ -394,8 +394,49 @@ SHAPES = (
                 doc="Null until the operator tunes it, and null is not a gap: "
                 "the whole record is derived from `id` when absent.",
             ),
+            f(
+                "formerAnimals",
+                ListOf(Ref("FormerAnimal")),
+                doc="Animals with history in this cohort that are no longer on "
+                "its roster (`DATA.md#former-members`). Never posted back: a "
+                "former member is restored by posting its id in `animals`.",
+            ),
         ),
         doc="The full record, fetched only when a cohort is opened.",
+    ),
+    Shape(
+        "FormerAnimal",
+        obj(
+            f("id", STR),
+            f(
+                "name",
+                nullable(STR),
+                doc="Null only for an id named by notes alone, with no file to "
+                "read a name from.",
+            ),
+            f(
+                "source",
+                lit("removed", "files"),
+                doc="`removed`: taken off the roster and kept. `files`: an id "
+                "this cohort's history names with no row anywhere — a removal "
+                "from before former members were kept — named from its files' "
+                "stems at read time and never stored.",
+            ),
+            f("removedAt", nullable(STR), doc="Null for `files`: nothing recorded when."),
+            f("runCount", INT, doc="Recorded plus adopted runs this cohort holds for it."),
+            f("sex", nullable(Ref("Sex"))),
+            f("idNumber", nullable(STR)),
+            f("cage", nullable(INT)),
+            f("notes", nullable(STR)),
+            f(
+                "groupName",
+                nullable(STR),
+                doc="The group it was in, by name — groups are rewritten on "
+                "every roster edit, so an id would not survive.",
+            ),
+        ),
+        doc="An animal with history in a cohort but no place on its roster "
+        "(`DATA.md#former-members`).",
     ),
     Shape(
         "CohortSummary",
@@ -1119,6 +1160,13 @@ SHAPES = (
             f("groupId", STR),
             f("boxNumber", nullable(INT)),
             f("cage", nullable(INT), doc="Home-cage number, same field as Animal.cage."),
+            f(
+                "former",
+                BOOL,
+                doc="A former member (`DATA.md#former-members`), listed after "
+                "the roster and only when it has runs in this summary. Its "
+                "`groupId` is empty and `boxNumber` null.",
+            ),
         ),
     ),
     Shape(
@@ -1477,6 +1525,103 @@ SHAPES = (
                 "started today — left whole, and said so.",
             ),
         ),
+    ),
+    Shape(
+        "AnimalMoveAnimal",
+        obj(
+            f("animalId", STR, doc="Its id in the source cohort."),
+            f("name", STR),
+            f(
+                "status",
+                lit("active", "former", "files"),
+                doc="On the source's roster, a former member, or an id known "
+                "only from its files (`DATA.md#former-members`).",
+            ),
+            f(
+                "outcome",
+                lit("joins", "carried"),
+                doc="`joins`: the destination already has an animal of this "
+                "name, and its history becomes that animal's. `carried`: it "
+                "arrives under its own id — on the roster if it was on one, "
+                "else as a former member.",
+            ),
+            f("destinationAnimalId", STR),
+            f("runs", INT, doc="Recorded plus recovered runs that move."),
+            f("files", INT),
+        ),
+    ),
+    Shape(
+        "AnimalMoveSession",
+        obj(
+            f("sessionId", STR, doc="The source record."),
+            f("label", STR),
+            f("date", STR),
+            f(
+                "kind",
+                lit("whole", "split"),
+                doc="`whole`: only moved animals ran in it, so the record "
+                "itself moves. `split`: animals that stay ran in it too, so "
+                "the destination gets a record of its own.",
+            ),
+            f(
+                "joinsExisting",
+                BOOL,
+                doc="The destination already has this prefix, number and date; "
+                "the runs join that record.",
+            ),
+            f("notesMoved", INT),
+            f("notesCopied", INT, doc="Notes about the whole session, or a shared box."),
+        ),
+    ),
+    Shape(
+        "AnimalMoveFiles",
+        obj(
+            f("count", INT, doc="Files that move."),
+            f("bytes", INT),
+            f(
+                "alreadyThere",
+                INT,
+                doc="An identical copy is already at the destination — moved "
+                "on the other lab machine, or by an interrupted move.",
+            ),
+            f(
+                "missing",
+                INT,
+                doc="Runs whose file is in neither folder. Their records move all "
+                "the same; nothing is lost that wasn't already.",
+            ),
+        ),
+    ),
+    Shape(
+        "AnimalMoveRefusal",
+        obj(
+            f("code", STR),
+            f("message", STR, doc="Says what to do about it."),
+        ),
+    ),
+    Shape(
+        "AnimalMovePlan",
+        obj(
+            f("sourceCohortId", STR),
+            f("destinationCohortId", STR),
+            f("applied", BOOL, doc="False for a preview; true once the move is made."),
+            f("animals", ListOf(Ref("AnimalMoveAnimal"))),
+            f("sessions", ListOf(Ref("AnimalMoveSession"))),
+            f(
+                "recoveredSessions",
+                INT,
+                doc="Sessions known only from files whose runs move; they need "
+                "no record, so they are only counted.",
+            ),
+            f("files", Ref("AnimalMoveFiles")),
+            f(
+                "refused",
+                ListOf(Ref("AnimalMoveRefusal")),
+                doc="Why it can't be done. Empty means an apply would go ahead.",
+            ),
+        ),
+        doc="What moving animals between cohorts does, or did "
+        "(`DATA.md#moving-animals-between-cohorts`).",
     ),
     # Event-only envelope payloads
     Shape("ServerHello", obj(f("protocolVersion", INT), f("sidecarVersion", STR))),
@@ -2605,6 +2750,38 @@ COMMANDS = (
         "(`DATA.md#cohorts-animals-and-groups`).",
     ),
     Command(
+        "cohorts.moveAnimals",
+        args=obj(
+            f("cohortId", STR, doc="The source cohort."),
+            f(
+                "animalIds",
+                ListOf(STR),
+                doc="Roster animals, former members, or ids known only from "
+                "files (`Cohort.formerAnimals`).",
+            ),
+            f("destinationCohortId", STR),
+            f(
+                "destinationGroupId",
+                STR,
+                optional=True,
+                doc="Where an animal carried onto the destination's roster "
+                "lands. Default: its first group.",
+            ),
+            f("apply", BOOL, optional=True, doc="Default false: a preview that changes nothing."),
+        ),
+        result=Ref("AnimalMovePlan"),
+        doc="Move animals, their files and their history to another cohort "
+        "(`DATA.md#moving-animals-between-cohorts`). The files move into the "
+        "destination's data folder; run records, recovered runs and notes "
+        "about the animals follow, and notes about a session both cohorts ran "
+        "are copied. An apply re-plans rather than replaying the preview, and "
+        "is crash-safe: interrupted, it is finished or undone at the next "
+        "start. `ANIMAL_MOVE_REFUSED` (with the plan in `detail`) when the "
+        "apply's plan has refusals; `INTERNAL` while an analytics walk runs. "
+        "Broadcasts `cohorts.updated` and `logbook.updated` after an apply. "
+        "Long-running; the client raises its reply timeout.",
+    ),
+    Command(
         "cohorts.suggestGroups",
         args=obj(
             f("id", STR),
@@ -3467,6 +3644,13 @@ ERRORS = (
         "COHORT_NOT_ARCHIVED",
         "`cohorts.delete` on a cohort that wasn't archived first — the "
         "deliberate two-step guard.",
+    ),
+    ErrorCode(
+        "ANIMAL_MOVE_REFUSED",
+        "`cohorts.moveAnimals` with `apply` whose fresh plan can't go ahead, "
+        "or whose records changed while the files were being copied. Nothing "
+        "was moved. `detail` carries the `AnimalMovePlan` with its `refused` "
+        "reasons.",
     ),
     ErrorCode(
         "DATA_FOLDER_INVALID",

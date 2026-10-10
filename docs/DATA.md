@@ -20,8 +20,10 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
 - [Cohorts animals and groups](#cohorts-animals-and-groups)
   - [Data model](#data-model)
   - [Validation](#validation)
+  - [Former members](#former-members)
   - [Auto-Balance](#auto-balance)
   - [Data folder](#data-folder)
+  - [Moving animals between cohorts](#moving-animals-between-cohorts)
   - [Archive and delete](#archive-and-delete)
 - [Sessions and runs](#sessions-and-runs)
   - [Prefixes](#prefixes)
@@ -169,7 +171,8 @@ Enforced by `cohorts/repository.py`'s `_validate` (per-field errors, so the edit
 | Rule | Detail |
 |---|---|
 | Cohort name | Unique among **active** cohorts; archived ones release the name |
-| Animal name | Required; unique within its cohort, not globally |
+| Animal name | Required; unique within its cohort's roster, case-insensitively, not globally. A [former member](#former-members)'s name may be reused |
+| Animal id | One cohort's: an id another cohort holds, on its roster or as a former member, is refused by name. Moving an animal is [its own operation](#moving-animals-between-cohorts) |
 | `boxNumber` | `1`–`6` (`MIN_BOX`/`MAX_BOX`), validated against that range **and nothing else** |
 | `boxNumber` uniqueness | Scoped to the **group**: groups run consecutively, so one physical box is legitimately reused across groups. `null` collides with nothing |
 | `cage` | Integer ≥ 1, no upper bound, no occupancy limit, no interaction with groups |
@@ -180,6 +183,23 @@ Enforced by `cohorts/repository.py`'s `_validate` (per-field errors, so the edit
 
 > [!CAUTION]
 > **A stored assignment this machine can't honour is kept and reported, never rewritten.** A box that is merely unplugged is still the box that animal belongs in; clearing it would turn a loose USB hub into data loss. The editor names the affected animals and the browser flags the cohort — and both stay silent while the sidecar is disconnected, because reporting blindness as a fault is worse than saying nothing.
+
+### Former members
+
+Run records, adoptions and notes keep an `animal_id` with no foreign key ([why](#indexes)), so history outlives an animal's place on the roster. Every view names animals through the roster, though, so an animal taken off it used to come back as a bare id — or, in the Analytics rail, not at all. A **former member** is what keeps the name (`cohorts/members.py`).
+
+| Source | What it is |
+|---|---|
+| `removed` | Taken off the roster by `cohorts.update` while it had history here — any run, adoption or note. Kept in `former_animals` with its name, biography and group *name*. An animal with no history is a typo or a placeholder and is still deleted outright |
+| `files` | An id this cohort's history names with no row anywhere: a removal from before former members existed. Named at read time from its runs' **stored paths** — the stem's animal token ([Names](#names)), majority across its runs, no file opened — and never written back, so it works with the archive unplugged and heals the moment the animal is restored or moved |
+
+- **On the wire** as `Cohort.formerAnimals`, filled only when one cohort is loaded on its own; a listing never pays for the pass over history. `Cohort.animals` stays the roster, so nothing that schedules, flashes or places animals sees a former member.
+- **Restoring** is posting the id in `animals` again. Its history rejoins it because nothing about the history ever changed.
+- **In Analytics** the summary lists former members with runs in it **after** the roster (`AnalyticsAnimal.former`), so a removal never shifts another animal's colour; the rail gives them a bucket of their own. The Log, `notes.md` and the PDFs name them the same way.
+- **Adoption** may match a stray file to a `removed` former member, never to one whose name an animal on the roster now holds ([Orphan adoption](#orphan-adoption)).
+
+> [!IMPORTANT]
+> **`former_animals` is a table of its own, not a column on `animals`.** `animals.group_id` cascades from `groups`, and every roster edit deletes and re-inserts every group — so a former member kept in `animals` would be deleted with its old group at the next save.
 
 ### Auto-Balance
 
@@ -210,6 +230,53 @@ Relocating is a separate action, `cohorts.setDataFolder` (`relocate`), with two 
 
 > [!WARNING]
 > **`moveExisting: false` is how a cohort attaches to an archive written before this app existed** — the reason [orphan adoption](#orphan-adoption) exists. Requiring an empty destination in both cases made that intent impossible to express. The empty rule protects against merge collisions, and there are none when nothing is written.
+
+### Moving animals between cohorts
+
+Splitting a cohort — two slow learners out of twelve into a cohort of their own — moves animals **and their history** (`cohorts.moveAnimals`; planned by `cohorts/move.py`, carried out by `cohorts/move_apply.py`). The two lab machines keep separate databases over one shared archive, so the files are the only fact both agree on: a move takes the animals' **files** into the destination's data folder, and their run records, recovered runs and notes follow. Afterwards the history is the destination's and none of it is the source's.
+
+Like [Tidy records](#tidy-records), it previews first (`apply: false`), and an apply re-plans rather than trusting the preview.
+
+**Who the animal becomes**, by case-folded name:
+
+| The destination has… | Outcome |
+|---|---|
+| An animal on its roster with that name | **Joins** it: the history becomes that animal's. This is the split done by hand — the new cohort was given a new animal with the old name |
+| A [former member](#former-members) with that name | Joins that one |
+| Neither | **Carried** under its own id: onto the roster in the chosen group (its box kept only if free there), or as a former member if it was one — or known only [from files](#former-members) |
+
+**What moves.** Every file of every run — recorded and [adopted](#orphan-adoption) — found by **run identity** ([the stem](#orphan-adoption)) in its session folder's format folders: `.json`, `.tsv` and `.mat`, in the current or the legacy spelling, including a crash's lone `.tsv`. Then any file in the source no record points at whose stem names a moved animal — unless an animal staying on the source's roster now holds that name. The path below the cohort folder is kept. **Never** `notes.md` (derived, and re-rendered at both ends), RHX recordings (they live outside the cohort folder) or AppleDouble files.
+
+**Sessions.** A session only moved animals ran in is **whole**: the record itself moves, with its notes, its log and its recording. One that animals staying behind ran in too is **split**: the destination gets a record of its own — the same prefix, number, date, times and status; no recording, because an RHX entry belongs to a group run both halves shared — or joins the destination's record of that day if it has one. Group runs follow the moved animals into their destination groups; the source drops a group run only the moved animals ran, unless the session is a recording.
+
+**Notes.** Notes are the operator's words, so none is ever lost or duplicated by accident:
+
+| Note about | On a split session |
+|---|---|
+| A moved animal | Moves |
+| An animal staying behind | Stays |
+| The whole session | **Copied** — it describes a session both cohorts ran |
+| A box only moved animals used | Moves |
+| A box both used (one box, two groups), or one no recorded run names | Copied |
+| A box only staying animals used | Stays |
+
+The session's operator and summary are copied too. A copied carry-forward flag is open in both cohorts, and resolving one does not resolve the other.
+
+**Caches follow.** `run_metrics_cache` rows are re-keyed to the new path and stat — the content is hash-verified identical, so the cached summary is still right — and adoptions take the new stat, so neither re-reads anything. Copied files are queued for [backup](#backup-mirroring); the mirror is additive, so the old copies stay in the source's mirror folder.
+
+**Refused**, with nothing touched, when: a session is held or a box runs anywhere in the app (copying competes with the write-ahead log's fsync); either cohort has an open (`configuring`/`running`) session; either data folder is unreachable; the folders are the same or one is inside the other; a destination file exists **with different content**; a run file lies outside the source's folder (the gap a `setDataFolder` move leaves; rescan first); two moved animals share a name; or the destination is archived. An identical file already at the destination is not a refusal.
+
+**Crash safety** — the order, and every step idempotent:
+
+1. **Journal**: the plan's file list goes into `animal_moves` as `copying`.
+2. **Copy** each file through `<name>.part`, fsync'd, renamed into place, re-read and hash-checked. No record has changed.
+3. **Commit**, in one transaction: re-plan the record half, abandon the move if it no longer matches what was copied, move every record, mark the journal `committed`.
+4. **Clean up**: delete each original whose hash still matches, `rmdir` emptied folders bottom-up (never `rmtree`), and a session folder no source record points at once all it holds is its derived `notes.md`. Mark the journal `done`.
+
+At start-up, before anything reads the archive, `move_apply.resume` undoes a `copying` move (deleting only copies verifiably its own, and only while the original still exists) and finishes a `committed` one. So a crash leaves each run in exactly one cohort, and no record pointing at a file that isn't there — the two states a [rescan](#pruning) would otherwise act on.
+
+> [!CAUTION]
+> **The other lab machine has its own records.** After a move, its database still points the moved runs at the source folder, where the files no longer are — and a rescan of the source there would [prune](#pruning) those records, losing the box, stop reason and parameters only a recorded run carries. **Run the same move on the other machine before rescanning there.** Its planner finds the files already at the destination (`already`, no copy) and simply re-points its records.
 
 ### Archive and delete
 
@@ -480,6 +547,7 @@ key, each deliberate (see the notes below). `run_metrics_cache` is left out: it 
 erDiagram
     cohorts ||--o{ groups : "cascade"
     cohorts ||--o{ animals : "cascade"
+    cohorts ||--o{ former_animals : "cascade"
     groups ||--o{ animals : "cascade"
     cohorts ||--o{ sessions : "cascade"
     sessions ||--o{ session_animal_runs : "cascade"
@@ -506,6 +574,12 @@ erDiagram
         TEXT cohort_id FK
         TEXT group_id FK
         INTEGER box_number
+    }
+    former_animals {
+        TEXT id PK
+        TEXT cohort_id FK
+        TEXT name
+        TEXT removed_at
     }
     prefixes {
         TEXT id PK
@@ -556,6 +630,8 @@ erDiagram
 | `cohorts` | `id`, `name`, `data_folder`, `created_at`, `updated_at`, `archived_at`, `appearance_json` | |
 | `groups` | `id`, `cohort_id`, `name`, `"order"` | Cascades from `cohorts` |
 | `animals` | `id`, `cohort_id`, `group_id`, `name`, `box_number`, `cage`, `sex`, `id_number`, `notes` | Cascades from `cohorts` and `groups` |
+| `former_animals` | `id`, `cohort_id`, `name`, `cage`, `sex`, `id_number`, `notes`, `group_name`, `removed_at` | [Former members](#former-members). Cascades from `cohorts` only — never from `groups` |
+| `animal_moves` | `id`, `source_cohort_id`, `dest_cohort_id`, `state`, `plan_json`, `created_at`, `updated_at`, `error` | The journal of a [move between cohorts](#moving-animals-between-cohorts). No foreign keys: the record of a move outlives either cohort |
 | `prefixes` | `id`, `name` (`UNIQUE COLLATE NOCASE`) | Hard delete; nothing on disk depends on it |
 | `sessions` | `id`, `cohort_id`, `prefix_id`, `prefix_name`, `session_number`, `date`, `started_at`, `ended_at`, `status`, `folder_path`, `group_runs` (JSON), `duration_minutes`, `recording_json` | No FK on `prefix_id` |
 | `session_animal_runs` | `id`, `session_id`, `animal_id`, `box_number`, `sketch_path`, `file_path`, `started_at`, `ended_at`, `stop_reason`, `profile_hash`, `config_json`, `params_hash` | Cascades from `sessions`; **no FK on `animal_id`** |
@@ -582,7 +658,7 @@ Indexes live in their own `INDEXES` block, applied **after** migrations: an inde
 Plus plain lookup indexes on each table's parent id.
 
 > [!CAUTION]
-> **An index on `animal_id`, never a foreign key.** `cohorts.update` deletes and re-inserts the cohort's entire animal set on every roster edit. With `ON DELETE CASCADE`, a single rename would destroy every historical run in the cohort. **The missing foreign key is load-bearing.** The same holds for `adopted_runs.animal_id`; storing the *id* is what lets an adopted run survive a rename.
+> **An index on `animal_id`, never a foreign key.** `cohorts.update` deletes and re-inserts the cohort's entire animal set on every roster edit. With `ON DELETE CASCADE`, a single rename would destroy every historical run in the cohort. **The missing foreign key is load-bearing.** The same holds for `adopted_runs.animal_id` and `session_notes.animal_id`; storing the *id* is what lets an adopted run survive a rename — and what lets history outlive the animal's place on the roster as a [former member](#former-members).
 
 ### Changing the schema
 
@@ -709,6 +785,8 @@ This is the **only** path by which a pre-Ephymeris archive reaches Analytics, an
 
 **The animal is recorded twice; use both.** When the document's `rat` matches no animal, the file stem is tried (`_animal_from_filename`) — but only if the stem has exactly the shape [Names](#names) prescribes, checked against the folder on disk, and the surviving token must still match a roster name exactly (case-folded). The document wins wherever it matches. A run silently missing from an animal's history reads as *the animal didn't run that day*, which is worse than the typo.
 
+**The roster first, then former members.** A file written while an animal was on the roster is still that animal's after it comes off, so a `removed` [former member](#former-members) is a candidate too — unless an animal on the roster now holds the name, because then the name means that animal. A former member derived from files alone is never a candidate: its name is itself a reading of the files.
+
 **Duplicate copies are one run.** Identity is the case-folded **file stem** (`reader.run_identity`): animal + session + start time. In one real archive 290 of 296 runs exist twice; adopting both would double every animal. The surviving copy is chosen **by content, not walk order** (`_prefer`): a copy whose document names its `sketch` can be decoded and one that doesn't cannot, with the path breaking ties. In that archive 30 runs carry `sketch` only in the consolidated copy.
 
 > [!WARNING]
@@ -805,6 +883,8 @@ Order of removal:
 3. **Sessions** only where the folder is gone, no run of the session survived, **and** it carries no [session log](#the-session-log) entry. Folder-gone alone would delete sessions whose runs were written elsewhere (a cohort relocated with `moveExisting: false`); no-runs alone would delete every aborted session.
 
 A session that is `configuring` or `running` is never deleted (enforced in the repository). The result reports `pruned: {runs, sessions, adopted}`. **Records only** — the rescan never writes to the archive.
+
+Files the other lab machine [moved to another cohort](#moving-animals-between-cohorts) are gone from this cohort's folder, so a rescan here prunes their records. Run the same move here first; it re-points them instead.
 
 ### Carrying adoptions forward
 

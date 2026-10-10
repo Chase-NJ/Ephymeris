@@ -15,6 +15,8 @@ The screenshots come from a demo rig of six boxes running a cohort called *Odor 
   - [Create a cohort](#create-a-cohort)
   - [Groups](#groups)
   - [Auto-balance](#auto-balance)
+  - [Removing an animal](#removing-an-animal)
+  - [Moving animals to another cohort](#moving-animals-to-another-cohort)
   - [The data folder](#the-data-folder)
   - [Archive and delete](#archive-and-delete)
 - [Running a session](#running-a-session)
@@ -231,6 +233,56 @@ time you switch.
 ![The Auto-balance panel: Split by set to Number of groups, Groups set to 2, the Balance by sex switch, Suggest grouping, and a preview of Group 1 and Group 2 with each animal's box, above Apply grouping and Cancel](images/auto-balance.webp)
 
 Applying replaces the current grouping entirely. A group can never have more than six animals.
+
+### Removing an animal
+
+The **−** button at the end of an animal's row takes it off the roster when you click **Save changes**.
+**Its sessions stay in the cohort's history.** It is listed under **Former members**, below the
+Animals table, and keeps its name in Analytics (in a **Former members** bucket of the animal list), in
+the Log and in the session PDFs.
+
+- **Restore** puts it back on the roster, with its history. Save to keep the change.
+- An animal removed before it ever ran (a typo, say) is simply deleted.
+- An animal removed with an older version of Ephymeris is listed too, marked **found in files**: its
+  name is read from its data files' names.
+- You can reuse a former member's name for a new animal. They stay two different animals.
+
+To give an animal's history to another cohort, don't remove it: [move it](#moving-animals-to-another-cohort).
+
+### Moving animals to another cohort
+
+To split a cohort (say, two slow learners into a cohort of their own), **move** the animals rather than
+removing them and adding new ones. A move takes each animal's data files into the other cohort's data
+folder, and its sessions and notes with them, so its whole history continues in the new cohort.
+
+1. Make the destination cohort first, if it does not exist yet. It can be empty.
+2. Open the cohort the animals are in now. In the **Animals** table, click **⇄** on an animal's row, or
+   **Move history…** under **Former members**.
+3. Choose the destination cohort, and the group the animal should join there. A preview lists the
+   animals, the sessions and how many files will move. Nothing has changed yet.
+4. Click **Move**.
+
+If the destination already has an animal with the same name, the history joins that animal. Otherwise
+the animal arrives with its own history.
+
+- A session the moved animal ran **alone** moves whole. A session it ran with animals that stay is
+  shared: both cohorts keep their own animals' runs, and each gets a copy of the notes about the whole
+  session.
+- The move is refused, and changes nothing, while a session is running or being set up, or if a file of
+  the same name but different content is already in the destination's folder. The preview says why.
+- If Ephymeris closes in the middle of a move, it finishes or undoes the move the next time it starts.
+
+**Repairing a split done the old way.** If you removed animals from one cohort and added animals of the
+same names to another, the removed ones are listed under **Former members** (marked **found in files**).
+Use **Move history…** on each, choosing the other cohort: their history joins the animals you added.
+
+> [!IMPORTANT]
+> **On the second lab machine, do the same move before rescanning.** Each machine keeps its own
+> records. The second machine's records still point at the old cohort's folder, and a **Rescan** there
+> would drop them. Open the old cohort on that machine and do the same move: the files are already in
+> place, so it only updates that machine's records. If that machine has no copy of the destination
+> cohort, create it first and use **Change data folder…** with **Move existing contents** unticked to
+> point it at the same folder.
 
 ### The data folder
 
@@ -844,7 +896,10 @@ PDF's fonts don't have, such as Chinese or emoji, print as `?`. Accented letters
 
 - **Do not unplug a box during a session.** The run for that animal stops at once.
 - **Do not rename, move or delete anything in the data folder.** Analytics finds sessions by their folder
-  and file names, and a renamed file can be lost from its session or read under the wrong date.
+  and file names, and a renamed file can be lost from its session or read under the wrong date. To
+  give animals' data to another cohort, use [Move](#moving-animals-to-another-cohort), which moves the
+  files and their history together.
+- **After moving animals, do the same move on the other lab machine before rescanning there.**
 - **Never edit a `.tsv` file.** It is the original record of the run, and Recover rebuilds the other
   files from it.
 - **`GRGL_Sim` really opens the fluid lines.** Run it dry unless you mean to dispense.

@@ -72,6 +72,10 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   [CMD.ANALYTICS_RESCAN]: 300_000,
   // Same walk as the rescan, plus a .json/.mat write per orphan found.
   [CMD.SESSIONS_RECOVER]: 300_000,
+  // Copies, hashes and verifies an animal's every file — over a network share
+  // when that is where the archive lives (`DATA.md#moving-animals-between-cohorts`).
+  // The preview hashes them too.
+  [CMD.COHORTS_MOVE_ANIMALS]: 600_000,
   // A RECORDING session ends gracefully (`RECORDING.md#graceful-end`): every box is
   // allowed to finish the trial it is in — up to 45 s — before RHX is stopped.
   // A behavior-only session still answers in well under a second.

@@ -292,9 +292,22 @@
      `pointer-events` is not an animatable value, and the attribute framer
      already stamps describes exactly the state we want to style — so this needs
      no React state, covers every `popLayout` exit in the app at once, and
-     applies for precisely the lifetime of the exit. */
-  [data-motion-pop-id] {
-    pointer-events: none;
+     applies for precisely the lifetime of the exit.
+
+     **The whole subtree, and `!important`.** On the attributed element alone
+     this only set an inherited default, which every `pointer-events-auto` tile
+     inside the page overrides — and Tailwind's utilities layer outranks this
+     one besides. The exiting page's controls stayed live while invisible, over
+     the incoming page — for the length of the exit, or for good if an exit
+     never finished — eating its clicks while the sky between them still
+     orbited.
+
+     The shared canvas included: r3f sets `pointer-events: auto` on its own
+     wrapper, so a sky still inside an outgoing page would otherwise cover the
+     whole incoming one. */
+  [data-motion-pop-id],
+  [data-motion-pop-id] * {
+    pointer-events: none !important;
   }
 
   /* A scroller with no scrollbar at all — for the HUD rails floating over the

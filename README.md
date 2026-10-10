@@ -237,6 +237,11 @@ from `sidecar/.venv`, copies `arduino-cli` from this machine's `PATH`, seeds a c
 merges `src-tauri/tauri.bundle.conf.json` and writes an NSIS installer to
 `src-tauri/target/release/bundle/nsis/`. Delete `src-tauri/resources/` to force a fresh stage.
 
+The frozen sidecar carries the interpreter of the venv that built it, so lab machines run whatever
+Python packaged them. `release.yml` uses 3.13; build locally from a 3.13+ venv too. On Windows,
+Python 3.12's asyncio clock ticks every 15.6 ms and fires any timer due within one tick at the next
+socket event, which makes short waits end early (see `SETTLE_S` in `intan/client.py`).
+
 The installer is unsigned. Packaging has only been run on Windows. The script is written platform-neutrally, but a macOS package has never been built, so treat
 macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\` paths); see
 [Architecture](docs/ARCHITECTURE.md#process-lifecycle).

@@ -41,7 +41,7 @@ jobs:
       # package-resources.mjs freezes from exactly sidecar/.venv.
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - run: |
           python -m venv sidecar\.venv
           sidecar\.venv\Scripts\pip.exe install -e "sidecar[dev]"

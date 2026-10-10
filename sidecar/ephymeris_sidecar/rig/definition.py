@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 WIRING_IN_USE = (
     "A session is set up or a box is running. Change the wiring between sessions: "
-    "every save regenerates the sketches the boxes are flashed from."
+    "every wiring change regenerates the sketches the boxes are flashed from."
 )
 VOCABULARY_IN_USE = (
     "A session is set up or a box is running. Edit the vocabulary between sessions: "

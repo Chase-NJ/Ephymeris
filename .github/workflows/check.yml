@@ -1,0 +1,82 @@
+# Every push to main: run the same suites a maintainer runs by hand (README "Commands").
+# Nothing here touches hardware; the tests that need arduino-cli, RHX or the lab's
+# probe maps skip themselves when those are absent.
+
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes an older run's answer irrelevant.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Protocol, typecheck, vitest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - run: npm run check
+
+  sidecar:
+    name: Sidecar (${{ matrix.os }})
+    # Windows is what the lab runs; Linux catches anything that only worked by
+    # accident of Windows paths.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sidecar/pyproject.toml
+      - run: pip install -e "sidecar[dev]"
+      - run: python -m pytest
+        working-directory: sidecar
+
+  firmware:
+    name: Firmware host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: sh firmware/libraries/BehaviorBox/extras/host_test/run.sh
+      - run: sh firmware/libraries/BehaviorBox/extras/host_test/run_box.sh
+
+  shell:
+    name: Tauri shell
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # The shell embeds ../dist at compile time, so the frontend must exist first.
+      - run: npm ci
+      - run: npm run build
+      - run: cargo test
+        working-directory: src-tauri

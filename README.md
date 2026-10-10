@@ -19,8 +19,8 @@ Maintainers should start with [Architecture](docs/ARCHITECTURE.md).
 Recording tabs, Debug Mode, Settings, the full session flow, backup mirroring, Analytics and recording
 with Intan RHX — has been tested and run on real hardware. The one thing not yet done is a
 full-length recording from a real animal ([Not yet verified](docs/RECORDING.md#not-yet-verified)).
-Analytics decodes two of the lab's real archives end to end. The Windows installer builds, but it is
-unsigned and there is no CI.
+Analytics decodes two of the lab's real archives end to end. The Windows installer is built by CI
+from a version tag, but it is unsigned.
 
 ## Documentation
 
@@ -200,9 +200,32 @@ shared library without `-fpermissive`, which makes them the strictest type check
 > argument type is a suppressed warning and the compile exits 0. After any shared-signature change,
 > compile every sketch with `--warnings all` and run the host tests. See [Firmware](docs/TASKS.md#firmware).
 
+## Continuous integration
+
+Two GitHub Actions workflows live in `.github/workflows/`:
+
+| Workflow | Runs on | What it does |
+|---|---|---|
+| `check.yml` | every push to `main`, every pull request | `npm run check`; the sidecar suite on Windows and Linux; the firmware host tests; `cargo test` on Windows |
+| `release.yml` | a pushed tag `v*` | builds the installer on a clean Windows runner and attaches it to a **draft** pre-release |
+
+Tests that need hardware, `arduino-cli`, RHX or the lab's probe maps skip themselves on a runner, so a
+green check says nothing about them.
+
+To release, set the same version in `package.json` and `src-tauri/tauri.conf.json`, commit, then tag
+with that version prefixed by `v` and push the tag:
+
+```bash
+git tag v1.1.1-alpha && git push origin main --tags
+```
+
+The workflow refuses a tag that disagrees with either file. When the draft appears on the Releases
+page, write its notes and publish it; nothing reaches the lab before that.
+
 ## Building the installer
 
-From a development machine that already runs the app from source:
+`release.yml` runs exactly this. To build one locally, from a development machine that already runs
+the app from source:
 
 ```bash
 npm run package
@@ -214,8 +237,7 @@ from `sidecar/.venv`, copies `arduino-cli` from this machine's `PATH`, seeds a c
 merges `src-tauri/tauri.bundle.conf.json` and writes an NSIS installer to
 `src-tauri/target/release/bundle/nsis/`. Delete `src-tauri/resources/` to force a fresh stage.
 
-The installer is unsigned and built by hand; there is no CI build. Packaging has only been run on
-Windows. The script is written platform-neutrally, but a macOS package has never been built, so treat
+The installer is unsigned. Packaging has only been run on Windows. The script is written platform-neutrally, but a macOS package has never been built, so treat
 macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\` paths); see
 [Architecture](docs/ARCHITECTURE.md#process-lifecycle).
 
@@ -253,8 +275,9 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   appeared, bind it to box 3?".
 - **Archive has no confirmation**, on purpose: archiving is reversible and only permanent delete is
   gated. Revisit if it proves too easy to trigger.
-- **Installer signing and a CI build.** Signing would remove the SmartScreen dialog; CI would make the
-  installer reproducible and untie it from one machine's `arduino-cli`.
+- **Installer signing and auto-update.** Signing would remove the SmartScreen dialog. Tauri's updater
+  would let a lab machine install a published release from inside the app, but needs internet on the
+  lab machines, an update-signing key kept safe, and a rule that it never installs during a session.
 - **`kind` in a task profile is a convention**, not a schema gate: a `utility` profile carrying
   `liveMetrics` is accepted and never scored. Enforce it only if it causes confusion.
 

@@ -1,0 +1,61 @@
+# Pushing a tag like v1.1.1-alpha builds the Windows installer on a clean machine and
+# attaches it to a DRAFT release. Nothing reaches the lab until the draft is published.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the release and upload the installer
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The tag is the version. Refuse a tag that disagrees with what the app
+      # will call itself, rather than ship an installer named one thing that
+      # reports another.
+      - name: Tag matches package.json and tauri.conf.json
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "tag=$tag package.json=$pkg tauri.conf.json=$conf"
+          [ "$tag" = "$pkg" ] && [ "$tag" = "$conf" ]
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: arduino/setup-arduino-cli@v2
+
+      # package-resources.mjs freezes from exactly sidecar/.venv.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m venv sidecar\.venv
+          sidecar\.venv\Scripts\pip.exe install -e "sidecar[dev]"
+
+      - run: npm ci
+      - run: npm run package
+
+      - name: Draft a release with the installer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft --prerelease \
+            --title "Ephymeris $GITHUB_REF_NAME" \
+            --generate-notes \
+            src-tauri/target/release/bundle/nsis/*-setup.exe

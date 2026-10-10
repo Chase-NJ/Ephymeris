@@ -33,6 +33,7 @@ export function ConfigFields({
   config,
   baseline,
   onChange,
+  onReset,
   disabled = false,
   only,
   exclude,
@@ -51,6 +52,14 @@ export function ConfigFields({
    */
   baseline: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
+  /**
+   * Report a reset as the keys reset rather than as values. The mapping step
+   * keeps only the operator's own edits, and a reset there has to DROP them so
+   * the field follows the layer underneath; written back as the baseline's
+   * value it would pin today's default (`TASKS.md#three-layer-merge`). Without
+   * it, a reset is an `onChange` with the baseline's values.
+   */
+  onReset?: (keys: string[]) => void;
   disabled?: boolean;
   /**
    * Render these groups only. ONE group renders with no section header — the
@@ -135,6 +144,10 @@ export function ConfigFields({
   }
 
   function resetKeys(keys: string[]) {
+    if (onReset) {
+      onReset(keys);
+      return;
+    }
     const next = { ...config };
     for (const key of keys) next[key] = baseline[key];
     onChange(next);

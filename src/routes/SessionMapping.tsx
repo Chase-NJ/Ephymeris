@@ -158,16 +158,10 @@ export function SessionMapping() {
       draft !== undefined &&
       draft.length === animals.length &&
       draft.every((m) => animals.some((a) => a.id === m.animalId));
+    // The draft holds only the operator's own edits, so restoring it cannot
+    // carry a default that changed during the visit (`TASKS.md#three-layer-merge`).
     if (sameAnimals) {
       setMappings(draft);
-      // The chosen sketches' profiles, for their config forms — fetched
-      // without re-seeding, which would undo the operator's edits.
-      const paths = [...new Set(draft.flatMap((m) => (m.sketchPath ? [m.sketchPath] : [])))];
-      for (const path of paths) {
-        void getTaskProfile(client, path)
-          .catch(() => null)
-          .then((profile) => setProfiles((prev) => ({ ...prev, [path]: profile })));
-      }
       return;
     }
     setMappings(
@@ -175,12 +169,12 @@ export function SessionMapping() {
         box: a.boxNumber as number,
         animalId: a.id,
         sketchPath: null,
-        config: {},
+        overrides: {},
       })),
     );
     // The draft is read once, at mount, as a starting point.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, cohort, groupId]);
+  }, [cohort, groupId]);
 
   // Kept current, so a sidebar click at any moment leaves nothing behind.
   useEffect(() => {
@@ -231,8 +225,8 @@ export function SessionMapping() {
   }
 
   /**
-   * This rig's saved defaults for a sketch (`TASKS.md#three-layer-merge`) — the layer
-   * a box starts on, and what its overrides are measured against.
+   * This rig's saved defaults for a sketch (`TASKS.md#three-layer-merge`) — the
+   * middle layer, under the operator's overrides and over the profile's own.
    */
   const rigDefaults = useCallback(
     (sketchPath: string | null) =>
@@ -240,40 +234,46 @@ export function SessionMapping() {
     [settings.taskDefaults],
   );
 
-  // Load each chosen sketch's Task Profile and seed its config from the merged
-  // defaults (`TASKS.md#three-layer-merge`: profile, then rig). Rows are identified by animal, not by
-  // box — box numbers are editable here and may collide mid-edit.
-  const loadProfile = useCallback(
-    async (animalId: string, sketchPath: string | null) => {
-      if (!sketchPath) return;
-      const seed = (profile: TaskProfile | null) =>
-        setMappings((prev) =>
-          prev.map((m) =>
-            m.animalId === animalId
-              ? {
-                  ...m,
-                  config: defaultConfig(profile, rigDefaults(sketchPath)),
-                }
-              : m,
-          ),
-        );
-      if (profiles[sketchPath] !== undefined) {
-        seed(profiles[sketchPath] ?? null);
-        return;
-      }
-      try {
-        const profile = await getTaskProfile(client, sketchPath);
-        setProfiles((prev) => ({ ...prev, [sketchPath]: profile }));
-        seed(profile);
-      } catch (err) {
-        // A malformed task.json is surfaced but doesn't block: the sketch is
-        // treated as profile-less (bare START).
-        setError(errorMessage(err));
-        setProfiles((prev) => ({ ...prev, [sketchPath]: null }));
-      }
-    },
-    [client, profiles, rigDefaults],
+  /*
+   * The chosen sketches' Task Profiles, for their config forms and for the
+   * merge at confirm. Rows are identified by animal, not by box — box numbers
+   * are editable here and may collide mid-edit — but a profile belongs to the
+   * sketch, so it is fetched once per path.
+   *
+   * Refetched when the set of chosen sketches changes and on every discovery
+   * (a rescan, a saved task): a profile is regenerated in place by a task save,
+   * a vocabulary edit or a wiring save, and the forms and the confirm must
+   * read the one on disk now. Leaving for Open Task / Open Rig unmounts this
+   * step, so returning refetches too.
+   */
+  const chosenPaths = useMemo(
+    () =>
+      [...new Set(mappings.flatMap((m) => (m.sketchPath ? [m.sketchPath] : [])))]
+        .sort()
+        .join("\u0000"),
+    [mappings],
   );
+  useEffect(() => {
+    if (!chosenPaths) return;
+    let active = true;
+    for (const path of chosenPaths.split("\u0000")) {
+      getTaskProfile(client, path).then(
+        (profile) => {
+          if (active) setProfiles((prev) => ({ ...prev, [path]: profile }));
+        },
+        (err) => {
+          // A malformed task.json is surfaced but doesn't block: the sketch is
+          // treated as profile-less (bare START).
+          if (!active) return;
+          setError(errorMessage(err));
+          setProfiles((prev) => ({ ...prev, [path]: null }));
+        },
+      );
+    }
+    return () => {
+      active = false;
+    };
+  }, [client, chosenPaths, discovery]);
 
   const names = useMemo(
     () => Object.fromEntries((cohort?.animals ?? []).map((a) => [a.id, a])),
@@ -291,9 +291,14 @@ export function SessionMapping() {
     return null;
   }, [mappings]);
 
+  // Confirm merges each box's config from its profile, so it waits for every
+  // chosen profile: without one the rig layer and the operator's edits would
+  // both be dropped from the line.
   const allChosen =
     mappings.length > 0 &&
-    mappings.every((m) => m.sketchPath !== null) &&
+    mappings.every(
+      (m) => m.sketchPath !== null && profiles[m.sketchPath] !== undefined,
+    ) &&
     duplicateBox === null;
 
   // A failed flash leaves its box in `ERROR`, and `ERROR → FLASHING` is
@@ -512,7 +517,21 @@ export function SessionMapping() {
           .call(CMD.UTILITY_ENSURE, { boxes: placementOrder.map((m) => m.box) })
           .catch(() => undefined);
       }
-      await confirmMapping(client, sessionId, groupId, mappings);
+      // Merged here, from the profiles as they are now — never from a value
+      // seeded earlier (`TASKS.md#three-layer-merge`).
+      await confirmMapping(
+        client,
+        sessionId,
+        groupId,
+        mappings.map(({ overrides, ...m }) => ({
+          ...m,
+          config: defaultConfig(
+            m.sketchPath ? (profiles[m.sketchPath] ?? null) : null,
+            rigDefaults(m.sketchPath),
+            overrides,
+          ),
+        })),
+      );
       // A confirmed mapping begins a fresh group run — drop the previous
       // group's telemetry and finished-run messages so Mission Control
       // doesn't show them against the new animals.
@@ -627,7 +646,9 @@ export function SessionMapping() {
             : duplicateBox !== null
               ? `Two animals share box ${duplicateBox} — move one first.`
               : !allChosen
-                ? "Pick a sketch for every box, then confirm."
+                ? mappings.every((m) => m.sketchPath !== null)
+                  ? "Reading the chosen sketches' parameters…"
+                  : "Pick a sketch for every box, then confirm."
                 : "Confirm the boxes, then place the animals one at a time.";
 
   return (
@@ -848,11 +869,10 @@ export function SessionMapping() {
                           setMappings((prev) =>
                             prev.map((m) =>
                               m.animalId === mapping.animalId
-                                ? { ...m, sketchPath: path, config: {} }
+                                ? { ...m, sketchPath: path, overrides: {} }
                                 : m,
                             ),
                           );
-                          void loadProfile(mapping.animalId, path);
                         }}
                         disabled={phase !== "review"}
                         className="min-w-0 flex-1 truncate"
@@ -978,17 +998,14 @@ export function SessionMapping() {
                         >
                           <TaskConfigForm
                             profile={profile}
-                            config={mapping.config}
-                            baseline={defaultConfig(
-                              profile,
-                              rigDefaults(mapping.sketchPath),
-                            )}
+                            rigDefaults={rigDefaults(mapping.sketchPath)}
+                            overrides={mapping.overrides}
                             disabled={phase !== "review"}
-                            onChange={(config) =>
+                            onOverridesChange={(overrides) =>
                               setMappings((prev) =>
                                 prev.map((m) =>
                                   m.animalId === mapping.animalId
-                                    ? { ...m, config }
+                                    ? { ...m, overrides }
                                     : m,
                                 ),
                               )

@@ -858,7 +858,8 @@ was. `lib/sessions/setupResume.ts` remembers two things:
 - **drafts** — each step's form, keyed by step and (past Configure) session and group, so a draft can never
   seed another session's form. A Boxes draft is dropped if the group's animals changed meanwhile; a walk left
   mid-placement comes back to the review with the mapping re-confirmable (the confirm is idempotent, and the
-  boxes re-flash).
+  boxes re-flash). A Boxes draft holds each box's sketch and the operator's own overrides, never the merged
+  config, so a default changed during the visit is followed on return ([TASKS.md](TASKS.md#three-layer-merge)).
 
 The memory is dropped on reaching Mission Control and by a deliberate Cancel or End session, and the offer is
 withheld whenever `sessions.active` no longer reports the session, because the sidecar is the authority on

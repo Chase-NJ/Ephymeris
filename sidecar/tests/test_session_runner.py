@@ -271,6 +271,50 @@ async def test_snapshot_carries_started_at_only_while_running(tmp_path: Path) ->
     assert runner.snapshot()[0]["startedAt"] is None
 
 
+async def test_snapshot_reports_a_finished_box_until_it_starts_again(tmp_path: Path) -> None:
+    """`session.animalEnded` is never replayed (`ARCHITECTURE.md#replay-on-connect`), so a
+    reloaded Mission Control learns a group is done only from `ended`."""
+    runner, ports, _events, ended = make_runner(tmp_path)
+    assert runner.snapshot()[0]["ended"] is False
+
+    runner.start_box(1)
+    ports.on_ready(None)
+    ports.on_strobe(246, 100)
+    await wait_until(lambda: bool(ended))
+    assert runner.snapshot()[0]["ended"] is True
+
+    runner.start_box(1)
+    assert runner.snapshot()[0]["ended"] is False
+
+
+async def test_a_box_is_ended_by_the_time_its_end_is_announced(tmp_path: Path) -> None:
+    """A client re-asks `sessions.status` on `session.animalEnded`; the answer must
+    already say the box ended."""
+    seen: list[bool] = []
+    runner, ports, _events, _ended = make_runner(tmp_path)
+
+    async def on_animal_ended(run, reason):
+        seen.append(runner.snapshot()[0]["ended"])
+
+    runner._on_animal_ended = on_animal_ended
+    runner.start_box(1)
+    ports.on_ready(None)
+    ports.on_strobe(246, 100)
+    await wait_until(lambda: bool(seen))
+    assert seen == [True]
+
+
+async def test_a_new_mapping_forgets_finished_boxes(tmp_path: Path) -> None:
+    runner, ports, _events, ended = make_runner(tmp_path)
+    runner.start_box(1)
+    ports.on_ready(None)
+    ports.on_strobe(246, 100)
+    await wait_until(lambda: bool(ended))
+
+    runner.configure(tmp_path, "2O-Bdisc_25", "g2", runner.box_configs())
+    assert runner.snapshot()[0]["ended"] is False
+
+
 async def test_a_board_drop_finalizes_with_whatever_was_captured(tmp_path: Path) -> None:
     """`ARCHITECTURE.md#board-drop` — the hard stop costs no data; the WAL already has it."""
     runner, ports, _events, ended = make_runner(tmp_path)
@@ -338,6 +382,7 @@ async def test_the_snapshot_reports_the_mapping_and_what_is_live(tmp_path: Path)
             "sketchPath": "/sk/GRGL_2-Odor",
             "running": False,
             "startedAt": None,
+            "ended": False,
         }
     ]
 

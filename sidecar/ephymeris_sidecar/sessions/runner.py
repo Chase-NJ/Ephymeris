@@ -103,6 +103,10 @@ class SessionRunner:
         # Per-session box configs, and the currently-running boxes.
         self._configs: dict[int, BoxConfig] = {}
         self._active: dict[int, ActiveRun] = {}
+        # Boxes whose run in this group has finished and not been restarted —
+        # the `ended` a reloaded client reads, since `session.animalEnded` is
+        # never replayed (`ARCHITECTURE.md#replay-on-connect`).
+        self._ended: set[int] = set()
         # In-flight fire-and-forget finalizations (end strobes, board drops).
         # `end_all` drains this so a caller that clears session state right
         # after it returns can't strand a finalization mid-write.
@@ -146,6 +150,7 @@ class SessionRunner:
         self._session_id_label = session_id_label
         self._group_id = group_id
         self._configs = {c.box: c for c in box_configs}
+        self._ended = set()
         self._duration_s = duration_s
 
     def clear(self) -> None:
@@ -153,6 +158,7 @@ class SessionRunner:
         if self._active:
             raise RuntimeError("cannot clear a runner with active runs")
         self._configs = {}
+        self._ended = set()
         self._session_folder = None
         self._session_id_label = ""
         self._group_id = ""
@@ -179,6 +185,7 @@ class SessionRunner:
                 "running": box in self._active,
                 # What lets a reloaded Mission Control resume its elapsed clocks.
                 "startedAt": run.started_at if (run := self._active.get(box)) else None,
+                "ended": box in self._ended,
             }
             for box, config in sorted(self._configs.items())
         ]
@@ -219,6 +226,7 @@ class SessionRunner:
             host_seed=host_seed,
         )
         self._active[box] = run
+        self._ended.discard(box)
         # The time limit counts from this box's own start (`ARCHITECTURE.md#configuration`). STOP is
         # still only a request the firmware honours at a trial boundary, so
         # the deadline sends it and the board's end strobe does the ending.
@@ -415,6 +423,10 @@ class SessionRunner:
             except Exception as exc:  # noqa: BLE001 - already torn down is fine
                 log.debug("box %d: end_session during finalize: %s", box, exc)
 
+        # Before the event goes out, so a client that re-asks on it sees the
+        # box as ended — unless it was started again during the awaits above.
+        if box not in self._active:
+            self._ended.add(box)
         await self._on_animal_ended(run, reason)
 
     def board_dropped(self, box: int) -> None:

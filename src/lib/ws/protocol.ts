@@ -815,6 +815,13 @@ export interface SessionBox {
    * resume its elapsed clocks.
    */
   startedAt: string | null;
+  /**
+   * This box's run in the group on the rig has finished and been recorded, and the box has not
+   * been started again. Cleared by a new mapping and by the box's next start. What lets a
+   * reloaded Mission Control tell a finished group from one never started
+   * (`ARCHITECTURE.md#running-boxes`).
+   */
+  ended: boolean;
 }
 
 export interface TelemetryMetric {

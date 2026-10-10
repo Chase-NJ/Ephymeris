@@ -273,7 +273,7 @@ SHAPES: Final[dict[str, Any]] = {
     "IdentifySpec": ('obj', (('on', 'str', False), ('off', 'str', False))),
     "TaskProfile": ('obj', (('taskName', 'str', False), ('kind', ('ref', 'ProfileKind'), False), ('config', ('list', ('ref', 'ConfigField')), False), ('strobes', ('map', 'str'), False), ('liveMetrics', ('list', ('ref', 'LiveMetric')), False), ('controls', ('list', ('ref', 'Control')), False), ('legacyNames', ('list', 'str'), False), ('telemetry', ('ref', 'TelemetrySpec'), True), ('identify', ('ref', 'IdentifySpec'), True))),
     "SessionBoxMapping": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('sketchPath', 'str', False), ('config', ('map', 'any'), False))),
-    "SessionBox": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('animalName', 'str', False), ('sketchName', 'str', False), ('sketchPath', 'str', False), ('running', 'bool', False), ('startedAt', ('union', ('str', 'null')), False))),
+    "SessionBox": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('animalName', 'str', False), ('sketchName', 'str', False), ('sketchPath', 'str', False), ('running', 'bool', False), ('startedAt', ('union', ('str', 'null')), False), ('ended', 'bool', False))),
     "TelemetryMetric": ('obj', (('id', 'str', False), ('value', ('union', ('float', 'null')), False), ('n', 'int', False))),
     "BoxTelemetry": ('obj', (('box', 'int', False), ('animalId', 'str', False), ('metrics', ('list', ('ref', 'TelemetryMetric')), False))),
     "PortTelemetry": ('obj', (('box', 'int', False), ('running', 'bool', False), ('metrics', ('list', ('ref', 'TelemetryMetric')), False))),

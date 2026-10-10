@@ -753,6 +753,15 @@ SHAPES = (
                 doc="When this box's current run began; null unless running. "
                 "What lets a reloaded Mission Control resume its elapsed clocks.",
             ),
+            f(
+                "ended",
+                BOOL,
+                doc="This box's run in the group on the rig has finished and been "
+                "recorded, and the box has not been started again. Cleared by a "
+                "new mapping and by the box's next start. What lets a reloaded "
+                "Mission Control tell a finished group from one never started "
+                "(`ARCHITECTURE.md#running-boxes`).",
+            ),
         ),
         doc="One box as the runner sees it — the source Mission Control renders.",
     ),

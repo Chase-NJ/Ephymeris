@@ -24,6 +24,12 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+// Every C++ standard header a test uses must come in here, ahead of the min/max
+// macros below. libstdc++ calls std::min inside its own headers, so one included
+// after the macros expands it to std::_bb_min and fails to compile. libc++ guards
+// its headers against these macros, so a macOS build never shows it.
+#include <algorithm>
+#include <iostream>
 #include <string>
 #include <deque>
 // strcasecmp/strncasecmp: avr-libc puts them in <string.h>, POSIX hosts in

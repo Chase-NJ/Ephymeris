@@ -37,7 +37,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      # Pinned: this copy ships inside the installer, and the action's default
+      # picks up release candidates. Move it on purpose, after a lab compile.
       - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: "1.5.1"
 
       # package-resources.mjs freezes from exactly sidecar/.venv.
       - uses: actions/setup-python@v6

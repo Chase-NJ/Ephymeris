@@ -126,6 +126,9 @@ def test_a_sketch_that_does_not_include_the_table_is_not_a_utility():
 
 @pytest.mark.skipif(shutil.which("clang++") is None and shutil.which("g++") is None,
                     reason="no host C++ compiler")
+@pytest.mark.skipif(os.name == "nt", reason="clang on Windows compiles against MSVC's "
+                    "standard library, which needs C++14; the AVR build is C++11, so this "
+                    "runs on Linux and macOS")
 def test_a_generated_table_compiles_against_the_engine(tmp_path):
     """Generated C is checked by a compiler, not by eye: the small relabelled
     rig's table, through the real BOX_Utility.ino and BoxUtility.h, on the
@@ -146,8 +149,7 @@ def test_a_generated_table_compiles_against_the_engine(tmp_path):
         encoding="utf-8",
     )
     compiler = shutil.which("clang++") or shutil.which("g++")
-    # Windows will not launch a binary without its .exe.
-    binary = tmp_path / ("utility.exe" if os.name == "nt" else "utility")
+    binary = tmp_path / "utility"
     built = subprocess.run(
         [compiler, "-std=c++11", "-Wall", "-Werror", "-Wno-unused-function",
          f"-I{host / 'box_shim'}", f"-I{host}", f"-I{host.parents[1]}",

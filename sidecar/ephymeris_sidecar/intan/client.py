@@ -42,7 +42,10 @@ HOST = "127.0.0.1"
 #: How long a reply may take. RHX answers a `get` in milliseconds; this is the
 #: bound on "RHX is wedged", not an expected latency.
 REPLY_TIMEOUT_S = 2.0
-#: The examples' settle, used only in the fallback discipline.
+#: The examples' settle, used only in the fallback discipline. Keep it well
+#: above 16 ms: on Windows under Python 3.12 the loop clock ticks every 15.6 ms
+#: and a timer due inside one tick fires at the next socket event, so a shorter
+#: settle can end before RHX's refusal is even sent.
 SETTLE_S = 0.1
 #: A quiet gap that ends a reply. Replies carry no terminator, so "no more
 #: bytes for this long" is the only end-of-message there is.

@@ -79,7 +79,12 @@ async def test_an_rhx_that_ignores_batched_gets_degrades_instead_of_failing():
     discovers it and the client falls back to the examples' discipline -- and
     the commands still land, including the batch that was in flight."""
     fake = await FakeRhx(answers_batched_get=False).start()
-    client = await connected(fake)
+    # The shipped settle, not the suite's 10 ms: this mode's only receipt is
+    # what arrives within it, and on Windows under Python 3.12 the loop clock
+    # ticks every 15.6 ms and treats a timer due inside one tick as due now --
+    # a 10 ms settle ends at the next socket event, before the refusal is sent.
+    client = RhxCommandClient(fake.command_port, reply_timeout_s=0.5)
+    await client.connect()
     await client.send(["set fileformat Traditional", "set savespikedata true"])
     assert client.confirms_writes is False
     assert fake.params["fileformat"] == "Traditional"

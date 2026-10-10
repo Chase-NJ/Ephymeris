@@ -119,32 +119,36 @@ class AnalyticsService:
         """The whole cohort table — every panel's data in one call
         (`DATA.md#analytics-views`)."""
         threshold = min_counted if min_counted is not None else self._min_counted
-        cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
-        sessions = await asyncio.to_thread(self._sessions.list_sessions, cohort_id)
-
-        # Adopted orphans (`DATA.md#orphan-adoption`) ride alongside recorded
-        # runs: payload-only
-        # synthetic sessions grouped from folder names, never database rows.
-        adopted = await asyncio.to_thread(self._repo.adopted_for_cohort, cohort_id)
-        # A recovered file from a session this database recorded counts under
-        # that session rather than as a second one on the same day
-        # (`DATA.md#tidy-records`).
-        owners = _adoption_owners(adopted, sessions)
-        synthetic, _ = _synthetic_sessions(adopted, cohort_id, owners)
-        sessions = _merge_sessions(sessions, synthetic)
-        if session_ids is not None:
-            wanted = set(session_ids)
-            sessions = [s for s in sessions if s.id in wanted]
-
-        runs = await asyncio.to_thread(self._sessions.runs_for_cohort, cohort_id)
-        runs = runs + [_adopted_to_run(a, owners) for a in adopted]
-        session_index = {s.id: index for index, s in enumerate(sessions)}
-        runs = [r for r in runs if r.session_id in session_index]
-        if animal_ids is not None:
-            wanted_animals = set(animal_ids)
-            runs = [r for r in runs if r.animal_id in wanted_animals]
-
+        # The records are read under the lock, not just indexed under it. A
+        # relocate, a move or a tidy holds it while it rewrites them, so a read
+        # taken before waiting would index what they just changed: the old data
+        # folder reported missing and every moved run with it.
         async with self._lock:
+            cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
+            sessions = await asyncio.to_thread(self._sessions.list_sessions, cohort_id)
+
+            # Adopted orphans (`DATA.md#orphan-adoption`) ride alongside recorded
+            # runs: payload-only
+            # synthetic sessions grouped from folder names, never database rows.
+            adopted = await asyncio.to_thread(self._repo.adopted_for_cohort, cohort_id)
+            # A recovered file from a session this database recorded counts under
+            # that session rather than as a second one on the same day
+            # (`DATA.md#tidy-records`).
+            owners = _adoption_owners(adopted, sessions)
+            synthetic, _ = _synthetic_sessions(adopted, cohort_id, owners)
+            sessions = _merge_sessions(sessions, synthetic)
+            if session_ids is not None:
+                wanted = set(session_ids)
+                sessions = [s for s in sessions if s.id in wanted]
+
+            runs = await asyncio.to_thread(self._sessions.runs_for_cohort, cohort_id)
+            runs = runs + [_adopted_to_run(a, owners) for a in adopted]
+            session_index = {s.id: index for index, s in enumerate(sessions)}
+            runs = [r for r in runs if r.session_id in session_index]
+            if animal_ids is not None:
+                wanted_animals = set(animal_ids)
+                runs = [r for r in runs if r.animal_id in wanted_animals]
+
             summaries = await self._index(runs, threshold, cohort_id)
 
         # A recovered session's clock closes from its files — each run's start

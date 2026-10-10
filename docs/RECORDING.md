@@ -358,8 +358,8 @@ box→animal→port map; `livenotes` stamps each box's start and end into RHX's 
 
 Where these steps sit in the wider session: [ARCHITECTURE.md](ARCHITECTURE.md#session-lifecycle).
 
-One group's recording from Start All to the stored run (`Application._begin_recording_if_any`,
-`_end_all_boxes`, `IntanService.start_recording` and `stop_recording`):
+One group's recording from Start All to the stored run (`SessionLifecycle` in `sessions/lifecycle.py`,
+`IntanService.start_recording` and `stop_recording`):
 
 ```mermaid
 sequenceDiagram
@@ -398,8 +398,8 @@ If RHX cannot be reached at the stop, `stop_recording` still returns the run and
 
 ### Start
 
-`sessions.startAll`, or the first `port.startSession`, goes through `Application._begin_recording_if_any`
-and `IntanService.start_recording`:
+`sessions.startAll`, or the first `port.startSession`, goes through `SessionLifecycle.start_all` or
+`start_box`, and `IntanService.start_recording`:
 
 1. `set runmode record`, polled until it takes.
 2. **Wait for samples** (`currenttimestamp` advancing). "Record" is a request; samples arriving is the fact.
@@ -411,10 +411,10 @@ A failure in 1–2 is an `INTAN_*` error with no box started.
 
 ### Graceful end
 
-`sessions.end` and `sessions.endGroup` go through `Application._end_all_boxes`:
+`sessions.end` and `sessions.endGroup` go through `SessionLifecycle.end` and `end_group`:
 
 1. `STOP` to every box.
-2. **Wait for each box's own `BF_END_SESSION`**, up to `Application.RECORDING_GRACE_S` (longer than any
+2. **Wait for each box's own `BF_END_SESSION`**, up to `RECORDING_GRACE_S` in `sessions/lifecycle.py` (longer than any
    trial the lab runs). `intan.status.waitingOn` names who is still out; Mission Control offers End now
    (`intan.forceStop`).
 3. Post-roll (`POST_ROLL_S`), then `set runmode stop`.

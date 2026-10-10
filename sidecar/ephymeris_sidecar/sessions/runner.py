@@ -58,6 +58,10 @@ class ActiveRun:
     started_at: str
     address: str
     session_id_label: str
+    #: The session record this run belongs to. Carried by the run itself so a
+    #: finalization that lands after the session let go still records against
+    #: the right one (`sessions/lifecycle.py`).
+    session_id: str = ""
     writer: AnimalWriter | None = None
     metrics: MetricSet | None = None
     end_code: int | None = None
@@ -113,6 +117,7 @@ class SessionRunner:
         self._finalizations: set[asyncio.Task] = set()
         self._session_folder: Path | None = None
         self._session_id_label: str = ""
+        self._session_id: str = ""
         self._group_id: str = ""
         self._duration_s: float | None = None
         # The recording subsystem's three taps (`intan/service.py`), all
@@ -137,6 +142,8 @@ class SessionRunner:
         group_id: str,
         box_configs: list[BoxConfig],
         duration_s: float | None = None,
+        *,
+        session_id: str,
     ) -> None:
         """Store the confirmed mapping for the group about to run
         (`ARCHITECTURE.md#mapping-and-the-placement-walk`).
@@ -148,6 +155,7 @@ class SessionRunner:
         """
         self._session_folder = session_folder
         self._session_id_label = session_id_label
+        self._session_id = session_id
         self._group_id = group_id
         self._configs = {c.box: c for c in box_configs}
         self._ended = set()
@@ -161,6 +169,7 @@ class SessionRunner:
         self._ended = set()
         self._session_folder = None
         self._session_id_label = ""
+        self._session_id = ""
         self._group_id = ""
         self._duration_s = None
 
@@ -222,6 +231,7 @@ class SessionRunner:
             started_at=_now(),
             address=address,
             session_id_label=self._session_id_label,
+            session_id=self._session_id,
             end_code=config.profile.end_code if config.profile else None,
             host_seed=host_seed,
         )
@@ -472,10 +482,12 @@ class SessionRunner:
             await self.finalize_box(box, reason, clean=True)
         # Fire-and-forget finalizations (an end strobe that landed just before
         # or during the grace window, a board drop racing the stop) may still
-        # be mid-write. Wait them out: `sessions.end` clears the running
-        # session id as soon as this returns, and a finalization landing on
-        # the wrong side of that clear would write its files with no
-        # `session_animal_runs` row — the self-inflicted orphan (`DATA.md#orphan-adoption`).
+        # be mid-write. Wait them out: the caller closes the group run, clears
+        # this runner and releases the rig as soon as this returns, and every
+        # file and `session_animal_runs` row must be written by then. (Each
+        # run carries its own `session_id`, so a late one would still be
+        # recorded against the right session, but after the group had closed
+        # -- `DATA.md#orphan-adoption`.)
         while self._finalizations:
             await asyncio.gather(*list(self._finalizations), return_exceptions=True)
 

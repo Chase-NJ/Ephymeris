@@ -11,7 +11,6 @@ import asyncio
 import json
 import logging
 import threading
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,10 +33,7 @@ from .cohorts.models import (
 )
 from .cohorts.repository import CohortRepository
 from .sessions.models import (
-    GroupRun,
     PrefixNameTaken,
-    Session,
-    SessionAnimalRun,
     SessionInvalid,
     SessionNotFound,
 )
@@ -53,7 +49,14 @@ from .logbook.service import LogbookService
 from .rig import definition as rig_definition
 from .rig import registry as rig_registry
 from .sessions.repository import SessionRepository
-from .sessions.runner import ActiveRun, BoxConfig, SessionRunner
+from .sessions.lifecycle import (
+    BoxRefused,
+    MappingEntry,
+    MappingRefused,
+    SessionLifecycle,
+    SessionRefused,
+)
+from .sessions.runner import SessionRunner
 from .strobes import store as strobe_store
 from .strobes.usage import ArchiveScanner, firmware_refs
 from .taskdef import bundled as bundled_sketches
@@ -72,46 +75,6 @@ from .settings import SidecarSettings
 from .utility import UtilityBaseline, UtilityUnavailable
 
 log = logging.getLogger(__name__)
-
-
-def build_active_payload(
-    running_id: str | None,
-    runner: SessionRunner | None,
-    unfinished: list[Session],
-) -> dict[str, Any]:
-    """The `ActiveSessions` shape — reconcile live app state against the DB.
-
-    The running slot is keyed off `running_id` (the runner-held session), never
-    a bare DB status query: a runner-held session can still read `configuring`
-    (post-confirmMapping, pre-startAll) and belongs in `running`, while a
-    `running` DB row nobody holds is a crash orphan and lands in `stale` —
-    surfaced for honesty, never offered for resume.
-    """
-    running = None
-    if running_id is not None and runner is not None:
-        held = next((s for s in unfinished if s.id == running_id), None)
-        if held is not None:
-            running = {
-                "session": held.to_json(),
-                "groupId": runner.group_id or None,
-                "boxes": runner.snapshot(),
-            }
-    # Only a session that actually made it into the running slot is excluded
-    # from the lists — a held id with no runner behind it proves nothing.
-    held_id = running_id if running is not None else None
-    return {
-        "running": running,
-        "configuring": [
-            s.to_json()
-            for s in unfinished
-            if s.status == "configuring" and s.id != held_id
-        ],
-        "stale": [
-            s.to_json()
-            for s in unfinished
-            if s.status == "running" and s.id != held_id
-        ],
-    }
 
 
 class Application:
@@ -159,7 +122,9 @@ class Application:
         #: session path except at `start_recording`.
         self.intan: IntanService | None = None
         self.profiles = AnalyticsRepository(self.db)
-        self._running_session_id: str | None = None
+        #: The held session and its whole lifecycle (`sessions/lifecycle.py`).
+        #: Built with the runner it sequences, in `start`.
+        self.lifecycle: SessionLifecycle | None = None
         #: One preview at a time, for load alone: `hardware.preview` and
         #: `tasks.preview` fire on every keystroke and re-validate every stored
         #: task profile. Correctness needs no lock -- a hypothetical is
@@ -185,7 +150,7 @@ class Application:
             vocabulary=self.vocab_store,
             tasks=self.task_store,
             repin=lambda: bundled_sketches.repin_all(self.pinned_root),
-            in_use=self._rig_in_use,
+            in_use=lambda: self.lifecycle is not None and self.lifecycle.in_use,
             rescan=self._rescan,
             after_rebuild=self._after_rebuild,
             broadcast=lambda message: self.server.broadcast(message),
@@ -366,7 +331,7 @@ class Application:
             loop=loop,
             ports=self.ports,
             broadcast=self.server.broadcast,
-            on_animal_ended=self._on_animal_ended,
+            on_animal_ended=lambda run, reason: self._require_lifecycle().animal_ended(run, reason),
             backup=self.backup,
         )
         self.intan = IntanService(
@@ -381,6 +346,17 @@ class Application:
         self.runner.recording_fields = self.intan.recording_fields
         self.runner.on_box_started = self.intan.box_started
         self.runner.on_strobe_tap = self.intan.on_strobe
+        self.lifecycle = SessionLifecycle(
+            sessions=self.sessions,
+            cohorts=self.cohorts,
+            runner=self.runner,
+            intan=self.intan,
+            utility=self.utility,
+            profiles=self.profiles,
+            logbook=self.logbook,
+            rig_reading=self.rig_definition.reading,
+            broadcast=self.server.broadcast,
+        )
 
     async def stop(self) -> None:
         # First, and it only closes OUR sockets: a recording in progress belongs
@@ -402,13 +378,6 @@ class Application:
         if self.backup is not None:
             await self.backup.stop()
         self.db.close()
-
-    def _rig_in_use(self) -> bool:
-        """A session set up, or any box running: when no rig definition write
-        may regenerate the folders the boxes were or will be flashed from."""
-        return self._running_session_id is not None or (
-            self.runner is not None and bool(self.runner.running_boxes())
-        )
 
     async def _after_rebuild(self, tasks: int, pinned: int) -> None:
         if tasks:
@@ -890,9 +859,7 @@ class Application:
         cohort_id = _str_arg(args, "id")
         path = _str_arg(args, "path")
         move_existing = args.get("moveExisting") is True
-        if move_existing and (
-            self._running_session_id or (self.runner is not None and self.runner.running_boxes())
-        ):
+        if move_existing and self.lifecycle is not None and self.lifecycle.in_use:
             raise CommandError(
                 ErrCode.DATA_FOLDER_INVALID,
                 "A session is set up or running. Finish it, then move the data folder.",
@@ -925,7 +892,7 @@ class Application:
             else None,
         )
         busy = None
-        if self._running_session_id or (self.runner is not None and self.runner.running_boxes()):
+        if self.lifecycle is not None and self.lifecycle.in_use:
             busy = "A session is set up or running. Finish it, then move the animals."
         with _cohort_errors():
             try:
@@ -942,7 +909,7 @@ class Application:
             if self.backup is not None and copied:
                 self.backup.enqueue(*copied)
             await self._broadcast_cohorts()
-            await self._broadcast_lifecycle()
+            await self._require_lifecycle().announce()
             if self.logbook is not None:
                 # Notes moved and copied, and both folders' notes.md re-render —
                 # including a source session whose every note moved away, which
@@ -1630,7 +1597,8 @@ class Application:
         touched, whatever the plan says; everything else the planner decides.
         """
         cohort_id = _str_arg(args, "cohortId")
-        protect = {self._running_session_id} if self._running_session_id else set()
+        held = self.lifecycle.held if self.lifecycle is not None else None
+        protect = {held} if held else set()
         with _cohort_errors():
             try:
                 result = await self._require_analytics().tidy(
@@ -1643,7 +1611,7 @@ class Application:
                 raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
         if result["applied"]:
             # Stale and set-up rows may have gone from the Dashboard's dock.
-            await self._broadcast_lifecycle()
+            await self._require_lifecycle().announce()
             # Notes may have moved to the kept record (`DATA.md#tidy-records`).
             if self.logbook is not None:
                 await self.logbook.refresh(cohort_id)
@@ -1663,7 +1631,7 @@ class Application:
         time app-wide, so any running box means hands off every archive.
         """
         cohort_id = _str_arg(args, "cohortId")
-        if self.runner is not None and self.runner.running_boxes():
+        if self.lifecycle is not None and self.lifecycle.writing:
             raise CommandError(
                 ErrCode.SESSION_INVALID,
                 "a session is running — its live .tsv files would look like "
@@ -1676,10 +1644,10 @@ class Application:
 
     # --- sessions (PROTOCOL.md#prefixes-and-sessions) ---------------------
 
-    def _require_runner(self) -> SessionRunner:
-        if self.runner is None:
+    def _require_lifecycle(self) -> SessionLifecycle:
+        if self.lifecycle is None:
             raise CommandError(ErrCode.INTERNAL, "session runner isn't running")
-        return self.runner
+        return self.lifecycle
 
     async def _sessions_suggest_number(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         prefix_id = _str_arg(args, "prefixId")
@@ -1744,35 +1712,13 @@ class Application:
             duration,
             args.get("recording") is True,
         )
-        await self._broadcast_lifecycle()
+        await self._require_lifecycle().announce()
         return {"session": session.to_json()}
 
     async def _sessions_abandon(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         session_id = _str_arg(args, "sessionId")
-        try:
-            session = await asyncio.to_thread(self.sessions.get_session, session_id)
-        except SessionNotFound as exc:
-            raise CommandError(ErrCode.SESSION_INVALID, str(exc)) from exc
-        # Once a group has run the record holds real history; only a session
-        # still in Step 2 limbo may be discarded.
-        if session.status != "configuring":
-            raise CommandError(
-                ErrCode.SESSION_INVALID,
-                f"session is {session.status}; only a configuring session can be abandoned",
-            )
-        # A confirmed-but-unstarted mapping may already sit in the runner —
-        # drop it so the next session can't inherit this one's boxes.
-        if self._running_session_id == session_id:
-            self._require_runner().clear()
-            self._running_session_id = None
-        if self.intan is not None:
-            # A recording that was set up and never started. One that IS
-            # running is left alone -- `release` refuses nothing and stops
-            # nothing.
-            self.intan.release()
-        session = await asyncio.to_thread(self.sessions.set_status, session_id, "aborted")
-        await self._release_baseline()
-        await self._broadcast_lifecycle()
+        with _lifecycle_errors():
+            session = await self._require_lifecycle().abandon(session_id)
         return {"session": session.to_json()}
 
     async def _sessions_confirm_mapping(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -1781,428 +1727,66 @@ class Application:
         boxes = args.get("boxes")
         if not isinstance(boxes, list):
             raise CommandError(ErrCode.SESSION_INVALID, "`boxes` must be a list")
-
-        try:
-            session = await asyncio.to_thread(self.sessions.get_session, session_id)
-            cohort = await asyncio.to_thread(self.cohorts.get, session.cohort_id)
-        except (SessionNotFound, CohortNotFound) as exc:
-            raise CommandError(ErrCode.SESSION_INVALID, str(exc)) from exc
-
-        # Held from the first profile read until the rig is held: a rig
-        # definition write waiting meanwhile then sees the session and refuses,
-        # instead of rebuilding the folders these profiles were just read from
-        # (`TASKS.md#the-rig-definition`).
-        async with self.rig_definition.reading():
-            names = {a.id: a.name for a in cohort.animals}
-            label = f"{session.prefix_name}_{session.session_number}"
-            box_configs: list[BoxConfig] = []
-            for entry in boxes:
-                if not isinstance(entry, dict):
-                    continue
-                box = entry.get("box")
-                animal_id = str(entry.get("animalId") or "")
-                sketch_path = str(entry.get("sketchPath") or "")
-                config = entry.get("config") if isinstance(entry.get("config"), dict) else {}
-                if not isinstance(box, int) or animal_id not in names or not sketch_path:
-                    raise CommandError(
-                        ErrCode.SESSION_INVALID,
-                        "A box mapping is missing its box, animal, or sketch.",
-                    )
-                profile = None
-                try:
-                    profile = await asyncio.to_thread(task_profile.load_profile, sketch_path)
-                except task_profile.TaskProfileError:
-                    profile = None  # profile-less: bare START, raw log
-                try:
-                    start_command = build_start_command(profile, config)
-                except task_profile.TaskProfileError as exc:
-                    # The profile declares more than the firmware's line buffer can
-                    # hold. Refusing the mapping is the point: the board cannot
-                    # report a truncated START, so letting this through would run
-                    # the session on whichever parameters happened to fit.
-                    raise CommandError(
-                        ErrCode.TASK_PROFILE_INVALID, str(exc), {"box": box}
-                    ) from exc
-                box_configs.append(
-                    BoxConfig(
-                        box=box,
-                        animal_id=animal_id,
-                        animal_name=names[animal_id],
-                        sketch_path=sketch_path,
-                        sketch_name=Path(sketch_path).name,
-                        start_command=start_command,
-                        config_metadata=dict(config),
-                        profile=profile,
-                    )
-                )
-
-            self._require_runner().configure(
-                Path(session.folder_path),
-                label,
-                group_id,
-                box_configs,
-                duration_s=(
-                    session.duration_minutes * 60.0
-                    if session.duration_minutes is not None
-                    else None
-                ),
+        entries = [
+            MappingEntry(
+                box=entry.get("box") if isinstance(entry.get("box"), int) else None,
+                animal_id=str(entry.get("animalId") or ""),
+                sketch_path=str(entry.get("sketchPath") or ""),
+                config=entry.get("config") if isinstance(entry.get("config"), dict) else {},
             )
-            self._running_session_id = session_id
-            # From here until the session ends the boxes belong to the runner: they
-            # will carry task sketches and fall idle between flashes, and a
-            # baseline restore landing in that window would erase the very sketch
-            # this mapping just chose
-            # (`ARCHITECTURE.md#three-rules-it-never-breaks`). Also extinguishes
-            # the placement walk's
-            # lights, in case the client didn't.
-            if self.utility is not None:
-                self.utility.hold()
-        await self._broadcast_lifecycle()
+            for entry in boxes
+            if isinstance(entry, dict)
+        ]
+        with _lifecycle_errors():
+            await self._require_lifecycle().confirm_mapping(session_id, group_id, entries)
         return {"ok": True}
 
     async def _sessions_status(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         session_id = _str_arg(args, "sessionId")
-        try:
-            session = await asyncio.to_thread(self.sessions.get_session, session_id)
-        except SessionNotFound as exc:
-            raise CommandError(ErrCode.SESSION_INVALID, str(exc)) from exc
-        runner = self._require_runner()
-        return {
-            "session": session.to_json(),
-            "groupId": runner.group_id,
-            "boxes": runner.snapshot(),
-        }
+        with _lifecycle_errors():
+            return await self._require_lifecycle().status(session_id)
 
     async def _sessions_active(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        unfinished = await asyncio.to_thread(self.sessions.list_unfinished)
-        return build_active_payload(self._running_session_id, self.runner, unfinished)
-
-    async def _broadcast_lifecycle(self) -> None:
-        """Push the fresh `ActiveSessions` snapshot to every client.
-
-        Called from each handler that changes session identity or status —
-        never from per-box transitions, which stay on `port.state`.
-        """
-        unfinished = await asyncio.to_thread(self.sessions.list_unfinished)
-        await self.server.broadcast(
-            event(
-                Evt.SESSION_LIFECYCLE,
-                build_active_payload(self._running_session_id, self.runner, unfinished),
-            )
-        )
+        return await self._require_lifecycle().active()
 
     async def _sessions_start_all(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         session_id = _str_arg(args, "sessionId")
-        runner = self._require_runner()
-        await self._begin_recording_if_any(session_id)
-        for box in runner.configured_boxes():
-            # `start_box` is a no-op for a box already running
-            # (`ARCHITECTURE.md#running-boxes`).
-            with _session_errors(box):
-                runner.start_box(box)
-        await asyncio.to_thread(self._open_group_run, session_id, runner.group_id)
-        session = await asyncio.to_thread(self.sessions.set_status, session_id, "running")
-        await self._broadcast_lifecycle()
+        with _lifecycle_errors():
+            session = await self._require_lifecycle().start_all(session_id)
         return {"session": session.to_json()}
 
     async def _sessions_end_group(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        """End the group on the rig and wait BETWEEN GROUPS
-        (`ARCHITECTURE.md#group-step`).
-
-        The session stays `running` and held, with an empty runner: which group
-        runs next is the operator's choice, made on the group step, and a
-        session is only ever finished by an explicit `sessions.end`. The sidecar
-        used to pick the next group by cohort order and auto-complete after the
-        last one; both were retired with the order itself.
-        """
+        """End the group and wait between groups (`ARCHITECTURE.md#group-step`)."""
         session_id = _str_arg(args, "sessionId")
-        await self._end_all_boxes(session_id)
-        session = await asyncio.to_thread(self._close_group_run, session_id)
-        self._clear_runner()
-        # The boxes are idle and the operator is about to walk the rig again for
-        # the next group, so the baseline comes back now rather than after the
-        # whole session — that walk is the one that needs the lights.
-        await self._release_baseline()
-        await self._broadcast_lifecycle()
+        with _lifecycle_errors():
+            session = await self._require_lifecycle().end_group(session_id)
         return {"session": session.to_json()}
 
     async def _sessions_resume(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
-        """Continue one of today's sessions with another group.
-
-        Deliberately NOT session resumption
-        (`DATA.md#continuing-between-groups`): nothing is picked
-        up mid-group. A group that was running when the app died is closed as
-        it stands -- its animals' `.tsv` files are the record, and `sessions.recover`
-        backfills them -- and the session re-enters the between-groups state
-        `sessions.endGroup` leaves, as if the operator had pressed Switch Group.
-
-        Same day only: the session folder carries its date in its name, and a
-        run appended to it tomorrow would be filed under the wrong day.
-        """
+        """Continue one of today's sessions with another group
+        (`DATA.md#continuing-between-groups`)."""
         session_id = _str_arg(args, "sessionId")
-        try:
-            session = await asyncio.to_thread(self.sessions.get_session, session_id)
-        except SessionNotFound as exc:
-            raise CommandError(ErrCode.SESSION_INVALID, str(exc)) from exc
-        if session.status not in ("running", "completed"):
-            raise CommandError(
-                ErrCode.SESSION_INVALID,
-                f"session is {session.status}; only one that ran a group can be continued",
-            )
-        if not session.group_runs:
-            raise CommandError(
-                ErrCode.SESSION_INVALID,
-                "this session never ran a group — start a new session instead",
-            )
-        if session.date != datetime.now().date().isoformat():
-            raise CommandError(
-                ErrCode.SESSION_INVALID,
-                "only today's sessions can be continued — its folder is named for "
-                f"{session.date}",
-            )
-        # Holding the rig again waits out a rig definition write in progress,
-        # which checked for a held session before this one existed.
-        async with self.rig_definition.reading():
-            held = self._running_session_id
-            if held is not None and held != session_id:
-                raise CommandError(
-                    ErrCode.SESSION_INVALID,
-                    "another session is open — end it before continuing this one",
-                )
-            if held == session_id and self._require_runner().configured_boxes():
-                # Already held with a mapping loaded: nothing to resume.
-                return {"session": session.to_json()}
-            await asyncio.to_thread(self._close_group_run, session_id)
-            session = await asyncio.to_thread(self.sessions.set_status, session_id, "running")
-            self._clear_runner()
-            self._running_session_id = session_id
-            await self._broadcast_lifecycle()
-            return {"session": session.to_json()}
-
-    def _clear_runner(self) -> None:
-        """Drop the finished group's mapping so the runner holds no boxes.
-
-        Between groups the runner must not still describe the previous group:
-        a reload would otherwise offer Start All on animals already carried
-        home. `clear` refuses while a run is active, which after `end_all`
-        cannot be the case -- but a refusal is logged rather than raised,
-        because the group HAS ended and the session must not be stranded.
-        """
-        if self.runner is None:
-            return
-        try:
-            self.runner.clear()
-        except RuntimeError:
-            log.warning("runner still holds active runs after the group ended")
+        with _lifecycle_errors():
+            session = await self._require_lifecycle().resume(session_id)
+        return {"session": session.to_json()}
 
     async def _sessions_end(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         session_id = _str_arg(args, "sessionId")
-        held = self._running_session_id == session_id
-        # Close Out on a crash-orphaned session reaches here too, and must not
-        # stop whichever OTHER session the runner is holding.
-        if held or self._running_session_id is None:
-            await self._end_all_boxes(session_id)
-        await asyncio.to_thread(self._close_group_run, session_id)
-        session = await asyncio.to_thread(self.sessions.set_status, session_id, "completed")
-        if held:
-            self._clear_runner()
-            self._running_session_id = None
-        if held or self._running_session_id is None:
-            await self._release_baseline()
-        await self._broadcast_lifecycle()
-        # The session's clock just closed; its log's end time and elapsed did too.
-        if self.logbook is not None:
-            await self.logbook.refresh(session.cohort_id, [session.id])
+        with _lifecycle_errors():
+            session = await self._require_lifecycle().end(session_id)
         return {"session": session.to_json()}
-
-    # --- recording (RECORDING.md#start-and-end) ---------------------------
-
-    #: How long a recording waits for each box to finish the trial it is in
-    #: after STOP. Longer than any trial the lab runs -- a 20 s error delay plus
-    #: a 4 s ITI plus the holds -- and the operator can cut it short.
-    RECORDING_GRACE_S = 45.0
-
-    async def _is_recording_session(self, session_id: str) -> bool:
-        try:
-            session = await asyncio.to_thread(self.sessions.get_session, session_id)
-        except SessionNotFound:
-            return False
-        return session.recording is not None
-
-    async def _begin_recording_if_any(self, session_id: str) -> None:
-        """Start RHX recording BEFORE any box starts, or refuse.
-
-        The one place the recording may fail the session path, and on purpose:
-        a behavior session quietly missing its electrophysiology cannot be
-        re-run, so this raises while no animal has seen a trial yet.
-        """
-        if self.intan is None or not await self._is_recording_session(session_id):
-            return
-        runner = self._require_runner()
-        if not self.intan.configured_for(session_id, runner.group_id):
-            raise CommandError(
-                ErrCode.INTAN_NOT_READY,
-                "This is a recording session, but no recording is set up for this "
-                "group. Finish the Recording step first.",
-            )
-        with _intan_errors():
-            await self.intan.start_recording()
-
-    async def _end_all_boxes(self, session_id: str) -> None:
-        """End every box, and the recording around them if there is one.
-
-        Order is the whole point: STOP the boxes, WAIT for each to close its
-        trial, and only then stop RHX -- so the last event of every animal is
-        inside the recording, with a post-roll after it.
-        """
-        runner = self._require_runner()
-        intan = self.intan
-        if intan is None or not intan.is_recording:
-            await runner.end_all("operator stop")
-            if intan is not None:
-                intan.release()
-            return
-        await runner.end_all(
-            "operator stop",
-            graceful_timeout_s=self.RECORDING_GRACE_S,
-            force=intan.force_stop,
-            on_waiting=intan.note_waiting,
-        )
-        run = await intan.stop_recording()
-        if run is not None:
-            await asyncio.to_thread(self._record_recording_run, session_id, run)
-
-    def _record_recording_run(self, session_id: str, run: dict[str, Any]) -> None:
-        session = self.sessions.get_session(session_id)
-        recording = dict(session.recording or {"runs": []})
-        recording["runs"] = [*recording.get("runs", []), run]
-        self.sessions.set_recording(session_id, recording)
-
-    async def _release_baseline(self) -> None:
-        """Hand the rig back to the utility baseline once a session lets go."""
-        if self.utility is None:
-            return
-        self.utility.release()
-        self.utility.ensure()
-        await self.utility.publish()
-
-    def _open_group_run(self, session_id: str, group_id: str) -> None:
-        """Record that a group started running.
-
-        What the group step reads to badge a group "ran 10:42", and what
-        `sessions.resume` requires before a session can be continued. Deduped
-        only against an OPEN run of the same group: running a group a second
-        time is allowed and appends a second entry, while Start All after a
-        per-box start (both in one group run) does not.
-        """
-        session = self.sessions.get_session(session_id)
-        if any(
-            run.group_id == group_id and run.ended_at is None
-            for run in session.group_runs
-        ):
-            return
-        runs = [*session.group_runs, GroupRun(group_id=group_id, order=len(session.group_runs), started_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))]
-        self.sessions.set_group_runs(session_id, runs)
-
-    def _close_group_run(self, session_id: str) -> Session:
-        """Close the open group run, if there is one."""
-        session = self.sessions.get_session(session_id)
-        runs = list(session.group_runs)
-        for index, run in enumerate(runs):
-            if run.ended_at is None:
-                runs[index] = replace(run, ended_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
-                return self.sessions.set_group_runs(session_id, runs)
-        return session
 
     async def _port_start_session(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         box = _box_arg(args)
-        session_id = self._running_session_id
-        if session_id is not None:
-            await self._begin_recording_if_any(session_id)
-        runner = self._require_runner()
-        with _session_errors(box):
-            runner.start_box(box)
-        if session_id is not None and runner.group_id:
-            # A group started one box at a time has run exactly as much as one
-            # started with Start All. Without this it was never recorded: the
-            # group step could not say it had run, and the session sat in
-            # `configuring`, where Back on the next mapping discarded it.
-            await asyncio.to_thread(self._open_group_run, session_id, runner.group_id)
-            session = await asyncio.to_thread(self.sessions.get_session, session_id)
-            if session.status != "running":
-                await asyncio.to_thread(self.sessions.set_status, session_id, "running")
-                await self._broadcast_lifecycle()
+        with _lifecycle_errors():
+            await self._require_lifecycle().start_box(box)
         return {"state": self._require_ports().handler(box).state.value}
 
     async def _port_stop_session(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         box = _box_arg(args)
-        with _session_errors(box):
-            self._require_runner().stop_box(box)
+        with _lifecycle_errors():
+            self._require_lifecycle().stop_box(box)
         return {"state": self._require_ports().handler(box).state.value}
-
-    async def _on_animal_ended(self, run: ActiveRun, reason: str) -> None:
-        """Record the run and tell the frontend (`session.animalEnded`)."""
-        if self._running_session_id is not None:
-            # Snapshot the profile that actually decoded this run
-            # (`DATA.md#which-profile-decodes-a-run`). A
-            # `task.json` lives beside its sketch and can be edited or deleted
-            # long after a session, so without this the run would silently be
-            # re-interpreted years later with whatever codes are current.
-            profile_hash = None
-            if run.config.profile is not None:
-                try:
-                    profile_hash = await asyncio.to_thread(
-                        self.profiles.remember_profile, run.config.profile
-                    )
-                except Exception:  # noqa: BLE001 - never fail a finalization over this
-                    log.exception("couldn't snapshot the task profile for box %d", run.box)
-            # The parameters this run actually ran on (`TASKS.md#three-layer-merge`).
-            # They already reach
-            # the session file; recording them here is what makes them
-            # queryable, and what lets Analytics tell two differently-tuned runs
-            # of the same sketch apart — `profile_hash` cannot, it covers only
-            # the declaration.
-            run_config = dict(run.config.config_metadata) or None
-            await asyncio.to_thread(
-                self.sessions.record_animal_run,
-                SessionAnimalRun(
-                    id=run.run_id,
-                    session_id=self._running_session_id,
-                    animal_id=run.config.animal_id,
-                    box_number=run.box,
-                    sketch_path=run.config.sketch_path,
-                    file_path=run.file_json,
-                    started_at=run.started_at,
-                    ended_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    stop_reason=reason,
-                    profile_hash=profile_hash,
-                    config=run_config,
-                    params_hash=task_profile.params_hash(run_config),
-                ),
-            )
-        if self.intan is not None:
-            self.intan.box_ended(run.box, run.config.animal_name, reason)
-        await self.server.broadcast(
-            event(
-                Evt.SESSION_ANIMAL_ENDED,
-                {
-                    "box": run.box,
-                    "animalId": run.config.animal_id,
-                    "stopReason": reason,
-                    "filePath": run.file_json,
-                },
-            )
-        )
-        # The run's what-changed entry exists now (`DATA.md#what-changed`).
-        # After the event above, and never able to fail a finalization.
-        if self.logbook is not None and self._running_session_id is not None:
-            try:
-                session = await asyncio.to_thread(
-                    self.sessions.get_session, self._running_session_id
-                )
-                await self.logbook.refresh(session.cohort_id, [session.id])
-            except Exception:  # noqa: BLE001
-                log.exception("logbook: couldn't announce box %d's run", run.box)
 
     # --- the session log (DATA.md#the-session-log) ---------------------------
 
@@ -2413,6 +1997,29 @@ class _session_errors:
                 {"box": self.box, "from": exc.current.value, "to": exc.requested.value},
             ) from exc
         return False
+
+
+class _lifecycle_errors:
+    """Map `SessionLifecycle`'s refusals onto wire codes."""
+
+    def __enter__(self) -> "_lifecycle_errors":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
+        if exc is None:
+            return False
+        if isinstance(exc, (SessionRefused, SessionNotFound, CohortNotFound)):
+            raise CommandError(ErrCode.SESSION_INVALID, str(exc)) from exc
+        if isinstance(exc, MappingRefused):
+            raise CommandError(
+                ErrCode.TASK_PROFILE_INVALID, str(exc), {"box": exc.box}
+            ) from exc
+        if isinstance(exc, BoxRefused):
+            cause = exc.__cause__
+            assert cause is not None
+            _session_errors(exc.box).__exit__(type(cause), cause, cause.__traceback__)
+            raise cause
+        return _intan_errors().__exit__(exc_type, exc, tb)
 
 
 class _intan_errors:

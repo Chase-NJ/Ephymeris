@@ -459,8 +459,7 @@ def app(tmp_path, db, library, monkeypatch):
         vocab_store=vocab_store,
         task_store=tasks,
         strobe_scanner=ArchiveScanner(db),
-        _running_session_id=None,
-        runner=None,
+        lifecycle=SimpleNamespace(in_use=False),
         server=SimpleNamespace(broadcast=broadcast),
         _cohort_roots=lambda: [str(cohort_root)],
         events=events,
@@ -472,7 +471,7 @@ def app(tmp_path, db, library, monkeypatch):
         vocabulary=vocab_store,
         tasks=tasks,
         repin=lambda: 0,
-        in_use=lambda: Application._rig_in_use(stub),
+        in_use=lambda: stub.lifecycle.in_use,
         rescan=rescan,
         after_rebuild=after_rebuild,
         broadcast=broadcast,
@@ -542,24 +541,17 @@ async def test_a_port_slot_code_reports_its_blocker_and_is_refused(app):
     assert refused.value.code == "STROBE_REQUIRED"
 
 
-async def test_no_edit_while_a_session_is_set_up(app):
-    app._running_session_id = "s1"
-    with pytest.raises(CommandError) as refused:
-        await call(app, "_strobes_add", name="LASER_ON", code=300, rationale="x")
-    assert refused.value.code == "STROBE_SESSION_RUNNING"
-
-
-async def test_no_edit_while_a_box_runs_a_task_from_debug_mode(app):
-    """No session, but a box is running: its sketch was generated from the
-    vocabulary an edit would replace."""
-    app.runner = SimpleNamespace(running_boxes=lambda: [3])
+async def test_no_edit_while_the_rig_is_in_use(app):
+    """A session set up, or a box running (`SessionLifecycle.in_use`): either
+    way a sketch was generated from the vocabulary an edit would replace."""
+    app.lifecycle.in_use = True
     with pytest.raises(CommandError) as refused:
         await call(app, "_strobes_add", name="LASER_ON", code=300, rationale="x")
     assert refused.value.code == "STROBE_SESSION_RUNNING"
 
 
 async def test_a_remove_is_refused_before_its_archive_scan(app, monkeypatch):
-    app._running_session_id = "s1"
+    app.lifecycle.in_use = True
 
     async def scan():
         pytest.fail("scanned the archive for an edit that was always going to be refused")

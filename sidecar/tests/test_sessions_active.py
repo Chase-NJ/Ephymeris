@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.app import build_active_payload
+from ephymeris_sidecar.sessions.lifecycle import build_active_payload
 from ephymeris_sidecar.protocol import Evt, event, validate_command_result
 from ephymeris_sidecar.sessions.models import GroupRun, Session
 from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
@@ -63,6 +63,7 @@ def runner(tmp_path: Path):
                 profile=None,
             )
         ],
+        session_id="s1",
     )
     try:
         yield r

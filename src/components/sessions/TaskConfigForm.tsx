@@ -5,7 +5,12 @@ import { useState } from "react";
 import { Dropdown } from "@/components/common/Dropdown";
 import { ConfigFields } from "@/components/sessions/ConfigFields";
 import { springSnappy } from "@/lib/motion";
-import type { TaskProfile } from "@/lib/sessions/types";
+import {
+  defaultConfig,
+  editedOverrides,
+  withoutOverrides,
+  type TaskProfile,
+} from "@/lib/sessions/types";
 import { QUICK_TUNE_GROUPS } from "@/lib/tasks/topology";
 
 /**
@@ -24,6 +29,13 @@ import { QUICK_TUNE_GROUPS } from "@/lib/tasks/topology";
  * line says how many values differ from the rig's defaults for this animal,
  * which is the only thing an operator needs to see at a glance.
  *
+ * **It holds the operator's edits, not the values.** What it shows is rebuilt
+ * on every render from the profile and rig defaults it is given, with
+ * `overrides` on top, and `onOverridesChange` reports only the keys the
+ * operator touched. A seeded snapshot would hide a default changed mid-setup:
+ * the untouched field would keep the old value, read as an override, and go to
+ * the board (`TASKS.md#three-layer-merge`).
+ *
  * Opened, the pane leads with **Quick tune** — the `QUICK_TUNE_GROUPS`
  * registry's groups (correction budgets, the lazy-penalty escalation),
  * ordered by how often the lab actually turns them at setup rather than by
@@ -35,20 +47,27 @@ import { QUICK_TUNE_GROUPS } from "@/lib/tasks/topology";
  */
 export function TaskConfigForm({
   profile,
-  config,
-  baseline,
-  onChange,
+  rigDefaults,
+  overrides,
+  onOverridesChange,
   disabled = false,
 }: {
   profile: TaskProfile | null;
-  config: Record<string, unknown>;
-  /** This rig's saved defaults for the sketch — what "overridden" is measured against. */
-  baseline: Record<string, unknown>;
-  onChange: (next: Record<string, unknown>) => void;
+  /** This rig's saved defaults for the sketch — with the profile's, what "overridden" is measured against. */
+  rigDefaults: Record<string, unknown>;
+  /** Only the values the operator set here, keyed by `metadataKey`. */
+  overrides: Record<string, unknown>;
+  onOverridesChange: (next: Record<string, unknown>) => void;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   if (!profile || profile.config.length === 0) return null;
+
+  const baseline = defaultConfig(profile, rigDefaults);
+  const config = defaultConfig(profile, rigDefaults, overrides);
+  const onChange = (next: Record<string, unknown>) =>
+    onOverridesChange(editedOverrides(overrides, config, next));
+  const onReset = (keys: string[]) => onOverridesChange(withoutOverrides(overrides, keys));
 
   const overridden = profile.config.filter(
     (f) => f.metadataKey in config && !Object.is(config[f.metadataKey], baseline[f.metadataKey]),
@@ -137,6 +156,7 @@ export function TaskConfigForm({
                             config={config}
                             baseline={baseline}
                             onChange={onChange}
+                            onReset={onReset}
                             disabled={disabled}
                             only={group}
                           />
@@ -157,6 +177,7 @@ export function TaskConfigForm({
                 config={config}
                 baseline={baseline}
                 onChange={onChange}
+                onReset={onReset}
                 disabled={disabled}
                 exclude={promoted}
               />

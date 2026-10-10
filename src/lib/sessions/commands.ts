@@ -83,11 +83,17 @@ export async function abandonSession(
   await client.call(CMD.SESSIONS_ABANDON, { sessionId });
 }
 
+/**
+ * Confirm a group's boxes. Each `config` is the full merged config, built by the
+ * caller from the CURRENT profile at the click — a row's `overrides` alone would
+ * drop the rig layer, and a stored snapshot would carry stale defaults
+ * (`TASKS.md#three-layer-merge`).
+ */
 export async function confirmMapping(
   client: SidecarClient,
   sessionId: string,
   groupId: string,
-  boxes: BoxMapping[],
+  boxes: Array<Omit<BoxMapping, "overrides"> & { config: Record<string, unknown> }>,
 ): Promise<void> {
   await client.call(CMD.SESSIONS_CONFIRM_MAPPING, {
     sessionId,

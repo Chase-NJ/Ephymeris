@@ -745,6 +745,11 @@ flowchart LR
 
 They merge in that order in exactly one place, `defaultConfig` in `src/lib/sessions/types.ts`. **It iterates the profile's fields, not the stored objects**, so a value for a field the sketch no longer declares cannot reach the wire. `taskDefaults` is keyed by sketch folder name (what the session file records as `sketch`) and stores only divergences; it has no editor, and entries keyed by a sketch that no longer exists are inert. The session file records the merged values flat, plus `config_json`/`params_hash` on the run — a reader never needs to know which layer a number came from.
 
+The mapping step keeps **only the per-box layer**: a row (and its set-up draft) holds the keys the operator edited in `TaskConfigForm` and nothing else. The full config is rebuilt by `defaultConfig` from the current profile and `taskDefaults` whenever the form renders, and again at confirm. The Confirm button waits until every chosen profile has loaded, because the merge needs it. An edit is a key whose value moved between what the form showed and what it reported. A reset drops the key, so the field goes back to following the layers underneath.
+
+> [!CAUTION]
+> Never seed a row with the merged config, and never decide what is an override by comparing a value against the baseline. The rig is not held until the first group's walk starts, so Open Task or Open Rig can regenerate the chosen sketch's `task.json` mid-setup. A seeded snapshot would keep the old default. Compared against the new baseline, that old default reads as an override the operator never set, and it goes to the board and into the session file as if it had been chosen.
+
 ### Building the line
 
 `build_start_command(profile, config)` in `tasks/start_command.py`: `START <wireKey>=<value> <wireKey>=<value> …`, space-separated, order-independent, matching the firmware parser (unknown keys ignored, missing keys keep the compiled default).

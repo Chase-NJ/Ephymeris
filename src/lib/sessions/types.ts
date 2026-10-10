@@ -48,8 +48,13 @@ export interface BoxMapping {
   box: number;
   animalId: string;
   sketchPath: string | null;
-  /** Keyed by `metadataKey`, per the sketch's Task Profile. */
-  config: Record<string, unknown>;
+  /**
+   * Only the values the operator edited on the mapping step, keyed by
+   * `metadataKey` — never a snapshot of the merged config. The full config is
+   * rebuilt by `defaultConfig` from the CURRENT profile whenever it is shown
+   * or confirmed (`TASKS.md#three-layer-merge`).
+   */
+  overrides: Record<string, unknown>;
 }
 
 /**
@@ -146,6 +151,39 @@ export function defaultConfig(
       return [key, f.default];
     }),
   );
+}
+
+/**
+ * The overrides after one edit of a form that reports whole configs: every key
+ * whose value moved between what was `shown` and the `next` it reported is now
+ * the operator's own, even one set to the value underneath.
+ *
+ * Measured against the form's previous value, never against the baseline.
+ * "Differs from the baseline" is what goes stale: once a seeded value was kept,
+ * a later change to the profile's default turned the untouched field into an
+ * apparent override and the old default reached the wire
+ * (`TASKS.md#three-layer-merge`).
+ */
+export function editedOverrides(
+  overrides: Record<string, unknown>,
+  shown: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...overrides };
+  for (const [key, value] of Object.entries(next)) {
+    if (!Object.is(value, shown[key])) out[key] = value;
+  }
+  return out;
+}
+
+/** The overrides with these keys dropped, so those fields follow the layers underneath again. */
+export function withoutOverrides(
+  overrides: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const out = { ...overrides };
+  for (const key of keys) delete out[key];
+  return out;
 }
 
 /**

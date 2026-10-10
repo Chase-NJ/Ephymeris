@@ -27,6 +27,7 @@ import pytest
 
 from ephymeris_sidecar import app as app_module
 from ephymeris_sidecar.app import Application
+from ephymeris_sidecar.rig.definition import _ReadWriteLock
 from ephymeris_sidecar.boards.tool import DetectedBoard
 from ephymeris_sidecar.debug_run import DebugRuns
 from ephymeris_sidecar.ports.handler import OutputLine
@@ -101,6 +102,7 @@ def make_app() -> SimpleNamespace:
         tool=tool,
         events=events,
         _board_bauds={},
+        rig_definition=SimpleNamespace(reading=_ReadWriteLock().reading),
     )
 
     def on_state_change(*args) -> None:  # noqa: ANN002
@@ -131,6 +133,7 @@ def make_app() -> SimpleNamespace:
         broadcast=broadcast,
         load_profile=lambda _path: UTILITY_PROFILE,
         is_utility=lambda sketch: sketch.name == "BOX_Utility",
+        reading=app.rig_definition.reading,
     )
     utility.update_settings(settings)
 

@@ -11,6 +11,9 @@ Two registries and one operator-owned document:
 Plus the strobe vocabulary: `<data_dir>/strobes/vocabulary.json`, seeded from
 `schema/strobe_vocab.default.json` and read through `vocabulary()`.
 
+Together the wiring and the vocabulary are the rig definition, and
+`definition.py` owns every write to them (TASKS.md#the-rig-definition).
+
 This package was extracted from the task-spec compiler (`taskgraph/registries.py`)
 when that system was removed. The registries survived because they describe the
 BOX, not the compiler: the rig wiring editor reads them, and the task-profile

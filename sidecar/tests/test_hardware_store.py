@@ -30,7 +30,7 @@ from ephymeris_sidecar.rig import registry
 def _shipped_wiring():
     """Every test starts and ends on the shipped pinout.
 
-    `set_rig_source` mutates module state and clears an `lru_cache` every reader
+    `set_rig_source` mutates module state and clears a cache every reader
     shares, so a test that left one installed would change what every later test
     resolves -- silently, and only when run in the same session.
     """
@@ -151,7 +151,7 @@ def test_a_repin_resolves_to_the_new_pin():
 
 
 def test_the_cache_is_cleared_on_a_rig_change_within_one_process():
-    """`channels()` is lru_cached. Without invalidation the second read here
+    """`channels()` is cached. Without invalidation the second read here
     would return the first one's map."""
     first = registry.channels().get("right_well").index
 

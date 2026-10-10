@@ -62,8 +62,27 @@ const DEFAULT_CALL_TIMEOUT_MS = 15_000;
  * sidecar about what state the port is in.
  */
 const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
-  [CMD.PORT_FLASH]: 300_000,
-  [CMD.SKETCHES_REFRESH]: 60_000,
+  // A rig definition write waits for any flash already compiling (up to ~420 s,
+  // `cli_tool.py`'s compile + upload timeouts), and everything that reads a
+  // generated folder waits for the write (`TASKS.md#the-rig-definition`). A
+  // flash can sit behind both before running its own.
+  [CMD.PORT_FLASH]: 900_000,
+  [CMD.HARDWARE_SAVE]: 600_000,
+  [CMD.HARDWARE_RESET]: 600_000,
+  [CMD.TASKS_SAVE]: 600_000,
+  [CMD.TASKS_DELETE]: 600_000,
+  [CMD.STROBES_ADD]: 600_000,
+  [CMD.STROBES_EDIT]: 600_000,
+  [CMD.STROBES_RETIRE]: 600_000,
+  [CMD.STROBES_REINSTATE]: 600_000,
+  [CMD.STROBES_REMOVE]: 600_000,
+  [CMD.STROBES_IMPORT]: 600_000,
+  [CMD.STROBES_USAGE]: 600_000,
+  [CMD.PORT_SEND_START]: 600_000,
+  [CMD.SESSIONS_CONFIRM_MAPPING]: 600_000,
+  [CMD.TASKS_GET_PROFILE]: 600_000,
+  [CMD.SETTINGS_PUSH]: 600_000,
+  [CMD.SKETCHES_REFRESH]: 600_000,
   // A first sync can be an entire archive copied to a network share.
   [CMD.BACKUP_SYNC_NOW]: 600_000,
   // A cold first index reads every historical session file, and every one of

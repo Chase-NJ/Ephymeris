@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from ephymeris_sidecar.app import Application
+from ephymeris_sidecar.rig.definition import _ReadWriteLock
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.server import CommandError
@@ -90,6 +91,7 @@ def app(db: Database) -> SimpleNamespace:
         server=SimpleNamespace(broadcast=broadcast),
         events=events,
         _running_session_id=None,
+        rig_definition=SimpleNamespace(reading=_ReadWriteLock().reading),
     )
     # The handlers call these as methods; bind the real ones to the stand-in.
     for name in (

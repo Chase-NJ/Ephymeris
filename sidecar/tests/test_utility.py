@@ -140,6 +140,7 @@ async def _noop_presence(_boards):  # noqa: ANN001
 def make_baseline(
     profile: TaskProfile | None = UTILITY_PROFILE,
     sketch_path: str | None = UTILITY_PATH,
+    **extra,
 ) -> tuple[UtilityBaseline, PortManager, FakeTool, list[dict]]:
     tool = FakeTool()
     manager = PortManager(
@@ -172,6 +173,7 @@ def make_baseline(
         # The fakes have no folders to read an `.ino` from; name the utility
         # the way the real predicate would find it.
         is_utility=lambda sketch: sketch_path is not None and sketch.path == sketch_path,
+        **extra,
     )
     baseline.update_settings(settings)
     return baseline, manager, tool, events
@@ -208,6 +210,43 @@ async def test_restores_an_idle_box_once() -> None:
     baseline.ensure()
     await settle(baseline)
     assert tool.uploads == [UTILITY_PATH]
+
+
+async def test_a_rig_definition_write_waits_for_a_restore_then_gets_its_own() -> None:
+    """A write that rebuilt the utility while it was being flashed would have
+    `rebuilt()` undone by the restore's own `believed = entry.path`: the box
+    would read ready on the old build. Holding the read side for the whole
+    restore makes the write wait, and its `rebuilt()` restores the box again."""
+    from ephymeris_sidecar.rig.definition import _ReadWriteLock
+
+    lock = _ReadWriteLock()
+    baseline, _manager, tool, _ = make_baseline(reading=lock.reading)
+    uploading = asyncio.Event()
+    release = asyncio.Event()
+    upload = tool.upload
+
+    async def slow_upload(*args):
+        uploading.set()
+        await release.wait()
+        await upload(*args)
+
+    tool.upload = slow_upload
+    baseline.ensure()
+    await asyncio.wait_for(uploading.wait(), 5)
+
+    async def write() -> None:
+        async with lock.writing():
+            baseline.rebuilt()
+
+    rebuild = asyncio.create_task(write())
+    await asyncio.sleep(0.05)
+    assert not rebuild.done(), "the write rebuilt the folder under a restore's compile"
+
+    release.set()
+    await rebuild
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH, UTILITY_PATH]
+    assert box_state(baseline)["state"] == "ready"
 
 
 async def test_force_reflashes_a_ready_box() -> None:

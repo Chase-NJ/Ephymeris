@@ -2311,14 +2311,16 @@ COMMANDS = (
         "(`ARCHITECTURE.md#settings`). Each push rescans the sketch library and "
         "re-applies the backup directory, box bindings and utility baseline. "
         "The reply carries the bundled library's state so a client learns it "
-        "on connect without a second round trip.",
+        "on connect without a second round trip. "
+        "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
     ),
     Command(
         "sketches.refresh",
         result=Ref("SketchDiscovery"),
         doc="Re-run discovery now (Debug Mode's Refresh, and on its mount) "
         "(`TASKS.md#sketch-library`). Also broadcasts `sketches.updated`. "
-        "Long-running; the client raises its reply timeout.",
+        "Long-running; the client raises its reply timeout. "
+        "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
     ),
     # ------------------------------------------------------------------- ports
     Command(
@@ -2378,7 +2380,8 @@ COMMANDS = (
         "when the line would exceed the firmware's `START_LINE_MAX` "
         "(`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port "
         "is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and "
-        "wait for `port.telemetry.running` to go false — the board ends it.",
+        "wait for `port.telemetry.running` to go false — the board ends it. "
+        "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
     ),
     Command(
         "port.flash",
@@ -2414,7 +2417,8 @@ COMMANDS = (
         "and saved task profiles are the only flashable sketches, enforced "
         "here and not just by the picker. `FLASH_FAILED` carries the parsed "
         "`arduino-cli` output. Long-running; the client raises its reply "
-        "timeout, and timing out does not cancel the flash.",
+        "timeout, and timing out does not cancel the flash. "
+        "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
     ),
     Command(
         "port.reset",
@@ -2545,7 +2549,11 @@ COMMANDS = (
         "the reply (pins are compiled into `TaskPins.h`, so a stale folder "
         "would flash the old pins and still compile), and `hardware.updated` "
         "is broadcast, with `sketches.updated` and `tasks.updated` from the "
-        "rebuild.",
+        "rebuild. "
+        "Refused with `RIG_IN_USE` while a session is set up or a box is running. "
+        "A rig definition write: it waits for flashes already in progress, and "
+        "everything that reads a generated folder waits for it "
+        "(`TASKS.md#the-rig-definition`).",
     ),
     Command(
         "hardware.reset",
@@ -2553,11 +2561,17 @@ COMMANDS = (
         doc="Discard this rig's document and go back to the shipped wiring. A "
         "wiring change like any other: regenerates every profile and "
         "broadcasts `hardware.updated`, as `hardware.save` does. Replies in "
-        "`hardware.get`'s shape so the editor re-renders from one shape.",
+        "`hardware.get`'s shape so the editor re-renders from one shape. "
+        "Refused with `RIG_IN_USE` while a session is set up or a box is running. "
+        "A rig definition write: it waits for flashes already in progress, and "
+        "everything that reads a generated folder waits for it "
+        "(`TASKS.md#the-rig-definition`).",
     ),
     # ------------------------------------------------------- strobe vocabulary
     #
-    # Every mutating command below refuses while a session is running, writes
+    # Every mutating command below refuses with `STROBE_SESSION_RUNNING` while
+    # a session is set up or a box is running, runs as a rig definition write
+    # (`TASKS.md#the-rig-definition`), writes
     # the machine's vocabulary document, regenerates every stored task profile
     # and bundled sketch (their `TaskPins.h` carries the codes), and broadcasts
     # `strobes.updated` with `sketches.updated` / `tasks.updated` from the
@@ -2916,7 +2930,8 @@ COMMANDS = (
         "(`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing "
         "its box, sketch, or an animal of this cohort. From here until the "
         "session lets go the rig is **held**: no baseline restore runs. "
-        "Broadcasts `session.lifecycle`.",
+        "Broadcasts `session.lifecycle`. "
+        "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
     ),
     Command(
         "sessions.status",
@@ -3013,7 +3028,8 @@ COMMANDS = (
         "(`TASKS.md#task-profile`). A sketch with none returns "
         "`{profile: null}` — fully supported (bare `START`, raw strobe log). "
         "`TASK_PROFILE_INVALID` when the file exists but is malformed. Works "
-        "the same on a bundled sketch and on one generated from a saved task.",
+        "the same on a bundled sketch and on one generated from a saved task. "
+        "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
         section="Task profiles",
     ),
     Command(
@@ -3057,7 +3073,11 @@ COMMANDS = (
         "(case-insensitively): two sketches with one name make the picker "
         "ambiguous, and two tasks would share one folder. Broadcasts "
         "`tasks.updated` and `sketches.updated`, since a saved profile is also "
-        "a sketch.",
+        "a sketch. "
+        "Refused with `RIG_IN_USE` while a session is set up or a box is running. "
+        "A rig definition write: it waits for flashes already in progress, and "
+        "everything that reads a generated folder waits for it "
+        "(`TASKS.md#the-rig-definition`).",
     ),
     Command(
         "tasks.delete",
@@ -3066,7 +3086,11 @@ COMMANDS = (
         doc="Remove the definition and its generated sketch folder. "
         "Idempotent: deleting what is already gone is a successful "
         "`{deleted: false}`, because two clients racing on one task is not an "
-        "error.",
+        "error. "
+        "Refused with `RIG_IN_USE` while a session is set up or a box is running. "
+        "A rig definition write: it waits for flashes already in progress, and "
+        "everything that reads a generated folder waits for it "
+        "(`TASKS.md#the-rig-definition`).",
     ),
     # ------------------------------------------------------------------ backup
     Command(
@@ -3724,6 +3748,13 @@ ERRORS = (
         "carrying located problems.",
     ),
     ErrorCode(
+        "RIG_IN_USE",
+        "`hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while "
+        "a session is set up or a box is running. Each regenerates sketch "
+        "folders a box was or will be flashed from, under a session whose "
+        "profiles were read from the old ones (`TASKS.md#the-rig-definition`).",
+    ),
+    ErrorCode(
         "RIG_WOULD_BREAK_TASKS",
         "`hardware.save` without `confirm` on a change that would stop a saved "
         "task profile generating. `detail.breaks` lists them. Retry with "
@@ -3765,8 +3796,8 @@ ERRORS = (
     ),
     ErrorCode(
         "STROBE_SESSION_RUNNING",
-        "A vocabulary edit while a session is running. Every edit regenerates "
-        "the sketches a running box was flashed from.",
+        "A vocabulary edit while a session is set up or a box is running. Every "
+        "edit regenerates the sketches a box was or will be flashed from.",
     ),
     ErrorCode(
         "TASK_NOT_FOUND",

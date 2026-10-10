@@ -4,7 +4,8 @@ Loaded once, cached, and shared by the rig wiring editor and the task-profile
 code generator. Each reads one document -- the machine's own when it has one
 (`set_rig_source`, `set_vocabulary_source`), the shipped seed under `schema/`
 otherwise -- and nothing here invents a value: if a number is not in that
-document, it does not exist.
+document, it does not exist. A preview asks about a document that is not in
+force through `hypothetical`, which no other reader can see.
 
 That discipline is the whole point. `START_LINE_MAX` is mirrored across two
 repositories with nothing keeping it in sync and `baudRate` across nine files;
@@ -21,14 +22,17 @@ are retired codes 29 recorded sessions contain.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
 import os
 import re
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from functools import lru_cache
 
 from .paths import HARDWARE_DIR, SCHEMA_DIR  # noqa: F401  (re-exported)
 
@@ -750,34 +754,99 @@ def default_vocabulary_document() -> dict:
     return _load(DEFAULT_VOCABULARY)
 
 
+class _InForce:
+    """One cached value: the half of the rig definition currently in force.
+
+    `functools.lru_cache` would do, but for one race it cannot see. A reader on a
+    worker thread can start composing from the OLD document, a write can install
+    the new one and clear the cache, and the reader then stores the old value --
+    which the write's own rebuild would read next. So a clear bumps a generation,
+    and a compute that began before it returns its value without storing it.
+    """
+
+    def __init__(self, compute: Callable[[], object]) -> None:
+        self._compute = compute
+        self._lock = threading.Lock()
+        self._generation = 0
+        self._value: object = None
+        self._stored = False
+
+    def get(self):  # noqa: ANN201 - ChannelMap or Vocabulary, by construction
+        with self._lock:
+            if self._stored:
+                return self._value
+            generation = self._generation
+        value = self._compute()
+        with self._lock:
+            if generation == self._generation:
+                self._value, self._stored = value, True
+        return value
+
+    def clear(self) -> None:
+        with self._lock:
+            self._generation += 1
+            self._value, self._stored = None, False
+
+
+@dataclass(frozen=True)
+class _Hypothetical:
+    channels: ChannelMap | None
+    vocabulary: Vocabulary | None
+
+
+#: A rig definition someone is ASKING ABOUT rather than using: "what would this
+#: wiring / vocabulary break?" (TASKS.md#the-rig-definition). Context-local, so
+#: it is seen only by the code that installed it -- and, through
+#: `asyncio.to_thread`'s copied context, by the worker it runs in -- and never
+#: by a rebuild, a session's profile load or anything else reading at the same
+#: moment. Installing one process-wide is how a preview once could have put
+#: previewed pins into every generated `TaskPins.h`.
+_hypothetical: ContextVar[_Hypothetical | None] = ContextVar("rig_hypothetical", default=None)
+
+
+@contextmanager
+def hypothetical(*, rig: dict | None = None, vocabulary: dict | None = None) -> Iterator[None]:
+    """Evaluate the body under a hypothetical wiring, vocabulary, or both.
+
+    Each half given is composed once, here, with the same fallback the one in
+    force gets; a half not given stays whatever is in force (or already
+    hypothetical, when nested).
+    """
+    outer = _hypothetical.get()
+    token = _hypothetical.set(
+        _Hypothetical(
+            channels=(
+                _compose_channels(copy.deepcopy(rig))
+                if rig is not None
+                else (outer.channels if outer else None)
+            ),
+            vocabulary=(
+                _compose_vocabulary(copy.deepcopy(vocabulary))
+                if vocabulary is not None
+                else (outer.vocabulary if outer else None)
+            ),
+        )
+    )
+    try:
+        yield
+    finally:
+        _hypothetical.reset(token)
+
+
 #: The machine's own vocabulary document. Set at startup and again after every
 #: edit by `strobes/store.py`, via `set_vocabulary_source` -- the same shape as
 #: `_rig_source` below, for the same reason.
 _vocab_source: Callable[[], dict | None] | None = None
 
 
-def current_vocabulary_source() -> Callable[[], dict | None] | None:
-    """Whatever is installed, so a caller can put it back (see `impact_of`)."""
-    return _vocab_source
-
-
 def set_vocabulary_source(source: Callable[[], dict | None] | None) -> None:
     """Point `vocabulary()` at a document, and drop what it cached."""
     global _vocab_source
     _vocab_source = source
-    vocabulary.cache_clear()
+    _vocabulary_in_force.clear()
 
 
-@lru_cache(maxsize=1)
-def vocabulary() -> Vocabulary:
-    """The strobe vocabulary in force: the machine's own, else the seed.
-
-    The seed is the fallback only for a process that never installed a source
-    (tests, a tool) or whose document will not compose. The second case is
-    logged loudly, and `strobes/store.py` refuses every edit while it lasts:
-    issuing a code against the seed could reissue one this machine added.
-    """
-    doc = _vocab_source() if _vocab_source is not None else None
+def _compose_vocabulary(doc: dict | None) -> Vocabulary:
     if doc is not None:
         try:
             return Vocabulary(doc)
@@ -790,6 +859,27 @@ def vocabulary() -> Vocabulary:
     return Vocabulary(default_vocabulary_document())
 
 
+_vocabulary_in_force = _InForce(
+    lambda: _compose_vocabulary(_vocab_source() if _vocab_source is not None else None)
+)
+
+
+def vocabulary() -> Vocabulary:
+    """The strobe vocabulary in force: the machine's own, else the seed.
+
+    The seed is the fallback only for a process that never installed a source
+    (tests, a tool) or whose document will not compose. The second case is
+    logged loudly, and `strobes/store.py` refuses every edit while it lasts:
+    issuing a code against the seed could reissue one this machine added.
+
+    Inside `hypothetical(vocabulary=...)`, the hypothetical instead.
+    """
+    asked = _hypothetical.get()
+    if asked is not None and asked.vocabulary is not None:
+        return asked.vocabulary
+    return _vocabulary_in_force.get()
+
+
 #: The rig's own wiring document, when it has one. Set once at startup and again
 #: after every write by `hardware/store.py`, via `set_rig_source`.
 #:
@@ -798,16 +888,6 @@ def vocabulary() -> Vocabulary:
 #: that changes about twice a year. It is the same shape `$EPHYMERIS_PINOUT`
 #: already had, better typed.
 _rig_source: Callable[[], dict | None] | None = None
-
-
-def current_rig_source() -> Callable[[], dict | None] | None:
-    """Whatever is installed, so a caller can put it back.
-
-    A preview installs a HYPOTHETICAL wiring to answer "what would this break?",
-    and leaving it installed would mean a preview silently changed what the app
-    generates.
-    """
-    return _rig_source
 
 
 def set_rig_source(source: Callable[[], dict | None] | None) -> None:
@@ -820,18 +900,10 @@ def set_rig_source(source: Callable[[], dict | None] | None) -> None:
     """
     global _rig_source
     _rig_source = source
-    channels.cache_clear()
+    _channels_in_force.clear()
 
 
-@lru_cache(maxsize=1)
-def channels() -> ChannelMap:
-    """The composed channel map: what each channel means, and where it is.
-
-    A rig document REPLACES the shipped pair rather than merging with it. A merge
-    would mean a channel the operator deleted came back, and there would be no
-    way to describe a box that lacks one.
-    """
-    rig = _rig_source() if _rig_source is not None else None
+def _compose_channels(rig: dict | None) -> ChannelMap:
     if rig is not None:
         try:
             return ChannelMap(*split_rig(rig))
@@ -843,6 +915,26 @@ def channels() -> ChannelMap:
                 "rig document could not be composed (%s); using the shipped pinout", exc
             )
     return ChannelMap(_load("channels.v1.json"), _pinout())
+
+
+_channels_in_force = _InForce(
+    lambda: _compose_channels(_rig_source() if _rig_source is not None else None)
+)
+
+
+def channels() -> ChannelMap:
+    """The composed channel map: what each channel means, and where it is.
+
+    A rig document REPLACES the shipped pair rather than merging with it. A merge
+    would mean a channel the operator deleted came back, and there would be no
+    way to describe a box that lacks one.
+
+    Inside `hypothetical(rig=...)`, the hypothetical instead.
+    """
+    asked = _hypothetical.get()
+    if asked is not None and asked.channels is not None:
+        return asked.channels
+    return _channels_in_force.get()
 
 
 def shipped_channels() -> ChannelMap:

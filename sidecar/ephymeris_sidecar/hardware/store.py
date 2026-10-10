@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -147,8 +148,13 @@ class HardwareStore:
 
         stored = dict(doc)
         stored["edited_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Write-then-rename: a reader composing the wiring mid-save (a worker
+        # thread's cache miss) would otherwise read half a file and fall back to
+        # the shipped pinout.
         self.root.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
+        tmp = self.path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, self.path)
         return stored
 
     def reset(self) -> None:

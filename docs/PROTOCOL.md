@@ -38,7 +38,7 @@ Must be the connection's first frame. A bad or missing token, any other first me
 <a id="cmd-settings.push"></a>
 #### `settings.push`
 
-Sent on every connect and every change, Tauri → sidecar only; the sidecar is never the settings source of truth (`ARCHITECTURE.md#settings`). Each push rescans the sketch library and re-applies the backup directory, box bindings and utility baseline. The reply carries the bundled library's state so a client learns it on connect without a second round trip.
+Sent on every connect and every change, Tauri → sidecar only; the sidecar is never the settings source of truth (`ARCHITECTURE.md#settings`). Each push rescans the sketch library and re-applies the backup directory, box bindings and utility baseline. The reply carries the bundled library's state so a client learns it on connect without a second round trip. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -55,7 +55,7 @@ Sent on every connect and every change, Tauri → sidecar only; the sidecar is n
 <a id="cmd-sketches.refresh"></a>
 #### `sketches.refresh`
 
-Re-run discovery now (Debug Mode's Refresh, and on its mount) (`TASKS.md#sketch-library`). Also broadcasts `sketches.updated`. Long-running; the client raises its reply timeout.
+Re-run discovery now (Debug Mode's Refresh, and on its mount) (`TASKS.md#sketch-library`). Also broadcasts `sketches.updated`. Long-running; the client raises its reply timeout. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Result:** [SketchDiscovery](#shape-sketchdiscovery)
 
@@ -118,7 +118,7 @@ Write one line to the open console. The sent text is echoed into `port.output` a
 <a id="cmd-port.sendstart"></a>
 #### `port.sendStart`
 
-Debug Mode's **Send START**: builds the `START` line from the named sketch's Task Profile exactly as `sessions.confirmMapping` does (a sketch with no profile gets a bare `START`) and writes it to the open console, then arms live scoring, reported as `port.telemetry`. No `SEED` token and nothing recorded: this is not a run. `SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` when the line would exceed the firmware's `START_LINE_MAX` (`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and wait for `port.telemetry.running` to go false — the board ends it.
+Debug Mode's **Send START**: builds the `START` line from the named sketch's Task Profile exactly as `sessions.confirmMapping` does (a sketch with no profile gets a bare `START`) and writes it to the open console, then arms live scoring, reported as `port.telemetry`. No `SEED` token and nothing recorded: this is not a run. `SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` when the line would exceed the firmware's `START_LINE_MAX` (`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and wait for `port.telemetry.running` to go false — the board ends it. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -138,7 +138,7 @@ Debug Mode's **Send START**: builds the `START` line from the named sketch's Tas
 <a id="cmd-port.flash"></a>
 #### `port.flash`
 
-Compile and upload. Entering `FLASHING` force-releases `PASSTHROUGH` and resumes it afterward unless suppressed (`ARCHITECTURE.md#flashing-reset-and-passthrough`). Streams `flash.progress` events carrying this command's `corr`. `SKETCH_UNKNOWN` for a path outside discovery — the bundled library and saved task profiles are the only flashable sketches, enforced here and not just by the picker. `FLASH_FAILED` carries the parsed `arduino-cli` output. Long-running; the client raises its reply timeout, and timing out does not cancel the flash.
+Compile and upload. Entering `FLASHING` force-releases `PASSTHROUGH` and resumes it afterward unless suppressed (`ARCHITECTURE.md#flashing-reset-and-passthrough`). Streams `flash.progress` events carrying this command's `corr`. `SKETCH_UNKNOWN` for a path outside discovery — the bundled library and saved task profiles are the only flashable sketches, enforced here and not just by the picker. `FLASH_FAILED` carries the parsed `arduino-cli` output. Long-running; the client raises its reply timeout, and timing out does not cancel the flash. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -284,7 +284,7 @@ Validate a wiring document and cost it, writing nothing. The editor calls it as 
 <a id="cmd-hardware.save"></a>
 #### `hardware.save`
 
-Validate, then write: a document that fails validation is never written, so the file on disk is never one the app refuses. On success the cached channel map is cleared, **every stored task profile and every bundled sketch that opts into rig pins is regenerated** before the reply (pins are compiled into `TaskPins.h`, so a stale folder would flash the old pins and still compile), and `hardware.updated` is broadcast, with `sketches.updated` and `tasks.updated` from the rebuild.
+Validate, then write: a document that fails validation is never written, so the file on disk is never one the app refuses. On success the cached channel map is cleared, **every stored task profile and every bundled sketch that opts into rig pins is regenerated** before the reply (pins are compiled into `TaskPins.h`, so a stale folder would flash the old pins and still compile), and `hardware.updated` is broadcast, with `sketches.updated` and `tasks.updated` from the rebuild. Refused with `RIG_IN_USE` while a session is set up or a box is running. A rig definition write: it waits for flashes already in progress, and everything that reads a generated folder waits for it (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -298,7 +298,7 @@ Validate, then write: a document that fails validation is never written, so the 
 <a id="cmd-hardware.reset"></a>
 #### `hardware.reset`
 
-Discard this rig's document and go back to the shipped wiring. A wiring change like any other: regenerates every profile and broadcasts `hardware.updated`, as `hardware.save` does. Replies in `hardware.get`'s shape so the editor re-renders from one shape.
+Discard this rig's document and go back to the shipped wiring. A wiring change like any other: regenerates every profile and broadcasts `hardware.updated`, as `hardware.save` does. Replies in `hardware.get`'s shape so the editor re-renders from one shape. Refused with `RIG_IN_USE` while a session is set up or a box is running. A rig definition write: it waits for flashes already in progress, and everything that reads a generated folder waits for it (`TASKS.md#the-rig-definition`).
 
 **Result:** [RigDocument](#shape-rigdocument)
 
@@ -706,7 +706,7 @@ Discard a session still in `configuring` (the mapping step's Back): marks it `ab
 <a id="cmd-sessions.confirmmapping"></a>
 #### `sessions.confirmMapping`
 
-Load one group's box → animal → sketch mapping into the runner and build each box's `START` line from its sketch's Task Profile and `config`. `TASK_PROFILE_INVALID` when a line would exceed `START_LINE_MAX` — refused because the board cannot report a truncated `START` and would run on whichever values fit (`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing its box, sketch, or an animal of this cohort. From here until the session lets go the rig is **held**: no baseline restore runs. Broadcasts `session.lifecycle`.
+Load one group's box → animal → sketch mapping into the runner and build each box's `START` line from its sketch's Task Profile and `config`. `TASK_PROFILE_INVALID` when a line would exceed `START_LINE_MAX` — refused because the board cannot report a truncated `START` and would run on whichever values fit (`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing its box, sketch, or an animal of this cohort. From here until the session lets go the rig is **held**: no baseline restore runs. Broadcasts `session.lifecycle`. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -821,7 +821,7 @@ The global 'what is running?' query — argument-free, so a client with no prior
 <a id="cmd-tasks.getprofile"></a>
 #### `tasks.getProfile`
 
-Read the `task.json` beside a sketch's `.ino` (`TASKS.md#task-profile`). A sketch with none returns `{profile: null}` — fully supported (bare `START`, raw strobe log). `TASK_PROFILE_INVALID` when the file exists but is malformed. Works the same on a bundled sketch and on one generated from a saved task.
+Read the `task.json` beside a sketch's `.ino` (`TASKS.md#task-profile`). A sketch with none returns `{profile: null}` — fully supported (bare `START`, raw strobe log). `TASK_PROFILE_INVALID` when the file exists but is malformed. Works the same on a bundled sketch and on one generated from a saved task. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -876,7 +876,7 @@ Compile an unsaved definition and say what is wrong with it, writing nothing. Th
 <a id="cmd-tasks.save"></a>
 #### `tasks.save`
 
-Write the definition and regenerate its sketch. **Always saves, even with diagnostics** — a half-finished task must be savable, and the gate is flashing, not saving. Refused with `TASK_INVALID` only when the name collides with a bundled sketch or another saved task (case-insensitively): two sketches with one name make the picker ambiguous, and two tasks would share one folder. Broadcasts `tasks.updated` and `sketches.updated`, since a saved profile is also a sketch.
+Write the definition and regenerate its sketch. **Always saves, even with diagnostics** — a half-finished task must be savable, and the gate is flashing, not saving. Refused with `TASK_INVALID` only when the name collides with a bundled sketch or another saved task (case-insensitively): two sketches with one name make the picker ambiguous, and two tasks would share one folder. Broadcasts `tasks.updated` and `sketches.updated`, since a saved profile is also a sketch. Refused with `RIG_IN_USE` while a session is set up or a box is running. A rig definition write: it waits for flashes already in progress, and everything that reads a generated folder waits for it (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -889,7 +889,7 @@ Write the definition and regenerate its sketch. **Always saves, even with diagno
 <a id="cmd-tasks.delete"></a>
 #### `tasks.delete`
 
-Remove the definition and its generated sketch folder. Idempotent: deleting what is already gone is a successful `{deleted: false}`, because two clients racing on one task is not an error.
+Remove the definition and its generated sketch folder. Idempotent: deleting what is already gone is a successful `{deleted: false}`, because two clients racing on one task is not an error. Refused with `RIG_IN_USE` while a session is set up or a box is running. A rig definition write: it waits for flashes already in progress, and everything that reads a generated folder waits for it (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -1517,6 +1517,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. An ordinary mirroring failure is never a command error; it appears on `backup.status`. |
 | `UTILITY_UNAVAILABLE` | A `utility.*` command when the box utility can't be used at all — the install's sketch library has none, or its profile is unreadable or not a utility profile; for `utility.identify`, also a profile with no `identify` pair. A box-level problem never raises this: it is that box's `state` in the snapshot, because 'box 4 has no board' is a fact about the rig, not a failure of the command. |
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
+| `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). |
 | `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail.breaks` lists them. Retry with `confirm: true` to proceed — the app does not veto a rewiring, it refuses to let one happen unnoticed. |
 | `STROBE_INVALID` | A strobe edit the vocabulary cannot take: a malformed or duplicate name, a code that is not free, a blank meaning, an unknown name, or an import file that is not a vocabulary. |
 | `STROBE_REQUIRED` | Retiring or removing a code a response-port slot reports with, or one the shared firmware library names. Never passable with `confirm`. |
@@ -1524,7 +1525,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `STROBE_WOULD_BREAK_TASKS` | `strobes.retire` / `strobes.remove` without `confirm` on a code a saved task or bundled sketch names. `detail.breaks` and `detail.firmware` list them. |
 | `STROBE_IMPORT_CONFLICT` | `strobes.import` applied with a plan that has conflicts. Nothing was written; `detail.conflicts` lists them. |
 | `STROBE_VOCABULARY_UNREADABLE` | This machine's vocabulary document will not read. Every edit is refused until it is repaired: one issued against the shipped default could reissue a code this machine added. |
-| `STROBE_SESSION_RUNNING` | A vocabulary edit while a session is running. Every edit regenerates the sketches a running box was flashed from. |
+| `STROBE_SESSION_RUNNING` | A vocabulary edit while a session is set up or a box is running. Every edit regenerates the sketches a box was or will be flashed from. |
 | `TASK_NOT_FOUND` | No task profile with that id on this rig. |
 | `TASK_INVALID` | The definition is not a definition — wrong shape, too large, an unusable id or name, or a name that collides with a bundled sketch or another saved task. NOT the same as a task that will not run: a well-formed definition describing an impossible task is a successful reply carrying located diagnostics, exactly as a wiring document is. |
 | `INTAN_UNAVAILABLE` | RHX is not reachable: not running, its Remote TCP Control command server not opened, or the socket died. The message says what to click. |

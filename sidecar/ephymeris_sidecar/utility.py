@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterable
 
@@ -113,6 +114,7 @@ class UtilityBaseline:
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         load_profile: Callable[[str], TaskProfile | None] = task_profile.load_profile,
         is_utility: Callable[[Any], bool] | None = None,
+        reading: Callable[[], AbstractAsyncContextManager[None]] = nullcontext,
     ) -> None:
         self._loop = loop
         self._ports = ports
@@ -122,6 +124,9 @@ class UtilityBaseline:
         #: Which discovered sketch is the box utility. Injected so a test can
         #: name one without a folder on disk; the real answer reads the `.ino`.
         self._is_utility = is_utility or _is_generated_utility
+        #: The rig definition's read side (`TASKS.md#the-rig-definition`): a
+        #: restore compiles a generated folder a write would rebuild.
+        self._reading = reading
 
         self._settings = SidecarSettings()
         self._boxes: dict[int, BoxBaseline] = {
@@ -147,7 +152,7 @@ class UtilityBaseline:
 
     def rebuilt(self) -> None:
         """The utility was just regenerated — a wiring change or a vocabulary
-        edit (`app._rebuild_generated`). What is on every box is now an OLD
+        edit (`RigDefinition._rebuild`). What is on every box is now an OLD
         build of it, with the old pins, codes and channel names, so no belief
         survives and every idle box is restored. Pins stay: a box the operator
         deliberately flashed with something else keeps it."""
@@ -291,6 +296,13 @@ class UtilityBaseline:
             self._worker = None
 
     async def _restore(self, box: int, force: bool) -> None:
+        # Held for the whole restore, belief included: a rig definition write
+        # landing between the flash and `believed = entry.path` would have its
+        # `rebuilt()` undone, leaving the box marked ready on the old build.
+        async with self._reading():
+            await self._restore_holding(box, force)
+
+    async def _restore_holding(self, box: int, force: bool) -> None:
         state = self._boxes[box]
         entry = self._sketch_entry()
         if entry is None:

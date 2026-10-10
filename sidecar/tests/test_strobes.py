@@ -8,7 +8,6 @@ unlabelled, and a stale header strobes numbers the app decodes differently.
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import json
 import sqlite3
@@ -19,7 +18,9 @@ import pytest
 
 from ephymeris_sidecar.app import Application
 from ephymeris_sidecar.cohorts.db import Database
+from ephymeris_sidecar.hardware.store import HardwareStore
 from ephymeris_sidecar.rig import registry
+from ephymeris_sidecar.rig.definition import RigDefinition
 from ephymeris_sidecar.server import CommandError
 from ephymeris_sidecar.strobes import store as strobe_store
 from ephymeris_sidecar.strobes.store import StrobeRefused
@@ -444,32 +445,40 @@ def app(tmp_path, db, library, monkeypatch):
     async def broadcast(message: dict) -> None:
         events.append(message)
 
-    async def rebuild() -> None:
+    async def rescan() -> None:
         rebuilds.append(1)
+
+    async def after_rebuild(_tasks: int, _pinned: int) -> None:
+        pass
 
     vocab_store = strobe_store.VocabularyStore(tmp_path / "data")
     vocab_store.ensure_seeded()
-    registry.set_vocabulary_source(vocab_store.load)
     tasks = task_store_mod.TaskStore(tmp_path / "data", library_root=library)
     cohort_root = tmp_path / "cohort"
     stub = SimpleNamespace(
         vocab_store=vocab_store,
         task_store=tasks,
-        _task_store=tasks,
         strobe_scanner=ArchiveScanner(db),
-        _rig_gate=asyncio.Semaphore(1),
         _running_session_id=None,
+        runner=None,
         server=SimpleNamespace(broadcast=broadcast),
-        _rebuild_generated=rebuild,
         _cohort_roots=lambda: [str(cohort_root)],
         events=events,
         rebuilds=rebuilds,
         cohort_root=cohort_root,
     )
+    stub.rig_definition = RigDefinition(
+        hardware=HardwareStore(tmp_path / "data"),
+        vocabulary=vocab_store,
+        tasks=tasks,
+        repin=lambda: 0,
+        in_use=lambda: Application._rig_in_use(stub),
+        rescan=rescan,
+        after_rebuild=after_rebuild,
+        broadcast=broadcast,
+    )
     for name in (
-        "_vocabulary_payload",
         "_edit_vocabulary",
-        "_load_vocabulary_strict",
         "_strobe_impact",
         "_refuse_unconfirmed",
         "_scan_archive",
@@ -533,10 +542,31 @@ async def test_a_port_slot_code_reports_its_blocker_and_is_refused(app):
     assert refused.value.code == "STROBE_REQUIRED"
 
 
-async def test_no_edit_while_a_session_runs(app):
+async def test_no_edit_while_a_session_is_set_up(app):
     app._running_session_id = "s1"
     with pytest.raises(CommandError) as refused:
         await call(app, "_strobes_add", name="LASER_ON", code=300, rationale="x")
+    assert refused.value.code == "STROBE_SESSION_RUNNING"
+
+
+async def test_no_edit_while_a_box_runs_a_task_from_debug_mode(app):
+    """No session, but a box is running: its sketch was generated from the
+    vocabulary an edit would replace."""
+    app.runner = SimpleNamespace(running_boxes=lambda: [3])
+    with pytest.raises(CommandError) as refused:
+        await call(app, "_strobes_add", name="LASER_ON", code=300, rationale="x")
+    assert refused.value.code == "STROBE_SESSION_RUNNING"
+
+
+async def test_a_remove_is_refused_before_its_archive_scan(app, monkeypatch):
+    app._running_session_id = "s1"
+
+    async def scan():
+        pytest.fail("scanned the archive for an edit that was always going to be refused")
+
+    app._scan_archive = scan
+    with pytest.raises(CommandError) as refused:
+        await call(app, "_strobes_remove", name="ODOR_12_ON", confirm=True)
     assert refused.value.code == "STROBE_SESSION_RUNNING"
 
 

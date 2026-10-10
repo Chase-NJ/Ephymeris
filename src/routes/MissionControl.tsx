@@ -45,9 +45,9 @@ import {
   useBoxEnded,
   useBoxTelemetry,
   useBoxWriteError,
-  useEndedCount,
   useSessionStore,
 } from "@/lib/sessions/context";
+import { groupProgress, sessionHasRun } from "@/lib/sessions/progress";
 import {
   groupRunsFor,
   groupsRunCount,
@@ -61,7 +61,7 @@ import { useLastRuns } from "@/lib/analytics/useLastRuns";
 import { resolveFlag } from "@/lib/logbook/commands";
 import { useLogbook, useLogbookStore } from "@/lib/logbook/context";
 import type { NoteScope } from "@/lib/logbook/types";
-import { CMD } from "@/lib/ws/protocol";
+import { CMD, EVT } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -130,6 +130,16 @@ export function MissionControl() {
     if (!connected) return;
     void refresh().catch((err) => setError(errorMessage(err)));
   }, [connected, refresh]);
+
+  // A box finishing changes the runner's `ended` for it — ask again rather
+  // than tally events, which a reload never replays (`ARCHITECTURE.md#replay-on-connect`).
+  useEffect(
+    () =>
+      client.on(EVT.SESSION_ANIMAL_ENDED, () => {
+        void refresh().catch((err) => setError(errorMessage(err)));
+      }),
+    [client, refresh],
+  );
 
   useEffect(() => {
     if (!connected || !cohortId) return;
@@ -264,13 +274,12 @@ export function MissionControl() {
 
   // --- guided-flow state ---------------------------------------------------
 
-  const endedCount = useEndedCount();
-  const runningCount = boxes.filter(
-    (b) => portStates[b.box]?.state === "IN_SESSION",
-  ).length;
-  const allRunning = boxes.length > 0 && runningCount === boxes.length;
-  const groupDone =
-    boxes.length > 0 && runningCount === 0 && endedCount >= boxes.length;
+  const {
+    running: runningCount,
+    ended: endedCount,
+    allRunning,
+    done: groupDone,
+  } = groupProgress(boxes, (box) => portStates[box]?.state === "IN_SESSION");
 
   // Which group is on the rig, and how many of the cohort's groups have run.
   // Not a position: groups run in whatever order the operator picks (`ARCHITECTURE.md#configuration`).
@@ -308,12 +317,8 @@ export function MissionControl() {
    * confirmed and merely hasn't been started yet.
    */
   const neverConfirmed = configuring && boxes.length === 0;
-  /*
-   * Whether anything has actually recorded. The only fact discard-vs-end may
-   * rest on: a session whose boxes were started one at a time never reaches
-   * `running` status, and discarding it would throw away real data.
-   */
-  const hasRun = runningCount > 0 || endedCount > 0;
+  // Whether anything has run: the session's status, as `sessions.abandon` reads it.
+  const hasRun = sessionHasRun(session);
 
   const lastGroup = groupsWaiting === 0;
   const journeyStep = groupDone && lastGroup ? ("finish" as const) : ("run" as const);
@@ -434,12 +439,11 @@ export function MissionControl() {
   // Shared by the left rail's End Session and the wrap-up's (`USER-GUIDE.md#ending-the-session`).
   function doEndSession() {
     void run(async () => {
-      // A session that never recorded anything is discarded, not "ended":
-      // marking it completed would seed Analytics with an empty session — the
-      // same rule as the session dock's Discard. Keyed on whether a box ever
-      // ran, NOT on the session status: boxes started one at a time leave the
-      // status at `configuring` forever, and discarding on that basis threw
-      // away real runs.
+      // A session that never ran is discarded, not "ended": marking it
+      // completed would seed Analytics with an empty session — the same rule
+      // as the session dock's Discard. Keyed on the session status, which the
+      // sidecar moves to `running` on any box's start (Start All or one box
+      // at a time) and which is the one thing `sessions.abandon` checks.
       if (!hasRun) {
         await abandonSession(client, sessionId!);
         navigate("/");
@@ -572,10 +576,8 @@ export function MissionControl() {
               date={session?.date ?? ""}
               // The session clock (`DATA.md#the-session-clock`): the first
               // group's start, the same moment the log's T+ offsets count
-              // from. Gated on a box having actually run rather than on the
-              // session status, which per-box Start never advances — until
-              // then, "started 11:49" with a ticking counter describes a run
-              // that never began.
+              // from. Gated on the session having run — until then, "started
+              // 11:49" with a ticking counter describes a run that never began.
               startedAt={hasRun ? (session?.clockStartedAt ?? null) : null}
               groupName={groupInfo?.name ?? null}
             />
@@ -634,7 +636,8 @@ export function MissionControl() {
               )}
               <Button
                 variant="ghost"
-                disabled={busy || !connected}
+                // Not before the snapshot: discard-or-end is decided on it.
+                disabled={busy || !connected || !session}
                 onClick={doEndSession}
               >
                 {hasRun ? "End Session" : "Discard session"}

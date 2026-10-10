@@ -876,10 +876,14 @@ re-enters the between-groups state. **Same day only**, because the session folde
 | **Start All** / **Start** | `sessions.startAll` / `port.startSession`: [IN_SESSION entry](#entering-in_session) for each box not running. A recording session starts RHX first and refuses before any box starts if it can't ([RECORDING.md](RECORDING.md#start-and-end)) |
 | **Stop** | Writes the literal `STOP`. The firmware honours it at the next trial boundary — firmware behaviour the app relies on, not enforces |
 | **Reset** | The DTR reset; the box returns to waiting at `READY` |
-| **End Session** | `sessions.end`: `STOP` every box, wait `graceful_timeout_s` (`SessionRunner.end_all`), force-finalize the rest, close the group run, mark `completed`, release the baseline. The UI abandons a session that never ran instead |
+| **End Session** | `sessions.end`: `STOP` every box, wait `graceful_timeout_s` (`SessionRunner.end_all`), force-finalize the rest, close the group run, mark `completed`, release the baseline. The UI abandons a session still `configuring` instead (`sessions.abandon`, which refuses any other status) |
 
-Run clocks come from the runner's per-box `startedAt`, never a client stopwatch, so a reload resumes
-mid-count. A per-box write failure is pushed as `sidecar.error`.
+Mission Control's flow rests on runner facts, never on events it happened to see, because live session
+events are [not replayed](#replay-on-connect). Run clocks come from the runner's per-box `startedAt`, never
+a client stopwatch, so a reload resumes mid-count. Whether a box has finished this group is the runner's
+per-box `ended`, re-asked with `sessions.status` on each `session.animalEnded`, so a reload over a finished
+group still opens the wrap-up. Whether the session has run at all is its status: any box's start, by Start
+All or one at a time, moves it to `running`. A per-box write failure is pushed as `sidecar.error`.
 
 ### Entering IN_SESSION
 

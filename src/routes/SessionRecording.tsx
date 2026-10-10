@@ -28,9 +28,9 @@ import { summarizeRecordingConfig, type RecordingConfigDefaults } from "@/lib/in
 import { channelRange } from "@/lib/intan/scopeMath";
 import { FILE_FORMATS, type ProbeMap, type RecordingBoxConfig, type RecordingConfig } from "@/lib/intan/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
-import { sessionStatus } from "@/lib/sessions/commands";
+import { stepUrl } from "@/lib/sessions/flow";
 import { getSetupDraft, setSetupDraft } from "@/lib/sessions/setupResume";
-import type { SessionSnapshot } from "@/lib/sessions/types";
+import { useSessionFlow } from "@/lib/sessions/useSessionFlow";
 import { useSettings } from "@/lib/settings/context";
 import { useRecordingDefaults } from "@/lib/settings/useRecordingDefaults";
 import { useSidecar } from "@/lib/ws/context";
@@ -80,7 +80,6 @@ export function SessionRecording() {
   const { id: sessionId } = useParams<{ id: string }>();
   const [params] = useSearchParams();
   const groupId = params.get("group") ?? "";
-  const cohortId = params.get("cohort") ?? "";
   const navigate = useNavigate();
   const { client, status: link } = useSidecar();
   const { settings } = useSettings();
@@ -92,7 +91,8 @@ export function SessionRecording() {
   const draftKey = `record:${sessionId ?? ""}:${groupId}`;
   const [draft] = useState(() => getSetupDraft<RecordingDraft>(draftKey));
 
-  const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
+  // The mapped boxes and the session's own folder come from the sidecar.
+  const { session, boxes, flow, error: loadError } = useSessionFlow(sessionId, groupId);
   const [config, setConfig] = useState<RecordingConfigDefaults | null>(draft?.config ?? null);
   const [saveRoot, setSaveRoot] = useState<string | null>(
     draft ? draft.saveRoot : defaults.saveRoot,
@@ -107,19 +107,7 @@ export function SessionRecording() {
     setSetupDraft<RecordingDraft>(draftKey, { config, saveRoot, editing, rows });
   }, [draftKey, config, saveRoot, editing, rows]);
 
-  // The mapped boxes and the session's own folder come from the sidecar.
-  useEffect(() => {
-    if (link !== "connected" || !sessionId) return;
-    let cancelled = false;
-    void sessionStatus(client, sessionId)
-      .then((s) => !cancelled && setSnapshot(s))
-      .catch((err: unknown) => !cancelled && setError(errorMessage(err)));
-    return () => {
-      cancelled = true;
-    };
-  }, [client, link, sessionId]);
-
-  const sessionFolder = snapshot?.session.folderPath ?? null;
+  const sessionFolder = session?.folderPath ?? null;
   const folderName = sessionFolder ? (sessionFolder.split(/[\\/]/).filter(Boolean).pop() ?? "") : "";
   // Beside the behavior data by default; under a root of the operator's
   // choosing otherwise — electrophysiology is large and often lives on its own
@@ -140,14 +128,14 @@ export function SessionRecording() {
     [intan.ports],
   );
 
-  // Seed the form once the snapshot is in. Re-seeded when the group changes,
-  // never on an `intan.status` tick — that would discard what was typed.
+  // Seed the form once the rig's boxes are in. Never re-seeded on an
+  // `intan.status` tick — that would discard what was typed.
   useEffect(() => {
-    if (!snapshot) return;
+    if (boxes.length === 0) return;
     setConfig((current) => current ?? { ...defaults.config });
     setRows((current) => {
       if (current.length > 0) return current;
-      return snapshot.boxes.map((b) => {
+      return boxes.map((b) => {
         const memory = defaults.boxes[String(b.box)];
         return {
           box: b.box,
@@ -164,7 +152,7 @@ export function SessionRecording() {
     });
     // The defaults are read once, as a starting point.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot]);
+  }, [boxes]);
 
   // Once RHX reports its ports, give each unassigned box the next free one
   // with its whole range. A guess the operator can see and change, which beats
@@ -331,7 +319,7 @@ export function SessionRecording() {
           ]),
         ),
       });
-      navigate(`/session/${sessionId}/control?cohort=${cohortId}&group=${groupId}`);
+      navigate(stepUrl.control(sessionId!));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -367,16 +355,16 @@ export function SessionRecording() {
         className="scrollbar-none pointer-events-none absolute inset-0 overflow-y-auto"
       >
         <section className="pointer-events-auto mx-auto max-w-4xl px-8 py-8">
-          <SessionJourney step="record" hint={hint} recording />
+          <SessionJourney step="record" hint={hint} group={flow.group} recording />
           <h1 className="font-display text-[22px] text-starlight">Set Up the Recording</h1>
 
-          {error && (
+          {(error ?? loadError) && (
             <div
               className="mt-4 flex items-start gap-2 rounded-sm border border-halo px-3 py-2 text-[12px]"
               style={{ color: "var(--color-status-error)" }}
             >
               <CircleAlert size={14} strokeWidth={1.75} className="mt-px shrink-0" />
-              {error}
+              {error ?? loadError}
             </div>
           )}
 
@@ -656,7 +644,7 @@ export function SessionRecording() {
               </Button>
               <Button
                 variant="ghost"
-                onClick={() => navigate(`/session/${sessionId}/mapping?cohort=${cohortId}&group=${groupId}`)}
+                onClick={() => navigate(stepUrl.boxes(sessionId!, groupId))}
               >
                 Back to boxes
               </Button>

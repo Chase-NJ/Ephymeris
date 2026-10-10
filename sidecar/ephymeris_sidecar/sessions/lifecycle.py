@@ -167,11 +167,18 @@ class SessionLifecycle:
     # --- reads --------------------------------------------------------------
 
     async def status(self, session_id: str) -> dict[str, Any]:
+        """The session's record, with the rig's group and boxes only if it holds the rig.
+
+        The runner carries one session's mapping; answering with it for any
+        other id would show that session's animals, and their box numbers,
+        under this one.
+        """
         session = await asyncio.to_thread(self._sessions.get_session, session_id)
+        held = self._held == session_id
         return {
             "session": session.to_json(),
-            "groupId": self._runner.group_id,
-            "boxes": self._runner.snapshot(),
+            "groupId": (self._runner.group_id or None) if held else None,
+            "boxes": self._runner.snapshot() if held else [],
         }
 
     async def active(self) -> dict[str, Any]:

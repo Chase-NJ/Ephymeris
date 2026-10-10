@@ -322,8 +322,8 @@ Record step renders the same rows at full density.
 ### Record step
 
 The Dashboard's Start Recording tile opens `/session/new?mode=recording`, which creates the session with
-`recording: true`. From there the flow reads the flag off the sidecar's session snapshot
-(`useIsRecordingSession`), **not the URL**: the flow is re-entered from the dock, a group switch and a
+`recording: true`. From there the flow reads the flag off the session record
+(`SessionFlow.isRecording`, `lib/sessions/flow.ts`), **not the URL**: the flow is re-entered from the dock, a group switch and a
 reload, and a query flag would have to survive every one of those.
 
 ```

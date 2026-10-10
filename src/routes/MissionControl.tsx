@@ -9,7 +9,7 @@ import {
   Users,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { Button } from "@/components/common/controls";
 import { CarryForwardPanel } from "@/components/logbook/CarryForwardPanel";
@@ -26,42 +26,34 @@ import { SessionJourney } from "@/components/sessions/SessionJourney";
 import type { ScopeTrigger } from "@/lib/intan/windows";
 import { MetricStrip } from "@/components/sessions/MetricStrip";
 import { StarPanel } from "@/components/sessions/StarPanel";
-import { errorMessage, getCohort } from "@/lib/cohorts/commands";
-import type { Cohort } from "@/lib/cohorts/types";
+import { errorMessage } from "@/lib/cohorts/commands";
 import { useAllPortStatuses, usePortStatus } from "@/lib/hardware/context";
 import { springPanel } from "@/lib/motion";
 import { useDeparture } from "@/lib/nav/departure";
 import {
   abandonSession,
   endSession,
-  sessionStatus,
   startAll,
   startBox,
   endGroup,
   stopBox,
 } from "@/lib/sessions/commands";
 import {
-  useActiveSessions,
   useBoxEnded,
   useBoxTelemetry,
   useBoxWriteError,
   useSessionStore,
 } from "@/lib/sessions/context";
-import { groupProgress, sessionHasRun } from "@/lib/sessions/progress";
-import {
-  groupRunsFor,
-  groupsRunCount,
-  populatedGroups,
-  type SessionBox,
-  type SessionSnapshot,
-} from "@/lib/sessions/types";
+import { missionControlHint, stepUrl } from "@/lib/sessions/flow";
+import type { SessionBox } from "@/lib/sessions/types";
 import { useBoxAccuracies } from "@/lib/sessions/useBoxAccuracies";
+import { useSessionFlow } from "@/lib/sessions/useSessionFlow";
 import { metricLabels, useTaskProfiles } from "@/lib/sessions/useTaskProfiles";
 import { useLastRuns } from "@/lib/analytics/useLastRuns";
 import { resolveFlag } from "@/lib/logbook/commands";
 import { useLogbook, useLogbookStore } from "@/lib/logbook/context";
 import type { NoteScope } from "@/lib/logbook/types";
-import { CMD, EVT } from "@/lib/ws/protocol";
+import { CMD } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -108,67 +100,37 @@ const PANEL_FRAME_SHIFT = (RAIL_WIDTH_FOCUSED - (SIDEBAR_PX + RAIL_WIDTH)) / 2;
 
 export function MissionControl() {
   const { id: sessionId } = useParams<{ id: string }>();
-  const [params] = useSearchParams();
-  const cohortId = params.get("cohort") ?? "";
   const navigate = useNavigate();
   const { client, status } = useSidecar();
   const sessionStore = useSessionStore();
 
-  const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
-  const [cohort, setCohort] = useState<Cohort | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const connected = status === "connected";
 
-  const refresh = useCallback(async () => {
-    if (!sessionId) return;
-    setSnapshot(await sessionStatus(client, sessionId));
-  }, [client, sessionId]);
-
-  useEffect(() => {
-    if (!connected) return;
-    void refresh().catch((err) => setError(errorMessage(err)));
-  }, [connected, refresh]);
-
-  // A box finishing changes the runner's `ended` for it — ask again rather
-  // than tally events, which a reload never replays (`ARCHITECTURE.md#replay-on-connect`).
-  useEffect(
-    () =>
-      client.on(EVT.SESSION_ANIMAL_ENDED, () => {
-        void refresh().catch((err) => setError(errorMessage(err)));
-      }),
-    [client, refresh],
-  );
-
-  useEffect(() => {
-    if (!connected || !cohortId) return;
-    let active = true;
-    void getCohort(client, cohortId)
-      .then((c) => active && setCohort(c))
-      .catch((err) => active && setError(errorMessage(err)));
-    return () => {
-      active = false;
-    };
-  }, [client, connected, cohortId]);
-
-  // Switch Group (`ARCHITECTURE.md#group-step`) is only meaningful with more than one populated group.
-  const multiGroup = useMemo(
-    () => (cohort ? populatedGroups(cohort).length > 1 : false),
-    [cohort],
-  );
-
-  const session = snapshot?.session ?? null;
-  const boxes = useMemo(() => snapshot?.boxes ?? [], [snapshot]);
-  // Also an Intan recording (`RECORDING.md`). Everything it adds to this screen
-  // is an ADDITION — the rail block and each box's scope buttons — and renders
-  // nothing for a behavior-only session.
-  const isRecording = session?.recording != null;
+  const { session, cohortId, cohort, rigGroupId, boxes, flow, error: loadError, refresh } =
+    useSessionFlow(sessionId);
+  const error = actionError ?? loadError;
+  const {
+    hasRun,
+    // Switch Group (`ARCHITECTURE.md#group-step`) is only meaningful with more than one populated group.
+    multiGroup,
+    // Also an Intan recording (`RECORDING.md`). Everything it adds to this screen
+    // is an ADDITION — the rail block and each box's scope buttons — and renders
+    // nothing for a behavior-only session.
+    isRecording,
+    group: groupInfo,
+    lastGroup,
+    neverConfirmed,
+    name: sessionName,
+  } = flow;
+  const groupDone = flow.progress.done;
 
   // The session log (`DATA.md#the-session-log`): the quick note, this cohort's
   // open carry-forward flags, and the wrap-up's operator and summary.
   const logStore = useLogbookStore();
-  const logEntry = useLogbook(cohortId || null);
+  const logEntry = useLogbook(cohortId);
   useEffect(() => {
     if (connected && cohortId) void logStore.load(cohortId);
   }, [connected, cohortId, logStore]);
@@ -178,8 +140,8 @@ export function MissionControl() {
   );
   const animalNames = useMemo(() => new Map(roster.map((a) => [a.id, a.name])), [roster]);
   const noteBoxes = useMemo(
-    () => [...new Set((snapshot?.boxes ?? []).map((b) => b.box))].sort((a, b) => a - b),
-    [snapshot],
+    () => [...new Set(boxes.map((b) => b.box))].sort((a, b) => a - b),
+    [boxes],
   );
   const [note, setNote] = useState<{ open: boolean; scope?: NoteScope | undefined }>({
     open: false,
@@ -188,18 +150,6 @@ export function MissionControl() {
     (scope?: NoteScope) => setNote({ open: true, scope }),
     [],
   );
-
-  /*
-   * `configuring` is NOT "the mapping was never confirmed", tempting as the name
-   * is. The sidecar only leaves that status in `sessions.startAll` (`app.py`), so
-   * a session sits in it through confirmation, flashing, and every per-box Start
-   * — the whole normal arrival at this screen. Reading it as "unconfirmed" told
-   * the operator to go finish a step they had just finished, and made End
-   * Session offer to *discard* runs that had actually recorded.
-   *
-   * So the two questions it was standing in for are asked directly, below.
-   */
-  const configuring = session?.status === "configuring";
 
   // Every animal in the cohort gets a star; only those whose box is
   // actually IN_SESSION are lit and interactive. An animal in a group that
@@ -274,53 +224,6 @@ export function MissionControl() {
 
   // --- guided-flow state ---------------------------------------------------
 
-  const {
-    running: runningCount,
-    ended: endedCount,
-    allRunning,
-    done: groupDone,
-  } = groupProgress(boxes, (box) => portStates[box]?.state === "IN_SESSION");
-
-  // Which group is on the rig, and how many of the cohort's groups have run.
-  // Not a position: groups run in whatever order the operator picks (`ARCHITECTURE.md#configuration`).
-  const groupInfo = useMemo(() => {
-    if (!cohort || !snapshot) return null;
-    const groups = populatedGroups(cohort);
-    const found = groups.find((g) => g.id === snapshot.groupId);
-    if (!found || groups.length < 2) return null;
-    return {
-      name: found.name,
-      ran: groupsRunCount(cohort, snapshot.session),
-      count: groups.length,
-    };
-  }, [cohort, snapshot]);
-
-  /*
-   * Whether any populated group has yet to run in this session, besides the one
-   * on the rig. The only thing "last group" can mean without a run order: with
-   * none left, a finished group is the natural end (the wrap-up), otherwise the
-   * natural next step is choosing another (the group-swap prompt). Either way
-   * both doors are offered — a group may be run again, and a session may end
-   * early.
-   */
-  const groupsWaiting = useMemo(() => {
-    if (!cohort || !snapshot) return 0;
-    return populatedGroups(cohort).filter(
-      (g) => g.id !== snapshot.groupId && groupRunsFor(snapshot.session, g.id).length === 0,
-    ).length;
-  }, [cohort, snapshot]);
-
-  /*
-   * Reached with a mapping that was never confirmed — a deep link, a reload
-   * mid-setup, or Back from a partial flash. The runner holds no boxes for this
-   * session, which is the fact that distinguishes it from a session that IS
-   * confirmed and merely hasn't been started yet.
-   */
-  const neverConfirmed = configuring && boxes.length === 0;
-  // Whether anything has run: the session's status, as `sessions.abandon` reads it.
-  const hasRun = sessionHasRun(session);
-
-  const lastGroup = groupsWaiting === 0;
   const journeyStep = groupDone && lastGroup ? ("finish" as const) : ("run" as const);
 
   /*
@@ -331,7 +234,7 @@ export function MissionControl() {
    */
   const [returned, setReturned] = useState<Set<number>>(() => new Set());
   const [wrapDismissed, setWrapDismissed] = useState(false);
-  const groupKey = snapshot?.groupId ?? null;
+  const groupKey = rigGroupId;
   useEffect(() => {
     setReturned(new Set());
     setWrapDismissed(false);
@@ -356,7 +259,7 @@ export function MissionControl() {
   useEffect(() => {
     if (!groupDone) setWrapDismissed(false);
   }, [groupDone]);
-  const wrapOpen = connected && groupDone && lastGroup && hasRun && !wrapDismissed;
+  const wrapOpen = connected && flow.wrapUpDue && !wrapDismissed;
 
   // N takes a note from anywhere on the screen — hands are often full, and the
   // moment is the point. Not while typing, and not over the wrap-up, which has
@@ -387,35 +290,16 @@ export function MissionControl() {
     groupInfo ? `${groupInfo.ran}/${groupInfo.count} groups` : "1 group",
     `${clockSpan(sessionSeconds)} elapsed`,
   ].join(" · ");
-  const hint = !connected
-    ? "Waiting for the hardware service…"
-    : neverConfirmed
-      ? "This session hasn't started — finish box confirmation first."
-      : boxes.length === 0
-        // Only name actions that exist: Switch Group is a multi-group control.
-        ? multiGroup
-          ? "No boxes in this group — switch group or end the session."
-          : "No boxes in this group — end the session."
-        : groupDone
-        ? lastGroup
-          ? "All boxes finished — End Session saves and wraps up."
-          : "Group finished — pick the next group, or end the session."
-        : runningCount > 0
-          ? "Recording — Stop takes effect at the next trial boundary."
-          : endedCount === 0
-            ? "Animals in their boxes? Start All begins recording."
-            : "Start the remaining boxes, or switch group.";
-
-  const sessionName = session ? `${session.prefixName}_${session.sessionNumber}` : null;
+  const hint = missionControlHint(flow, connected);
 
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
-    setError(null);
+    setActionError(null);
     try {
       await action();
       await refresh();
     } catch (err) {
-      setError(errorMessage(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -432,8 +316,7 @@ export function MissionControl() {
   // Back to a choice of group for a never-confirmed session: Step 2 needs a
   // group, and the record doesn't carry one.
   function resumeSetup() {
-    if (!cohort) return;
-    navigate(`/session/${sessionId}/group?cohort=${cohort.id}`);
+    navigate(stepUrl.group(sessionId!));
   }
 
   // Shared by the left rail's End Session and the wrap-up's (`USER-GUIDE.md#ending-the-session`).
@@ -465,7 +348,7 @@ export function MissionControl() {
   function doSwitchGroup() {
     void run(async () => {
       await endGroup(client, sessionId!);
-      navigate(`/session/${sessionId}/group?cohort=${cohortId}`);
+      navigate(stepUrl.group(sessionId!));
     });
   }
 
@@ -474,17 +357,10 @@ export function MissionControl() {
    * the rig carries no group, so there is nothing here to run. The group step
    * is the next thing, not an empty cockpit.
    */
-  const held = useActiveSessions()?.running ?? null;
-  const betweenGroups =
-    held !== null &&
-    held.session.id === sessionId &&
-    !held.groupId &&
-    held.session.status === "running";
+  const betweenGroups = flow.rigStep === "group";
   useEffect(() => {
-    if (betweenGroups) {
-      navigate(`/session/${sessionId}/group?cohort=${cohortId}`, { replace: true });
-    }
-  }, [betweenGroups, navigate, sessionId, cohortId]);
+    if (betweenGroups) navigate(stepUrl.group(sessionId!), { replace: true });
+  }, [betweenGroups, navigate, sessionId]);
 
   return (
     // No `overflow-hidden`: it would clip the shared canvas back out of the
@@ -498,7 +374,7 @@ export function MissionControl() {
           is transparent and fades at its edges, so it belongs to the page. */}
       <div className="absolute inset-0">
         {/*
-          **Mounted on the URL's `cohortId` alone — never on a fetch.**
+          **Mounted at once — never on a fetch.**
 
           This view's scene has to claim the shared canvas (`SharedCanvas.tsx`)
           before anything else can, because until it does, the canvas is still
@@ -513,17 +389,16 @@ export function MissionControl() {
           settings, not from either fetch: with no animals yet the constellation
           draws its unoccupied stars at exactly the positions the occupied ones
           will use, so animals arriving later light up slots rather than moving
-          anything.
+          anything. The cohort id only keys the animals' ships, so it can be
+          empty while there are none.
         */}
-        {cohortId && (
-          <Constellation3D
-            cohortId={cohortId}
-            animals={constellationAnimals}
-            focusedId={focusedId}
-            onFocus={setFocusedId}
-            frameShift={PANEL_FRAME_SHIFT}
-          />
-        )}
+        <Constellation3D
+          cohortId={cohortId ?? ""}
+          animals={constellationAnimals}
+          focusedId={focusedId}
+          onFocus={setFocusedId}
+          frameShift={PANEL_FRAME_SHIFT}
+        />
       </div>
 
       {/* The chrome, over the sky in two rails (the
@@ -606,7 +481,7 @@ export function MissionControl() {
                   advertising the one action that has nothing left to do. The
                   per-box Start controls remain for a box that later finishes,
                   and this returns the moment one does. */}
-              {!allRunning && (
+              {!flow.progress.allRunning && (
                 <Button
                   variant="primary"
                   disabled={busy || !connected || boxes.length === 0}
@@ -855,7 +730,7 @@ export function MissionControl() {
                     </p>
                     <Button
                       variant="primary"
-                      disabled={busy || !connected || !cohort}
+                      disabled={busy || !connected}
                       onClick={resumeSetup}
                     >
                       Resume setup

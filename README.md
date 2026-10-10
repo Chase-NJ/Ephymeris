@@ -281,7 +281,7 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   but no frontend caller; Auto-Balance runs client-side in `src/lib/cohorts/grouping.ts`. Remove them,
   or route Auto-Balance through the sidecar.
 - **Frontend coverage beyond the pure layer.** Stores (`lib/sessions/store.ts`, `lib/hardware/store.ts`),
-  the session flow's step transitions and every component are untested, and there is no linter.
+  `useSessionFlow`'s refresh rules and every component are untested, and there is no linter.
 - **A "flash all six" in Debug Mode**: whether to have one, whether it halts at the first failure as the
   session sequence does, and whether it is one command or six.
 - **Settings schema.** The sidecar reads only the keys it needs and ignores the rest, so adding a key is

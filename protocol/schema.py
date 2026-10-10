@@ -2941,10 +2941,15 @@ COMMANDS = (
             f(
                 "groupId",
                 nullable(STR),
-                doc="The group the runner holds; an empty string when it holds "
-                "none (before a mapping is confirmed, and between groups).",
+                doc="The group on the rig. Null unless this is the held session "
+                "with a group mapped: before a mapping is confirmed, between groups, "
+                "and for any session that does not hold the rig.",
             ),
-            f("boxes", ListOf(Ref("SessionBox"))),
+            f(
+                "boxes",
+                ListOf(Ref("SessionBox")),
+                doc="The rig's boxes; empty unless this is the held session.",
+            ),
         ),
         doc="What Mission Control renders. The runner is the authority on the "
         "confirmed mapping and which boxes are live, so a reopened window asks "

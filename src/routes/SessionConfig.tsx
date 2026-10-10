@@ -28,6 +28,7 @@ import type { SessionListItem } from "@/lib/analytics/types";
 import { resolveFlag } from "@/lib/logbook/commands";
 import { useLogbook, useLogbookStore } from "@/lib/logbook/context";
 import { useActiveSessions, usePrefixes } from "@/lib/sessions/context";
+import { stepUrl } from "@/lib/sessions/flow";
 import {
   clearSetupDraft,
   clearSetupResume,
@@ -253,10 +254,7 @@ export function SessionConfig() {
       // The session exists now; from here the way back is the mapping step,
       // which carries the cohort and group in its URL.
       clearSetupDraft(draftKey);
-      navigate(
-        `/session/${session.id}/mapping?cohort=${cohort.id}&group=${groupId}` +
-          (recording ? "&recording=1" : ""),
-      );
+      navigate(stepUrl.boxes(session.id, groupId));
     });
   }
 
@@ -391,7 +389,7 @@ export function SessionConfig() {
                       <Button
                         disabled={busy || !connected}
                         onClick={() =>
-                          navigate(`/session/${s.id}/group?cohort=${s.cohortId}`)
+                          navigate(stepUrl.group(s.id))
                         }
                       >
                         Continue

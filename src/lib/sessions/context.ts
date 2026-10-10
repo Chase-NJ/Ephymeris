@@ -37,21 +37,6 @@ export function useActiveLoaded(): boolean {
   return useSyncExternalStore(subscribe, () => store.activeIsLoaded());
 }
 
-/**
- * Whether this session is also an Intan recording (`ARCHITECTURE.md#recording-step`).
- *
- * Read from the sidecar's own snapshot rather than carried in the URL: the
- * flow is re-entered from the session dock, from a group switch and from a
- * reload, and a query flag would have to survive every one of those doors. A
- * session is in exactly one of the two lists for as long as it is unfinished.
- */
-export function useIsRecordingSession(sessionId: string | undefined): boolean {
-  const active = useActiveSessions();
-  if (!sessionId || !active) return false;
-  if (active.running?.session.id === sessionId) return active.running.session.recording != null;
-  return active.configuring.some((s) => s.id === sessionId && s.recording != null);
-}
-
 /** The runner-held session, or null — what the sidebar dot and hero CTA read. */
 export function useRunningSession(): SessionSnapshot | null {
   const store = useSessionStore();
@@ -87,13 +72,6 @@ export function useMetricHistory(box: number, metricId: string): number[] {
     [store, box],
   );
   return useSyncExternalStore(subscribe, () => store.getHistory(box, metricId));
-}
-
-/** Count of boxes whose run has ended this group — drives flow guidance. */
-export function useEndedCount(): number {
-  const store = useSessionStore();
-  const subscribe = useCallback((cb: () => void) => store.subscribe("ended", cb), [store]);
-  return useSyncExternalStore(subscribe, () => store.getEndedCount());
 }
 
 /** The finished run for one box, once `session.animalEnded` arrives. */

@@ -226,11 +226,6 @@ export class SessionStore {
     return this.writeErrors.get(box) ?? null;
   }
 
-  /** How many boxes have finished their run this group. */
-  getEndedCount(): number {
-    return this.ended.size;
-  }
-
   /** One metric's recent values for a box, oldest first. */
   getHistory(box: number, metricId: string): number[] {
     return this.history.get(box)?.get(metricId) ?? NO_HISTORY;

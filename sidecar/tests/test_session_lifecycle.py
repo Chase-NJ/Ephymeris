@@ -229,6 +229,28 @@ async def test_confirming_a_mapping_holds_the_session_and_the_rig(rig) -> None:
     assert rig.events[-1]["evt"] == "session.lifecycle"
 
 
+async def test_status_reports_the_rig_only_for_the_session_holding_it(rig) -> None:
+    held = rig.session()
+    other = rig.session()
+    await rig.confirm(held)
+    rig.runner.snapshot = lambda: [{"box": 1}]
+
+    assert (await rig.lifecycle.status(held.id))["boxes"] == [{"box": 1}]
+    assert (await rig.lifecycle.status(held.id))["groupId"] == "g-a"
+    # Another session's status must not carry the held one's animals and boxes.
+    reply = await rig.lifecycle.status(other.id)
+    assert reply["session"]["id"] == other.id
+    assert (reply["groupId"], reply["boxes"]) == (None, [])
+
+
+async def test_status_between_groups_reports_no_group(rig) -> None:
+    session = rig.session()
+    await rig.run_group(session)
+    await rig.lifecycle.end_group(session.id)
+
+    assert (await rig.lifecycle.status(session.id))["groupId"] is None
+
+
 async def test_a_mapping_missing_its_animal_is_refused_and_holds_nothing(rig) -> None:
     session = rig.session()
     entry = MappingEntry(box=1, animal_id="nobody", sketch_path="/sk", config={})

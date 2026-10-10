@@ -34,18 +34,18 @@ describe("setupStepOf", () => {
 
 describe("noteLocation", () => {
   it("remembers the last setup step, exactly as it was left", () => {
-    noteLocation("/session/abc/mapping", "?cohort=c&group=g");
+    noteLocation("/session/abc/mapping", "?group=g");
     noteLocation("/config/wiring", "");
     expect(getSetupResume()).toEqual({
-      url: "/session/abc/mapping?cohort=c&group=g",
+      url: "/session/abc/mapping?group=g",
       step: "boxes",
       sessionId: "abc",
     });
   });
 
   it("forgets it once Mission Control is reached", () => {
-    noteLocation("/session/abc/recording", "?cohort=c&group=g");
-    noteLocation("/session/abc/control", "?cohort=c&group=g");
+    noteLocation("/session/abc/recording", "?group=g");
+    noteLocation("/session/abc/control", "?group=g");
     expect(getSetupResume()).toBeNull();
   });
 });
@@ -57,12 +57,12 @@ describe("drafts", () => {
     noteLocation("/config", "");
     expect(getSetupDraft("configure:recording")).toEqual({ sessionNumber: "7" });
 
-    noteLocation("/session/abc/control", "?cohort=c");
+    noteLocation("/session/abc/control", "");
     expect(getSetupDraft("configure:recording")).toBeUndefined();
   });
 
   it("are dropped by a deliberate cancel", () => {
-    noteLocation("/session/abc/mapping", "?cohort=c&group=g");
+    noteLocation("/session/abc/mapping", "?group=g");
     setSetupDraft("boxes:abc:g", []);
     clearSetupResume();
     expect(getSetupDraft("boxes:abc:g")).toBeUndefined();

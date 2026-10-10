@@ -738,8 +738,8 @@ What Mission Control renders. The runner is the authority on the confirmed mappi
 | Field | Type | Notes |
 |---|---|---|
 | `session` | [Session](#shape-session) |  |
-| `groupId` | string \| null | The group the runner holds; an empty string when it holds none (before a mapping is confirmed, and between groups). |
-| `boxes` | [SessionBox](#shape-sessionbox)[] |  |
+| `groupId` | string \| null | The group on the rig. Null unless this is the held session with a group mapped: before a mapping is confirmed, between groups, and for any session that does not hold the rig. |
+| `boxes` | [SessionBox](#shape-sessionbox)[] | The rig's boxes; empty unless this is the held session. |
 
 <a id="cmd-sessions.startall"></a>
 #### `sessions.startAll`

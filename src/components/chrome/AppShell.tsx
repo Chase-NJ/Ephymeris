@@ -9,6 +9,7 @@ import { SvgDefs } from "./SvgDefs";
 import { Titlebar } from "./Titlebar";
 import { ConstellationStageProvider } from "@/components/constellation3d/SharedCanvas";
 import { springSnappy } from "@/lib/motion";
+import { useUpdateChecks } from "@/lib/updates/store";
 import { useReduceMotion } from "@/lib/useReduceMotion";
 
 /**
@@ -26,6 +27,9 @@ import { useReduceMotion } from "@/lib/useReduceMotion";
  */
 export function AppShell() {
   const reduceMotion = useReduceMotion();
+  // Here because the shell outlives every route: the check runs at launch
+  // whichever screen opens first (`ARCHITECTURE.md#updates`).
+  useUpdateChecks();
 
   return (
     <MotionConfig reducedMotion={reduceMotion ? "always" : "never"}>

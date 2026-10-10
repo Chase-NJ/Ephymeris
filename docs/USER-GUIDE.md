@@ -51,6 +51,7 @@ The screenshots come from a demo rig of six boxes running a cohort called *Odor 
   - [Carry-forward flags](#carry-forward-flags)
   - [What changed and how they did](#what-changed-and-how-they-did)
   - [Saving the log as a PDF](#saving-the-log-as-a-pdf)
+- [Updating Ephymeris](#updating-ephymeris)
 - [Troubleshooting](#troubleshooting)
 - [Rules that protect the data](#rules-that-protect-the-data)
 - [Glossary](#glossary)
@@ -177,7 +178,7 @@ last ran. The most recently run cohort is at the top.
 time, notes anyone wrote, and what changed since the last session. See [Keeping the log](#keeping-the-log).
 
 **Settings.** Where data is saved (**Data directory**), where a backup copy goes (**Backup directory**),
-and **Reduce motion**. If no backup directory is set, a note under it says so.
+**Reduce motion**, and **Updates**. If no backup directory is set, a note under it says so.
 
 ![The Settings screen: Data directory set to a folder, Backup directory showing Not set with a warning that data is only on one drive, and the Reduce motion switch](images/settings.webp)
 
@@ -882,6 +883,23 @@ bottom-right corner shows the progress; choose where to save it when it asks. Th
 
 Notes print as written, except that a few symbols are spelled out (`≥` becomes `>=`), and characters the
 PDF's fonts don't have, such as Chinese or emoji, print as `?`. Accented letters and Greek print normally.
+
+## Updating Ephymeris
+
+Ephymeris checks for a newer version when it opens and every few hours while it runs. When one is
+ready, a small dot appears beside **Settings** in the sidebar.
+
+1. Open **Settings**. The **Updates** tile names the new version.
+2. Click **Install and restart**, then confirm. Ephymeris downloads the update, closes, runs the
+   installer, and opens again on its own, usually within a minute.
+
+Your cohorts, sessions, settings, saved tasks and data files are not touched.
+
+The button waits while anything is in progress, and says what: a running session, a recording, or a
+box that is flashing, resetting or open in **Debug**. Install between sessions.
+
+If the tile says **couldn't check**, the PC probably has no internet connection. That is harmless;
+ask the lab manager for the new installer instead.
 
 ## Troubleshooting
 

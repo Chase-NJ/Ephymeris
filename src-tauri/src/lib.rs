@@ -1,4 +1,5 @@
 mod sidecar;
+mod updater;
 
 use tauri::{LogicalSize, Manager, RunEvent, WebviewWindow};
 
@@ -67,8 +68,17 @@ pub fn run() {
         // the operator pointed a cohort (other drives, network shares), so
         // the path scope is broad and the verb is kept narrow instead.
         .plugin(tauri_plugin_opener::init())
+        // Reached only through the shell's own update commands (`updater.rs`),
+        // which stop the sidecar before installing; the webview gets no
+        // updater permission of its own.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(sidecar::SidecarState::default())
-        .invoke_handler(tauri::generate_handler![sidecar::sidecar_endpoint])
+        .manage(updater::PendingUpdate::default())
+        .invoke_handler(tauri::generate_handler![
+            sidecar::sidecar_endpoint,
+            updater::update_check,
+            updater::update_install
+        ])
         .setup(|app| {
             // The window is created hidden so this sizing never shows up as a
             // resize jump on launch. Show it either way — a window that stays

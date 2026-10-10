@@ -62,7 +62,11 @@ backend, `arduino-cli` and the `arduino:avr` toolchain all ship inside it.
 The app installs to `%LOCALAPPDATA%\Ephymeris`. Its own state (the cohort database, settings, the
 writable toolchain copy, saved tasks) lives in `%APPDATA%\edu.hartlab.ephymeris`. Session data goes
 wherever the Data directory points. Uninstalling removes the app but leaves both data locations alone.
-To update, run a newer installer over the old one.
+After that, Ephymeris updates itself. When a newer version is published, a dot appears beside
+**Settings** in the sidebar; **Settings → Updates → Install and restart** closes the app, runs the new
+installer and reopens it. It waits while a session, a recording or any box is busy. A PC without
+internet access never sees an update: run the newer installer over the old one by hand, which is also
+how a copy older than 1.1.2-alpha moves onto a version that updates itself.
 
 ## Developer setup
 
@@ -202,12 +206,13 @@ shared library without `-fpermissive`, which makes them the strictest type check
 
 ## Continuous integration
 
-Two GitHub Actions workflows live in `.github/workflows/`:
+Three GitHub Actions workflows live in `.github/workflows/`:
 
 | Workflow | Runs on | What it does |
 |---|---|---|
 | `check.yml` | every push to `main`, every pull request | `npm run check`; the sidecar suite on Windows and Linux; the firmware host tests; `cargo test` on Windows |
-| `release.yml` | a pushed tag `v*` | builds the installer on a clean Windows runner and attaches it to a **draft** pre-release |
+| `release.yml` | a pushed tag `v*` | builds and signs the installer on a clean Windows runner and attaches it and its `.sig` to a **draft** pre-release |
+| `publish-update.yml` | publishing a release | points the update feed, `latest.json` on the `updates` branch, at that release ([Updates](docs/ARCHITECTURE.md#updates)) |
 
 Tests that need hardware, `arduino-cli`, RHX or the lab's probe maps skip themselves on a runner, so a
 green check says nothing about them.
@@ -220,7 +225,13 @@ git tag v1.1.1-alpha && git push origin main --tags
 ```
 
 The workflow refuses a tag that disagrees with either file. When the draft appears on the Releases
-page, write its notes and publish it; nothing reaches the lab before that.
+page, write its notes and publish it. **Publishing is shipping**: within a few minutes every installed
+copy that checks finds it. Nothing reaches the lab before that.
+
+Signing needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; their public half is `plugins.updater.pubkey` in
+`tauri.conf.json`. Losing the key strands every installed copy
+([Updates](docs/ARCHITECTURE.md#updates)).
 
 ## Building the installer
 
@@ -280,9 +291,8 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   appeared, bind it to box 3?".
 - **Archive has no confirmation**, on purpose: archiving is reversible and only permanent delete is
   gated. Revisit if it proves too easy to trigger.
-- **Installer signing and auto-update.** Signing would remove the SmartScreen dialog. Tauri's updater
-  would let a lab machine install a published release from inside the app, but needs internet on the
-  lab machines, an update-signing key kept safe, and a rule that it never installs during a session.
+- **Code-signing the installer.** It would remove the SmartScreen dialog on a first install. Updates
+  are already signed for the updater, which is a separate key and doesn't affect SmartScreen.
 - **`kind` in a task profile is a convention**, not a schema gate: a `utility` profile carrying
   `liveMetrics` is accepted and never scored. Enforce it only if it causes confusion.
 

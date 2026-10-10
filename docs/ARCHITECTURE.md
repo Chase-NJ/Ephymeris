@@ -203,6 +203,44 @@ exports `EPHYMERIS_BUNDLED_ARDUINO_CLI`, `EPHYMERIS_BUNDLED_ARDUINO_DATA_SEED` a
 > see it, because they read `<repo>/firmware` in place. `simplified()` leaves verbatim UNC paths and paths
 > past `MAX_PATH` alone, where the prefix is needed; `discovery._plain()` strips it again on the Python side.
 
+### Updates
+
+An installed copy updates itself from published releases. Three parts, each owning one step:
+
+| Part | Does |
+|---|---|
+| `release.yml` | Builds the installer with `tauri.updater.conf.json` merged in, which signs it with the `TAURI_SIGNING_PRIVATE_KEY` secret, and drafts a release carrying `*-setup.exe` and `*-setup.exe.sig` |
+| `publish-update.yml` | When a draft is **published**, writes `latest.json` (version, signature, installer URL) to the `updates` branch. That file is the feed: the endpoint in `tauri.conf.json` is its `raw.githubusercontent.com` URL |
+| `src-tauri/src/updater.rs` | `update_check` asks the feed; `update_install` downloads the installer, which the plugin refuses unless its signature matches `plugins.updater.pubkey`, then stops the sidecar and hands over to it |
+
+The feed lives on a branch rather than as a release asset because GitHub's latest-release link skips
+pre-releases. Publishing is shipping: a draft is invisible to the feed, and nothing else moves it.
+
+**Stopping the sidecar first.** On Windows the plugin launches the NSIS installer (`installMode:
+"passive"`) and exits the app at once. The shell first closes the sidecar's stdin and waits up to 12 s
+(`SidecarState::stop`): that runs the sidecar's normal shutdown, which stops the `arduino-cli` daemon and
+waits for it, and closes the database. A plain kill would leave the daemon to notice on its own, and an
+installer that started first would find the bundled `arduino-cli.exe` still locked. Only past the wait
+is the sidecar killed. The download and its signature check finish before the sidecar is touched, so a
+bad download leaves the app running.
+
+**When it may install** is the frontend's call (`lib/updates/blocker.ts`), from what the sidecar
+reported: no session, no recording, and every box `IDLE` or `ERROR`. A sidecar that is down holds
+nothing and blocks nothing, so a release whose sidecar won't start can still update out of it.
+
+The app checks at launch and every 6 hours (`lib/updates/store.ts`), shows the result in Settings'
+Updates tile, and marks Settings in the sidebar while one is waiting. Installing is always the
+operator's click. A dev build never checks.
+
+> [!CAUTION]
+> **The signing key is the only way to reach installed copies.** Lose `TAURI_SIGNING_PRIVATE_KEY` (or
+> its password) and every installed copy rejects every future update; each lab PC then needs a new
+> installer run by hand, built with a new key's public half in `tauri.conf.json`. Keep the key file and
+> its password backed up outside this machine and outside GitHub, which never shows a secret again.
+
+Installed copies never downgrade: the plugin installs only a version newer than its own. A bad
+release is fixed forward, by publishing a newer one.
+
 ## Wire protocol
 
 ### Source of truth and generated files
@@ -1275,6 +1313,11 @@ Small maths stays hand-written when the package's import costs more than the cod
 Wilson interval ([DATA.md](DATA.md#derived-metrics)) is a few lines over `math.sqrt`, and `scipy.stats`
 takes about 0.3 s to import.
 
+The shell's `tauri-plugin-updater` meets the same four: it is Tauri's own, it replaces a signed download
+and installer handoff we would otherwise write, it never runs on the session path, and it is fenced by
+scope — the webview has no updater permission, only the shell's two commands reach it, and a failed
+check costs the Updates tile its answer and nothing else ([Updates](#updates)).
+
 The Intan subsystem is stdlib only. Frontend dependencies (`three`, `@react-three/fiber`,
 `@react-three/drei`, `modern-screenshot`, `@react-pdf/renderer`) are less constrained because they are
 bundled at build time; `npm install` never runs on a lab machine. `@react-pdf/renderer` follows the scoped
@@ -1325,6 +1368,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
 | `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `editorLayout.ts`, `orrery.ts`, `useGlidingWidth.ts`, `useLiveNode.ts`; task commands, `lines.ts` (odor lines and onsets), `selection.ts` (mode scope); vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine), [TASKS.md](TASKS.md#editor) |
 | `lib/exports/` | `jobs.ts`, the export progress store | [Export progress](#export-progress) |
+| `lib/updates/`, `components/settings/UpdatesTile.tsx` | The update store and checks, `installBlocker`, the Settings tile | [Updates](#updates) |
 | `lib/constellations/` | `zodiac.ts`, `slots.ts`, `ships.ts`, `cohortSky.ts`, `viewMemory.ts` | [One sky](#one-sky) |
 | `lib/prng.ts`, `lib/motion.ts`, `lib/useReduceMotion.ts` | Seeded PRNG behind every procedural visual; springs; reduced motion | [Theme](#theme) |
 | `components/chrome/`, `components/constellation3d/` | Shell, status constellation and export cards; the shared canvas, scene, camera, backdrop, shaders, `ProgramWarmth` | [One sky](#one-sky), [Shaders and lights](#shaders-and-lights), [Export progress](#export-progress) |
@@ -1342,7 +1386,8 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 |---|---|
 | `src-tauri/src/main.rs` | Binary entry |
 | `src-tauri/src/lib.rs` | Tauri builder, plugins, `sidecar_endpoint`, window sizing, closing other windows with `main` |
-| `src-tauri/src/sidecar.rs` | Launch resolution, spawn, handshake parsing, stdio forwarding, held-open stdin, kill on exit, `simplified()` |
+| `src-tauri/src/sidecar.rs` | Launch resolution, spawn, handshake parsing, stdio forwarding, held-open stdin, kill on exit, graceful `stop` before an update, `simplified()` |
+| `src-tauri/src/updater.rs` | `update_check`, `update_install` ([Updates](#updates)) |
 | `src-tauri/tauri.conf.json` | App config, including `dragDropEnabled: false` |
 
 ### Repo tooling

@@ -44,6 +44,43 @@ impl SidecarState {
         self.endpoint.lock().ok().and_then(|g| g.clone())
     }
 
+    /// Let the sidecar shut itself down, then kill it if it hasn't by `grace`.
+    ///
+    /// For handing the install over to an updater, where a plain kill isn't
+    /// enough: the sidecar's `arduino-cli` daemon notices its parent's death on
+    /// its own schedule, and an installer that starts first finds the bundled
+    /// `arduino-cli.exe` still locked. Closing stdin runs the sidecar's normal
+    /// shutdown, which stops the daemon and waits for it, and closes the
+    /// database. Returns once the process is gone.
+    pub fn stop(&self, grace: std::time::Duration) {
+        if let Ok(mut guard) = self.stdin.lock() {
+            guard.take(); // EOF -> request_shutdown -> Application.stop()
+        }
+        let Ok(mut guard) = self.child.lock() else {
+            return;
+        };
+        let Some(mut child) = guard.take() else {
+            return;
+        };
+        let deadline = std::time::Instant::now() + grace;
+        while std::time::Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    log::info!("sidecar stopped ({status})");
+                    return;
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                Err(err) => {
+                    log::warn!("could not poll the sidecar: {err}");
+                    break;
+                }
+            }
+        }
+        log::warn!("sidecar still running after {grace:?}; killing it");
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
     /// Kill the child on app exit so it can never outlive us holding serial ports.
     pub fn shutdown(&self) {
         if let Ok(mut guard) = self.stdin.lock() {

@@ -7,6 +7,7 @@ import { HudTile } from "@/components/common/HudTile";
 import { BackupStatusNote } from "@/components/settings/BackupStatusNote";
 import { DirectoryField } from "@/components/settings/DirectoryField";
 import { SettingRow } from "@/components/settings/SettingRow";
+import { UpdatesTile } from "@/components/settings/UpdatesTile";
 import { useBackupStatus, type BackupStatus } from "@/lib/backup/useBackupStatus";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
@@ -179,6 +180,9 @@ export function Settings() {
                 </HudTile>
               </motion.div>
 
+              <motion.div variants={RISE}>
+                <UpdatesTile />
+              </motion.div>
             </motion.div>
           </fieldset>
 

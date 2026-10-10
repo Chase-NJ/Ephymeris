@@ -1,0 +1,79 @@
+# Publishing a release is shipping it: this points every installed copy's updater at it.
+#
+# The feed is latest.json on the `updates` branch, served from raw.githubusercontent.com
+# (the endpoint in tauri.conf.json). It lives outside the release because GitHub's
+# "latest release" link skips pre-releases, and every Ephymeris release is one.
+#
+# Runs when YOU publish a draft. A release created already-published by a workflow's own
+# token would not trigger it, which is one more reason release.yml only ever drafts.
+
+name: Publish update
+
+on:
+  release:
+    types: [published]
+  # Re-point the feed by hand: after a failed run, or to put back an earlier release's
+  # entry. Installed copies never downgrade; a copy newer than the feed just stays put.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to point the feed at, e.g. v1.1.2-alpha"
+        required: true
+
+permissions:
+  contents: write # push the feed branch
+
+concurrency:
+  group: update-feed
+
+jobs:
+  feed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build latest.json from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          release=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,name,publishedAt,isDraft,assets)
+          if [ "$(jq -r .isDraft <<<"$release")" = true ]; then
+            echo "::error::$TAG is still a draft; publish it first"; exit 1
+          fi
+          url=$(jq -r '.assets[] | select(.name | endswith("-setup.exe")) | .url' <<<"$release")
+          sig_name=$(jq -r '.assets[] | select(.name | endswith("-setup.exe.sig")) | .name' <<<"$release")
+          if [ -z "$url" ] || [ -z "$sig_name" ]; then
+            echo "::error::$TAG has no signed installer (built before updates were signed?)"; exit 1
+          fi
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$sig_name" --dir "$RUNNER_TEMP"
+          # The signature is base64; a trailing newline would fail its decode on every PC.
+          jq -n \
+            --arg version "${TAG#v}" \
+            --arg notes "$(jq -r .name <<<"$release")" \
+            --arg pub_date "$(jq -r .publishedAt <<<"$release")" \
+            --arg url "$url" \
+            --arg signature "$(tr -d '\r\n' < "$RUNNER_TEMP/$sig_name")" \
+            '{version: $version, notes: $notes, pub_date: $pub_date,
+              platforms: {"windows-x86_64": {signature: $signature, url: $url}}}' \
+            > "$RUNNER_TEMP/latest.json"
+          cat "$RUNNER_TEMP/latest.json"
+
+      - name: Push it to the updates branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          mkdir feed && cd feed
+          git init -q
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth 1 origin updates; then
+            git checkout -q -b updates FETCH_HEAD
+          else
+            git checkout -q --orphan updates
+          fi
+          cp "$RUNNER_TEMP/latest.json" latest.json
+          git add latest.json
+          git commit -q -m "Point the update feed at $TAG"
+          git push -q origin updates

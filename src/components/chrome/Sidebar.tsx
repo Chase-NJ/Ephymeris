@@ -20,6 +20,7 @@ import { springSnappy } from "@/lib/motion";
 import { runDeparture } from "@/lib/nav/departure";
 import { useUnsaved } from "@/lib/nav/unsavedGuard";
 import { useActiveSessions, useRunningSession } from "@/lib/sessions/context";
+import { useUpdate } from "@/lib/updates/store";
 import {
   noteLocation,
   SETUP_STEP_LABEL,
@@ -103,12 +104,15 @@ function NavList({
   items,
   pathname,
   sessionRunning = false,
+  updateReady = false,
   resume = null,
   onNavigate,
 }: {
   items: readonly NavItem[];
   pathname: string;
   sessionRunning?: boolean;
+  /** A newer version is published; Settings is where it is installed. */
+  updateReady?: boolean;
   /** An unfinished set-up the Dashboard row returns to, with its caption. */
   resume?: ResumeOffer | null;
   /** Returns false to swallow the click — the shell is asking first. */
@@ -188,6 +192,12 @@ function NavList({
                   style={{ background: "var(--color-status-ok)" }}
                 />
               )}
+              {item.to === "/settings" && updateReady && (
+                <span
+                  title="Update available"
+                  className="ml-auto inline-block size-1.5 rounded-full bg-pulsar"
+                />
+              )}
             </NavLink>
           </li>
         );
@@ -242,6 +252,7 @@ export function Sidebar() {
   const { pathname, search } = useLocation();
   const navigate = useNavigate();
   const sessionRunning = useRunningSession() !== null;
+  const updateReady = useUpdate().kind === "available";
   const active = useActiveSessions();
   const resume = resumeOffer(useSetupResume(), active, pathname);
 
@@ -295,7 +306,12 @@ export function Sidebar() {
       </div>
 
       <div className="mt-auto">
-        <NavList items={NAV_BOTTOM} pathname={pathname} onNavigate={onNavigate} />
+        <NavList
+          items={NAV_BOTTOM}
+          pathname={pathname}
+          updateReady={updateReady}
+          onNavigate={onNavigate}
+        />
         <div className="mx-3 border-t border-halo" />
         <div className="pt-2.5">
           <LiveConstellation />

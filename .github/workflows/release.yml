@@ -1,5 +1,6 @@
-# Pushing a tag like v1.1.1-alpha builds the Windows installer on a clean machine and
-# attaches it to a DRAFT release. Nothing reaches the lab until the draft is published.
+# Pushing a tag like v1.1.1-alpha builds the Windows installer on a clean machine, signs
+# it for the updater, and attaches both to a DRAFT release. Nothing reaches the lab until
+# the draft is published, which is when publish-update.yml points installed copies at it.
 
 name: Release
 
@@ -52,9 +53,14 @@ jobs:
           sidecar\.venv\Scripts\pip.exe install -e "sidecar[dev]"
 
       - run: npm ci
-      - run: npm run package
+      # tauri.updater.conf.json turns on the updater's signature, which needs the
+      # private key; a local `npm run package` leaves it off and needs no key.
+      - run: npm run package -- --config src-tauri/tauri.updater.conf.json
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      - name: Draft a release with the installer
+      - name: Draft a release with the installer and its signature
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -63,4 +69,5 @@ jobs:
             --draft --prerelease \
             --title "Ephymeris $GITHUB_REF_NAME" \
             --generate-notes \
-            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/*-setup.exe \
+            src-tauri/target/release/bundle/nsis/*-setup.exe.sig

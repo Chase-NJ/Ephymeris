@@ -29,6 +29,17 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENGRTcwMzBCM0NFNjZFQTMKUldTamJ1WThDd1Bueng0SDNoSkdScFZTZys3SEE2U1hJYzRidWd4UFJhMFI3c2RFbjlGSTZQeGoK",
+      "endpoints": [
+        "https://raw.githubusercontent.com/Chase-NJ/Ephymeris/updates/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],

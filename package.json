@@ -1,6 +1,6 @@
 {
   "name": "ephymeris",
-  "version": "1.1.2-alpha",
+  "version": "1.1.3-alpha",
   "description": "Behavioral data collection & analysis suite",
   "private": true,
   "type": "module",

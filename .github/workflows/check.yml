@@ -71,7 +71,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - uses: dtolnay/rust-toolchain@stable
+      # Stable Rust ships with the runner image; installing it again is one more
+      # download that can fail. Cargo.toml's rust-version is far behind it.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri

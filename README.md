@@ -32,6 +32,8 @@ from a version tag, but it is unsigned.
 | [docs/DATA.md](docs/DATA.md) | touch anything written to disk or analysed: file layout, crash safety and recovery, SQLite, backup, the archive walk, metric definitions |
 | [docs/RECORDING.md](docs/RECORDING.md) | work on the Intan RHX integration |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | need the exact shape of a command, event or error code. **Generated** from `protocol/schema.py`; never edit it by hand |
+| [GLOSSARY.md](GLOSSARY.md) | need the exact meaning of a domain term, or are naming something new |
+| [docs/adr/](docs/adr/) | are about to undo a decision that looks odd: each record says what was chosen and why |
 
 ## Installing on a lab machine
 

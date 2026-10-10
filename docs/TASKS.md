@@ -489,6 +489,17 @@ flowchart TD
 > [!CAUTION]
 > **A wiring change or a vocabulary edit must rebuild every stored profile AND every bundled sketch, and the failure is invisible if it does not.** A stale folder still compiles and runs; the only symptom is a valve that never fires or an event decoded under the wrong name. Both rebuilds go through the one call site `Application._rebuild_generated` (rebuild, then rescan), because splitting it into two calls is how one eventually gets forgotten.
 
+### The rig definition
+
+The [rig definition](../GLOSSARY.md#rig-definition) is the rig wiring plus the strobe vocabulary in force: everything a generated sketch takes from the rig rather than from its task. `rig/definition.py` owns it; `rig/registry.py`'s `channels()` and `vocabulary()` are how everything reads it.
+
+**A preview asks about a hypothetical without installing it.** `hardware.preview`, `hardware.save`'s impact check and `strobes.usage` validate every saved task under a hypothetical wiring or vocabulary (`definition.impact_of`) and report only what it would *newly* break. The hypothetical lives in a `ContextVar` (`registry.hypothetical`): the code that installed it, and the `asyncio.to_thread` worker it runs in, see it; a rebuild, a session's profile load or anything else reading at the same moment sees the definition in force ([ADR 0001](adr/0001-rig-definition-hypotheticals-are-context-local.md)).
+
+> [!CAUTION]
+> **Never answer "what if" with `set_rig_source` or `set_vocabulary_source`.** They change the definition every thread reads. A rebuild reading it then writes the previewed pins or codes into `TaskPins.h`, and the sketch compiles. The same holds for starting a plain `threading.Thread` inside `registry.hypothetical`: it begins with an empty context and reads the definition in force, so its answer is silently about the wrong rig.
+
+**The in-force values are cached, and a cache never keeps a value composed before a clear.** `set_rig_source` / `set_vocabulary_source` drop the cache and bump a generation; a reader that began composing from the old document returns its value without storing it.
+
 ### Rebuilt bundled sketches
 
 The shipped sketches compile against `BoxPins.h`'s defaults — the box as built. On a rewired rig that is silently wrong: `utility.identify` lights whatever is on the old trial-light pin and `GRGL_Sim` opens whatever is on the old odor line. So `taskdef/bundled.py` rebuilds them into `<data_dir>/rig/sketches/<category>/<name>/` with a generated `TaskPins.h`, served in place of the original.
@@ -555,7 +566,7 @@ flowchart TD
     saved{"A saved<br/>hardware/rig.json?"}
     saved -->|no| shipped["channels.v1.json + the<br/>selected hardware pinout"]
     saved -->|"yes: replaces the pair"| rig["data_dir/hardware/rig.json<br/>(kinds still from channels.v1.json)"]
-    shipped --> map["ChannelMap<br/>lru_cached until set_rig_source"]
+    shipped --> map["ChannelMap<br/>cached until set_rig_source"]
     rig --> map
     map --> taskPins["Each saved task's generated folder"]
     map --> bundledPins["Bundled sketches rebuilt into<br/>data_dir/rig/sketches/"]
@@ -564,7 +575,7 @@ flowchart TD
 
 `rig/registry.py` composes the pair into a `ChannelMap`. Three rules that are easy to break:
 
-- **`channels()` is `lru_cache`d and cleared only by `set_rig_source`**, which `Application` calls at construction and after a wiring write. Never hang invalidation off `settings.push`: it fires on every reconnect.
+- **`channels()` is cached and cleared only by `set_rig_source`**, which `Application` calls at construction and after a wiring write. Never hang invalidation off `settings.push`: it fires on every reconnect.
 - **`hardware/store.py`'s `default_document()` reads the shipped pair via `shipped_channels()`**, never the wiring in force — otherwise Reset resets to itself. It also keeps declaration order (sorting by pin once re-ordered the odor table on a rig's first save).
 - **`ChannelMap.content_hash()` covers only fields that can change a compiled byte** (name, kind, direction, pin, watch bit, well, port slot). A reworded rationale must not move it, or people learn to ignore it. **`onset_strobe` is excluded for the same reason**: the generator emits the code a trial row stores, so the declaration changes what the editor writes, never a compiled byte. A profile names channels, not pins, so a rewiring moves no `profile_hash`; this hash is what records which wiring a sketch was built against (it is stamped into each generated header).
 
@@ -579,7 +590,7 @@ flowchart TD
 7–12 on the odd pins 23–33, which is why [odor index](#order-is-meaning) must come from declaration order,
 not pin order.*
 
-**Saving previews what it would break.** `hardware.preview` validates as the operator types and reports `breaks` — the saved tasks this wiring would *newly* break, computed by validating each definition under both wirings (`hardware/service.py`'s `impact_of`). `hardware.save` without `confirm` refuses such a change with `RIG_WOULD_BREAK_TASKS`; with `confirm: true` it writes anyway. Rewiring is the operator's call; the app only refuses to let it happen unnoticed. A document that fails validation is never written.
+**Saving previews what it would break.** `hardware.preview` validates as the operator types and reports `breaks` — the saved tasks this wiring would *newly* break, computed by validating each definition under both wirings ([The rig definition](#the-rig-definition)). `hardware.save` without `confirm` refuses such a change with `RIG_WOULD_BREAK_TASKS`; with `confirm: true` it writes anyway. Rewiring is the operator's call; the app only refuses to let it happen unnoticed. A document that fails validation is never written.
 
 ### Wiring rules
 
@@ -641,7 +652,7 @@ Every edit is a `strobes.*` command (`app.py`, rules in `strobes/store.py`, evid
 **Where a code is used** has three answers, all computed per request:
 
 - **Firmware:** a regex for `BF_<NAME>` over every source file under the sketch library and the saved-task folders, comments stripped, the generated `TaskPins.h` and any `extras/` folder (a library's host tests) excluded. A hit under `libraries/` is a `library` reference.
-- **Tasks:** `impact_of`'s method with a hypothetical vocabulary in place of a wiring — every saved task validated with and without the code, only what is *newly* broken reported.
+- **Tasks:** the [impact check](#the-rig-definition) with a hypothetical vocabulary — every saved task validated with and without the code, only what is *newly* broken reported.
 - **Sessions:** `ArchiveScanner` walks every cohort's data folder (archived ones included) plus every file the database lists, reading each `.json` and each `.tsv` with no `.json` beside it — a crashed or running session is a recorded session. Results are cached per file in `strobe_scan_cache` on (path, mtime, size), so only the first scan reads everything; it publishes `strobes.scanProgress`.
 
 > [!WARNING]

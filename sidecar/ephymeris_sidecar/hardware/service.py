@@ -91,51 +91,10 @@ def _rule_problems(document: Any) -> list[dict[str, Any]]:
 
 
 def impact_of(document: Any, tasks: Any) -> list[dict[str, Any]]:
-    """Which stored task profiles this wiring would newly break.
+    """Which stored task profiles this wiring would newly break (`rig/definition.py`)."""
+    from ephymeris_sidecar.rig import definition
 
-    COMPUTED BEFORE THE WRITE, which is the whole point. Full channel authoring
-    means an operator can delete a channel a saved task binds; catching that at
-    generation time would be too late — the wiring is written by then and the
-    task is already broken.
-
-    NEWLY is load-bearing. A task already failing for its own reasons is not this
-    change's fault, and listing it would bury the ones that are — so each profile
-    is validated under BOTH wirings and only the difference is reported.
-
-    The rig source is restored in a `finally`: this function installs a
-    hypothetical wiring to answer a question, and leaving it installed would mean
-    a preview silently changed what the app generates.
-
-    `tasks` is the task-profile store. It is None until one exists, and an empty
-    `breaks` on a rig with no profiles is the honest answer either way.
-    """
-    if tasks is None:
-        return []
-
-    import copy
-
-    from ephymeris_sidecar.rig import registry
-
-    entries = list(tasks.list_entries())
-    if not entries:
-        return []
-
-    before = {e["id"]: tasks.failures(e["id"]) for e in entries}
-
-    saved = registry.current_rig_source()
-    try:
-        registry.set_rig_source(lambda: copy.deepcopy(document))
-        after = {e["id"]: tasks.failures(e["id"]) for e in entries}
-    finally:
-        registry.set_rig_source(saved)
-
-    out: list[dict[str, Any]] = []
-    for entry in entries:
-        task_id = entry["id"]
-        gained = sorted(after[task_id] - before[task_id])
-        if gained:
-            out.append({"specId": task_id, "label": entry.get("label"), "codes": gained})
-    return out
+    return definition.impact_of(tasks, wiring=document)
 
 
 def _status(rig: store.HardwareStore, doc: dict) -> dict[str, Any]:

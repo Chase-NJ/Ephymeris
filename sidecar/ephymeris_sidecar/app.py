@@ -50,6 +50,7 @@ from .intan import probemap as intan_probemap
 from .intan.service import IntanNotReady, IntanService
 from .logbook.models import NoteInvalid, NoteNotFound
 from .logbook.service import LogbookService
+from .rig import definition as rig_definition
 from .rig import registry as rig_registry
 from .sessions.repository import SessionRepository
 from .sessions.runner import ActiveRun, BoxConfig, SessionRunner
@@ -2682,29 +2683,6 @@ def _code_in(doc: dict[str, Any], name: str) -> int:
 
 
 def _impact_under_vocabulary(document: dict[str, Any], tasks: Any) -> list[dict[str, Any]]:
-    """`hardware/service.impact_of`, for a hypothetical vocabulary.
-
-    Which saved tasks generate today and would not under `document` — NEWLY,
-    so a task already failing for its own reasons is not blamed on this edit.
-    """
-    import copy
-
-    if tasks is None:
-        return []
-    entries = list(tasks.list_entries())
-    if not entries:
-        return []
-    before = {e["id"]: tasks.failures(e["id"]) for e in entries}
-    saved = rig_registry.current_vocabulary_source()
-    try:
-        rig_registry.set_vocabulary_source(lambda: copy.deepcopy(document))
-        after = {e["id"]: tasks.failures(e["id"]) for e in entries}
-    finally:
-        rig_registry.set_vocabulary_source(saved)
-    out: list[dict[str, Any]] = []
-    for entry in entries:
-        gained = sorted(after[entry["id"]] - before[entry["id"]])
-        if gained:
-            out.append({"specId": entry["id"], "label": entry.get("label"), "codes": gained})
-    return out
+    """Which saved tasks a hypothetical vocabulary would newly break (`rig/definition.py`)."""
+    return rig_definition.impact_of(tasks, vocabulary=document)
 

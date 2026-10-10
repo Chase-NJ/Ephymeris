@@ -1,4 +1,5 @@
-"""`hardware.*` — the payloads, and the impact check that gates a save.
+"""`hardware.*` — the payloads. The impact check that gates a save is
+`rig/definition.py`'s, tested in `test_rig_definition.py`.
 
 The rule this module rests on: a document that is WELL-FORMED and describes an
 impossible box is not a command error. It is a successful reply carrying located
@@ -132,85 +133,6 @@ def test_every_problem_is_reported_not_just_the_first():
 
 
 # --------------------------------------------------------------------------- #
-# The impact check — the whole reason save has a confirm flag
-# --------------------------------------------------------------------------- #
-
-
-def test_deleting_a_bound_channel_names_the_task_it_breaks(rig_store, tasks):
-    """Full channel authoring means an operator can delete a channel a saved
-    task binds. Catching it at generation would be too late — by then the wiring
-    is written and the task is broken."""
-    doc = rig()
-    doc["channels"].pop("left_well")
-    doc["pins"].pop("left_well")
-
-    breaks = service.impact_of(doc, tasks)
-    assert [b["specId"] for b in breaks] == ["grgl"]
-    assert "missing:left_well" in breaks[0]["codes"]
-    assert breaks[0]["label"]
-
-
-def test_a_harmless_repin_breaks_nothing(rig_store, tasks):
-    assert service.impact_of(rig(pins={"left_well": {"index": 12}}), tasks) == []
-
-
-def test_a_task_already_failing_is_not_blamed_on_the_wiring(rig_store):
-    """NEWLY is load-bearing: listing a task that was already broken would bury
-    the ones this change actually broke."""
-    two = FakeTaskStore({
-        "grgl": {"odor_port", "left_well"},
-        "broken": {"a_channel_that_never_existed"},
-    })
-
-    doc = rig()
-    doc["channels"].pop("left_well")
-    doc["pins"].pop("left_well")
-
-    assert [b["specId"] for b in service.impact_of(doc, two)] == ["grgl"]
-
-
-def test_the_impact_check_leaves_the_wiring_it_found(rig_store, tasks):
-    """It installs a HYPOTHETICAL wiring to answer a question. Leaving it
-    installed would mean a preview silently changed what the app generates."""
-    before = registry.channels().content_hash()
-    service.impact_of(rig(pins={"left_well": {"index": 12}}), tasks)
-    assert registry.channels().content_hash() == before
-    assert registry.current_rig_source() is None
-
-
-def test_the_impact_check_restores_even_when_a_task_explodes(rig_store):
-    """The restore is in a `finally` precisely because the thing it wraps can
-    raise. A hypothetical wiring surviving a crash is the worst outcome here:
-    every later generation would silently use it."""
-    class Exploding(FakeTaskStore):
-        def __init__(self):
-            super().__init__({"grgl": {"left_well"}})
-            self.calls = 0
-
-        def failures(self, task_id):
-            self.calls += 1
-            if self.calls > 1:
-                raise RuntimeError("task store exploded")
-            return super().failures(task_id)
-
-    before = registry.channels().content_hash()
-    with pytest.raises(RuntimeError):
-        service.impact_of(rig(pins={"left_well": {"index": 12}}), Exploding())
-    assert registry.channels().content_hash() == before
-    assert registry.current_rig_source() is None
-
-
-def test_an_empty_library_costs_nothing(rig_store):
-    assert service.impact_of(rig(), FakeTaskStore({})) == []
-
-
-def test_a_rig_with_no_task_store_yet_reports_no_breaks(rig_store):
-    """None is "none stored yet", which is the honest empty answer rather than a
-    special case the caller has to know about."""
-    assert service.impact_of(rig(), None) == []
-
-
-# --------------------------------------------------------------------------- #
 # preview / saved payloads
 # --------------------------------------------------------------------------- #
 
@@ -239,27 +161,3 @@ def test_a_saved_rig_reports_itself_as_custom(rig_store):
     assert payload["status"]["derivedFrom"] == "behaviorbox_mega2560.v1"
     assert payload["status"]["editedAt"]
     assert payload["problems"] == []
-
-
-def test_rewiring_a_line_s_onset_names_the_task_it_would_mislabel(rig_store):
-    """An onset declaration changes no compiled byte, so nothing at generation
-    would catch it. Through the definitions' own validation, a saved task whose
-    rows still carry the old pairing reports TSK114 before the write."""
-    from ephymeris_sidecar.taskdef.validate import validate
-    from tests.fixtures import task_definitions as presets
-
-    definition = presets.instantiate("grgl_2odor", "probe")
-
-    class Definitions:
-        def list_entries(self):
-            return [{"id": "probe", "label": "Probe"}]
-
-        def failures(self, task_id):
-            return {d.code for d in validate(definition)}
-
-    doc = rig()
-    doc["channels"]["odor_line_1"]["onset_strobe"] = "ODOR_9_ON"
-    doc["channels"]["odor_line_9"]["onset_strobe"] = "ODOR_1_ON"
-    breaks = service.impact_of(doc, Definitions())
-    assert [b["specId"] for b in breaks] == ["probe"]
-    assert "TSK114" in breaks[0]["codes"]

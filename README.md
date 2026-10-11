@@ -179,6 +179,9 @@ assert what a screenshot shows better. There is no linter.
 
 **Sidecar: pytest, `sidecar/tests/`.** `conftest.py` sets `EPHYMERIS_WIRE_VALIDATE=1` for the whole suite,
 so every event and command reply is checked against `protocol/schema.py`; production leaves it off.
+Test a command handler through the `sidecar` fixture (`tests/live_sidecar.py`): the real `Application`
+behind the real server over a WebSocket, with only the board tool and serial faked. A handler called
+directly skips the wiring in `app.py`, the error mapping and the reply's schema check.
 The guards that matter most:
 
 - `test_protocol_contract.py`: the generated mirrors match the schema, and every wire name appears in

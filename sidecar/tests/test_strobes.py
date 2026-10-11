@@ -10,26 +10,22 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sqlite3
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from ephymeris_sidecar.app import Application
 from ephymeris_sidecar.cohorts.db import Database
-from ephymeris_sidecar.hardware.store import HardwareStore
 from ephymeris_sidecar.rig import registry
-from ephymeris_sidecar.rig.definition import RigDefinition
-from ephymeris_sidecar.server import CommandError
 from ephymeris_sidecar.strobes import store as strobe_store
 from ephymeris_sidecar.strobes.store import StrobeRefused
 from ephymeris_sidecar.strobes.usage import ArchiveScanner, firmware_refs
 from ephymeris_sidecar.taskdef import generate
-from ephymeris_sidecar.taskdef import store as task_store_mod
 from ephymeris_sidecar.tasks import profile as task_profile
 from tests.conftest import rewrite_keeping_stat
 from tests.fixtures import task_definitions as presets
+from tests.live_sidecar import LiveSidecar, Refused, create_cohort, hold_the_rig, sketch_path
 
 
 @pytest.fixture(autouse=True)
@@ -435,155 +431,127 @@ def test_a_second_scan_answers_an_orphaned_tsv_from_the_cache(tmp_path, db):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture
-def library(tmp_path):
-    root = tmp_path / "library"
-    sketch = root / "Olfactory Behavior" / "GRGL"
-    sketch.mkdir(parents=True)
-    (sketch / "GRGL.ino").write_text("// root sketch\n", encoding="utf-8")
-    return root
+class Lab:
+    """A cohort with one box-assigned animal, on the live sidecar."""
+
+    def __init__(self, sidecar: LiveSidecar, cohort: dict) -> None:
+        self.sidecar = sidecar
+        self.cohort = cohort
+        self.root = Path(cohort["dataFolder"])
+
+    async def call(self, cmd: str, **args):  # noqa: ANN003, ANN201
+        return await self.sidecar.call(cmd, **args)
+
+    async def codes(self) -> dict[str, int]:
+        return {c["name"]: c["code"] for c in (await self.call("strobes.get"))["codes"]}
+
+    async def grgl(self) -> Path:
+        return await sketch_path(self.sidecar, "GRGL")
+
+    async def hold_the_rig(self) -> None:
+        await hold_the_rig(self.sidecar, self.cohort)
 
 
 @pytest.fixture
-def app(tmp_path, db, library, monkeypatch):
-    from ephymeris_sidecar import discovery
-
-    monkeypatch.setattr(discovery, "library_root", lambda: (library, "override"))
-    events: list[dict] = []
-    rebuilds: list[int] = []
-
-    async def broadcast(message: dict) -> None:
-        events.append(message)
-
-    async def rescan() -> None:
-        rebuilds.append(1)
-
-    async def after_rebuild(_tasks: int, _pinned: int) -> None:
-        pass
-
-    vocab_store = strobe_store.VocabularyStore(tmp_path / "data")
-    vocab_store.ensure_seeded()
-    tasks = task_store_mod.TaskStore(tmp_path / "data", library_root=library)
-    cohort_root = tmp_path / "cohort"
-    stub = SimpleNamespace(
-        vocab_store=vocab_store,
-        task_store=tasks,
-        strobe_scanner=ArchiveScanner(db),
-        lifecycle=SimpleNamespace(in_use=False),
-        server=SimpleNamespace(broadcast=broadcast),
-        _cohort_roots=lambda: [str(cohort_root)],
-        events=events,
-        rebuilds=rebuilds,
-        cohort_root=cohort_root,
-    )
-    stub.rig_definition = RigDefinition(
-        hardware=HardwareStore(tmp_path / "data"),
-        vocabulary=vocab_store,
-        tasks=tasks,
-        repin=lambda: 0,
-        in_use=lambda: stub.lifecycle.in_use,
-        rescan=rescan,
-        after_rebuild=after_rebuild,
-        broadcast=broadcast,
-    )
-    for name in (
-        "_edit_vocabulary",
-        "_strobe_impact",
-        "_refuse_unconfirmed",
-        "_scan_archive",
-        "_strobe_name_arg",
-    ):
-        setattr(stub, name, getattr(Application, name).__get__(stub))
-    return stub
+async def lab(sidecar: LiveSidecar, tmp_path: Path) -> Lab:
+    return Lab(sidecar, await create_cohort(sidecar, tmp_path / "cohort"))
 
 
-async def call(app, handler: str, **args):  # noqa: ANN001, ANN003, ANN201
-    return await getattr(Application, handler)(app, None, None, args, None)
-
-
-async def test_an_added_code_is_written_installed_rebuilt_and_announced(app):
-    reply = await call(app, "_strobes_add", name="LASER_ON", code=300, rationale="Light on.")
+async def test_an_added_code_is_written_installed_rebuilt_and_announced(lab: Lab) -> None:
+    reply = await lab.call("strobes.add", name="LASER_ON", code=300, rationale="Light on.")
     assert {"name": "LASER_ON", "code": 300, "origin": "operator", "rationale": "Light on."} in reply["codes"]
     assert reply["editable"] is True
-    assert app.rebuilds == [1]
-    assert app.events[-1]["evt"] == "strobes.updated"
-    assert registry.vocabulary().code_of("LASER_ON") == 300
-    assert "LASER_ON" in app.vocab_store.load_strict()["codes"]
+    assert (await lab.codes())["LASER_ON"] == 300
+    assert "#define BF_LASER_ON 300" in (await lab.grgl() / "TaskPins.h").read_text(encoding="utf-8")
+    await lab.sidecar.until(lambda: any(
+        c["name"] == "LASER_ON" for c in (lab.sidecar.latest("strobes.updated") or {"codes": []})["codes"]
+    ))
 
 
-async def test_removing_a_recorded_code_is_refused_and_writes_nothing(app):
-    _write_run(app.cohort_root / "P" / "S1" / "behavior.json", "rat1", [116])
-    with pytest.raises(CommandError) as refused:
-        await call(app, "_strobes_remove", name="ODOR_12_ON", confirm=True)
+async def test_removing_a_recorded_code_is_refused_and_writes_nothing(lab: Lab) -> None:
+    _write_run(lab.root / "P" / "S1" / "behavior.json", "rat1", [116])
+    pins_before = (await lab.grgl() / "TaskPins.h").read_text(encoding="utf-8")
+    with pytest.raises(Refused) as refused:
+        await lab.call("strobes.remove", name="ODOR_12_ON", confirm=True)
     assert refused.value.code == "STROBE_IN_RECORDED_SESSION"
     assert refused.value.detail["count"] == 1
-    assert "ODOR_12_ON" in app.vocab_store.load_strict()["codes"]
-    assert app.rebuilds == []
+    assert "ODOR_12_ON" in await lab.codes()
+    assert (await lab.grgl() / "TaskPins.h").read_text(encoding="utf-8") == pins_before
 
 
-async def test_removing_an_unrecorded_code_frees_its_number(app):
-    reply = await call(app, "_strobes_remove", name="ODOR_12_ON", confirm=False)
+async def test_removing_an_unrecorded_code_frees_its_number(lab: Lab) -> None:
+    reply = await lab.call("strobes.remove", name="ODOR_12_ON", confirm=False)
     assert any(lo <= 116 <= hi for lo, hi in reply["freeRanges"])
 
 
-async def test_retiring_a_code_a_saved_task_uses_needs_confirm(app):
-    app.task_store.save(presets.instantiate("grgl_2odor", "probe", "Probe"))
-    onset = presets.instantiate("grgl_2odor", "probe", "Probe").trials[0].onset_strobe
+async def test_retiring_a_code_a_saved_task_uses_needs_confirm(lab: Lab) -> None:
+    probe = presets.instantiate("grgl_2odor", "probe", "Probe")
+    await lab.call("tasks.save", definition=probe.to_json())
+    onset = probe.trials[0].onset_strobe
 
-    usage = await call(app, "_strobes_usage", name=onset)
+    usage = await lab.call("strobes.usage", name=onset)
     assert usage["breaks"] and usage["breaks"][0]["specId"] == "probe"
     assert usage["retireBlocker"] is None
 
-    with pytest.raises(CommandError) as refused:
-        await call(app, "_strobes_retire", name=onset, confirm=False)
+    with pytest.raises(Refused) as refused:
+        await lab.call("strobes.retire", name=onset, confirm=False)
     assert refused.value.code == "STROBE_WOULD_BREAK_TASKS"
 
-    reply = await call(app, "_strobes_retire", name=onset, confirm=True)
+    reply = await lab.call("strobes.retire", name=onset, confirm=True)
     assert onset in {r["name"] for r in reply["retired"]}
 
 
-async def test_a_port_slot_code_reports_its_blocker_and_is_refused(app):
-    usage = await call(app, "_strobes_usage", name="WATER_POKE_L", scan=True)
+async def test_a_port_slot_code_reports_its_blocker_and_is_refused(lab: Lab) -> None:
+    usage = await lab.call("strobes.usage", name="WATER_POKE_L", scan=True)
     assert usage["portSlot"] == 1 and usage["retireBlocker"] and usage["removeBlocker"]
-    assert usage["sessions"]["scanned"]["roots"] == [str(app.cohort_root)]
-    with pytest.raises(CommandError) as refused:
-        await call(app, "_strobes_retire", name="WATER_POKE_L", confirm=True)
+    assert usage["sessions"]["scanned"]["roots"] == [str(lab.root)]
+    with pytest.raises(Refused) as refused:
+        await lab.call("strobes.retire", name="WATER_POKE_L", confirm=True)
     assert refused.value.code == "STROBE_REQUIRED"
 
 
-async def test_no_edit_while_the_rig_is_in_use(app):
+async def test_no_edit_while_the_rig_is_in_use(lab: Lab) -> None:
     """A session set up, or a box running (`SessionLifecycle.in_use`): either
     way a sketch was generated from the vocabulary an edit would replace."""
-    app.lifecycle.in_use = True
-    with pytest.raises(CommandError) as refused:
-        await call(app, "_strobes_add", name="LASER_ON", code=300, rationale="x")
+    await lab.hold_the_rig()
+    with pytest.raises(Refused) as refused:
+        await lab.call("strobes.add", name="LASER_ON", code=300, rationale="x")
     assert refused.value.code == "STROBE_SESSION_RUNNING"
 
 
-async def test_a_remove_is_refused_before_its_archive_scan(app, monkeypatch):
-    app.lifecycle.in_use = True
+async def test_a_remove_is_refused_before_its_archive_scan(
+    lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scan can take minutes over a share, and the edit was always going to
+    be refused: no stat below the cohort folder means no scan began."""
+    await lab.hold_the_rig()
+    looked: list[str] = []
+    real_stat = os.stat
 
-    async def scan():
-        pytest.fail("scanned the archive for an edit that was always going to be refused")
+    def stat(path, *args, **kwargs):  # noqa: ANN001, ANN202
+        if isinstance(path, (str, os.PathLike)) and Path(path).is_relative_to(lab.root):
+            looked.append(str(path))
+        return real_stat(path, *args, **kwargs)
 
-    app._scan_archive = scan
-    with pytest.raises(CommandError) as refused:
-        await call(app, "_strobes_remove", name="ODOR_12_ON", confirm=True)
+    monkeypatch.setattr(os, "stat", stat)
+    with pytest.raises(Refused) as refused:
+        await lab.call("strobes.remove", name="ODOR_12_ON", confirm=True)
     assert refused.value.code == "STROBE_SESSION_RUNNING"
+    assert looked == []
 
 
-async def test_import_previews_then_applies(app):
+async def test_import_previews_then_applies(lab: Lab) -> None:
     other = strobe_store.add(seed(), "LASER_ON", 300, rationale="theirs")
-    preview = await call(app, "_strobes_import", document=other, apply=False)
+    preview = await lab.call("strobes.import", document=other, apply=False)
     assert preview["vocabulary"] is None and preview["plan"]["adds"][0]["name"] == "LASER_ON"
-    assert "LASER_ON" not in app.vocab_store.load_strict()["codes"]
+    assert "LASER_ON" not in await lab.codes()
 
-    applied = await call(app, "_strobes_import", document=other, apply=True)
+    applied = await lab.call("strobes.import", document=other, apply=True)
     assert any(c["name"] == "LASER_ON" for c in applied["vocabulary"]["codes"])
 
 
-async def test_export_travels_without_this_machine_s_stamps(app):
-    reply = await call(app, "_strobes_export")
+async def test_export_travels_without_this_machine_s_stamps(lab: Lab) -> None:
+    reply = await lab.call("strobes.export")
     assert reply["filename"].startswith("strobe-vocabulary-") and reply["filename"].endswith(".json")
     assert "seeded_at" not in reply["document"] and "edited_at" not in reply["document"]
     assert strobe_store.validate(reply["document"]) == []

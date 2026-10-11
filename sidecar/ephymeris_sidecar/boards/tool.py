@@ -98,6 +98,13 @@ class BoardTool(ABC):
         on error.
         """
 
+    def set_binary(self, binary: str | None) -> None:
+        """Use the `arduino-cli` at `binary`, or the bundled one for `None`:
+        the Settings override, applied on every `settings.push`.
+
+        A no-op by default, for a backend that runs no binary.
+        """
+
     async def close(self) -> None:
         """Release whatever the backend holds (a daemon child, a channel).
 

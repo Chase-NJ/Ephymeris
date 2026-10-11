@@ -27,6 +27,7 @@ from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import fine_mtime
+from tests.live_sidecar import LiveSidecar, Refused
 
 SESSION = "2O-Bdisc_1_2026-09-01"
 
@@ -442,17 +443,42 @@ def test_a_session_recorded_during_the_copy_abandons_the_move(
     assert rescan(archive)["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}
 
 
-def test_a_session_cannot_be_set_up_while_the_folder_moves(archive: Archive) -> None:
-    """`sessions.create` asks: the folder it makes would be at the old place."""
-    assert not relocate.moving(archive.db, archive.cohort.id)
-    for state in ("moving", "copying", "committed"):
-        archive.db.conn.execute("DELETE FROM folder_moves")
-        journal(archive, state)
-        assert relocate.moving(archive.db, archive.cohort.id), state
-    for state in ("done", "rolled-back"):
-        archive.db.conn.execute("DELETE FROM folder_moves")
-        journal(archive, state)
-        assert not relocate.moving(archive.db, archive.cohort.id), state
+async def test_a_session_cannot_be_set_up_while_the_folder_moves(
+    sidecar: LiveSidecar, tmp_path: Path, other_volume, hung_volume
+) -> None:
+    """`sessions.create` refuses: the folder it makes would be at the old place
+    while the records move to the new one. Once the move is done, it can."""
+    old, new = tmp_path / "data" / "Batch A", tmp_path / "elsewhere" / "Batch A"
+    created = await sidecar.call(
+        "cohorts.create", name="Batch A", dataFolder=str(old),
+        groups=[{"id": "g1", "name": "Morning", "order": 0}],
+        animals=[{"name": "remy1", "groupId": "g1", "boxNumber": 1}],
+    )
+    cohort_id = created["cohort"]["id"]
+    prefix_id = (await sidecar.call("prefixes.create", name="2O-Bdisc"))["prefix"]["id"]
+    (old / "notes.txt").write_text("a file for the move to copy", encoding="utf-8")
+    other_volume(new.parent)
+    drive = hung_volume(new.parent)
+
+    moving = await sidecar.send(
+        "cohorts.setDataFolder", id=cohort_id, path=str(new), moveExisting=True
+    )
+    try:
+        assert await asyncio.to_thread(drive.entered.wait, 5), "the move never began copying"
+        with pytest.raises(Refused) as refused:
+            await sidecar.call(
+                "sessions.create", cohortId=cohort_id, prefixId=prefix_id, sessionNumber="1"
+            )
+        assert refused.value.code == "SESSION_INVALID"
+        assert "being moved" in refused.value.message
+    finally:
+        drive.release()
+
+    assert (await sidecar.reply(moving))["cohort"]["dataFolder"] == str(new)
+    session = await sidecar.call(
+        "sessions.create", cohortId=cohort_id, prefixId=prefix_id, sessionNumber="1"
+    )
+    assert Path(session["session"]["folderPath"]).is_relative_to(new)
 
 
 # --- crashes -----------------------------------------------------------------------

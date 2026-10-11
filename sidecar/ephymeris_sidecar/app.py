@@ -20,6 +20,7 @@ from .analytics import AnalyticsService, ArchiveBusy, CohortArchive
 from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager, BackupNotConfigured
 from .boards import create_board_tool
+from .boards.tool import BoardTool
 from .cohorts import folders, grouping, move_apply, relocate
 from .cohorts.move import MoveRequest
 from .cohorts.db import DB_FILENAME, Database
@@ -79,7 +80,9 @@ log = logging.getLogger(__name__)
 
 
 class Application:
-    def __init__(self, server: SidecarServer, data_dir: Path) -> None:
+    def __init__(
+        self, server: SidecarServer, data_dir: Path, *, tool: BoardTool | None = None
+    ) -> None:
         self.server = server
         self.settings = SidecarSettings()
         # A real scan, not a placeholder: the library ships with the app, so
@@ -103,8 +106,8 @@ class Application:
         # data_dir is where the bundled arduino data seed gets its writable
         # copy in a packaged install (`boards/cli_tool.py`). The factory picks
         # the gRPC daemon backend when grpcio is importable, the subprocess
-        # backend otherwise (`boards/__init__.py`).
-        self.tool = create_board_tool(app_data_dir=data_dir)
+        # backend otherwise (`boards/__init__.py`). Tests pass their own.
+        self.tool = tool if tool is not None else create_board_tool(app_data_dir=data_dir)
         self.ports: PortManager | None = None
         #: Every flash, one at a time, rig-wide (`ports/flashing.py`).
         self.flashes: FlashQueue | None = None

@@ -31,6 +31,7 @@ from ephymeris_sidecar.sessions.lifecycle import (
 from ephymeris_sidecar.sessions.models import GroupRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from ephymeris_sidecar.sessions.runner import ActiveRun, BoxConfig
+from tests.live_sidecar import LiveSidecar, Refused, create_cohort, hold_the_rig
 
 TODAY = date.today().isoformat()
 
@@ -779,3 +780,31 @@ def test_each_refusal_reaches_the_wire_with_its_code() -> None:
 
 def test_a_box_failure_nobody_names_surfaces_as_itself() -> None:
     assert isinstance(_mapped(_box_refused(2, ValueError("odd"))), ValueError)
+
+
+# --- refusals over the wire -----------------------------------------------------
+
+
+async def test_starting_boxes_that_carry_no_sketch_is_refused_by_name(
+    sidecar: LiveSidecar, tmp_path: Path
+) -> None:
+    """Through the real handler: a refusal the handler forgot to map would reach
+    the operator as INTERNAL, with no box to go and flash."""
+    session = await hold_the_rig(sidecar, await create_cohort(sidecar, tmp_path / "Batch A"))
+    with pytest.raises(Refused) as refused:
+        await sidecar.call("sessions.startAll", sessionId=session)
+    assert refused.value.code == "SESSION_INVALID"
+    assert refused.value.detail == {"boxes": [1]}
+
+
+async def test_flashing_for_a_session_that_does_not_hold_the_rig_is_refused(
+    sidecar: LiveSidecar, tmp_path: Path
+) -> None:
+    cohort = await create_cohort(sidecar, tmp_path / "Batch A")
+    prefix = (await sidecar.call("prefixes.create", name="2O-Bdisc"))["prefix"]["id"]
+    session = (await sidecar.call(
+        "sessions.create", cohortId=cohort["id"], prefixId=prefix, sessionNumber="1"
+    ))["session"]["id"]
+    with pytest.raises(Refused) as refused:
+        await sidecar.call("sessions.flash", sessionId=session, boxes=[1])
+    assert refused.value.code == "SESSION_INVALID"

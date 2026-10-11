@@ -211,3 +211,13 @@ def fine_mtime(*paths: Path) -> None:
     """Give files an mtime a 10 ms volume cannot keep, as NTFS's 100 ns can."""
     for path in paths:
         os.utime(path, ns=(1_760_000_000_123_456_789, 1_760_000_000_123_456_789))
+
+
+@pytest.fixture
+async def sidecar(tmp_path: Path):
+    """The sidecar over a real WebSocket, with no boards attached
+    (`tests/live_sidecar.py`)."""
+    from tests.live_sidecar import live_sidecar
+
+    async with live_sidecar(tmp_path / "app") as client:
+        yield client

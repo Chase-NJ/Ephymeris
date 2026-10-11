@@ -261,8 +261,7 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
         raise failure
 
     if not same_volume:
-        _delete_sources(source, target, copies)
-        _finish(db, journal, "done")
+        _finish_deleting(db, journal, source, target, copies)
     log.info("relocate: moved cohort %s from %s to %s", cohort_id, source, target)
     return target
 
@@ -292,18 +291,31 @@ def resume(db: Database) -> int:
             log.warning("relocate %s: interrupted while copying; removing the copy", journal)
             _remove_copies(source, target)
             _finish(db, journal, "rolled-back", "interrupted while copying")
-        elif out_of_reach(source):
-            # Nothing there can be deleted, or told apart from deleted: the
-            # journal stays `committed`, and a start that can see it finishes.
-            log.warning(
-                "relocate %s: %s can't be reached; its originals wait for the next start",
-                journal, source,
-            )
         else:
             log.warning("relocate %s: interrupted after it committed; finishing", journal)
-            _delete_sources(source, target)
-            _finish(db, journal, "done")
+            _finish_deleting(db, journal, source, target)
     return len(rows)
+
+
+def _finish_deleting(
+    db: Database,
+    journal: str,
+    source: Path,
+    target: Path,
+    copies: list[transfer.FileCopy] | None = None,
+) -> None:
+    """After the commit: delete the originals and mark the journal `done`.
+    While the old folder is out of reach nothing there can be deleted, or
+    told apart from deleted, so the journal stays `committed` and the next
+    start that can see it finishes."""
+    if out_of_reach(source):
+        log.warning(
+            "relocate %s: %s can't be reached; its originals wait for the next start",
+            journal, source,
+        )
+        return
+    _delete_sources(source, target, copies)
+    _finish(db, journal, "done")
 
 
 def out_of_reach(path: Path) -> bool:

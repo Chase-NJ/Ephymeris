@@ -203,10 +203,12 @@ class PortHandler:
     def _announce(
         self, previous: PortState, to: PortState, reason: str, lost: SessionClaim | None
     ) -> None:
-        """Runs on the loop."""
-        self._on_state_change(self.box, previous, to, reason)
-        if lost is not None:
-            lost._lost(reason)
+        """Runs on the loop. A lost claim hears of it even if the announcement raised."""
+        try:
+            self._on_state_change(self.box, previous, to, reason)
+        finally:
+            if lost is not None:
+                lost._lost(reason)
 
     def force_error(self, reason: str) -> None:
         with self._lock:

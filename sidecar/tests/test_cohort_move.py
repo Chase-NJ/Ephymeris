@@ -25,6 +25,7 @@ from ephymeris_sidecar.logbook.repository import LogbookRepository
 from ephymeris_sidecar.sessions.models import GroupRun, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import fine_mtime
+from tests.test_relocate import unreachable
 
 
 class Lab:
@@ -506,6 +507,31 @@ def test_a_crash_after_the_commit_is_finished_at_the_next_start(lab: Lab, power_
 
     assert not any("slow1" in f for f in lab.files(lab.a_root))
     assert all(Path(p).is_file() for _, p in lab.runs(lab.b.id).values())
+
+
+def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
+    lab: Lab, power_cut, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B18: with the source's folder unreachable at start-up, the resume
+    deleted nothing and still marked the move `done`, so the originals stayed
+    behind with nothing left to finish them. It stays `committed` instead,
+    and the next start with the folder back deletes them."""
+    power_cut("unlink", lab.a_root)  # the first original to go
+    with pytest.raises(SystemExit):
+        lab.apply("slow1")
+
+    with monkeypatch.context() as m:
+        unreachable(m, lab.a_root)
+        move_apply.resume(lab.db)
+    [state] = lab.db.conn.execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "committed"
+    assert any("slow1" in f for f in lab.files(lab.a_root)), "nothing was deleted"
+
+    assert move_apply.resume(lab.db) == 1
+
+    assert not any("slow1" in f for f in lab.files(lab.a_root))
+    [state] = lab.db.conn.execute("SELECT state FROM animal_moves").fetchone()
+    assert state == "done"
 
 
 def test_records_changing_under_the_copy_abandon_the_move(lab: Lab) -> None:

@@ -9,6 +9,7 @@ next Rescan read those files as deleted and pruned the records.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import shutil
@@ -557,6 +558,62 @@ def test_a_crash_after_the_commit_finishes_deleting_the_originals(
     relocate.resume(archive.db)
 
     assert not archive.old.exists()
+    assert archive.journal() == "done"
+
+
+def unreachable(m: pytest.MonkeyPatch, root: Path) -> None:
+    """Within `m`'s context, every `os.stat` below `root` fails with `EIO`: a
+    share that stopped answering, which says nothing about whether the files
+    are there. Leaving the context is the share coming back."""
+    real = os.stat
+
+    def stat(path, *args, **kwargs):  # noqa: ANN001, ANN202
+        if isinstance(path, (str, os.PathLike)) and Path(path).is_relative_to(root):
+            raise OSError(errno.EIO, os.strerror(errno.EIO), str(path))
+        return real(path, *args, **kwargs)
+
+    m.setattr(os, "stat", stat)
+
+
+def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
+    archive: Archive, other_volume, power_cut, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B18: with the old folder unreachable at start-up, the resume deleted
+    nothing and still marked the journal `done`, so the originals stayed
+    behind with nothing left to finish them. It stays `committed` instead,
+    and the next start with the folder back deletes them."""
+    other_volume(archive.new.parent)
+    power_cut("unlink", archive.old)  # the first original to go
+    with pytest.raises(SystemExit):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    with monkeypatch.context() as m:
+        unreachable(m, archive.old)
+        relocate.resume(archive.db)
+    assert archive.journal() == "committed"
+    assert any(p.is_file() for p in archive.old.rglob("*")), "nothing was deleted"
+    assert archive.all_under(archive.new)
+
+    relocate.resume(archive.db)
+
+    assert not archive.old.exists()
+    assert archive.journal() == "done"
+
+
+def test_a_resume_after_the_originals_are_all_gone_is_done(
+    archive: Archive, other_volume, power_cut
+) -> None:
+    """The old folder absent with its parent readable is a clean-up that
+    finished before the crash, not an unreachable one: nothing is left to
+    retry."""
+    other_volume(archive.new.parent)
+    power_cut("unlink", archive.old)
+    with pytest.raises(SystemExit):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    shutil.rmtree(archive.old)  # the rest of the clean-up, before the power went
+
+    relocate.resume(archive.db)
+
     assert archive.journal() == "done"
 
 

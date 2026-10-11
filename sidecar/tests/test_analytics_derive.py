@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from collections import Counter
 
+import pytest
+
 from ephymeris_sidecar.analytics import derive
 from ephymeris_sidecar.tasks.metrics import compute_series
 from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
@@ -826,10 +828,8 @@ def test_whole_session_p_is_the_exact_ratio_of_scored_trials() -> None:
     metric = derive.summarize(document(codes), PROFILE).metrics[0]
     assert metric.counted == len(trials)
     assert metric.p_session == hits / len(trials)
-    # And the interval is the one for that exact integer numerator.
-    assert (metric.wilson_low, metric.wilson_high) == derive.wilson_interval(
-        hits, len(trials)
-    )
+    # And the interval is the one for that exact integer numerator, 5 of 7.
+    assert (metric.wilson_low, metric.wilson_high) == pytest.approx((0.3589, 0.9178), abs=5e-5)
 
 
 def test_overall_is_absent_when_nothing_scored() -> None:
@@ -863,6 +863,15 @@ def test_a_wilson_interval_never_leaves_the_unit_range() -> None:
     low, high = derive.wilson_interval(3, 3)
     assert 0.0 <= low < high <= 1.0
     assert low < 1.0, "a 3/3 estimate must not claim certainty"
+
+
+def test_a_wilson_interval_is_the_95_percent_score_interval() -> None:
+    """The literals are SciPy's (`binomtest(k, n).proportion_ci(method="wilson")`)
+    and the published values for these cases, so a wrong z or a dropped term
+    in the margin fails here rather than redrawing every error bar."""
+    assert derive.wilson_interval(8, 10) == pytest.approx((0.4902, 0.9433), abs=5e-5)
+    assert derive.wilson_interval(3, 3) == pytest.approx((0.4385, 1.0), abs=5e-5)
+    assert derive.wilson_interval(0, 10) == pytest.approx((0.0, 0.2775), abs=5e-5)
 
 
 def test_wilson_narrows_as_n_grows() -> None:

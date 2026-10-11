@@ -608,6 +608,19 @@ def test_originals_left_to_a_later_start_do_not_hold_up_a_session(
     assert not relocate.moving(archive.db, archive.cohort.id)
 
 
+def test_a_relocate_still_deleting_holds_up_a_session(
+    archive: Archive, other_volume, power_cut
+) -> None:
+    """While its originals can be reached, a committed relocate is still
+    deleting them. A session set up from the cohort read just before the
+    commit would make its folder at the old place, under what is being
+    emptied, and `rmdir` could take it."""
+    commit_then_cut(archive, other_volume, power_cut)
+    assert archive.journal() == "committed"
+
+    assert relocate.moving(archive.db, archive.cohort.id)
+
+
 def test_a_missing_path_under_a_folder_that_errors_is_out_of_reach(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

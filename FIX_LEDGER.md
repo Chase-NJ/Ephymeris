@@ -8,9 +8,9 @@ Status: `open` (not started) · `in progress` · `fixed` · `not reproduced` · 
 
 | Bug | Status | Node | Ticket | Regression test | Commit | What changed |
 |---|---|---|---|---|---|---|
-| B1 | open | P1 | #32 | | | A failed Start leaves a phantom run |
-| B2 | open | P1 | #32 | | | A partial Start All leaves boxes running under a configuring session |
-| B3 | open | F1 | #35 | | | START line cap off by one |
+| B1 | fixed | P1 | #32 | `test_session_runner.py::test_a_box_whose_port_refuses_is_never_a_run`, `test_session_lifecycle.py::test_a_box_start_the_port_refuses_records_nothing_and_ends`, `::test_switch_group_after_a_refused_box_start` | c0f8daf (#49) | The runner records a run only once `ports.claim_session` hands back a `SessionClaim`; STOP goes through `claim.request_stop()`, which never raises |
+| B2 | fixed | P1 | #32 | `test_session_lifecycle.py::test_start_all_failing_part_way_records_the_boxes_it_started`, `::test_start_all_refused_at_its_first_box_can_be_abandoned` | c0f8daf (#49) | `start_all` records the group run and `running` as soon as any box holds a claim, then re-raises; End works after a partial start |
+| B3 | fixed | F1 | #35 | `test_task_profiles.py::test_a_line_the_firmware_buffer_cannot_hold_whole_is_refused[640]` | 14dd391 (#48) | The host refuses a START line of 640+ characters (the firmware keeps 639); firmware unchanged, so no reflash needed |
 | B4 | open | A1 | #41 | | | A torn .json blocks Recover for good |
 | B5 | open | U1 + U1b | #38 #40 | | | Record step reuses its saved form after the mapping changes |
 | B6 | open | P2 | #33 | | | Console close accepted mid-flash and from ERROR |
@@ -20,40 +20,40 @@ Status: `open` (not started) · `in progress` · `fixed` · `not reproduced` · 
 | B10 | open | D1 | #39 | | | Busy archive / box-start OSError reach the UI as INTERNAL |
 | B11 | open | A1 | #41 | | | sessions.recover writes without the archive lock |
 | B12 | open | D1 | #39 | | | Hand-started Debug run not replayed on connect |
-| B13 | open (reviewer finding: reproduce first) | U2 | #37 | | | Debug START clears live data before it can be refused; drops task defaults |
+| B13 | fixed (reproduced) | U2 | #37 | `store.test.ts`: `keeps the last Debug run through a refused START, and clears it on the sidecar's arm (B13)` and 8 more; `test_session_lifecycle.py::test_confirming_the_same_mapping_again_is_a_new_confirmation_on_the_wire` | 6f30ca6 (#50) | The store clears on sidecar events only: IN_SESSION, Debug's arm, and a new `confirmations` count (Chase's decision); Debug START waits for the profile so task defaults aren't dropped |
 | B14 | open (reviewer finding: reproduce first) | DB | #44 | | | Another writer's rollback discards a pending task-profile row |
 | B15 | open (reviewer finding: reproduce first) | A2 | #42 | | | Adopted-run ids hash only the file stem |
 | B16 | open (reviewer finding: reproduce first) | P3 | #34 | | | Per-box Start after RHX drop gets the wrong message |
-| B17 | open (reviewer finding: reproduce first) | P1 | #32 | | | Board drop during finalize_box ends in IDLE, not ERROR |
-| B18 | open (reviewer finding: reproduce first) | S1 | #36 | | | Transfer resume with source unreachable marks the journal done |
-| B19 | open (reviewer finding: reproduce first) | S1 | #36 | | | Strobe vocabulary replaced without fsync |
+| B17 | fixed (reproduced) | P1 | #32 | `test_session_runner.py::test_a_board_lost_while_its_run_finalizes_stays_in_error` | c0f8daf (#49) | `release` moves IN_SESSION → IDLE only while the claim is current, so a drop during finalize stays ERROR |
+| B18 | fixed (reproduced) | S1 | #36 | `test_relocate.py::test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry`, `test_cohort_move.py::` (same name), `test_relocate.py::test_a_relocate_that_loses_the_old_folder_after_its_copy_leaves_the_journal_to_retry` | 8983716 (#47) | A resume or live delete that can't reach the source leaves the journal `committed`; `moving()` holds sessions only while this process is still deleting |
+| B19 | fixed (structural test) | S1 | #36 | `test_strobes.py::test_every_write_is_flushed_to_disk_before_it_replaces_the_document` | 8983716 (#47) | The vocabulary is written to `.part`, fsynced, then replaced |
 | B20 | open | P3 | #34 | | | Session ending while RHX unreachable never stops or records its recording |
 
 ## Candidates
 
 | Candidate | Node | Ticket | PR | Status |
 |---|---|---|---|---|
-| 1 · A box start that cannot half-happen | P1 | #32 | | open |
+| 1 · A box start that cannot half-happen | P1 | #32 | #49 | done |
 | 2 · Port verbs that name the states they leave | P2 | #33 | | open |
 | 3 · One dispatch seam | D1 | #39 | | open |
 | 4 · Every archive write goes through the archive | A1 | #41 | | open |
 | 5 · One version for the analytics cache | C5 | #43 | | open |
 | 6 · A database unit of work | DB | #44 | | open |
 | 7 · Pure builders for the two setup commands | U1 + U1b | #38 #40 | | open |
-| 8 · SessionStore notices a new run itself | U2 | #37 | | open |
+| 8 · SessionStore notices a new run itself | U2 | #37 | #50 | done |
 
 ## Nodes
 
 | Node | Ticket | Status | PR | Notes |
 |---|---|---|---|---|
-| A0 | #31 | done | (this PR) | Baseline green; all 20 bugs still present at a407126; 15 tickets filed |
-| P1 | #32 | in progress | | |
-| P2 | #33 | open | | |
-| P3 | #34 | open | | |
-| F1 | #35 | in progress | | |
-| S1 | #36 | in progress | | |
-| U2 | #37 | in progress | | |
-| U1 | #38 | open | | |
+| A0 | #31 | merged f9ccec2 | #46 | Baseline green; all 20 bugs still present at a407126; 15 tickets filed |
+| P1 | #32 | merged c0f8daf | #49 | SessionClaim; FakePorts retired; hot path verified equivalent |
+| P2 | #33 | in review | #51 |  |
+| P3 | #34 | in review | #52 |  |
+| F1 | #35 | merged 14dd391 | #48 | Host-side fix; verifier PASS |
+| S1 | #36 | merged 8983716 | #47 | 3 verifier rounds; `moving()` uses an in-process registry (DB must keep it) |
+| U2 | #37 | merged 6f30ca6 | #50 | Stop-and-ask fired; Chase chose a sidecar confirmation counter (#37 comment) |
+| U1 | #38 | in progress |  |  |
 | D1 | #39 | open | | |
 | U1b | #40 | open | | |
 | A1 | #41 | open | | |

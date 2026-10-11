@@ -341,7 +341,7 @@ One row in `sessions` per session-flow invocation (`sessions/models.py`'s `Sessi
 | `folderPath` | The session folder |
 | `groupRuns` | JSON list of `{groupId, order, startedAt, endedAt}` — one per group run, `order` its position in this session's sequence. A group may appear more than once |
 | `durationMinutes` | Optional per-box time limit; null = none |
-| `recording` | Null for behavior only; otherwise one entry per group run ([RECORDING.md](RECORDING.md#what-is-written)) |
+| `recording` | Null for behavior only; otherwise one entry per group run, or on an `aborted` session the run its abandon stopped ([RECORDING.md](RECORDING.md#what-is-written)) |
 
 Every session listing is ordered by `(date, startedAt)` and carries an `ordinal` from that order — never from `sessionNumber`, which would sort `10` before `9`.
 
@@ -1028,7 +1028,7 @@ Every probability carries `counted` and a **95% Wilson score interval** (`wilson
 | **Zero counted trials** | `null`, **never `0.0`**. Zero percent and "no trials" are opposite claims. No strategy point is placed |
 | **Profile-less sketch** | `no-metrics`, no metrics invented. **The run is still listed** — it has a real duration, event count and stop reason |
 | **Utility-kind profile** | Scored if it declares metrics, but `excludedByDefault` from cohort aggregates |
-| **Board disconnected mid-run** | Finalized with `stop_reason: "board disconnected"`. **Include it**, show the reason; a drop at trial 180 of 200 is good data. Distinct from an `aborted` session, which wrote nothing |
+| **Board disconnected mid-run** | Finalized with `stop_reason: "board disconnected"`. **Include it**, show the reason; a drop at trial 180 of 200 is good data. Distinct from an `aborted` session, which ran no box and wrote no behavior data |
 | **No file path recorded** | The writer never opened (handshake failed, or the exclusive open collided): `missing` |
 | **Path recorded, file absent** | `missing` — and if the sibling `.tsv` exists, say so: that is the disk-full case [recovery](#crash-recovery) fixes |
 | **Two runs for one (animal, session)** | Real (a restart after a board drop, a same-day prefix+number reuse). Both are runs and both are listed; no view may silently keep whichever came last. A short first run is a [false start](#false-starts): still listed, but counted nowhere |

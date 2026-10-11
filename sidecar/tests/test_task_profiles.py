@@ -679,3 +679,23 @@ def test_the_start_line_cap_matches_the_firmware():
     match = re.search(r"^#define START_LINE_MAX (\d+)", header.read_text(encoding="utf-8"), re.M)
     assert match is not None, "BehaviorBox.h no longer defines START_LINE_MAX"
     assert int(match.group(1)) == START_LINE_MAX
+
+
+def test_the_firmware_parses_the_start_line_the_app_builds_for_grgl():
+    """`TASKS.md#the-start-line` — the firmware host test parses a pasted copy
+    of GRGL's line, which proves nothing once the copy is stale: a key the app
+    sends and the firmware does not know runs the session on the compiled-in
+    value, in silence. Rebuild it here so a stale copy fails."""
+    import re
+    from pathlib import Path
+
+    from ephymeris_sidecar.tasks.start_command import with_trial_seed
+
+    firmware = Path(__file__).resolve().parents[2] / "firmware"
+    test_cpp = firmware / "libraries" / "BehaviorBox" / "extras" / "host_test" / "test_behaviorbox.cpp"
+    block = test_cpp.read_text(encoding="utf-8").split("THE CROSS-REPO CHECK", 1)[1]
+    call = block[block.index("snprintf(") : block.index(");")]
+    pasted = "".join(re.findall(r'"([^"]*)"', call))
+
+    profile = load_profile(firmware / "Olfactory Behavior" / "GRGL")
+    assert with_trial_seed(build_start_command(profile, {}), 2147483646) == pasted

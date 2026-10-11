@@ -326,7 +326,9 @@ int main() {
   //     session simply runs on the compiled-in value. Pasting the real line here
   //     is the cheapest thing that would notice.
   //
-  //     Regenerate after editing GRGL/task.json:
+  //     Regenerate after editing GRGL/task.json, which the sidecar's
+  //     test_the_firmware_parses_the_start_line_the_app_builds_for_grgl fails
+  //     until you do:
   //       build_start_command(load_profile(<GRGL>), {f.metadata_key: f.default})
   { char line[START_LINE_MAX];
     int n = snprintf(line, sizeof(line),

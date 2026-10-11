@@ -1893,7 +1893,7 @@ SHAPES = (
                 "startLineMax",
                 INT,
                 doc="The firmware's cap, so the editor can show headroom without "
-                "hardcoding it. Over it is TSK107 and a refused generation — "
+                "hardcoding it. At or over it is TSK107 and a refused generation — "
                 "`readLineInto()` truncates in silence, so this is checked "
                 "rather than trusted.",
             ),
@@ -2448,7 +2448,7 @@ COMMANDS = (
         "open console, then arms live scoring, reported as `port.telemetry`. "
         "No `SEED` token and nothing recorded: this is not a run. "
         "`SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` "
-        "when the line would exceed the firmware's `START_LINE_MAX` "
+        "when the line would reach the firmware's `START_LINE_MAX` "
         "(`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port "
         "is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and "
         "wait for `port.telemetry.running` to go false — the board ends it. "
@@ -3001,7 +3001,7 @@ COMMANDS = (
         result=obj(f("ok", BOOL)),
         doc="Load one group's box → animal → sketch mapping into the runner and "
         "build each box's `START` line from its sketch's Task Profile and "
-        "`config`. `TASK_PROFILE_INVALID` when a line would exceed "
+        "`config`. `TASK_PROFILE_INVALID` when a line would reach "
         "`START_LINE_MAX` — refused because the board cannot report a "
         "truncated `START` and would run on whichever values fit "
         "(`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing "
@@ -3837,7 +3837,7 @@ ERRORS = (
     ErrorCode(
         "TASK_PROFILE_INVALID",
         "A sketch's `task.json` exists but is malformed (`detail` carries the "
-        "parse error), or a profile's `START` line would exceed "
+        "parse error), or a profile's `START` line would reach "
         "`START_LINE_MAX`.",
     ),
     ErrorCode(

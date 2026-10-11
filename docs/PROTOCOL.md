@@ -118,7 +118,7 @@ Write one line to the open console. The sent text is echoed into `port.output` a
 <a id="cmd-port.sendstart"></a>
 #### `port.sendStart`
 
-Debug Mode's **Send START**: builds the `START` line from the named sketch's Task Profile exactly as `sessions.confirmMapping` does (a sketch with no profile gets a bare `START`) and writes it to the open console, then arms live scoring, reported as `port.telemetry`. No `SEED` token and nothing recorded: this is not a run. `SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` when the line would exceed the firmware's `START_LINE_MAX` (`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and wait for `port.telemetry.running` to go false — the board ends it. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
+Debug Mode's **Send START**: builds the `START` line from the named sketch's Task Profile exactly as `sessions.confirmMapping` does (a sketch with no profile gets a bare `START`) and writes it to the open console, then arms live scoring, reported as `port.telemetry`. No `SEED` token and nothing recorded: this is not a run. `SKETCH_UNKNOWN` for an undiscovered path; `TASK_PROFILE_INVALID` when the line would reach the firmware's `START_LINE_MAX` (`TASKS.md#the-start-line`); `SEND_NOT_PASSTHROUGH` unless the port is in `PASSTHROUGH`. To end the run, send `STOP` with `port.send` and wait for `port.telemetry.running` to go false — the board ends it. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -721,7 +721,7 @@ Discard a session still in `configuring` (the mapping step's Back): marks it `ab
 <a id="cmd-sessions.confirmmapping"></a>
 #### `sessions.confirmMapping`
 
-Load one group's box → animal → sketch mapping into the runner and build each box's `START` line from its sketch's Task Profile and `config`. `TASK_PROFILE_INVALID` when a line would exceed `START_LINE_MAX` — refused because the board cannot report a truncated `START` and would run on whichever values fit (`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing its box, sketch, or an animal of this cohort. From here until the session lets go the rig is **held**: no baseline restore runs. Broadcasts `session.lifecycle`. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
+Load one group's box → animal → sketch mapping into the runner and build each box's `START` line from its sketch's Task Profile and `config`. `TASK_PROFILE_INVALID` when a line would reach `START_LINE_MAX` — refused because the board cannot report a truncated `START` and would run on whichever values fit (`TASKS.md#the-start-line`). `SESSION_INVALID` for a mapping missing its box, sketch, or an animal of this cohort. From here until the session lets go the rig is **held**: no baseline restore runs. Broadcasts `session.lifecycle`. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
 
 **Args**
 
@@ -1548,7 +1548,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `PREFIX_NAME_TAKEN` | A prefix with that name already exists. |
 | `SESSION_INVALID` | A session command that can't apply: unknown session, cohort, prefix or group; a mapping naming a box or animal outside the session; a box with no confirmed mapping; or a lifecycle step from the wrong state (abandoning a session that ran, resuming another day's, recovering while a box runs). |
 | `SESSION_NOT_READY` | `sessions.create` against a cohort with no group holding a box-assigned animal. |
-| `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed (`detail` carries the parse error), or a profile's `START` line would exceed `START_LINE_MAX`. |
+| `TASK_PROFILE_INVALID` | A sketch's `task.json` exists but is malformed (`detail` carries the parse error), or a profile's `START` line would reach `START_LINE_MAX`. |
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. An ordinary mirroring failure is never a command error; it appears on `backup.status`. |
 | `UTILITY_UNAVAILABLE` | A `utility.*` command when the box utility can't be used at all — the install's sketch library has none, or its profile is unreadable or not a utility profile; for `utility.identify`, also a profile with no `identify` pair. A box-level problem never raises this: it is that box's `state` in the snapshot, because 'box 4 has no board' is a fact about the rig, not a failure of the command. |
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
@@ -3005,7 +3005,7 @@ A pure compile of an unsaved definition. Writes nothing.
 |---|---|---|
 | `diagnostics` | [TaskDiagnostic](#shape-taskdiagnostic)[] |  |
 | `startLineLength` | number | Bytes the built START line would occupy, seed included. |
-| `startLineMax` | number | The firmware's cap, so the editor can show headroom without hardcoding it. Over it is TSK107 and a refused generation — `readLineInto()` truncates in silence, so this is checked rather than trusted. |
+| `startLineMax` | number | The firmware's cap, so the editor can show headroom without hardcoding it. At or over it is TSK107 and a refused generation — `readLineInto()` truncates in silence, so this is checked rather than trusted. |
 | `profile` | [TaskProfile](#shape-taskprofile) | What this definition compiles to. |
 | `catalogueDefaults` | map&lt;string, unknown&gt; | `metadataKey` → the value this field has with NO override, keyed the same way `profile.config[].default` is. The editor needs both to know which values this profile actually pins: a definition stores only divergences, so a value merely EQUAL to the catalogue's must not be written into it — that would freeze it against a later correction to the range or the default. |
 

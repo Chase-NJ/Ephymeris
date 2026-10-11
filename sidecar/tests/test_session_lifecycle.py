@@ -330,6 +330,36 @@ async def test_confirming_a_mapping_holds_the_session_and_the_rig(rig) -> None:
     assert rig.events[-1]["evt"] == "session.lifecycle"
 
 
+async def test_confirming_the_same_mapping_again_is_a_new_confirmation_on_the_wire(rig) -> None:
+    """Two identical re-confirms are told apart by the payload itself.
+
+    Everything else in it can repeat byte for byte: the runner's snapshot of
+    a just-confirmed mapping is the same each time, and a per-box start of a
+    later group announces nothing. A client clears its live run on a
+    confirmation it has not seen, so the payload must say there was one.
+    """
+    session = rig.session()
+    await rig.confirm(session)
+    first = rig.events[-1]["data"]
+    await rig.confirm(session)
+    second = rig.events[-1]["data"]
+
+    assert first != second
+    assert second["confirmations"] == first["confirmations"] + 1
+    # The answer a reconnecting or reloaded client asks for carries it too.
+    assert (await rig.lifecycle.active())["confirmations"] == second["confirmations"]
+
+
+async def test_a_refused_mapping_is_not_a_confirmation(rig) -> None:
+    session = rig.session()
+    await rig.confirm(session)
+    before = (await rig.lifecycle.active())["confirmations"]
+    entry = MappingEntry(box=1, animal_id="nobody", sketch_path="/sk", config={})
+    with pytest.raises(SessionRefused):
+        await rig.lifecycle.confirm_mapping(session.id, "g-a", [entry])
+    assert (await rig.lifecycle.active())["confirmations"] == before
+
+
 async def test_status_reports_the_rig_only_for_the_session_holding_it(rig) -> None:
     held = rig.session()
     other = rig.session()

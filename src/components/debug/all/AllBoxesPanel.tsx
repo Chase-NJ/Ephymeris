@@ -15,8 +15,7 @@ import {
 import { baselineColor, baselineLabel } from "@/lib/hardware/utility";
 import { CASCADE, RISE, springSnappy } from "@/lib/motion";
 import { getTaskProfile } from "@/lib/sessions/commands";
-import { useSessionStore } from "@/lib/sessions/context";
-import { defaultConfig, sketchName, type TaskProfile } from "@/lib/sessions/types";
+import { sketchName, startConfig, type ReadProfile, type TaskProfile } from "@/lib/sessions/types";
 import { useSettings } from "@/lib/settings/context";
 import { BAUD_RATES } from "@/lib/settings/schema";
 import { useSidecar } from "@/lib/ws/context";
@@ -83,7 +82,6 @@ export function AllBoxesPanel({
   const { client } = useSidecar();
   const { settings } = useSettings();
   const store = useHardwareStore();
-  const sessionStore = useSessionStore();
   const ports = useAllPortStatuses();
   const utility = useUtilityStatus();
   const flashed = useFlashedSketches(bound);
@@ -96,7 +94,7 @@ export function AllBoxesPanel({
   const [report, setReport] = useState<Report | null>(null);
   const [flashOpen, setFlashOpen] = useState(false);
   const [utilityProfile, setUtilityProfile] = useState<TaskProfile | null>(null);
-  const [taskProfile, setTaskProfile] = useState<TaskProfile | null>(null);
+  const [taskRead, setTaskRead] = useState<ReadProfile | null>(null);
 
   const stateOf = (box: number) => ports[box]?.state ?? "IDLE";
   const detected = (box: number) => (health[box] ?? "absent") !== "absent";
@@ -135,19 +133,22 @@ export function AllBoxesPanel({
     return path && path !== utility.sketchPath ? path : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open.join(","), utility.sketchPath, flashed]);
+  // Kept with the sketch it was read for, so Start waits for this task's
+  // profile rather than sending the last one's, or none (`startConfig`).
+  // A failed read counts as profile-less, as the sidecar's own read does.
   useEffect(() => {
-    if (!sharedTask) {
-      setTaskProfile(null);
-      return;
-    }
+    if (!sharedTask) return;
     let cancelled = false;
     getTaskProfile(client, sharedTask)
-      .then((p) => !cancelled && setTaskProfile(p))
-      .catch(() => !cancelled && setTaskProfile(null));
+      .then((p) => !cancelled && setTaskRead({ sketchPath: sharedTask, profile: p }))
+      .catch(() => !cancelled && setTaskRead({ sketchPath: sharedTask, profile: null }));
     return () => {
       cancelled = true;
     };
   }, [client, sharedTask]);
+  const startWith = sharedTask
+    ? startConfig(sharedTask, taskRead, settings.taskDefaults[sketchName(sharedTask)] ?? {})
+    : null;
 
   const statuses = useMemo(
     () =>
@@ -353,15 +354,21 @@ export function AllBoxesPanel({
               <>
                 <Button
                   variant="primary"
-                  disabled={busy !== null}
-                  title={`Send START to ${open.length} box${open.length === 1 ? "" : "es"} running ${sketchName(sharedTask)}`}
-                  onClick={() =>
-                    void fanOut("Start", open, (box) => {
-                      sessionStore.resetBox(box);
-                      const config = defaultConfig(taskProfile, settings.taskDefaults[sketchName(sharedTask)] ?? {});
-                      return client.call(CMD.PORT_SEND_START, { box, sketchPath: sharedTask, config });
-                    })
+                  disabled={busy !== null || startWith === null}
+                  title={
+                    startWith === null
+                      ? "Reading the task's profile…"
+                      : `Send START to ${open.length} box${open.length === 1 ? "" : "es"} running ${sketchName(sharedTask)}`
                   }
+                  onClick={() => {
+                    if (startWith === null) return;
+                    // Each box's last run is forgotten by the session store
+                    // when the sidecar arms the new one, so a box whose START
+                    // is refused keeps it.
+                    void fanOut("Start", open, (box) =>
+                      client.call(CMD.PORT_SEND_START, { box, sketchPath: sharedTask, config: startWith }),
+                    );
+                  }}
                 >
                   <Play size={12} strokeWidth={2} />
                   Start {sketchName(sharedTask)}

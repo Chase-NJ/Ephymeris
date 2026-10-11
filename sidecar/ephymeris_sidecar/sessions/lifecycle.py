@@ -93,6 +93,8 @@ def build_active_payload(
     running_id: str | None,
     runner: SessionRunner | None,
     unfinished: list[Session],
+    *,
+    confirmations: int,
 ) -> dict[str, Any]:
     """The `ActiveSessions` shape — reconcile live app state against the DB.
 
@@ -101,6 +103,9 @@ def build_active_payload(
     (post-confirmMapping, pre-startAll) and belongs in `running`, while a
     `running` DB row nobody holds is a crash orphan and lands in `stale` —
     surfaced for honesty, never offered for resume.
+
+    `confirmations` is the lifecycle's count of confirmed mappings, passed
+    through so a re-confirm that changes nothing else still reads as one.
     """
     running = None
     if running_id is not None and runner is not None:
@@ -126,6 +131,7 @@ def build_active_payload(
             for s in unfinished
             if s.status == "running" and s.id != held_id
         ],
+        "confirmations": confirmations,
     }
 
 
@@ -157,6 +163,8 @@ class SessionLifecycle:
         self._carried = carried
         self._flashes = flashes
         self._held: str | None = None
+        #: Mappings confirmed since this process started (`ActiveSessions.confirmations`).
+        self._confirmations = 0
         self._lock = asyncio.Lock()
 
     # --- questions --------------------------------------------------------
@@ -198,7 +206,9 @@ class SessionLifecycle:
 
     async def active(self) -> dict[str, Any]:
         unfinished = await asyncio.to_thread(self._sessions.list_unfinished)
-        return build_active_payload(self._held, self._runner, unfinished)
+        return build_active_payload(
+            self._held, self._runner, unfinished, confirmations=self._confirmations
+        )
 
     async def announce(self) -> None:
         """Push the fresh `ActiveSessions` snapshot to every client.
@@ -275,6 +285,10 @@ class SessionLifecycle:
                     session_id=session_id,
                 )
                 self._held = session_id
+                # Said on the wire, because nothing else in the payload has to
+                # change when the same mapping is confirmed again, and a client
+                # clears its live run on each one (`ARCHITECTURE.md#live-session-views`).
+                self._confirmations += 1
                 # From here until the session ends the boxes belong to the
                 # runner: they will carry task sketches and fall idle between
                 # flashes, and a baseline restore landing in that window would

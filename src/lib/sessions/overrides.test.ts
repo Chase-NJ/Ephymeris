@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultConfig,
   editedOverrides,
+  startConfig,
   withoutOverrides,
   type TaskProfile,
 } from "./types";
@@ -76,5 +77,30 @@ describe("withoutOverrides", () => {
     const overrides = { reward_ul: 40, hold_ms: 800 };
     expect(withoutOverrides(overrides, ["reward_ul"])).toEqual({ hold_ms: 800 });
     expect(overrides).toEqual({ reward_ul: 40, hold_ms: 800 });
+  });
+});
+
+// Debug Mode's Send START reads the sketch's profile after the console opens.
+// Without it there is nothing to merge the rig's defaults through, and `{}`
+// would run the board on the profile's own defaults instead of this rig's (B13).
+describe("startConfig", () => {
+  const rig = { odor_ms: 500 };
+
+  it("has nothing to send while the sketch's profile is still being read", () => {
+    expect(startConfig("/s/Odor", null, rig)).toBeNull();
+  });
+
+  it("has nothing to send on the profile of the sketch the box carried before", () => {
+    const before = { sketchPath: "/s/Other", profile: profile({ odor_ms: 100 }) };
+    expect(startConfig("/s/Odor", before, rig)).toBeNull();
+  });
+
+  it("sends the rig's defaults through the sketch's own profile once it is read", () => {
+    const read = { sketchPath: "/s/Odor", profile: profile({ odor_ms: 100, iti_ms: 2000 }) };
+    expect(startConfig("/s/Odor", read, rig)).toEqual({ odor_ms: 500, iti_ms: 2000 });
+  });
+
+  it("sends a bare START for a sketch that declares no profile", () => {
+    expect(startConfig("/s/Odor", { sketchPath: "/s/Odor", profile: null }, rig)).toEqual({});
   });
 });

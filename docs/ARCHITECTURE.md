@@ -786,6 +786,8 @@ asked to light a box.
   strobes to **the same `MetricSet` a session uses** and pushes `port.telemetry` into the per-box slot
   `session.telemetry` fills. Debug Mode therefore mounts Mission Control's `MetricStrip` and `LivePanels`
   unchanged. Don't write a second scorer; `test_debug_flash.py` pins the two to identical output.
+  The button waits for the sketch's Task Profile (`startConfig`): without it the rig's `taskDefaults`
+  cannot be merged, and the sidecar would fill every field from the profile's own defaults.
 - **End sends `STOP`** via `port.send`. **The board ends the task**: it takes `STOP` at the next trial
   boundary and emits `BF_END_SESSION`, and the panel reads *running* until the sidecar sees it. The host
   cannot send a strobe. Leaving `PASSTHROUGH` also ends the run.
@@ -1322,6 +1324,22 @@ Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and 
 > **The session store keeps its own decoded strobe log per box**, separate from the console ring buffer,
 > which is capped and trimmed oldest-first. A real session emits thousands of strobes; deriving from the
 > ring would silently drop the early trials — the part of a learning curve you most want.
+
+**The session store forgets a run when the sidecar reports the next one began**, never on a click, so a
+refused start leaves the last run on screen. A port entering `IN_SESSION` (a real transition, not the
+connect replay) clears that box. Debug Mode's `port.telemetry` going from not running to running, which
+the sidecar sends only once a `START` is on the wire, clears that box. A confirmed mapping clears every
+box: the `ActiveSessions` payload carries `confirmations`, which `sessions.confirmMapping` increments, and
+the store clears on a value it has not seen. `session.lifecycle` broadcasts and `sessions.active` answers
+both count, so a mapping confirmed while a window was disconnected clears it on reconnect. The first answer
+a new store sees only records the value: nothing shown before it is a run it could be wrong about.
+
+> [!CAUTION]
+> **A new group run is the counter, never the rest of the payload.** Confirming the same group again can
+> broadcast every other field byte for byte (the runner's snapshot of a just-confirmed mapping is always
+> the same, and a later group's per-box start announces nothing), so a client that compares payloads keeps
+> the last run's trials on screen under the new one. The count is per sidecar process: the sidecar dies
+> with the shell and is never respawned, so no window outlives the count it was reading.
 
 Mission Control's elapsed time and the session log's T+ offsets read one clock, the **session clock**
 (`clockStartedAt`, [DATA.md](DATA.md#the-session-clock)) — the first group's start, not the record's

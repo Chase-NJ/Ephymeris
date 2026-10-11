@@ -7,6 +7,12 @@
  * pushed per metric update rather than batched — far lower frequency than raw
  * strobes, per `PROTOCOL.md#evt-session.telemetry`), and the active-session answer
  * (queried via `sessions.active` on connect, kept live by `session.lifecycle`).
+ *
+ * It also notices on its own when a run begins, and forgets the last one: no
+ * caller tells it, because a caller can only guess when the sidecar's run
+ * begins, and a guess made before a START is answered is wrong whenever the
+ * START is refused (`ARCHITECTURE.md#live-session-views`). See `attach` for the
+ * three events.
  */
 
 import type { SidecarPort } from "../ws/port";
@@ -90,6 +96,8 @@ export class SessionStore {
    */
   private active: ActiveSessions | null = null;
   private activeLoaded = false;
+  /** The sidecar's count of confirmed mappings in the last active answer. */
+  private confirmations: number | null = null;
   private subs = new Map<string, Set<() => void>>();
 
   attach(client: SidecarPort): () => void {
@@ -109,9 +117,7 @@ export class SessionStore {
             ask();
             return;
           }
-          this.active = result;
-          this.activeLoaded = true;
-          this.notify("active");
+          this.takeActive(result);
         })
         .catch(() => {
           // A failed discovery just leaves activeLoaded false; the next
@@ -121,9 +127,15 @@ export class SessionStore {
     const offs = [
       client.on(EVT.SESSION_LIFECYCLE, (data) => {
         broadcasts += 1;
-        this.active = data;
-        this.activeLoaded = true;
-        this.notify("active");
+        this.takeActive(data);
+      }),
+
+      // A session run begins: the box's last run, Debug or session, is not
+      // this one's. A connect replays every box with `prev` equal to `state`,
+      // which is no transition, so a running box keeps what it has gathered.
+      client.on(EVT.PORT_STATE, (d) => {
+        if (typeof d?.box !== "number") return;
+        if (d.state === "IN_SESSION" && d.prev !== "IN_SESSION") this.forgetBox(d.box);
       }),
 
       client.onStatus((status) => {
@@ -146,8 +158,13 @@ export class SessionStore {
       // history: a port in PASSTHROUGH cannot also be IN_SESSION, so the two
       // sources can never be writing one box at once, and sharing the slot is
       // what lets Debug Mode mount Mission Control's own components unchanged.
+      //
+      // The sidecar arms a Debug run only once its START is on the wire, so
+      // the arm (running false -> true) is when the last run is forgotten; a
+      // refused START never arms and leaves it on screen.
       client.on(EVT.PORT_TELEMETRY, (d) => {
         if (typeof d?.box !== "number") return;
+        if (d.running && !this.debugRunning.has(d.box)) this.forgetBox(d.box);
         this.telemetry.set(d.box, d.metrics ?? NO_METRICS);
         this.appendHistory(d.box, d.metrics ?? NO_METRICS);
         if (d.running) this.debugRunning.add(d.box);
@@ -269,8 +286,24 @@ export class SessionStore {
     }
   }
 
-  /** Clear per-run state when a new group's boxes are confirmed. */
-  resetRun(): void {
+  /**
+   * Take a new active answer, broadcast or asked for, and forget the last run
+   * if the sidecar has confirmed a mapping since the last one: its
+   * `confirmations` count is one this store has not seen. The first answer
+   * has nothing shown before it to forget, so it only records the count.
+   */
+  private takeActive(next: ActiveSessions): void {
+    if (this.confirmations !== null && next.confirmations !== this.confirmations) {
+      this.forgetRun();
+    }
+    this.confirmations = next.confirmations;
+    this.active = next;
+    this.activeLoaded = true;
+    this.notify("active");
+  }
+
+  /** Forget every box's run: a new group's boxes were confirmed. */
+  private forgetRun(): void {
     this.telemetry.clear();
     this.history.clear();
     this.ended.clear();
@@ -285,8 +318,8 @@ export class SessionStore {
     }
   }
 
-  /** Forget one box's finished run when it starts again mid-group. */
-  resetBox(box: number): void {
+  /** Forget one box's run: it began another. */
+  private forgetBox(box: number): void {
     this.telemetry.delete(box);
     this.history.delete(box);
     this.ended.delete(box);
@@ -299,11 +332,6 @@ export class SessionStore {
     this.notify(`ended:${box}`);
     this.notify(`writeError:${box}`);
     this.notify("ended");
-  }
-
-  /** Reset every box that has a finished run on record. */
-  resetFinishedBoxes(): void {
-    for (const box of [...this.ended.keys()]) this.resetBox(box);
   }
 
   // --- subscriptions ----------------------------------------------------

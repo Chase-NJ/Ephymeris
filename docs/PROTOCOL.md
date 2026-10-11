@@ -1580,6 +1580,7 @@ Everything unfinished, discoverable with no prior knowledge of ids. Also the ses
 | `running` | [RunnerSession](#shape-runnersession) \| null | Keyed off the live runner, never a bare DB status query — a 'running' row with no live runner is a crash orphan. A held session with `groupId: null` and no boxes is BETWEEN GROUPS, awaiting a choice. |
 | `configuring` | [Session](#shape-session)[] | Setup never finished; legitimately resumable into the mapping flow. |
 | `stale` | [Session](#shape-session)[] | DB says 'running' but no runner holds them — a crash or a closed app. The .tsv on disk is the record; a same-day one can be continued with another group (`sessions.resume`), never mid-group. |
+| `confirmations` | number | How many mappings `sessions.confirmMapping` has confirmed since the sidecar started. Nothing else in this payload is guaranteed to change when the same mapping is confirmed again, so this is how a client learns a new group run is set up: a value it has not seen means clear every box's live run (`ARCHITECTURE.md#live-session-views`). Per process, not persisted. |
 
 <a id="shape-analyticsanimal"></a>
 #### AnalyticsAnimal

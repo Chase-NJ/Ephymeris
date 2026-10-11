@@ -42,7 +42,6 @@ import {
   type FlashCard,
   type FlashCardState,
 } from "@/lib/sessions/flashCards";
-import { useSessionStore } from "@/lib/sessions/context";
 import { stepUrl } from "@/lib/sessions/flow";
 import {
   clearSetupResume,
@@ -109,7 +108,6 @@ export function SessionMapping() {
   const navigate = useNavigate();
   const { client, status } = useSidecar();
   const { discovery, settings } = useSettings();
-  const sessionStore = useSessionStore();
 
   // What the operator had chosen here before visiting another tab
   // (`setupResume.ts`) — keyed by session AND group, so one group's sketches
@@ -510,10 +508,6 @@ export function SessionMapping() {
           ),
         })),
       );
-      // A confirmed mapping begins a fresh group run — drop the previous
-      // group's telemetry and finished-run messages so Mission Control
-      // doesn't show them against the new animals.
-      sessionStore.resetRun();
       // The confirm cleared the last mapping's flashes; a walk that leaves
       // from here and comes back resumes this one.
       resumed.current = true;

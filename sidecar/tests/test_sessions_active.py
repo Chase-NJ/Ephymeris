@@ -72,7 +72,7 @@ def runner(tmp_path: Path):
 
 
 def test_runner_held_running_session_fills_the_running_slot(runner) -> None:
-    payload = build_active_payload("s1", runner, [_session("s1", "running")])
+    payload = build_active_payload("s1", runner, [_session("s1", "running")], confirmations=0)
     assert payload["running"]["session"]["id"] == "s1"
     assert payload["running"]["groupId"] == "g1"
     assert [b["box"] for b in payload["running"]["boxes"]] == [1]
@@ -83,7 +83,7 @@ def test_runner_held_running_session_fills_the_running_slot(runner) -> None:
 def test_runner_held_configuring_session_counts_as_running(runner) -> None:
     """Post-confirmMapping, pre-startAll: DB still says configuring, but the
     runner holds it — it belongs in `running`, not in the resumable-setup list."""
-    payload = build_active_payload("s1", runner, [_session("s1", "configuring")])
+    payload = build_active_payload("s1", runner, [_session("s1", "configuring")], confirmations=0)
     assert payload["running"]["session"]["status"] == "configuring"
     assert payload["configuring"] == []
 
@@ -91,7 +91,7 @@ def test_runner_held_configuring_session_counts_as_running(runner) -> None:
 def test_crash_orphaned_running_row_lands_in_stale(runner) -> None:
     """A `running` row with no live runner holding it is a crash orphan —
     surfaced, never offered for resume."""
-    payload = build_active_payload(None, runner, [_session("s1", "running")])
+    payload = build_active_payload(None, runner, [_session("s1", "running")], confirmations=0)
     assert payload["running"] is None
     assert [s["id"] for s in payload["stale"]] == ["s1"]
     assert payload["configuring"] == []
@@ -106,6 +106,7 @@ def test_plain_configuring_rows_are_resumable_setups(runner) -> None:
             _session("s2", "configuring"),
             _session("s3", "configuring"),
         ],
+        confirmations=3,
     )
     assert payload["running"]["session"]["id"] == "s1"
     assert [s["id"] for s in payload["configuring"]] == ["s2", "s3"]
@@ -114,13 +115,13 @@ def test_plain_configuring_rows_are_resumable_setups(runner) -> None:
 def test_running_id_with_no_matching_row_yields_null(runner) -> None:
     """A deleted or already-finished row behind the held id must not crash —
     the running slot simply reads empty."""
-    payload = build_active_payload("gone", runner, [_session("s2", "configuring")])
+    payload = build_active_payload("gone", runner, [_session("s2", "configuring")], confirmations=0)
     assert payload["running"] is None
     assert [s["id"] for s in payload["configuring"]] == ["s2"]
 
 
 def test_no_runner_yields_null_running_slot() -> None:
-    payload = build_active_payload("s1", None, [_session("s1", "running")])
+    payload = build_active_payload("s1", None, [_session("s1", "running")], confirmations=0)
     assert payload["running"] is None
     assert [s["id"] for s in payload["stale"]] == ["s1"]
 
@@ -134,7 +135,7 @@ def test_unconfigured_group_id_is_emitted_as_null(tmp_path: Path) -> None:
             pass
 
         bare = SessionRunner(loop=loop, ports=None, broadcast=noop, on_animal_ended=noop)
-        payload = build_active_payload("s1", bare, [_session("s1", "configuring")])
+        payload = build_active_payload("s1", bare, [_session("s1", "configuring")], confirmations=0)
         assert payload["running"]["groupId"] is None
     finally:
         loop.close()
@@ -155,10 +156,12 @@ def test_active_payload_matches_schema_as_command_and_event(runner) -> None:
             _session("s2", "configuring"),
             _session("s3", "running"),
         ],
+        confirmations=3,
     )
+    assert payload["confirmations"] == 3
     assert validate_command_result("sessions.active", payload) == []
     assert event(Evt.SESSION_LIFECYCLE, payload)["data"] == payload
 
-    empty = build_active_payload(None, None, [])
+    empty = build_active_payload(None, None, [], confirmations=0)
     assert validate_command_result("sessions.active", empty) == []
     assert event(Evt.SESSION_LIFECYCLE, empty)["data"] == empty

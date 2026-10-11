@@ -10,8 +10,9 @@
  *
  * It also notices on its own when a run begins, and forgets the last one: no
  * caller tells it, because a caller can only guess when the sidecar's run
- * began, and Debug Mode's guess came before a START that could still be
- * refused (`ARCHITECTURE.md#live-session-views`). See `attach` for the three events.
+ * begins, and a guess made before a START is answered is wrong whenever the
+ * START is refused (`ARCHITECTURE.md#live-session-views`). See `attach` for the
+ * three events.
  */
 
 import type { SidecarPort } from "../ws/port";
@@ -314,8 +315,10 @@ export class SessionStore {
    */
   private takeActive(next: ActiveSessions): void {
     const shown = JSON.stringify(next.running);
+    // The first answer has nothing shown before it to forget.
     if (
-      this.noneStarted(next.running) &&
+      this.activeLoaded &&
+      this.freshMapping(next.running) &&
       (shown !== this.shownRunning || this.ranSinceShown)
     ) {
       this.forgetRun();
@@ -333,7 +336,7 @@ export class SessionStore {
    * files are written and its port is released, and an announce landing then
    * reads as never started.
    */
-  private noneStarted(running: ActiveSessions["running"]): boolean {
+  private freshMapping(running: ActiveSessions["running"]): boolean {
     if (!running?.groupId || running.boxes.length === 0) return false;
     return running.boxes.every(
       (b) => !b.running && b.startedAt === null && !b.ended && !this.live.has(b.box),

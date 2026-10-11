@@ -80,9 +80,9 @@ describe("withoutOverrides", () => {
   });
 });
 
-// Debug Mode's Send START reads the sketch's profile after the console opens;
-// a click before it arrived sent `{}` and the board ran on the profile's own
-// defaults instead of this rig's (B13).
+// Debug Mode's Send START reads the sketch's profile after the console opens.
+// Without it there is nothing to merge the rig's defaults through, and `{}`
+// would run the board on the profile's own defaults instead of this rig's (B13).
 describe("startConfig", () => {
   const rig = { odor_ms: 500 };
 

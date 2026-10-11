@@ -288,9 +288,12 @@ export function NodeDetail({
     : null;
   const sendStart = () => {
     if (!effectiveSketch || !startWith) return;
-    const config = startWith;
     void run(() =>
-      client.call(CMD.PORT_SEND_START, { box, sketchPath: effectiveSketch.path, config }),
+      client.call(CMD.PORT_SEND_START, {
+        box,
+        sketchPath: effectiveSketch.path,
+        config: startWith,
+      }),
     ).then((sent) => {
       // Only a START that really went out can leave a spent sketch behind.
       if (sent) setRanOnce(true);

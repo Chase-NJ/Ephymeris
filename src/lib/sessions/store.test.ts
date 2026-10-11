@@ -350,6 +350,16 @@ describe("a new run clears the last one", () => {
     expect(shows(store, 1)).toEqual(ALL_OF_IT);
   });
 
+  it("keeps what arrived before the first answer, which has nothing shown before it to forget", async () => {
+    const { sidecar, store } = attached("connected");
+    sidecar.emit(EVT.PORT_TELEMETRY, { box: 6, running: true, metrics: [] });
+    sidecar.emit(EVT.PORT_OUTPUT, output(6, ["rx", "11\t5"]));
+
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, holding("g", mapped(1)));
+
+    expect(store.getStrobes(6)).toHaveLength(1);
+  });
+
   it("keeps the run when a reconnect's answer shows the mapping it already held", async () => {
     const { sidecar, store } = attached("connected");
     await sidecar.reply(CMD.SESSIONS_ACTIVE, holding("g", mapped(1)));

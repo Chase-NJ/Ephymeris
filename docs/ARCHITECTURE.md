@@ -786,6 +786,8 @@ asked to light a box.
   strobes to **the same `MetricSet` a session uses** and pushes `port.telemetry` into the per-box slot
   `session.telemetry` fills. Debug Mode therefore mounts Mission Control's `MetricStrip` and `LivePanels`
   unchanged. Don't write a second scorer; `test_debug_flash.py` pins the two to identical output.
+  The button waits for the sketch's Task Profile (`startConfig`): without it the rig's `taskDefaults`
+  cannot be merged, and the sidecar would fill every field from the profile's own defaults.
 - **End sends `STOP`** via `port.send`. **The board ends the task**: it takes `STOP` at the next trial
   boundary and emits `BF_END_SESSION`, and the panel reads *running* until the sidecar sees it. The host
   cannot send a strobe. Leaving `PASSTHROUGH` also ends the run.
@@ -1311,8 +1313,7 @@ connect replay) clears that box; Debug Mode's `port.telemetry` going from not ru
 the sidecar sends only once a `START` is on the wire, clears that box; a `session.lifecycle` answer that
 shows a newly confirmed mapping clears every box. The payload carries no confirmation id, so "newly
 confirmed" means a mapping none of whose boxes has started, and either not the one last shown or the same
-one again after a box entered `IN_SESSION`. Debug Mode's **Send START** waits for the sketch's Task Profile,
-since without it the rig's `taskDefaults` cannot be merged (`startConfig`).
+one again after a box entered `IN_SESSION`.
 
 Mission Control's elapsed time and the session log's T+ offsets read one clock, the **session clock**
 (`clockStartedAt`, [DATA.md](DATA.md#the-session-clock)) — the first group's start, not the record's

@@ -16,10 +16,10 @@ A job's origin fixes its policy:
 * **debug** — a sketch the operator chose. Waits for its port; resumes a
   console it took, or opens one at the requested baud. Pinned against
   automatic restores (`utility.py`).
-* **baseline** — never waits: its `prepare` decides, synchronously and with no
-  `await` before the flash takes the port, whether the box is still IDLE and
-  still wanted. That is what keeps "only an IDLE port" true even though the
-  job sat in a queue.
+* **baseline** — never waits: its `prepare` decides, at the job's turn,
+  whether the box is still wanted. Its flash takes only an `IDLE` port
+  (`IDLE_ONLY`, `PortHandler.release_for`), so "only an IDLE port" holds by
+  what the verb accepts, whatever happens between `prepare` and the take.
 
 What the queue is doing is published as `flash.queue` and replayed on connect,
 so a component that unmounts, a window that reloads, or a second window loses
@@ -37,7 +37,7 @@ from typing import Any, AsyncContextManager, Awaitable, Callable, Iterable, Lite
 
 from ..settings import BOX_COUNT
 from .manager import BoardNotDetected, PortManager, PortNotBound
-from .states import PortState
+from .states import IDLE_ONLY, IDLE_OR_CONSOLE, IllegalTransition, PortState
 
 log = logging.getLogger(__name__)
 
@@ -50,9 +50,14 @@ PORT_WAIT_S = 180.0
 #: How often a waiting job re-checks its deadline when no port changes.
 TICK_S = 1.0
 
-#: Ports a session or Debug flash may take. Entering `FLASHING` force-releases a
-#: console (`ARCHITECTURE.md#exclusivity`), which is right when a person asked.
-_FREE = (PortState.IDLE, PortState.PASSTHROUGH)
+#: What each origin's flash may take (`ARCHITECTURE.md#port-verbs`). Entering
+#: `FLASHING` force-releases a console (`ARCHITECTURE.md#exclusivity`), which is
+#: right when a person asked and never for a background restore.
+TAKES: dict[Origin, frozenset[PortState]] = {
+    "session": IDLE_OR_CONSOLE,
+    "debug": IDLE_OR_CONSOLE,
+    "baseline": IDLE_ONLY,
+}
 
 
 @dataclass
@@ -228,8 +233,8 @@ class FlashQueue:
         await self._broadcast(event(Evt.FLASH_QUEUE, self.status()))
 
     def _publish_soon(self) -> None:
-        # Never awaited inside the worker: between a baseline job's `prepare`
-        # and the flash taking the port there must be no yield.
+        # Never awaited inside the worker, so a baseline job's `prepare`
+        # decides on the port its flash then takes.
         self._loop.create_task(self.publish())
 
     # --- the worker -------------------------------------------------------
@@ -292,13 +297,15 @@ class FlashQueue:
         state = self._ports.handler(job.box).state
         if state is PortState.ERROR:
             return ("fail", "the box is in an error state — acknowledge it, then retry the flash.")
-        if state in _FREE:
+        if state in TAKES[job.origin]:
             return None
         return ("wait", state.value.lower())
 
     async def _execute(self, job: FlashJob) -> None:
         async with self._reading():
-            # From here to the flash taking the port: nothing that yields.
+            # From here to the flash taking the port nothing yields, so what
+            # `prepare` saw is what the flash meets. The flash's `from_` is
+            # what makes a wrong take impossible; this keeps it from happening.
             path = job.prepare()
             if path is None:
                 self._drop_row(job)
@@ -324,7 +331,19 @@ class FlashQueue:
                     getattr(self._discovery(), "libraries_path", None),
                     self._progress(job),
                     suppress_passthrough_resume=job.origin != "debug",
+                    from_=TAKES[job.origin],
                 )
+            except IllegalTransition as exc:
+                # The port was not taken and nothing was flashed. A restore
+                # refused a port someone holds, which is not a failed flash.
+                log.info("box %d: %s flash refused: %s", job.box, job.origin, exc)
+                if job.origin == "baseline":
+                    self._drop_row(job)
+                else:
+                    self._fail_row(job, str(exc))
+                if job.finished is not None:
+                    job.finished(exc)
+                return
             except Exception as exc:  # noqa: BLE001 - compile, upload, port, missing cli
                 log.warning("box %d: %s flash of %s failed: %s", job.box, job.origin, sketch.name, exc)
                 self._fail_row(job, str(exc))

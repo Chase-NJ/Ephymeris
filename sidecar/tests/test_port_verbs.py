@@ -31,7 +31,9 @@ from .test_utility import (  # noqa: F401 - fake_serial is an autouse fixture
     TASK_PATH,
     UTILITY_PATH,
     FakeSerial,
+    box_state,
     fake_serial,
+    make_baseline,
     rig_definition,
     settle,
 )
@@ -122,3 +124,43 @@ async def test_a_baseline_flash_never_takes_a_console(rig: Rig) -> None:
     assert not console.closed
     assert rig.uploaded() == []
     assert rig.flashed == []
+    # A refused take is not a failed flash: the row goes, as a restore that
+    # decided not to flash does.
+    assert rig.row(1) is None
+
+
+async def test_a_restore_that_meets_a_console_at_the_take_leaves_the_box_busy() -> None:
+    """The baseline's "only an IDLE port" no longer rests on nothing yielding
+    between its decision and the take: here a console opens in between."""
+    baseline, manager, tool, _ = await make_baseline()
+    queue = baseline.flash_queue
+    submit = queue.submit
+
+    def console_opens_after_the_decision(jobs) -> None:  # noqa: ANN001
+        jobs = list(jobs)
+        for job in jobs:
+            decide = job.prepare
+
+            def prepare(decide=decide):  # noqa: ANN001, ANN202
+                path = decide()
+                manager.open_passthrough(1)
+                return path
+
+            job.prepare = prepare
+        submit(jobs)
+
+    queue.submit = console_opens_after_the_decision
+    baseline.ensure([1])
+    await settle(baseline)
+
+    assert manager.handler(1).state is PortState.PASSTHROUGH
+    assert tool.uploads == []
+    assert box_state(baseline)["state"] == "busy"
+
+    # Busy, not failed: once the console closes, the next restore runs.
+    queue.submit = submit
+    manager.close_passthrough(1)
+    baseline.ensure([1])
+    await settle(baseline)
+    assert tool.uploads == [UTILITY_PATH]
+    assert box_state(baseline)["state"] == "ready"

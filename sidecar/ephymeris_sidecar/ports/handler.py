@@ -19,7 +19,20 @@ from typing import Any, Callable, Literal
 
 import serial
 
-from .states import IllegalTransition, PortState, assert_transition
+from .states import (
+    ACKNOWLEDGE_FROM,
+    CLAIM_FROM,
+    CLOSE_FROM,
+    FINISH_FROM,
+    IDLE_ONLY,
+    OPEN_FROM,
+    RELEASE_FROM,
+    RESUME_FROM,
+    IllegalTransition,
+    PortState,
+    assert_leaves,
+    assert_transition,
+)
 
 log = logging.getLogger(__name__)
 
@@ -230,65 +243,97 @@ class PortHandler:
             self._lock.release()
 
     def acknowledge_error(self) -> PortState:
-        """ERROR → IDLE on user acknowledgement (`ARCHITECTURE.md#transitions`)."""
+        """`ERROR → IDLE` on the operator's acknowledgement: the only way out of
+        `ERROR` (`ARCHITECTURE.md#port-verbs`). A port already `IDLE` has
+        nothing to acknowledge, as when a second window got there first."""
         with self._lock:
+            if self._state is PortState.IDLE:
+                return self._state
+            assert_leaves(self._state, ACKNOWLEDGE_FROM, PortState.IDLE)
             self._set_state(PortState.IDLE, "error acknowledged")
             return self._state
 
     # --- passthrough ------------------------------------------------------
 
     def open_passthrough(self, address: str, baud: int) -> PortState:
+        """Open a console on a port nobody holds: `IDLE → PASSTHROUGH`."""
         with self._lock:
-            assert_transition(self._state, PortState.PASSTHROUGH)
-            try:
-                port = self._open(
-                    port=address,
-                    baudrate=baud,
-                    timeout=READ_TIMEOUT_S,
-                    write_timeout=WRITE_TIMEOUT_S,
-                )
-            except (serial.SerialException, OSError) as exc:
-                self._set_state(PortState.ERROR, f"couldn't open {address}: {exc}")
-                raise
+            assert_leaves(self._state, OPEN_FROM, PortState.PASSTHROUGH)
+            return self._open_passthrough(address, baud)
 
-            self._serial = port
-            self._baud = baud
-            self._buf.clear()
-            self._stop = threading.Event()
-            self._reader = threading.Thread(
-                target=self._read_loop,
-                args=(port, self._stop),
-                name=f"box{self.box}-reader",
-                daemon=True,
+    def resume_passthrough(self, address: str, baud: int) -> PortState:
+        """Give a flash or reset's port back to the console it took
+        (`ARCHITECTURE.md#exclusivity`): `FLASHING`/`RESETTING → PASSTHROUGH`."""
+        with self._lock:
+            assert_leaves(self._state, RESUME_FROM, PortState.PASSTHROUGH)
+            return self._open_passthrough(address, baud)
+
+    def _open_passthrough(self, address: str, baud: int) -> PortState:
+        """Caller holds the lock and has checked the verb."""
+        try:
+            port = self._open(
+                port=address,
+                baudrate=baud,
+                timeout=READ_TIMEOUT_S,
+                write_timeout=WRITE_TIMEOUT_S,
             )
-            self._reader.start()
-            self._set_state(PortState.PASSTHROUGH, f"opened {address} @ {baud}")
-            return self._state
+        except (serial.SerialException, OSError) as exc:
+            self._set_state(PortState.ERROR, f"couldn't open {address}: {exc}")
+            raise
+
+        self._serial = port
+        self._baud = baud
+        self._buf.clear()
+        self._stop = threading.Event()
+        self._reader = threading.Thread(
+            target=self._read_loop,
+            args=(port, self._stop),
+            name=f"box{self.box}-reader",
+            daemon=True,
+        )
+        self._reader.start()
+        self._set_state(PortState.PASSTHROUGH, f"opened {address} @ {baud}")
+        return self._state
 
     def close_passthrough(self, reason: str = "closed by user") -> PortState:
+        """Close a console: `PASSTHROUGH → IDLE`, and from nothing else. A close
+        that arrives once the port has moved on (a flash took it, it faulted)
+        is refused rather than freeing a port the console no longer holds."""
         with self._lock:
-            assert_transition(self._state, PortState.IDLE)
+            assert_leaves(self._state, CLOSE_FROM, PortState.IDLE)
             self._teardown_serial()
             self._set_state(PortState.IDLE, reason)
             return self._state
 
     def finish_to_idle(self, reason: str) -> PortState:
-        """Conclude a FLASHING/RESETTING operation that isn't auto-resuming."""
+        """Conclude a flash or reset that isn't resuming a console:
+        `FLASHING`/`RESETTING → IDLE`."""
         with self._lock:
+            assert_leaves(self._state, FINISH_FROM, PortState.IDLE)
             self._set_state(PortState.IDLE, reason)
             return self._state
 
-    def release_for(self, next_state: PortState, reason: str) -> bool:
+    def release_for(
+        self,
+        next_state: PortState,
+        reason: str,
+        *,
+        from_: frozenset[PortState] = IDLE_ONLY,
+    ) -> bool:
         """Hand the port to a flash or reset, returning whether to auto-resume.
 
-        `ARCHITECTURE.md#exclusivity`: entering `FLASHING`/`RESETTING` forces a clean release of
-        `PASSTHROUGH` first, and if passthrough *was* the prior state the caller
-        should resume it afterward so the user sees the new sketch's output
-        without an extra click.
+        `from_` is what the caller may take (`ARCHITECTURE.md#port-verbs`):
+        `IDLE_ONLY` for the utility baseline, which must never take a console,
+        and `IDLE_OR_CONSOLE` for a flash or reset a person asked for. Entering
+        `FLASHING`/`RESETTING` from `PASSTHROUGH` releases the console cleanly
+        first, and the caller should resume it afterward so the user sees the
+        new sketch's output without an extra click (`ARCHITECTURE.md#exclusivity`).
         """
+        if next_state not in FINISH_FROM:
+            raise ValueError(f"release_for hands a port to a flash or reset, not {next_state.value}")
         with self._lock:
             was_passthrough = self._state == PortState.PASSTHROUGH
-            assert_transition(self._state, next_state)
+            assert_leaves(self._state, from_, next_state)
             if was_passthrough:
                 self._teardown_serial()
             self._set_state(next_state, reason)
@@ -319,7 +364,7 @@ class PortHandler:
         off the event loop.
         """
         with self._lock:
-            assert_transition(self._state, PortState.IN_SESSION)
+            assert_leaves(self._state, CLAIM_FROM, PortState.IN_SESSION)
             self._baud = baud
             self._stop = threading.Event()
             self._reader = threading.Thread(
@@ -353,6 +398,8 @@ class PortHandler:
         with self._lock:
             if self._claim is not claim:
                 return
+            # A current claim is one whose port is `IN_SESSION`.
+            assert_leaves(self._state, RELEASE_FROM, PortState.IDLE)
             self._teardown_serial()
             self._set_state(PortState.IDLE, reason)
 

@@ -21,7 +21,7 @@ from ephymeris_sidecar.ports.handler import (
     PortHandler,
     RING_CAPACITY,
 )
-from ephymeris_sidecar.ports.states import IllegalTransition, PortState
+from ephymeris_sidecar.ports.states import IDLE_OR_CONSOLE, IllegalTransition, PortState
 
 
 class FakeSerial:
@@ -344,7 +344,9 @@ def test_release_from_passthrough_reports_that_it_should_resume(fake_port) -> No
     handler, _ = make_handler()
     handler.open_passthrough("/dev/fake", 115200)
 
-    should_resume = handler.release_for(PortState.FLASHING, "flash requested")
+    should_resume = handler.release_for(
+        PortState.FLASHING, "flash requested", from_=IDLE_OR_CONSOLE
+    )
 
     assert should_resume is True
     assert handler.state is PortState.FLASHING
@@ -435,3 +437,20 @@ def test_only_the_acknowledgement_leaves_error(fake_port) -> None:
 
     assert handler.acknowledge_error() is PortState.IDLE
     assert announced(changes) == [(S.IDLE, S.ERROR), (S.ERROR, S.IDLE)]
+
+
+@pytest.mark.parametrize("state", [S.FLASHING, S.RESETTING])
+def test_a_flash_or_reset_lands_in_idle_or_back_in_its_console(fake_port, state: PortState) -> None:
+    handler, _ = make_handler()
+    enter(handler, state)
+    assert handler.finish_to_idle("done") is S.IDLE
+
+    enter(handler, state)
+    assert handler.resume_passthrough("/dev/fake", 115200) is S.PASSTHROUGH
+
+
+def test_release_for_hands_a_port_only_to_a_flash_or_reset() -> None:
+    handler, _ = make_handler()
+    with pytest.raises(ValueError):
+        handler.release_for(S.IN_SESSION, "not a flash")
+    assert handler.state is S.IDLE

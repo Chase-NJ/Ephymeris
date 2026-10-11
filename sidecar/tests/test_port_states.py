@@ -11,10 +11,12 @@ import itertools
 
 import pytest
 
+from ephymeris_sidecar.ports import states
 from ephymeris_sidecar.ports.states import (
     TRANSITIONS,
     IllegalTransition,
     PortState,
+    assert_leaves,
     assert_transition,
     can_transition,
 )
@@ -84,3 +86,48 @@ def test_flashing_and_resetting_can_auto_resume_passthrough() -> None:
 
 def test_every_state_has_a_table_entry() -> None:
     assert set(TRANSITIONS) == set(S)
+
+
+# --- port verbs (`ARCHITECTURE.md#port-verbs`) -------------------------------
+
+#: Each verb's from-set and where it goes. Every edge must be in the table:
+#: the verbs narrow `TRANSITIONS`, never widen it.
+VERBS = {
+    "open_passthrough": (states.OPEN_FROM, S.PASSTHROUGH),
+    "resume_passthrough": (states.RESUME_FROM, S.PASSTHROUGH),
+    "close_passthrough": (states.CLOSE_FROM, S.IDLE),
+    "finish_to_idle": (states.FINISH_FROM, S.IDLE),
+    "acknowledge_error": (states.ACKNOWLEDGE_FROM, S.IDLE),
+    "claim_session": (states.CLAIM_FROM, S.IN_SESSION),
+    "release": (states.RELEASE_FROM, S.IDLE),
+    "release_for(FLASHING)": (states.IDLE_OR_CONSOLE, S.FLASHING),
+    "release_for(RESETTING)": (states.IDLE_OR_CONSOLE, S.RESETTING),
+}
+
+
+@pytest.mark.parametrize("verb", sorted(VERBS))
+def test_every_verb_edge_is_in_the_table(verb: str) -> None:
+    from_, to = VERBS[verb]
+    for state in from_:
+        assert can_transition(state, to), f"{verb}: {state.value} -> {to.value}"
+
+
+def test_only_the_acknowledgement_leaves_error() -> None:
+    assert [verb for verb, (from_, _to) in VERBS.items() if S.ERROR in from_] == [
+        "acknowledge_error"
+    ]
+
+
+def test_a_baseline_take_never_includes_a_console() -> None:
+    assert states.IDLE_ONLY < states.IDLE_OR_CONSOLE
+    assert S.PASSTHROUGH not in states.IDLE_ONLY
+
+
+def test_assert_leaves_checks_the_verb_and_then_the_table() -> None:
+    assert_leaves(S.PASSTHROUGH, states.CLOSE_FROM, S.IDLE)
+    with pytest.raises(IllegalTransition) as refused:
+        assert_leaves(S.FLASHING, states.CLOSE_FROM, S.IDLE)
+    assert (refused.value.current, refused.value.requested) == (S.FLASHING, S.IDLE)
+    # A from-set wider than the table is still held to the table.
+    with pytest.raises(IllegalTransition):
+        assert_leaves(S.IN_SESSION, frozenset(S), S.FLASHING)

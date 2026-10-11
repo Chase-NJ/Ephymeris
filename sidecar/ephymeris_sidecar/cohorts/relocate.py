@@ -291,11 +291,35 @@ def resume(db: Database) -> int:
             log.warning("relocate %s: interrupted while copying; removing the copy", journal)
             _remove_copies(source, target)
             _finish(db, journal, "rolled-back", "interrupted while copying")
+        elif out_of_reach(source):
+            # Nothing there can be deleted, or told apart from deleted: the
+            # journal stays `committed`, and a start that can see it finishes.
+            log.warning(
+                "relocate %s: %s can't be reached; its originals wait for the next start",
+                journal, source,
+            )
         else:
             log.warning("relocate %s: interrupted after it committed; finishing", journal)
             _delete_sources(source, target)
             _finish(db, journal, "done")
     return len(rows)
+
+
+def out_of_reach(path: Path) -> bool:
+    """Whether `path` can't be seen at all — a share that stopped answering,
+    or a volume that isn't mounted — as opposed to there, or demonstrably gone.
+
+    Absence counts as gone only while some ancestor is readable, the rule
+    the prune keeps (`DATA.md#pruning`): a deleted tree leaves the drive root
+    at worst, an unmounted volume leaves nothing."""
+    try:
+        os.stat(path)
+        return False
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return True
+    return not any(os.path.isdir(ancestor) for ancestor in path.parents)
 
 
 def _commit_records(

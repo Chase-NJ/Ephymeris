@@ -35,7 +35,7 @@ from typing import Any, Callable
 
 from ..sessions.models import GroupRun
 from ..sessions.tidy import Merge, merged_fields
-from . import freshness, transfer
+from . import freshness, relocate, transfer
 from .db import Database
 from .move import (
     MovePlan,
@@ -412,8 +412,18 @@ def _clean_up(
 ) -> None:
     """Delete the originals the commit made redundant, and the folders that
     leaves empty. A file whose content changed since it was planned is left
-    where it is — it is not the file that was copied."""
-    touched = transfer.delete_originals(_copies(files, "copy", "present"))
+    where it is — it is not the file that was copied. While any original
+    can't be reached, nothing is deleted and the journal stays `committed`
+    for the next start: an unreadable original is not a deleted one."""
+    copies = _copies(files, "copy", "present")
+    unreached = [f.src for f in copies if relocate.out_of_reach(f.src)]
+    if unreached:
+        log.warning(
+            "move %s: %d original(s) can't be reached (%s); left for the next start",
+            journal, len(unreached), unreached[0],
+        )
+        return
+    touched = transfer.delete_originals(copies)
     _remove_emptied(db, touched, source_folder, source_id)
     with db.lock:
         db.conn.execute(

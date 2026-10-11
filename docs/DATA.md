@@ -238,7 +238,7 @@ Relocating is a separate action, `cohorts.setDataFolder` (`relocate`), with two 
 | Destination | How | A crash in between |
 |---|---|---|
 | Same volume | One atomic `rename` of the folder, then the records in one transaction | The folder is demonstrably at the target, so the records are rolled forward at the next start |
-| Another volume | A [verified copy](#verified-transfer) of every file, then the records, then each original whose copy is in place | Undone while copying; finished after the commit |
+| Another volume | A [verified copy](#verified-transfer) of every file, then the records, then each original whose copy is in place | Undone while copying; finished after the commit, by the first start that can reach the old folder |
 
 The cache and adoption rows [carry their freshness keys](#caching) to the moved files, so nothing that was fresh is re-read. Where each recorded group run told RHX to save (`recording_json`) moves too when it lies inside the folder, as the default `<session folder>/ephys` does, whichever cohort the session now belongs to: [a move of animals](#moving-animals-between-cohorts) leaves a recording in the source's folder. A save location elsewhere is left alone. Every column that stores such a path is listed once, in `cohorts/db.py`'s `DATA_PATHS`; a test fails when a column that could hold a path is in neither it nor `OTHER_PATHS`, or when a relocate leaves one behind.
 
@@ -291,7 +291,7 @@ The session's operator and summary are copied too. A copied carry-forward flag i
 3. **Commit**, in one transaction: re-plan the record half, abandon the move if it no longer matches what was copied, move every record, mark the journal `committed`.
 4. **Clean up**: delete each original whose copy is in place, `rmdir` emptied folders bottom-up (never `rmtree`), and a session folder no source record points at once all it holds is its derived `notes.md`. Mark the journal `done`.
 
-At start-up, before anything reads the archive, `move_apply.resume` undoes a `copying` move and finishes a `committed` one. So a crash leaves each run in exactly one cohort, and no record pointing at a file that isn't there — the two states a [rescan](#pruning) would otherwise act on.
+At start-up, before anything reads the archive, `move_apply.resume` undoes a `copying` move and finishes a `committed` one once it can [reach the originals](#verified-transfer). So a crash leaves each run in exactly one cohort, and no record pointing at a file that isn't there — the two states a [rescan](#pruning) would otherwise act on.
 
 > [!CAUTION]
 > **The other lab machine has its own records.** After a move, its database still points the moved runs at the source folder, where the files no longer are — and a rescan of the source there would [prune](#pruning) those records, losing the box, stop reason and parameters only a recorded run carries. **Run the same move on the other machine before rescanning there.** Its planner finds the files already at the destination (`already`, no copy) and simply re-points its records.
@@ -305,6 +305,8 @@ Both transfers that copy a cohort's files to another place, a [relocate](#data-f
 | Copy | Each file through `<name>.part`: `copy2`, fsync, renamed into place, then re-read and SHA-256-checked against the original. A destination already holding the same content is left as it is; one holding anything else stops the transfer |
 | Undo, before the records commit | Removes any `.part`, and each copy whose original is still there **with the same content** |
 | Delete originals, after the commit | Removes each original whose copy is there **with the same content**; one changed since it was copied is left in place |
+
+An original that can't be seen at all, a share that stopped answering or a drive not plugged in, is never read as deleted. Its transfer deletes nothing and leaves its journal `committed`, and the next start that can reach it finishes. Absence counts as gone only while something above it is readable, the [prune's](#pruning) rule (`relocate.out_of_reach`).
 
 > [!CAUTION]
 > **Neither step that deletes trusts a remembered hash alone.** Both read the file they keep as well as the one they remove, so a file whose content exists nowhere else is never deleted: not a copy of an original edited since, and not an original whose copy has gone. A crash can leave only a `.part`, never a partial file under its real name, so a retry is never blocked by debris the undo kept.

@@ -14,11 +14,13 @@ import os
 import shutil
 import sqlite3
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
+from ephymeris_sidecar.analytics.repository import AdoptedRun, AnalyticsRepository, CacheKey, CachedRun
 from ephymeris_sidecar.analytics.service import _orphan_run_id
 from ephymeris_sidecar.cohorts import relocate
 from ephymeris_sidecar.cohorts.db import DATA_PATHS, OTHER_PATHS, Database
@@ -66,20 +68,23 @@ class Archive:
         )
         # The id a rescan would give it: a hash of the run identity.
         self.adopted_id = _orphan_run_id(recovered)
-        db.conn.execute(
-            "INSERT INTO adopted_runs (id, cohort_id, animal_id, file_path, prefix_name,"
-            " session_number, date, started_at, adopted_at) VALUES (?, ?, 'a1', ?,"
-            " '2O-Bdisc', '1', '2026-09-01', '2026-09-01T11:00:00', 'now')",
-            (self.adopted_id, self.cohort.id, str(recovered)),
-        )
-        for run_id, path in (("run-1", recorded), (self.adopted_id, recovered)):
-            db.conn.execute(
-                "INSERT INTO run_metrics_cache (run_id, file_path, file_mtime_ns, file_size,"
-                " profile_source, codec_version, computed_at, status, summary_json)"
-                " VALUES (?, ?, 1, 1, 'snapshot', 1, 'now', 'ok', '{}')",
-                (run_id, str(path)),
+        self.analytics = AnalyticsRepository(db)
+        self.analytics.store_adopted([
+            AdoptedRun(
+                id=self.adopted_id, cohort_id=self.cohort.id, animal_id="a1",
+                file_path=str(recovered), prefix_name="2O-Bdisc", session_number="1",
+                date="2026-09-01", started_at="2026-09-01T11:00:00", sketch_name=None,
+                sketch_path=None,
             )
-        db.conn.commit()
+        ])
+        self.analytics.store([
+            CachedRun(
+                run_id=run_id, status="ok", detail=None, profile_hash=None,
+                profile_source="snapshot", params_hash=None, config=None, summary={},
+                key=CacheKey(file_path=str(path), mtime_ns=1, size=1, profile_hash=None, codec_version=1),
+            )
+            for run_id, path in (("run-1", recorded), (self.adopted_id, recovered))
+        ])
 
     @staticmethod
     def write(folder: Path, stem: str) -> Path:
@@ -298,12 +303,16 @@ def rescan(archive: Archive) -> dict:
     return asyncio.run(service.rescan(archive.cohort.id))
 
 
-def keys(archive: Archive, table: str, column: str, value: str) -> tuple:
-    return tuple(
-        archive.db.conn.execute(
-            f"SELECT file_mtime_ns, file_size FROM {table} WHERE {column} = ?", (value,)
-        ).fetchone()
-    )
+def cache_key(archive: Archive, run_id: str) -> tuple[int | None, int | None]:
+    """The stat a cached summary is vouched for by."""
+    key = archive.analytics.load_cached([run_id])[run_id].key
+    return key.mtime_ns, key.size
+
+
+def adoption_key(archive: Archive, run_id: str) -> tuple[int | None, int | None]:
+    """The stat an adoption was taken from."""
+    adopted = archive.analytics.adopted_by_id(run_id)
+    return adopted.file_mtime_ns, adopted.file_size
 
 
 def test_a_recovered_run_keeps_its_animal_on_a_coarser_volume(
@@ -315,25 +324,20 @@ def test_a_recovered_run_keeps_its_animal_on_a_coarser_volume(
     other_volume(archive.new.parent)
     fine_mtime(*archive.old.rglob("*_110000.*"))
     rescan(archive)  # adopted from the file, with its stat
-    archive.db.conn.execute("UPDATE animals SET name = 'remy-A' WHERE id = 'a1'")
-    archive.db.conn.execute(
-        "INSERT INTO animals (id, cohort_id, group_id, name, box_number)"
-        " VALUES ('a2', ?, 'g', 'remy1', 3)",
-        (archive.cohort.id,),
-    )
-    archive.db.conn.commit()
+    archive.cohorts.update(archive.cohort.id, {"animals": [
+        {"id": "a1", "name": "remy-A", "groupId": "g", "boxNumber": 2},
+        {"id": "a2", "name": "remy1", "groupId": "g", "boxNumber": 3},
+    ]})
 
     relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
     result = rescan(archive)
 
-    [(animal, path)] = archive.db.conn.execute(
-        "SELECT animal_id, file_path FROM adopted_runs"
-    ).fetchall()
-    assert animal == "a1"
+    [adopted] = archive.analytics.adopted_for_cohort(archive.cohort.id)
+    assert adopted.animal_id == "a1"
     assert (result["adopted"], result["orphans"]) == (0, [])
-    assert keys(archive, "adopted_runs", "id", archive.adopted_id) == (
-        Path(path).stat().st_mtime_ns,
-        Path(path).stat().st_size,
+    assert adoption_key(archive, archive.adopted_id) == (
+        Path(adopted.file_path).stat().st_mtime_ns,
+        Path(adopted.file_path).stat().st_size,
     )
 
 
@@ -344,20 +348,16 @@ def test_only_a_key_fresh_for_the_original_is_carried(
     a summary of content the file no longer has."""
     recorded = next(archive.old.rglob("*_090001.json"))
     fine_mtime(recorded)
-    archive.db.conn.execute(
-        "UPDATE run_metrics_cache SET file_mtime_ns = ?, file_size = ? WHERE run_id = 'run-1'",
-        (recorded.stat().st_mtime_ns, recorded.stat().st_size),
-    )
-    archive.db.conn.commit()  # the recovered run's row keeps its stale (1, 1)
+    fresh = archive.analytics.load_cached(["run-1"])["run-1"]
+    archive.analytics.store([replace(fresh, key=replace(
+        fresh.key, mtime_ns=recorded.stat().st_mtime_ns, size=recorded.stat().st_size
+    ))])  # the recovered run's row keeps its stale (1, 1)
 
     relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
 
     copy = next(archive.new.rglob("*_090001.json")).stat()
-    assert keys(archive, "run_metrics_cache", "run_id", "run-1") == (
-        copy.st_mtime_ns,
-        copy.st_size,
-    )
-    assert keys(archive, "run_metrics_cache", "run_id", archive.adopted_id) == (1, 1)
+    assert cache_key(archive, "run-1") == (copy.st_mtime_ns, copy.st_size)
+    assert cache_key(archive, archive.adopted_id) == (1, 1)
 
 
 def test_every_copy_is_flushed_before_an_original_goes(
@@ -589,7 +589,7 @@ def test_rescan_re_points_records_an_old_relocate_left_behind(archive: Archive) 
     assert result["rehomed"] == 3  # the session, the recorded run, the recovered one
     assert result["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}
     # The recovered run is the same row, not a second adoption of its file.
-    assert [r[0] for r in archive.db.conn.execute("SELECT id FROM adopted_runs")] == [archive.adopted_id]
+    assert [a.id for a in archive.analytics.adopted_for_cohort(archive.cohort.id)] == [archive.adopted_id]
     assert archive.all_under(archive.new), archive.stored_paths()
     [run] = archive.sessions.runs_for_cohort(archive.cohort.id)
     assert run.stop_reason == "BF_END_SESSION received"
@@ -626,9 +626,7 @@ def test_a_record_whose_file_is_not_at_the_new_place_is_left_for_the_prune(
     (lost.parent.parent / "behavior.tsv" / f"{lost.stem}.tsv").unlink()
 
     assert relocate.rehome(archive.db, archive.cohort.id) == 2
-    recorded = archive.db.conn.execute(
-        "SELECT file_path FROM session_animal_runs WHERE id = 'run-1'"
-    ).fetchone()[0]
+    [recorded] = [r.file_path for r in archive.sessions.runs_for(archive.session_id) if r.id == "run-1"]
     assert str(archive.old) in recorded
 
 

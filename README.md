@@ -181,7 +181,10 @@ assert what a screenshot shows better. There is no linter.
 so every event and command reply is checked against `protocol/schema.py`; production leaves it off.
 Test a command handler through the `sidecar` fixture (`tests/live_sidecar.py`): the real `Application`
 behind the real server over a WebSocket, with only the board tool and serial faked. A handler called
-directly skips the wiring in `app.py`, the error mapping and the reply's schema check.
+directly skips the wiring in `app.py`, the error mapping and the reply's schema check. Set up and check
+the database through the repositories: raw SQL pins column names and can build a row the app never
+could. It stays only where the schema is the subject (migrations, the `DATA_PATHS` guards), for crash
+journals nothing else reads, and for a state only an older app could leave.
 The guards that matter most:
 
 - `test_protocol_contract.py`: the generated mirrors match the schema, and every wire name appears in

@@ -27,7 +27,7 @@ def test_a_copy_is_verified_and_carries_its_hash(tmp_path: Path) -> None:
     f = pair(tmp_path)
     [done] = transfer.copy([f])
     assert f.dst.read_bytes() == b"ts_data"
-    assert done.sha256 == transfer.digest(f.src)[1]
+    assert done.sha256 == "c5d1393d52675642caf7df9e6a8abbb17ca105c5093a2d5187a3cfcd2d1382d2"  # of b"ts_data"
     assert not transfer.part_of(f.dst).exists()
 
 

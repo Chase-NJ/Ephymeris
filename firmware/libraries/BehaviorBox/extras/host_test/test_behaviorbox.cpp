@@ -326,7 +326,9 @@ int main() {
   //     session simply runs on the compiled-in value. Pasting the real line here
   //     is the cheapest thing that would notice.
   //
-  //     Regenerate after editing GRGL/task.json:
+  //     Regenerate after editing GRGL/task.json, which the sidecar's
+  //     test_the_firmware_parses_the_start_line_the_app_builds_for_grgl fails
+  //     until you do:
   //       build_start_command(load_profile(<GRGL>), {f.metadata_key: f.default})
   { char line[START_LINE_MAX];
     int n = snprintf(line, sizeof(line),
@@ -365,6 +367,15 @@ int main() {
     assert(_pinLog[1].us - _pinLog[0].us >= (unsigned long)BOX_SYNC_PULSE_US);  // width
     assert(_pinLog[2].us - _pinLog[1].us >= (unsigned long)BOX_SYNC_GAP_US);    // the LOW between
     assert(_pinLog[3].us - _pinLog[2].us >= (unsigned long)BOX_SYNC_PULSE_US); }
+
+  // --- emitStrobe: the line the app parses (^\d{1,3}\t\d+$), code zero-padded
+  //     to three digits, then the ms since beginSession(). 7 is no vocabulary
+  //     code; it is the smallest input that shows the padding.
+  { _ms = 0; TrialClock clock; clock.beginSession();
+    _ms = 1500;
+    _serialOutLen = 0; _serialOut[0] = '\0';
+    emitStrobe(clock, 7);
+    assert(strcmp(_serialOut, "007\t1500\r\n") == 0); }
 
   // initBoxHardware() claims the line and parks it LOW: a floating input on the
   // controller reads as noise, i.e. as events.

@@ -12,12 +12,14 @@ built here are checked against `protocol/schema.py` on the way out.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.taskdef import generate, store
 from tests.fixtures import task_definitions as presets
+from tests.live_sidecar import LiveSidecar, Refused, create_cohort, hold_the_rig
 from ephymeris_sidecar.taskdef.model import (
     StageRow,
     TaskDefinition,
@@ -1100,78 +1102,34 @@ def test_a_rebuild_refuses_to_be_its_own_source(tmp_path):
     assert (inside / "Probe.ino").is_file(), "it deleted the thing it refused to copy"
 
 
-def _tasks_app(tmp_path, library):
-    """The slice of `Application` `tasks.save`/`tasks.delete` touch, over a
-    real task store and a real rig definition."""
-    from types import SimpleNamespace
-
-    from ephymeris_sidecar.app import Application
-    from ephymeris_sidecar.hardware.store import HardwareStore
-    from ephymeris_sidecar.rig.definition import RigDefinition
-    from ephymeris_sidecar.strobes.store import VocabularyStore
-
-    task_store = store.TaskStore(tmp_path, library_root=library)
-    vocabulary = VocabularyStore(tmp_path)
-    vocabulary.ensure_seeded()
-
-    async def nothing(*_args) -> None:
-        return None
-
-    app = SimpleNamespace(
-        discovery=SimpleNamespace(sketches=[]),
-        task_store=task_store,
-        lifecycle=SimpleNamespace(in_use=False),
-        _rescan=nothing,
-        _broadcast_tasks=nothing,
-    )
-    app.rig_definition = RigDefinition(
-        hardware=HardwareStore(tmp_path),
-        vocabulary=vocabulary,
-        tasks=task_store,
-        repin=lambda: 0,
-        in_use=lambda: app.lifecycle.in_use,
-        rescan=nothing,
-        after_rebuild=nothing,
-        broadcast=nothing,
-    )
-    app._definition_arg = Application._definition_arg.__get__(app)
-    return app
-
-
-async def test_saving_refuses_a_name_another_task_already_uses(tmp_path, library):
+async def test_saving_refuses_a_name_another_task_already_uses(sidecar: LiveSidecar) -> None:
     """Two saved tasks sharing a name share a sketch folder — saving one would
     overwrite the other's firmware, and deleting either would remove both.
     Duplicating a task makes that the easy mistake, so `tasks.save` refuses."""
-    from ephymeris_sidecar.app import Application
-    from ephymeris_sidecar.server import CommandError
-
-    app = _tasks_app(tmp_path, library)
-    app.task_store.save(presets.instantiate("grgl_2odor", "probe", "Probe Task"))
+    probe = presets.instantiate("grgl_2odor", "probe", "Probe Task")
+    await sidecar.call("tasks.save", definition=probe.to_json())
     copy = presets.instantiate("grgl_2odor", "probe_copy", "probe task")
-    with pytest.raises(CommandError, match="already called"):
-        await Application._tasks_save(app, None, None, {"definition": copy.to_json()}, None)
+    with pytest.raises(Refused, match="already called"):
+        await sidecar.call("tasks.save", definition=copy.to_json())
 
     # Re-saving the task under its own name is, of course, fine.
-    same = presets.instantiate("grgl_2odor", "probe", "Probe Task")
-    reply = await Application._tasks_save(app, None, None, {"definition": same.to_json()}, None)
+    reply = await sidecar.call("tasks.save", definition=probe.to_json())
     assert reply["entry"]["id"] == "probe"
 
 
-async def test_no_task_is_saved_or_deleted_while_a_session_is_set_up(tmp_path, library):
+async def test_no_task_is_saved_or_deleted_while_a_session_is_set_up(
+    sidecar: LiveSidecar, tmp_path: Path
+) -> None:
     """A task's folder is what its box is flashed from, and the session read its
     profile from that folder at mapping (`TASKS.md#the-rig-definition`)."""
-    from ephymeris_sidecar.app import Application
-    from ephymeris_sidecar.server import CommandError
+    probe = presets.instantiate("grgl_2odor", "probe", "Probe Task")
+    await sidecar.call("tasks.save", definition=probe.to_json())
+    await hold_the_rig(sidecar, await create_cohort(sidecar, tmp_path / "Batch A"))
 
-    app = _tasks_app(tmp_path, library)
-    app.task_store.save(presets.instantiate("grgl_2odor", "probe", "Probe Task"))
-    app.lifecycle.in_use = True
-
-    edited = presets.instantiate("grgl_2odor", "probe", "Probe Task")
-    with pytest.raises(CommandError) as refused:
-        await Application._tasks_save(app, None, None, {"definition": edited.to_json()}, None)
+    with pytest.raises(Refused) as refused:
+        await sidecar.call("tasks.save", definition=probe.to_json())
     assert refused.value.code == "RIG_IN_USE"
-    with pytest.raises(CommandError) as refused:
-        await Application._tasks_delete(app, None, None, {"taskId": "probe"}, None)
+    with pytest.raises(Refused) as refused:
+        await sidecar.call("tasks.delete", taskId="probe")
     assert refused.value.code == "RIG_IN_USE"
-    assert app.task_store.get("probe") is not None
+    await sidecar.call("tasks.get", taskId="probe")

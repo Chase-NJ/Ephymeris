@@ -25,7 +25,7 @@ from ephymeris_sidecar.taskdef import generate
 from ephymeris_sidecar.tasks import profile as task_profile
 from tests.conftest import rewrite_keeping_stat
 from tests.fixtures import task_definitions as presets
-from tests.live_sidecar import LiveSidecar, Refused
+from tests.live_sidecar import LiveSidecar, Refused, create_cohort, hold_the_rig, sketch_path
 
 
 @pytest.fixture(autouse=True)
@@ -434,10 +434,10 @@ def test_a_second_scan_answers_an_orphaned_tsv_from_the_cache(tmp_path, db):
 class Lab:
     """A cohort with one box-assigned animal, on the live sidecar."""
 
-    def __init__(self, sidecar: LiveSidecar, root: Path, cohort: dict) -> None:
+    def __init__(self, sidecar: LiveSidecar, cohort: dict) -> None:
         self.sidecar = sidecar
-        self.root = root
         self.cohort = cohort
+        self.root = Path(cohort["dataFolder"])
 
     async def call(self, cmd: str, **args):  # noqa: ANN003, ANN201
         return await self.sidecar.call(cmd, **args)
@@ -446,31 +446,15 @@ class Lab:
         return {c["name"]: c["code"] for c in (await self.call("strobes.get"))["codes"]}
 
     async def grgl(self) -> Path:
-        sketches = (await self.call("sketches.refresh"))["sketches"]
-        return Path(next(s["path"] for s in sketches if s["name"] == "GRGL"))
+        return await sketch_path(self.sidecar, "GRGL")
 
     async def hold_the_rig(self) -> None:
-        """Confirm a mapping, so a session holds the rig (`SessionLifecycle.in_use`)."""
-        prefix = (await self.call("prefixes.create", name="2O-Bdisc"))["prefix"]["id"]
-        session = (await self.call(
-            "sessions.create", cohortId=self.cohort["id"], prefixId=prefix, sessionNumber="1"
-        ))["session"]
-        [animal] = self.cohort["animals"]
-        await self.call(
-            "sessions.confirmMapping", sessionId=session["id"], groupId="g1",
-            boxes=[{"box": 1, "animalId": animal["id"], "sketchPath": str(await self.grgl()), "config": {}}],
-        )
+        await hold_the_rig(self.sidecar, self.cohort)
 
 
 @pytest.fixture
 async def lab(sidecar: LiveSidecar, tmp_path: Path) -> Lab:
-    root = tmp_path / "cohort"
-    created = await sidecar.call(
-        "cohorts.create", name="Batch A", dataFolder=str(root),
-        groups=[{"id": "g1", "name": "Morning", "order": 0}],
-        animals=[{"name": "rat1", "groupId": "g1", "boxNumber": 1}],
-    )
-    return Lab(sidecar, Path(created["cohort"]["dataFolder"]), created["cohort"])
+    return Lab(sidecar, await create_cohort(sidecar, tmp_path / "cohort"))
 
 
 async def test_an_added_code_is_written_installed_rebuilt_and_announced(lab: Lab) -> None:

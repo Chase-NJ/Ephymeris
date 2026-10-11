@@ -113,6 +113,37 @@ class LiveSidecar:
             pass
 
 
+async def create_cohort(sidecar: LiveSidecar, folder: Path) -> dict[str, Any]:
+    """A cohort at `folder` with one animal on box 1, so a session can run."""
+    created = await sidecar.call(
+        "cohorts.create", name=folder.name, dataFolder=str(folder),
+        groups=[{"id": "g1", "name": "Morning", "order": 0}],
+        animals=[{"name": "rat1", "groupId": "g1", "boxNumber": 1}],
+    )
+    return created["cohort"]
+
+
+async def sketch_path(sidecar: LiveSidecar, name: str) -> Path:
+    sketches = (await sidecar.call("sketches.refresh"))["sketches"]
+    return Path(next(s["path"] for s in sketches if s["name"] == name))
+
+
+async def hold_the_rig(sidecar: LiveSidecar, cohort: dict[str, Any]) -> str:
+    """Set up a session of `cohort` and confirm GRGL on box 1, so the session
+    holds the rig (`SessionLifecycle.in_use`). Returns the session id."""
+    prefix = (await sidecar.call("prefixes.create", name="2O-Bdisc"))["prefix"]["id"]
+    session = (await sidecar.call(
+        "sessions.create", cohortId=cohort["id"], prefixId=prefix, sessionNumber="1"
+    ))["session"]
+    [animal] = cohort["animals"]
+    grgl = await sketch_path(sidecar, "GRGL")
+    await sidecar.call(
+        "sessions.confirmMapping", sessionId=session["id"], groupId="g1",
+        boxes=[{"box": 1, "animalId": animal["id"], "sketchPath": str(grgl), "config": {}}],
+    )
+    return session["id"]
+
+
 @asynccontextmanager
 async def live_sidecar(data_dir: Path, tool: BoardTool | None = None) -> AsyncIterator[LiveSidecar]:
     """Start the sidecar on a free loopback port, connect and authenticate."""

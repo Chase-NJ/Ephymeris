@@ -73,6 +73,47 @@ class PortBusy(Exception):
     """The port isn't in a state that permits this operation."""
 
 
+class SessionClaim:
+    """One run's hold on a port in `IN_SESSION` (`ARCHITECTURE.md#entering-in_session`).
+
+    Exists only once the port has moved `IDLE → IN_SESSION`: `claim_session`
+    raises before anything starts, so a holder records a run only once it has
+    one. A port holds at most one claim, and a claim is current from that
+    transition until the port next leaves `IN_SESSION`:
+
+    * `request_stop()` sends `STOP` and says whether it went out. Never raises.
+    * `release(reason)` ends a clean run, `IN_SESSION → IDLE`. Idempotent, and
+      a no-op once the claim is not current: it never clears an `ERROR`, and
+      never ends a later claim's run.
+    * `on_lost(reason)`, given at claim time, runs on the loop when the port
+      leaves `IN_SESSION` for `ERROR` (`ARCHITECTURE.md#board-drop`), at most
+      once, never after `release`.
+    """
+
+    def __init__(self, handler: "PortHandler", address: str, on_lost: Callable[[str], None]) -> None:
+        self.box = handler.box
+        self.address = address
+        self._handler = handler
+        self._on_lost = on_lost
+
+    def request_stop(self) -> bool:
+        """Ask the board to stop at its next trial boundary (`ARCHITECTURE.md#clean-exit`).
+        False when the port has left `IN_SESSION`, has no open port yet (the
+        handshake is still opening it), or the write failed."""
+        return self._handler._request_stop(self)
+
+    def release(self, reason: str) -> None:
+        """`IN_SESSION → IDLE` if this claim is still current; otherwise nothing.
+        Blocking: joins the session thread, so call it off the loop."""
+        self._handler._release(self, reason)
+
+    def _lost(self, reason: str) -> None:
+        try:
+            self._on_lost(reason)
+        except Exception:  # noqa: BLE001 - the port's own bookkeeping must go on
+            log.exception("box %d: on_lost failed", self.box)
+
+
 #: Opens a serial port: `serial.Serial`'s signature. Injected so a test can
 #: drive the real handler and manager with a scripted board behind them.
 OpenSerial = Callable[..., Any]
@@ -95,6 +136,8 @@ class PortHandler:
 
         self._state = PortState.IDLE
         self._lock = threading.RLock()
+        #: The current `SessionClaim`; set exactly while the state is `IN_SESSION`.
+        self._claim: SessionClaim | None = None
 
         self._serial: serial.Serial | None = None
         self._reader: threading.Thread | None = None
@@ -130,12 +173,27 @@ class PortHandler:
             return
         assert_transition(previous, to)
         self._state = to
+        # Leaving IN_SESSION ends the claim, whoever moved the port. Leaving it
+        # for ERROR is a lost session, told to the claim's holder.
+        lost: SessionClaim | None = None
+        if previous == PortState.IN_SESSION:
+            claim, self._claim = self._claim, None
+            if to == PortState.ERROR:
+                lost = claim
         log.info("box %d: %s -> %s (%s)", self.box, previous.value, to.value, reason)
         # Always hand the notification to the loop thread: this is reachable
-        # from the reader thread when a board disappears mid-stream.
-        self._loop.call_soon_threadsafe(
-            self._on_state_change, self.box, previous, to, reason
-        )
+        # from the reader thread when a board disappears mid-stream. One
+        # hand-off per transition, as ever; a lost claim hears of it in the
+        # same callback, after the state change is announced.
+        self._loop.call_soon_threadsafe(self._announce, previous, to, reason, lost)
+
+    def _announce(
+        self, previous: PortState, to: PortState, reason: str, lost: SessionClaim | None
+    ) -> None:
+        """Runs on the loop."""
+        self._on_state_change(self.box, previous, to, reason)
+        if lost is not None:
+            lost._lost(reason)
 
     def force_error(self, reason: str) -> None:
         with self._lock:
@@ -238,18 +296,20 @@ class PortHandler:
 
     # --- session (ARCHITECTURE.md#entering-in_session) -------------------------------
 
-    def start_session(
+    def claim_session(
         self,
         address: str,
         baud: int,
         start_command: str,
         on_ready: Callable[[int | None], None],
         on_strobe: Callable[[int, int], None],
-    ) -> PortState:
+        on_lost: Callable[[str], None] = lambda _reason: None,
+    ) -> SessionClaim:
         """Enter `IN_SESSION` and run the entry sequence in a worker thread.
 
-        The port transition is synchronous (the caller learns immediately that
-        the box was claimed); the handshake — open → DTR auto-reset → await
+        Raises `IllegalTransition` unless the port is `IDLE`, before anything
+        starts. The port transition is synchronous (the caller holds the claim
+        when this returns); the handshake — open → DTR auto-reset → await
         `READY` → send `START` → optional `SEED` — then runs off the event loop.
 
         `on_ready(seed)` fires once the handshake resolves, *before* the first
@@ -269,27 +329,32 @@ class PortHandler:
                 daemon=True,
             )
             self._set_state(PortState.IN_SESSION, "starting session")
+            claim = SessionClaim(self, address, on_lost)
+            self._claim = claim
             self._reader.start()
-            return self._state
+            return claim
 
-    def send_session_line(self, text: str) -> None:
-        """Write a raw line to the board mid-session (e.g. `STOP`).
-
-        Doesn't force a transition — the board's own end-of-session strobe does
-        (`ARCHITECTURE.md#clean-exit`). Permitted only in `IN_SESSION`.
-        """
+    def _request_stop(self, claim: SessionClaim) -> bool:
+        """`SessionClaim.request_stop`. Doesn't force a transition: the board's
+        own end-of-session strobe does (`ARCHITECTURE.md#clean-exit`)."""
         with self._lock:
-            if self._state != PortState.IN_SESSION or self._serial is None:
-                raise PortBusy(f"box {self.box} is {self._state.value}; not in a session")
-            self._serial.write((text + "\n").encode("utf-8", errors="replace"))
-            self._serial.flush()
+            if self._claim is not claim or self._serial is None:
+                return False
+            try:
+                self._serial.write(b"STOP\n")
+                self._serial.flush()
+            except Exception as exc:  # noqa: BLE001 - the reader notices a dead port
+                log.warning("box %d: couldn't send STOP: %s", self.box, exc)
+                return False
+            return True
 
-    def end_session(self, reason: str) -> PortState:
-        """Conclude a clean run: `IN_SESSION → IDLE`, stopping the thread."""
+    def _release(self, claim: SessionClaim, reason: str) -> None:
+        """`SessionClaim.release`: `IN_SESSION → IDLE`, stopping the thread."""
         with self._lock:
+            if self._claim is not claim:
+                return
             self._teardown_serial()
             self._set_state(PortState.IDLE, reason)
-            return self._state
 
     def _session_loop(
         self,

@@ -28,7 +28,7 @@ import serial
 
 from ..boards.tool import BoardTool, DetectedBoard
 from ..settings import BOX_COUNT, SidecarSettings
-from .handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine, PortHandler
+from .handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine, PortHandler, SessionClaim
 from .states import PortState
 
 log = logging.getLogger(__name__)
@@ -303,31 +303,28 @@ class PortManager:
 
         return self._conclude(handler, address, prior_baud, was_passthrough, "reset complete")
 
-    def start_session(
+    def claim_session(
         self,
         box: int,
         start_command: str,
-        on_ready: "Callable[[int | None], None]",
-        on_strobe: "Callable[[int, int], None]",
-    ) -> PortState:
-        """Enter `IN_SESSION` on one box (`ARCHITECTURE.md#entering-in_session`).
+        *,
+        on_ready: Callable[[int | None], None],
+        on_strobe: Callable[[int, int], None],
+        on_lost: Callable[[str], None],
+    ) -> SessionClaim:
+        """Enter `IN_SESSION` on one box and hand back the run's hold on it
+        (`ARCHITECTURE.md#entering-in_session`).
 
-        The box must be `IDLE` (a session flash leaves it there via
-        `suppress_passthrough_resume`). Baud is the session default.
+        Raises `PortNotBound`, `BoardNotDetected` or `IllegalTransition` before
+        anything starts: the box must be bound, present and `IDLE` (a session
+        flash leaves it there via `suppress_passthrough_resume`). Baud is the
+        session default. `on_ready` and `on_strobe` run on the session thread,
+        `on_lost` on the loop; `SessionClaim` says what each promises.
         """
         address = self.resolve_address(box)
-        handler = self.handler(box)
-        return handler.start_session(
-            address, self._settings.default_baud, start_command, on_ready, on_strobe
+        return self.handler(box).claim_session(
+            address, self._settings.default_baud, start_command, on_ready, on_strobe, on_lost
         )
-
-    def stop_session(self, box: int) -> None:
-        """Send `STOP` to a running box; the board's end strobe ends the run."""
-        self.handler(box).send_session_line("STOP")
-
-    def end_session(self, box: int, reason: str) -> PortState:
-        """Conclude a run cleanly: `IN_SESSION → IDLE`."""
-        return self.handler(box).end_session(reason)
 
     def _conclude(
         self,

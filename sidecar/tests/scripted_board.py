@@ -32,11 +32,31 @@ class ScriptedBoard:
         self._out = bytearray()
         self._lock = threading.Lock()
         self._fail = False
+        #: Reads that found nothing. The session thread reads, handles every
+        #: line it got, then reads again: an empty read after `say` means all
+        #: of it has been handled.
+        self._empty_reads = 0
 
     def say(self, text: str) -> None:
         """Queue lines the board prints."""
         with self._lock:
             self._out.extend(text.encode())
+
+    async def said(self, *lines: str, timeout: float = 5.0) -> None:
+        """Print `lines` and return once the session thread has handled them."""
+        with self._lock:
+            self._out.extend("".join(f"{line}\n" for line in lines).encode())
+            before = self._empty_reads
+
+        def handled() -> bool:
+            with self._lock:
+                return self._empty_reads > before
+
+        await until(handled, timeout=timeout)
+
+    def sent(self) -> list[str]:
+        """Every line the sidecar wrote to the board, in order."""
+        return bytes(self.written).decode().splitlines()
 
     def unplug(self) -> None:
         """The next read fails, as a board pulled mid-session does."""
@@ -55,6 +75,7 @@ class ScriptedBoard:
                 chunk = bytes(self._out[:size])
                 del self._out[:size]
                 return chunk
+            self._empty_reads += 1
         time.sleep(handler_module.READ_TIMEOUT_S)
         return b""
 
@@ -136,13 +157,17 @@ class Bench:
         return self.board(box)
 
     async def run_handshake(self, box: int, seed: int | None = None) -> ScriptedBoard:
-        """Play a board through READY, and SEED when given, up to the first strobe."""
+        """Play a board through READY, and SEED when given. Without a SEED the
+        handshake resolves on the first strobe, or when the SEED window closes."""
         board = await self.wait_for_board(box)
-        board.say("READY\n")
-        await until(lambda: b"START" in bytes(board.written))
-        if seed is not None:
-            board.say(f"SEED\t{seed}\n")
+        # In one go, as a board prints them: the SEED window can't close first.
+        await board.said("READY", *([f"SEED\t{seed}"] if seed is not None else []))
+        assert b"START" in bytes(board.written)
         return board
+
+    def transitions(self, box: int) -> list[tuple[PortState, PortState, str]]:
+        """What `box`'s port announced, as `(from, to, reason)`."""
+        return [(old, new, reason) for b, old, new, reason in self.changes if b == box]
 
     def shutdown(self) -> None:
         for box in self._boxes:

@@ -993,7 +993,10 @@ All or one at a time, moves it to `running`. A per-box write failure is pushed a
 Per box (`ports/handler.py`, `sessions/runner.py`):
 
 1. `IDLE → IN_SESSION`, refused from any other state. Before it, `SessionLifecycle` refuses a box whose
-   board does not [carry](#what-a-board-carries) the mapped sketch's current build.
+   board does not [carry](#what-a-board-carries) the mapped sketch's current build. The transition hands
+   the runner a `SessionClaim` (`PortManager.claim_session`), and the runner records the run and arms its
+   time limit only once it holds one: a port that refuses (`ERROR` from an earlier start, say) raises
+   before anything is recorded, and leaves nothing for End to stop.
 2. Open the port, which pulls DTR and resets the Mega.
 3. Wait `SESSION_READY_TIMEOUT_S` for `READY`, else `ERROR`.
 4. Send the built `START … SEED=<n>`. **The seed is drawn at the click**, not at mapping, or every box in a
@@ -1007,6 +1010,14 @@ Per box (`ports/handler.py`, `sessions/runner.py`):
 Writer I/O stays on the port's session thread; anything touching the socket or state machine is scheduled
 back onto the event loop.
 
+The claim is the run's only handle on its port (`SessionClaim`, `ports/handler.py`):
+
+| Member | Promise |
+|---|---|
+| `request_stop()` | Writes `STOP`; `False` when the port has left the session, isn't open yet, or the write failed. Never raises, so End reaches every box whatever one port is doing |
+| `release(reason)` | `IN_SESSION → IDLE`, only while this claim is current. Idempotent; never clears an `ERROR`, never ends a later claim's run |
+| `on_lost(reason)` | Given at claim time; runs on the loop when the port leaves `IN_SESSION` for `ERROR`, at most once, never after `release` ([Board drop](#board-drop)) |
+
 The same sequence for one box. The file is opened only once the handshake resolves — on a `SEED` line,
 the first strobe, or the end of the seed window — so its header can carry the seed:
 
@@ -1018,9 +1029,11 @@ sequenceDiagram
     participant Board as Mega2560
     participant File as Animal .tsv
     UI->>Runner: sessions.startAll or port.startSession
-    Runner->>Runner: draw the host seed, arm the time limit
-    Runner->>Port: start_session with START … SEED=n
-    Port->>Port: IDLE → IN_SESSION
+    Runner->>Runner: draw the host seed
+    Runner->>Port: claim_session with START … SEED=n
+    Port->>Port: IDLE → IN_SESSION, or raise
+    Port-->>Runner: SessionClaim
+    Runner->>Runner: record the run, arm the time limit
     Port->>Board: open the port, DTR resets the Mega
     Board-->>Port: READY
     Note over Port,Board: no READY within SESSION_READY_TIMEOUT_S → ERROR
@@ -1041,7 +1054,7 @@ sequenceDiagram
 ### Clean exit
 
 `STOP` → the board finishes its trial and emits its end strobe → the sidecar finalizes →
-`IN_SESSION → IDLE`. `STOP` is a nudge, written to the port and nothing else; only the end strobe forces
+`IN_SESSION → IDLE` (`SessionClaim.release`). `STOP` is a nudge, written to the port and nothing else; only the end strobe forces
 the transition, or a forced finalization for boxes that didn't answer when the session ends.
 
 > [!IMPORTANT]
@@ -1053,7 +1066,9 @@ the transition, or a forced finalization for boxes that didn't answer when the s
 
 A board dropping during `IN_SESSION` is **always a hard stop into `ERROR`**, cleared by a manual
 `port.error.ack`, with no auto-recovery. The run is finalized at once from what the `.tsv` already holds,
-so the hard stop costs no data.
+so the hard stop costs no data. The runner hears of the drop from its own claim (`on_lost`); a board lost
+at any point before the run's release, the writer's finalize included, leaves the port in `ERROR`, because
+`release` only ever moves `IN_SESSION → IDLE`.
 
 ![Mission Control with box 2's tile reading ERROR and "Finished — board disconnected" while boxes 1, 3 and 4 stay IN_SESSION; box 2's star in the sidebar figure is red](images/mission-control-error.webp)
 
@@ -1064,7 +1079,7 @@ so the hard stop costs no data.
 *The box's own panel names the fault. **Acknowledge** sends `port.error.ack`, the only way out of `ERROR`.
 The operator's procedure is [USER-GUIDE.md](USER-GUIDE.md#when-a-box-shows-error-or-a-board-disconnects).*
 
-Every way a run ends, side by side (`SessionRunner.finalize_box`, `end_all`, `board_dropped`):
+Every way a run ends, side by side (`SessionRunner.finalize_box`, `end_all`, `_on_lost`):
 
 ```mermaid
 flowchart TD

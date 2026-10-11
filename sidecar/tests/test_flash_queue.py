@@ -143,9 +143,13 @@ async def rig() -> Rig:
     return r
 
 
-def run_a_session(rig: Rig, box: int) -> None:
-    """Hold a box `IN_SESSION`, the state a session or Debug flash waits on."""
-    rig.ports.start_session(box, "START", lambda _seed: None, lambda _code, _ts: None)
+def run_a_session(rig: Rig, box: int):  # noqa: ANN201
+    """Hold a box `IN_SESSION`, the state a session or Debug flash waits on.
+    Returns the claim, whose `release` ends it."""
+    return rig.ports.claim_session(
+        box, "START", on_ready=lambda _seed: None, on_strobe=lambda _code, _ts: None,
+        on_lost=lambda _reason: None,
+    )
 
 
 # --- one at a time ----------------------------------------------------------
@@ -169,7 +173,7 @@ async def test_never_two_flashes_at_once_whoever_asked(rig: Rig) -> None:
 
 
 async def test_a_busy_port_waits_without_holding_up_the_rest(rig: Rig) -> None:
-    run_a_session(rig, 1)
+    claim = run_a_session(rig, 1)
     rig.queue.submit([rig.job(1), rig.job(2)])
     for _ in range(100):
         await asyncio.sleep(0.01)
@@ -179,7 +183,7 @@ async def test_a_busy_port_waits_without_holding_up_the_rest(rig: Rig) -> None:
     assert rig.row(1)["state"] == "waiting"
     assert "in_session" in rig.row(1)["detail"]
 
-    rig.ports.end_session(1, "the run ended")  # the port's own change wakes the job
+    claim.release("the run ended")  # the port's own change wakes the job
     await rig.settle()
     assert rig.uploaded() == ["2", "1"]
     assert rig.row(1)["state"] == "done"
@@ -207,10 +211,10 @@ async def test_a_faulted_port_fails_at_once(rig: Rig) -> None:
 async def test_a_port_that_never_frees_gives_up(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(flashing_module, "PORT_WAIT_S", 0.05)
     monkeypatch.setattr(flashing_module, "TICK_S", 0.01)
-    run_a_session(rig, 1)
+    claim = run_a_session(rig, 1)
     rig.queue.submit([rig.job(1)])
     await rig.settle()
-    rig.ports.end_session(1, "test over")
+    claim.release("test over")
 
     assert rig.row(1)["state"] == "failed"
     assert "stayed in_session" in rig.row(1)["detail"]

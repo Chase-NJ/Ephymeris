@@ -960,15 +960,14 @@ async def test_flashing_for_a_session_that_does_not_hold_the_rig_is_refused(
 # members the lifecycle calls, run against both.
 
 
-def _real_runner(tmp_path: Path):  # noqa: ANN202
-    from tests.test_session_runner import FakePorts
+def _real_runner(ports):  # noqa: ANN001, ANN202
     from ephymeris_sidecar.sessions.runner import SessionRunner
 
     async def nothing(*_args) -> None:  # noqa: ANN002
         return None
 
     return SessionRunner(
-        loop=asyncio.get_running_loop(), ports=FakePorts(), broadcast=nothing, on_animal_ended=nothing,
+        loop=asyncio.get_running_loop(), ports=ports, broadcast=nothing, on_animal_ended=nothing,
     )
 
 
@@ -980,9 +979,9 @@ def _box(box: int) -> BoxConfig:
 
 
 @pytest.fixture(params=["FakeRunner", "SessionRunner"])
-async def runner(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
-    # Built inside the test's loop: the real runner binds to it.
-    made = FakeRunner([]) if request.param == "FakeRunner" else _real_runner(tmp_path)
+async def runner(request: pytest.FixtureRequest, tmp_path: Path, bench):  # noqa: ANN001, ANN201
+    # Built inside the test's loop: the real runner binds to it, on real ports.
+    made = FakeRunner([]) if request.param == "FakeRunner" else _real_runner(bench.ports)
     made.configure(tmp_path, "2O-Bdisc_12", "g-a", [_box(2), _box(1)], session_id="s1")
     return made
 

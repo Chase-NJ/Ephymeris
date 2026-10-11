@@ -25,7 +25,6 @@ from ephymeris_sidecar.logbook.repository import LogbookRepository
 from ephymeris_sidecar.sessions.models import GroupRun, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import fine_mtime
-from tests.test_relocate import unreachable
 
 
 class Lab:
@@ -510,7 +509,7 @@ def test_a_crash_after_the_commit_is_finished_at_the_next_start(lab: Lab, power_
 
 
 def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
-    lab: Lab, power_cut, monkeypatch: pytest.MonkeyPatch
+    lab: Lab, power_cut, unreachable_volume, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """B18: with the source's folder unreachable at start-up, the resume
     deleted nothing and still marked the move `done`, so the originals stayed
@@ -520,11 +519,12 @@ def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
     with pytest.raises(SystemExit):
         lab.apply("slow1")
 
-    with monkeypatch.context() as m:
-        unreachable(m, lab.a_root)
-        move_apply.resume(lab.db)
+    unreachable_volume(lab.a_root)
+    move_apply.resume(lab.db)
     [state] = lab.db.conn.execute("SELECT state FROM animal_moves").fetchone()
     assert state == "committed"
+
+    monkeypatch.undo()  # the share answers again (and every other fake goes)
     assert any("slow1" in f for f in lab.files(lab.a_root)), "nothing was deleted"
 
     assert move_apply.resume(lab.db) == 1

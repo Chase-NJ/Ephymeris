@@ -65,13 +65,42 @@ TRANSITIONS: dict[PortState, frozenset[PortState]] = {
 }
 
 
+#: The states each port verb leaves (`ARCHITECTURE.md#port-verbs`). `TRANSITIONS`
+#: is every move that is ever legal; it cannot say who is asking, and a move it
+#: allows can still be the wrong caller's. `FLASHING → IDLE` is how a flash
+#: ends, not something a console close may do, and `ERROR → IDLE` belongs to the
+#: acknowledgement alone. Every verb checks both: its own set, then the table.
+OPEN_FROM = frozenset({PortState.IDLE})
+CLOSE_FROM = frozenset({PortState.PASSTHROUGH})
+#: The states a flash or reset holds the port in: what `release_for` hands
+#: it to, and what landing it leaves, for `IDLE` or back in the console it took.
+FLASH_OR_RESET = frozenset({PortState.FLASHING, PortState.RESETTING})
+FINISH_FROM = FLASH_OR_RESET
+RESUME_FROM = FLASH_OR_RESET
+ACKNOWLEDGE_FROM = frozenset({PortState.ERROR})
+CLAIM_FROM = frozenset({PortState.IDLE})
+RELEASE_FROM = frozenset({PortState.IN_SESSION})
+#: What a flash or reset may take (`release_for`). A background job, the
+#: utility baseline's restore, takes only a port nobody holds; one a person
+#: asked for (a session flash, a Debug flash, a reset) may also take a console,
+#: which it releases first (`ARCHITECTURE.md#exclusivity`).
+IDLE_ONLY = frozenset({PortState.IDLE})
+IDLE_OR_CONSOLE = frozenset({PortState.IDLE, PortState.PASSTHROUGH})
+
+
 class IllegalTransition(Exception):
-    """Raised when a caller attempts a transition the table forbids."""
+    """Raised when a caller attempts a transition the table, or the verb, forbids."""
 
     def __init__(self, current: PortState, requested: PortState) -> None:
         super().__init__(f"cannot move from {current.value} to {requested.value}")
         self.current = current
         self.requested = requested
+
+
+class TakeRefused(IllegalTransition):
+    """`release_for` refused to hand the port to a flash or reset: the port was
+    not taken and nothing ran. Distinct from an `IllegalTransition` raised once
+    the port is held (landing it), which is a failed operation."""
 
 
 def can_transition(current: PortState, requested: PortState) -> bool:
@@ -81,3 +110,13 @@ def can_transition(current: PortState, requested: PortState) -> bool:
 def assert_transition(current: PortState, requested: PortState) -> None:
     if not can_transition(current, requested):
         raise IllegalTransition(current, requested)
+
+
+def assert_leaves(
+    current: PortState, from_: frozenset[PortState], requested: PortState
+) -> None:
+    """A verb that leaves only `from_` asks to move `current` to `requested`.
+    Raises `IllegalTransition` unless both the verb and the table allow it."""
+    if current not in from_:
+        raise IllegalTransition(current, requested)
+    assert_transition(current, requested)

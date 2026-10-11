@@ -37,6 +37,7 @@ are [DATA.md](DATA.md); Intan recording is [RECORDING.md](RECORDING.md).
 - [Port state machine](#port-state-machine)
   - [States](#states)
   - [Transitions](#transitions)
+  - [Port verbs](#port-verbs)
   - [Exclusivity](#exclusivity)
 - [Flashing reset and passthrough](#flashing-reset-and-passthrough)
   - [Flashing](#flashing)
@@ -463,7 +464,8 @@ produces the observable reset.
 ## Port state machine
 
 Each of the six ports runs its own state machine. `ports/states.py` (`TRANSITIONS`, `assert_transition`)
-is the authority, and every state change goes through it.
+is the authority, and every state change goes through it, after the asking verb's own check
+([Port verbs](#port-verbs)).
 
 > [!IMPORTANT]
 > **The invariant everything here protects: a serial port has exactly one owner at a time.** Transitions
@@ -522,12 +524,48 @@ A failed *utility baseline* restore is the one `ERROR` the app acknowledges itse
 The absences carry the meaning. **Only `IDLE` reaches `IN_SESSION`** — which is why the session flash
 sequence suppresses passthrough resume. **`IN_SESSION` leads only to `IDLE` or `ERROR`**, so a running
 animal's box can't be flashed, reset or monitored out from under it. **`ERROR` is a dead end until
-acknowledged** — no timeout, no retry — so a failed flash must be acknowledged before it can be retried. A
-transition to the current state is a silent no-op.
+acknowledged** — no timeout, no retry — so a failed flash must be acknowledged before it can be retried.
+
+### Port verbs
+
+The table says which moves are ever legal; it cannot say who is asking. `FLASHING → IDLE` is how a flash
+ends, not something a console close may do, and `ERROR → IDLE` belongs to the acknowledgement alone. So
+each `PortHandler` verb names the states it leaves (the `*_FROM` sets in `ports/states.py`), and
+`assert_leaves` checks that set before the table. A verb asked for from any other state raises
+`IllegalTransition`, `ILLEGAL_TRANSITION` on the wire, and the port stays as it was.
+
+| Verb (`ports/handler.py`) | Leaves | To | Asked by |
+|---|---|---|---|
+| `open_passthrough` | `IDLE` | `PASSTHROUGH` | `port.passthrough.open`, identify, a Debug flash's console |
+| `close_passthrough` | `PASSTHROUGH` | `IDLE` | `port.passthrough.close`, identify |
+| `release_for(target, from_=…)` | `from_` | `FLASHING` or `RESETTING` | the flash queue, `port.reset` |
+| `finish_to_idle` | `FLASHING`, `RESETTING` | `IDLE` | a flash or reset landing |
+| `resume_passthrough` | `FLASHING`, `RESETTING` | `PASSTHROUGH` | a flash or reset giving back the console it took |
+| `claim_session` | `IDLE` | `IN_SESSION` | the session runner |
+| `SessionClaim.release` | `IN_SESSION` (its own claim) | `IDLE` | the session runner |
+| `acknowledge_error` | `ERROR` | `IDLE` | `port.error.ack`, a [failed restore](#failed-restores) |
+| `force_error` | any | `ERROR` | a failure |
+
+`release_for`'s `from_` is what the caller may take: `IDLE_ONLY` for the utility baseline, `IDLE_OR_CONSOLE`
+for a flash or reset a person asked for (`TAKES` in `ports/flashing.py`, `PortManager.reset`). Its
+refusal is `TakeRefused`, an `IllegalTransition` that means the port was not taken and nothing ran; the
+flash queue reports a refused restore as `busy`. A refusal once the port is held, landing a flash whose
+port left `FLASHING` during the upload, is a failed flash: the row fails and the board carries nothing
+anyone can name.
+
+Acknowledging a port that is already `IDLE` changes nothing, so a second window's acknowledgement is not an
+error. A console close that reaches a port a flash has taken, or one in `ERROR`, is refused:
+
+- The frontend closes consoles on unmount by the last state it saw, or none (`useHandshakeTest.ts`,
+  `NodeDetail.tsx`, `AllBoxesPanel.tsx`), and those closes ignore the refusal.
+- The handshake test closes a console before re-opening it; a refusal there ends the test as `failed`,
+  reading the box as busy.
+- A close the operator clicks reports it.
 
 ### Exclusivity
 
-- Entering `FLASHING` or `RESETTING` **force-releases `PASSTHROUGH`** first, closing the port cleanly.
+- Entering `FLASHING` or `RESETTING` **force-releases `PASSTHROUGH`** first, closing the port cleanly,
+  when the caller may take a console ([Port verbs](#port-verbs)).
 - **Auto-resume:** a port in `PASSTHROUGH` immediately before a flash or reset returns to it afterwards,
   so the user sees the new sketch's output without another click.
 - **A session or baseline flash suppresses the resume**, so every box lands in `IDLE` for the runner or
@@ -585,7 +623,7 @@ carries is recorded ([TASKS.md](TASKS.md#the-rig-definition)).
 |---|---|---|---|---|---|
 | `session` | `sessions.flash`, the placement walk | read from the held mapping **when the job runs** | waits for `IDLE` or `PASSTHROUGH` | `IDLE` | no |
 | `debug` | `flash.enqueue`, Debug Mode | the one asked for | waits for `IDLE` or `PASSTHROUGH` | a console, at the baud sent | yes |
-| `baseline` | the utility baseline's `ensure` | the box utility | never waits: decides at its turn | `IDLE` | — |
+| `baseline` | the utility baseline's `ensure` | the box utility | never waits: decides at its turn, takes `IDLE` only | `IDLE` | — |
 
 A waiting job gives up after `PORT_WAIT_S` (three minutes, `ports/flashing.py`); a port in `ERROR` or a box
 with no board fails it at once. One job failing never stops the rest. `flash.cancel` drops queued session
@@ -599,10 +637,9 @@ Debug Mode's flash dialogs only ask and render.
 
 > [!CAUTION]
 > **Nothing else may call `PortManager.flash`.** A second caller is a second queue: two compiles at once,
-> and a baseline restore that checked `IDLE` before waiting behind another flash. A queued restore decides
-> whether to flash in its `prepare`, synchronously, with **no `await` between that decision and the flash
-> taking the port**, so "only an `IDLE` port" holds at the moment it matters
-> ([Three rules it never breaks](#three-rules-it-never-breaks)).
+> and two flashes racing for one box. What a flash may take is the queue's to say, by origin (`TAKES` in
+> `ports/flashing.py`, passed as `from_`); a new caller must pass `IDLE_ONLY` unless a person asked for
+> this flash, or it takes their console ([Port verbs](#port-verbs)).
 
 > [!CAUTION]
 > **A session job reads its sketch from the mapping when it runs, never when it was queued.** A mapping
@@ -728,9 +765,12 @@ its console open, because the Debug flash that pinned it ends in that console.
 ### Three rules it never breaks
 
 > [!CAUTION]
-> **Only an `IDLE` port is ever touched.** Entering `FLASHING` would force-release a `PASSTHROUGH`
-> console — right when a user asks to flash, wrong for a background restore. The check is on the port
-> already being idle, not on the transition being legal.
+> **Only an `IDLE` port is ever touched.** Entering `FLASHING` may force-release a `PASSTHROUGH`
+> console — right when a user asks to flash, wrong for a background restore. A restore's flash takes
+> `IDLE_ONLY` (`TAKES` in `ports/flashing.py`), so `release_for` refuses any other port at the take and the
+> box reads `busy`, not `failed` ([Port verbs](#port-verbs)). `_decide` checks `IDLE` too, only to avoid
+> queuing a flash that would be refused. Identify opens a console only on an `IDLE` port
+> (`_open_if_idle`) and closes only one it opened.
 
 > [!CAUTION]
 > **A confirmed session mapping holds the whole rig** — `hold()` at `sessions.confirmMapping`, `release()`
@@ -1084,7 +1124,7 @@ at any point before the run's release, the writer's finalize included, leaves th
 *The box's own panel names the fault. **Acknowledge** sends `port.error.ack`, the only way out of `ERROR`.
 The operator's procedure is [USER-GUIDE.md](USER-GUIDE.md#when-a-box-shows-error-or-a-board-disconnects).*
 
-Every way a run ends, side by side (`SessionRunner.finalize_box`, `end_all`, `_on_lost`):
+Every way a run ends, side by side (`SessionRunner.finalize_box`, `end_all`, and the claim's `on_lost`):
 
 ```mermaid
 flowchart TD

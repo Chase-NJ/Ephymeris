@@ -12,10 +12,12 @@ is a box whose firmware nobody knows.
 Two rules keep this from being hostile:
 
 * **A restore only ever takes an `IDLE` port.** Never a console the user has
-  open, never a flash, never a running session. Entering `FLASHING` would
-  happily force-release `PASSTHROUGH` (`ARCHITECTURE.md#exclusivity`) — that
-  is exactly what must not happen here, so the check is on `IDLE` rather than
-  on the transition being legal.
+  open, never a flash, never a running session. Entering `FLASHING` may
+  force-release `PASSTHROUGH` (`ARCHITECTURE.md#exclusivity`) — exactly what
+  must not happen here — so a restore's flash job takes `IDLE_ONLY`
+  (`ports/flashing.py`'s `TAKES`), and `PortHandler.release_for` refuses
+  anything else. `_decide` checks `IDLE` too, but only to report the box as
+  busy rather than queue a flash that would be refused.
 * **A confirmed session mapping holds the whole rig.** Between
   `sessions.confirmMapping` and the session ending, boxes carry task sketches
   and land in `IDLE` constantly; restoring then would erase the very sketch the
@@ -45,7 +47,7 @@ from typing import Any, Awaitable, Callable, Iterable
 from .ports.flashing import FlashJob, FlashQueue, sketch_name
 from .ports.handler import PortBusy
 from .ports.manager import BoardNotDetected, PortManager, PortNotBound
-from .ports.states import IllegalTransition, PortState
+from .ports.states import IllegalTransition, PortState, TakeRefused
 from .settings import BOX_COUNT, SidecarSettings
 from .tasks import profile as task_profile
 from .tasks.profile import TaskProfile
@@ -281,9 +283,9 @@ class UtilityBaseline:
         """Decide, as the queue is about to flash, whether this box still
         wants the utility: the folder to flash, or None to leave it.
 
-        Runs under the rig definition's read side and with no `await` between
-        it and the flash taking the port, so "only an IDLE port" holds at the
-        moment that matters, not at the moment the restore was queued.
+        Runs under the rig definition's read side, at the job's turn rather
+        than when the restore was queued. "Only an IDLE port" does not rest on
+        it: the flash itself takes only `IDLE` (`ports/flashing.py`'s `TAKES`).
         """
         state = self._boxes[box]
         before = (state.state, state.detail)
@@ -319,7 +321,7 @@ class UtilityBaseline:
         port_state = self._ports.handler(box).state
         if port_state is not PortState.IDLE:
             # Not a fault either: a console, a flash, or a run legitimately
-            # owns this port, and taking it back would be the bug.
+            # owns this port. The flash would refuse it; say so instead.
             state.state, state.detail = "busy", f"port is {port_state.value}"
             return None
         if self._carries(box, entry.path) and not force:
@@ -335,6 +337,10 @@ class UtilityBaseline:
         if exc is None:
             state.state, state.detail, state.failed = "ready", None, False
             state.pinned = False
+        elif isinstance(exc, TakeRefused):
+            # The flash refused a port that was no longer IDLE at the take:
+            # nothing was flashed, and the box is busy, not failed.
+            state.state, state.detail = "busy", f"port is {exc.current.value}"
         else:
             state.state = "failed"
             state.detail = str(exc)

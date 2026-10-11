@@ -29,7 +29,7 @@ import serial
 from ..boards.tool import BoardTool, DetectedBoard
 from ..settings import BOX_COUNT, SidecarSettings
 from .handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine, PortHandler, SessionClaim
-from .states import PortState
+from .states import IDLE_ONLY, IDLE_OR_CONSOLE, IllegalTransition, PortState
 
 log = logging.getLogger(__name__)
 
@@ -231,13 +231,18 @@ class PortManager:
         libraries_path: str | None,
         on_progress: PhaseProgress,
         suppress_passthrough_resume: bool = False,
+        *,
+        from_: frozenset[PortState] = IDLE_ONLY,
     ) -> tuple[PortState, bool]:
         """Compile + upload (`ARCHITECTURE.md#flashing`). Called only by the
         flash queue (`ports/flashing.py`), which keeps it to one at a time.
 
-        Entering FLASHING force-releases PASSTHROUGH first, and on success the
-        prior passthrough is auto-resumed at its old baud so the user sees the
-        new sketch's output without an extra click (`ARCHITECTURE.md#exclusivity`). Failures land in
+        `from_` is what this flash may take (`PortHandler.release_for`): a
+        port in any other state raises `TakeRefused` before anything starts.
+        An `IllegalTransition` raised later means the port left `FLASHING`
+        during the upload and could not be landed: a failed flash. Taking `PASSTHROUGH` force-releases it first, and on success
+        the prior passthrough is auto-resumed at its old baud so the user sees
+        the new sketch's output without an extra click (`ARCHITECTURE.md#exclusivity`). Failures land in
         ERROR with the parsed message — never a silent fall back to IDLE.
 
         `suppress_passthrough_resume` forces the port to IDLE afterward instead,
@@ -248,7 +253,7 @@ class PortManager:
         handler = self.handler(box)
         prior_baud = handler.baud or self._settings.default_baud
         was_passthrough = handler.release_for(
-            PortState.FLASHING, f"flashing {sketch_name}"
+            PortState.FLASHING, f"flashing {sketch_name}", from_=from_
         )
         # The session flow wants IDLE regardless of the pre-flash state.
         resume = was_passthrough and not suppress_passthrough_resume
@@ -279,20 +284,26 @@ class PortManager:
             handler.force_error(f"flash failed: {exc}")
             raise
 
+        # Recorded only once the port has landed: a flash whose landing is
+        # refused has failed, and carries nothing anyone can name.
+        landed = self._conclude(handler, address, prior_baud, resume,
+                                f"flashed {sketch_name}")
         self._carried[box] = CarriedSketch(sketch_dir, fingerprint)
-        return self._conclude(handler, address, prior_baud, resume,
-                              f"flashed {sketch_name}")
+        return landed
 
     async def reset(self, box: int) -> tuple[PortState, bool]:
         """DTR-toggle reset (`ARCHITECTURE.md#reset`).
 
         A serial-layer operation, deliberately not routed through arduino-cli.
-        Auto-resumes passthrough afterward if that was the prior state (`ARCHITECTURE.md#exclusivity`).
+        Only ever asked for by a person, so it may take a console, and resumes
+        it afterward (`ARCHITECTURE.md#exclusivity`).
         """
         address = self.resolve_address(box)
         handler = self.handler(box)
         prior_baud = handler.baud or self._settings.default_baud
-        was_passthrough = handler.release_for(PortState.RESETTING, "reset (DTR toggle)")
+        was_passthrough = handler.release_for(
+            PortState.RESETTING, "reset (DTR toggle)", from_=IDLE_OR_CONSOLE
+        )
 
         try:
             # Blocking serial work stays off the event loop.
@@ -334,12 +345,15 @@ class PortManager:
         was_passthrough: bool,
         reason: str,
     ) -> tuple[PortState, bool]:
-        """Land the port after a flash/reset: auto-resume or return to IDLE."""
+        """Land the port after a flash/reset: auto-resume or return to IDLE.
+        Raises `IllegalTransition` if the port has left `FLASHING`/`RESETTING`."""
         if was_passthrough:
             try:
-                handler.open_passthrough(address, baud)
+                handler.resume_passthrough(address, baud)
                 return handler.state, True
-            except Exception as exc:  # noqa: BLE001 - handler is already in ERROR
+            except IllegalTransition:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the open failed; handler is in ERROR
                 log.warning(
                     "box %d: auto-resume failed after %s: %s", handler.box, reason, exc
                 )

@@ -21,7 +21,12 @@ from ephymeris_sidecar.ports.handler import (
     PortHandler,
     RING_CAPACITY,
 )
-from ephymeris_sidecar.ports.states import IllegalTransition, PortState
+from ephymeris_sidecar.ports.states import (
+    IDLE_OR_CONSOLE,
+    IllegalTransition,
+    PortState,
+    TakeRefused,
+)
 
 
 class FakeSerial:
@@ -128,6 +133,10 @@ def enter(handler: PortHandler, state: PortState) -> None:
     """Put a fresh handler in `state` the way the app does."""
     if state is PortState.IN_SESSION:
         handler.claim_session("/dev/fake", 115200, "START", lambda _seed: None, lambda _c, _t: None)
+    elif state is PortState.PASSTHROUGH:
+        handler.open_passthrough("/dev/fake", 115200)
+    elif state is PortState.ERROR:
+        handler.force_error("test")
     elif state is not PortState.IDLE:
         handler.release_for(state, "test")
 
@@ -340,7 +349,9 @@ def test_release_from_passthrough_reports_that_it_should_resume(fake_port) -> No
     handler, _ = make_handler()
     handler.open_passthrough("/dev/fake", 115200)
 
-    should_resume = handler.release_for(PortState.FLASHING, "flash requested")
+    should_resume = handler.release_for(
+        PortState.FLASHING, "flash requested", from_=IDLE_OR_CONSOLE
+    )
 
     assert should_resume is True
     assert handler.state is PortState.FLASHING
@@ -359,3 +370,118 @@ def test_error_is_acknowledged_back_to_idle() -> None:
     assert handler.state is PortState.ERROR
 
     assert handler.acknowledge_error() is PortState.IDLE
+
+
+# --- each verb names the states it leaves (`ARCHITECTURE.md#port-verbs`) ----
+#
+# `TRANSITIONS` says which moves are ever legal; it cannot say who is asking.
+# `FLASHING → IDLE` is legal because a flash lands there, not so a console
+# close can free a port mid-upload; `ERROR → IDLE` belongs to the
+# acknowledgement. Each verb refuses any state it does not leave, and leaves
+# the port as it was.
+
+S = PortState
+
+#: verb → (the call, the states it is refused from).
+REFUSED_FROM = {
+    "close_passthrough": (
+        lambda h: h.close_passthrough(),
+        [S.FLASHING, S.RESETTING, S.IN_SESSION, S.ERROR],
+    ),
+    "finish_to_idle": (
+        lambda h: h.finish_to_idle("done"),
+        [S.PASSTHROUGH, S.IN_SESSION, S.ERROR],
+    ),
+    "acknowledge_error": (
+        lambda h: h.acknowledge_error(),
+        [S.PASSTHROUGH, S.FLASHING, S.RESETTING, S.IN_SESSION],
+    ),
+    "open_passthrough": (
+        lambda h: h.open_passthrough("/dev/fake", 115200),
+        [S.PASSTHROUGH, S.FLASHING, S.RESETTING, S.IN_SESSION, S.ERROR],
+    ),
+    # No `from_`: what a background job passes, which takes only an idle port.
+    "release_for": (
+        lambda h: h.release_for(S.FLASHING, "flash requested"),
+        [S.PASSTHROUGH, S.FLASHING, S.RESETTING, S.IN_SESSION, S.ERROR],
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("verb", "state"),
+    [(verb, state) for verb, (_call, states) in REFUSED_FROM.items() for state in states],
+)
+def test_a_verb_refuses_a_state_it_does_not_leave(fake_port, verb: str, state: PortState) -> None:
+    handler, changes = make_handler()
+    enter(handler, state)
+    before = announced(changes)
+    opened = list(fake_port)
+
+    with pytest.raises(IllegalTransition):
+        REFUSED_FROM[verb][0](handler)
+
+    assert handler.state is state
+    assert announced(changes) == before
+    # Nothing it held was closed, and nothing new was opened.
+    if state is S.PASSTHROUGH:
+        assert not opened[0].closed
+    if state is not S.IN_SESSION:  # whose own thread opens the port when it likes
+        assert fake_port == opened
+
+
+def test_only_the_acknowledgement_leaves_error(fake_port) -> None:
+    handler, changes = make_handler()
+    handler.force_error("board vanished")
+    for verb, (call, _states) in REFUSED_FROM.items():
+        if verb == "acknowledge_error":
+            continue
+        with pytest.raises(IllegalTransition):
+            call(handler)
+    assert handler.state is PortState.ERROR
+
+    assert handler.acknowledge_error() is PortState.IDLE
+    assert announced(changes) == [(S.IDLE, S.ERROR), (S.ERROR, S.IDLE)]
+
+
+@pytest.mark.parametrize("state", [S.FLASHING, S.RESETTING])
+def test_a_flash_or_reset_lands_in_idle_or_back_in_its_console(fake_port, state: PortState) -> None:
+    handler, _ = make_handler()
+    enter(handler, state)
+    assert handler.finish_to_idle("done") is S.IDLE
+
+    enter(handler, state)
+    assert handler.resume_passthrough("/dev/fake", 115200) is S.PASSTHROUGH
+
+
+def test_release_for_hands_a_port_only_to_a_flash_or_reset() -> None:
+    handler, _ = make_handler()
+    with pytest.raises(ValueError):
+        handler.release_for(S.IN_SESSION, "not a flash")
+    assert handler.state is S.IDLE
+
+
+def test_a_refused_take_says_the_port_was_not_taken(fake_port) -> None:
+    """`TakeRefused` is how the flash queue tells "not taken" from a landing
+    refused after the upload."""
+    handler, _ = make_handler()
+    handler.open_passthrough("/dev/fake", 115200)
+    with pytest.raises(TakeRefused) as refused:
+        handler.release_for(S.FLASHING, "a restore")
+    assert (refused.value.current, refused.value.requested) == (S.PASSTHROUGH, S.FLASHING)
+
+
+def test_a_lost_claim_hears_of_it_even_if_the_announcement_raises(fake_port) -> None:
+    def announce(*_args) -> None:  # noqa: ANN002
+        raise RuntimeError("a listener broke")
+
+    handler = PortHandler(1, _loop, announce)
+    _created.append(handler)
+    lost: list[str] = []
+    handler.claim_session(
+        "/dev/fake", 115200, "START", lambda _seed: None, lambda _c, _t: None, lost.append
+    )
+    handler.force_error("board went away")
+    _loop.run_until_complete(asyncio.sleep(0))
+
+    assert lost == ["board went away"]

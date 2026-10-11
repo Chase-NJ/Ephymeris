@@ -1005,6 +1005,11 @@ was. `lib/sessions/setupResume.ts` remembers two things:
   mid-placement picks up again at the first box no flash was asked for, read from the
   [flash queue](#the-flash-queue), whose flashes carried on meanwhile. A Boxes draft holds each box's sketch and the operator's own overrides, never the merged
   config, so a default changed during the visit is followed on return ([TASKS.md](TASKS.md#three-layer-merge)).
+  A Record draft follows the mapping: a box still mapped keeps its row as typed, a box no longer mapped is
+  dropped, and a newly mapped one starts from the recording defaults (`reconcileRows`,
+  `lib/intan/recordingSetup.ts`) and, with no remembered port RHX still reports, is guessed onto a free one
+  (`assignPorts`), so a return to Boxes that moved an animal cannot leave `intan.configure` naming the box it
+  left.
 
 The memory is dropped on reaching Mission Control and by a deliberate Cancel or End session, and the offer is
 withheld whenever `sessions.active` no longer reports the session, because the sidecar is the authority on
@@ -1587,7 +1592,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 |---|---|---|
 | `main.tsx`, `App.tsx` | Provider trees (main, scope) and the router | [Routes](#routes) |
 | `lib/ws/`, `lib/settings/`, `lib/hardware/` | Port, its client and fake, and protocol; settings `schema.ts`; hardware store, `useHandshakeTest.ts`, `useRig.ts` | [Wire protocol](#wire-protocol), [Settings](#settings) |
-| `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `flow.ts` and `useSessionFlow`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
+| `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `flow.ts` and `useSessionFlow`, `placementWalk.ts` (the Boxes step's rules and walk), `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults, `recordingSetup.ts` (the Record step's rows, readiness and `intan.configure`) and scope maths | [Session lifecycle](#session-lifecycle) |
 | `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `editorLayout.ts`, `orrery.ts`, `useGlidingWidth.ts`, `useLiveNode.ts`; task commands, `lines.ts` (odor lines and onsets), `selection.ts` (mode scope); vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine), [TASKS.md](TASKS.md#editor) |
 | `lib/exports/` | `jobs.ts`, the export progress store | [Export progress](#export-progress) |
 | `lib/updates/`, `components/settings/UpdatesTile.tsx` | The update store and checks, `installBlocker`, the Settings tile | [Updates](#updates) |

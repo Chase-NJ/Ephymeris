@@ -23,7 +23,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable
 
-from ..intan.service import IntanNotReady
 from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.handler import PortBusy
 from ..ports.manager import CarriedSketch, sketch_fingerprint
@@ -488,11 +487,15 @@ class SessionLifecycle:
                 self._flashes.cancel(origins=("session",), clear=True)
                 self._runner.clear()
                 self._held = None
-            if self._intan is not None:
-                # A recording that was set up and never started. One that IS
-                # running is left alone -- `release` refuses nothing and stops
-                # nothing.
-                self._intan.release()
+            intan = self._intan
+            if intan is not None and intan.run_open_for(session_id):
+                # Start All began the recording and then no box started: nothing
+                # ran, but RHX is recording. Stop it, and keep the run on the
+                # record, since its files exist.
+                await self._stop_recording(session_id)
+            elif intan is not None:
+                # A recording that was set up and never started.
+                intan.release()
             session = await asyncio.to_thread(self._sessions.set_status, session_id, "aborted")
             await self._release_baseline()
             await self.announce()
@@ -626,11 +629,9 @@ class SessionLifecycle:
         """
         if self._intan is None or not await self._is_recording_session(session_id):
             return
-        if not self._intan.configured_for(session_id, self._runner.group_id):
-            raise IntanNotReady(
-                "This is a recording session, but no recording is set up for this "
-                "group. Finish the Recording step first."
-            )
+        # Raises the refusal that names what is wrong: nothing set up, or RHX
+        # out of reach (`RECORDING.md#when-rhx-goes-away`).
+        self._intan.refuse_unless_ready(session_id, self._runner.group_id)
         await self._intan.start_recording()
 
     async def _end_all_boxes(self, session_id: str) -> None:
@@ -639,10 +640,12 @@ class SessionLifecycle:
 
         Order is the whole point: STOP the boxes, WAIT for each to close its
         trial, and only then stop RHX -- so the last event of every animal is
-        inside the recording, with a post-roll after it.
+        inside the recording, with a post-roll after it. A recording counts
+        from its start to its stop, not by the link: with RHX unreachable the
+        boxes still get the grace period and the run is still recorded.
         """
         intan = self._intan
-        if intan is None or not intan.is_recording:
+        if intan is None or not intan.run_open_for(session_id):
             await self._runner.end_all("operator stop")
             if intan is not None:
                 intan.release()
@@ -653,7 +656,13 @@ class SessionLifecycle:
             force=intan.force_stop,
             on_waiting=intan.note_waiting,
         )
-        run = await intan.stop_recording()
+        await self._stop_recording(session_id)
+
+    async def _stop_recording(self, session_id: str) -> None:
+        """Stop RHX and append the run to the session. Bounded, and never
+        raises (`IntanService.stop_recording`)."""
+        assert self._intan is not None
+        run = await self._intan.stop_recording()
         if run is not None:
             await asyncio.to_thread(self._record_recording_run, session_id, run)
 

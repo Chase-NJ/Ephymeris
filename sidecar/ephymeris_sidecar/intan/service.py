@@ -12,9 +12,13 @@ none of that may stall or fail a behavior session. Concretely --
     the one place a failure must be loud: a recording that cannot start refuses
     before any box is started, because a behavior session silently missing its
     electrophysiology cannot be re-run;
-  * `stop_recording` swallows every RHX failure. By the time it runs the
-    animals are done; the only thing a raise could do is strand the session as
-    `running`;
+  * `stop_recording` swallows every RHX failure, and is bounded
+    (`STOP_TIMEOUT_S`). By the time it runs the animals are done; the only
+    thing a raise could do is strand the session as `running`. A stop that
+    could not reach RHX is OWED, and sent as soon as RHX answers again;
+  * a run, once started, is kept until it is stopped -- through a lost link or
+    a Stop pressed in RHX -- so the End that follows still waits for the
+    boxes, stops it and records it (`run_open_for`);
   * the data sockets are a convenience. Losing them costs the live views and
     never the recording, which RHX writes to disk on its own;
   * closing the command socket does not stop RHX recording, so neither a
@@ -86,6 +90,9 @@ SILENT_POLLS = 2
 #: baseline on disk ahead of the first event -- and likewise after the last.
 PRE_ROLL_S = 1.0
 POST_ROLL_S = 1.0
+#: The longest `set runmode stop` may take before the stop is given up on and
+#: owed. Covers the client's own wait for the change to take, with room.
+STOP_TIMEOUT_S = 12.0
 #: Live views are published this often; the histograms every other tick.
 PUBLISH_S = 0.2
 #: A scope nobody has touched for this long belonged to a window that is gone.
@@ -240,6 +247,7 @@ class IntanService:
         pre_roll_s: float = PRE_ROLL_S,
         post_roll_s: float = POST_ROLL_S,
         poll_s: float = POLL_S,
+        stop_timeout_s: float = STOP_TIMEOUT_S,
     ) -> None:
         self._loop = loop
         self._broadcast = broadcast
@@ -248,6 +256,7 @@ class IntanService:
         self._pre_roll_s = pre_roll_s
         self._post_roll_s = post_roll_s
         self._poll_s = poll_s
+        self._stop_timeout_s = stop_timeout_s
 
         self._client = RhxCommandClient(settings.intan.command_port)
         self._state = "disconnected"
@@ -255,6 +264,9 @@ class IntanService:
         self._info: dict[str, Any] = {}
         self._run_mode: str | None = None
         self._recording: Recording | None = None
+        #: A stop that could not reach RHX: the run ended in the session, and
+        #: RHX may still be in Record. Sent once RHX answers again.
+        self._stop_owed = False
         self._waiting_on: list[int] = []
         self._force_stop = asyncio.Event()
         self._last_status: dict[str, Any] | None = None
@@ -339,7 +351,22 @@ class IntanService:
 
     @property
     def is_recording(self) -> bool:
+        """RHX is recording, as far as the link can tell right now."""
         return self._state in ("recording", "stopping")
+
+    @property
+    def _run_open(self) -> bool:
+        """A recording this service started and has not stopped, whatever the
+        link says now: lost, or Stop pressed in RHX, it is still a run."""
+        recording = self._recording
+        return recording is not None and recording.started_at is not None
+
+    def run_open_for(self, session_id: str) -> bool:
+        """This session has a recording running, or one it started and has not
+        stopped yet -- which an End must still wait for, stop and record
+        (`RECORDING.md#when-rhx-goes-away`)."""
+        recording = self._recording
+        return self._run_open and recording is not None and recording.session_id == session_id
 
     @property
     def force_stop(self) -> asyncio.Event:
@@ -405,7 +432,7 @@ class IntanService:
             await self._after_connect()
 
     async def disconnect(self) -> None:
-        if self.is_recording:
+        if self._run_open:
             raise IntanNotReady("A recording is running; end it first.")
         self._close_streams()
         await self._client.close()
@@ -415,13 +442,17 @@ class IntanService:
 
     async def _after_connect(self) -> None:
         await self._refresh_info()
-        if self._state == "error" and self._recording is not None and self._run_mode == "record":
-            # RHX kept recording while we were away; pick the run back up.
-            self._set_state("recording", None)
-            await self._open_streams()
+        if self._run_open:
+            if self._run_mode == "record":
+                # RHX kept recording while we were away; pick the run back up.
+                self._set_state("recording", None)
+                await self._open_streams()
+            else:
+                self._set_state("error", _stopped_in_rhx(self._run_mode))
         elif self._state in ("disconnected", "error"):
             self._recording = None
             self._set_state("idle", None)
+        await self._send_owed_stop()
         await self.publish()
 
     async def _refresh_info(self) -> None:
@@ -477,6 +508,7 @@ class IntanService:
         try:
             self._run_mode = await self._client.run_mode()
             self._silent_polls = 0
+            await self._send_owed_stop()
         except RhxError as exc:
             # A socket that is still open but did not answer: allow one.
             if self._client.connected:
@@ -487,11 +519,7 @@ class IntanService:
             await self.publish()
             return
         if self._state == "recording" and self._run_mode != "record":
-            self._set_state(
-                "error",
-                f"RHX is no longer recording (run mode is {self._run_mode!r}) — it was "
-                "stopped from RHX itself. The behavior session is unaffected.",
-            )
+            self._set_state("error", _stopped_in_rhx(self._run_mode))
         await self.publish()
 
     async def _lost(self, why: str) -> None:
@@ -509,6 +537,8 @@ class IntanService:
                 f"Lost contact with RHX ({why}) RHX keeps recording on its own; "
                 "reconnecting. The behavior session is unaffected.",
             )
+        elif self._run_open:
+            pass  # already `error`, stopped from RHX: still a run to close out
         else:
             self._recording = None
             self._set_state("disconnected", None)
@@ -523,13 +553,14 @@ class IntanService:
         base_filename: str,
         notes: tuple[str, str, str] = ("", "", ""),
     ) -> None:
-        if self.is_recording:
+        if self._run_open:
             raise IntanNotReady("A recording is already running.")
         if not self._client.connected:
             await self.connect()
         client = self._client
 
         await self._refresh_info()
+        await self._send_owed_stop()
         if self._run_mode == "record" or self._run_mode == "trigger":
             raise IntanNotReady("RHX is already recording. Stop it in RHX first.")
         if self._run_mode == "run":
@@ -723,8 +754,8 @@ class IntanService:
 
     def release(self) -> None:
         """The session let go without recording (abandon, or a group that
-        never started). Refuses nothing; a running recording is left alone."""
-        if self.is_recording:
+        never started). Refuses nothing; a started recording is left alone."""
+        if self._run_open:
             return
         if self._recording is not None:
             self._recording = None
@@ -733,13 +764,34 @@ class IntanService:
                 self._set_state("idle", None)
             self._loop.create_task(self.publish())
 
-    def configured_for(self, session_id: str, group_id: str) -> bool:
+    def refuse_unless_ready(self, session_id: str, group_id: str) -> None:
+        """Raise unless this group's recording is set up and RHX can be told to
+        start it, or is recording it already. The refusal says what is actually
+        wrong: a lost link sends the operator to RHX, not back to a Recording
+        step they finished."""
         r = self._recording
-        return (
-            r is not None
-            and r.session_id == session_id
-            and r.group_id == group_id
-            and self._state in ("configured", "recording")
+        ours = r is not None and r.session_id == session_id and r.group_id == group_id
+        if ours and self._state in ("configured", "recording"):
+            return
+        if ours and self._run_open and not self._client.connected:
+            raise RhxUnavailable(
+                "Lost contact with RHX, which keeps recording this group on its own. "
+                "No box can start until it is back: Ephymeris is reconnecting, and if it "
+                "does not, open Network → Remote TCP Control in RHX and press Connect."
+            )
+        if ours and self._run_open:
+            raise IntanNotReady(
+                "RHX is no longer recording this group — it was stopped from RHX itself. "
+                "Switch Group or End the session to close the recording out."
+            )
+        if not self._client.connected:
+            raise RhxUnavailable(
+                "RHX is not reachable, so this group's recording cannot start. Once it "
+                "is connected again, set the recording up on the Recording step."
+            )
+        raise IntanNotReady(
+            "This is a recording session, but no recording is set up for this "
+            "group. Finish the Recording step first."
         )
 
     # --- record -----------------------------------------------------------
@@ -784,7 +836,9 @@ class IntanService:
         self._loop.create_task(self.publish())
 
     async def stop_recording(self) -> dict[str, Any] | None:
-        """Stop saving and hand back the run's record. NEVER RAISES."""
+        """Stop saving and hand back the run's record. NEVER RAISES, and is
+        bounded: with RHX unreachable the run is still handed back, and the
+        stop is owed until RHX answers again (`_send_owed_stop`)."""
         recording = self._recording
         if recording is None or recording.started_at is None:
             self.release()
@@ -795,13 +849,14 @@ class IntanService:
         message: str | None = None
         try:
             await asyncio.sleep(self._post_roll_s)
-            await self._client.set_run_mode("stop")
-            self._run_mode = "stop"
+            await self._stop_rhx()
         except Exception as exc:  # noqa: BLE001 - the animals are done; never raise
-            log.error("couldn't stop the RHX recording: %s", exc)
+            log.error("couldn't stop the RHX recording: %s", _why(exc))
+            self._stop_owed = True
             message = (
-                f"Ephymeris could not stop the RHX recording ({exc}). "
-                "Stop it from RHX; the data it has written is safe."
+                f"Ephymeris could not stop the RHX recording ({_why(exc)}). It stops it "
+                "as soon as RHX answers again. Stop it from RHX to stop it sooner; the "
+                "data it has written is safe."
             )
         recording.ended_at = _now()
         self._recording = None
@@ -813,6 +868,38 @@ class IntanService:
             self._set_state("idle" if self._client.connected else "disconnected", None)
         await self.publish()
         return recording.to_json()
+
+    async def _stop_rhx(self) -> None:
+        """`set runmode stop`, bounded by `stop_timeout_s`. Raises on failure."""
+        await asyncio.wait_for(self._client.set_run_mode("stop"), self._stop_timeout_s)
+        self._run_mode = "stop"
+
+    async def _send_owed_stop(self) -> None:
+        """Stop the recording an earlier stop could not reach, once RHX answers.
+
+        Only while RHX is still in Record and no run of ours is open: a run
+        stopped by hand meanwhile settles the debt, and a run of ours started
+        since cannot exist, because `configure` sends the owed stop first.
+        """
+        if not self._stop_owed or self._run_open or not self._client.connected:
+            return
+        if self._run_mode not in ("record", "trigger"):
+            self._stop_owed = False
+            return
+        try:
+            await self._stop_rhx()
+        except Exception as exc:  # noqa: BLE001 - still owed; the next poll retries
+            log.error("couldn't send the owed RHX stop: %s", _why(exc))
+            self._set_state(
+                "error",
+                "RHX is still recording a run whose session has ended, and Ephymeris "
+                f"could not stop it ({_why(exc)}). Stop it from RHX.",
+            )
+            return
+        log.info("sent the RHX stop an unreachable End owed")
+        self._stop_owed = False
+        if self._state == "error":
+            self._set_state("idle", None)
 
     # --- what the runner tells us ----------------------------------------
 
@@ -1250,6 +1337,20 @@ def _b(value: Any) -> str:
 def _note(text: str) -> str:
     """A note is one `set` value: no `;` (it would end the command)."""
     return (text.replace(";", ",").replace("\n", " ").strip() or "-")[:200]
+
+
+def _stopped_in_rhx(run_mode: str | None) -> str:
+    return (
+        f"RHX is no longer recording (run mode is {run_mode!r}) — it was "
+        "stopped from RHX itself. The behavior session is unaffected."
+    )
+
+
+def _why(exc: BaseException) -> str:
+    """An exception as words. A timeout's own text is empty."""
+    if isinstance(exc, asyncio.TimeoutError):
+        return "RHX did not answer in time"
+    return str(exc) or type(exc).__name__
 
 
 def _now() -> str:

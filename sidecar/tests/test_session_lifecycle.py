@@ -120,8 +120,12 @@ class FakeIntan:
         """What the Record step's `intan.configure` leaves behind."""
         self.set_up_for = (session_id, group_id)
 
-    def configured_for(self, session_id: str, group_id: str) -> bool:
-        return self.set_up_for == (session_id, group_id)
+    def refuse_unless_ready(self, session_id: str, group_id: str) -> None:
+        if self.set_up_for != (session_id, group_id):
+            raise IntanNotReady("Finish the Recording step first.")
+
+    def run_open_for(self, session_id: str) -> bool:
+        return self.is_recording and self.set_up_for is not None and self.set_up_for[0] == session_id
 
     async def start_recording(self) -> None:
         self.log.append("rhx start")
@@ -129,9 +133,13 @@ class FakeIntan:
             await self.gate.wait()
         self.is_recording = True
 
-    async def stop_recording(self) -> dict[str, Any]:
+    async def stop_recording(self) -> dict[str, Any] | None:
+        if not self.is_recording:
+            self.release()
+            return None
         self.log.append("rhx stop")
         self.is_recording = False
+        self.set_up_for = None
         return {"file": "run1.rhd"}
 
     def release(self) -> None:
@@ -1273,30 +1281,48 @@ async def intan(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
         await rhx.stop()
 
 
+def _ready(service, session_id: str, group_id: str) -> bool:  # noqa: ANN001
+    from ephymeris_sidecar.intan.client import RhxUnavailable
+
+    try:
+        service.refuse_unless_ready(session_id, group_id)
+    except (IntanNotReady, RhxUnavailable):
+        return False
+    return True
+
+
 async def test_a_recording_is_set_up_for_one_session_and_group(intan) -> None:  # noqa: ANN001
     service, set_up = intan
-    assert not service.configured_for("s1", "g1")
+    assert not _ready(service, "s1", "g1")
     await set_up("s1", "g1")
-    assert service.configured_for("s1", "g1")
-    assert not service.configured_for("s1", "g2")
-    assert not service.configured_for("s2", "g1")
+    assert _ready(service, "s1", "g1")
+    assert not _ready(service, "s1", "g2")
+    assert not _ready(service, "s2", "g1")
 
 
 async def test_a_recording_runs_from_start_to_stop(intan) -> None:  # noqa: ANN001
     service, set_up = intan
     await set_up("s1", "g1")
-    assert not service.is_recording
+    assert not service.is_recording and not service.run_open_for("s1")
     await service.start_recording()
     assert service.is_recording
+    assert service.run_open_for("s1") and not service.run_open_for("s2")
     assert await service.stop_recording() is not None
-    assert not service.is_recording
+    assert not service.is_recording and not service.run_open_for("s1")
+
+
+async def test_stopping_a_recording_that_never_started_lets_go(intan) -> None:  # noqa: ANN001
+    service, set_up = intan
+    await set_up("s1", "g1")
+    assert await service.stop_recording() is None
+    assert not _ready(service, "s1", "g1")
 
 
 async def test_letting_go_forgets_a_set_up_that_never_recorded(intan) -> None:  # noqa: ANN001
     service, set_up = intan
     await set_up("s1", "g1")
     service.release()
-    assert not service.configured_for("s1", "g1")
+    assert not _ready(service, "s1", "g1")
 
 
 async def test_letting_go_leaves_a_running_recording_alone(intan) -> None:  # noqa: ANN001
@@ -1304,5 +1330,5 @@ async def test_letting_go_leaves_a_running_recording_alone(intan) -> None:  # no
     await set_up("s1", "g1")
     await service.start_recording()
     service.release()
-    assert service.is_recording
+    assert service.is_recording and service.run_open_for("s1")
     await service.stop_recording()

@@ -83,7 +83,9 @@ async def rig():
     """A service wired to a fake RHX, with boxes 1 and 3 bound to DIN 2 and 5."""
     made: list[Harness] = []
 
-    async def make(*, sync: bool = True, dins=None, poll_s: float = 0.05, **fake_kwargs) -> Harness:
+    async def make(
+        *, sync: bool = True, dins=None, poll_s: float = 0.05, stop_timeout_s: float = 1.0, **fake_kwargs
+    ) -> Harness:
         fake = await FakeRhx(**fake_kwargs).start()
         events: list[dict] = []
 
@@ -98,6 +100,7 @@ async def rig():
             pre_roll_s=0.0,
             post_roll_s=0.0,
             poll_s=poll_s,
+            stop_timeout_s=stop_timeout_s,
         )
         service.start()
         harness = Harness(fake, service, events)
@@ -248,6 +251,46 @@ async def test_stop_returns_the_run_and_never_raises_even_with_rhx_dead(rig, tmp
     assert run is not None and run["groupId"] == "g1" and run["endedAt"]
     status = h.service.status_json()
     assert status["state"] == "error" and "Stop it from RHX" in status["message"]
+
+
+async def test_a_stop_rhx_never_answers_is_bounded_and_sent_once_it_does(rig, tmp_path):
+    """THE RULE at End: a wedged RHX costs the stop `stop_timeout_s`, not the
+    session. The stop is owed, and the first poll RHX answers sends it."""
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    h.fake.silent = True
+
+    started = asyncio.get_running_loop().time()
+    run = await h.service.stop_recording()
+
+    assert asyncio.get_running_loop().time() - started < 2.0
+    assert run is not None and run["endedAt"]
+    assert h.fake.params["runmode"] == "Record"
+    assert "did not answer in time" in h.service.status_json()["message"]
+
+    h.fake.silent = False
+    await h.service._poll_once()
+    await h.until(lambda: h.fake.params["runmode"] == "Stop")
+    assert h.service.status_json()["state"] == "idle"
+
+
+async def test_an_owed_stop_is_dropped_when_rhx_was_stopped_by_hand(rig, tmp_path):
+    """Stopped from RHX before the link came back: nothing is left to stop, and
+    the next recording RHX is put in is not touched."""
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    h.fake.silent = True
+    await h.service.stop_recording()
+
+    h.fake.params["runmode"] = "Stop"
+    h.fake.silent = False
+    await h.service._poll_once()
+    h.fake.params["runmode"] = "Record"
+    await h.service._poll_once()
+    await asyncio.sleep(0.2)
+    assert h.fake.params["runmode"] == "Record"
 
 
 async def test_losing_rhx_mid_recording_is_loud_and_the_run_is_kept(rig, tmp_path):

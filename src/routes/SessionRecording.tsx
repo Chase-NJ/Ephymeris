@@ -106,8 +106,8 @@ export function SessionRecording() {
   }, [draftKey, config, saveRoot, editing, rows]);
 
   const sessionFolder = session?.folderPath ?? null;
-  const directory = saveDirectory(sessionFolder, saveRoot);
-  const present = useMemo(() => presentPorts(intan.ports), [intan.ports]);
+  const saveDir = saveDirectory(sessionFolder, saveRoot);
+  const portsPresent = useMemo(() => presentPorts(intan.ports), [intan.ports]);
 
   // Seed the form once the rig's boxes are in, and follow them when a return
   // to Boxes changed the mapping. Never re-seeded on an `intan.status` tick,
@@ -169,7 +169,7 @@ export function SessionRecording() {
     config,
     intan,
     settings.boxes,
-    directory,
+    saveDir,
   );
   const okCount = checks.filter((c) => c.ok).length;
 
@@ -202,7 +202,7 @@ export function SessionRecording() {
     }
   }
 
-  const portOptions = present.map((p) => ({
+  const portOptions = portsPresent.map((p) => ({
     value: p,
     label: `Port ${p}`,
     detail: `${intan.ports[p] ?? 0} ch`,
@@ -289,9 +289,9 @@ export function SessionRecording() {
                   <div className="border-b border-halo px-4 py-3">
                     <div className="text-[13px] font-medium text-starlight">Save location</div>
                     <div className="mt-1 font-mono text-[11px] break-all text-static" data-selectable>
-                      {directory || "—"}
+                      {saveDir || "—"}
                     </div>
-                    {/\s/.test(directory) && (
+                    {/\s/.test(saveDir) && (
                       <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--color-status-warning)" }}>
                         This path contains a space. If RHX does not keep it exactly as given, Ephymeris
                         refuses to start rather than let RHX record somewhere else.
@@ -405,7 +405,7 @@ export function SessionRecording() {
                                   size="regular"
                                   value={row.port}
                                   options={portOptions}
-                                  placeholder={intan.connected && present.length === 0 ? "no headstage" : "— port —"}
+                                  placeholder={intan.connected && portsPresent.length === 0 ? "no headstage" : "— port —"}
                                   className="w-40"
                                   onChange={(port) =>
                                     patchRow(row.box, {

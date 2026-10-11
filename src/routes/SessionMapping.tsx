@@ -56,6 +56,7 @@ import {
   isPlaced,
   mappingReadiness,
   placementOrder as orderOfPlacement,
+  rigDefaultsFor,
   seedMappings,
   walkReducer,
   walkStop,
@@ -67,7 +68,6 @@ import {
 } from "@/lib/sessions/setupResume";
 import {
   animalsInGroup,
-  sketchName,
   type BoxMapping,
   type TaskProfile,
 } from "@/lib/sessions/types";
@@ -229,13 +229,10 @@ export function SessionMapping() {
     }
   }
 
-  /**
-   * This rig's saved defaults for a sketch (`TASKS.md#three-layer-merge`) — the
-   * middle layer, under the operator's overrides and over the profile's own.
-   */
+  // This rig's saved defaults for a sketch, the merge's middle layer (`rigDefaultsFor`).
   const rigDefaults = useCallback(
     (sketchPath: string | null) =>
-      settings.taskDefaults[sketchName(sketchPath)] ?? {},
+      rigDefaultsFor(settings.taskDefaults, sketchPath),
     [settings.taskDefaults],
   );
 

@@ -54,9 +54,9 @@ function seedRow(box: MappedBox, defaults: RecordingDefaults): BoxRow {
  *
  * Keyed to the CURRENT boxes, never to the rows: a box still mapped keeps what
  * was typed for it, under the animal mapped there now; a box no longer mapped
- * is dropped; a newly mapped box is seeded from the remembered defaults. A
- * draft saved before Back to Boxes otherwise kept a moved animal's old box,
- * and `intan.configure` named a box with no animal on it (B5).
+ * is dropped; a newly mapped box is seeded from the remembered defaults. So a
+ * return to Boxes that moved an animal cannot leave `intan.configure` naming
+ * the box it left (`ARCHITECTURE.md#leaving-set-up`).
  *
  * The same array comes back when nothing changed, so a repeated answer from
  * the sidecar neither re-renders nor rewrites the draft. No boxes (not loaded
@@ -121,11 +121,9 @@ export function assignPorts(rows: BoxRow[], ports: Readonly<Record<string, numbe
 // --- where it saves -----------------------------------------------------------
 
 /**
- * Where RHX saves this session. Beside the behavior data by default; under a
- * root of the operator's choosing otherwise — electrophysiology is large and
- * often lives on its own drive. Either way the session's folder name is kept,
- * so the two halves of one session can be matched by eye. "" until the
- * session's folder is known.
+ * Where RHX saves this session (`RECORDING.md#record-step`): `<session>/ephys`,
+ * or the session's folder name under a chosen root. "" until the session's
+ * folder is known.
  */
 export function saveDirectory(sessionFolder: string | null, saveRoot: string | null): string {
   if (!sessionFolder) return "";

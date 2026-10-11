@@ -7,8 +7,20 @@
  */
 
 import type { Animal } from "@/lib/cohorts/types";
+import type { PortStateName } from "@/lib/ws/protocol";
 
 import { defaultConfig, sketchName, type BoxMapping, type TaskProfile } from "./types";
+
+/** `settings.taskDefaults`: this rig's saved defaults, keyed by sketch name. */
+export type TaskDefaults = Readonly<Record<string, Record<string, unknown>>>;
+
+/**
+ * This rig's saved defaults for a sketch (`TASKS.md#three-layer-merge`) — the
+ * middle layer, under the operator's overrides and over the profile's own.
+ */
+export function rigDefaultsFor(taskDefaults: TaskDefaults, sketchPath: string | null): Record<string, unknown> {
+  return taskDefaults[sketchName(sketchPath)] ?? {};
+}
 
 // --- the mapping ----------------------------------------------------------------
 
@@ -37,11 +49,7 @@ export function seedMappings(
   }));
 }
 
-/**
- * The walk order is by **box number**, never by animal: the operator is
- * walking down a bench, and sending them from box 5 to box 2 and back is how
- * an animal ends up in the wrong chamber.
- */
+/** The walk order: by box number, never by animal (`ARCHITECTURE.md#mapping-and-the-placement-walk`). */
 export function placementOrder(mappings: readonly BoxMapping[]): BoxMapping[] {
   return [...mappings].sort((a, b) => a.box - b.box);
 }
@@ -76,7 +84,7 @@ export interface MappingReadiness {
 export function mappingReadiness(
   mappings: readonly BoxMapping[],
   profiles: Profiles,
-  portStates: Readonly<Record<number, { state: string } | undefined>>,
+  portStates: Readonly<Record<number, { state: PortStateName } | undefined>>,
   configuredBoxes: ReadonlySet<number>,
 ): MappingReadiness {
   // Two animals can't share a box — reassigning one here has to displace the
@@ -126,13 +134,13 @@ export function mappingReadiness(
 export function confirmPayload(
   mappings: readonly BoxMapping[],
   profiles: Profiles,
-  taskDefaults: Readonly<Record<string, Record<string, unknown>>>,
+  taskDefaults: TaskDefaults,
 ): Array<Omit<BoxMapping, "overrides"> & { config: Record<string, unknown> }> {
   return mappings.map(({ overrides, ...m }) => ({
     ...m,
     config: defaultConfig(
       m.sketchPath ? (profiles[m.sketchPath] ?? null) : null,
-      taskDefaults[sketchName(m.sketchPath)] ?? {},
+      rigDefaultsFor(taskDefaults, m.sketchPath),
       overrides,
     ),
   }));

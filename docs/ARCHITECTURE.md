@@ -1516,7 +1516,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 |---|---|---|
 | `main.tsx`, `App.tsx` | Provider trees (main, scope) and the router | [Routes](#routes) |
 | `lib/ws/`, `lib/settings/`, `lib/hardware/` | Port, its client and fake, and protocol; settings `schema.ts`; hardware store, `useHandshakeTest.ts`, `useRig.ts` | [Wire protocol](#wire-protocol), [Settings](#settings) |
-| `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `flow.ts` and `useSessionFlow`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
+| `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `flow.ts` and `useSessionFlow`, `placementWalk.ts` (the Boxes step's rules and walk), `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults, `recordingSetup.ts` (the Record step's rows, readiness and `intan.configure`) and scope maths | [Session lifecycle](#session-lifecycle) |
 | `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `editorLayout.ts`, `orrery.ts`, `useGlidingWidth.ts`, `useLiveNode.ts`; task commands, `lines.ts` (odor lines and onsets), `selection.ts` (mode scope); vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine), [TASKS.md](TASKS.md#editor) |
 | `lib/exports/` | `jobs.ts`, the export progress store | [Export progress](#export-progress) |
 | `lib/updates/`, `components/settings/UpdatesTile.tsx` | The update store and checks, `installBlocker`, the Settings tile | [Updates](#updates) |

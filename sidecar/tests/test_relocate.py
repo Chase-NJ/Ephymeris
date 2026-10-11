@@ -608,6 +608,35 @@ def test_originals_left_to_a_later_start_do_not_hold_up_a_session(
     assert not relocate.moving(archive.db, archive.cohort.id)
 
 
+def test_a_relocate_that_loses_the_old_folder_after_its_copy_leaves_the_journal_to_retry(
+    archive: Archive, other_volume, unreachable_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B18 on the live path: the share drops between the verified copy and
+    the deletes. The records follow the copy, but nothing could be deleted,
+    so the journal stays `committed` for the next start rather than `done`."""
+    other_volume(archive.new.parent)
+    copy_tree = relocate._copy_tree
+
+    def copy_then_drop(source: Path, target: Path):  # noqa: ANN202
+        copies = copy_tree(source, target)
+        unreachable_volume(archive.old)  # the share stops answering here
+        return copies
+
+    monkeypatch.setattr(relocate, "_copy_tree", copy_then_drop)
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert archive.journal() == "committed"
+    assert archive.cohorts.get(archive.cohort.id).data_folder == str(archive.new)
+    monkeypatch.undo()  # the share answers again (and every other fake goes)
+    assert any(p.is_file() for p in archive.old.rglob("*")), "nothing was deleted"
+
+    relocate.resume(archive.db)
+
+    assert not archive.old.exists()
+    assert archive.journal() == "done"
+
+
 def test_a_relocate_still_deleting_holds_up_a_session(
     archive: Archive, other_volume, power_cut
 ) -> None:

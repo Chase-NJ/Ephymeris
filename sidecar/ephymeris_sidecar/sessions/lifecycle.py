@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable
 
 from ..ports.flashing import FlashJob, FlashQueue
-from ..ports.handler import PortBusy
 from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
 from ..tasks import profile as task_profile
@@ -76,6 +75,17 @@ class BoxRefused(Exception):
 
     def __init__(self, box: int) -> None:
         super().__init__(f"box {box} was refused")
+        self.box = box
+
+
+class StopRefused(Exception):
+    """A running box's port did not take `STOP`: it left the session, or the
+    write failed. The box is not stopping."""
+
+    def __init__(self, box: int) -> None:
+        super().__init__(
+            f"box {box} did not take STOP: its port has left the session, or the write failed"
+        )
         self.box = box
 
 
@@ -395,10 +405,7 @@ class SessionLifecycle:
         if box not in self._runner.running_boxes():
             return
         if not self._runner.stop_box(box):
-            raise BoxRefused(box) from PortBusy(
-                f"box {box} did not take STOP: its port has left the session, or the "
-                "write failed"
-            )
+            raise StopRefused(box)
 
     async def end_group(self, session_id: str) -> Session:
         """End the group on the rig and wait BETWEEN GROUPS

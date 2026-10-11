@@ -32,7 +32,13 @@ from .ports.states import IllegalTransition
 from .protocol import ErrCode
 from .rig.definition import RigInUse, VocabularyInUse, WiringWouldBreakTasks
 from .server import Args, CommandError, ErrorTable, resolve_error
-from .sessions.lifecycle import BoxRefused, MappingRefused, SessionRefused, SketchNotCarried
+from .sessions.lifecycle import (
+    BoxRefused,
+    MappingRefused,
+    SessionRefused,
+    SketchNotCarried,
+    StopRefused,
+)
 from .sessions.models import PrefixNameTaken, SessionNotFound
 from .strobes.store import StrobeRefused
 from .taskdef.model import TaskDefinitionError
@@ -66,16 +72,10 @@ def _fixed(code: str, message: str | None = None) -> Any:
 
 
 def _box_refused(exc: BoxRefused, args: Args) -> CommandError | None:
-    """A box that couldn't start or stop: its cause, answered for that box.
-
-    A refused console write (`PortBusy`) is a console code everywhere else;
-    here the port was asked to start or stop a run, which its state didn't
-    allow."""
+    """A box that couldn't start: its cause, answered for that box."""
     cause = exc.__cause__
     if cause is None:
         return None
-    if isinstance(cause, PortBusy):
-        return CommandError(ErrCode.ILLEGAL_TRANSITION, str(cause), {"box": exc.box})
     if isinstance(cause, KeyError):
         # `SessionRunner.start_box`'s: the box is outside the confirmed mapping.
         return CommandError(
@@ -134,6 +134,8 @@ def _strobe_refused(exc: StrobeRefused, _args: Args) -> CommandError:
 ERRORS: ErrorTable = [
     # --- ports (ARCHITECTURE.md#port-state-machine) ---
     (BoxRefused, _box_refused),
+    # Asked to stop a run its port has left: the port's state didn't allow it.
+    (StopRefused, _boxed(ErrCode.ILLEGAL_TRANSITION)),
     (PortNotBound, _boxed(ErrCode.PORT_NOT_BOUND)),
     (BoardNotDetected, _boxed(ErrCode.PORT_OPEN_FAILED)),
     (PortBusy, _boxed(ErrCode.SEND_NOT_PASSTHROUGH)),

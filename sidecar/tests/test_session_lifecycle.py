@@ -27,6 +27,7 @@ from ephymeris_sidecar.sessions.lifecycle import (
     SessionLifecycle,
     SessionRefused,
     SketchNotCarried,
+    StopRefused,
 )
 from ephymeris_sidecar.sessions.models import GroupRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
@@ -1051,7 +1052,7 @@ async def test_a_stop_the_port_could_not_take_is_refused_by_box(rig) -> None:
     await rig.run_group(session)
     rig.runner.stop_refused.add(1)
 
-    with pytest.raises(BoxRefused) as refused:
+    with pytest.raises(StopRefused) as refused:
         rig.lifecycle.stop_box(1)
 
     mapped = _mapped(refused.value)

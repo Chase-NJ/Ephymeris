@@ -351,7 +351,7 @@ and reports through replayed events instead (`flash.queue`, `utility.updated`).
 ### Reply timeouts
 
 `client.ts` applies `DEFAULT_CALL_TIMEOUT_MS`, with longer values in `CALL_TIMEOUT_OVERRIDES` for work that
-runs long (waiting out a rig definition write, library refresh, backup sync, analytics indexing, recovery, ending a session or group,
+runs long (waiting out a rig definition write, library refresh, backup sync, analytics indexing, recovery, ending or abandoning a session, ending a group,
 starting a recording, configuring RHX). **A client timeout does not cancel sidecar work**; the resulting
 `port.state` is what the UI shows.
 

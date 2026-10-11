@@ -225,7 +225,7 @@ Start one box of the confirmed mapping: open the port (the Mega DTR-resets), awa
 <a id="cmd-port.stopsession"></a>
 #### `port.stopSession`
 
-Sends the literal `STOP` line and does **not** force the transition: the firmware ends the run at its next trial boundary with its own end-of-session strobe, and the port leaves `IN_SESSION` when the sidecar sees it.
+Sends the literal `STOP` line and does **not** force the transition: the firmware ends the run at its next trial boundary with its own end-of-session strobe, and the port leaves `IN_SESSION` when the sidecar sees it. A box that isn't running is a no-op (its run already ended, or never began). `ILLEGAL_TRANSITION` with `detail.box` when a running box's port did not take `STOP` -- it left the session, or the write failed -- so the box is not stopping.
 
 **Args**
 
@@ -704,7 +704,7 @@ Create a session in status `configuring` and make its folder. `SESSION_NOT_READY
 <a id="cmd-sessions.abandon"></a>
 #### `sessions.abandon`
 
-Discard a session still in `configuring` (the mapping step's Back): marks it `aborted`, clears any confirmed-but-unstarted mapping from the runner, drops an unstarted recording setup, and hands the rig back to the utility baseline. Nothing on disk is touched. `SESSION_INVALID` once a group has run.
+Discard a session still in `configuring` (the mapping step's Back): marks it `aborted`, clears any confirmed-but-unstarted mapping from the runner, drops an unstarted recording setup, and hands the rig back to the utility baseline. Nothing on disk is touched. A recording Start All began before any box started is stopped, and its run is kept on the aborted session, since RHX's files exist (`RECORDING.md`): the reply can then take RHX's stop, about 16 s at worst. `SESSION_INVALID` once a group has run.
 
 **Args**
 

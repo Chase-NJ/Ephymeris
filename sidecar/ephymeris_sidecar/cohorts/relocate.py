@@ -418,16 +418,21 @@ def _check_destination(source: Path, target: Path) -> None:
 def moving(db: Database, cohort_id: str) -> bool:
     """Whether this cohort's folder is part-way through a relocate, so a new
     session must not be set up in it: its folder would be made at the old
-    place while the records move to the new one. Not once it has committed:
-    the cohort's folder is the new one by then, and what is left is deleting
-    originals, which may wait for a drive to come back (`resume`)."""
+    place while the records move to the new one.
+
+    A committed relocate counts while it is still deleting the originals: a
+    session set up from the cohort as read just before the commit would make
+    its folder under the old place, which the delete is emptying. Not once
+    the old folder is out of reach: what is left then waits for a drive that
+    may not come back for weeks (`resume`), and the cohort must not wait with
+    it."""
     with db.lock:
-        row = db.conn.execute(
-            "SELECT 1 FROM folder_moves WHERE cohort_id = ?"
-            " AND state IN ('moving', 'copying') LIMIT 1",
+        rows = db.conn.execute(
+            "SELECT state, source FROM folder_moves WHERE cohort_id = ?"
+            " AND state IN ('moving', 'copying', 'committed')",
             (cohort_id,),
-        ).fetchone()
-    return row is not None
+        ).fetchall()
+    return any(state != "committed" or not out_of_reach(Path(source)) for state, source in rows)
 
 
 def _refuse_open_sessions(conn: sqlite3.Connection, cohort_id: str) -> None:

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { SidecarClient, type ConnectionStatus } from "./client";
+import { SidecarClient } from "./client";
+import type { ConnectionStatus } from "./port";
 import { SidecarContext } from "./context";
 
 // Component-only module: the hook lives in `context.ts` so Fast Refresh can

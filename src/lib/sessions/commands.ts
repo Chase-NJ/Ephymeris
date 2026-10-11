@@ -3,7 +3,7 @@
  * (`PROTOCOL.md#prefixes-and-sessions`).
  */
 
-import type { SidecarClient } from "../ws/client";
+import type { SidecarPort } from "../ws/port";
 import { CMD, ERR, SidecarCommandError } from "../ws/protocol";
 import type {
   BoxMapping,
@@ -13,12 +13,12 @@ import type {
   TaskProfile,
 } from "./types";
 
-export async function createPrefix(client: SidecarClient, name: string): Promise<Prefix> {
+export async function createPrefix(client: SidecarPort, name: string): Promise<Prefix> {
   const r = await client.call(CMD.PREFIXES_CREATE, { name });
   return r.prefix;
 }
 
-export async function deletePrefix(client: SidecarClient, id: string): Promise<void> {
+export async function deletePrefix(client: SidecarPort, id: string): Promise<void> {
   await client.call(CMD.PREFIXES_DELETE, { id });
 }
 
@@ -27,7 +27,7 @@ export async function deletePrefix(client: SidecarClient, id: string): Promise<v
  * (`TASKS.md#task-profile`): bare `START`, raw strobe log instead of charts.
  */
 export async function getTaskProfile(
-  client: SidecarClient,
+  client: SidecarPort,
   sketchPath: string,
 ): Promise<TaskProfile | null> {
   const r = (await client.call(CMD.TASKS_GET_PROFILE, { sketchPath })) as
@@ -42,7 +42,7 @@ export async function getTaskProfile(
  * never a block.
  */
 export async function suggestSessionNumber(
-  client: SidecarClient,
+  client: SidecarPort,
   prefixId: string,
 ): Promise<{ suggestion: string | null; sameDayNumbers: string[] }> {
   const r = await client.call(CMD.SESSIONS_SUGGEST_NUMBER, { prefixId });
@@ -50,7 +50,7 @@ export async function suggestSessionNumber(
 }
 
 export async function createSession(
-  client: SidecarClient,
+  client: SidecarPort,
   cohortId: string,
   prefixId: string,
   sessionNumber: string,
@@ -74,7 +74,7 @@ export async function createSession(
  * `aborted` instead of stranding the record. Rejected once a group has run.
  */
 export async function abandonSession(
-  client: SidecarClient,
+  client: SidecarPort,
   sessionId: string,
 ): Promise<void> {
   await client.call(CMD.SESSIONS_ABANDON, { sessionId });
@@ -87,7 +87,7 @@ export async function abandonSession(
  * (`TASKS.md#three-layer-merge`).
  */
 export async function confirmMapping(
-  client: SidecarClient,
+  client: SidecarPort,
   sessionId: string,
   groupId: string,
   boxes: Array<Omit<BoxMapping, "overrides"> & { config: Record<string, unknown> }>,
@@ -112,13 +112,13 @@ export async function confirmMapping(
  * running instead of a stale copy.
  */
 export async function sessionStatus(
-  client: SidecarClient,
+  client: SidecarPort,
   sessionId: string,
 ): Promise<SessionSnapshot> {
   return client.call(CMD.SESSIONS_STATUS, { sessionId });
 }
 
-export async function startAll(client: SidecarClient, sessionId: string): Promise<Session> {
+export async function startAll(client: SidecarPort, sessionId: string): Promise<Session> {
   const r = await client.call(CMD.SESSIONS_START_ALL, { sessionId });
   return r.session;
 }
@@ -128,7 +128,7 @@ export async function startAll(client: SidecarClient, sessionId: string): Promis
  * (`ARCHITECTURE.md#group-step`): still running, held, no boxes. The operator then picks
  * the next group — any group — on the group step, or ends the session.
  */
-export async function endGroup(client: SidecarClient, sessionId: string): Promise<Session> {
+export async function endGroup(client: SidecarPort, sessionId: string): Promise<Session> {
   const r = await client.call(CMD.SESSIONS_END_GROUP, { sessionId });
   return r.session;
 }
@@ -138,20 +138,20 @@ export async function endGroup(client: SidecarClient, sessionId: string): Promis
  * between groups, or one ended too early. Never resumes a group mid-run.
  */
 export async function resumeSession(
-  client: SidecarClient,
+  client: SidecarPort,
   sessionId: string,
 ): Promise<Session> {
   const r = await client.call(CMD.SESSIONS_RESUME, { sessionId });
   return r.session;
 }
 
-export async function endSession(client: SidecarClient, sessionId: string): Promise<Session> {
+export async function endSession(client: SidecarPort, sessionId: string): Promise<Session> {
   const r = await client.call(CMD.SESSIONS_END, { sessionId });
   return r.session;
 }
 
 /** Per-box Start — the command itself comes from the confirmed mapping. */
-export async function startBox(client: SidecarClient, box: number): Promise<void> {
+export async function startBox(client: SidecarPort, box: number): Promise<void> {
   await client.call(CMD.PORT_START_SESSION, { box });
 }
 
@@ -169,7 +169,7 @@ export function boxesNeedingFlash(err: unknown): number[] | null {
 }
 
 /** Per-box Stop — sends `STOP`; the board's end strobe ends the run (`ARCHITECTURE.md#running-boxes`). */
-export async function stopBox(client: SidecarClient, box: number): Promise<void> {
+export async function stopBox(client: SidecarPort, box: number): Promise<void> {
   await client.call(CMD.PORT_STOP_SESSION, { box });
 }
 
@@ -180,7 +180,7 @@ export async function stopBox(client: SidecarClient, box: number): Promise<void>
  * loses nothing. Each box lands in `IDLE` for the runner.
  */
 export async function flashSessionBoxes(
-  client: SidecarClient,
+  client: SidecarPort,
   sessionId: string,
   boxes: number[],
 ): Promise<void> {

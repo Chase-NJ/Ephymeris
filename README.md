@@ -172,9 +172,10 @@ Run from the repo root unless noted.
 **Frontend: Vitest, `src/lib/**` only, and deliberately no DOM.** What is worth pinning there is the
 arithmetic and decoding that yield a drawing or readout that looks deliberate when it is wrong: the
 derived state machine (`tasks/topology.ts`), its layout (`tasks/graphLayout.ts`), the strategy plane's
-axes (`analytics/view.ts`), cohort appearance, the cohort sky layout and the scope maths. A component
-test would need a DOM, a settings context and a WebSocket client to assert what a screenshot shows
-better. There is no linter.
+axes (`analytics/view.ts`), cohort appearance, the cohort sky layout and the scope maths. The session
+and hardware stores are tested through `FakeSidecar` (`lib/ws/fakeSidecar.ts`), which lets a test
+order each reply against each event. A component test would need a DOM and a settings context to
+assert what a screenshot shows better. There is no linter.
 
 **Sidecar: pytest, `sidecar/tests/`.** `conftest.py` sets `EPHYMERIS_WIRE_VALIDATE=1` for the whole suite,
 so every event and command reply is checked against `protocol/schema.py`; production leaves it off.
@@ -282,8 +283,9 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
 - **Unused sidecar commands.** `cohorts.list`, `prefixes.list` and `cohorts.suggestGroups` have handlers
   but no frontend caller; Auto-Balance runs client-side in `src/lib/cohorts/grouping.ts`. Remove them,
   or route Auto-Balance through the sidecar.
-- **Frontend coverage beyond the pure layer.** Stores (`lib/sessions/store.ts`, `lib/hardware/store.ts`),
-  `useSessionFlow`'s refresh rules and every component are untested, and there is no linter.
+- **Frontend coverage beyond the pure layer and two stores.** The other stores, `useSessionFlow`'s
+  refresh rules and every component are untested, and there is no linter. The refresh rules live in
+  React effects, which `FakeSidecar` cannot reach without a hook renderer or moving them into a store.
 - **Settings schema.** The sidecar reads only the keys it needs and ignores the rest, so adding a key is
   deliberately cheap; the set is not final. `settings.taskDefaults` has no editor, so stale entries
   (inert, but present) cannot be cleared.

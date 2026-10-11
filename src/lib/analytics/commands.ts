@@ -5,7 +5,7 @@
  * one place rather than scattered through components.
  */
 
-import type { SidecarClient } from "../ws/client";
+import type { SidecarPort } from "../ws/port";
 import { CMD, SidecarCommandError } from "../ws/protocol";
 import type {
   AnalyticsSummary,
@@ -23,7 +23,7 @@ import type {
  * reading files.
  */
 export async function listSessions(
-  client: SidecarClient,
+  client: SidecarPort,
   cohortId: string,
   includeAborted = false,
 ): Promise<SessionListItem[]> {
@@ -36,7 +36,7 @@ export async function listSessions(
  * counts it whatever the rule says, null hands it back to the rule.
  */
 export async function setFalseStart(
-  client: SidecarClient,
+  client: SidecarPort,
   cohortId: string,
   runId: string,
   falseStart: boolean | null,
@@ -49,7 +49,7 @@ export async function setFalseStart(
  * filters this client-side rather than re-querying.
  */
 export async function getSummary(
-  client: SidecarClient,
+  client: SidecarPort,
   cohortId: string,
 ): Promise<AnalyticsSummary> {
   return client.call(CMD.ANALYTICS_SUMMARY, { cohortId });
@@ -57,7 +57,7 @@ export async function getSummary(
 
 /** Within-session trajectories. Plural so one session is one call, not six. */
 export async function getSeries(
-  client: SidecarClient,
+  client: SidecarPort,
   runIds: string[],
   mode: "rolling" | "cumulative" = "rolling",
 ): Promise<SeriesResult> {
@@ -71,7 +71,7 @@ export async function getSeries(
  * archive (`recorded: false`), which `sessions.list` cannot.
  */
 export async function recentSessions(
-  client: SidecarClient,
+  client: SidecarPort,
   limit?: number,
 ): Promise<DiskSession[]> {
   const result = await client.call(
@@ -83,7 +83,7 @@ export async function recentSessions(
 
 /** The explicit archive walk — never a side effect of opening the view. */
 export async function rescan(
-  client: SidecarClient,
+  client: SidecarPort,
   cohortId: string,
 ): Promise<RescanResult> {
   return client.call(CMD.ANALYTICS_RESCAN, { cohortId });
@@ -96,7 +96,7 @@ export async function rescan(
  * is an orphan the rescan can then adopt.
  */
 export async function recover(
-  client: SidecarClient,
+  client: SidecarPort,
   cohortId: string,
 ): Promise<RecoverResult> {
   return client.call(CMD.SESSIONS_RECOVER, { cohortId });
@@ -108,7 +108,7 @@ export async function recover(
  * on apply rather than trusting the preview it sent.
  */
 export async function tidyRecords(
-  client: SidecarClient,
+  client: SidecarPort,
   cohortId: string,
   apply: boolean,
 ): Promise<TidyPlan> {

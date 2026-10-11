@@ -288,7 +288,10 @@ logged and swallowed rather than dropping the connection.
 **Live session state is not replayed.** A reconnecting client asks: `sessions.active` to discover what is
 running with no prior ids, or `sessions.status` for a session it knows. The runner is the authority on the
 confirmed mapping, and asking beats a snapshot that may be stale on arrival; `session.lifecycle`
-broadcasts keep the answer current afterwards.
+broadcasts keep the answer current afterwards. A broadcast that lands while `sessions.active` is in
+flight leaves the client unable to tell which is newer: the sidecar reads part of the answer before a
+transition and can send it after that transition's broadcast. `SessionStore` keeps the broadcast and
+asks again.
 
 ### Reconnection
 
@@ -1115,14 +1118,17 @@ All routes are children of `components/chrome/AppShell.tsx` in `src/App.tsx`; fi
 Rig and Task are split **by subject**: a pin is compile-time input that belongs to the box, while a strobe
 code is what a condition is named by, and the trial table's onset picker is its only consumer.
 
-`src/lib/ws/` holds the client and generated protocol; each domain (`lib/hardware`, `lib/cohorts`,
-`lib/sessions`, `lib/settings`, `lib/analytics`, `lib/intan`, `lib/logbook`) has **one Provider + store**
-wrapping the shared client. `HardwareProvider` is mounted at the **app root**, not per view, because the sidebar's status
+`src/lib/ws/` holds the generated protocol and `SidecarPort` (`port.ts`), the typed `call`/`on`/`onStatus`
+the rest of the frontend depends on. It has two adapters: `SidecarClient` (`client.ts`), the WebSocket,
+constructed only by `SidecarProvider`; and `FakeSidecar` (`fakeSidecar.ts`), which tests drive. Each
+domain (`lib/hardware`, `lib/cohorts`, `lib/sessions`, `lib/settings`, `lib/analytics`, `lib/intan`,
+`lib/logbook`) has **one Provider + store** wrapping the shared port. `HardwareProvider` is mounted at the **app root**, not per view, because the sidebar's status
 constellation needs box health on every screen.
 
 **Unit tests cover `src/lib/**` only** (vitest), on purpose: no jsdom, no component rendering. What's worth
 pinning is the arithmetic and decoding where a mistake draws something plausible, and that lives in pure
-modules so it can be tested without a DOM, a settings context and a socket.
+modules so it can be tested without a DOM, a settings context and a socket. A store's event handling is
+tested through `FakeSidecar`, where the test decides when each reply lands relative to each event.
 
 ### Scope windows
 
@@ -1469,7 +1475,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | Path | Responsibility | Docs |
 |---|---|---|
 | `main.tsx`, `App.tsx` | Provider trees (main, scope) and the router | [Routes](#routes) |
-| `lib/ws/`, `lib/settings/`, `lib/hardware/` | Client and protocol; settings `schema.ts`; hardware store, `useHandshakeTest.ts`, `useRig.ts` | [Wire protocol](#wire-protocol), [Settings](#settings) |
+| `lib/ws/`, `lib/settings/`, `lib/hardware/` | Port, its client and fake, and protocol; settings `schema.ts`; hardware store, `useHandshakeTest.ts`, `useRig.ts` | [Wire protocol](#wire-protocol), [Settings](#settings) |
 | `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `flow.ts` and `useSessionFlow`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
 | `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `editorLayout.ts`, `orrery.ts`, `useGlidingWidth.ts`, `useLiveNode.ts`; task commands, `lines.ts` (odor lines and onsets), `selection.ts` (mode scope); vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine), [TASKS.md](TASKS.md#editor) |
 | `lib/exports/` | `jobs.ts`, the export progress store | [Export progress](#export-progress) |

@@ -1,9 +1,9 @@
 import { createContext, useContext } from "react";
 
-import type { SidecarClient, ConnectionStatus } from "./client";
+import type { ConnectionStatus, SidecarPort } from "./port";
 
 export interface SidecarContextValue {
-  client: SidecarClient;
+  client: SidecarPort;
   status: ConnectionStatus;
 }
 

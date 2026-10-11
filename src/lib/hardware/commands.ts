@@ -1,5 +1,5 @@
 import { CMD } from "@/lib/ws/protocol";
-import type { SidecarClient } from "@/lib/ws/client";
+import type { SidecarPort } from "@/lib/ws/port";
 
 import type { RigDocument } from "./types";
 
@@ -12,23 +12,23 @@ import type { RigDocument } from "./types";
  * reconstruct the thing it was about to check.
  */
 
-export async function getRig(client: SidecarClient) {
+export async function getRig(client: SidecarPort) {
   return client.call(CMD.HARDWARE_GET, {});
 }
 
-export async function previewRig(client: SidecarClient, document: RigDocument) {
+export async function previewRig(client: SidecarPort, document: RigDocument) {
   return client.call(CMD.HARDWARE_PREVIEW, { document });
 }
 
 export async function saveRig(
-  client: SidecarClient,
+  client: SidecarPort,
   document: RigDocument,
   confirm: boolean,
 ) {
   return client.call(CMD.HARDWARE_SAVE, { document, confirm });
 }
 
-export async function resetRig(client: SidecarClient) {
+export async function resetRig(client: SidecarPort) {
   return client.call(CMD.HARDWARE_RESET, {});
 }
 
@@ -38,7 +38,7 @@ export async function resetRig(client: SidecarClient) {
  * reports the rest. With `baud`, each box ends in a console opened at it.
  */
 export async function enqueueFlash(
-  client: SidecarClient,
+  client: SidecarPort,
   boxes: readonly number[],
   sketchPath: string,
   baud?: number,
@@ -51,6 +51,6 @@ export async function enqueueFlash(
 }
 
 /** Drop queued session and Debug flashes; one under way finishes. */
-export async function cancelFlashes(client: SidecarClient, boxes?: readonly number[]) {
+export async function cancelFlashes(client: SidecarPort, boxes?: readonly number[]) {
   return client.call(CMD.FLASH_CANCEL, boxes ? { boxes: [...boxes] } : {});
 }

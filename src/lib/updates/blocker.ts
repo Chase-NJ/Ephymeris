@@ -1,4 +1,4 @@
-import type { ConnectionStatus } from "@/lib/ws/client";
+import type { ConnectionStatus } from "@/lib/ws/port";
 import { BOX_IDS, type PortStatus } from "@/lib/hardware/store";
 
 /**

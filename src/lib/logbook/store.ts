@@ -14,7 +14,7 @@
 
 import type { SessionListItem } from "../analytics/types";
 import { listSessions } from "../analytics/commands";
-import type { SidecarClient } from "../ws/client";
+import type { SidecarPort } from "../ws/port";
 import { EVT } from "../ws/protocol";
 import { getLogbook } from "./commands";
 import type { LogbookCohort, RunChange, SessionLog, SessionNote } from "./types";
@@ -83,7 +83,7 @@ export class LogbookStore {
   private inflight = new Map<string, Promise<void>>();
   /** A refetch asked for while one was already running — run once more after. */
   private again = new Set<string>();
-  private client: SidecarClient | null = null;
+  private client: SidecarPort | null = null;
   private cohortId: string | null = null;
   private sessionId: string | null = null;
   private subscribers = new Map<string, Set<() => void>>();
@@ -102,7 +102,7 @@ export class LogbookStore {
     this.subscribers.get(key)?.forEach((callback) => callback());
   }
 
-  attach(client: SidecarClient): () => void {
+  attach(client: SidecarPort): () => void {
     this.client = client;
     const refetch = (cohortId: string) => {
       if (this.entries.has(cohortId)) void this.load(cohortId, true);

@@ -7,7 +7,7 @@
  * through the `cohorts.updated` broadcast, not through a return value.
  */
 
-import type { SidecarClient } from "../ws/client";
+import type { SidecarPort } from "../ws/port";
 import { CMD, ERR, SidecarCommandError, type AnimalMovePlan } from "../ws/protocol";
 import type {
   Animal,
@@ -16,7 +16,7 @@ import type {
   Group,
 } from "./types";
 
-export async function getCohort(client: SidecarClient, id: string): Promise<Cohort> {
+export async function getCohort(client: SidecarPort, id: string): Promise<Cohort> {
   const result = await client.call(CMD.COHORTS_GET, { id });
   return result.cohort;
 }
@@ -30,7 +30,7 @@ export async function getCohort(client: SidecarClient, id: string): Promise<Coho
  * fail on its own and leave a named, empty cohort behind.
  */
 export async function createCohort(
-  client: SidecarClient,
+  client: SidecarPort,
   name: string,
   options: { dataFolder?: string; animals?: Animal[]; groups?: Group[] } = {},
 ): Promise<Cohort> {
@@ -48,7 +48,7 @@ export async function createCohort(
 }
 
 export async function updateCohort(
-  client: SidecarClient,
+  client: SidecarPort,
   id: string,
   patch: CohortPatch,
 ): Promise<Cohort> {
@@ -56,24 +56,24 @@ export async function updateCohort(
   return result.cohort;
 }
 
-export async function archiveCohort(client: SidecarClient, id: string): Promise<Cohort> {
+export async function archiveCohort(client: SidecarPort, id: string): Promise<Cohort> {
   const result = await client.call(CMD.COHORTS_ARCHIVE, { id });
   return result.cohort;
 }
 
-export async function restoreCohort(client: SidecarClient, id: string): Promise<Cohort> {
+export async function restoreCohort(client: SidecarPort, id: string): Promise<Cohort> {
   const result = await client.call(CMD.COHORTS_RESTORE, { id });
   return result.cohort;
 }
 
 /** Rejected by the sidecar (`DATA.md#archive-and-delete`) unless the cohort is already archived. */
-export async function deleteCohort(client: SidecarClient, id: string): Promise<void> {
+export async function deleteCohort(client: SidecarPort, id: string): Promise<void> {
   await client.call(CMD.COHORTS_DELETE, { id, confirm: true });
 }
 
 /** The explicit relocate (`DATA.md#data-folder`) — never triggered by a rename. */
 export async function setDataFolder(
-  client: SidecarClient,
+  client: SidecarPort,
   id: string,
   path: string,
   moveExisting: boolean,
@@ -94,7 +94,7 @@ export async function setDataFolder(
  * detail — see `refusedPlan`.
  */
 export async function moveAnimals(
-  client: SidecarClient,
+  client: SidecarPort,
   args: {
     cohortId: string;
     animalIds: string[];

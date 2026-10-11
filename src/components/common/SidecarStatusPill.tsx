@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 
 import { springSnappy } from "@/lib/motion";
-import type { ConnectionStatus } from "@/lib/ws/client";
+import type { ConnectionStatus } from "@/lib/ws/port";
 
 /**
  * Sidecar connection readout.

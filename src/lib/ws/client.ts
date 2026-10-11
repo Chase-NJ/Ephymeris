@@ -1,5 +1,6 @@
 /**
- * WebSocket client for the Python sidecar.
+ * WebSocket client for the Python sidecar: the production adapter behind
+ * `SidecarPort` (`port.ts`). Only `SidecarProvider` constructs it.
  *
  * Owns endpoint discovery (via the Tauri shell), authentication, request/reply
  * correlation, event fan-out, and reconnection with backoff. Consumers observe
@@ -16,34 +17,26 @@ import {
   SidecarCommandError,
   isEvent,
   isReply,
-  type CommandArgsMap,
   type CommandName,
   type CommandResultMap,
-  type EventDataMap,
   type EventMessage,
   type EventName,
   type ServerMessage,
 } from "./protocol";
-
-export type ConnectionStatus =
-  | "starting" // waiting for the shell to report the sidecar endpoint
-  | "connecting"
-  | "connected"
-  | "reconnecting"
-  | "down"; // sidecar exited or never started
+import type {
+  CallRest,
+  ConnectionStatus,
+  EventHandler,
+  SidecarPort,
+  StatusHandler,
+} from "./port";
 
 export interface SidecarEndpoint {
   port: number;
   token: string;
 }
 
-/** Handles one event, typed from the generated `EventDataMap`. */
-export type EventHandler<E extends EventName> = (
-  data: EventDataMap[E],
-  message: EventMessage,
-) => void;
 type AnyEventHandler = (data: unknown, message: EventMessage) => void;
-type StatusHandler = (status: ConnectionStatus) => void;
 
 function readManualEndpoint(): SidecarEndpoint | null {
   try {
@@ -122,7 +115,7 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
 
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
 
-export class SidecarClient {
+export class SidecarClient implements SidecarPort {
   private ws: WebSocket | null = null;
   private endpoint: SidecarEndpoint | null = null;
   private status: ConnectionStatus = "starting";
@@ -279,23 +272,12 @@ export class SidecarClient {
   // --- messaging ----------------------------------------------------------
 
   /**
-   * Send a command and resolve with its result.
-   *
-   * Typed against the generated `CommandArgsMap`/`CommandResultMap`, so a call
-   * whose args or result use drifts from `protocol/schema.py` fails
-   * `npm run typecheck` rather than a lab session. The args parameter is only
-   * omittable for commands that take none.
-   *
-   * Rejects with {@link SidecarCommandError} when the sidecar refuses — which
-   * is the normal path for illegal state transitions, since the sidecar is the
-   * authority on port state, not this frontend.
+   * {@link SidecarPort.call}. Typed against the generated
+   * `CommandArgsMap`/`CommandResultMap`, so a call whose args or result use
+   * drifts from `protocol/schema.py` fails `npm run typecheck` rather than a
+   * lab session. Times out per `CALL_TIMEOUT_OVERRIDES`.
    */
-  call<C extends CommandName>(
-    cmd: C,
-    ...rest: Record<string, never> extends CommandArgsMap[C]
-      ? [args?: CommandArgsMap[C], options?: { timeoutMs?: number }]
-      : [args: CommandArgsMap[C], options?: { timeoutMs?: number }]
-  ): Promise<CommandResultMap[C]>;
+  call<C extends CommandName>(cmd: C, ...rest: CallRest<C>): Promise<CommandResultMap[C]>;
   call(
     cmd: string,
     args: Record<string, unknown> = {},
@@ -362,13 +344,7 @@ export class SidecarClient {
 
   // --- subscriptions ------------------------------------------------------
 
-  /**
-   * Subscribe to one event. The handler's `data` is typed from the generated
-   * `EventDataMap`, so a consumer reading a field `protocol/schema.py` no
-   * longer declares fails `npm run typecheck`. Read `data` as given rather
-   * than casting it: a cast to a hand-written shape compiles past exactly the
-   * drift this typing exists to catch.
-   */
+  /** {@link SidecarPort.on}. */
   on<E extends EventName>(evt: E, handler: EventHandler<E>): () => void {
     let handlers = this.eventHandlers.get(evt);
     if (!handlers) {

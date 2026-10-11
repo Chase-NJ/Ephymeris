@@ -3,11 +3,11 @@
  * Same pattern as `analytics/commands.ts`.
  */
 
-import type { SidecarClient } from "../ws/client";
+import type { SidecarPort } from "../ws/port";
 import { CMD } from "../ws/protocol";
 import type { LogbookCohort, NoteScope, NoteTag, SessionLog, SessionNote } from "./types";
 
-export async function getLogbook(client: SidecarClient, cohortId: string): Promise<LogbookCohort> {
+export async function getLogbook(client: SidecarPort, cohortId: string): Promise<LogbookCohort> {
   return client.call(CMD.LOGBOOK_COHORT, { cohortId });
 }
 
@@ -21,7 +21,7 @@ export interface NoteDraft {
 }
 
 export async function addNote(
-  client: SidecarClient,
+  client: SidecarPort,
   sessionId: string,
   draft: NoteDraft,
 ): Promise<SessionNote> {
@@ -30,7 +30,7 @@ export async function addNote(
 }
 
 export async function editNote(
-  client: SidecarClient,
+  client: SidecarPort,
   noteId: string,
   changes: Partial<NoteDraft>,
 ): Promise<SessionNote> {
@@ -38,12 +38,12 @@ export async function editNote(
   return result.note;
 }
 
-export async function deleteNote(client: SidecarClient, noteId: string): Promise<void> {
+export async function deleteNote(client: SidecarPort, noteId: string): Promise<void> {
   await client.call(CMD.LOGBOOK_DELETE_NOTE, { noteId });
 }
 
 export async function resolveFlag(
-  client: SidecarClient,
+  client: SidecarPort,
   noteId: string,
   resolved: boolean,
   sessionId: string | null = null,
@@ -57,7 +57,7 @@ export async function resolveFlag(
 }
 
 export async function setSessionLog(
-  client: SidecarClient,
+  client: SidecarPort,
   sessionId: string,
   fields: { operator?: string | null; summary?: string | null },
 ): Promise<SessionLog> {
@@ -65,7 +65,7 @@ export async function setSessionLog(
   return result.log;
 }
 
-export async function openFlags(client: SidecarClient, cohortId: string): Promise<SessionNote[]> {
+export async function openFlags(client: SidecarPort, cohortId: string): Promise<SessionNote[]> {
   const result = await client.call(CMD.LOGBOOK_OPEN_FLAGS, { cohortId });
   return result.notes;
 }

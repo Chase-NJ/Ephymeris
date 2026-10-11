@@ -1,5 +1,5 @@
 import { CMD } from "@/lib/ws/protocol";
-import type { SidecarClient } from "@/lib/ws/client";
+import type { SidecarPort } from "@/lib/ws/port";
 
 /**
  * The `strobes.*` calls — `TASKS.md#strobe-vocabulary`.
@@ -18,11 +18,11 @@ import type { SidecarClient } from "@/lib/ws/client";
  */
 const SCAN_TIMEOUT_MS = 600_000;
 
-export function getVocabulary(client: SidecarClient) {
+export function getVocabulary(client: SidecarPort) {
   return client.call(CMD.STROBES_GET, {});
 }
 
-export function strobeUsage(client: SidecarClient, name: string, scan = false) {
+export function strobeUsage(client: SidecarPort, name: string, scan = false) {
   return client.call(
     CMD.STROBES_USAGE,
     { name, scan },
@@ -31,35 +31,35 @@ export function strobeUsage(client: SidecarClient, name: string, scan = false) {
 }
 
 export function addStrobe(
-  client: SidecarClient,
+  client: SidecarPort,
   args: { name: string; code: number; rationale: string; emittedOn?: string },
 ) {
   return client.call(CMD.STROBES_ADD, args);
 }
 
 export function editStrobe(
-  client: SidecarClient,
+  client: SidecarPort,
   args: { name: string; rationale: string; emittedOn?: string },
 ) {
   return client.call(CMD.STROBES_EDIT, args);
 }
 
-export function retireStrobe(client: SidecarClient, name: string, confirm: boolean) {
+export function retireStrobe(client: SidecarPort, name: string, confirm: boolean) {
   return client.call(CMD.STROBES_RETIRE, { name, confirm });
 }
 
-export function reinstateStrobe(client: SidecarClient, name: string) {
+export function reinstateStrobe(client: SidecarPort, name: string) {
   return client.call(CMD.STROBES_REINSTATE, { name });
 }
 
-export function removeStrobe(client: SidecarClient, name: string, confirm: boolean) {
+export function removeStrobe(client: SidecarPort, name: string, confirm: boolean) {
   return client.call(CMD.STROBES_REMOVE, { name, confirm }, { timeoutMs: SCAN_TIMEOUT_MS });
 }
 
-export function exportVocabulary(client: SidecarClient) {
+export function exportVocabulary(client: SidecarPort) {
   return client.call(CMD.STROBES_EXPORT, {});
 }
 
-export function importVocabulary(client: SidecarClient, document: unknown, apply: boolean) {
+export function importVocabulary(client: SidecarPort, document: unknown, apply: boolean) {
   return client.call(CMD.STROBES_IMPORT, { document, apply });
 }

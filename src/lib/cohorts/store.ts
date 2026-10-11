@@ -10,7 +10,7 @@
  * snapshot, so `useSyncExternalStore` can bail out on unchanged references.
  */
 
-import type { SidecarClient } from "../ws/client";
+import type { SidecarPort } from "../ws/port";
 import { EVT } from "../ws/protocol";
 import type { CohortSummary } from "./types";
 
@@ -21,7 +21,7 @@ export class CohortStore {
   private loaded = false;
   private subs = new Set<() => void>();
 
-  attach(client: SidecarClient): () => void {
+  attach(client: SidecarPort): () => void {
     return client.on(EVT.COHORTS_UPDATED, (data) => {
       this.cohorts = data?.cohorts ?? NO_COHORTS;
       this.loaded = true;

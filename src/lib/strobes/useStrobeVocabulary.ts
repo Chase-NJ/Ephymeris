@@ -43,9 +43,7 @@ export function useStrobeVocabulary(): {
 
   useEffect(
     () =>
-      client.on(EVT.STROBES_UPDATED, (data) => {
-        setVocabulary(data as StrobeVocabulary);
-      }),
+      client.on(EVT.STROBES_UPDATED, setVocabulary),
     [client],
   );
 

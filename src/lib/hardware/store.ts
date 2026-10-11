@@ -107,8 +107,7 @@ export class HardwareStore {
   /** Wire up to the client's event stream. Returns a detach function. */
   attach(client: SidecarClient): () => void {
     const offs = [
-      client.on(EVT.PORT_STATE, (data) => {
-        const d = data as PortStatus & { box: number };
+      client.on(EVT.PORT_STATE, (d) => {
         if (!this.statuses.has(d.box)) return;
         const status = { state: d.state, prev: d.prev, reason: d.reason };
         this.statuses.set(d.box, status);
@@ -117,8 +116,7 @@ export class HardwareStore {
         this.notify("state:*");
       }),
 
-      client.on(EVT.PORT_OUTPUT, (data) => {
-        const d = data as { box: number; lines: Array<Omit<ConsoleLine, "id">> };
+      client.on(EVT.PORT_OUTPUT, (d) => {
         const current = this.lines.get(d.box);
         if (!current || d.lines.length === 0) return;
         const appended = [...current, ...d.lines.map((l) => ({ ...l, id: ++this.seq }))];
@@ -129,18 +127,17 @@ export class HardwareStore {
         this.notify(`output:${d.box}`);
       }),
 
-      client.on(EVT.BOARDS_PRESENCE, (data) => {
-        const d = data as { boards?: DetectedBoard[] } | null;
+      client.on(EVT.BOARDS_PRESENCE, (d) => {
         this.boards = d?.boards ?? NO_BOARDS;
         this.notify("presence");
       }),
 
       client.on(EVT.UTILITY_UPDATED, (data) => {
-        this.utility = data as UtilityStatus;
+        this.utility = data;
         this.notify("utility");
       }),
 
-      client.on(EVT.FLASH_QUEUE, (data) => this.takeFlashes(data as FlashQueueStatus)),
+      client.on(EVT.FLASH_QUEUE, (status) => this.takeFlashes(status)),
     ];
     // Replayed on connect, but a window that attaches later (a scope pop-up)
     // has missed that replay.

@@ -17,7 +17,7 @@ import { listSessions } from "../analytics/commands";
 import type { SidecarClient } from "../ws/client";
 import { EVT } from "../ws/protocol";
 import { getLogbook } from "./commands";
-import type { LogbookCohort, LogbookUpdated, RunChange, SessionLog, SessionNote } from "./types";
+import type { LogbookCohort, RunChange, SessionLog, SessionNote } from "./types";
 
 export type LogbookState = "idle" | "loading" | "ready" | "error";
 
@@ -108,7 +108,7 @@ export class LogbookStore {
       if (this.entries.has(cohortId)) void this.load(cohortId, true);
     };
     const offUpdated = client.on(EVT.LOGBOOK_UPDATED, (data) => {
-      refetch((data as LogbookUpdated).cohortId);
+      refetch(data.cohortId);
     });
     // Lifecycle events don't say which cohort; the reads are database-only,
     // so refetching the one or two cached cohorts is cheaper than guessing.

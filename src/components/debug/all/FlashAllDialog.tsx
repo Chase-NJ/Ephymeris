@@ -71,8 +71,7 @@ export function FlashAllDialog({
   useEffect(() => {
     setLastLine("");
     if (current === null) return;
-    return client.on(EVT.FLASH_PROGRESS, (data) => {
-      const d = data as { box: number; text: string };
+    return client.on(EVT.FLASH_PROGRESS, (d) => {
       if (d.box === current && d.text.trim()) setLastLine(d.text.trim());
     });
   }, [client, current]);

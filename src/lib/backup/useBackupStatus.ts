@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { CMD, EVT, type BackupState, type BackupStatus, type SyncResult } from "@/lib/ws/protocol";
+import { CMD, EVT, type BackupStatus, type SyncResult } from "@/lib/ws/protocol";
 import { useSidecar } from "@/lib/ws/context";
 
 /**
@@ -28,28 +28,6 @@ const UNKNOWN: BackupStatus = {
   intervalSeconds: 10,
 };
 
-function parse(data: unknown): BackupStatus | null {
-  if (typeof data !== "object" || data === null) return null;
-  const raw = data as Record<string, unknown>;
-  return {
-    configured: raw.configured === true,
-    directory: typeof raw.directory === "string" ? raw.directory : null,
-    state: (["disabled", "pending", "ok", "failed"] as const).includes(
-      raw.state as BackupState,
-    )
-      ? (raw.state as BackupState)
-      : "disabled",
-    pending: typeof raw.pending === "number" ? raw.pending : 0,
-    tracking: typeof raw.tracking === "number" ? raw.tracking : 0,
-    mirroredFiles: typeof raw.mirroredFiles === "number" ? raw.mirroredFiles : 0,
-    lastSuccessAt: typeof raw.lastSuccessAt === "string" ? raw.lastSuccessAt : null,
-    lastError: typeof raw.lastError === "string" ? raw.lastError : null,
-    syncing: raw.syncing === true,
-    intervalSeconds:
-      typeof raw.intervalSeconds === "number" ? raw.intervalSeconds : 10,
-  };
-}
-
 export function useBackupStatus() {
   const { client } = useSidecar();
   const [status, setStatus] = useState<BackupStatus>(UNKNOWN);
@@ -58,8 +36,7 @@ export function useBackupStatus() {
 
   useEffect(
     () =>
-      client.on(EVT.BACKUP_STATUS, (data) => {
-        const next = parse(data);
+      client.on(EVT.BACKUP_STATUS, (next) => {
         if (next) setStatus(next);
       }),
     [client],

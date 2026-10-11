@@ -64,9 +64,7 @@ export function StrobeDetail({
     setScanning(true);
     setProgress(null);
     setError(null);
-    const off = client.on(EVT.STROBES_SCAN_PROGRESS, (data) =>
-      setProgress(data as StrobeScanProgress),
-    );
+    const off = client.on(EVT.STROBES_SCAN_PROGRESS, setProgress);
     try {
       setUsage(await strobeUsage(client, row.name, true));
     } catch (err) {

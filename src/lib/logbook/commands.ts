@@ -8,7 +8,7 @@ import { CMD } from "../ws/protocol";
 import type { LogbookCohort, NoteScope, NoteTag, SessionLog, SessionNote } from "./types";
 
 export async function getLogbook(client: SidecarClient, cohortId: string): Promise<LogbookCohort> {
-  return (await client.call(CMD.LOGBOOK_COHORT, { cohortId })) as LogbookCohort;
+  return client.call(CMD.LOGBOOK_COHORT, { cohortId });
 }
 
 export interface NoteDraft {
@@ -25,9 +25,7 @@ export async function addNote(
   sessionId: string,
   draft: NoteDraft,
 ): Promise<SessionNote> {
-  const result = (await client.call(CMD.LOGBOOK_ADD_NOTE, { sessionId, ...draft })) as {
-    note: SessionNote;
-  };
+  const result = await client.call(CMD.LOGBOOK_ADD_NOTE, { sessionId, ...draft });
   return result.note;
 }
 
@@ -36,9 +34,7 @@ export async function editNote(
   noteId: string,
   changes: Partial<NoteDraft>,
 ): Promise<SessionNote> {
-  const result = (await client.call(CMD.LOGBOOK_EDIT_NOTE, { noteId, ...changes })) as {
-    note: SessionNote;
-  };
+  const result = await client.call(CMD.LOGBOOK_EDIT_NOTE, { noteId, ...changes });
   return result.note;
 }
 
@@ -52,11 +48,11 @@ export async function resolveFlag(
   resolved: boolean,
   sessionId: string | null = null,
 ): Promise<SessionNote> {
-  const result = (await client.call(CMD.LOGBOOK_RESOLVE_FLAG, {
+  const result = await client.call(CMD.LOGBOOK_RESOLVE_FLAG, {
     noteId,
     resolved,
     sessionId,
-  })) as { note: SessionNote };
+  });
   return result.note;
 }
 
@@ -65,15 +61,11 @@ export async function setSessionLog(
   sessionId: string,
   fields: { operator?: string | null; summary?: string | null },
 ): Promise<SessionLog> {
-  const result = (await client.call(CMD.LOGBOOK_SET_SESSION_LOG, { sessionId, ...fields })) as {
-    log: SessionLog;
-  };
+  const result = await client.call(CMD.LOGBOOK_SET_SESSION_LOG, { sessionId, ...fields });
   return result.log;
 }
 
 export async function openFlags(client: SidecarClient, cohortId: string): Promise<SessionNote[]> {
-  const result = (await client.call(CMD.LOGBOOK_OPEN_FLAGS, { cohortId })) as {
-    notes: SessionNote[];
-  };
+  const result = await client.call(CMD.LOGBOOK_OPEN_FLAGS, { cohortId });
   return result.notes;
 }

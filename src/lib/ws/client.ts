@@ -19,7 +19,9 @@ import {
   type CommandArgsMap,
   type CommandName,
   type CommandResultMap,
+  type EventDataMap,
   type EventMessage,
+  type EventName,
   type ServerMessage,
 } from "./protocol";
 
@@ -35,7 +37,12 @@ export interface SidecarEndpoint {
   token: string;
 }
 
-type EventHandler = (data: unknown, message: EventMessage) => void;
+/** Handles one event, typed from the generated `EventDataMap`. */
+export type EventHandler<E extends EventName> = (
+  data: EventDataMap[E],
+  message: EventMessage,
+) => void;
+type AnyEventHandler = (data: unknown, message: EventMessage) => void;
 type StatusHandler = (status: ConnectionStatus) => void;
 
 function readManualEndpoint(): SidecarEndpoint | null {
@@ -136,7 +143,7 @@ export class SidecarClient {
     string,
     { resolve: (v: unknown) => void; reject: (e: unknown) => void; timer: ReturnType<typeof setTimeout> }
   >();
-  private readonly eventHandlers = new Map<string, Set<EventHandler>>();
+  private readonly eventHandlers = new Map<string, Set<AnyEventHandler>>();
   private readonly statusHandlers = new Set<StatusHandler>();
 
   // --- lifecycle ----------------------------------------------------------
@@ -355,15 +362,25 @@ export class SidecarClient {
 
   // --- subscriptions ------------------------------------------------------
 
-  on(evt: string, handler: EventHandler): () => void {
+  /**
+   * Subscribe to one event. The handler's `data` is typed from the generated
+   * `EventDataMap`, so a consumer reading a field `protocol/schema.py` no
+   * longer declares fails `npm run typecheck`. Read `data` as given rather
+   * than casting it: a cast to a hand-written shape compiles past exactly the
+   * drift this typing exists to catch.
+   */
+  on<E extends EventName>(evt: E, handler: EventHandler<E>): () => void {
     let handlers = this.eventHandlers.get(evt);
     if (!handlers) {
       handlers = new Set();
       this.eventHandlers.set(evt, handlers);
     }
-    handlers.add(handler);
+    // `onMessage` dispatches by `msg.evt`, so a handler stored under `evt`
+    // only ever receives `EventDataMap[E]`.
+    const stored = handler as AnyEventHandler;
+    handlers.add(stored);
     return () => {
-      handlers.delete(handler);
+      handlers.delete(stored);
     };
   }
 

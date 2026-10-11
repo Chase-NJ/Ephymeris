@@ -41,11 +41,10 @@ export class IntanStore {
   attach(client: SidecarClient): () => void {
     const offs = [
       client.on(EVT.INTAN_STATUS, (data) => {
-        this.status = data as IntanStatus;
+        this.status = data;
         this.subs.forEach((cb) => cb());
       }),
-      client.on(EVT.INTAN_SCOPE_DATA, (data) => {
-        const d = data as ScopeData;
+      client.on(EVT.INTAN_SCOPE_DATA, (d) => {
         this.scopeSubs.get(d.scopeId)?.forEach((cb) => cb(d));
       }),
     ];

@@ -111,17 +111,18 @@ export function SessionRecording() {
 
   // Seed the form once the rig's boxes are in, and follow them when a return
   // to Boxes changed the mapping. Never re-seeded on an `intan.status` tick,
-  // and a box still mapped keeps what was typed for it.
+  // and a box still mapped keeps what was typed for it. A box seeded here gets
+  // its port guess at once, from the ports RHX reports now.
   useEffect(() => {
     if (boxes.length === 0) return;
     setConfig((current) => current ?? { ...defaults.config });
-    setRows((current) => reconcileRows(boxes, defaults, current));
+    setRows((current) => assignPorts(reconcileRows(boxes, defaults, current), intan.ports));
     // The defaults are read once, as a starting point.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boxes]);
 
-  // Once RHX reports its ports, give each unassigned box the next free one
-  // with its whole range (`assignPorts`).
+  // Whenever RHX reports its ports, give each unassigned box the next free
+  // one with its whole range (`assignPorts`).
   useEffect(() => {
     setRows((current) => assignPorts(current, intan.ports));
   }, [intan.ports]);

@@ -454,3 +454,19 @@ def test_release_for_hands_a_port_only_to_a_flash_or_reset() -> None:
     with pytest.raises(ValueError):
         handler.release_for(S.IN_SESSION, "not a flash")
     assert handler.state is S.IDLE
+
+
+def test_a_lost_claim_hears_of_it_even_if_the_announcement_raises(fake_port) -> None:
+    def announce(*_args) -> None:  # noqa: ANN002
+        raise RuntimeError("a listener broke")
+
+    handler = PortHandler(1, _loop, announce)
+    _created.append(handler)
+    lost: list[str] = []
+    handler.claim_session(
+        "/dev/fake", 115200, "START", lambda _seed: None, lambda _c, _t: None, lost.append
+    )
+    handler.force_error("board went away")
+    _loop.run_until_complete(asyncio.sleep(0))
+
+    assert lost == ["board went away"]

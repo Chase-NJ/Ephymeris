@@ -395,8 +395,11 @@ If you loaded the rig before opening this screen, click **They're already in —
 > **An animal in the wrong box produces a complete, normal-looking data file under the wrong name.**
 > Nothing later can detect it. Follow the box order, and trust the number on the box over the light.
 
-When every box has flashed, Mission Control opens by itself (or the Record step, for a recording). If a box fails to flash, click
-**Acknowledge** on its card, then **Retry flash**.
+When every box has flashed, Mission Control opens by itself (or the Record step, for a recording). If a box fails to flash, its
+card says why; click **Acknowledge** on it, then **Retry flash**.
+
+Flashing carries on if you leave this screen for another tab. Coming back, the cards show where each box
+is, and the walk picks up at the next box you hadn't closed.
 
 ### Record
 
@@ -660,7 +663,8 @@ The panel has three parts:
 - **Connection.** **Open** connects to the box's console. **Close** disconnects. **Reset** restarts the
   board. **Acknowledge** clears an `ERROR`.
 - **Sketch.** **Flash…** puts a program on the box. Pick a sketch and click **Flash**. The log shows the
-  program being built and loaded; when it says *Flashed. The console is open*, click **Close**.
+  program being built and loaded; when it says *Flashed. The console is open*, click **Close**. If another
+  box is flashing, this one waits its turn.
 
   ![The Flash box 3 dialog: sketches grouped under Olfactory behavior, Utility, Discrimination and Shaping, with Refresh and Flash buttons](images/flash-dialog.webp)
 
@@ -710,7 +714,8 @@ as data.** Press Esc or click **← Constellation** to go back.
   small light per box, so you can see which boxes have it open; its switch turns the line on for every
   box, or off once it is on everywhere. The table below lists each box's beams and test status.
 - **Sketch.** **Flash…** puts one program on every targeted box, one box at a time, and opens each
-  console afterwards. **Return to baseline** puts them all back on the utility sketch. When every open
+  console afterwards. Closing the dialog doesn't stop it; open **Flash…** again to see how far it got.
+  **Stop after this box** cancels the boxes still waiting. **Return to baseline** puts them all back on the utility sketch. When every open
   box carries the same task, **Start** and **End** start and stop it on all of them.
 - **Console.** Every targeted box's output in one stream, each line marked with its box number. Typing a
   line sends it to every open console. Tick **status** to show the utility sketch's status lines too.

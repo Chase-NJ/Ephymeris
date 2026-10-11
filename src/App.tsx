@@ -38,7 +38,7 @@ export default function App() {
         {/* Task is a landing over an editor. `/task` lists this rig's saved
             profiles; the editor (`TASKS.md#editor` — the trial types, the ramp,
             the parameters) opens on one of them, or on nothing at `/task/new`.
-            Saving generates a sketch that discovery finds, so `port.flash`
+            Saving generates a sketch that discovery finds, so a flash
             takes it like any other.
 
             `/task/new` is declared BEFORE `/task/:taskId` for readability

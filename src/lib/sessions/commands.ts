@@ -181,19 +181,15 @@ export async function stopBox(client: SidecarClient, box: number): Promise<void>
 }
 
 /**
- * Flash one box as part of the session sequence (`ARCHITECTURE.md#flash-sequence`).
- *
- * `suppressPassthroughResume` is what makes the box land in `IDLE` so the
- * runner can claim it — the opposite of Debug Mode's auto-resume.
+ * Queue the held mapping's sketches onto these boxes, in this order
+ * (`ARCHITECTURE.md#flash-sequence`). Returns once they are queued; the sidecar
+ * flashes them one at a time and reports on `flash.queue`, so leaving the page
+ * loses nothing. Each box lands in `IDLE` for the runner.
  */
-export async function flashForSession(
+export async function flashSessionBoxes(
   client: SidecarClient,
-  box: number,
-  sketchPath: string,
+  sessionId: string,
+  boxes: number[],
 ): Promise<void> {
-  await client.call(CMD.PORT_FLASH, {
-    box,
-    sketchPath,
-    suppressPassthroughResume: true,
-  });
+  await client.call(CMD.SESSIONS_FLASH, { sessionId, boxes });
 }

@@ -306,7 +306,7 @@ function FirstTask({ onStart }: { onStart: () => void }) {
  * Deleting takes the generated sketch with it, and the confirm says so.
  *
  * `TaskStore.delete` removes the definition AND `rmtree`s the folder under
- * `<data_dir>/tasks/`, which is what `port.flash` points at. The folder is
+ * `<data_dir>/tasks/`, which is what a flash points at. The folder is
  * never visible from this screen, so it is worth a sentence — as is the thing
  * an operator will actually worry about, which is their recorded data.
  */

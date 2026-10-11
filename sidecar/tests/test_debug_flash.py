@@ -9,9 +9,9 @@ be started or talked to.
 `test_utility.py` could not see it, because its harness wires the port manager
 with a no-op `on_state_change` — the hook that did the damage was never in the
 loop. The harness here hands the port manager the app's REAL
-`_handle_state_change`, and drives the real `_port_flash` handler over it, so
-the order of "note what was flashed" and "the idle hook fires" is the order
-production has.
+`_handle_state_change`, and drives a Debug flash through the real
+`flash.enqueue` handler and flash queue over it, so the order of "note what was
+flashed" and "the idle hook fires" is the order production has.
 
 The second half covers what makes a flashed task usable from the console:
 `port.sendStart`, and the live scoring it arms (`debug_run.py`).
@@ -30,8 +30,10 @@ from ephymeris_sidecar.app import Application
 from ephymeris_sidecar.rig.definition import _ReadWriteLock
 from ephymeris_sidecar.boards.tool import DetectedBoard
 from ephymeris_sidecar.debug_run import DebugRuns
+from ephymeris_sidecar.ports.flashing import FlashJob, FlashQueue
 from ephymeris_sidecar.ports.handler import OutputLine
 from ephymeris_sidecar.ports.manager import FQBN, PortManager
+from ephymeris_sidecar.ports.states import PortState
 from ephymeris_sidecar.protocol import ErrCode, Evt
 from ephymeris_sidecar.server import CommandError
 from ephymeris_sidecar.settings import SidecarSettings
@@ -98,6 +100,7 @@ def make_app() -> SimpleNamespace:
         discovery=FakeDiscovery,
         runner=None,
         utility=None,
+        flashes=None,
         debug_runs=DebugRuns(),
         tool=tool,
         events=events,
@@ -126,6 +129,14 @@ def make_app() -> SimpleNamespace:
     manager.update_settings(settings)
     manager._presence = {HWID: DetectedBoard(hardware_id=HWID, address=ADDRESS, fqbn=FQBN)}
 
+    flashes = FlashQueue(
+        loop=loop,
+        ports=manager,
+        discovery=FakeDiscovery,
+        broadcast=broadcast,
+        reading=app.rig_definition.reading,
+        on_flashed=lambda *args: Application._on_flashed(app, *args),
+    )
     utility = UtilityBaseline(
         loop=loop,
         ports=manager,
@@ -133,22 +144,26 @@ def make_app() -> SimpleNamespace:
         broadcast=broadcast,
         load_profile=lambda _path: UTILITY_PROFILE,
         is_utility=lambda sketch: sketch.name == "BOX_Utility",
-        reading=app.rig_definition.reading,
+        flashes=flashes,
     )
     utility.update_settings(settings)
 
     app.settings = settings
+    app.flashes = flashes
     app.utility = utility
     app.ports = manager
     app._require_ports = lambda: manager
     app._require_utility = lambda: utility
+    app._require_flashes = lambda: flashes
     return app
 
 
-async def flash(app: SimpleNamespace, path: str, **extra) -> dict:  # noqa: ANN003
-    return await Application._port_flash(
-        app, None, None, {"box": 1, "sketchPath": path, **extra}, "c1"
+async def flash(app: SimpleNamespace, path: str, **extra) -> None:  # noqa: ANN003
+    """A Debug Mode flash of box 1, as the dialog asks for it, run to the end."""
+    await Application._flash_enqueue(
+        app, None, None, {"boxes": [1], "sketchPath": path, **extra}, None
     )
+    await settle(app.utility)
 
 
 async def at_baseline(app: SimpleNamespace) -> None:
@@ -165,8 +180,8 @@ async def test_a_debug_flash_from_idle_is_not_overwritten() -> None:
     app = make_app()
     await at_baseline(app)
 
-    reply = await flash(app, TASK_PATH)
-    assert reply == {"state": "IDLE", "resumedPassthrough": False}
+    await flash(app, TASK_PATH)
+    assert app.ports.handler(1).state is PortState.IDLE
     # Let the queued idle hook fire and the worker it starts run dry.
     await asyncio.sleep(0)
     await settle(app.utility)
@@ -198,13 +213,16 @@ async def test_the_pin_outlasts_every_automatic_trigger() -> None:
 
 
 async def test_a_session_flash_is_not_pinned() -> None:
-    """The session sequence marks itself with `suppressPassthroughResume`; its
-    sketches are exactly what the baseline is meant to reclaim afterwards."""
+    """A session flash is its own origin; its sketches are exactly what the
+    baseline is meant to reclaim afterwards."""
     app = make_app()
     await at_baseline(app)
     app.utility.hold()
 
-    await flash(app, TASK_PATH, suppressPassthroughResume=True)
+    app.flashes.submit(
+        [FlashJob(box=1, origin="session", prepare=lambda: TASK_PATH, sketch_path=TASK_PATH)]
+    )
+    await settle(app.utility)
     await asyncio.sleep(0)
     await settle(app.utility)
     assert app.tool.uploads == [UTILITY_PATH, TASK_PATH]

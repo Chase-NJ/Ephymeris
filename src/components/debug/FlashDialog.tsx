@@ -3,15 +3,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
-import { useHardwareStore } from "@/lib/hardware/context";
+import { errorMessage } from "@/lib/cohorts/commands";
+import { enqueueFlash } from "@/lib/hardware/commands";
+import { useBoxFlash } from "@/lib/hardware/context";
 import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
-import { CMD, EVT } from "@/lib/ws/protocol";
+import { EVT } from "@/lib/ws/protocol";
 
 /**
  * The flashing flow (`ARCHITECTURE.md#flashing`): pick a sketch from the
  * categorized list discovered in the sketch library, then watch
  * compile/upload progress stream in — not a spinner-until-done.
+ *
+ * The sidecar's flash queue runs it (`ARCHITECTURE.md#the-flash-queue`), behind
+ * any other flash on the rig, and ends it in a console at this panel's baud:
+ * someone who has just put a sketch on a board wants to talk to it. Closing
+ * the dialog stops nothing.
  *
  * The list is the only path to a flashable sketch (`TASKS.md#discovery`),
  * and every library state (`TASKS.md#library-states`) renders distinctly here.
@@ -28,6 +35,8 @@ interface ProgressEntry {
 
 type Stage = "pick" | "flashing" | "done";
 
+const IN_HAND = new Set(["queued", "waiting", "flashing"]);
+
 export function FlashDialog({
   box,
   baud,
@@ -42,22 +51,43 @@ export function FlashDialog({
 }) {
   const { client } = useSidecar();
   const { discovery, refreshSketches } = useSettings();
-  const store = useHardwareStore();
+  const row = useBoxFlash(box);
+  // Only a Debug flash is this dialog's: a restore or a session flash of the
+  // same box is not something it asked for.
+  const job = row?.job?.origin === "debug" ? row.job : null;
 
   const [selected, setSelected] = useState<string | null>(null);
-  const [stage, setStage] = useState<Stage>("pick");
+  const [submitted, setSubmitted] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
   const [log, setLog] = useState<ProgressEntry[]>([]);
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const seq = useRef(0);
 
-  // Fresh start each time the dialog opens.
+  // Fresh start each time the dialog opens — unless a flash of this box is
+  // still under way, which it shows rather than offering another.
   useEffect(() => {
     if (open) {
-      setStage("pick");
+      setSubmitted(false);
+      setRefused(null);
       setLog([]);
-      setResult(null);
     }
   }, [open]);
+
+  const inHand = job !== null && IN_HAND.has(job.state);
+  const stage: Stage = refused !== null ? "done" : inHand ? "flashing" : submitted ? "done" : "pick";
+  const result =
+    refused !== null
+      ? { ok: false, message: refused }
+      : job?.state === "failed"
+        ? { ok: false, message: job.detail ?? "The flash failed." }
+        : job?.state === "done"
+          ? {
+              ok: true,
+              message:
+                job.detail === "console open"
+                  ? "Flashed. The console is open — the sketch's output is in it."
+                  : "Flashed. Open the console to talk to the sketch.",
+            }
+          : null;
 
   useEffect(() => {
     if (!open) return;
@@ -84,53 +114,16 @@ export function FlashDialog({
 
   async function flash() {
     if (!selected) return;
-    setStage("flashing");
     setLog([]);
+    setRefused(null);
     try {
-      const res = (await client.call(CMD.PORT_FLASH, { box, sketchPath: selected })) as {
-        resumedPassthrough: boolean;
-      };
-      // Remember what's on the box so its console panel can load the matching
-      // Task Profile (utility controls / telemetry).
-      const name = discovery.sketches.find((s) => s.path === selected)?.name ?? selected;
-      store.setFlashed(box, { path: selected, name });
-
-      /*
-       * **A flash from Debug Mode ends with a console, whichever state it
-       * started in.** The sidecar resumes passthrough only when one was open
-       * before the flash (`ARCHITECTURE.md#exclusivity`), so a flash from
-       * `IDLE` — the resting state of every box, and so the usual case — used
-       * to land in `IDLE` with the send box disabled and nothing on screen to
-       * say why. Someone who has just put a sketch on a board wants to talk to
-       * it.
-       *
-       * Opened here rather than by the sidecar so that rule stays true as
-       * written and the session sequence's `IDLE` landing is untouched. The
-       * open also toggles DTR, which reboots the Mega: a behaviour sketch
-       * prints `READY` into the console and waits there for `START`.
-       *
-       * Best-effort. The flash succeeded either way, and the Open button is
-       * still there; a failed open only changes what the message says.
-       */
-      let consoleOpen = res.resumedPassthrough;
-      if (!consoleOpen) {
-        try {
-          await client.call(CMD.PORT_PASSTHROUGH_OPEN, { box, baud });
-          consoleOpen = true;
-        } catch {
-          consoleOpen = false;
-        }
-      }
-      setResult({
-        ok: true,
-        message: consoleOpen
-          ? "Flashed. The console is open — the sketch's output is in it."
-          : "Flashed. Open the console to talk to the sketch.",
-      });
+      // The open that ends it toggles DTR, which reboots the Mega: a behaviour
+      // sketch prints `READY` into the console and waits there for `START`.
+      await enqueueFlash(client, [box], selected, baud);
+      setSubmitted(true);
     } catch (err) {
-      setResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
+      setRefused(errorMessage(err));
     }
-    setStage("done");
   }
 
   const { state } = discovery.library;
@@ -209,9 +202,11 @@ export function FlashDialog({
         <>
           <p className="mb-2 font-mono text-[12px] text-static">
             {stage === "flashing"
-              ? log.some((l) => l.phase === "upload")
-                ? "uploading…"
-                : "compiling…"
+              ? job?.state === "flashing"
+                ? log.some((l) => l.phase === "upload")
+                  ? "uploading…"
+                  : "compiling…"
+                : (job?.detail ?? "waiting for its turn…")
               : null}
           </p>
 
@@ -231,7 +226,7 @@ export function FlashDialog({
               )}
               <span>
                 {result.message}
-                {!result.ok && (
+                {!result.ok && refused === null && (
                   <span className="mt-1 block text-[11px] text-static">
                     The box is in ERROR — acknowledge it in the panel to recover.
                   </span>

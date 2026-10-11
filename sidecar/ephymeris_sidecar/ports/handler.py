@@ -24,11 +24,13 @@ from .states import (
     CLAIM_FROM,
     CLOSE_FROM,
     FINISH_FROM,
+    FLASH_OR_RESET,
     IDLE_ONLY,
     OPEN_FROM,
     RELEASE_FROM,
     RESUME_FROM,
     IllegalTransition,
+    TakeRefused,
     PortState,
     assert_leaves,
     assert_transition,
@@ -326,16 +328,20 @@ class PortHandler:
 
         `from_` is what the caller may take (`ARCHITECTURE.md#port-verbs`):
         `IDLE_ONLY` for the utility baseline, which must never take a console,
-        and `IDLE_OR_CONSOLE` for a flash or reset a person asked for. Entering
+        and `IDLE_OR_CONSOLE` for a flash or reset a person asked for. Any
+        other port raises `TakeRefused`, with nothing changed. Entering
         `FLASHING`/`RESETTING` from `PASSTHROUGH` releases the console cleanly
         first, and the caller should resume it afterward so the user sees the
         new sketch's output without an extra click (`ARCHITECTURE.md#exclusivity`).
         """
-        if next_state not in FINISH_FROM:
+        if next_state not in FLASH_OR_RESET:
             raise ValueError(f"release_for hands a port to a flash or reset, not {next_state.value}")
         with self._lock:
             was_passthrough = self._state == PortState.PASSTHROUGH
-            assert_leaves(self._state, from_, next_state)
+            try:
+                assert_leaves(self._state, from_, next_state)
+            except IllegalTransition as exc:
+                raise TakeRefused(exc.current, exc.requested) from None
             if was_passthrough:
                 self._teardown_serial()
             self._set_state(next_state, reason)

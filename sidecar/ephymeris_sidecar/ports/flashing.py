@@ -37,7 +37,7 @@ from typing import Any, AsyncContextManager, Awaitable, Callable, Iterable, Lite
 
 from ..settings import BOX_COUNT
 from .manager import BoardNotDetected, PortManager, PortNotBound
-from .states import IDLE_ONLY, IDLE_OR_CONSOLE, IllegalTransition, PortState
+from .states import IDLE_ONLY, IDLE_OR_CONSOLE, PortState, TakeRefused
 
 log = logging.getLogger(__name__)
 
@@ -333,9 +333,10 @@ class FlashQueue:
                     suppress_passthrough_resume=job.origin != "debug",
                     from_=TAKES[job.origin],
                 )
-            except IllegalTransition as exc:
+            except TakeRefused as exc:
                 # The port was not taken and nothing was flashed. A restore
                 # refused a port someone holds, which is not a failed flash.
+                # A refusal after the take (landing) is a failure, below.
                 log.info("box %d: %s flash refused: %s", job.box, job.origin, exc)
                 if job.origin == "baseline":
                     self._drop_row(job)

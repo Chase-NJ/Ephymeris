@@ -47,7 +47,7 @@ from typing import Any, Awaitable, Callable, Iterable
 from .ports.flashing import FlashJob, FlashQueue, sketch_name
 from .ports.handler import PortBusy
 from .ports.manager import BoardNotDetected, PortManager, PortNotBound
-from .ports.states import IllegalTransition, PortState
+from .ports.states import IllegalTransition, PortState, TakeRefused
 from .settings import BOX_COUNT, SidecarSettings
 from .tasks import profile as task_profile
 from .tasks.profile import TaskProfile
@@ -337,7 +337,7 @@ class UtilityBaseline:
         if exc is None:
             state.state, state.detail, state.failed = "ready", None, False
             state.pinned = False
-        elif isinstance(exc, IllegalTransition):
+        elif isinstance(exc, TakeRefused):
             # The flash refused a port that was no longer IDLE at the take:
             # nothing was flashed, and the box is busy, not failed.
             state.state, state.detail = "busy", f"port is {exc.current.value}"

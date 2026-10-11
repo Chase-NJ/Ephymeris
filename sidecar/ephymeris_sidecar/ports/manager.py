@@ -29,7 +29,7 @@ import serial
 from ..boards.tool import BoardTool, DetectedBoard
 from ..settings import BOX_COUNT, SidecarSettings
 from .handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine, PortHandler, SessionClaim
-from .states import IDLE_ONLY, IDLE_OR_CONSOLE, PortState
+from .states import IDLE_ONLY, IDLE_OR_CONSOLE, IllegalTransition, PortState
 
 log = logging.getLogger(__name__)
 
@@ -238,8 +238,9 @@ class PortManager:
         flash queue (`ports/flashing.py`), which keeps it to one at a time.
 
         `from_` is what this flash may take (`PortHandler.release_for`): a
-        port in any other state raises `IllegalTransition` before anything
-        starts. Taking `PASSTHROUGH` force-releases it first, and on success
+        port in any other state raises `TakeRefused` before anything starts.
+        An `IllegalTransition` raised later means the port left `FLASHING`
+        during the upload and could not be landed: a failed flash. Taking `PASSTHROUGH` force-releases it first, and on success
         the prior passthrough is auto-resumed at its old baud so the user sees
         the new sketch's output without an extra click (`ARCHITECTURE.md#exclusivity`). Failures land in
         ERROR with the parsed message — never a silent fall back to IDLE.
@@ -283,9 +284,12 @@ class PortManager:
             handler.force_error(f"flash failed: {exc}")
             raise
 
+        # Recorded only once the port has landed: a flash whose landing is
+        # refused has failed, and carries nothing anyone can name.
+        landed = self._conclude(handler, address, prior_baud, resume,
+                                f"flashed {sketch_name}")
         self._carried[box] = CarriedSketch(sketch_dir, fingerprint)
-        return self._conclude(handler, address, prior_baud, resume,
-                              f"flashed {sketch_name}")
+        return landed
 
     async def reset(self, box: int) -> tuple[PortState, bool]:
         """DTR-toggle reset (`ARCHITECTURE.md#reset`).
@@ -341,12 +345,15 @@ class PortManager:
         was_passthrough: bool,
         reason: str,
     ) -> tuple[PortState, bool]:
-        """Land the port after a flash/reset: auto-resume or return to IDLE."""
+        """Land the port after a flash/reset: auto-resume or return to IDLE.
+        Raises `IllegalTransition` if the port has left `FLASHING`/`RESETTING`."""
         if was_passthrough:
             try:
                 handler.resume_passthrough(address, baud)
                 return handler.state, True
-            except Exception as exc:  # noqa: BLE001 - handler is already in ERROR
+            except IllegalTransition:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the open failed; handler is in ERROR
                 log.warning(
                     "box %d: auto-resume failed after %s: %s", handler.box, reason, exc
                 )

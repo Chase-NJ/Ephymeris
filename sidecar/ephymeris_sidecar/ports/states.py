@@ -72,9 +72,11 @@ TRANSITIONS: dict[PortState, frozenset[PortState]] = {
 #: acknowledgement alone. Every verb checks both: its own set, then the table.
 OPEN_FROM = frozenset({PortState.IDLE})
 CLOSE_FROM = frozenset({PortState.PASSTHROUGH})
-#: How a flash or reset lands: in `IDLE`, or back in the console it took.
-FINISH_FROM = frozenset({PortState.FLASHING, PortState.RESETTING})
-RESUME_FROM = FINISH_FROM
+#: The states a flash or reset holds the port in: what `release_for` hands
+#: it to, and what landing it leaves, for `IDLE` or back in the console it took.
+FLASH_OR_RESET = frozenset({PortState.FLASHING, PortState.RESETTING})
+FINISH_FROM = FLASH_OR_RESET
+RESUME_FROM = FLASH_OR_RESET
 ACKNOWLEDGE_FROM = frozenset({PortState.ERROR})
 CLAIM_FROM = frozenset({PortState.IDLE})
 RELEASE_FROM = frozenset({PortState.IN_SESSION})
@@ -93,6 +95,12 @@ class IllegalTransition(Exception):
         super().__init__(f"cannot move from {current.value} to {requested.value}")
         self.current = current
         self.requested = requested
+
+
+class TakeRefused(IllegalTransition):
+    """`release_for` refused to hand the port to a flash or reset: the port was
+    not taken and nothing ran. Distinct from an `IllegalTransition` raised once
+    the port is held (landing it), which is a failed operation."""
 
 
 def can_transition(current: PortState, requested: PortState) -> bool:

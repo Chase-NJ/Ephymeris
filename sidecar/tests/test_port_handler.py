@@ -21,7 +21,12 @@ from ephymeris_sidecar.ports.handler import (
     PortHandler,
     RING_CAPACITY,
 )
-from ephymeris_sidecar.ports.states import IDLE_OR_CONSOLE, IllegalTransition, PortState
+from ephymeris_sidecar.ports.states import (
+    IDLE_OR_CONSOLE,
+    IllegalTransition,
+    PortState,
+    TakeRefused,
+)
 
 
 class FakeSerial:
@@ -370,10 +375,10 @@ def test_error_is_acknowledged_back_to_idle() -> None:
 # --- each verb names the states it leaves (`ARCHITECTURE.md#port-verbs`) ----
 #
 # `TRANSITIONS` says which moves are ever legal; it cannot say who is asking.
-# A console close is legal out of FLASHING by the table (the flash's own
-# auto-resume ends there), so a stale close from the UI freed a port mid-upload,
-# and one from ERROR cleared the fault without the acknowledgement. Each verb
-# refuses any state it does not leave, and leaves the port as it was.
+# `FLASHING → IDLE` is legal because a flash lands there, not so a console
+# close can free a port mid-upload; `ERROR → IDLE` belongs to the
+# acknowledgement. Each verb refuses any state it does not leave, and leaves
+# the port as it was.
 
 S = PortState
 
@@ -454,6 +459,16 @@ def test_release_for_hands_a_port_only_to_a_flash_or_reset() -> None:
     with pytest.raises(ValueError):
         handler.release_for(S.IN_SESSION, "not a flash")
     assert handler.state is S.IDLE
+
+
+def test_a_refused_take_says_the_port_was_not_taken(fake_port) -> None:
+    """`TakeRefused` is how the flash queue tells "not taken" from a landing
+    refused after the upload."""
+    handler, _ = make_handler()
+    handler.open_passthrough("/dev/fake", 115200)
+    with pytest.raises(TakeRefused) as refused:
+        handler.release_for(S.FLASHING, "a restore")
+    assert (refused.value.current, refused.value.requested) == (S.PASSTHROUGH, S.FLASHING)
 
 
 def test_a_lost_claim_hears_of_it_even_if_the_announcement_raises(fake_port) -> None:

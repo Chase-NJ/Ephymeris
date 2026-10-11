@@ -547,12 +547,20 @@ each `PortHandler` verb names the states it leaves (the `*_FROM` sets in `ports/
 | `force_error` | any | `ERROR` | a failure |
 
 `release_for`'s `from_` is what the caller may take: `IDLE_ONLY` for the utility baseline, `IDLE_OR_CONSOLE`
-for a flash or reset a person asked for (`TAKES` in `ports/flashing.py`, `PortManager.reset`).
+for a flash or reset a person asked for (`TAKES` in `ports/flashing.py`, `PortManager.reset`). Its
+refusal is `TakeRefused`, an `IllegalTransition` that means the port was not taken and nothing ran; the
+flash queue reports a refused restore as `busy`. A refusal once the port is held, landing a flash whose
+port left `FLASHING` during the upload, is a failed flash: the row fails and the board carries nothing
+anyone can name.
+
 Acknowledging a port that is already `IDLE` changes nothing, so a second window's acknowledgement is not an
-error. A console close that reaches a port a flash has taken, or one in `ERROR`, is refused: the
-frontend closes consoles on unmount by the last state it saw, or none (`useHandshakeTest.ts`,
-`NodeDetail.tsx`, `AllBoxesPanel.tsx`), and those closes ignore the refusal; a close the operator clicks
-reports it.
+error. A console close that reaches a port a flash has taken, or one in `ERROR`, is refused:
+
+- The frontend closes consoles on unmount by the last state it saw, or none (`useHandshakeTest.ts`,
+  `NodeDetail.tsx`, `AllBoxesPanel.tsx`), and those closes ignore the refusal.
+- The handshake test closes a console before re-opening it; a refusal there ends the test as `failed`,
+  reading the box as busy.
+- A close the operator clicks reports it.
 
 ### Exclusivity
 

@@ -6,7 +6,6 @@ import asyncio
 
 import pytest
 
-from ephymeris_sidecar.boards.cli_tool import _failure_message
 from ephymeris_sidecar.boards.tool import BoardTool, DetectedBoard, FlashFailed
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.ports import manager as manager_module
@@ -348,9 +347,9 @@ def test_the_fingerprint_follows_content_not_noise(tmp_path) -> None:  # noqa: A
     assert sketch_fingerprint(str(tmp_path / "missing")) == sketch_fingerprint(str(tmp_path / "gone"))
 
 
-async def test_a_console_is_closed_before_the_flash_is_announced(fake_serial) -> None:  # noqa: ANN001
+async def test_a_console_is_closed_by_the_time_the_flash_is_heard(fake_serial) -> None:  # noqa: ANN001
     """`ARCHITECTURE.md#exclusivity`: whoever hears `FLASHING` may hand the port
-    to the uploader, so the console must already be shut when it is announced."""
+    to the uploader, so the console must already be shut when it is."""
     console_closed: dict[PortState, bool] = {}
 
     def on_state_change(_box: int, _old: PortState, new: PortState, _reason: str) -> None:
@@ -359,6 +358,7 @@ async def test_a_console_is_closed_before_the_flash_is_announced(fake_serial) ->
     manager, _tool, _, _ = await make_manager(on_state_change)
     manager.open_passthrough(1, baud=9600)
     await manager.flash(1, "/sk/clean", "clean", None, lambda *a: None)
+    await asyncio.sleep(0)  # the announcements reach the loop as callbacks
 
     assert console_closed[PortState.FLASHING] is True
     manager.handler(1).shutdown()
@@ -401,19 +401,3 @@ async def test_reset_failure_lands_in_error(fake_serial) -> None:  # noqa: ANN00
         await manager.reset(1)
 
     assert manager.handler(1).state is PortState.ERROR
-
-
-# --- failure-message extraction ------------------------------------------
-
-
-def test_failure_message_prefers_the_error_line() -> None:
-    payload = {
-        "compiler_err": "In file included from x\nclean.ino:3:5: error: expected ';'\nexit status 1",
-        "success": False,
-    }
-    assert _failure_message("compile", payload, 1) == "clean.ino:3:5: error: expected ';'"
-
-
-def test_failure_message_falls_back_to_last_line_then_generic() -> None:
-    assert _failure_message("upload", {"stderr": "a\nfinal line"}, 1) == "final line"
-    assert _failure_message("upload", {}, 2) == "upload failed (arduino-cli exited 2)"

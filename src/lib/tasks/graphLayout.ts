@@ -61,23 +61,23 @@ export const R = 9;
 /**
  * Where a glyph's text sits relative to its centre.
  *
- * **Shared with `measureNode` on purpose.** These offsets used to live only in
- * `NodeGlyph`'s JSX, which was fine while nothing needed to know how tall a
- * node was; now the abort band is derived from exactly that. Two copies of
- * these numbers would drift, and the drift would be invisible — the band would
- * simply settle inside a chip stack, with nothing thrown and no test failing.
+ * **Read only through `nodeMetrics`.** `NodeGlyph` draws from it and
+ * `measureNode` sizes the node from it, and the abort band is derived from that
+ * size. Two copies of this arithmetic would drift, and the drift would be
+ * invisible — the band would simply settle inside a chip stack, with nothing
+ * thrown and no test failing.
  */
-export const LABEL_BELOW_DY = 15;
-export const LABEL_RIGHT_DY = 4;
-export const LABEL_ABOVE_DY = -(R + 9);
+const LABEL_BELOW_DY = 15;
+const LABEL_RIGHT_DY = 4;
+const LABEL_ABOVE_DY = -(R + 9);
 /** Gap from a below-anchored label's baseline to the first chip's. */
-export const CHIP_GAP = 12;
+const CHIP_GAP = 12;
 /** Baseline-to-baseline within the chip stack. */
 export const CHIP_STEP = 12;
-export const CHIP_RIGHT_DY = 17;
-export const CHIP_ABOVE_DY = R + 14;
+const CHIP_RIGHT_DY = 17;
+const CHIP_ABOVE_DY = R + 14;
 /** Descender room under the lowest baseline. */
-export const TEXT_DESCENT = 3;
+const TEXT_DESCENT = 3;
 
 /**
  * The condition tick strip, drawn between the glyph and its label.
@@ -96,7 +96,7 @@ export const TICK_PITCH = 5;
  *  neighbouring columns — the vocabulary allows twelve odor lines. */
 export const TICK_MAX = 8;
 /** Vertical room the strip claims under the glyph. */
-export const TICK_BLOCK = TICK_ACTIVE_H + 3;
+const TICK_BLOCK = TICK_ACTIVE_H + 3;
 
 /** Horizontal pads. The right one only shelters the ITI; the outcome column's
  *  right-anchored labels fit because the model keeps a whole column of room
@@ -140,6 +140,50 @@ export interface Frame {
   returnDepth: number;
 }
 
+/** Where a node's marks are drawn, as offsets from its centre, in px. */
+export interface NodeMetrics {
+  /** Whether the condition tick strip is drawn under the glyph. */
+  ticks: boolean;
+  /** The label's baseline. */
+  labelY: number;
+  /** The first chip's baseline; each later chip sits `CHIP_STEP` lower. */
+  chipY: number;
+  /** How far the drawn content reaches above the centre. */
+  up: number;
+  /** How far the drawn content reaches below the centre. */
+  down: number;
+}
+
+/**
+ * Where `NodeGlyph` draws a node's label and chips, and how far they reach.
+ *
+ * The one copy of this arithmetic: the glyph places its text from it and
+ * `measureNode` sizes the node from it, so the layout cannot budget for a
+ * drawing other than the one on screen. `chips` is the count the host draws.
+ */
+export function nodeMetrics(node: TaskNode, chips: number): NodeMetrics {
+  const anchor = node.labelAnchor ?? "below";
+  const ticks = (node.variants?.length ?? 0) > 1;
+  let labelY: number;
+  let chipY: number;
+  let up = R;
+  if (anchor === "right") {
+    labelY = LABEL_RIGHT_DY;
+    chipY = CHIP_RIGHT_DY;
+  } else if (anchor === "above") {
+    labelY = LABEL_ABOVE_DY;
+    chipY = CHIP_ABOVE_DY;
+    up = -LABEL_ABOVE_DY + 8;
+  } else {
+    // The strip sits between the glyph and its label, so the label moves down
+    // by exactly what the strip claims.
+    labelY = R + (ticks ? TICK_BLOCK : 0) + LABEL_BELOW_DY;
+    chipY = labelY + CHIP_GAP;
+  }
+  const lowest = chips > 0 ? chipY + (chips - 1) * CHIP_STEP : labelY;
+  return { ticks, labelY, chipY, up, down: Math.max(R, lowest + TEXT_DESCENT) };
+}
+
 /**
  * How far a node's drawn content reaches above and below its centre, in px.
  *
@@ -150,24 +194,8 @@ export interface Frame {
  * sitting inside a chip stack rather than an error.
  */
 export function measureNode(node: TaskNode, chips: number): { up: number; down: number } {
-  const anchor = node.labelAnchor ?? "below";
-  const ticks = (node.multiplicity ?? 0) > 1 ? TICK_BLOCK : 0;
-  if (anchor === "right") {
-    const bottom =
-      chips > 0 ? CHIP_RIGHT_DY + (chips - 1) * CHIP_STEP + TEXT_DESCENT : LABEL_RIGHT_DY;
-    return { up: R, down: Math.max(R, bottom) };
-  }
-  if (anchor === "above") {
-    const bottom =
-      chips > 0 ? CHIP_ABOVE_DY + (chips - 1) * CHIP_STEP + TEXT_DESCENT : R;
-    return { up: -LABEL_ABOVE_DY + 8, down: Math.max(R, bottom) };
-  }
-  const labelBaseline = R + ticks + LABEL_BELOW_DY;
-  const bottom =
-    chips > 0
-      ? labelBaseline + CHIP_GAP + (chips - 1) * CHIP_STEP + TEXT_DESCENT
-      : labelBaseline + TEXT_DESCENT;
-  return { up: R, down: bottom };
+  const { up, down } = nodeMetrics(node, chips);
+  return { up, down };
 }
 
 /** Clearance between the deepest drawn content and the top of the abort band. */

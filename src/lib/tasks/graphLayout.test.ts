@@ -7,10 +7,12 @@
  * fit left **two pixels** of clearance at N=2 and overlapping text at N=4. No
  * exception, no missing glyph — just a drawing that looked deliberate.
  *
- * So the assertions here are about CLEARANCE, expressed against `measureNode`
+ * So the band's assertions are about CLEARANCE, expressed against `measureNode`
  * rather than against remembered pixel values: whatever a node occupies, the
  * band must sit below it, at every condition count, in both hosts, and on the
- * fallback path that no shipped profile can reach.
+ * fallback path that no shipped profile can reach. `measureNode` and the drawn
+ * glyph both read `nodeMetrics`, which is pinned to worked literals, so
+ * clearance against the one is clearance against what is on screen.
  */
 
 import { describe, expect, it } from "vitest";
@@ -25,9 +27,10 @@ import {
   VIEWER_GEOMETRY,
   frameFor,
   measureNode,
+  nodeMetrics,
   type Geometry,
 } from "./graphLayout";
-import { taskGraph, type TaskNode } from "./topology";
+import { taskGraph, type Condition, type TaskNode } from "./topology";
 
 
 function profile(n: number, { noGo = false } = {}): TaskProfile {
@@ -78,9 +81,15 @@ function bandTop(
   return Math.min(...floor.map((node) => frame.y(node)));
 }
 
-// --- what a node occupies ---------------------------------------------------
+// --- where a node's marks are drawn -----------------------------------------
 
-describe("measureNode", () => {
+/*
+ * Worked by hand from R = 9, LABEL_BELOW_DY = 15, TICK_BLOCK = 13,
+ * CHIP_GAP = 12, CHIP_STEP = 12, TEXT_DESCENT = 3, CHIP_RIGHT_DY = 17,
+ * CHIP_ABOVE_DY = 23, LABEL_ABOVE_DY = -18, LABEL_RIGHT_DY = 4. If a constant
+ * moves on purpose, rework these; never derive them from the constants.
+ */
+describe("nodeMetrics", () => {
   const plain: TaskNode = {
     id: "x",
     label: "Poke",
@@ -90,30 +99,63 @@ describe("measureNode", () => {
     governedBy: [],
     entryNames: [],
   };
+  /** A collapsed node's conditions — the strip is drawn from these alone. */
+  const variants = (n: number): Condition[] =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `odor_${i + 1}`,
+      label: `Odor ${i + 1}`,
+      metricLabel: null,
+      strobeName: `ODOR_${i + 1}_ON`,
+      index: i + 1,
+      correctAnswer: null,
+    }));
 
-  it("grows with the chips the host will actually draw", () => {
-    const bare = measureNode(plain, 0).down;
-    const chipped = measureNode(plain, 4).down;
-    expect(chipped).toBeGreaterThan(bare);
-    // The gap between them is the whole reason this cannot live in
+  it("sets a below-anchored label under the glyph", () => {
+    expect(nodeMetrics(plain, 0)).toMatchObject({ ticks: false, labelY: 24, up: 9, down: 27 });
+  });
+
+  it("stacks a below-anchored node's chips under its label", () => {
+    // 75 here against 27 bare is the whole reason this cannot live in
     // `topology.ts`: the live panel draws zero chips and the viewer draws four,
-    // so a model-side measurement is wrong for one of the two hosts by this
-    // much.
-    expect(chipped - bare).toBeGreaterThan(40);
+    // so a model-side measurement is wrong for one of the two hosts by 48px.
+    expect(nodeMetrics(plain, 4)).toEqual({ ticks: false, labelY: 24, chipY: 36, up: 9, down: 75 });
   });
 
-  it("budgets room for the tick strip, so the label clears it", () => {
-    const collapsed: TaskNode = { ...plain, multiplicity: 4 };
-    expect(measureNode(collapsed, 0).down).toBeGreaterThan(measureNode(plain, 0).down);
+  it("drops a below-anchored label and its chips under the tick strip", () => {
+    const collapsed: TaskNode = { ...plain, variants: variants(4) };
+    expect(nodeMetrics(collapsed, 4)).toEqual({
+      ticks: true,
+      labelY: 37,
+      chipY: 49,
+      up: 9,
+      down: 88,
+    });
   });
 
-  it("does not budget a strip for a node standing only for itself", () => {
-    expect(measureNode({ ...plain, multiplicity: 1 }, 0)).toEqual(measureNode(plain, 0));
+  it("draws no strip for a node standing only for itself", () => {
+    const single: TaskNode = { ...plain, variants: variants(1) };
+    expect(nodeMetrics(single, 0)).toMatchObject({ ticks: false, labelY: 24, down: 27 });
   });
 
-  it("makes a right-anchored node shorter — which is why five outcomes stack", () => {
+  // Shorter than a below-anchored node, which is why five outcomes stack.
+  it("sets a right-anchored label beside the glyph, which then reaches no lower than itself", () => {
     const right: TaskNode = { ...plain, labelAnchor: "right" };
-    expect(measureNode(right, 0).down).toBeLessThan(measureNode(plain, 0).down);
+    expect(nodeMetrics(right, 0)).toMatchObject({ ticks: false, labelY: 4, up: 9, down: 9 });
+  });
+
+  it("trails a right-anchored node's chips below its label", () => {
+    const right: TaskNode = { ...plain, labelAnchor: "right" };
+    expect(nodeMetrics(right, 4)).toEqual({ ticks: false, labelY: 4, chipY: 17, up: 9, down: 56 });
+  });
+
+  it("lifts an above-anchored label over the glyph, leaving only the glyph below", () => {
+    const above: TaskNode = { ...plain, labelAnchor: "above" };
+    expect(nodeMetrics(above, 0)).toMatchObject({ ticks: false, labelY: -18, up: 26, down: 9 });
+  });
+
+  it("hangs an above-anchored node's chips under the glyph", () => {
+    const above: TaskNode = { ...plain, labelAnchor: "above" };
+    expect(nodeMetrics(above, 4)).toEqual({ ticks: false, labelY: -18, chipY: 23, up: 26, down: 62 });
   });
 });
 

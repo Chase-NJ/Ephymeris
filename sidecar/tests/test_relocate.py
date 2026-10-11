@@ -9,6 +9,7 @@ next Rescan read those files as deleted and pruned the records.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import shutil
@@ -605,6 +606,30 @@ def test_originals_left_to_a_later_start_do_not_hold_up_a_session(
     assert archive.journal() == "committed"
 
     assert not relocate.moving(archive.db, archive.cohort.id)
+
+
+def test_a_missing_path_under_a_folder_that_errors_is_out_of_reach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absence is read as deletion only while a folder above it answers. One
+    that errors says nothing either way, as the prune's
+    `_storage_is_reachable` reads it: here the path itself reports not-found,
+    but the share holding it fails, so its absence proves nothing."""
+    share = tmp_path / "share"
+    share.mkdir()
+    gone = share / "Batch A" / "behavior.json"
+    assert not relocate.out_of_reach(gone), "a missing path below a readable folder is gone"
+
+    real = os.stat
+
+    def stat(path, *args, **kwargs):  # noqa: ANN001, ANN202
+        if Path(path) == share:
+            raise OSError(errno.EIO, os.strerror(errno.EIO), str(path))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat)
+
+    assert relocate.out_of_reach(gone)
 
 
 def test_a_resume_after_the_originals_are_all_gone_is_done(

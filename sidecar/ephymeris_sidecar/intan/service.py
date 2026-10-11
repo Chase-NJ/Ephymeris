@@ -15,7 +15,9 @@ none of that may stall or fail a behavior session. Concretely --
   * `stop_recording` swallows every RHX failure, and is bounded
     (`STOP_TIMEOUT_S`). By the time it runs the animals are done; the only
     thing a raise could do is strand the session as `running`. A stop that
-    could not reach RHX is OWED, and sent as soon as RHX answers again;
+    could not reach RHX is OWED, and sent once RHX answers again -- only if
+    RHX is still writing that run's file (`Filename.ActiveFileTimestamp`), so
+    a recording started by hand meanwhile is never stopped;
   * a run, once started, is kept until it is stopped -- through a lost link or
     a Stop pressed in RHX -- so the End that follows still waits for the
     boxes, stops it and records it (`run_open_for`);
@@ -264,9 +266,15 @@ class IntanService:
         self._info: dict[str, Any] = {}
         self._run_mode: str | None = None
         self._recording: Recording | None = None
-        #: A stop that could not reach RHX: the run ended in the session, and
-        #: RHX may still be in Record. Sent once RHX answers again.
-        self._stop_owed = False
+        #: A run whose stop could not reach RHX: it ended in the session, and
+        #: RHX may still be writing it. Stopped once RHX answers again, if RHX
+        #: is still writing THIS run's file (`_send_owed_stop`).
+        self._stop_owed: Recording | None = None
+        #: RHX is known to be writing the open run: true from a start that took,
+        #: or a reconnect that found RHX on this run's file; false once the link
+        #: is lost or RHX is seen out of Record. Only a confirmed run is
+        #: stopped outright; any other goes through the owed-stop check.
+        self._run_confirmed = False
         self._waiting_on: list[int] = []
         self._force_stop = asyncio.Event()
         self._last_status: dict[str, Any] | None = None
@@ -368,6 +376,15 @@ class IntanService:
         recording = self._recording
         return self._run_open and recording is not None and recording.session_id == session_id
 
+    def may_still_record_for(self, session_id: str) -> bool:
+        """RHX may still be writing this session's run: confirmed, or out of
+        reach so nobody can say. False once RHX is seen not writing it (Stop
+        pressed in RHX, or another file), when an End's grace period would
+        keep nothing inside the recording."""
+        return self.run_open_for(session_id) and (
+            self._run_confirmed or not self._client.connected
+        )
+
     @property
     def force_stop(self) -> asyncio.Event:
         return self._force_stop
@@ -433,7 +450,10 @@ class IntanService:
 
     async def disconnect(self) -> None:
         if self._run_open:
-            raise IntanNotReady("A recording is running; end it first.")
+            raise IntanNotReady(
+                "A recording Ephymeris started is still open. Switch Group or End the "
+                "session to close it out first."
+            )
         self._close_streams()
         await self._client.close()
         self._recording = None
@@ -442,13 +462,25 @@ class IntanService:
 
     async def _after_connect(self) -> None:
         await self._refresh_info()
-        if self._run_open:
-            if self._run_mode == "record":
+        recording = self._recording
+        if self._run_open and recording is not None:
+            if self._run_mode != "record":
+                self._set_state("error", _stopped_in_rhx(self._run_mode))
+            elif await self._rhx_writes(recording):
                 # RHX kept recording while we were away; pick the run back up.
+                self._run_confirmed = True
                 self._set_state("recording", None)
                 await self._open_streams()
             else:
-                self._set_state("error", _stopped_in_rhx(self._run_mode))
+                # Recording, but maybe not this run: stopped and started again
+                # by hand. Never adopted, so never stopped as ours.
+                self._set_state(
+                    "error",
+                    "RHX is recording, but not this run as far as Ephymeris can tell (its "
+                    "file stamp changed, or could not be read) — it was restarted from RHX "
+                    "itself. Ephymeris leaves that recording alone. The behavior session "
+                    "is unaffected.",
+                )
         elif self._state in ("disconnected", "error"):
             self._recording = None
             self._set_state("idle", None)
@@ -519,6 +551,7 @@ class IntanService:
             await self.publish()
             return
         if self._state == "recording" and self._run_mode != "record":
+            self._run_confirmed = False
             self._set_state("error", _stopped_in_rhx(self._run_mode))
         await self.publish()
 
@@ -531,6 +564,8 @@ class IntanService:
         self._silent_polls = 0
         await self._client.close()
         self._run_mode = None
+        if self._run_open:
+            self._run_confirmed = False
         if self.is_recording:
             self._set_state(
                 "error",
@@ -539,6 +574,9 @@ class IntanService:
             )
         elif self._run_open:
             pass  # already `error`, stopped from RHX: still a run to close out
+        elif self._stop_owed is not None:
+            # Still `error`, still saying a stop is owed: that outlives the link.
+            self._recording = None
         else:
             self._recording = None
             self._set_state("disconnected", None)
@@ -818,6 +856,7 @@ class IntanService:
         self._recording.file_timestamp = None if stamp == "RecordingNotStarted" else stamp
         self._recording.started_at = _now()
         self._force_stop.clear()
+        self._run_confirmed = True
         self._set_state("recording", None)
         await self.publish()
         await asyncio.sleep(self._pre_roll_s)
@@ -829,41 +868,66 @@ class IntanService:
             pass
 
     def note_waiting(self, boxes: list[int]) -> None:
-        """Graceful-end progress from the runner: who is still mid-trial."""
+        """Graceful-end progress from the runner: who is still mid-trial.
+
+        `stopping` whenever a run is open, so Mission Control offers End now
+        even with the link lost; the message saying why RHX is in trouble
+        stays."""
         self._waiting_on = sorted(boxes)
-        if self._state == "recording" and boxes:
-            self._set_state("stopping", None)
+        if self._run_open and boxes and self._state != "stopping":
+            self._set_state("stopping", self._message)
         self._loop.create_task(self.publish())
 
     async def stop_recording(self) -> dict[str, Any] | None:
         """Stop saving and hand back the run's record. NEVER RAISES, and is
         bounded: with RHX unreachable the run is still handed back, and the
-        stop is owed until RHX answers again (`_send_owed_stop`)."""
+        stop is owed until RHX answers again (`_send_owed_stop`).
+
+        Only a CONFIRMED run is stopped outright. One whose link was lost, or
+        that RHX was seen not writing, goes through the owed-stop check, which
+        stops RHX only on this run's own file.
+        """
         recording = self._recording
         if recording is None or recording.started_at is None:
             self.release()
             return None
-        self._set_state("stopping", None)
         self._waiting_on = []
-        await self.publish()
         message: str | None = None
-        try:
-            await asyncio.sleep(self._post_roll_s)
-            await self._stop_rhx()
-        except Exception as exc:  # noqa: BLE001 - the animals are done; never raise
-            log.error("couldn't stop the RHX recording: %s", _why(exc))
-            self._stop_owed = True
-            message = (
-                f"Ephymeris could not stop the RHX recording ({_why(exc)}). It stops it "
-                "as soon as RHX answers again. Stop it from RHX to stop it sooner; the "
-                "data it has written is safe."
+        owed = False
+        attempted = self._run_confirmed and self._client.connected
+        if attempted:
+            self._set_state("stopping", None)
+            await self.publish()
+            try:
+                await asyncio.sleep(self._post_roll_s)
+                await self._stop_rhx()
+            except Exception as exc:  # noqa: BLE001 - the animals are done; never raise
+                log.error("couldn't stop the RHX recording: %s", _why(exc))
+                owed = True
+                message = _owed_message(_why(exc))
+        else:
+            owed = True
+            message = _owed_message(
+                "RHX is not reachable" if not self._client.connected
+                else "RHX was not seen writing this run"
             )
         recording.ended_at = _now()
         self._recording = None
+        self._run_confirmed = False
         self._close_streams()
         self._force_stop.clear()
-        if message:
+        if owed:
+            self._stop_owed = recording
             self._set_state("error", message)
+            # Not after a stop that just failed: that already cost its bound,
+            # and the next poll retries. An unconfirmed run is checked now.
+            if not attempted and self._client.connected:
+                try:
+                    self._run_mode = await self._client.run_mode()
+                except RhxError:
+                    pass  # still owed; the next poll tries
+                else:
+                    await self._send_owed_stop()
         else:
             self._set_state("idle" if self._client.connected else "disconnected", None)
         await self.publish()
@@ -874,32 +938,63 @@ class IntanService:
         await asyncio.wait_for(self._client.set_run_mode("stop"), self._stop_timeout_s)
         self._run_mode = "stop"
 
-    async def _send_owed_stop(self) -> None:
-        """Stop the recording an earlier stop could not reach, once RHX answers.
+    async def _rhx_writes(self, recording: Recording) -> bool | None:
+        """Whether RHX's active file is this run's (`Filename.ActiveFileTimestamp`,
+        read at its start). None when that can't be told."""
+        if recording.file_timestamp is None:
+            return None
+        try:
+            stamp = (await self._client.get("filename.activefiletimestamp")).strip()
+        except RhxError:
+            return None
+        return stamp == recording.file_timestamp
 
-        Only while RHX is still in Record and no run of ours is open: a run
-        stopped by hand meanwhile settles the debt, and a run of ours started
-        since cannot exist, because `configure` sends the owed stop first.
+    async def _send_owed_stop(self) -> None:
+        """Stop the run an earlier stop could not reach, once RHX answers.
+
+        Only while RHX is still in Record ON THAT RUN'S FILE. Stopped by hand
+        meanwhile settles the debt; another file, or one that can't be read,
+        is a recording someone may want, so it is left alone and said so --
+        `configure` then refuses it as "already recording". Never while a run
+        of ours is open: `configure` sends the owed stop before one can start.
         """
-        if not self._stop_owed or self._run_open or not self._client.connected:
+        owed = self._stop_owed
+        if owed is None or self._run_open or not self._client.connected:
             return
         if self._run_mode not in ("record", "trigger"):
-            self._stop_owed = False
+            self._stop_owed = None
+            if self._state == "error":
+                self._set_state("idle", None)
+            return
+        writes = await self._rhx_writes(owed)
+        if not writes:
+            self._stop_owed = None
+            self._set_state(
+                "error",
+                "RHX is recording, but "
+                + ("not the run whose session ended" if writes is False
+                   else "Ephymeris could not confirm it is the run whose session ended")
+                + ", so Ephymeris left it alone. Stop it from RHX if it should not be running.",
+            )
             return
         try:
             await self._stop_rhx()
         except Exception as exc:  # noqa: BLE001 - still owed; the next poll retries
             log.error("couldn't send the owed RHX stop: %s", _why(exc))
-            self._set_state(
-                "error",
-                "RHX is still recording a run whose session has ended, and Ephymeris "
-                f"could not stop it ({_why(exc)}). Stop it from RHX.",
-            )
+            if not self._run_open:
+                self._set_state(
+                    "error",
+                    "RHX is still recording a run whose session has ended, and Ephymeris "
+                    f"could not stop it ({_why(exc)}). Stop it from RHX.",
+                )
             return
         log.info("sent the RHX stop an unreachable End owed")
-        self._stop_owed = False
-        if self._state == "error":
-            self._set_state("idle", None)
+        self._stop_owed = None
+        if not self._run_open:
+            self._set_state(
+                "idle",
+                "Stopped the RHX recording a session ended while RHX was out of reach.",
+            )
 
     # --- what the runner tells us ----------------------------------------
 
@@ -1337,6 +1432,14 @@ def _b(value: Any) -> str:
 def _note(text: str) -> str:
     """A note is one `set` value: no `;` (it would end the command)."""
     return (text.replace(";", ",").replace("\n", " ").strip() or "-")[:200]
+
+
+def _owed_message(why: str) -> str:
+    return (
+        f"Ephymeris could not stop the RHX recording ({why}). It stops it as soon as "
+        "RHX answers again, if RHX is still writing this run. Stop it from RHX to stop "
+        "it sooner; the data it has written is safe."
+    )
 
 
 def _stopped_in_rhx(run_mode: str | None) -> str:

@@ -127,6 +127,9 @@ class FakeIntan:
     def run_open_for(self, session_id: str) -> bool:
         return self.is_recording and self.set_up_for is not None and self.set_up_for[0] == session_id
 
+    def may_still_record_for(self, session_id: str) -> bool:
+        return self.run_open_for(session_id)
+
     async def start_recording(self) -> None:
         self.log.append("rhx start")
         if self.gate is not None:
@@ -1309,8 +1312,10 @@ async def test_a_recording_runs_from_start_to_stop(intan) -> None:  # noqa: ANN0
     await service.start_recording()
     assert service.is_recording
     assert service.run_open_for("s1") and not service.run_open_for("s2")
+    assert service.may_still_record_for("s1") and not service.may_still_record_for("s2")
     assert await service.stop_recording() is not None
     assert not service.is_recording and not service.run_open_for("s1")
+    assert not service.may_still_record_for("s1")
 
 
 async def test_stopping_a_recording_that_never_started_lets_go(intan) -> None:  # noqa: ANN001

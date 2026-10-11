@@ -43,7 +43,7 @@ decides almost everything below.
 | Rule | Reason |
 |---|---|
 | Nothing on the session path awaits RHX, **except starting** | `sessions.startAll` and `port.startSession` on a recording session begin the RHX recording *first* and refuse with an `INTAN_*` code if they cannot, **before any box is started**. A behavior session quietly missing its electrophysiology cannot be re-run, so this is the one place a failure must be loud |
-| `IntanService.stop_recording` never raises, and is bounded | By the time it runs the animals are done; a raise could only strand the session as `running`. RHX unreachable → the run is still recorded and the stop is owed until RHX answers again ([When RHX goes away](#when-rhx-goes-away)) |
+| `IntanService.stop_recording` never raises, and is bounded | By the time it runs the animals are done; a raise could only strand the session as `running`. RHX unreachable → the run is still recorded and the stop is owed until RHX answers again, sent only if RHX is still writing that run ([When RHX goes away](#when-rhx-goes-away)) |
 | The data sockets are a convenience | Losing them costs the live windows, never the recording. RHX writes to disk on its own |
 | Closing our sockets never stops RHX | So neither a reconnect nor the sidecar exiting ends a recording. `IntanService.stop()` closes *our* sockets and nothing else |
 
@@ -394,8 +394,10 @@ sequenceDiagram
     App->>App: append the run to sessions.recording_json
 ```
 
-A recording counts from its start to its stop, not by the link (`IntanService.run_open_for`): with RHX
-unreachable, or stopped from RHX, End still waits for the boxes, attempts the stop and records the run.
+**A recording counts from its start to its stop, not by the link** (`IntanService.run_open_for`): with
+RHX unreachable, or stopped from RHX, End still attempts the stop and records the run. Only a run RHX is
+known to be writing is stopped outright; any other goes through the owed-stop check
+([When RHX goes away](#when-rhx-goes-away)).
 
 ### Start
 
@@ -411,7 +413,8 @@ unreachable, or stopped from RHX, End still waits for the boxes, attempts the st
 A failure in 1–2 is an `INTAN_*` error with no box started. Before step 1,
 `IntanService.refuse_unless_ready` refuses with the reason that applies: `INTAN_NOT_READY` when no
 recording is set up for this group, `INTAN_UNAVAILABLE` when RHX is out of reach. A box started while the
-group's recording has lost its link is refused the same way, naming the lost link.
+group's recording has lost its link is refused the same way, naming the lost link; one started after Stop
+was pressed in RHX gets `INTAN_NOT_READY`, pointing to Switch Group or End.
 
 A box refused *after* step 5 (Start All refused at its first box) leaves RHX recording with nothing run, so
 a retry starts its boxes inside the same recording. `sessions.abandon` stops it and keeps the run on the
@@ -423,8 +426,10 @@ aborted session, since its files exist.
 
 1. `STOP` to every box.
 2. **Wait for each box's own `BF_END_SESSION`**, up to `RECORDING_GRACE_S` in `sessions/lifecycle.py` (longer than any
-   trial the lab runs). `intan.status.waitingOn` names who is still out; Mission Control offers End now
-   (`intan.forceStop`).
+   trial the lab runs). `intan.status.waitingOn` names who is still out and the state is `stopping`, even
+   with the link lost, so Mission Control offers End now (`intan.forceStop`). When RHX was seen not
+   writing the run (Stop pressed in RHX), the grace period would keep nothing inside the recording, so
+   the boxes end as behavior-only ones do (`IntanService.may_still_record_for`).
 3. Post-roll (`POST_ROLL_S`), then `set runmode stop`.
 4. The run is appended to `sessions.recording_json`.
 
@@ -437,7 +442,8 @@ aborted session, since its files exist.
 ![Mission Control ending a recording: an ENDING panel reading "Finishing the trials in flight" and "Waiting for box 1, 4, 5 to finish its trial…" with an End now button above the sync check, while boxes 2 and 3 already read IDLE, "Finished — BF_END_SESSION received"](images/mission-control-ending.webp)
 
 **One recording per group run**, not per session: another group is different animals, possibly on
-different ports.
+different ports. The one exception is an aborted session: Abandon after Start All was refused at its
+first box records the stopped run with no group run beside it ([Start](#start)).
 
 ### When RHX goes away
 
@@ -445,9 +451,9 @@ different ports.
 |---|---|
 | RHX hangs up (Disconnect in its dialog, or quit) | Seen within `WATCH_S` without sending anything: EOF reaches the reader when the peer closes (`RhxCommandClient.peer_closed`). `connected: false` at once; the reconnect succeeds once Connect is pressed in RHX again |
 | RHX silent with the socket open | `SILENT_POLLS` consecutive unanswered polls (one silence can be RHX busy) and the link is declared lost **and our end is closed** (`_lost`). The close matters: `connected` is the socket's, so a link marked lost on an open socket would go on reading *connected* |
-| Command socket lost mid-recording | `state: error`, "RHX keeps recording on its own; reconnecting". The session is untouched, and the run is kept. On reconnect, if RHX is still in `Record`, the run is picked back up and the streams reopened. A box started meanwhile is refused with `INTAN_UNAVAILABLE` |
-| Stop pressed in RHX | The poll sees `runmode ≠ record` → `error`, said plainly. The session is untouched, and the run is kept for End to record |
-| RHX unreachable at End | The boxes still get `RECORDING_GRACE_S`. `stop_recording` attempts `set runmode stop`, bounded by `STOP_TIMEOUT_S`, records the run, and owes the stop: the first time RHX answers again and is still in `Record`, it is stopped (`_send_owed_stop`), so the next Record step is not refused. Stopped by hand meanwhile, nothing is sent |
+| Command socket lost mid-recording | `state: error`, "RHX keeps recording on its own; reconnecting". The session is untouched, and [the run is kept](#start-and-end). On reconnect, if RHX is in `Record` **on this run's file** (`Filename.ActiveFileTimestamp` as read at the start), the run is picked back up and the streams reopened; on another file, or one that can't be read, it is a recording restarted by hand: `error`, said plainly, and never adopted or stopped as ours. A box started meanwhile is refused with `INTAN_UNAVAILABLE` |
+| Stop pressed in RHX | The poll sees `runmode ≠ record` → `error`, said plainly. The session is untouched, and [the run is kept](#start-and-end) for End to record, without the grace period |
+| RHX unreachable at End | The boxes still get `RECORDING_GRACE_S`. `stop_recording` attempts `set runmode stop`, bounded by `STOP_TIMEOUT_S`, records the run, and owes the stop, saying so in `intan.status.message` until it is settled, through a lost link too. The first time RHX answers again and is still in `Record` on **that run's file**, it is stopped and the message says so (`_send_owed_stop`), so the next Record step is not refused. Stopped by hand meanwhile, nothing is sent. Recording another file, or one whose stamp can't be read, it is left alone and the message says to stop it from RHX; the Record step then refuses it as already recording |
 | Data sockets fail to open | `liveStreams: false`; Mission Control says the live views are unavailable, the recording is unaffected |
 | The sidecar exits | Its sockets close. RHX keeps recording |
 

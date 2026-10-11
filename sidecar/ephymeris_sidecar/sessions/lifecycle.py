@@ -71,10 +71,11 @@ class MappingRefused(Exception):
 
 
 class BoxRefused(Exception):
-    """Starting one box failed; the runner's or port's error is `__cause__`."""
+    """The runner or port refused one box -- its start, or its STOP. The
+    runner's or port's error is `__cause__`, and says which."""
 
     def __init__(self, box: int) -> None:
-        super().__init__(f"box {box} could not start")
+        super().__init__(f"box {box} was refused")
         self.box = box
 
 
@@ -641,8 +642,9 @@ class SessionLifecycle:
         Order is the whole point: STOP the boxes, WAIT for each to close its
         trial, and only then stop RHX -- so the last event of every animal is
         inside the recording, with a post-roll after it. A recording counts
-        from its start to its stop, not by the link: with RHX unreachable the
-        boxes still get the grace period and the run is still recorded.
+        from its start to its stop, not by the link
+        (`RECORDING.md#start-and-end`): with RHX unreachable the boxes still
+        get the grace period and the run is still recorded.
         """
         intan = self._intan
         if intan is None or not intan.run_open_for(session_id):
@@ -650,12 +652,18 @@ class SessionLifecycle:
             if intan is not None:
                 intan.release()
             return
-        await self._runner.end_all(
-            "operator stop",
-            graceful_timeout_s=RECORDING_GRACE_S,
-            force=intan.force_stop,
-            on_waiting=intan.note_waiting,
-        )
+        if intan.may_still_record_for(session_id):
+            await self._runner.end_all(
+                "operator stop",
+                graceful_timeout_s=RECORDING_GRACE_S,
+                force=intan.force_stop,
+                on_waiting=intan.note_waiting,
+            )
+        else:
+            # RHX was seen not writing this run (Stop pressed in RHX): the
+            # grace period would keep nothing inside the recording, so the
+            # boxes end as behavior-only ones do.
+            await self._runner.end_all("operator stop")
         await self._stop_recording(session_id)
 
     async def _stop_recording(self, session_id: str) -> None:

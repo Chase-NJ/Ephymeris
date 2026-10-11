@@ -13,7 +13,7 @@ import asyncio
 import pytest
 
 from ephymeris_sidecar.intan.client import RhxCommandFailed
-from ephymeris_sidecar.intan.service import IntanNotReady, IntanService
+from ephymeris_sidecar.intan.service import SILENT_POLLS, IntanNotReady, IntanService
 from ephymeris_sidecar.intan.streams import (
     FRAMES_PER_BLOCK,
     FrameLayout,
@@ -323,7 +323,7 @@ async def test_a_lost_link_keeps_saying_a_stop_is_owed(rig, tmp_path):
     saying so, outlive it."""
     h = await rig(poll_s=30.0, stop_timeout_s=0.5)
     await _owe_a_stop(h, tmp_path)
-    for _ in range(3):  # SILENT_POLLS unanswered polls: the link is lost
+    for _ in range(SILENT_POLLS):  # unanswered polls: the link is given up on
         await h.service._poll_once()
 
     status = h.service.status_json()

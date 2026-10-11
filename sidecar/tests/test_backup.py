@@ -35,7 +35,8 @@ from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
 from ephymeris_sidecar.tasks.profile import parse_profile
-from tests.test_session_runner import GRGL, FakePorts, wait_until
+from tests.scripted_board import Bench
+from tests.test_session_runner import GRGL, wait_until
 
 
 # --- mirror layout (`DATA.md#mirror-layout`) -------------------------------
@@ -487,9 +488,9 @@ async def test_a_hung_backup_target_never_holds_up_a_run(
     async def broadcast(_message: dict) -> None:
         return None
 
-    ports = FakePorts()
+    bench = await Bench(asyncio.get_running_loop(), (1,)).plug_in()
     runner = SessionRunner(
-        loop=asyncio.get_event_loop(), ports=ports, broadcast=broadcast,
+        loop=asyncio.get_running_loop(), ports=bench.ports, broadcast=broadcast,
         on_animal_ended=on_animal_ended, backup=backup,
     )
     runner.configure(data, "2O-Bdisc_25", "g1", [BoxConfig(
@@ -499,14 +500,13 @@ async def test_a_hung_backup_target_never_holds_up_a_run(
     )], session_id="s1")
 
     try:
-        runner.start_box(1)  # tracked before the first pass, so the .tsv is what hangs
-        ports.on_ready(None)
-        ports.on_strobe(101, 0)
+        runner.start_box(1)
+        board = await bench.run_handshake(1)
+        await board.said("101\t0")  # the .tsv is open and tracked before the first pass
         backup.start()
         assert await asyncio.to_thread(share.entered.wait, 5), "the mirror never began a copy"
 
-        ports.on_strobe(249, 100)
-        ports.on_strobe(246, 200)  # END_SESSION
+        await board.said("249\t100", "246\t200")  # END_SESSION
         await wait_until(lambda: bool(ended))
 
         assert share.stuck, "the run finished only once the share let go"
@@ -514,6 +514,7 @@ async def test_a_hung_backup_target_never_holds_up_a_run(
         assert json.loads(document.read_text(encoding="utf-8"))["n_events"] == 3
     finally:
         share.release()
+        bench.shutdown()
 
     await wait_until(lambda: (mirror / "Batch A" / "behavior.json" / document.name).is_file())
     await backup.stop()

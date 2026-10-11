@@ -416,11 +416,11 @@ def _clean_up(
     can't be reached, nothing is deleted and the journal stays `committed`
     for the next start: an unreadable original is not a deleted one."""
     copies = _copies(files, "copy", "present")
-    unreached = [f.src for f in copies if relocate.out_of_reach(f.src)]
-    if unreached:
+    unreached = next((f.src for f in copies if relocate.out_of_reach(f.src)), None)
+    if unreached is not None:
         log.warning(
-            "move %s: %d original(s) can't be reached (%s); left for the next start",
-            journal, len(unreached), unreached[0],
+            "move %s: %s can't be reached; its originals are left for the next start",
+            journal, unreached,
         )
         return
     touched = transfer.delete_originals(copies)

@@ -272,7 +272,103 @@ async def test_a_stop_rhx_never_answers_is_bounded_and_sent_once_it_does(rig, tm
     h.fake.silent = False
     await h.service._poll_once()
     await h.until(lambda: h.fake.params["runmode"] == "Stop")
-    assert h.service.status_json()["state"] == "idle"
+    status = h.service.status_json()
+    assert status["state"] == "idle"
+    assert "Stopped the RHX recording" in status["message"]  # said, not silent
+
+
+async def _owe_a_stop(h, tmp_path) -> None:  # noqa: ANN001
+    """A recording whose stop RHX never answered: the stop is owed."""
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    h.fake.silent = True
+    await h.service.stop_recording()
+    assert h.fake.params["runmode"] == "Record"
+
+
+async def test_an_owed_stop_leaves_a_recording_started_by_hand_alone(rig, tmp_path):
+    """RHX was stopped and started again by hand while unreachable: the file it
+    writes now is not the run the session ended, so it is not stopped. Said
+    plainly instead."""
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await _owe_a_stop(h, tmp_path)
+    h.fake.params["filename.activefiletimestamp"] = "260920_111111"
+
+    h.fake.silent = False
+    await h.service._poll_once()
+    await asyncio.sleep(0.2)
+
+    assert h.fake.params["runmode"] == "Record"
+    assert "left it alone" in h.service.status_json()["message"]
+    await h.service._poll_once()  # and never on a later poll either
+    await asyncio.sleep(0.2)
+    assert h.fake.params["runmode"] == "Record"
+
+
+async def test_an_owed_stop_is_report_only_when_rhx_cannot_say_what_it_records(rig, tmp_path):
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await _owe_a_stop(h, tmp_path)
+    del h.fake.params["filename.activefiletimestamp"]
+
+    h.fake.silent = False
+    await h.service._poll_once()
+    await asyncio.sleep(0.2)
+
+    assert h.fake.params["runmode"] == "Record"
+    assert "left it alone" in h.service.status_json()["message"]
+
+
+async def test_a_lost_link_keeps_saying_a_stop_is_owed(rig, tmp_path):
+    """The link given up on after the failed stop: the debt, and the message
+    saying so, outlive it."""
+    h = await rig(poll_s=30.0, stop_timeout_s=0.5)
+    await _owe_a_stop(h, tmp_path)
+    for _ in range(3):  # SILENT_POLLS unanswered polls: the link is lost
+        await h.service._poll_once()
+
+    status = h.service.status_json()
+    assert status["connected"] is False
+    assert "could not stop the RHX recording" in status["message"]
+
+
+async def test_a_reconnect_does_not_adopt_a_recording_started_by_hand(rig, tmp_path):
+    """The link drops, and RHX is stopped and started again by hand. On
+    reconnect RHX is in Record, but not writing this run: it is not picked
+    back up as ours, and the End that follows does not stop it."""
+    h = await rig(poll_s=0.05, stop_timeout_s=0.5)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    await h.fake.stop_listening()
+    await h.until(lambda: h.service.status_json()["state"] == "error")
+    h.fake.params["filename.activefiletimestamp"] = "260920_111111"
+
+    await h.fake.listen_again()
+    # Reconnected and decided: the lost-link message is gone either way.
+    await h.until(lambda: "Lost contact" not in (h.service.status_json()["message"] or ""))
+    status = h.service.status_json()
+    assert status["state"] == "error" and "not this run" in status["message"]
+
+    run = await h.service.stop_recording()
+    await asyncio.sleep(0.2)
+    assert run is not None
+    assert h.fake.params["runmode"] == "Record"
+
+
+async def test_an_end_waiting_on_boxes_offers_end_now_with_rhx_lost(rig, tmp_path):
+    """Mission Control offers End now only while `stopping`. With the link
+    lost, an End still waits on the boxes, so it must still be offered --
+    and the reason RHX is in trouble must not vanish."""
+    h = await rig(poll_s=0.05)
+    await h.service.configure("s1", "g1", config(tmp_path), "x")
+    await h.service.start_recording()
+    await h.fake.stop_listening()
+    await h.until(lambda: h.service.status_json()["state"] == "error")
+
+    h.service.note_waiting([1, 3])
+
+    status = h.service.status_json()
+    assert (status["state"], status["waitingOn"]) == ("stopping", [1, 3])
+    assert "Lost contact with RHX" in status["message"]
 
 
 async def test_an_owed_stop_is_dropped_when_rhx_was_stopped_by_hand(rig, tmp_path):

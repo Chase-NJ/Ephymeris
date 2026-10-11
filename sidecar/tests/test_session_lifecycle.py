@@ -931,7 +931,8 @@ async def test_an_end_after_rhx_was_stopped_from_rhx_still_records_the_run(
     db, tmp_path, rhx  # noqa: ANN001
 ) -> None:
     """B20's sibling: Stop pressed in RHX mid-recording. The run happened, and
-    the session says so."""
+    the session says so. RHX is known to be in Stop, so the grace period would
+    keep nothing inside the recording: the boxes end as behavior-only ones do."""
     fake, service = rhx
     rig, session = await _recording_rig(db, tmp_path, rhx)
     await rig.lifecycle.start_all(session.id)
@@ -940,6 +941,7 @@ async def test_an_end_after_rhx_was_stopped_from_rhx_still_records_the_run(
 
     await rig.lifecycle.end(session.id)
 
+    assert "graceful_timeout_s" not in rig.runner.ended_with
     runs = rig.sessions.get_session(session.id).recording["runs"]
     assert [r["groupId"] for r in runs] == ["g-a"]
 

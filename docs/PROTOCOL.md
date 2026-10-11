@@ -2824,6 +2824,7 @@ The full result of a library scan (`TASKS.md#sketch-library`): the bundled sketc
 | `category` | string |  |
 | `name` | string |  |
 | `path` | string |  |
+| `source` | "bundled" \| "rig" | `rig` when the app generated the folder from one of this rig's saved task definitions, so it is rebuilt on every save and wiring change; `bundled` otherwise, including a bundled sketch rebuilt against this rig's wiring (`TASKS.md#library-roots`). |
 
 <a id="shape-sketchlibrarystatus"></a>
 #### SketchLibraryStatus

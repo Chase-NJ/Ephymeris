@@ -259,6 +259,12 @@ export interface SketchEntry {
   category: string;
   name: string;
   path: string;
+  /**
+   * `rig` when the app generated the folder from one of this rig's saved task definitions, so it
+   * is rebuilt on every save and wiring change; `bundled` otherwise, including a bundled sketch
+   * rebuilt against this rig's wiring (`TASKS.md#library-roots`).
+   */
+  source: "bundled" | "rig";
 }
 
 /** Carried in full so a missing sketch is inspectable, not silent. */

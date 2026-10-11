@@ -112,7 +112,19 @@ SHAPES = (
     ),
     Shape(
         "SketchEntry",
-        obj(f("category", STR), f("name", STR), f("path", STR)),
+        obj(
+            f("category", STR),
+            f("name", STR),
+            f("path", STR),
+            f(
+                "source",
+                lit("bundled", "rig"),
+                doc="`rig` when the app generated the folder from one of this rig's "
+                "saved task definitions, so it is rebuilt on every save and wiring "
+                "change; `bundled` otherwise, including a bundled sketch rebuilt "
+                "against this rig's wiring (`TASKS.md#library-roots`).",
+            ),
+        ),
     ),
     Shape(
         "SkippedEntry",

@@ -13,12 +13,20 @@ on inside `protocol.event()` itself, so every event any test emits is checked.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from ephymeris_sidecar.boards.tool import DetectedBoard
 from ephymeris_sidecar.cohorts.grouping import suggest_groups
 from ephymeris_sidecar.cohorts.models import Animal, Cohort, Group
-from ephymeris_sidecar.discovery import SketchDiscovery, SketchLibraryStatus, library_status
+from ephymeris_sidecar.discovery import (
+    LIBRARY_ENV,
+    SketchDiscovery,
+    SketchLibraryStatus,
+    discover,
+    library_status,
+)
 from ephymeris_sidecar.ports.handler import OutputLine
 from ephymeris_sidecar.protocol import (
     Evt,
@@ -340,6 +348,35 @@ def test_discovery_payloads_match_schema() -> None:
     # The damaged arm explicitly, since a dev machine will rarely produce it.
     damaged = SketchLibraryStatus("damaged", None, "missing", "bundled")
     assert validate(("ref", "SketchLibraryStatus"), damaged.to_json()) == []
+
+
+def test_a_populated_discovery_matches_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every sketch arm on the wire: bundled, rebuilt-bundled and rig.
+
+    Needs real entries: an empty `sketches` list validates whatever `SketchEntry`
+    says, so a field a `Sketch` gains would pass here and fail `sketches.updated`
+    on any real machine with validation on.
+    """
+
+    def make_sketch(root: Path, category: str, name: str) -> None:
+        folder = root / category / name
+        folder.mkdir(parents=True)
+        (folder / f"{name}.ino").write_text("void setup(){}\n", encoding="utf-8")
+
+    library, pinned, generated = tmp_path / "lib", tmp_path / "pinned", tmp_path / "tasks"
+    make_sketch(library, "Shaping", "shaping_GL")
+    make_sketch(library, "Discrimination", "disc_2O")
+    make_sketch(pinned, "Discrimination", "disc_2O")
+    make_sketch(generated, "Saved", "my_task")
+    monkeypatch.setenv(LIBRARY_ENV, str(library))
+
+    payload = discover(generated_root=generated, pinned_root=pinned).to_json()
+    assert {s["source"] for s in payload["sketches"]} == {"bundled", "rig"}
+    assert validate(("ref", "SketchDiscovery"), payload) == []
+    # Through the event builder too, which is what `_replay_state` sends.
+    assert event(Evt.SKETCHES_UPDATED, payload)["data"] == payload
 
 
 def test_event_data_specs_cover_every_event() -> None:

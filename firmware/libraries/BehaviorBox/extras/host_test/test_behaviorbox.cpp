@@ -349,6 +349,31 @@ int main() {
     assert(p.odorPokeHold==500 && p.fluidWellPoll==2000);        // holds, via row 0
     assert(p.trialSeed==2147483646UL); }
 
+  // --- readLineInto: what a sketch's char cmd[START_LINE_MAX] keeps whole ---
+  //
+  //     One byte goes to the terminator, so START_LINE_MAX - 1 characters is the
+  //     longest line read intact, and the host refuses to build anything longer
+  //     (sidecar test_a_line_the_firmware_buffer_cannot_hold_whole_is_refused).
+  //     A line of exactly START_LINE_MAX loses its last character -- on a START
+  //     line, the seed's last digit, and the board runs a seed nobody drew.
+  { static char sent[START_LINE_MAX + 2];
+    char cmd[START_LINE_MAX];
+    memset(sent, '7', START_LINE_MAX - 1);
+    sent[START_LINE_MAX - 1] = '\n'; sent[START_LINE_MAX] = '\0';
+    _serialIn = sent;
+    assert(readLineInto(cmd, sizeof(cmd)));
+    assert(strlen(cmd) == START_LINE_MAX - 1);              // whole
+    assert(*_serialIn == '\0');                             // terminator consumed
+
+    memset(sent, '7', START_LINE_MAX - 1);
+    sent[START_LINE_MAX - 1] = '9';                          // one more: the last digit
+    sent[START_LINE_MAX] = '\n'; sent[START_LINE_MAX + 1] = '\0';
+    _serialIn = sent;
+    assert(readLineInto(cmd, sizeof(cmd)));
+    assert(strlen(cmd) == START_LINE_MAX - 1);              // truncated...
+    assert(cmd[START_LINE_MAX - 2] == '7');                  // ...and the '9' is gone
+    assert(*_serialIn == '\0'); }                           // tail drained, not left queued
+
   // --- emitStrobe: one sync pulse per strobe, and never two fused into one ---
   //
   // The recording controller sees only edges, and the host matches the Nth edge

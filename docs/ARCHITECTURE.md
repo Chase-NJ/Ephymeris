@@ -1327,11 +1327,19 @@ Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and 
 
 **The session store forgets a run when the sidecar reports the next one began**, never on a click, so a
 refused start leaves the last run on screen. A port entering `IN_SESSION` (a real transition, not the
-connect replay) clears that box; Debug Mode's `port.telemetry` going from not running to running, which
-the sidecar sends only once a `START` is on the wire, clears that box; a `session.lifecycle` answer that
-shows a newly confirmed mapping clears every box. The payload carries no confirmation id, so "newly
-confirmed" means a mapping none of whose boxes has started, and either not the one last shown or the same
-one again after a box entered `IN_SESSION`.
+connect replay) clears that box. Debug Mode's `port.telemetry` going from not running to running, which
+the sidecar sends only once a `START` is on the wire, clears that box. A confirmed mapping clears every
+box: the `ActiveSessions` payload carries `confirmations`, which `sessions.confirmMapping` increments, and
+the store clears on a value it has not seen. `session.lifecycle` broadcasts and `sessions.active` answers
+both count, so a mapping confirmed while a window was disconnected clears it on reconnect. The first answer
+a new store sees only records the value: nothing shown before it is a run it could be wrong about.
+
+> [!CAUTION]
+> **A new group run is the counter, never the rest of the payload.** Confirming the same group again can
+> broadcast every other field byte for byte (the runner's snapshot of a just-confirmed mapping is always
+> the same, and a later group's per-box start announces nothing), so a client that compares payloads keeps
+> the last run's trials on screen under the new one. The count is per sidecar process: the sidecar dies
+> with the shell and is never respawned, so no window outlives the count it was reading.
 
 Mission Control's elapsed time and the session log's T+ offsets read one clock, the **session clock**
 (`clockStartedAt`, [DATA.md](DATA.md#the-session-clock)) — the first group's start, not the record's

@@ -96,15 +96,8 @@ export class SessionStore {
    */
   private active: ActiveSessions | null = null;
   private activeLoaded = false;
-  /**
-   * Boxes whose port is `IN_SESSION`, on `port.state`'s word. Only for telling
-   * a run still being written apart from a mapping no box has started.
-   */
-  private live = new Set<number>();
-  /** The running slot of the last active answer, as JSON, to tell a repeat. */
-  private shownRunning: string | null = null;
-  /** A box entered `IN_SESSION` since that answer. */
-  private ranSinceShown = false;
+  /** The sidecar's count of confirmed mappings in the last active answer. */
+  private confirmations: number | null = null;
   private subs = new Map<string, Set<() => void>>();
 
   attach(client: SidecarPort): () => void {
@@ -142,14 +135,7 @@ export class SessionStore {
       // which is no transition, so a running box keeps what it has gathered.
       client.on(EVT.PORT_STATE, (d) => {
         if (typeof d?.box !== "number") return;
-        if (d.state !== "IN_SESSION") {
-          this.live.delete(d.box);
-          return;
-        }
-        this.live.add(d.box);
-        if (d.prev === "IN_SESSION") return;
-        this.ranSinceShown = true;
-        this.forgetBox(d.box);
+        if (d.state === "IN_SESSION" && d.prev !== "IN_SESSION") this.forgetBox(d.box);
       }),
 
       client.onStatus((status) => {
@@ -302,45 +288,18 @@ export class SessionStore {
 
   /**
    * Take a new active answer, broadcast or asked for, and forget the last run
-   * if it shows a newly confirmed mapping.
-   *
-   * The payload carries no confirmation id, so "newly confirmed" is read from
-   * what it does carry: a mapping none of whose boxes has started (the runner
-   * clears `startedAt` and `ended` only when a mapping is confirmed), which is
-   * either not the one last shown, or the same one again after a box has run
-   * since. Confirming the same group twice, with a per-box start and its end
-   * in between, repeats the last broadcast exactly, and only that run tells
-   * them apart. A repeat with no run between is some other announce (a
-   * session created, a tidy) and changes nothing.
+   * if the sidecar has confirmed a mapping since the last one: its
+   * `confirmations` count is one this store has not seen. The first answer
+   * has nothing shown before it to forget, so it only records the count.
    */
   private takeActive(next: ActiveSessions): void {
-    const shown = JSON.stringify(next.running);
-    // The first answer has nothing shown before it to forget.
-    if (
-      this.activeLoaded &&
-      this.freshMapping(next.running) &&
-      (shown !== this.shownRunning || this.ranSinceShown)
-    ) {
+    if (this.confirmations !== null && next.confirmations !== this.confirmations) {
       this.forgetRun();
     }
-    this.shownRunning = shown;
-    this.ranSinceShown = false;
+    this.confirmations = next.confirmations;
     this.active = next;
     this.activeLoaded = true;
     this.notify("active");
-  }
-
-  /**
-   * A mapping is held and no box of it has begun a run. A box still
-   * `IN_SESSION` on its port has: the runner lets go of a run before its
-   * files are written and its port is released, and an announce landing then
-   * reads as never started.
-   */
-  private freshMapping(running: ActiveSessions["running"]): boolean {
-    if (!running?.groupId || running.boxes.length === 0) return false;
-    return running.boxes.every(
-      (b) => !b.running && b.startedAt === null && !b.ended && !this.live.has(b.box),
-    );
   }
 
   /** Forget every box's run: a new group's boxes were confirmed. */

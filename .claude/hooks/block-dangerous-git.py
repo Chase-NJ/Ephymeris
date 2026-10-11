@@ -41,15 +41,51 @@ def block(reason: str) -> None:
     raise Blocked(reason)
 
 
+HEREDOC = re.compile(
+    r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)\n[ \t]*\2[ \t]*(?=\n|\)|$)", re.S
+)
+INTERPRETERS = SHELLS | {"python", "python3", "node", "perl", "ruby"}
+
+
+def split_heredocs(command: str) -> tuple[str, list[str]]:
+    """Cut heredoc bodies out of the command line, and return the ones a shell
+    or interpreter on the same line will run so they are checked too. The rest
+    (a commit message, a PR body) are data, and prose would trip the lexer."""
+    executed: list[str] = []
+
+    def cut(match: re.Match[str]) -> str:
+        line_start = command.rfind("\n", 0, match.start()) + 1
+        line = command[line_start : match.start()] + match.group(3)
+        programs = {w.rsplit("/", 1)[-1] for w in re.split(r"[\s|;&()]+", line) if w}
+        if programs & INTERPRETERS:
+            executed.append(match.group(4))
+        return "<< " + match.group(2) + match.group(3)
+
+    return HEREDOC.sub(cut, command), executed
+
+
 def tokenize(command: str) -> list[list[str]]:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars="&|;()<>")
+    # A newline separates commands like `;` does, so it is punctuation here;
+    # inside quotes it stays part of the word.
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="&|;()<>\n")
+    lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
     tokens = list(lexer)
     commands: list[list[str]] = [[]]
+    skip_next = False
     for token in tokens:
-        if token in SEPARATORS or set(token) <= set("&|;()"):
+        if skip_next:
+            skip_next = False
+            continue
+        if set(token) <= set("&|;()\n"):
             commands.append([])
+        elif set(token) <= set("<>&|") and ("<" in token or ">" in token):
+            # A redirection: drop it, its target, and a file descriptor in front
+            # (`2>&1` lexes as `2`, `>&`, `1`).
+            if commands[-1] and commands[-1][-1].isdigit():
+                commands[-1].pop()
+            skip_next = True
         else:
             commands[-1].append(token)
     return [c for c in commands if c]
@@ -254,6 +290,9 @@ def check_merge(args: list[str], cwd: str | None) -> None:
 def check(command: str, cwd: str | None, depth: int = 0) -> None:
     if depth > 4:
         block("command nests shells too deeply to check")
+    command, executed = split_heredocs(command)
+    for body in executed:
+        check(body, cwd, depth + 1)
     try:
         commands = tokenize(command)
     except ValueError as exc:

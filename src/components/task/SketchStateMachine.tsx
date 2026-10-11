@@ -17,24 +17,19 @@ import type {
   TaskNode,
 } from "@/lib/tasks/topology";
 import {
-  CHIP_ABOVE_DY,
-  CHIP_GAP,
-  CHIP_RIGHT_DY,
+  CHIP_STEP,
   EDITOR_MIN_W,
-  LABEL_ABOVE_DY,
-  LABEL_BELOW_DY,
-  LABEL_RIGHT_DY,
   LIVE_GEOMETRY,
   R,
   TICK_ACTIVE_H,
   TICK_H,
-  TICK_BLOCK,
   TICK_MAX,
   TICK_PITCH,
   TICK_W,
   VIEWER_GEOMETRY,
   frameFor,
   layoutWidthFor,
+  nodeMetrics,
   spinePath,
   type Frame,
 } from "@/lib/tasks/graphLayout";
@@ -875,27 +870,17 @@ function NodeGlyph({
   const fill = fillFor(node);
 
   const anchor = node.labelAnchor ?? "below";
-  const ticks = node.variants && node.variants.length > 1 ? node.variants : null;
-  // The strip sits between the glyph and its label, so the label moves down by
-  // exactly what the strip claims — the same number `measureNode` budgets.
-  const tickBlock = ticks ? TICK_BLOCK : 0;
+  // The same offsets `measureNode` sizes the node by, so the layout budgets
+  // for exactly what is drawn here.
+  const metrics = nodeMetrics(node, chips.length);
+  const ticks = metrics.ticks ? node.variants : undefined;
   const labelX = anchor === "right" ? x + R + 6 : x;
-  const labelY =
-    anchor === "right"
-      ? y + LABEL_RIGHT_DY
-      : anchor === "above"
-        ? y + LABEL_ABOVE_DY
-        : y + R + tickBlock + LABEL_BELOW_DY;
+  const labelY = y + metrics.labelY;
   const textAnchor = anchor === "right" ? "start" : "middle";
 
   // Chips stack under the label (or trail it, for right-anchored nodes).
   const chipX = anchor === "right" ? x + R + 6 : x;
-  const chipY0 =
-    anchor === "right"
-      ? y + CHIP_RIGHT_DY
-      : anchor === "above"
-        ? y + CHIP_ABOVE_DY
-        : labelY + CHIP_GAP;
+  const chipY0 = y + metrics.chipY;
 
   return (
     <g
@@ -1020,7 +1005,7 @@ function NodeGlyph({
           <text
             key={chip.short}
             x={chipX}
-            y={chipY0 + index * 12}
+            y={chipY0 + index * CHIP_STEP}
             textAnchor={textAnchor}
             fontSize={9}
             className={covered ? "fill-pulsar" : "fill-static"}

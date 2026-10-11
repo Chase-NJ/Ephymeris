@@ -17,7 +17,7 @@ import pytest
 from websockets.asyncio.client import connect
 
 from ephymeris_sidecar.protocol import PROTOCOL_VERSION
-from tests.live_sidecar import TOKEN, LiveSidecar, Refused
+from tests.live_sidecar import TOKEN, LiveSidecar, Refused, animal
 from tests.wire import dispatch, running_app
 
 
@@ -31,7 +31,7 @@ async def _cohort(app, folder: Path) -> dict:  # noqa: ANN001
     created = await dispatch(
         app, "cohorts.create", name=folder.name, dataFolder=str(folder),
         groups=[{"id": "g1", "name": "Morning", "order": 0}],
-        animals=[{"name": "rat1", "groupId": "g1", "boxNumber": 1}],
+        animals=[animal("rat1", "g1", box=1)],
     )
     return created["cohort"]
 
@@ -115,4 +115,84 @@ async def test_a_cohort_command_still_works_through_dispatch(app, tmp_path: Path
     cohort = await _cohort(app, tmp_path / "Batch B")
     listed = await dispatch(app, "cohorts.list")
     assert [c["id"] for c in listed["cohorts"]] == [cohort["id"]]
+
+
+# --- arguments are the schema's before a handler sees them -----------------------
+
+
+@pytest.mark.parametrize(
+    ("cmd", "args", "problem"),
+    [
+        ("port.reset", {"box": "1"}, "port.reset.args.box: expected int, got str"),
+        ("port.reset", {}, "missing required field `box`"),
+        ("port.send", {"box": 1, "text": "x", "lineEnding": "lfcr"}, "not one of"),
+        ("cohorts.get", {"id": "c1", "extra": True}, "unknown field `extra`"),
+        ("sessions.create", {"cohortId": "c", "prefixId": "p", "sessionNumber": "1", "durationMinutes": 2.5},
+         "expected int, got float"),
+    ],
+)
+async def test_arguments_that_are_not_the_schemas_are_a_bad_message(app, monkeypatch, cmd, args, problem) -> None:  # noqa: ANN001
+    """Refused before the handler runs, under one code, naming the problem."""
+    ran: list[str] = []
+    monkeypatch.setitem(app.server._handlers, cmd, lambda _args: ran.append(cmd))  # noqa: SLF001
+    with pytest.raises(Refused) as refused:
+        await dispatch(app, cmd, **args)
+    assert refused.value.code == "BAD_MESSAGE"
+    assert any(problem in p for p in refused.value.detail["problems"])
+    assert ran == []
+
+
+async def test_a_box_outside_the_rig_is_a_bad_message(app) -> None:  # noqa: ANN001
+    with pytest.raises(Refused) as refused:
+        await dispatch(app, "port.reset", box=7)
+    assert refused.value.code == "BAD_MESSAGE"
+
+
+async def test_every_declared_command_has_a_handler(app) -> None:  # noqa: ANN001
+    assert app.server.unhandled() == set()
+
+
+# --- one table ------------------------------------------------------------------
+
+
+def test_no_domain_module_knows_the_wire_error_type() -> None:
+    """Domain modules raise their own exceptions; `wire_errors.py` maps them.
+    Only the wire layer may name `CommandError`."""
+    package = Path(__file__).resolve().parents[1] / "ephymeris_sidecar"
+    wire_layer = {"server.py", "app.py", "wire_errors.py"}
+    offenders = [
+        str(path.relative_to(package))
+        for path in package.rglob("*.py")
+        if path.name not in wire_layer and "CommandError" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
+
+
+# --- one snapshot for replay and publish --------------------------------------------
+
+
+async def test_publish_sends_what_replay_sends(app, tmp_path: Path) -> None:  # noqa: ANN001
+    """A client that reconnects is told what one that stayed was told."""
+    await _cohort(app, tmp_path / "Batch C")
+    published: list[dict] = []
+
+    async def broadcast(message: dict) -> None:
+        published.append(message)
+
+    app.server.broadcast = broadcast
+    await app.server.publish("cohorts.updated")
+    [replayed] = await app.server.snapshot("cohorts.updated")
+    assert [m["data"] for m in published] == [replayed["data"]]
+
+
+async def test_replay_sends_one_port_state_per_box_first(sidecar: LiveSidecar) -> None:
+    port = sidecar.app.server.port
+    async with connect(f"ws://127.0.0.1:{port}") as ws:
+        await ws.recv()
+        await ws.send(json.dumps({"v": PROTOCOL_VERSION, "id": "a", "cmd": "auth", "args": {"token": TOKEN}}))
+        await ws.recv()
+        replayed = [json.loads(await asyncio.wait_for(ws.recv(), timeout=5)) for _ in range(7)]
+    assert [m["evt"] for m in replayed[:6]] == ["port.state"] * 6
+    assert [m["data"]["box"] for m in replayed[:6]] == [1, 2, 3, 4, 5, 6]
+    assert replayed[6]["evt"] == "boards.presence"  # no Debug run, so no port.telemetry
 

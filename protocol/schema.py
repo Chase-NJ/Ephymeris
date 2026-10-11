@@ -3770,7 +3770,13 @@ EVENTS = (
 # --- Error codes ------------------------------------------------------------
 
 ERRORS = (
-    ErrorCode("BAD_MESSAGE", "Malformed JSON, a non-object frame, or invalid args."),
+    ErrorCode(
+        "BAD_MESSAGE",
+        "Malformed JSON, a non-object frame, or args that don't match the "
+        "command's declaration here: checked before any handler runs, with "
+        "`detail.problems` listing each mismatch. Also a value the schema "
+        "can't describe, such as a box number outside 1–6 or a blank id.",
+    ),
     ErrorCode("UNKNOWN_COMMAND", "Unrecognized `cmd`."),
     ErrorCode("UNAUTHORIZED", "Missing or invalid token, or a first message that isn't `auth`."),
     ErrorCode(
@@ -3957,10 +3963,16 @@ ERRORS = (
         "`detail.command` carries what was sent.",
     ),
     ErrorCode(
+        "ARCHIVE_BUSY",
+        "A scan, tidy, data-folder move or move of animals already holds the "
+        "archive (`analytics.rescan`, `sessions.tidy`, `cohorts.setDataFolder`, "
+        "`cohorts.moveAnimals`). Nothing was done; try again when it finishes.",
+    ),
+    ErrorCode(
         "INTERNAL",
-        "Unhandled sidecar exception, a subsystem that isn't running, or an "
-        "analytics walk already in progress. Also the code `sidecar.error` "
-        "carries for a mid-session write failure.",
+        "Unhandled sidecar exception, or a subsystem that isn't running. Also "
+        "the code `sidecar.error` carries for a mid-session write failure. Every "
+        "other refusal has its own code (`ARCHITECTURE.md#dispatch`).",
     ),
 )
 

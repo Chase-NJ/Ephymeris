@@ -917,12 +917,11 @@ async def test_closing_out_an_orphan_leaves_the_live_session_alone(rig) -> None:
 
 
 def _mapped(exc: BaseException):  # noqa: ANN202
-    from ephymeris_sidecar.app import _lifecycle_errors
+    """The reply the server's error table gives `exc`; None is INTERNAL."""
+    from ephymeris_sidecar.server import resolve_error
+    from ephymeris_sidecar.wire_errors import ERRORS
 
-    with pytest.raises(Exception) as raised:
-        with _lifecycle_errors():
-            raise exc
-    return raised.value
+    return resolve_error(ERRORS, exc, {})
 
 
 def _box_refused(box: int, cause: BaseException) -> BoxRefused:
@@ -951,8 +950,8 @@ def test_each_refusal_reaches_the_wire_with_its_code() -> None:
             assert mapped.detail == data
 
 
-def test_a_box_failure_nobody_names_surfaces_as_itself() -> None:
-    assert isinstance(_mapped(_box_refused(2, ValueError("odd"))), ValueError)
+def test_a_box_failure_nobody_names_surfaces_as_internal() -> None:
+    assert _mapped(_box_refused(2, ValueError("odd"))) is None
 
 
 # --- refusals over the wire -----------------------------------------------------

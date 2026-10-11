@@ -23,8 +23,7 @@ from typing import Any
 
 from ..hardware import service as hardware_service
 from ..hardware import store as hardware_store
-from ..protocol import ErrCode, Evt, event
-from ..server import CommandError
+from ..protocol import Evt, event
 from ..strobes import store as strobe_store
 from . import registry
 
@@ -85,17 +84,25 @@ def impact_of(
     return out
 
 
-def strobe_error(exc: strobe_store.StrobeRefused) -> CommandError:
-    """A vocabulary rule's refusal, as the wire reports it."""
-    code = {
-        "invalid": ErrCode.STROBE_INVALID,
-        "required": ErrCode.STROBE_REQUIRED,
-        "in_recorded_session": ErrCode.STROBE_IN_RECORDED_SESSION,
-        "would_break_tasks": ErrCode.STROBE_WOULD_BREAK_TASKS,
-        "import_conflict": ErrCode.STROBE_IMPORT_CONFLICT,
-        "unreadable": ErrCode.STROBE_VOCABULARY_UNREADABLE,
-    }.get(exc.reason, ErrCode.STROBE_INVALID)
-    return CommandError(code, str(exc), exc.detail or None)
+class RigInUse(Exception):
+    """A rig definition write refused because a session is set up or a box is
+    running. The message says what to do instead."""
+
+
+class VocabularyInUse(RigInUse):
+    """`RigInUse`, for a strobe vocabulary edit."""
+
+
+class WiringWouldBreakTasks(Exception):
+    """A wiring change that would stop saved task profiles generating, asked
+    for without `confirm`. Nothing was written."""
+
+    def __init__(self, breaks: list[dict[str, Any]]) -> None:
+        super().__init__(
+            f"This wiring would stop {len(breaks)} saved "
+            f"task{'' if len(breaks) == 1 else 's'} compiling."
+        )
+        self.breaks = breaks
 
 
 class _ReadWriteLock:
@@ -212,45 +219,36 @@ class RigDefinition:
         Waits for a write in progress; a write waits for it."""
         return self._lock.reading()
 
-    def refuse_if_in_use(self, code: str, message: str) -> None:
+    def refuse_if_in_use(self, refusal: type[RigInUse], message: str) -> None:
         if self._in_use():
-            raise CommandError(code, message)
+            raise refusal(message)
 
     @asynccontextmanager
     async def writing(
-        self, code: str = ErrCode.RIG_IN_USE, message: str = TASKS_IN_USE
+        self, message: str = TASKS_IN_USE, *, refusal: type[RigInUse] = RigInUse
     ) -> AsyncIterator[None]:
-        """Exclusive. Refused while in use -- once before waiting, cheaply, and
-        again once the lock is held, which is the check that counts."""
-        self.refuse_if_in_use(code, message)
+        """Exclusive. Refused with `refusal(message)` while in use -- once
+        before waiting, cheaply, and again once the lock is held, which is the
+        check that counts."""
+        self.refuse_if_in_use(refusal, message)
         async with self._lock.writing():
-            self.refuse_if_in_use(code, message)
+            self.refuse_if_in_use(refusal, message)
             yield
 
     # -- the writes ---------------------------------------------------------- #
 
     async def save_wiring(self, document: dict[str, Any], *, confirm: bool) -> dict[str, Any]:
-        async with self.writing(ErrCode.RIG_IN_USE, WIRING_IN_USE):
+        """Raises `RigInUse`, `WiringWouldBreakTasks` without `confirm`, or
+        `hardware.store.RigInvalid` for a document that is not one."""
+        async with self.writing(WIRING_IN_USE):
             breaks = await asyncio.to_thread(impact_of, self._tasks, wiring=document)
             if breaks and not confirm:
                 # Not an error the operator cannot pass -- it is the "shown
                 # loudly" half of "a pin change applies to everything". The app
                 # does not veto a rewiring; it refuses to let one happen
                 # unnoticed. Nothing is written on this path.
-                raise CommandError(
-                    ErrCode.RIG_WOULD_BREAK_TASKS,
-                    f"This wiring would stop {len(breaks)} saved "
-                    f"task{'' if len(breaks) == 1 else 's'} compiling.",
-                    {"breaks": breaks},
-                )
-            try:
-                stored = await asyncio.to_thread(self._hardware.save, document)
-            except hardware_store.RigInvalid as exc:
-                raise CommandError(
-                    ErrCode.RIG_INVALID,
-                    "This wiring document could not be saved.",
-                    {"problems": [{"location": loc, "message": msg} for loc, msg in exc.problems]},
-                ) from exc
+                raise WiringWouldBreakTasks(breaks)
+            stored = await asyncio.to_thread(self._hardware.save, document)
             # Install before reporting, or the reply would describe the wiring
             # that was in force a moment ago.
             registry.set_rig_source(self._hardware.load)
@@ -261,7 +259,7 @@ class RigDefinition:
         return payload
 
     async def reset_wiring(self) -> dict[str, Any]:
-        async with self.writing(ErrCode.RIG_IN_USE, WIRING_IN_USE):
+        async with self.writing(WIRING_IN_USE):
             await asyncio.to_thread(self._hardware.reset)
             registry.set_rig_source(self._hardware.load)
             payload = await asyncio.to_thread(hardware_service.document_payload, self._hardware)
@@ -278,17 +276,15 @@ class RigDefinition:
         """Load, judge, edit, write, install, rebuild, announce -- in that order.
 
         `check` runs inside the write, so a task saved a moment after the page
-        last looked is still counted. Nothing is written on any refusal path.
+        last looked is still counted. Nothing is written on any refusal path:
+        `VocabularyInUse`, or the `StrobeRefused` a rule or `check` raised.
         """
-        async with self.writing(ErrCode.STROBE_SESSION_RUNNING, VOCABULARY_IN_USE):
+        async with self.writing(VOCABULARY_IN_USE, refusal=VocabularyInUse):
             doc = await asyncio.to_thread(self.load_vocabulary_strict)
             if check is not None:
                 await asyncio.to_thread(check)
-            try:
-                updated = edit(doc)
-                await asyncio.to_thread(self._vocabulary.save, updated)
-            except strobe_store.StrobeRefused as exc:
-                raise strobe_error(exc) from exc
+            updated = edit(doc)
+            await asyncio.to_thread(self._vocabulary.save, updated)
             registry.set_vocabulary_source(self._vocabulary.load)
             payload = await asyncio.to_thread(self.vocabulary_payload)
             await self._rebuild()
@@ -298,10 +294,8 @@ class RigDefinition:
     # -- reads that need no lock --------------------------------------------- #
 
     def load_vocabulary_strict(self) -> dict[str, Any]:
-        try:
-            return self._vocabulary.load_strict()
-        except strobe_store.StrobeRefused as exc:
-            raise strobe_error(exc) from exc
+        """Raises `StrobeRefused("unreadable")` for a document that won't read."""
+        return self._vocabulary.load_strict()
 
     def vocabulary_payload(self) -> dict[str, Any]:
         payload = registry.vocabulary().to_json()

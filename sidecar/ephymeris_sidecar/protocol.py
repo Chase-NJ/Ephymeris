@@ -234,7 +234,7 @@ SHAPES: Final[dict[str, Any]] = {
     "DetectedBoard": ('obj', (('hardwareId', 'str', False), ('address', 'str', False), ('fqbn', ('union', ('str', 'null')), False), ('boxId', ('union', ('int', 'null')), False))),
     "LibraryState": ('lit', ('ok', 'empty', 'damaged')),
     "SketchLibraryStatus": ('obj', (('state', ('ref', 'LibraryState'), False), ('path', ('union', ('str', 'null')), False), ('message', ('union', ('str', 'null')), False), ('source', ('lit', ('bundled', 'override')), False))),
-    "SketchEntry": ('obj', (('category', 'str', False), ('name', 'str', False), ('path', 'str', False))),
+    "SketchEntry": ('obj', (('category', 'str', False), ('name', 'str', False), ('path', 'str', False), ('source', ('lit', ('bundled', 'rig')), False))),
     "SkippedEntry": ('obj', (('path', 'str', False), ('reason', 'str', False))),
     "SketchDiscovery": ('obj', (('library', ('ref', 'SketchLibraryStatus'), False), ('sketches', ('list', ('ref', 'SketchEntry')), False), ('skipped', ('list', ('ref', 'SkippedEntry')), False), ('skippedCount', 'int', False), ('libraries', ('list', 'str'), False), ('librariesPath', ('union', ('str', 'null')), False))),
     "BoxBinding": ('obj', (('box', 'int', False), ('hardwareId', ('union', ('str', 'null')), False), ('label', 'str', False), ('intanDigitalIn', ('union', ('int', 'null')), True))),

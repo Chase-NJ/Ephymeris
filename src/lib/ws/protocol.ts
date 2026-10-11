@@ -950,6 +950,13 @@ export interface ActiveSessions {
    * mid-group.
    */
   stale: Session[];
+  /**
+   * How many mappings `sessions.confirmMapping` has confirmed since the sidecar started. Nothing
+   * else in this payload is guaranteed to change when the same mapping is confirmed again, so
+   * this is how a client learns a new group run is set up: a value it has not seen means clear
+   * every box's live run (`ARCHITECTURE.md#live-session-views`). Per process, not persisted.
+   */
+  confirmations: number;
 }
 
 /** One session, from sessions.list or inside a summary. */

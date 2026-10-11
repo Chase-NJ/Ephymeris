@@ -909,6 +909,16 @@ SHAPES = (
                 "app. The .tsv on disk is the record; a same-day one can be continued "
                 "with another group (`sessions.resume`), never mid-group.",
             ),
+            f(
+                "confirmations",
+                INT,
+                doc="How many mappings `sessions.confirmMapping` has confirmed since "
+                "the sidecar started. Nothing else in this payload is guaranteed to "
+                "change when the same mapping is confirmed again, so this is how a "
+                "client learns a new group run is set up: a value it has not seen "
+                "means clear every box's live run "
+                "(`ARCHITECTURE.md#live-session-views`). Per process, not persisted.",
+            ),
         ),
         doc="Everything unfinished, discoverable with no prior knowledge of ids. "
         "Also the session.lifecycle payload — one shape, one emitter.",

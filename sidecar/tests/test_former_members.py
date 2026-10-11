@@ -17,6 +17,10 @@ from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.members import name_from_paths
 from ephymeris_sidecar.cohorts.models import ValidationError
 from ephymeris_sidecar.cohorts.repository import CohortRepository
+from ephymeris_sidecar.logbook.models import SessionNote
+from ephymeris_sidecar.logbook.repository import LogbookRepository
+from ephymeris_sidecar.sessions.models import SessionAnimalRun
+from ephymeris_sidecar.sessions.repository import SessionRepository
 
 SESSION = "2O-Bdisc_25_2026-07-22"
 
@@ -40,21 +44,24 @@ def run_file(name: str, time: str = "113123") -> str:
     return f"/data/Batch A/2O-Bdisc/{SESSION}/behavior.json/{name}_{SESSION}_{time}.json"
 
 
-def add_run(db: Database, cohort_id: str, animal_id: str, file_path: str | None) -> None:
-    """A recorded run of `animal_id`, in a session of its own."""
-    session_id = str(uuid.uuid4())
-    db.conn.execute(
-        "INSERT INTO sessions (id, cohort_id, prefix_id, prefix_name, session_number, date,"
-        " started_at, status, folder_path) VALUES (?, ?, 'p', '2O-Bdisc', '25', '2026-07-22',"
-        " '2026-07-22T11:31:00+00:00', 'completed', ?)",
-        (session_id, cohort_id, f"/data/Batch A/2O-Bdisc/{SESSION}"),
+def add_run(db: Database, cohort_id: str, animal_id: str, file_path: str | None) -> str:
+    """A recorded run of `animal_id`, in a completed session of its own. Returns
+    the session's id."""
+    sessions = SessionRepository(db)
+    prefix = next(
+        (p for p in sessions.list_prefixes() if p.name == "2O-Bdisc"), None
+    ) or sessions.create_prefix("2O-Bdisc")
+    session = sessions.create_session(
+        cohort_id, prefix, "25", "2026-07-22", f"/data/Batch A/2O-Bdisc/{SESSION}"
     )
-    db.conn.execute(
-        "INSERT INTO session_animal_runs (id, session_id, animal_id, box_number, sketch_path,"
-        " file_path, started_at) VALUES (?, ?, ?, 1, 'GRGL', ?, '2026-07-22T11:31:23+00:00')",
-        (str(uuid.uuid4()), session_id, animal_id, file_path),
+    sessions.set_status(session.id, "completed")
+    sessions.record_animal_run(
+        SessionAnimalRun(
+            id=str(uuid.uuid4()), session_id=session.id, animal_id=animal_id, box_number=1,
+            sketch_path="GRGL", file_path=file_path, started_at="2026-07-22T11:31:23+00:00",
+        )
     )
-    db.conn.commit()
+    return session.id
 
 
 def cohort_with(repo: CohortRepository, *names: str):
@@ -94,15 +101,13 @@ def test_removing_an_animal_with_no_history_deletes_it(repo) -> None:
 
 def test_a_note_alone_is_history(db, repo) -> None:
     cohort = cohort_with(repo, "remy1", "remy2")
-    add_run(db, cohort.id, "remy1", run_file("remy1"))
-    session_id = db.conn.execute("SELECT id FROM sessions").fetchone()[0]
-    db.conn.execute(
-        "INSERT INTO session_notes (id, session_id, cohort_id, at, created_at, tag, scope_kind,"
-        " animal_id, body) VALUES ('n1', ?, ?, 'now', 'now', 'observation', 'animal', 'remy2',"
-        " 'Lethargic')",
-        (session_id, cohort.id),
+    session_id = add_run(db, cohort.id, "remy1", run_file("remy1"))
+    LogbookRepository(db).add(
+        SessionNote(
+            id="n1", session_id=session_id, cohort_id=cohort.id, at="now", created_at="now",
+            tag="observation", body="Lethargic", scope_kind="animal", animal_id="remy2",
+        )
     )
-    db.conn.commit()
 
     updated = repo.update(cohort.id, {"animals": [a for a in roster(cohort) if a["id"] != "remy2"]})
 

@@ -32,6 +32,7 @@ from ephymeris_sidecar.backup.manager import (
 from ephymeris_sidecar.backup.paths import MirrorLayout, mirror_segments
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
+from ephymeris_sidecar.sessions.repository import SessionRepository
 from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
 from ephymeris_sidecar.tasks.profile import parse_profile
 from tests.test_session_runner import GRGL, FakePorts, wait_until
@@ -292,10 +293,7 @@ async def test_a_recovered_target_clears_the_failure(db: Database, tmp_path: Pat
 async def test_the_database_is_backed_up_and_is_a_readable_copy(
     db: Database, tmp_path: Path
 ) -> None:
-    db.conn.execute(
-        "INSERT INTO prefixes (id, name) VALUES ('p1', '2O-Bdisc')"
-    )
-    db.conn.commit()
+    SessionRepository(db).create_prefix("2O-Bdisc")
     backup = tmp_path / "mirror"
 
     manager = make_manager(db, [], db_debounce=0.0)
@@ -330,8 +328,7 @@ async def test_every_commit_marks_the_database_dirty(db: Database, tmp_path: Pat
     # Clean: nothing committed since, so nothing was re-copied.
     assert not (tmp_path / "mirror" / DB_MIRROR_NAME).exists()
 
-    db.conn.execute("INSERT INTO prefixes (id, name) VALUES ('p2', 'x')")
-    db.conn.commit()
+    SessionRepository(db).create_prefix("x")
     await manager._pass()
     assert (tmp_path / "mirror" / DB_MIRROR_NAME).is_file()
 
@@ -343,8 +340,7 @@ async def test_the_database_backup_is_debounced(db: Database, tmp_path: Path) ->
     db.on_commit(manager.mark_db_dirty)
     await manager.configure(str(tmp_path / "mirror"))
 
-    db.conn.execute("INSERT INTO prefixes (id, name) VALUES ('p3', 'y')")
-    db.conn.commit()
+    SessionRepository(db).create_prefix("y")
     await manager._pass()
 
     assert not (tmp_path / "mirror" / DB_MIRROR_NAME).exists()
@@ -376,8 +372,7 @@ async def test_the_days_first_snapshot_wins(db: Database, tmp_path: Path) -> Non
     snapshot = next((backup / DB_SNAPSHOT_DIR).glob("ephymeris_*.db"))
     snapshot.write_bytes(b"the original day's copy")
 
-    db.conn.execute("INSERT INTO prefixes (id, name) VALUES ('p4', 'z')")
-    db.conn.commit()
+    SessionRepository(db).create_prefix("z")
     await manager._pass()
 
     assert snapshot.read_bytes() == b"the original day's copy"

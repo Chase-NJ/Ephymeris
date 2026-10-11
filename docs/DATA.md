@@ -711,7 +711,7 @@ Plus plain lookup indexes on each table's parent id.
 - **A migration may repair a cache**, never data: the v8 step deletes `inferred` cache rows that would otherwise never recompute ([below](#which-profile-decodes-a-run)), and the v12 step deletes adopted runs' rows so their recorded parameters are read into the new `config_json` ([What changed](#what-changed)).
 
 > [!TIP]
-> `tests/test_migrations.py` pins the v1 and v2 schemas as **literal fixtures**. Extend it rather than importing the current schema, which would test today's code against itself.
+> `tests/test_migrations.py` pins old schemas as **literal fixtures**: hand-written ones for v1 to v9, and from v4 on the `SCHEMA` and `INDEXES` each version shipped, copied out of git history into `tests/fixtures/schemas/`. Every one is upgraded and compared with a fresh database, table by table and column by column, so a column missing its migration fails there. **When you bump `SCHEMA_VERSION`, add the version you are leaving** as `vN.sql`, copied from the last commit before the bump. Never import the current schema into a fixture: that tests today's code against itself.
 
 ## Backup mirroring
 

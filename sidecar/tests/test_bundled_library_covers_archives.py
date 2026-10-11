@@ -1,7 +1,7 @@
 """The bundled library must resolve every sketch name the lab's archives record.
 
 Analytics resolves a historical run's `sketch` field against CURRENT discovery
-(`app.py::_sketch_path_for_name`), by folder name with a `legacyNames` fallback.
+(`SketchLibrary.path_for_name`), by folder name with a `legacyNames` fallback.
 That resolution is load-bearing for orphan-adopted archives (`DATA.md#orphan-adoption`) —
 runs with no database record, where the recorded name is the only key there is.
 Both of the lab's decoded archives are exactly that.

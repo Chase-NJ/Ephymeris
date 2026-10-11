@@ -70,8 +70,8 @@ class MappingRefused(Exception):
 
 
 class BoxRefused(Exception):
-    """The runner or port refused one box -- its start, or its STOP. The
-    runner's or port's error is `__cause__`, and says which."""
+    """The runner or port refused to start one box. The runner's or port's
+    error is `__cause__`, and says why."""
 
     def __init__(self, box: int) -> None:
         super().__init__(f"box {box} was refused")

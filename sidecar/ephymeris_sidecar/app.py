@@ -1,8 +1,9 @@
 """Application state and command handlers.
 
-Keeps `__main__` thin, owns the hardware layer, and is the only place that
-knows both the wire protocol and the port manager — the `ports/` package stays
-protocol-free and this module does the translating.
+Keeps `__main__` thin and owns the hardware layer. Each handler takes its
+command's schema-checked arguments and returns its result; the exceptions it
+lets through are answered by `wire_errors.py` (`ARCHITECTURE.md#dispatch`), so
+`ports/` and every other domain package stay protocol-free.
 """
 
 from __future__ import annotations

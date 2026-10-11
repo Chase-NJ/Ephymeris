@@ -55,7 +55,7 @@ def _box(exc: BaseException, args: Args) -> int | None:
 
 
 def _boxed(code: str) -> Any:
-    """`code` with `{"box": n}` -- or `{}`-less when no box is to be had."""
+    """`code` with `{"box": n}` as detail, or no detail when there is no box."""
 
     def mapper(exc: BaseException, args: Args) -> CommandError:
         box = _box(exc, args)

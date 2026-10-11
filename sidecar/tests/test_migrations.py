@@ -83,6 +83,21 @@ def write_v1_database(path: Path, *, version: int = 1) -> None:
         conn.close()
 
 
+SHIPPED = Path(__file__).parent / "fixtures" / "schemas"
+
+
+def write_shipped_database(path: Path, version: int) -> None:
+    """A database exactly as version `version` of the app left it, from the
+    schema it shipped (`fixtures/schemas/`, copied out of git history)."""
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript((SHIPPED / f"v{version}.sql").read_text(encoding="utf-8"))
+        conn.execute(f"PRAGMA user_version = {version}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def user_version(path: Path) -> int:
     conn = sqlite3.connect(path)
     try:
@@ -1005,7 +1020,7 @@ def test_a_v10_database_gains_the_session_log_tables(tmp_path: Path) -> None:
     """v11 added tables only (`DATA.md#the-session-log`): no migration entry,
     and `CREATE TABLE IF NOT EXISTS` still has to reach an existing file."""
     path = tmp_path / "ephymeris.db"
-    write_v1_database(path, version=10)
+    write_shipped_database(path, 10)
     assert "session_notes" not in tables(path)
 
     db = Database(path)
@@ -1022,12 +1037,10 @@ def test_v12_caches_recorded_parameters_and_rereads_only_recovered_runs(tmp_path
     recovered runs — the only ones the column is read for — and keeps the rest
     (`DATA.md#what-changed`)."""
     path = tmp_path / "ephymeris.db"
-    db = Database(path)
-    db.connect()
-    db.close()
+    write_shipped_database(path, 11)
 
     conn = sqlite3.connect(path)
-    conn.execute("ALTER TABLE run_metrics_cache DROP COLUMN config_json")
+    assert "config_json" not in table_columns(conn, "run_metrics_cache")
     conn.execute(
         "INSERT INTO cohorts (id, name, data_folder, created_at, updated_at)"
         " VALUES ('c1', 'Batch A', '/data', 'then', 'then')"
@@ -1044,7 +1057,6 @@ def test_v12_caches_recorded_parameters_and_rereads_only_recovered_runs(tmp_path
             " VALUES (?, '/x.json', 'snapshot', 1, 'then', 'ok', '{}')",
             (run_id,),
         )
-    conn.execute("PRAGMA user_version = 11")
     conn.commit()
     conn.close()
 
@@ -1069,7 +1081,14 @@ def test_an_older_database_gains_the_former_member_and_move_tables(tmp_path: Pat
     `CREATE TABLE IF NOT EXISTS` makes them on an existing file, and the
     cohort already in it is untouched."""
     path = tmp_path / "ephymeris.db"
-    write_v1_database(path, version=13)
+    write_shipped_database(path, 13)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO cohorts (id, name, data_folder, created_at, updated_at)"
+        " VALUES ('c1', 'Batch A', '/data', 'then', 'then')"
+    )
+    conn.commit()
+    conn.close()
 
     db = Database(path)
     db.connect()
@@ -1082,3 +1101,69 @@ def test_an_older_database_gains_the_former_member_and_move_tables(tmp_path: Pat
         assert conn.execute("SELECT name FROM cohorts").fetchall() == [("Batch A",)]
     finally:
         conn.close()
+
+
+# --- every upgrade lands on today's schema -----------------------------------
+
+
+def shape(path: Path) -> tuple[dict[str, dict[str, tuple]], dict[str, str]]:
+    """Every table's columns, each as (type, not null, default, primary key),
+    and every index's definition. Column order is left out: a migration can
+    only append. The schema is the subject here, so it is read the way SQLite
+    reports it."""
+    conn = sqlite3.connect(path)
+    try:
+        tables = {
+            table: {
+                row[1]: (row[2].upper(), row[3], row[4], row[5])
+                for row in conn.execute(f'PRAGMA table_info("{table}")')
+            }
+            for (table,) in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        indexes = {
+            name: " ".join(sql.split())
+            for name, sql in conn.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"
+            )
+        }
+        return tables, indexes
+    finally:
+        conn.close()
+
+
+def _shipped(version: int):  # noqa: ANN202
+    def write(path: Path) -> None:
+        write_shipped_database(path, version)
+
+    write.__name__ = f"write_v{version}_shipped_database"
+    return write
+
+
+@pytest.mark.parametrize(
+    "write_old",
+    [
+        write_v1_database, write_v2_database, write_v3_database, write_v5_database,
+        write_v6_database, write_v7_database, write_v8_database, write_v9_database,
+        *(_shipped(v) for v in (4, 10, 11, 12, 13, 14)),
+    ],
+    ids=lambda writer: writer.__name__.removeprefix("write_").removesuffix("_database"),
+)
+def test_an_upgraded_database_has_the_shape_of_a_fresh_one(tmp_path: Path, write_old) -> None:  # noqa: ANN001
+    """`DATA.md#changing-the-schema`: a column added to `SCHEMA` with no
+    `MIGRATIONS` entry reaches a fresh database and never an existing one. The
+    per-version tests above each check the columns someone remembered; this one
+    checks every table, column and index against what a new install gets, down
+    to each column's type, default and NOT NULL."""
+    fresh = Database(tmp_path / "fresh.db")
+    fresh.connect()
+    fresh.close()
+
+    old = tmp_path / "old.db"
+    write_old(old)
+    upgraded = Database(old)
+    upgraded.connect()
+    upgraded.close()
+
+    assert shape(old) == shape(tmp_path / "fresh.db")

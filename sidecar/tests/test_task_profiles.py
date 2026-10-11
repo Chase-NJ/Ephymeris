@@ -651,7 +651,36 @@ def test_the_cap_reserves_room_for_the_seed_appended_later() -> None:
             cmd = build_start_command(profile, {})
         except TaskProfileError:
             continue
-        assert len(with_trial_seed(cmd, 2**31 - 2)) <= START_LINE_MAX
+        assert len(with_trial_seed(cmd, 2**31 - 2)) < START_LINE_MAX
+
+
+def _profile_whose_seeded_line_is(length: int) -> dict:
+    """A one-field profile whose line, with the widest seed appended, is
+    exactly `length` characters: `START X=aaa… SEED=2147483646`."""
+    value_len = length - len("START X=") - len(" SEED=2147483646")
+    return {"taskName": "Edge", "config": [
+        {"metadataKey": "x", "wireKey": "X", "label": "x", "type": "string", "default": "a" * value_len}
+    ]}
+
+
+@pytest.mark.parametrize("length", [START_LINE_MAX, START_LINE_MAX + 1])
+def test_a_line_the_firmware_buffer_cannot_hold_whole_is_refused(length: int) -> None:
+    """`readLineInto(cmd, sizeof cmd)` keeps one byte of `char cmd[START_LINE_MAX]`
+    for the terminator, so a line of exactly START_LINE_MAX characters loses its
+    last one -- the seed's last digit. The board then runs a different seed and
+    the seed check blames old firmware. The host must refuse it."""
+    profile = parse_profile(_profile_whose_seeded_line_is(length))
+    with pytest.raises(TaskProfileError, match="over the firmware"):
+        build_start_command(profile, {})
+
+
+def test_the_longest_line_the_firmware_holds_whole_is_built() -> None:
+    """One under the buffer size is the longest line `readLineInto` keeps whole
+    (the firmware host test pins that side), so it must still be accepted."""
+    from ephymeris_sidecar.tasks.start_command import with_trial_seed
+
+    cmd = build_start_command(parse_profile(_profile_whose_seeded_line_is(START_LINE_MAX - 1)), {})
+    assert len(with_trial_seed(cmd, 2**31 - 2)) == START_LINE_MAX - 1
 
 
 def test_a_value_with_whitespace_falls_back_to_the_default() -> None:

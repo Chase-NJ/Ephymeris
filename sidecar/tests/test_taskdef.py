@@ -152,7 +152,7 @@ def test_every_preset_fits_the_start_line():
         profile = generate.build_profile(definition)
         config = {f.metadata_key: f.default for f in profile.config}
         line = with_trial_seed(build_start_command(profile, config), 2147483646)
-        assert len(line) <= START_LINE_MAX, (preset["id"], len(line))
+        assert len(line) < START_LINE_MAX, (preset["id"], len(line))
 
 
 def test_a_preset_is_a_starting_point_not_a_task():

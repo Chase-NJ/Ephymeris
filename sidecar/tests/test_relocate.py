@@ -600,6 +600,24 @@ def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
     assert archive.journal() == "done"
 
 
+def test_originals_left_to_a_later_start_do_not_hold_up_a_session(
+    archive: Archive, other_volume, power_cut, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once committed, the cohort's folder is the new one, and a session set
+    up there is never in the way of deleting the old one. The old drive may
+    not come back for weeks; the cohort must not wait for it."""
+    other_volume(archive.new.parent)
+    power_cut("unlink", archive.old)
+    with pytest.raises(SystemExit):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    with monkeypatch.context() as m:
+        unreachable(m, archive.old)
+        relocate.resume(archive.db)
+    assert archive.journal() == "committed"
+
+    assert not relocate.moving(archive.db, archive.cohort.id)
+
+
 def test_a_resume_after_the_originals_are_all_gone_is_done(
     archive: Archive, other_volume, power_cut
 ) -> None:

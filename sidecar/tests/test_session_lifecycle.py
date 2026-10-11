@@ -82,9 +82,20 @@ class FakeRunner:
         self.configs = {}
 
     def snapshot(self) -> list[dict]:
-        # The real SessionBox rows need a port behind them; the lifecycle
-        # broadcast is validated against the schema, and an empty list passes.
-        return []
+        """The real runner's rows, from this fake's own mapping and runs."""
+        return [
+            {
+                "box": box,
+                "animalId": config.animal_id,
+                "animalName": config.animal_name,
+                "sketchName": config.sketch_name,
+                "sketchPath": config.sketch_path,
+                "running": box in self.running,
+                "startedAt": "2026-07-22T10:00:00+00:00" if box in self.running else None,
+                "ended": False,
+            }
+            for box, config in sorted(self.configs.items())
+        ]
 
 
 class FakeIntan:
@@ -808,3 +819,82 @@ async def test_flashing_for_a_session_that_does_not_hold_the_rig_is_refused(
     with pytest.raises(Refused) as refused:
         await sidecar.call("sessions.flash", sessionId=session, boxes=[1])
     assert refused.value.code == "SESSION_INVALID"
+
+
+# --- FakeRunner keeps the real runner's contract -------------------------------
+#
+# The lifecycle tests above run on FakeRunner, so they prove something about the
+# lifecycle only while it answers as SessionRunner does. These rules are the
+# members the lifecycle calls, run against both.
+
+
+def _real_runner(tmp_path: Path):  # noqa: ANN202
+    from tests.test_session_runner import FakePorts
+    from ephymeris_sidecar.sessions.runner import SessionRunner
+
+    async def nothing(*_args) -> None:  # noqa: ANN002
+        return None
+
+    return SessionRunner(
+        loop=asyncio.get_running_loop(), ports=FakePorts(), broadcast=nothing, on_animal_ended=nothing,
+    )
+
+
+def _box(box: int) -> BoxConfig:
+    return BoxConfig(
+        box=box, animal_id=f"a{box}", animal_name=f"remy{box}", sketch_path="/sk/GRGL",
+        sketch_name="GRGL", start_command="START", config_metadata={}, profile=None,
+    )
+
+
+@pytest.fixture(params=["FakeRunner", "SessionRunner"])
+async def runner(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
+    # Built inside the test's loop: the real runner binds to it.
+    made = FakeRunner([]) if request.param == "FakeRunner" else _real_runner(tmp_path)
+    made.configure(tmp_path, "2O-Bdisc_12", "g-a", [_box(2), _box(1)], session_id="s1")
+    return made
+
+
+async def test_a_runner_holds_the_mapping_it_was_given(runner) -> None:  # noqa: ANN001
+    assert runner.group_id == "g-a"
+    assert runner.configured_boxes() == [1, 2]
+    assert [c.box for c in runner.box_configs()] == [1, 2]
+    assert runner.running_boxes() == []
+
+
+async def test_a_runner_refuses_a_box_it_has_no_mapping_for(runner) -> None:  # noqa: ANN001
+    with pytest.raises(KeyError):
+        runner.start_box(5)
+    assert runner.running_boxes() == []
+
+
+async def test_a_runner_starts_a_box_once(runner) -> None:  # noqa: ANN001
+    runner.start_box(1)
+    runner.start_box(1)
+    assert runner.running_boxes() == [1]
+
+
+async def test_a_runner_will_not_forget_a_mapping_while_a_box_runs(runner) -> None:  # noqa: ANN001
+    runner.start_box(1)
+    with pytest.raises(RuntimeError):
+        runner.clear()
+    assert runner.configured_boxes() == [1, 2]
+
+
+async def test_a_runner_ends_every_box_then_forgets_on_clear(runner) -> None:  # noqa: ANN001
+    runner.start_box(1)
+    runner.start_box(2)
+    await runner.end_all("operator stop")
+    assert runner.running_boxes() == []
+
+    runner.clear()
+    assert (runner.group_id, runner.configured_boxes()) == ("", [])
+
+
+async def test_a_runner_reports_a_row_per_mapped_box(runner) -> None:  # noqa: ANN001
+    """What the lifecycle broadcasts as the running session's boxes."""
+    runner.start_box(2)
+    rows = runner.snapshot()
+    assert [(r["box"], r["animalId"], r["running"]) for r in rows] == [
+        (1, "a1", False), (2, "a2", True),
+    ]

@@ -33,7 +33,7 @@ from ephymeris_sidecar.boards.grpc_tool import (
     _daemon_echo,
     parse_daemon_address,
 )
-from ephymeris_sidecar.boards.tool import DetectedBoard
+from ephymeris_sidecar.boards.tool import DetectedBoard, FlashFailed
 
 
 # --- daemon banner parsing --------------------------------------------------
@@ -160,39 +160,63 @@ def test_blank_lines_are_dropped() -> None:
 # --- fallback behavior ------------------------------------------------------
 
 
-class _FakeFallback:
-    """Stands in for ArduinoCliTool: records calls, returns sentinels."""
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.binary = "arduino-cli"
-
-    async def list_boards(self):
-        self.calls.append("list")
-        return [DetectedBoard(hardware_id="FAKE", address="COM9")]
-
-    async def compile(self, sketch_dir, fqbn, libraries_path, on_line):
-        self.calls.append("compile")
-
-    async def upload(self, sketch_dir, fqbn, address, on_line):
-        self.calls.append("upload")
+MEGA_ON_COM7 = json.dumps({
+    "detected_ports": [{
+        "port": {
+            "address": "COM7", "protocol": "serial", "hardware_id": "FAKE",
+            "properties": {"vid": "0x2341", "pid": "0x0042"},
+        },
+        "matching_boards": [{"fqbn": "arduino:avr:mega", "name": "Arduino Mega"}],
+    }],
+})
 
 
-async def test_a_daemon_that_cannot_spawn_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    tool = GrpcBoardTool(binary="definitely-not-a-real-binary-xyz")
-    fake = _FakeFallback()
-    tool._fallback = fake  # type: ignore[assignment]
+async def test_a_daemon_that_cannot_start_falls_back_to_the_subprocess(fake_arduino_cli) -> None:  # noqa: ANN001
+    """An `arduino-cli daemon` that exits without a listen address: every call
+    still works, through `board list`, `compile` and `upload` subprocesses."""
+    fake_arduino_cli.answer("daemon", stderr="no daemon on this machine", rc=1)
+    fake_arduino_cli.answer("board list", stdout=MEGA_ON_COM7)
+    tool = GrpcBoardTool(binary=str(fake_arduino_cli.path))
+    try:
+        boards = await tool.list_boards()
+        await tool.compile("/sk", "arduino:avr:mega", None, lambda s, t: None)
+        await tool.upload("/sk", "arduino:avr:mega", "COM7", lambda s, t: None)
+    finally:
+        await tool.close()
 
-    async def no_spawn() -> None:
-        raise DaemonUnavailable("no binary")
+    assert [(b.hardware_id, b.address) for b in boards] == [("FAKE", "COM7")]
+    assert [call[0] for call in fake_arduino_cli.calls if call[0] != "daemon"] == [
+        "board", "compile", "upload",
+    ]
 
-    monkeypatch.setattr(tool, "_spawn", no_spawn)
 
-    boards = await tool.list_boards()
-    assert [b.hardware_id for b in boards] == ["FAKE"]
-    await tool.compile("/sk", "arduino:avr:mega", None, lambda s, t: None)
-    await tool.upload("/sk", "arduino:avr:mega", "COM7", lambda s, t: None)
-    assert fake.calls == ["list", "compile", "upload"]
+# --- what a failed flash says (`ARCHITECTURE.md#flashing`) -------------------
+
+
+async def test_a_failed_compile_names_its_error_line(fake_arduino_cli) -> None:  # noqa: ANN001
+    """Not "exit status 1": the line the operator needs, from `compiler_err`."""
+    fake_arduino_cli.answer("compile", rc=1, stdout=json.dumps({
+        "compiler_err": "In file included from x\nclean.ino:3:5: error: expected ';'\nexit status 1",
+        "success": False,
+    }))
+    tool = ArduinoCliTool(binary=str(fake_arduino_cli.path))
+    with pytest.raises(FlashFailed) as failed:
+        await tool.compile("/sk", "arduino:avr:mega", None, lambda s, t: None)
+    assert (failed.value.phase, failed.value.message) == ("compile", "clean.ino:3:5: error: expected ';'")
+
+
+async def test_a_failed_upload_says_its_last_line_else_its_exit_status(fake_arduino_cli) -> None:  # noqa: ANN001
+    tool = ArduinoCliTool(binary=str(fake_arduino_cli.path))
+
+    fake_arduino_cli.answer("upload", rc=1, stdout=json.dumps({"stderr": "a\nfinal line"}))
+    with pytest.raises(FlashFailed) as failed:
+        await tool.upload("/sk", "arduino:avr:mega", "COM7", lambda s, t: None)
+    assert failed.value.message == "final line"
+
+    fake_arduino_cli.answer("upload", rc=2, stdout="{}")
+    with pytest.raises(FlashFailed) as failed:
+        await tool.upload("/sk", "arduino:avr:mega", "COM7", lambda s, t: None)
+    assert failed.value.message == "upload failed (arduino-cli exited 2)"
 
 
 async def test_the_factory_honours_the_escape_hatch(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -18,8 +18,10 @@ at the nth copy or delete below a folder.
 from __future__ import annotations
 
 import errno
+import json
 import os
 import shutil
+import sys
 import threading
 from pathlib import Path
 
@@ -221,3 +223,58 @@ async def sidecar(tmp_path: Path):
 
     async with live_sidecar(tmp_path / "app") as client:
         yield client
+
+
+_STUB_CLI = '''\
+import json, sys
+from pathlib import Path
+
+here = Path(__file__).parent
+with open(here / "calls.jsonl", "a", encoding="utf-8") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\\n")
+spec = json.loads((here / "spec.json").read_text(encoding="utf-8"))
+answer = spec.get(" ".join(sys.argv[1:3]), spec.get(sys.argv[1] if len(sys.argv) > 1 else "", {}))
+sys.stdout.write(answer.get("stdout", ""))
+sys.stderr.write(answer.get("stderr", ""))
+sys.exit(answer.get("rc", 0))
+'''
+
+
+class FakeArduinoCli:
+    """An `arduino-cli` on disk that answers each subcommand as told and logs
+    every argv it was run with. Answers are keyed by the first two arguments
+    (`"board list"`) or the first (`"compile"`); anything unset exits 0 silent."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "stub.py").write_text(_STUB_CLI, encoding="utf-8")
+        self.answers: dict[str, dict] = {}
+        self._save()
+        if os.name == "nt":
+            self.path = root / "arduino-cli.cmd"
+            self.path.write_text(f'@"{sys.executable}" "{root / "stub.py"}" %*\r\n', encoding="utf-8")
+        else:
+            self.path = root / "arduino-cli"
+            self.path.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{root / "stub.py"}" "$@"\n', encoding="utf-8")
+            self.path.chmod(0o755)
+
+    def answer(self, command: str, *, stdout: str = "", stderr: str = "", rc: int = 0) -> None:
+        self.answers[command] = {"stdout": stdout, "stderr": stderr, "rc": rc}
+        self._save()
+
+    def _save(self) -> None:
+        (self._root / "spec.json").write_text(json.dumps(self.answers), encoding="utf-8")
+
+    @property
+    def calls(self) -> list[list[str]]:
+        log = self._root / "calls.jsonl"
+        if not log.exists():
+            return []
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+
+@pytest.fixture
+def fake_arduino_cli(tmp_path: Path) -> FakeArduinoCli:
+    """The arduino-cli boundary, faked by a real executable (`FakeArduinoCli`)."""
+    return FakeArduinoCli(tmp_path / "arduino-cli-stub")

@@ -45,6 +45,14 @@ class OverlapTool(FakeTool):
         self.overlapped = False
         self.gates: dict[str, asyncio.Event] = {}
         self.started: list[str] = []
+        #: What the board list reports, by hardware id. Remove one to unplug it.
+        self.boards = {
+            f"HW{b}": DetectedBoard(hardware_id=f"HW{b}", address=address(b), fqbn=FQBN)
+            for b in BOXES
+        }
+
+    async def list_boards(self) -> list[DetectedBoard]:
+        return list(self.boards.values())
 
     async def compile(self, sketch_dir, fqbn, libraries_path, on_line) -> None:  # noqa: ANN001
         self.active += 1
@@ -100,10 +108,6 @@ class Rig:
             }
         )
         self.ports.update_settings(settings)
-        self.ports._presence = {
-            f"HW{b}": DetectedBoard(hardware_id=f"HW{b}", address=address(b), fqbn=FQBN)
-            for b in BOXES
-        }
         self.queue = FlashQueue(
             loop=loop,
             ports=self.ports,
@@ -134,7 +138,14 @@ class Rig:
 @pytest.fixture
 async def rig() -> Rig:
     # Built inside the test's loop: the queue and the port manager bind to it.
-    return Rig()
+    r = Rig()
+    await r.ports.poll_once()  # every board present
+    return r
+
+
+def run_a_session(rig: Rig, box: int) -> None:
+    """Hold a box `IN_SESSION`, the state a session or Debug flash waits on."""
+    rig.ports.start_session(box, "START", lambda _seed: None, lambda _code, _ts: None)
 
 
 # --- one at a time ----------------------------------------------------------
@@ -158,7 +169,7 @@ async def test_never_two_flashes_at_once_whoever_asked(rig: Rig) -> None:
 
 
 async def test_a_busy_port_waits_without_holding_up_the_rest(rig: Rig) -> None:
-    rig.ports.handler(1)._state = PortState.IN_SESSION
+    run_a_session(rig, 1)
     rig.queue.submit([rig.job(1), rig.job(2)])
     for _ in range(100):
         await asyncio.sleep(0.01)
@@ -168,8 +179,7 @@ async def test_a_busy_port_waits_without_holding_up_the_rest(rig: Rig) -> None:
     assert rig.row(1)["state"] == "waiting"
     assert "in_session" in rig.row(1)["detail"]
 
-    rig.ports.handler(1)._state = PortState.IDLE
-    rig.queue.port_changed(1)
+    rig.ports.end_session(1, "the run ended")  # the port's own change wakes the job
     await rig.settle()
     assert rig.uploaded() == ["2", "1"]
     assert rig.row(1)["state"] == "done"
@@ -197,17 +207,19 @@ async def test_a_faulted_port_fails_at_once(rig: Rig) -> None:
 async def test_a_port_that_never_frees_gives_up(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(flashing_module, "PORT_WAIT_S", 0.05)
     monkeypatch.setattr(flashing_module, "TICK_S", 0.01)
-    rig.ports.handler(1)._state = PortState.RESETTING
+    run_a_session(rig, 1)
     rig.queue.submit([rig.job(1)])
     await rig.settle()
+    rig.ports.end_session(1, "test over")
 
     assert rig.row(1)["state"] == "failed"
-    assert "stayed resetting" in rig.row(1)["detail"]
+    assert "stayed in_session" in rig.row(1)["detail"]
     assert rig.uploaded() == []
 
 
 async def test_a_box_with_no_board_fails_by_name(rig: Rig) -> None:
-    rig.ports._presence.pop("HW2")
+    del rig.tool.boards["HW2"]  # unplugged
+    await rig.ports.poll_once()
     rig.queue.submit([rig.job(2)])
     await rig.settle()
     assert rig.row(2)["state"] == "failed"

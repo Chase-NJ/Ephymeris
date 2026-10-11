@@ -346,16 +346,22 @@ class PortManager:
 
     # --- background loops -------------------------------------------------
 
+    async def poll_once(self) -> None:
+        """Ask the board tool what is plugged in, once, and act on any change:
+        a vanished board's box is forgotten, and `on_presence` hears about it.
+        `start` does this every `POLL_INTERVAL_S`."""
+        try:
+            boards = await self._tool.list_boards()
+        except Exception as exc:  # noqa: BLE001 - missing binary, timeout, …
+            self._note_poll_failure(exc)
+        else:
+            self._poll_failures = 0
+            if self._update_presence(boards):
+                await self._on_presence(self.presence_json())
+
     async def _poll_loop(self) -> None:
         while True:
-            try:
-                boards = await self._tool.list_boards()
-            except Exception as exc:  # noqa: BLE001 - missing binary, timeout, …
-                self._note_poll_failure(exc)
-            else:
-                self._poll_failures = 0
-                if self._update_presence(boards):
-                    await self._on_presence(self.presence_json())
+            await self.poll_once()
             await asyncio.sleep(POLL_INTERVAL_S)
 
     def _note_poll_failure(self, exc: Exception) -> None:

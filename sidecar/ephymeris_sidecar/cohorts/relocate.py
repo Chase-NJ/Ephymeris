@@ -13,10 +13,9 @@ So the paths move with the files, in the order that makes it safe:
   records follow in one transaction. A crash between the two is rolled forward
   at the next start: the folder is demonstrably at the target, so the records
   are what's behind.
-* **Another volume** — copy, fsync and verify, commit the records, then
-  delete the originals; the animal move's order
-  (`DATA.md#moving-animals-between-cohorts`). A crash while copying is undone,
-  after the commit finished.
+* **Another volume** — a verified copy (`transfer`, the animal move's too),
+  commit the records, then delete the originals. A crash while copying is
+  undone, after the commit finished.
 
 Neither starts while a session of the cohort is open, and the copy checks
 again at commit: a session recorded while it ran has its files at the old
@@ -38,7 +37,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
 import sqlite3
 import uuid
 from collections import Counter
@@ -46,7 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import folders, freshness
+from . import folders, freshness, transfer
 from .db import Database
 from .folders import DataFolderError, relative_below, resolved
 from .models import CohortNotFound
@@ -220,6 +218,7 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
         )
         db.conn.commit()
 
+    copies: list[transfer.FileCopy] | None = None
     try:
         if same_volume:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -227,7 +226,7 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
                 target.rmdir()  # checked empty; a rename needs the name free
             os.rename(source, target)
         else:
-            _copy_tree(source, target)
+            copies = _copy_tree(source, target)
     except OSError as exc:
         if not same_volume:
             _remove_copies(source, target)
@@ -261,7 +260,7 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
         raise failure
 
     if not same_volume:
-        _delete_sources(source, target)
+        _delete_sources(source, target, copies)
         _finish(db, journal, "done")
     log.info("relocate: moved cohort %s from %s to %s", cohort_id, source, target)
     return target
@@ -454,49 +453,39 @@ def _files(root: Path) -> list[Path]:
     return [p for p in root.rglob("*") if p.is_file()] if root.is_dir() else []
 
 
-def _counterpart_matches(path: Path, mirror: Path) -> bool:
-    try:
-        return mirror.is_file() and mirror.stat().st_size == path.stat().st_size
-    except OSError:
-        return False
+def _copies(source: Path, target: Path) -> list[transfer.FileCopy]:
+    """Every file below `source`, paired with its place below `target`."""
+    return [transfer.FileCopy(p, target / p.relative_to(source)) for p in _files(source)]
 
 
-def _copy_tree(source: Path, target: Path) -> None:
-    shutil.copytree(source, target, copy_function=_copy_durably, dirs_exist_ok=True)
-    for path in _files(source):
-        if not _counterpart_matches(path, target / path.relative_to(source)):
-            raise OSError(f"{target / path.relative_to(source)} did not copy intact")
-
-
-def _copy_durably(src: str, dst: str) -> str:
-    """`copy2`, then fsync: the originals are deleted right after the commit,
-    and a copy still in the OS cache is not yet a copy."""
-    out = shutil.copy2(src, dst)
-    with open(out, "rb+") as handle:
-        os.fsync(handle.fileno())
-    return out
+def _copy_tree(source: Path, target: Path) -> list[transfer.FileCopy]:
+    """Copy every file, verified (`DATA.md#verified-transfer`), and every
+    folder, empty ones included."""
+    for folder in [source, *(p for p in source.rglob("*") if p.is_dir())]:
+        (target / folder.relative_to(source)).mkdir(parents=True, exist_ok=True)
+    return transfer.copy(_copies(source, target))
 
 
 def _remove_copies(source: Path, target: Path) -> None:
-    """Undo a copy: a file goes only when its original is still there, the
-    same size — never anything that is the only copy."""
+    """Undo a copy. The target was empty, so everything below it is this
+    relocate's: each copy whose original is still there, the same, and any
+    `.part` a crash left. Never anything that is the only copy."""
+    copies: dict[Path, transfer.FileCopy] = {}
     for path in _files(target):
-        if _counterpart_matches(path, source / path.relative_to(target)):
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        dst = path
+        if path.name.endswith(transfer.PART_SUFFIX) and not (source / path.relative_to(target)).exists():
+            dst = path.with_name(path.name[: -len(transfer.PART_SUFFIX)])
+        copies.setdefault(dst, transfer.FileCopy(source / dst.relative_to(target), dst))
+    transfer.undo(copies.values())
     _prune_empty_dirs(target, keep_root=True)
 
 
-def _delete_sources(source: Path, target: Path) -> None:
-    """After the commit: an original goes only once its copy is in place."""
-    for path in _files(source):
-        if _counterpart_matches(path, target / path.relative_to(source)):
-            try:
-                path.unlink()
-            except OSError as exc:
-                log.warning("relocate: couldn't remove %s: %s", path, exc)
+def _delete_sources(
+    source: Path, target: Path, copies: list[transfer.FileCopy] | None = None
+) -> None:
+    """After the commit: an original goes only while its copy is in place,
+    the same. A restart has no hashes to hand, so it compares the two."""
+    transfer.delete_originals(copies if copies is not None else _copies(source, target))
     _prune_empty_dirs(source, keep_root=False)
 
 

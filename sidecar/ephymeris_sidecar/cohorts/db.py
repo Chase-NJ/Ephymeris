@@ -402,6 +402,37 @@ CREATE INDEX IF NOT EXISTS idx_notes_open_flags ON session_notes(cohort_id)
     WHERE carry_forward = 1 AND resolved_at IS NULL AND deleted_at IS NULL;
 """
 
+#: Every column that stores where a file or folder lies inside a data folder,
+#: so a relocate must rebase it (`relocate.rewrite_paths`,
+#: `DATA.md#data-folder`). `recording_json` carries one per recorded group
+#: run, as `runs[].path`. A new column that names a path goes here or in
+#: `OTHER_PATHS`; `test_relocate.py` fails until it does.
+DATA_PATHS: tuple[tuple[str, str], ...] = (
+    ("sessions", "folder_path"),
+    ("sessions", "recording_json"),
+    ("session_animal_runs", "file_path"),
+    ("adopted_runs", "file_path"),
+    ("run_metrics_cache", "file_path"),
+    ("strobe_scan_cache", "file_path"),
+)
+
+#: Columns that look like they could hold such a path, and why a relocate
+#: leaves them alone.
+OTHER_PATHS: dict[tuple[str, str], str] = {
+    ("cohorts", "data_folder"): "the folder itself; the relocate sets it",
+    ("session_animal_runs", "sketch_path"): "the sketch library, not a data folder",
+    ("adopted_runs", "sketch_path"): "the sketch library, not a data folder",
+    ("folder_moves", "source"): "a relocate's own journal",
+    ("folder_moves", "target"): "a relocate's own journal",
+    ("animal_moves", "plan_json"): "a move's own journal",
+    ("cohorts", "appearance_json"): "no paths",
+    ("run_metrics_cache", "config_json"): "no paths",
+    ("run_metrics_cache", "summary_json"): "no paths",
+    ("session_animal_runs", "config_json"): "no paths",
+    ("strobe_scan_cache", "codes_json"): "no paths",
+    ("task_profiles", "profile_json"): "no paths",
+}
+
 
 def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     """Column names on `table`, or an empty set if it doesn't exist."""

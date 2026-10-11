@@ -15,7 +15,6 @@ roster edited between the preview and the apply cannot be acted on stale.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
@@ -24,6 +23,7 @@ from typing import Any, Literal
 
 from ..sessions.models import GroupRun, Session
 from ..sessions.tidy import session_key
+from . import transfer
 from .folders import relative_below, resolved
 from .models import Cohort, CohortNotFound
 
@@ -622,8 +622,8 @@ def _plan_unrecorded_files(
 def _plan_file(plan: MovePlan, src: Path, dst: Path) -> None:
     if any(_norm(f.src) == _norm(str(src)) for f in plan.files):
         return
-    src_hash = _digest(src)
-    dst_hash = _digest(dst)
+    src_hash = transfer.digest(src)
+    dst_hash = transfer.digest(dst)
     if src_hash is not None and dst_hash is None:
         action: FileAction = "copy"
         size, digest = src_hash
@@ -664,22 +664,6 @@ def _sessions(conn: sqlite3.Connection, cohort_id: str) -> list[Session]:
         "SELECT * FROM sessions WHERE cohort_id = ? ORDER BY date, started_at", (cohort_id,)
     ).fetchall()
     return [SessionRepository._hydrate(row) for row in rows]
-
-
-def _digest(path: Path) -> tuple[int, str] | None:
-    """Size and SHA-256, or None when there is nothing readable there."""
-    try:
-        if not path.is_file():
-            return None
-        h = hashlib.sha256()
-        size = 0
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1 << 20), b""):
-                h.update(chunk)
-                size += len(chunk)
-        return size, h.hexdigest()
-    except OSError:
-        return None
 
 
 def _is_dir(path: Path) -> bool:

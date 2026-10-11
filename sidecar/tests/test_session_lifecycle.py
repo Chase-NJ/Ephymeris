@@ -949,6 +949,28 @@ async def test_an_end_after_rhx_was_stopped_from_rhx_still_records_the_run(
     assert [r["groupId"] for r in runs] == ["g-a"]
 
 
+async def test_an_end_waits_while_rhx_may_still_be_writing_the_run(
+    db, tmp_path, rhx  # noqa: ANN001
+) -> None:
+    """The link comes back but RHX's file stamp can't be read, so the run is
+    not confirmed. RHX is in Record, maybe on this run: unsure keeps the grace
+    period (End now is the escape). Only RHX seen out of Record skips it."""
+    from ephymeris_sidecar.sessions.lifecycle import RECORDING_GRACE_S
+
+    fake, service = rhx
+    rig, session = await _recording_rig(db, tmp_path, rhx)
+    await rig.lifecycle.start_all(session.id)
+    await _lose_rhx(rhx)
+    del fake.params["filename.activefiletimestamp"]
+    await fake.listen_again()
+    await until(lambda: "Lost contact" not in (service.status_json()["message"] or ""))
+
+    await rig.lifecycle.end(session.id)
+
+    assert rig.runner.ended_with.get("graceful_timeout_s") == RECORDING_GRACE_S
+    assert [r["groupId"] for r in rig.sessions.get_session(session.id).recording["runs"]] == ["g-a"]
+
+
 async def test_a_box_start_after_rhx_drops_names_the_lost_link(db, tmp_path, rhx) -> None:  # noqa: ANN001
     """B16: one box of a recording group is running and RHX's link drops.
     Starting another box is refused, but for the reason it is: the link, not a

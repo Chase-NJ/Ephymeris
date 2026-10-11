@@ -12,7 +12,7 @@ import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from ..cohorts.db import Database
 from ..logbook.models import SessionLog, merge_logs
@@ -90,8 +90,11 @@ def _id_chunks(ids: list[str], size: int = 400) -> list[list[str]]:
 
 
 class SessionRepository:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, *, now: Callable[[], str] = _now) -> None:
         self._db = db
+        #: Where a record's times come from: when it was set up and when it
+        #: ended. A test that cares which of two records came first passes its own.
+        self._now = now
 
     # --- prefixes ---------------------------------------------------------
 
@@ -191,7 +194,7 @@ class SessionRepository:
             prefix_name=prefix.name,
             session_number=session_number.strip(),
             date=date,
-            started_at=_now(),
+            started_at=self._now(),
             status="configuring",
             folder_path=folder_path,
             duration_minutes=duration_minutes,
@@ -233,7 +236,7 @@ class SessionRepository:
         return self._hydrate(row)
 
     def set_status(self, session_id: str, status: SessionStatus) -> Session:
-        ended = _now() if status in ("completed", "aborted") else None
+        ended = self._now() if status in ("completed", "aborted") else None
         with self._db.lock:
             self._db.conn.execute(
                 "UPDATE sessions SET status = ?,"
@@ -487,7 +490,7 @@ class SessionRepository:
                             keep_id,
                             merged_log.operator,
                             merged_log.summary,
-                            merged_log.updated_at or _now(),
+                            merged_log.updated_at or self._now(),
                         ),
                     )
                 conn.execute(

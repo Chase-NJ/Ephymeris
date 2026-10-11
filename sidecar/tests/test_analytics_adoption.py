@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -572,14 +573,26 @@ async def test_a_warm_cache_cannot_answer_with_an_older_payload_shape(
     rig.service._sketch_lookup = lambda name: None
     rig.add_legacy_run("remy1", ([101, 249] + [103, 248]) * 12)
     await rig.service.rescan(rig.cohort.id)
-    await rig.service.summary(rig.cohort.id)
+    first = await rig.service.summary(rig.cohort.id)
 
-    # Forge exactly the stale row: the cache as an older codec left it.
-    with rig.db.lock:
-        rig.db.conn.execute(
-            "UPDATE run_metrics_cache SET codec_version = ?", (derive.CODEC_VERSION - 1,)
+    # Forge exactly the stale row: the cache as an older codec left it, its
+    # payload shaped before `answerSide` existed.
+    cached = rig.repo.load_cached([r["runId"] for r in first["runs"]])
+    assert cached, "the summary cached the run"
+    rig.repo.store([
+        replace(
+            entry,
+            key=replace(entry.key, codec_version=derive.CODEC_VERSION - 1),
+            summary={
+                **entry.summary,
+                "metrics": [
+                    {k: v for k, v in m.items() if k != "answerSide"}
+                    for m in entry.summary["metrics"]
+                ],
+            },
         )
-        rig.db.conn.commit()
+        for entry in cached.values()
+    ])
 
     run = (await rig.service.summary(rig.cohort.id))["runs"][0]
     assert all(m["answerSide"] for m in run["metrics"]), (

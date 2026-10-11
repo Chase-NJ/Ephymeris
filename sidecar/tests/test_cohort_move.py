@@ -15,10 +15,13 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
+from ephymeris_sidecar.analytics.repository import AnalyticsRepository, CacheKey, CachedRun
 from ephymeris_sidecar.cohorts import move_apply, relocate
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.move import MoveRequest
 from ephymeris_sidecar.cohorts.repository import CohortRepository
+from ephymeris_sidecar.logbook.models import SessionNote
+from ephymeris_sidecar.logbook.repository import LogbookRepository
 from ephymeris_sidecar.sessions.models import GroupRun, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import fine_mtime
@@ -97,13 +100,13 @@ class Lab:
     def note(self, session_id: str, body: str, *, animal: str | None = None, box: int | None = None) -> str:
         note_id = f"note-{body}"
         kind = "animal" if animal else "box" if box else "session"
-        self.db.conn.execute(
-            "INSERT INTO session_notes (id, session_id, cohort_id, at, created_at, tag,"
-            " scope_kind, animal_id, box_number, body) VALUES (?, ?, ?, ?, ?, 'observation',"
-            " ?, ?, ?, ?)",
-            (note_id, session_id, self.a.id, "2026-07-22T10:30:00+00:00", "now", kind, animal, box, body),
+        LogbookRepository(self.db).add(
+            SessionNote(
+                id=note_id, session_id=session_id, cohort_id=self.a.id,
+                at="2026-07-22T10:30:00+00:00", created_at="now", tag="observation",
+                body=body, scope_kind=kind, animal_id=animal, box_number=box,
+            )
         )
-        self.db.conn.commit()
         return note_id
 
     def request(self, *ids: str, dest_group: str | None = None) -> MoveRequest:
@@ -121,12 +124,18 @@ class Lab:
             for r in self.sessions.runs_for_cohort(cohort_id)
         }
 
+    def notes(self) -> list[tuple[str, str, str]]:
+        """(body, cohort, session) for every note in either cohort."""
+        logbook = LogbookRepository(self.db)
+        return [
+            (n.body, n.cohort_id, n.session_id)
+            for cohort in (self.a.id, self.b.id)
+            for n in logbook.notes_for_cohort(cohort)
+        ]
+
     def note_rows(self) -> dict[str, tuple[str, str]]:
         """body → (cohort, session) for every note."""
-        return {
-            row["body"]: (row["cohort_id"], row["session_id"])
-            for row in self.db.conn.execute("SELECT body, cohort_id, session_id FROM session_notes")
-        }
+        return {body: (cohort, session) for body, cohort, session in self.notes()}
 
     def files(self, root: Path) -> set[str]:
         return {
@@ -231,10 +240,8 @@ def test_the_files_records_and_notes_move(lab: Lab) -> None:
     assert notes["remy1-fine"] == (lab.a.id, lab.s1)
     assert notes["box1-clean"] == (lab.a.id, lab.s1)
     assert notes["slow1-alone"][0] == lab.b.id
-    copies = lab.db.conn.execute(
-        "SELECT cohort_id FROM session_notes WHERE body = 'Fan was loud'"
-    ).fetchall()
-    assert sorted(r[0] for r in copies) == sorted([lab.a.id, lab.b.id])
+    copies = [cohort for body, cohort, _ in lab.notes() if body == "Fan was loud"]
+    assert sorted(copies) == sorted([lab.a.id, lab.b.id])
     assert lab.note_rows()["Fan was loud"]  # the original is untouched
     assert shared  # (named for readability)
 
@@ -260,6 +267,8 @@ def test_a_carried_animal_lands_on_the_destination_roster(lab: Lab) -> None:
 def test_the_labs_split_is_repaired_from_its_files(lab: Lab) -> None:
     """slow1's row was deleted before former members existed; B has its own
     slow1. The dangling id is named from its files and joins B's animal."""
+    # A state only an older app could leave, so it is written the way the
+    # migration tests write old schemas: by hand.
     lab.db.conn.execute("DELETE FROM animals WHERE id = 'slow1'")
     lab.db.conn.commit()
     give_b(lab, "slow1", "b-slow")
@@ -311,22 +320,18 @@ def test_a_moved_recording_follows_a_relocate_of_the_folder_it_stayed_in(
 
 
 def cache_row(lab: Lab, path: str, key: tuple[int, int]) -> None:
-    lab.db.conn.execute(
-        "INSERT INTO run_metrics_cache (run_id, file_path, file_mtime_ns, file_size,"
-        " profile_source, codec_version, computed_at, status, summary_json)"
-        " VALUES ('run-2-slow1', ?, ?, ?, 'snapshot', 1, 'now', 'ok', '{}')",
-        (path, *key),
-    )
-    lab.db.conn.commit()
+    AnalyticsRepository(lab.db).store([
+        CachedRun(
+            run_id="run-2-slow1", status="ok", detail=None, profile_hash=None,
+            profile_source="snapshot", params_hash=None, config=None, summary={},
+            key=CacheKey(file_path=path, mtime_ns=key[0], size=key[1], profile_hash=None, codec_version=1),
+        )
+    ])
 
 
 def cached_key(lab: Lab) -> tuple[str, int, int]:
-    return tuple(
-        lab.db.conn.execute(
-            "SELECT file_path, file_mtime_ns, file_size FROM run_metrics_cache"
-            " WHERE run_id = 'run-2-slow1'"
-        ).fetchone()
-    )
+    key = AnalyticsRepository(lab.db).load_cached(["run-2-slow1"])["run-2-slow1"].key
+    return key.file_path, key.mtime_ns, key.size
 
 
 def test_the_cache_follows_the_run_and_stays_warm(lab: Lab, coarse_volume: None) -> None:
@@ -507,14 +512,12 @@ def test_records_changing_under_the_copy_abandon_the_move(lab: Lab) -> None:
     def record_once_copied(done: int, total: int) -> None:
         if done < total:
             return
-        with lab.db.lock:
-            lab.db.conn.execute(
-                "INSERT INTO session_animal_runs (id, session_id, animal_id, box_number,"
-                " sketch_path, file_path, started_at) VALUES ('late', ?, 'slow1', 3, 'GRGL',"
-                " NULL, 'now')",
-                (lab.s1,),
+        lab.sessions.record_animal_run(
+            SessionAnimalRun(
+                id="late", session_id=lab.s1, animal_id="slow1", box_number=3,
+                sketch_path="GRGL", started_at="now",
             )
-            lab.db.conn.commit()
+        )
 
     before = lab.files(lab.a_root)
 

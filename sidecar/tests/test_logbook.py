@@ -171,11 +171,8 @@ async def test_a_deleted_note_is_hidden_but_kept(rig: Rig, logbook: LogbookServi
     assert (await logbook.cohort(rig.cohort.id))["notes"] == []
     with pytest.raises(NoteNotFound):
         await logbook.edit_note(note["id"], {"body": "y"})
-    # The row is still there, marked — a soft delete, never an erase.
-    row = rig.db.conn.execute(
-        "SELECT deleted_at FROM session_notes WHERE id = ?", (note["id"],)
-    ).fetchone()
-    assert row["deleted_at"] is not None
+    # The note is still there, marked — a soft delete, never an erase.
+    assert logbook.repo.get(note["id"], include_deleted=True).deleted_at is not None
 
 
 @pytest.mark.parametrize(
@@ -257,12 +254,13 @@ async def test_annotated_means_a_live_note_or_a_filled_field(
 
 async def test_deleting_the_cohort_takes_its_log(rig: Rig, logbook: LogbookService) -> None:
     sid = rig.add_session("1", DAY)
-    await logbook.add_note(sid, {"tag": "observation", "body": "x"})
+    note = (await logbook.add_note(sid, {"tag": "observation", "body": "x"}))["note"]
     await logbook.set_session_log(sid, {"operator": "CJ"})
     rig.cohorts.archive(rig.cohort.id)
     rig.cohorts.delete(rig.cohort.id)
-    assert rig.db.conn.execute("SELECT COUNT(*) FROM session_notes").fetchone()[0] == 0
-    assert rig.db.conn.execute("SELECT COUNT(*) FROM session_logs").fetchone()[0] == 0
+    with pytest.raises(NoteNotFound):
+        logbook.repo.get(note["id"], include_deleted=True)
+    assert logbook.repo.get_log(sid) is None
 
 
 def test_merged_logs_keep_everything_anyone_wrote() -> None:

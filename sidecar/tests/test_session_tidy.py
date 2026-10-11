@@ -10,7 +10,7 @@ folder, and any file at all.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -18,6 +18,7 @@ import pytest
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.sessions import tidy
 from ephymeris_sidecar.sessions.models import GroupRun
+from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.test_analytics_service import HIT_1, HIT_3, Rig
 
 TODAY = date.today().isoformat()
@@ -34,18 +35,29 @@ def db(tmp_path: Path):
         database.close()
 
 
+class Clock:
+    """The time a record is set up at: real unless a test sets `at`."""
+
+    def __init__(self) -> None:
+        self.at: str | None = None
+
+    def __call__(self) -> str:
+        return self.at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 @pytest.fixture
 def rig(db: Database, tmp_path: Path) -> Rig:
     r = Rig(db, tmp_path)
     r.write_sketch()
+    r.clock = Clock()
+    r.sessions = SessionRepository(db, now=r.clock)
     return r
 
 
-def started(rig: Rig, session_id: str, at: str) -> str:
-    """Pin a record's creation time — two made in one test share a second."""
-    rig.db.conn.execute("UPDATE sessions SET started_at = ? WHERE id = ?", (at, session_id))
-    rig.db.conn.commit()
-    return session_id
+def started(rig: Rig, at: str) -> str:
+    """A record set up at `at` — two made in one test would share a second."""
+    rig.clock.at = at
+    return rig.add_session("12", DAY)
 
 
 def group_run(group_id: str, at: str) -> GroupRun:
@@ -68,8 +80,8 @@ async def apply(rig: Rig, **kw) -> dict:
 
 
 async def test_two_records_of_one_session_merge_into_the_earliest(rig: Rig) -> None:
-    first = started(rig, rig.add_session("12", DAY), "2026-07-22T08:55:00")
-    second = started(rig, rig.add_session("12", DAY), "2026-07-22T12:55:00")
+    first = started(rig, "2026-07-22T08:55:00")
+    second = started(rig, "2026-07-22T12:55:00")
     rig.sessions.set_group_runs(first, [group_run("gA", "2026-07-22T09:00:00")])
     rig.sessions.set_group_runs(second, [group_run("gB", "2026-07-22T13:00:00")])
     rig.add_run(first, "a1", HIT_1 * 5)
@@ -125,8 +137,8 @@ async def test_the_earliest_record_WITH_DATA_is_kept(rig: Rig) -> None:
 
 
 async def test_recording_runs_from_every_record_are_kept(rig: Rig) -> None:
-    first = started(rig, rig.add_session("12", DAY), "2026-07-22T08:55:00")
-    second = started(rig, rig.add_session("12", DAY), "2026-07-22T12:55:00")
+    first = started(rig, "2026-07-22T08:55:00")
+    second = started(rig, "2026-07-22T12:55:00")
     rig.add_run(first, "a1", HIT_1)
     rig.sessions.set_recording(second, {"runs": [{"groupId": "gB", "startedAt": "t2"}]})
     rig.sessions.set_recording(first, {"runs": [{"groupId": "gA", "startedAt": "t1"}]})
@@ -189,8 +201,8 @@ async def test_an_aborted_or_old_set_up_record_is_cleared(rig: Rig) -> None:
 
 
 async def test_the_held_session_and_its_folder_mates_are_left_whole(rig: Rig) -> None:
-    earlier = started(rig, rig.add_session("12", DAY), "2026-07-22T08:55:00")
-    held = started(rig, rig.add_session("12", DAY), "2026-07-22T12:55:00")
+    earlier = started(rig, "2026-07-22T08:55:00")
+    held = started(rig, "2026-07-22T12:55:00")
     rig.add_run(earlier, "a1", HIT_1)
     plan = await preview(rig, protect={held})
     assert plan["merges"] == [] and plan["empty"] == []
@@ -292,8 +304,8 @@ async def test_a_merge_carries_notes_resolutions_and_fields(rig: Rig) -> None:
     from ephymeris_sidecar.logbook.repository import LogbookRepository
 
     logbook = LogbookRepository(rig.db)
-    first = started(rig, rig.add_session("12", DAY), "2026-07-22T08:55:00")
-    second = started(rig, rig.add_session("12", DAY), "2026-07-22T12:55:00")
+    first = started(rig, "2026-07-22T08:55:00")
+    second = started(rig, "2026-07-22T12:55:00")
     rig.add_run(first, "a1", HIT_1 * 5)
     rig.add_run(second, "a2", HIT_3 * 5)
     note = _note(rig, second, "afternoon")

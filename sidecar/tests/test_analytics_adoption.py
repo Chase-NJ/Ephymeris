@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive, reader
-from ephymeris_sidecar.analytics.repository import AnalyticsRepository
+from ephymeris_sidecar.analytics.repository import AdoptedRun, AnalyticsRepository
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.protocol import validate_command_result
@@ -782,6 +782,36 @@ async def test_two_cohorts_over_one_archive_keep_their_own_adoptions(
         second = await rig.service.summary(other)
         assert [r["animalId"] for r in first["runs"]] == ["a1"], f"round {round_}"
         assert [r["animalId"] for r in second["runs"]] == ["b1"], f"round {round_}"
+
+
+def test_storing_an_adoption_never_takes_another_cohorts_row(rig: LegacyRig) -> None:
+    """B15's other half. `INSERT OR REPLACE` on the id let one cohort's write
+    move a row another cohort holds. Taking a run from one cohort to another is
+    a move's job (`DATA.md#moving-animals-between-cohorts`), never a rescan's:
+    the write that would do it is left out, and the rest of its batch lands."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    spare = rig.add_legacy_run("remy2", HIT_1 * 5)
+    other = _second_cohort(rig, rig.root)
+    theirs = AdoptedRun(
+        id="adopted:held-by-the-other", cohort_id=other, animal_id="b1",
+        file_path=str(path), prefix_name="2O-Bdisc", session_number="01",
+        date="2026-06-16", started_at="2026-06-16T12:00:22", sketch_name=None,
+        sketch_path=None,
+    )
+    rig.repo.store_adopted([theirs])
+
+    rig.repo.store_adopted([
+        replace(theirs, cohort_id=rig.cohort.id, animal_id="a1"),
+        replace(
+            theirs, id="adopted:new", cohort_id=rig.cohort.id,
+            animal_id="a2", file_path=str(spare),
+        ),
+    ])
+
+    assert [(e.id, e.animal_id) for e in rig.repo.adopted_for_cohort(other)] == [
+        ("adopted:held-by-the-other", "b1")
+    ], "the other cohort's row stands"
+    assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == ["adopted:new"]
 
 
 async def test_a_second_rescan_does_not_read_the_files_again(rig: LegacyRig) -> None:

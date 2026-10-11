@@ -25,6 +25,7 @@ from ephymeris_sidecar.cohorts.folders import DataFolderError
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
+from tests.conftest import fine_mtime
 
 SESSION = "2O-Bdisc_1_2026-09-01"
 
@@ -101,6 +102,24 @@ class Archive:
     def journal(self) -> str:
         return self.db.conn.execute("SELECT state FROM folder_moves").fetchone()[0]
 
+    def record(self) -> str:
+        """Two recorded group runs: one saved in the default place, under the
+        session folder, and one under a save root of its own. Returns the
+        second, which no relocate of this cohort may touch."""
+        ephys = self.old / "2O-Bdisc" / SESSION / "ephys"
+        (ephys / "rec_260901_090000").mkdir(parents=True)
+        (ephys / "rec_260901_090000" / "info.rhd").write_bytes(b"rhd")
+        elsewhere = str(self.root / "rhx" / SESSION)
+        self.sessions.set_recording(
+            self.session_id,
+            {"runs": [{"groupId": "g", "path": str(ephys)}, {"groupId": "h", "path": elsewhere}]},
+        )
+        return elsewhere
+
+    def recording_paths(self) -> list[str]:
+        recording = self.sessions.get_session(self.session_id).recording or {}
+        return [run["path"] for run in recording["runs"]]
+
 
 @pytest.fixture
 def db(tmp_path: Path):
@@ -160,6 +179,18 @@ def test_the_records_survive_the_next_rescan(archive: Archive, volume: str) -> N
     assert (run.box_number, run.stop_reason) == (2, "BF_END_SESSION received")
 
 
+def test_a_recording_saved_in_the_session_folder_moves_with_it(
+    archive: Archive, volume: str
+) -> None:
+    elsewhere = archive.record()
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    ephys = archive.new / "2O-Bdisc" / SESSION / "ephys"
+    assert archive.recording_paths() == [str(ephys), elsewhere]
+    assert (ephys / "rec_260901_090000" / "info.rhd").is_file()
+
+
 def test_pointing_without_moving_rewrites_nothing(archive: Archive) -> None:
     before = archive.stored_paths()
     archive.new.mkdir(parents=True)
@@ -195,6 +226,104 @@ def test_a_failed_commit_puts_the_files_back(
     assert archive.all_under(archive.old)
     assert not any(p.is_file() for p in archive.new.rglob("*")) if archive.new.exists() else True
     assert archive.journal() == "rolled-back"
+
+
+# --- freshness keys and durability ----------------------------------------------------
+
+
+def rescan(archive: Archive) -> dict:
+    async def broadcast(_message: dict) -> None:
+        return None
+
+    service = AnalyticsService(
+        db=archive.db,
+        cohorts=archive.cohorts,
+        sessions=archive.sessions,
+        broadcast=broadcast,
+        archive=archive.cohort_archive,
+    )
+    return asyncio.run(service.rescan(archive.cohort.id))
+
+
+def keys(archive: Archive, table: str, column: str, value: str) -> tuple:
+    return tuple(
+        archive.db.conn.execute(
+            f"SELECT file_mtime_ns, file_size FROM {table} WHERE {column} = ?", (value,)
+        ).fetchone()
+    )
+
+
+def test_a_recovered_run_keeps_its_animal_on_a_coarser_volume(
+    archive: Archive, coarse_volume: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy's mtime is rounded, so a key left at the original's sent the
+    recovered run back to being matched by name — and the name it carries
+    had since passed to another animal."""
+    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
+    fine_mtime(*archive.old.rglob("*_110000.*"))
+    rescan(archive)  # adopted from the file, with its stat
+    archive.db.conn.execute("UPDATE animals SET name = 'remy-A' WHERE id = 'a1'")
+    archive.db.conn.execute(
+        "INSERT INTO animals (id, cohort_id, group_id, name, box_number)"
+        " VALUES ('a2', ?, 'g', 'remy1', 3)",
+        (archive.cohort.id,),
+    )
+    archive.db.conn.commit()
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    result = rescan(archive)
+
+    [(animal, path)] = archive.db.conn.execute(
+        "SELECT animal_id, file_path FROM adopted_runs"
+    ).fetchall()
+    assert animal == "a1"
+    assert (result["adopted"], result["orphans"]) == (0, [])
+    assert keys(archive, "adopted_runs", "id", archive.adopted_id) == (
+        Path(path).stat().st_mtime_ns,
+        Path(path).stat().st_size,
+    )
+
+
+def test_only_a_key_fresh_for_the_original_is_carried(
+    archive: Archive, volume: str, coarse_volume: None
+) -> None:
+    """A row already stale must stay stale: carried, the copy would vouch for
+    a summary of content the file no longer has."""
+    recorded = next(archive.old.rglob("*_090001.json"))
+    fine_mtime(recorded)
+    archive.db.conn.execute(
+        "UPDATE run_metrics_cache SET file_mtime_ns = ?, file_size = ? WHERE run_id = 'run-1'",
+        (recorded.stat().st_mtime_ns, recorded.stat().st_size),
+    )
+    archive.db.conn.commit()  # the recovered run's row keeps its stale (1, 1)
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    copy = next(archive.new.rglob("*_090001.json")).stat()
+    assert keys(archive, "run_metrics_cache", "run_id", "run-1") == (
+        copy.st_mtime_ns,
+        copy.st_size,
+    )
+    assert keys(archive, "run_metrics_cache", "run_id", archive.adopted_id) == (1, 1)
+
+
+def test_every_copy_is_flushed_before_an_original_goes(
+    archive: Archive, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
+    originals = [p for p in archive.old.rglob("*") if p.is_file()]
+    real = os.fsync
+    flushed: list[bool] = []
+
+    def fsync(fd: int) -> None:
+        flushed.append(all(p.is_file() for p in originals))
+        real(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert flushed == [True] * len(originals)
+    assert not archive.old.exists()
 
 
 # --- crashes -----------------------------------------------------------------------
@@ -293,6 +422,28 @@ def test_rescan_re_points_records_an_old_relocate_left_behind(archive: Archive) 
     assert archive.all_under(archive.new), archive.stored_paths()
     [run] = archive.sessions.runs_for_cohort(archive.cohort.id)
     assert run.stop_reason == "BF_END_SESSION received"
+
+
+def test_rescan_re_points_a_recording_an_old_relocate_left_behind(archive: Archive) -> None:
+    elsewhere = archive.record()
+    old_way(archive)
+
+    async def broadcast(_message: dict) -> None:
+        return None
+
+    service = AnalyticsService(
+        db=archive.db,
+        cohorts=archive.cohorts,
+        sessions=archive.sessions,
+        broadcast=broadcast,
+        archive=archive.cohort_archive,
+    )
+    asyncio.run(service.rescan(archive.cohort.id))
+
+    assert archive.recording_paths() == [
+        str(archive.new / "2O-Bdisc" / SESSION / "ephys"),
+        elsewhere,
+    ]
 
 
 def test_a_record_whose_file_is_not_at_the_new_place_is_left_for_the_prune(

@@ -237,11 +237,13 @@ Relocating is a separate action, `cohorts.setDataFolder` (`relocate`), with two 
 | Destination | How | A crash in between |
 |---|---|---|
 | Same volume | One atomic `rename` of the folder, then the records in one transaction | The folder is demonstrably at the target, so the records are rolled forward at the next start |
-| Another volume | Copy and size-check every file, commit the records, then delete each original whose copy is in place | Undone while copying (only copies whose original is still there are removed); finished after the commit |
+| Another volume | Copy, fsync and size-check every file, commit the records, then delete each original whose copy is in place | Undone while copying (only copies whose original is still there are removed); finished after the commit |
+
+The cache and adoption rows [carry their freshness keys](#caching) to the moved files, so nothing that was fresh is re-read. Where each recorded group run told RHX to save (`recording_json`) moves too when it lies inside the folder, as the default `<session folder>/ephys` does; a save location elsewhere is left alone.
 
 It runs under the [archive lock](#the-cohort-archive), so no rescan or summary reads the records mid-move, and is refused while a session is set up or running — a session writing into the folder would be writing into one that moves. Pointing without moving rewrites nothing.
 
-**Rescan repairs a relocate from before this.** Before it prunes, it re-points (`rehomed`) records left at a folder the cohort was moved out of: a stale path is one outside the cohort's folder with nothing there; the old folder is the root most stale paths agree on, found by which tail of each exists under the cohort's folder; and only paths whose files (or, for a run, its write-ahead `.tsv`) are actually there are rewritten. Anything else is left to the prune's own rules.
+**Rescan repairs a relocate from before this.** Before it prunes, it re-points (`rehomed`) records left at a folder the cohort was moved out of: a stale path is one outside the cohort's folder with nothing there; the old folder is the root most stale paths agree on, found by which tail of each exists under the cohort's folder; and only paths whose files (or, for a run, its write-ahead `.tsv`) are actually there are rewritten, a recording's save location among them. Anything else is left to the prune's own rules.
 
 ### Moving animals between cohorts
 
@@ -257,7 +259,7 @@ Like [Tidy records](#tidy-records), it previews first (`apply: false`), and an a
 | A [former member](#former-members) with that name | Joins that one |
 | Neither | **Carried** under its own id: onto the roster in the chosen group (its box kept only if free there), or as a former member if it was one — or known only [from files](#former-members) |
 
-**What moves.** Every file of every run — recorded and [adopted](#orphan-adoption) — found by **run identity** ([the stem](#orphan-adoption)) in its session folder's format folders: `.json`, `.tsv` and `.mat`, in the current or the legacy spelling, including a crash's lone `.tsv`. Then any file in the source no record points at whose stem names a moved animal — unless an animal staying on the source's roster now holds that name. The path below the cohort folder is kept. **Never** `notes.md` (derived, and re-rendered at both ends), RHX recordings (they live outside the cohort folder) or AppleDouble files.
+**What moves.** Every file of every run — recorded and [adopted](#orphan-adoption) — found by **run identity** ([the stem](#orphan-adoption)) in its session folder's format folders: `.json`, `.tsv` and `.mat`, in the current or the legacy spelling, including a crash's lone `.tsv`. Then any file in the source no record points at whose stem names a moved animal — unless an animal staying on the source's roster now holds that name. The path below the cohort folder is kept. **Never** `notes.md` (derived, and re-rendered at both ends), an RHX recording or AppleDouble files. A recording in its default place, `<session folder>/ephys`, stays in the source's folder, where a moved record's recording still points.
 
 **Sessions.** A session only moved animals ran in is **whole**: the record itself moves, with its notes, its log and its recording. One that animals staying behind ran in too is **split**: the destination gets a record of its own — the same prefix, number, date, times and status; no recording, because an RHX entry belongs to a group run both halves shared — or joins the destination's record of that day if it has one. Group runs follow the moved animals into their destination groups; the source drops a group run only the moved animals ran, unless the session is a recording.
 
@@ -274,7 +276,7 @@ Like [Tidy records](#tidy-records), it previews first (`apply: false`), and an a
 
 The session's operator and summary are copied too. A copied carry-forward flag is open in both cohorts, and resolving one does not resolve the other.
 
-**Caches follow.** `run_metrics_cache` rows are re-keyed to the new path and stat — the content is hash-verified identical, so the cached summary is still right — and adoptions take the new stat, so neither re-reads anything. Copied files are queued for [backup](#backup-mirroring); the mirror is additive, so the old copies stay in the source's mirror folder.
+**Caches follow.** `run_metrics_cache`, adoption and strobe-scan rows take the new path and [carry their freshness keys](#caching): the content is hash-verified identical, so a summary that was right for the original is right for the copy. Copied files are queued for [backup](#backup-mirroring); the mirror is additive, so the old copies stay in the source's mirror folder.
 
 **Refused**, with nothing touched, when: a session is held or a box runs anywhere in the app (copying competes with the write-ahead log's fsync); either cohort has an open (`configuring`/`running`) session; either data folder is unreachable; the folders are the same or one is inside the other; a destination file exists **with different content**; a run file lies outside the source's folder (left by a data-folder move from before records followed one; a rescan [re-points it](#data-folder)); two moved animals share a name; or the destination is archived. An identical file already at the destination is not a refusal.
 
@@ -877,6 +879,11 @@ The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash an
 
 > [!CAUTION]
 > **Bump `CODEC_VERSION` in `analytics/derive.py` whenever the payload changes — the maths *or its shape*.** A cache hit is served verbatim, so without a bump every already-indexed run keeps the old answer forever, with no symptom. "The numbers didn't move" is not an exemption: adding a field without a bump means every warm-cache run answers without it. (When `answerSide` was added that way, the strategy plane concluded "no condition says which well it rewards" on an archive whose profiles say exactly that.) `tests/test_analytics_derive.py` pins the payload's field names as a literal list against the version.
+
+- **A relocate or a move carries a key only if it was fresh for the original** (`cohorts/freshness.py`). The copy's stat need not be the original's: a volume that keeps mtimes coarser than NTFS rounds them (exFAT to 10 ms, FAT32 to 1 s). So each row in `run_metrics_cache`, `adopted_runs` and `strobe_scan_cache` whose key matched the original's stat takes the copy's, and any other row keeps its key and is re-read.
+
+> [!CAUTION]
+> **A key left at the original's is not only a re-read.** An adopted run that misses is [matched to an animal by name](#orphan-adoption) again. If the animal was renamed since adoption, the run turns into an unattributed orphan on every rescan; if its old name now belongs to another animal, the run silently changes animal. Carrying a key that was already stale is wrong the other way: the copy would vouch for a summary of content the file no longer has.
 
 - **Profile resolution is memoized per indexing pass, never across passes**, so an edited `task.json` takes effect on the next summary.
 - **Never delete a cache entry because a file vanished** on the read path — mark it stale and keep serving it. The read path cannot tell a deletion from an unplugged drive; only [pruning](#pruning) can.

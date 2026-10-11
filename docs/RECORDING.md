@@ -454,12 +454,13 @@ exceptions; a test pins that a throwing tap costs the run nothing.
 ## What is written
 
 **By RHX**: its own files, in its own format, under `Filename.Path`, in a directory it timestamps itself
-(`createnewdirectory true`, so two recordings never overwrite each other). Ephymeris never reads or moves
-them. Probe-map XMLs are copied beside them as `box<n>_<name>.xml`.
+(`createnewdirectory true`, so two recordings never overwrite each other). Ephymeris never reads them, and
+moves them only with a [relocated](DATA.md#data-folder) cohort folder they sit in. Probe-map XMLs are copied beside them as `box<n>_<name>.xml`.
 
 **`sessions.recording_json`** ([DATA.md](DATA.md#sqlite-database)): `{"runs": [...]}`, one per group run
 (path, base filename, RHX's file timestamp, format, sample rate, start/end, and per box its DIN, port,
-channels and probe-map file). `NULL` means behavior only.
+channels and probe-map file). `NULL` means behavior only. A save location inside the cohort folder follows
+a [relocate](DATA.md#data-folder) of it.
 
 **Each animal's document** ([DATA.md](DATA.md#per-animal-files)) gains flat `intan_*` fields, also in the
 `.tsv` header so a crash-recovered file keeps them:

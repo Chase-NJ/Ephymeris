@@ -28,7 +28,7 @@ import serial
 
 from ..boards.tool import BoardTool, DetectedBoard
 from ..settings import BOX_COUNT, SidecarSettings
-from .handler import DEFAULT_LINE_ENDING, OutputLine, PortHandler
+from .handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine, PortHandler
 from .states import PortState
 
 log = logging.getLogger(__name__)
@@ -108,14 +108,20 @@ class PortManager:
         on_state_change: StateCallback,
         on_output: OutputCallback,
         on_presence: PresenceCallback,
+        open_serial: OpenSerial | None = None,
     ) -> None:
+        """`open_serial` opens every serial port this manager uses (`serial.Serial`
+        when not given), so a test can put a scripted board behind the real
+        state machine."""
         self._loop = loop
         self._tool = tool
         self._on_output = on_output
         self._on_presence = on_presence
+        self._open_serial = open_serial
 
         self._handlers: dict[int, PortHandler] = {
-            box: PortHandler(box, loop, on_state_change) for box in range(1, BOX_COUNT + 1)
+            box: PortHandler(box, loop, on_state_change, open_serial)
+            for box in range(1, BOX_COUNT + 1)
         }
         self._settings = SidecarSettings()
         self._presence: dict[str, DetectedBoard] = {}
@@ -290,7 +296,7 @@ class PortManager:
 
         try:
             # Blocking serial work stays off the event loop.
-            await asyncio.to_thread(_dtr_pulse, address)
+            await asyncio.to_thread(_dtr_pulse, address, self._open_serial or serial.Serial)
         except Exception as exc:
             handler.force_error(f"reset failed: {exc}")
             raise
@@ -356,8 +362,13 @@ class PortManager:
             self._note_poll_failure(exc)
         else:
             self._poll_failures = 0
-            if self._update_presence(boards):
-                await self._on_presence(self.presence_json())
+            await self.note_boards(boards)
+
+    async def note_boards(self, boards: list[DetectedBoard]) -> None:
+        """Take `boards` as everything now plugged in, as one poll would: a
+        vanished board's box is forgotten, and `on_presence` hears of a change."""
+        if self._update_presence(boards):
+            await self._on_presence(self.presence_json())
 
     async def _poll_loop(self) -> None:
         while True:
@@ -398,14 +409,14 @@ class PortManager:
                     await self._on_output(box, batch)
 
 
-def _dtr_pulse(address: str) -> None:
+def _dtr_pulse(address: str, open_serial: OpenSerial) -> None:
     """The reset sequence (`ARCHITECTURE.md#reset`): dtr low → ~100ms → dtr high.
 
     The Mega2560 R3's auto-reset circuit fires on the DTR edge. Runs in a
     worker thread; the port is opened fresh and closed again, the state
     machine having already released any prior owner.
     """
-    port = serial.Serial()
+    port = open_serial()
     port.port = address
     port.dtr = True
     port.open()

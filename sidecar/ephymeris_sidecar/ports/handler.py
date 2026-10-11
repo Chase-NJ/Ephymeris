@@ -15,7 +15,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 import serial
 
@@ -73,16 +73,25 @@ class PortBusy(Exception):
     """The port isn't in a state that permits this operation."""
 
 
+#: Opens a serial port: `serial.Serial`'s signature. Injected so a test can
+#: drive the real handler and manager with a scripted board behind them.
+OpenSerial = Callable[..., Any]
+
+
 class PortHandler:
     def __init__(
         self,
         box: int,
         loop: asyncio.AbstractEventLoop,
         on_state_change: Callable[[int, PortState, PortState, str], None],
+        open_serial: OpenSerial | None = None,
     ) -> None:
         self.box = box
         self._loop = loop
         self._on_state_change = on_state_change
+        # Looked up at each open when not given, so `serial.Serial` is what it
+        # is at the time of the open.
+        self._open_serial = open_serial
 
         self._state = PortState.IDLE
         self._lock = threading.RLock()
@@ -174,7 +183,7 @@ class PortHandler:
         with self._lock:
             assert_transition(self._state, PortState.PASSTHROUGH)
             try:
-                port = serial.Serial(
+                port = self._open(
                     port=address,
                     baudrate=baud,
                     timeout=READ_TIMEOUT_S,
@@ -294,7 +303,7 @@ class PortHandler:
         try:
             # Opening the port toggles DTR, which the Mega's auto-reset circuit
             # interprets as a reset — the same mechanism as a DTR reset (`ARCHITECTURE.md#reset`), reused.
-            port = serial.Serial(
+            port = self._open(
                 port=address,
                 baudrate=baud,
                 timeout=READ_TIMEOUT_S,
@@ -494,6 +503,9 @@ class PortHandler:
 
     def scrollback(self) -> list[OutputLine]:
         return list(self._ring)
+
+    def _open(self, **kwargs: Any) -> Any:
+        return (self._open_serial or serial.Serial)(**kwargs)
 
     # --- teardown ---------------------------------------------------------
 

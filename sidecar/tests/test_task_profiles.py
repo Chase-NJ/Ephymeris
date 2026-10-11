@@ -7,12 +7,15 @@ from pathlib import Path
 
 import pytest
 
+from ephymeris_sidecar.rig.registry import Vocabulary, default_vocabulary_document
 from ephymeris_sidecar.tasks.metrics import MetricSet, compute_series
 from ephymeris_sidecar.tasks.profile import (
     TaskProfileError,
     build_legacy_name_index,
     load_profile,
+    params_hash,
     parse_profile,
+    profile_hash,
 )
 from ephymeris_sidecar.tasks.start_command import START_LINE_MAX, build_start_command
 
@@ -90,6 +93,55 @@ def test_every_shipped_profile_keeps_its_hash_through_a_round_trip() -> None:
         copied = parse_profile(json.loads(json.dumps(original.to_json())))
         assert profile_hash(copied) == profile_hash(original), preset["id"]
         assert copied.to_json() == original.to_json(), preset["id"]
+
+
+def test_a_runs_params_hash_is_the_documented_digest_of_its_values() -> None:
+    """`TASKS.md#profile-and-params-hashes` — a stored hash cannot be recomputed.
+
+    The literal was taken with `shasum -a 256` over the canonical JSON the doc
+    defines (sorted keys, compact separators, first 16 hex characters), not
+    from this code. If it moves, every run already stored lands in a new
+    comparability set in Analytics.
+    """
+    config = {"odor_poke_hold": 500, "reward_ul": 2.5, "lazy_escalation": True, "iti": 4000}
+    assert params_hash(config) == "c1ed040d2226df5c"
+
+
+def test_a_profiles_hash_is_the_documented_digest_of_its_declaration() -> None:
+    """`TASKS.md#profile-and-params-hashes` — the serialized profile, less `strobes`.
+
+    The literal was taken with `shasum -a 256` over this profile's canonical
+    JSON written out by hand, so it checks what the doc says goes in: every
+    declared section, the defaults `to_json` fills in, and no strobe map.
+    """
+    profile = parse_profile({
+        "taskName": "Box check",
+        "kind": "utility",
+        "controls": [
+            {"id": "gear", "label": "Fluid set", "type": "select", "options": [
+                {"label": "Set 1", "command": "SET GEAR=1"},
+                {"label": "Set 2", "command": "SET GEAR=2"},
+            ]},
+            {"id": "alloff", "label": "All off", "type": "button", "command": "ALLOFF"},
+        ],
+        "telemetry": {"match": "STATUS", "fields": [{"key": "gear", "label": "Fluid set"}]},
+        "identify": {"on": "ON trial_light", "off": "OFF trial_light"},
+    })
+    assert profile_hash(profile) == "3c3e841ffd2225ea"
+
+
+def test_grgls_declaration_keeps_the_hash_its_runs_are_stored_under() -> None:
+    """`TASKS.md#profile-and-params-hashes` — old hashes cannot be recomputed.
+
+    `fixtures/grgl_task.json` is a frozen copy of GRGL's `task.json`; never
+    regenerate it. Only parsing, serializing or hashing can move this literal,
+    and any of them moving it files every GRGL run under a new profile in
+    Analytics. A change that means to do so updates the literal, with a
+    migration that re-keys stored hashes (`DATA.md#changing-the-schema`).
+    """
+    raw = json.loads((Path(__file__).parent / "fixtures" / "grgl_task.json").read_text("utf-8"))
+    profile = parse_profile(raw, vocabulary=Vocabulary(default_vocabulary_document()))
+    assert profile_hash(profile) == "1d186cc5768ee663"
 
 
 def test_a_document_that_carries_no_snapshot_yields_none() -> None:

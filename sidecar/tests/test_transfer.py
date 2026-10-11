@@ -64,9 +64,10 @@ def test_an_identical_destination_is_left_as_it_is(tmp_path: Path) -> None:
     f = pair(tmp_path)
     f.dst.parent.mkdir(parents=True)
     f.dst.write_bytes(b"ts_data")
-    os.utime(f.dst, ns=(1, 1))
+    stamp = 1_700_000_000 * 10**9  # whole seconds: every volume keeps it exactly
+    os.utime(f.dst, ns=(stamp, stamp))
     transfer.copy([f])
-    assert f.dst.stat().st_mtime_ns == 1
+    assert f.dst.stat().st_mtime_ns == stamp
 
 
 def test_a_copy_that_changed_on_the_way_is_refused(tmp_path: Path) -> None:

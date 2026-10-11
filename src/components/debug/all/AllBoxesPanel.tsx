@@ -101,7 +101,8 @@ export function AllBoxesPanel({
   const stateOf = (box: number) => ports[box]?.state ?? "IDLE";
   const detected = (box: number) => (health[box] ?? "absent") !== "absent";
 
-  /** What a box is carrying — the baseline's word first, as in `NodeDetail`. */
+  /** What a box is carrying — the baseline's word first, then the sidecar's
+   *  record of its last flash, as in `NodeDetail`. */
   const sketchOf = (box: number): string | null => {
     const state = utility.boxes.find((b) => b.box === box)?.state;
     if (utility.configured && utility.sketchPath && state === "ready") return utility.sketchPath;

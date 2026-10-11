@@ -1,28 +1,29 @@
 import { Check, CircleAlert, Loader2, Zap } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/common/controls";
 import { Modal } from "@/components/common/Modal";
-import { useHardwareStore } from "@/lib/hardware/context";
-import type { PortStateName } from "@/lib/ws/protocol";
+import { errorMessage } from "@/lib/cohorts/commands";
+import { useFlashQueue } from "@/lib/hardware/context";
+import type { FlashJobStatus } from "@/lib/hardware/store";
+import { cancelFlashes, enqueueFlash } from "@/lib/hardware/commands";
 import { useSettings } from "@/lib/settings/context";
 import { useSidecar } from "@/lib/ws/context";
-import { CMD, EVT } from "@/lib/ws/protocol";
+import { EVT } from "@/lib/ws/protocol";
 
-/** How long one box may stay busy (a baseline restore, say) before its turn. */
-const PORT_WAIT_MS = 180_000;
-
-type Step = { state: "waiting" | "flashing" | "done" | "failed"; detail: string };
+const IN_HAND: ReadonlySet<FlashJobStatus["state"]> = new Set(["queued", "waiting", "flashing"]);
 
 /**
  * Flash one sketch to every targeted box — **one box at a time**.
  *
- * Two `arduino-cli` builds at once are slower than one after the other, and a
- * box mid-restore must be left to finish (`ARCHITECTURE.md#flash-sequence`),
- * so this is a queue: each box waits until its port is free, flashes, and
- * reopens its console, as a single-box flash from Debug does. Every flash
- * from Debug pins its box (`ARCHITECTURE.md#three-rules-it-never-breaks`);
- * "Return to baseline" undoes that for the lot.
+ * The sidecar runs it (`ARCHITECTURE.md#the-flash-queue`): each box waits
+ * until its port is free, flashes, and reopens its console, as a single-box
+ * flash from Debug does, and one failure does not stop the rest. This dialog
+ * only asks and shows, so closing it — or leaving Debug Mode — stops nothing;
+ * reopening it shows the queue again. "Stop after this box" drops what is
+ * still queued. Every flash from Debug pins its box
+ * (`ARCHITECTURE.md#three-rules-it-never-breaks`); "Return to baseline" undoes
+ * that for the lot.
  */
 export function FlashAllDialog({
   open,
@@ -37,23 +38,38 @@ export function FlashAllDialog({
 }) {
   const { client } = useSidecar();
   const { discovery } = useSettings();
-  const store = useHardwareStore();
+  const queue = useFlashQueue();
   const [selected, setSelected] = useState<string | null>(null);
-  const [steps, setSteps] = useState<Map<number, Step> | null>(null);
-  const [current, setCurrent] = useState<number | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [lastLine, setLastLine] = useState("");
-  const cancelled = useRef(false);
+
+  /** Each targeted box's Debug flash, as the sidecar reports it. */
+  const jobs = useMemo(() => {
+    const rows = new Map(queue.boxes.map((row) => [row.box, row.job]));
+    return new Map(
+      boxes.map((box) => {
+        const job = rows.get(box);
+        return [box, job?.origin === "debug" ? job : null] as const;
+      }),
+    );
+  }, [queue, boxes]);
+  const running = boxes.some((box) => {
+    const job = jobs.get(box);
+    return job !== null && job !== undefined && IN_HAND.has(job.state);
+  });
+  const current = boxes.find((box) => jobs.get(box)?.state === "flashing") ?? null;
 
   useEffect(() => {
     if (open) {
-      setSteps(null);
-      setCurrent(null);
+      setSubmitted(false);
+      setError(null);
       setLastLine("");
-      cancelled.current = false;
     }
   }, [open]);
 
   useEffect(() => {
+    setLastLine("");
     if (current === null) return;
     return client.on(EVT.FLASH_PROGRESS, (data) => {
       const d = data as { box: number; text: string };
@@ -69,61 +85,29 @@ export function FlashAllDialog({
     return [...groups.entries()];
   }, [discovery.sketches]);
 
-  const set = (box: number, step: Step) =>
-    setSteps((prev) => new Map(prev ?? []).set(box, step));
-
-  async function waitForPort(box: number): Promise<void> {
-    const free = (s: PortStateName) => s === "IDLE" || s === "PASSTHROUGH";
-    const started = Date.now();
-    while (!free(store.getStatus(box).state)) {
-      if (cancelled.current) throw new Error("cancelled");
-      if (Date.now() - started > PORT_WAIT_MS) throw new Error("the port stayed busy");
-      await new Promise((r) => setTimeout(r, 500));
-    }
-  }
-
   async function flashAll() {
     if (!selected) return;
-    const name = discovery.sketches.find((s) => s.path === selected)?.name ?? selected;
-    setSteps(new Map(boxes.map((b) => [b, { state: "waiting", detail: "queued" }])));
-    for (const box of boxes) {
-      if (cancelled.current) break;
-      setCurrent(box);
-      setLastLine("");
-      try {
-        await waitForPort(box);
-        set(box, { state: "flashing", detail: "compiling and uploading" });
-        const res = (await client.call(CMD.PORT_FLASH, { box, sketchPath: selected })) as {
-          resumedPassthrough: boolean;
-        };
-        store.setFlashed(box, { path: selected, name });
-        if (!res.resumedPassthrough) {
-          await client.call(CMD.PORT_PASSTHROUGH_OPEN, { box, baud }).catch(() => undefined);
-        }
-        set(box, { state: "done", detail: "flashed · console open" });
-      } catch (err) {
-        set(box, { state: "failed", detail: err instanceof Error ? err.message : String(err) });
-      }
+    setError(null);
+    try {
+      await enqueueFlash(client, boxes, selected, baud);
+      setSubmitted(true);
+    } catch (err) {
+      setError(errorMessage(err));
     }
-    setCurrent(null);
   }
 
-  const running = current !== null;
-  const finished = steps !== null && !running;
-  // Closing mid-queue lets the box in hand finish and flashes no more.
-  const close = () => {
-    if (running) cancelled.current = true;
-    onClose();
-  };
+  // A queue already under way for these boxes is shown, not offered again.
+  const showing = submitted || running;
+  const finished = showing && !running;
 
   return (
     <Modal
       open={open}
-      onClose={close}
+      onClose={onClose}
       title={`Flash ${boxes.length} box${boxes.length === 1 ? "" : "es"}`}
       size="md"
     >
-      {steps === null ? (
+      {!showing ? (
         <div className="flex flex-col gap-3">
           <p className="text-[12px] leading-relaxed text-static">
             One sketch to every targeted box, one box at a time. Each box is pinned to it until you
@@ -152,6 +136,7 @@ export function FlashAllDialog({
               </section>
             ))}
           </div>
+          {error && <p className="text-[12px] text-status-error">{error}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
               Cancel
@@ -166,36 +151,61 @@ export function FlashAllDialog({
         <div className="flex flex-col gap-2">
           <ul className="flex flex-col gap-1">
             {boxes.map((box) => {
-              const step = steps.get(box);
+              const job = jobs.get(box) ?? null;
               return (
                 <li key={box} className="flex items-center gap-2 font-mono text-[11px]">
                   <span className="w-12 text-static">Box {box}</span>
-                  {step?.state === "flashing" ? (
+                  {job?.state === "flashing" ? (
                     <Loader2 size={12} className="animate-spin text-pulsar" />
-                  ) : step?.state === "done" ? (
+                  ) : job?.state === "done" ? (
                     <Check size={12} className="text-ion" />
-                  ) : step?.state === "failed" ? (
+                  ) : job?.state === "failed" ? (
                     <CircleAlert size={12} className="text-status-error" />
                   ) : (
                     <span className="size-3" />
                   )}
-                  <span className={step?.state === "failed" ? "text-status-error" : "text-static"}>
-                    {step?.detail}
+                  <span className={job?.state === "failed" ? "text-status-error" : "text-static"}>
+                    {stepText(job)}
                   </span>
                 </li>
               );
             })}
           </ul>
-          {running && lastLine && (
+          {current !== null && lastLine && (
             <p className="truncate border-t border-halo/60 pt-1.5 font-mono text-[10px] text-static/70">{lastLine}</p>
           )}
-          <div className="flex justify-end">
-            <Button variant={finished ? "primary" : "ghost"} onClick={close}>
-              {finished ? "Done" : "Stop after this box"}
+          <div className="flex justify-end gap-2">
+            {running && (
+              <Button
+                variant="ghost"
+                onClick={() => void cancelFlashes(client, boxes).catch((err) => setError(errorMessage(err)))}
+              >
+                Stop after this box
+              </Button>
+            )}
+            <Button variant={finished ? "primary" : "ghost"} onClick={onClose}>
+              {finished ? "Done" : "Close"}
             </Button>
           </div>
         </div>
       )}
     </Modal>
   );
+}
+
+/** One box's line: what its Debug flash is doing, in the sidecar's words. */
+function stepText(job: FlashJobStatus | null): string {
+  if (job === null) return "not queued";
+  switch (job.state) {
+    case "queued":
+      return "queued";
+    case "waiting":
+      return job.detail ?? "waiting for the port";
+    case "flashing":
+      return "compiling and uploading";
+    case "done":
+      return job.detail ? `flashed · ${job.detail}` : "flashed";
+    case "failed":
+      return job.detail ?? "failed";
+  }
 }

@@ -64,9 +64,8 @@ const DEFAULT_CALL_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   // A rig definition write waits for any flash already compiling (up to ~420 s,
   // `cli_tool.py`'s compile + upload timeouts), and everything that reads a
-  // generated folder waits for the write (`TASKS.md#the-rig-definition`). A
-  // flash can sit behind both before running its own.
-  [CMD.PORT_FLASH]: 900_000,
+  // generated folder waits for the write (`TASKS.md#the-rig-definition`).
+  // Flashes themselves return once queued (`ARCHITECTURE.md#the-flash-queue`).
   [CMD.HARDWARE_SAVE]: 600_000,
   [CMD.HARDWARE_RESET]: 600_000,
   [CMD.TASKS_SAVE]: 600_000,
@@ -80,6 +79,9 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   [CMD.STROBES_USAGE]: 600_000,
   [CMD.PORT_SEND_START]: 600_000,
   [CMD.SESSIONS_CONFIRM_MAPPING]: 600_000,
+  // Waits its turn behind a lifecycle transition, which can be a confirm
+  // waiting out a rig definition write.
+  [CMD.SESSIONS_FLASH]: 600_000,
   [CMD.TASKS_GET_PROFILE]: 600_000,
   [CMD.SETTINGS_PUSH]: 600_000,
   [CMD.SKETCHES_REFRESH]: 600_000,

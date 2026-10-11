@@ -22,7 +22,7 @@ task profiles. They are scanned exactly like bundled ones and marked
 reported and dropped. This is the walk-back `TASKS.md#library-roots` allows: a
 hidden additional library that appends to the bundle, never a return of the
 configured root. It is what makes a saved profile an ordinary discovered sketch, so
-`port.flash`, the session flow and Analytics need no special case for one.
+flashing, the session flow and Analytics need no special case for one.
 
 `<data_dir>/rig/sketches/` holds rebuilds of the BUNDLED sketches against this
 rig's wiring (`taskdef/bundled.py`). Those REPLACE the entry they were built

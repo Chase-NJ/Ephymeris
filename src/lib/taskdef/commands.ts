@@ -13,7 +13,7 @@ import type { TaskDefinition } from "./types";
  * about to check.
  *
  * NOTHING HERE FLASHES. Saving generates a sketch folder that discovery then
- * finds, so `port.flash` takes it by path like any other sketch. That is what
+ * finds, so a flash takes it by path like any other sketch. That is what
  * keeps the session flow free of a special case for a profile-backed run.
  */
 

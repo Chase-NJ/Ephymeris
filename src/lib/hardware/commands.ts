@@ -31,3 +31,26 @@ export async function saveRig(
 export async function resetRig(client: SidecarClient) {
   return client.call(CMD.HARDWARE_RESET, {});
 }
+
+/**
+ * Queue a Debug Mode flash of one sketch onto these boxes, one at a time
+ * (`ARCHITECTURE.md#the-flash-queue`). Returns once queued; `flash.queue`
+ * reports the rest. With `baud`, each box ends in a console opened at it.
+ */
+export async function enqueueFlash(
+  client: SidecarClient,
+  boxes: readonly number[],
+  sketchPath: string,
+  baud?: number,
+) {
+  return client.call(CMD.FLASH_ENQUEUE, {
+    boxes: [...boxes],
+    sketchPath,
+    ...(baud !== undefined ? { baud } : {}),
+  });
+}
+
+/** Drop queued session and Debug flashes; one under way finishes. */
+export async function cancelFlashes(client: SidecarClient, boxes?: readonly number[]) {
+  return client.call(CMD.FLASH_CANCEL, boxes ? { boxes: [...boxes] } : {});
+}

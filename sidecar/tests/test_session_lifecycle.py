@@ -135,6 +135,29 @@ class FakeUtility:
         pass
 
 
+class FakeFlashes:
+    """The flash queue's lifecycle-facing surface. Its calls go to their own
+    list, not the ordering log: when a queue is cancelled is not an ordering
+    rule. `run` plays each queued job's run-time sketch lookup, the way the
+    queue would when the job's turn comes."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.jobs: list = []
+
+    def submit(self, jobs) -> None:  # noqa: ANN001
+        for job in jobs:
+            self.calls.append(f"flash {job.box}")
+            self.jobs.append(job)
+
+    def cancel(self, origins=("session", "debug"), boxes=None, *, clear: bool = False) -> None:  # noqa: ANN001
+        self.calls.append(f"cancel {','.join(origins)}")
+        self.jobs = [j for j in self.jobs if j.origin not in origins]
+
+    def run(self) -> list[str | None]:
+        return [job.prepare() for job in self.jobs]
+
+
 class Rig:
     """One lifecycle and everything it was built from."""
 
@@ -147,6 +170,7 @@ class Rig:
         self.runner = FakeRunner(self.log)
         self.intan = FakeIntan(self.log) if intan else None
         self.utility = FakeUtility(self.log)
+        self.flashes = FakeFlashes()
         #: What each box's board carries -- `PortManager.carried`'s record.
         self.carried: dict[int, CarriedSketch] = {}
 
@@ -164,6 +188,7 @@ class Rig:
             rig_reading=_ReadWriteLock().reading,
             broadcast=broadcast,
             carried=self.carried.get,
+            flashes=self.flashes,
         )
         self._cohorts = 0
 
@@ -387,6 +412,87 @@ async def test_a_running_box_is_not_checked_again(rig) -> None:
 
     await rig.lifecycle.start_all(session.id)
     assert "start 2" in rig.log
+
+
+# --- the session's flashes (ARCHITECTURE.md#flash-sequence) -------------------
+
+
+async def test_flashing_queues_the_mapped_boxes_in_the_order_asked(rig) -> None:
+    session = rig.session()
+    await rig.confirm(session, flash=False)
+
+    await rig.lifecycle.flash(session.id, [2, 1])
+
+    assert rig.flashes.calls == ["cancel session", "flash 2", "flash 1"]
+    assert [job.origin for job in rig.flashes.jobs] == ["session", "session"]
+    assert rig.flashes.run() == [str(rig.sketch()), str(rig.sketch())]
+
+
+async def test_a_queued_flash_takes_the_mapping_current_when_it_runs(rig) -> None:
+    """The defect the sidecar queue exists for: a flash queued under one
+    mapping must not land the old sketch after the mapping changed."""
+    session = rig.session()
+    await rig.confirm(session, flash=False)
+    await rig.lifecycle.flash(session.id, [1])
+    queued = rig.flashes.jobs[0]
+
+    other = rig.sketch("other")
+    entries = [
+        MappingEntry(box=e.box, animal_id=e.animal_id, sketch_path=str(other), config={})
+        for e in rig.mapping(session)
+    ]
+    await rig.lifecycle.confirm_mapping(session.id, "g-a", entries)
+
+    # The new confirm dropped it; had it already been under way, it would read
+    # the new mapping when its turn came.
+    assert rig.flashes.jobs == []
+    assert queued.prepare() == str(other)
+
+
+async def test_a_box_the_mapping_no_longer_holds_is_skipped(rig) -> None:
+    session = rig.session()
+    await rig.confirm(session, flash=False)
+    await rig.lifecycle.flash(session.id, [1])
+    queued = rig.flashes.jobs[0]
+
+    await rig.lifecycle.abandon(session.id)
+
+    assert queued.prepare() is None
+
+
+async def test_a_running_box_is_not_reflashed(rig) -> None:
+    session = rig.session()
+    await rig.confirm(session)
+    await rig.lifecycle.start_box(1)
+
+    with pytest.raises(SessionRefused, match="box 1 is running"):
+        await rig.lifecycle.flash(session.id, [1])
+    assert rig.lifecycle.mapped_sketch(1) is None
+
+
+async def test_flashing_needs_the_session_that_holds_the_rig(rig) -> None:
+    session = rig.session()
+    with pytest.raises(SessionRefused, match="doesn't hold the rig"):
+        await rig.lifecycle.flash(session.id, [1])
+
+    await rig.confirm(session, flash=False)
+    with pytest.raises(SessionRefused, match="box 3 isn't in the confirmed mapping"):
+        await rig.lifecycle.flash(session.id, [1, 3])
+    # Refused whole: nothing queued for box 1 either.
+    assert rig.flashes.jobs == []
+
+
+async def test_every_way_out_drops_what_is_still_queued(rig) -> None:
+    session = rig.session()
+    await rig.confirm(session, flash=False)
+    await rig.lifecycle.flash(session.id, [1, 2])
+    await rig.lifecycle.end(session.id)
+    assert rig.flashes.jobs == []
+
+    second = rig.session()
+    await rig.run_group(second)
+    await rig.lifecycle.end_group(second.id)
+    assert rig.flashes.calls[-1] == "cancel session"
 
 
 # --- abandon ------------------------------------------------------------------

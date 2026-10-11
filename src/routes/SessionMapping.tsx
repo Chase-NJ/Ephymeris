@@ -21,16 +21,27 @@ import {
   TaskConfigForm,
 } from "@/components/sessions/TaskConfigForm";
 import { errorMessage } from "@/lib/cohorts/commands";
-import { useAllPortStatuses, useUtilityStatus } from "@/lib/hardware/context";
+import { cancelFlashes } from "@/lib/hardware/commands";
+import {
+  useAllPortStatuses,
+  useFlashQueue,
+  useUtilityStatus,
+} from "@/lib/hardware/context";
 import { springPanel, springSnappy } from "@/lib/motion";
 import { useSettings } from "@/lib/settings/context";
 import {
   abandonSession,
   confirmMapping,
   endSession,
-  flashForSession,
+  flashSessionBoxes,
   getTaskProfile,
 } from "@/lib/sessions/commands";
+import {
+  resumeWalkAt,
+  sessionFlashCards,
+  type FlashCard,
+  type FlashCardState,
+} from "@/lib/sessions/flashCards";
 import { useSessionStore } from "@/lib/sessions/context";
 import { stepUrl } from "@/lib/sessions/flow";
 import {
@@ -74,16 +85,12 @@ import {
  * last confirmation lands on a rig that is nearly ready. Two shortcuts sit
  * beside the walk for the operator who has already done it by hand: "They're
  * already in" from the review, and "All animals are in" from any step of it.
+ *
+ * **The sidecar flashes; this step asks and shows.** Each closed enclosure is
+ * a `sessions.flash` for that box, and the cards read the sidecar's flash
+ * queue (`ARCHITECTURE.md#the-flash-queue`), so leaving the step mid-walk or
+ * reloading loses no flash, and coming back picks the walk up where it was.
  */
-
-type FlashState = "idle" | "queued" | "flashing" | "done" | "failed";
-
-/**
- * How long a queued flash waits for its port to come free before giving up.
- * A baseline restore still in flight on that box is the usual reason — it was
- * queued the instant the walk began, and a compile is a minute or two.
- */
-const PORT_WAIT_MS = 180_000;
 
 /** `review` edits the mapping, `placing` walks the rig, `placed` flashes. */
 type Phase = "review" | "placing" | "placed";
@@ -110,12 +117,16 @@ export function SessionMapping() {
   const draftKey = `boxes:${sessionId ?? ""}:${groupId}`;
   const [draft] = useState(() => getSetupDraft<BoxMapping[]>(draftKey));
 
-  const { session, cohort, flow, error: loadError } = useSessionFlow(sessionId, groupId);
+  const {
+    session,
+    cohort,
+    held,
+    rigGroupId,
+    flow,
+    error: loadError,
+  } = useSessionFlow(sessionId, groupId);
   const [mappings, setMappings] = useState<BoxMapping[]>([]);
   const [profiles, setProfiles] = useState<Record<string, TaskProfile | null>>(
-    {},
-  );
-  const [flashStates, setFlashStates] = useState<Record<number, FlashState>>(
     {},
   );
   const [error, setError] = useState<string | null>(null);
@@ -315,9 +326,9 @@ export function SessionMapping() {
 
   /**
    * Mapped boxes with no board behind them. Flashing one is a guaranteed
-   * failure, and because boxes flash in sequence the failure lands *after*
-   * earlier boxes are already reflashed — so it is worth saying before the
-   * button is pressed rather than discovering it halfway through the rig.
+   * failure, found only once the walk reaches it with the rest of the rig
+   * already flashed — so it is worth saying before the button is pressed
+   * rather than discovering it halfway through the rig.
    */
   const unconfiguredBoxes = useMemo(
     () =>
@@ -402,98 +413,64 @@ export function SessionMapping() {
   }, [connected, currentBox, canLight, identify]);
 
   /*
-   * --- the flash queue -----------------------------------------------------
+   * --- the flashes ---------------------------------------------------------
    *
-   * One box at a time, in the order their enclosures were closed, never in
-   * parallel (two `arduino-cli` builds at once on the lab machines is
-   * slower than one after the other, and a half-flashed pair is worse than a
-   * whole one). The queue and the worker live in refs because they outlive any
-   * one render: a flash takes a minute, and the operator is three boxes down
-   * the bench by the time it lands. The card states are the only thing React
-   * sees.
-   *
-   * Each flash waits for two things first. The identify light on that box goes
-   * out through the same serial queue the walk lights with, so the flash waits
-   * behind it rather than racing it; and the port has to be free — a baseline
-   * restore queued the instant the walk began may still be flashing that very
-   * box. `PASSTHROUGH` counts as free: entering `FLASHING` force-releases a
-   * console (`ARCHITECTURE.md#flashing`), and a light whose console was just taken
-   * goes out with the reset that follows anyway.
+   * One box at a time, in the order their enclosures were closed, run by the
+   * sidecar's one flash queue (`ARCHITECTURE.md#the-flash-queue`): it waits
+   * for each port to come free — a baseline restore queued the instant the
+   * walk began may still be flashing that very box — and reads each box's
+   * sketch from the confirmed mapping when its turn comes. Before the mapping
+   * is confirmed here, every card is idle.
    */
-  const portStatesRef = useRef(portStates);
-  portStatesRef.current = portStates;
-  const flashStatesRef = useRef(flashStates);
-  flashStatesRef.current = flashStates;
-  const mappingsRef = useRef(mappings);
-  mappingsRef.current = mappings;
-  const queueRef = useRef<number[]>([]);
-  const drainingRef = useRef(false);
+  const flashQueue = useFlashQueue();
+  const flashes = useMemo(
+    () =>
+      sessionFlashCards(
+        phase === "review" ? null : flashQueue,
+        mappings.map((m) => m.box),
+      ),
+    [phase, flashQueue, mappings],
+  );
 
-  const setFlashState = useCallback((box: number, state: FlashState) => {
-    flashStatesRef.current = { ...flashStatesRef.current, [box]: state };
-    setFlashStates(flashStatesRef.current);
-  }, []);
-
-  const waitForPort = useCallback((box: number) => {
-    return new Promise<void>((resolve, reject) => {
-      const started = Date.now();
-      const tick = () => {
-        const state = portStatesRef.current[box]?.state ?? "IDLE";
-        if (state === "IDLE" || state === "PASSTHROUGH") return resolve();
-        if (state === "ERROR") {
-          return reject(
-            new Error("the box is in an error state — acknowledge it, then retry the flash."),
-          );
-        }
-        if (Date.now() - started > PORT_WAIT_MS) {
-          return reject(
-            new Error(`the port stayed ${state.toLowerCase()} for three minutes — retry once it is free.`),
-          );
-        }
-        window.setTimeout(tick, 400);
-      };
-      tick();
-    });
-  }, []);
-
-  const drain = useCallback(async () => {
-    if (drainingRef.current) return;
-    drainingRef.current = true;
-    try {
-      while (queueRef.current.length > 0) {
-        const box = queueRef.current.shift()!;
-        const sketchPath = mappingsRef.current.find((m) => m.box === box)?.sketchPath;
-        if (!sketchPath) continue;
-        await identifyChain.current;
-        setFlashState(box, "flashing");
-        try {
-          await waitForPort(box);
-          await flashForSession(client, box, sketchPath);
-          setFlashState(box, "done");
-        } catch (err) {
-          setFlashState(box, "failed");
-          setError(`Box ${box} didn't flash: ${errorMessage(err)}`);
-        }
-      }
-    } finally {
-      drainingRef.current = false;
-    }
-  }, [client, setFlashState, waitForPort]);
-
-  /** Queue boxes that aren't already flashed, flashing or waiting. */
+  /**
+   * Ask for boxes that aren't already flashed, flashing or waiting. After the
+   * identify queue, as the walk lights with: the light for the box being left
+   * goes out through the same serial port the flash is about to take.
+   */
   const enqueue = useCallback(
     (boxes: number[]) => {
+      if (!sessionId) return;
       const fresh = boxes.filter((box) => {
-        const state = flashStatesRef.current[box] ?? "idle";
+        const state = flashes.cards.get(box)?.state ?? "idle";
         return state === "idle" || state === "failed";
       });
       if (fresh.length === 0) return;
-      for (const box of fresh) setFlashState(box, "queued");
-      queueRef.current.push(...fresh);
-      void drain();
+      void identifyChain.current
+        .then(() => flashSessionBoxes(client, sessionId, fresh))
+        .catch((err) => setError(`Box ${fresh.join(", ")} couldn't be queued: ${errorMessage(err)}`));
     },
-    [drain, setFlashState],
+    [client, sessionId, flashes],
   );
+
+  /*
+   * Back on this step with this group's mapping confirmed and flashes asked
+   * for — a visit to another tab, or a reload, mid-walk: pick the walk up at
+   * the first box nobody asked to flash, instead of offering to confirm again.
+   * Once per visit, and only while the walk is still to resume.
+   */
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (resumed.current || phase !== "review" || placementOrder.length === 0) return;
+    if (!held || rigGroupId !== groupId) return;
+    const at = resumeWalkAt(
+      flashQueue,
+      placementOrder.map((m) => m.box),
+    );
+    if (at === null) return;
+    resumed.current = true;
+    setPlaceIndex(at);
+    setPhase(at >= placementOrder.length ? "placed" : "placing");
+  }, [phase, placementOrder, held, rigGroupId, groupId, flashQueue]);
 
   /**
    * Confirm the mapping and start the walk — or, for the operator who has
@@ -505,7 +482,8 @@ export function SessionMapping() {
    * utility sketch before the session ever started (`ARCHITECTURE.md#three-rules-it-never-breaks`). The
    * baseline nudge goes out just before, for a box still carrying last
    * session's sketch; the hold that follows drops whatever of it hasn't
-   * started, and a restore already in flight is what `waitForPort` is for.
+   * started, and a session flash of a box waits out a restore already in
+   * flight.
    */
   async function startPlacement(skipWalk = false) {
     if (!sessionId || !allChosen) return;
@@ -536,13 +514,17 @@ export function SessionMapping() {
       // group's telemetry and finished-run messages so Mission Control
       // doesn't show them against the new animals.
       sessionStore.resetRun();
-      queueRef.current = [];
-      flashStatesRef.current = {};
-      setFlashStates({});
+      // The confirm cleared the last mapping's flashes; a walk that leaves
+      // from here and comes back resumes this one.
+      resumed.current = true;
       if (skipWalk) {
         setPlaceIndex(placementOrder.length);
         setPhase("placed");
-        enqueue(placementOrder.map((m) => m.box));
+        await flashSessionBoxes(
+          client,
+          sessionId,
+          placementOrder.map((m) => m.box),
+        );
       } else {
         setPlaceIndex(0);
         setPhase("placing");
@@ -583,10 +565,14 @@ export function SessionMapping() {
     if (placeIndex === 0) {
       // Back to editing: the mapping can change under a flash that already
       // landed, so nothing flashed so far is trusted — the next walk confirms
-      // and flashes afresh. Boxes still waiting simply stop waiting.
-      queueRef.current = [];
-      flashStatesRef.current = {};
-      setFlashStates({});
+      // and flashes afresh. Boxes still waiting simply stop waiting; one
+      // already flashing finishes.
+      void cancelFlashes(
+        client,
+        mappings.map((m) => m.box),
+      ).catch(() => undefined);
+      // A deliberate return to the review: not a walk to pick up again.
+      resumed.current = true;
       setPhase("review");
       setLight(null);
     } else {
@@ -597,10 +583,8 @@ export function SessionMapping() {
   async function acknowledge(box: number) {
     setError(null);
     try {
+      // The card keeps reading "failed", now with its Retry offered.
       await client.call(CMD.PORT_ERROR_ACK, { box });
-      // The star stays red on a cleared fault otherwise — the card would
-      // still read "failed" for a box that is now ready to flash.
-      setFlashState(box, "idle");
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -613,12 +597,7 @@ export function SessionMapping() {
   const controlUrl = isRecording
     ? stepUrl.record(sessionId!, groupId)
     : stepUrl.control(sessionId!);
-  const flashedCount = mappings.filter((m) => flashStates[m.box] === "done").length;
-  const allFlashed = mappings.length > 0 && flashedCount === mappings.length;
-  const flashPending = mappings.some((m) => {
-    const state = flashStates[m.box];
-    return state === "queued" || state === "flashing";
-  });
+  const { flashedCount, allFlashed, pending: flashPending } = flashes;
 
   // Everyone placed and every box flashed: the rig is ready, and nothing on
   // this screen is the next step any more.
@@ -729,8 +708,8 @@ export function SessionMapping() {
           )}
 
           {/* The cohort's stored box numbers are planning data; this rig may never
-          have had those boxes. Flashing is sequential, so an unbound box fails
-          only after the boxes before it have already been reflashed. */}
+          have had those boxes. An unbound box fails its flash, and its animal
+          cannot run, while the boxes around it flash as normal. */}
           {unconfiguredBoxes.length > 0 && (
             <div className="mt-4 flex items-start justify-between gap-4 rounded-sm border border-halo px-3 py-2.5">
               <div className="min-w-0">
@@ -743,9 +722,9 @@ export function SessionMapping() {
                     : `Boxes ${unconfiguredBoxes.join(", ")} have no board bound to them.`}
                 </p>
                 <p className="mt-0.5 text-[12px] text-static">
-                  Flashing stops at the first one that fails, after the boxes
-                  before it have already been flashed. Bind them on the Rig tab, or
-                  move these animals to boxes that are set up.
+                  They can't be flashed, so their animals can't run, though the
+                  other boxes flash as normal. Bind them on the Rig tab, or move
+                  these animals to boxes that are set up.
                 </p>
               </div>
               <div className="shrink-0">
@@ -821,7 +800,7 @@ export function SessionMapping() {
                     card, so it never truncates — an unusually long one wraps
                     instead. */}
                     <div className="flex items-start gap-3">
-                      <BoxStar state={flashStates[mapping.box] ?? "idle"} />
+                      <BoxStar state={flashes.cards.get(mapping.box)?.state ?? "idle"} />
                       <div className="min-w-0 flex-1 break-words text-[15px] font-semibold leading-snug text-starlight">
                         {animal?.name ?? "—"}
                         {animal?.sex && animal.sex !== "unknown" && (
@@ -847,7 +826,7 @@ export function SessionMapping() {
                     {/* What the flash queue is doing to this box, said on the
                     box — the star beside the name draws it, this names it. */}
                     <FlashLine
-                      state={flashStates[mapping.box] ?? "idle"}
+                      card={flashes.cards.get(mapping.box) ?? { state: "idle", detail: null }}
                       canRetry={
                         connected &&
                         portStates[mapping.box]?.state !== "ERROR" &&
@@ -1222,18 +1201,20 @@ function FlowArrow() {
 
 /**
  * The queue's word on one box, under the name: waiting, flashing, flashed, or
- * failed with the way to try again. Nothing for an idle box — before the walk
- * reaches it there is nothing to say, and six "not yet" lines would be noise.
+ * failed with why and the way to try again. Nothing for an idle box — before
+ * the walk reaches it there is nothing to say, and six "not yet" lines would
+ * be noise.
  */
 function FlashLine({
-  state,
+  card,
   canRetry,
   onRetry,
 }: {
-  state: FlashState;
+  card: FlashCard;
   canRetry: boolean;
   onRetry: () => void;
 }) {
+  const { state, detail } = card;
   if (state === "idle") return null;
   const colour =
     state === "done"
@@ -1250,17 +1231,24 @@ function FlashLine({
           ? "flashed"
           : "flash failed";
   return (
-    <div className="mt-2 flex items-center gap-2 font-mono text-[10px]" style={{ color: colour }}>
-      <Zap size={11} strokeWidth={1.75} className="shrink-0" />
-      <span>{text}</span>
-      {state === "failed" && canRetry && (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="ml-auto rounded-sm border border-halo px-2 py-0.5 text-starlight transition-colors hover:border-static/60"
-        >
-          Retry flash
-        </button>
+    <div className="mt-2 font-mono text-[10px]" style={{ color: colour }}>
+      <div className="flex items-center gap-2">
+        <Zap size={11} strokeWidth={1.75} className="shrink-0" />
+        <span>{text}</span>
+        {state === "failed" && canRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="ml-auto rounded-sm border border-halo px-2 py-0.5 text-starlight transition-colors hover:border-static/60"
+          >
+            Retry flash
+          </button>
+        )}
+      </div>
+      {/* Why it waits or failed: the sidecar's words, so a compile error
+      reads here rather than only in a log. */}
+      {detail && (state === "failed" || state === "queued") && (
+        <div className="mt-1 break-words pl-[19px]">{detail}</div>
       )}
     </div>
   );
@@ -1271,7 +1259,7 @@ function FlashLine({
  * keeping the visual language consistent with the rest of the app. A queued
  * box holds a steady half-light: claimed, not yet burning.
  */
-function BoxStar({ state }: { state: FlashState }) {
+function BoxStar({ state }: { state: FlashCardState }) {
   const fill =
     state === "done"
       ? NODE_ACCENT

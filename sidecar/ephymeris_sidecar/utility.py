@@ -39,10 +39,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterable
 
+from .ports.flashing import FlashJob, FlashQueue, sketch_name
 from .ports.handler import PortBusy
 from .ports.manager import BoardNotDetected, PortManager, PortNotBound
 from .ports.states import IllegalTransition, PortState
@@ -110,7 +110,8 @@ class UtilityBaseline:
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         load_profile: Callable[[str], TaskProfile | None] = task_profile.load_profile,
         is_utility: Callable[[Any], bool] | None = None,
-        reading: Callable[[], AbstractAsyncContextManager[None]] = nullcontext,
+        *,
+        flashes: FlashQueue,
     ) -> None:
         self._loop = loop
         self._ports = ports
@@ -120,18 +121,15 @@ class UtilityBaseline:
         #: Which discovered sketch is the box utility. Injected so a test can
         #: name one without a folder on disk; the real answer reads the `.ino`.
         self._is_utility = is_utility or _is_generated_utility
-        #: The rig definition's read side (`TASKS.md#the-rig-definition`): a
-        #: restore compiles a generated folder a write would rebuild.
-        self._reading = reading
+        #: The rig's one flash queue (`ports/flashing.py`). A restore is a job
+        #: on it, so it never compiles beside a session's or Debug's flash.
+        self._flashes = flashes
 
         self._settings = SidecarSettings()
         self._boxes: dict[int, BoxBaseline] = {
             box: BoxBaseline(box=box) for box in range(1, BOX_COUNT + 1)
         }
         self._held = False
-        self._queue: set[int] = set()
-        self._forced: set[int] = set()
-        self._worker: asyncio.Task[None] | None = None
         # Identify is a multi-step serial conversation; two overlapping ones on
         # the same box would interleave their opens and closes.
         self._identify_lock = asyncio.Lock()
@@ -163,7 +161,9 @@ class UtilityBaseline:
         if self._held:
             return
         self._held = True
-        self._queue.clear()
+        # A restore already flashing finishes; the session's flash of that box
+        # queues behind it.
+        self._flashes.cancel(origins=("baseline",))
         log.info("utility baseline held: a session mapping owns the boxes")
         self._loop.create_task(self._on_hold())
 
@@ -187,9 +187,6 @@ class UtilityBaseline:
 
     async def stop(self) -> None:
         """Leave no box lit and no port held open on the way out."""
-        if self._worker is not None:
-            self._worker.cancel()
-            self._worker = None
         await self.identify_all_off()
 
     # --- beliefs ----------------------------------------------------------
@@ -267,89 +264,78 @@ class UtilityBaseline:
             # No utility in the library is a damaged install, reported by
             # `status()`'s message; there is nothing to restore boxes to.
             return
-        targets = list(boxes) if boxes is not None else list(self._boxes)
-        for box in targets:
-            if box in self._boxes:
-                self._queue.add(box)
-                if force:
-                    self._forced.add(box)
-        if self._queue and self._worker is None:
-            self._worker = self._loop.create_task(self._drain(), name="utility-baseline")
+        targets = sorted(set(boxes) if boxes is not None else set(self._boxes))
+        self._flashes.submit(
+            FlashJob(
+                box=box,
+                origin="baseline",
+                prepare=lambda box=box, force=force: self._prepare_restore(box, force),
+                finished=lambda exc, box=box: self._restored(box, exc),
+                force=force,
+            )
+            for box in targets
+            if box in self._boxes
+        )
 
-    async def _drain(self) -> None:
-        try:
-            while self._queue:
-                box = min(self._queue)
-                self._queue.discard(box)
-                force = box in self._forced
-                self._forced.discard(box)
-                try:
-                    await self._restore(box, force)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001 - one box must not stop the rest
-                    log.exception("utility baseline restore failed for box %d", box)
-            await self.publish()
-        finally:
-            self._worker = None
+    def _prepare_restore(self, box: int, force: bool) -> str | None:
+        """Decide, as the queue is about to flash, whether this box still
+        wants the utility: the folder to flash, or None to leave it.
 
-    async def _restore(self, box: int, force: bool) -> None:
-        # Held for the whole restore, record included: a rig definition write
-        # landing between the compile and the port manager recording what it
-        # flashed would have its `rebuilt()` undone, leaving the box marked
-        # ready on the old build.
-        async with self._reading():
-            await self._restore_holding(box, force)
-
-    async def _restore_holding(self, box: int, force: bool) -> None:
+        Runs under the rig definition's read side and with no `await` between
+        it and the flash taking the port, so "only an IDLE port" holds at the
+        moment that matters, not at the moment the restore was queued.
+        """
         state = self._boxes[box]
+        before = (state.state, state.detail)
+        path = self._decide(state, force)
+        if (state.state, state.detail) != before:
+            self._publish_soon()
+        return path
+
+    def _decide(self, state: BoxBaseline, force: bool) -> str | None:
+        box = state.box
         entry = self._sketch_entry()
         if entry is None:
             state.state, state.detail = "unavailable", self._unavailable_reason()
-            return
+            return None
         if self._held:
             state.state, state.detail = "held", "a session mapping owns this box"
-            return
+            return None
         if state.failed and not force:
-            return
+            return None
 
         try:
             self._ports.resolve_address(box)
         except (PortNotBound, BoardNotDetected) as exc:
             state.state, state.detail = "unavailable", str(exc)
-            return
+            return None
 
+        if state.pinned and not force:
+            # Not a fault: the operator put this sketch here by hand, and may
+            # have its console open. The idle transition that follows their
+            # flash lands exactly here.
+            state.state, state.detail = "pinned", _pinned_detail(self._carried_path(box))
+            return None
         port_state = self._ports.handler(box).state
         if port_state is not PortState.IDLE:
-            # Not a fault: a console, a flash, or a run legitimately owns this
-            # port, and taking it back would be the bug.
+            # Not a fault either: a console, a flash, or a run legitimately
+            # owns this port, and taking it back would be the bug.
             state.state, state.detail = "busy", f"port is {port_state.value}"
-            return
-        if state.pinned and not force:
-            # Not a fault either: the operator put this sketch here by hand.
-            # The idle transition that follows their flash lands exactly here.
-            state.state, state.detail = "pinned", _pinned_detail(self._carried_path(box))
-            return
+            return None
         if self._carries(box, entry.path) and not force:
             state.state, state.detail = "ready", None
-            return
+            return None
 
         state.state, state.detail = "restoring", f"flashing {entry.name}"
-        await self.publish()
         log.info("box %d: restoring utility baseline (%s)", box, entry.name)
+        return entry.path
 
-        try:
-            await self._ports.flash(
-                box,
-                entry.path,
-                entry.name,
-                getattr(self._discovery(), "libraries_path", None),
-                lambda phase, stream, text: log.debug(
-                    "box %d baseline %s/%s: %s", box, phase, stream, text.rstrip()
-                ),
-                suppress_passthrough_resume=True,
-            )
-        except Exception as exc:  # noqa: BLE001 - compile, upload, missing cli
+    def _restored(self, box: int, exc: BaseException | None) -> None:
+        state = self._boxes[box]
+        if exc is None:
+            state.state, state.detail, state.failed = "ready", None, False
+            state.pinned = False
+        else:
             state.state = "failed"
             state.detail = str(exc)
             state.failed = True
@@ -360,10 +346,7 @@ class UtilityBaseline:
             # leaving six boxes needing an acknowledgement would make a broken
             # arduino-cli lock the rig instead of merely degrading it.
             self._clear_error(box)
-            return
-
-        state.state, state.detail, state.failed = "ready", None, False
-        state.pinned = False
+        self._publish_soon()
 
     def _carries(self, box: int, sketch_path: str) -> bool:
         carried = self._ports.carried(box)
@@ -625,12 +608,13 @@ class UtilityBaseline:
 
         await self._broadcast(event(Evt.UTILITY_UPDATED, self.status()))
 
+    def _publish_soon(self) -> None:
+        # From inside a flash-queue job, which must not yield before its flash.
+        self._loop.create_task(self.publish())
+
 
 def _pinned_detail(sketch_path: str | None) -> str:
-    # The folder name is the sketch name (`discovery.py`). Either separator may
-    # reach here: the sidecar runs on Windows and is tested on POSIX.
-    name = (sketch_path or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-    return f"holding {name or 'a sketch'}, flashed from Debug Mode"
+    return f"holding {sketch_name(sketch_path) or 'a sketch'}, flashed from Debug Mode"
 
 
 def _scrollback(handler: Any) -> list[Any]:

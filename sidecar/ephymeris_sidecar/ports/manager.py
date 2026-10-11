@@ -226,7 +226,8 @@ class PortManager:
         on_progress: PhaseProgress,
         suppress_passthrough_resume: bool = False,
     ) -> tuple[PortState, bool]:
-        """Compile + upload (`ARCHITECTURE.md#flashing`).
+        """Compile + upload (`ARCHITECTURE.md#flashing`). Called only by the
+        flash queue (`ports/flashing.py`), which keeps it to one at a time.
 
         Entering FLASHING force-releases PASSTHROUGH first, and on success the
         prior passthrough is auto-resumed at its old baud so the user sees the
@@ -305,8 +306,8 @@ class PortManager:
     ) -> PortState:
         """Enter `IN_SESSION` on one box (`ARCHITECTURE.md#entering-in_session`).
 
-        The box must be `IDLE` (the flash sequence leaves it there via
-        `suppressPassthroughResume`). Baud is the session default.
+        The box must be `IDLE` (a session flash leaves it there via
+        `suppress_passthrough_resume`). Baud is the session default.
         """
         address = self.resolve_address(box)
         handler = self.handler(box)

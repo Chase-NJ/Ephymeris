@@ -508,7 +508,7 @@ The [rig definition](../GLOSSARY.md#rig-definition) is the rig wiring plus the s
 **No write while a session is set up or a box is running** (`RIG_IN_USE`; `STROBE_SESSION_RUNNING` for the vocabulary). The session read its profiles from these folders at mapping and will flash from them; a running box was flashed from them. It is checked once before waiting and again once the write holds the lock — the check that counts, since a mapping confirmed while the write waited is exactly the case.
 
 > [!CAUTION]
-> **Never use a generated folder outside `reading()`, and never call `RigDefinition` writes or `reading()` from inside a write.** The first lets a rebuild delete a folder mid-compile or undo a box's belief about what it carries; the second waits on itself (the lock refuses re-entry rather than deadlock). `_rescan` takes no lock for that reason: writes call it.
+> **Never use a generated folder outside `reading()`, and never call `RigDefinition` writes or `reading()` from inside a write.** The first lets a rebuild delete a folder mid-compile or undo a box's belief about what it carries; the second waits on itself (the lock refuses re-entry rather than deadlock). `SketchLibrary.rescan` takes no lock for that reason: writes call it.
 
 ### Rebuilt bundled sketches
 

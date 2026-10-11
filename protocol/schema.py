@@ -2544,7 +2544,10 @@ COMMANDS = (
         doc="Sends the literal `STOP` line and does **not** force the "
         "transition: the firmware ends the run at its next trial boundary with "
         "its own end-of-session strobe, and the port leaves `IN_SESSION` when "
-        "the sidecar sees it.",
+        "the sidecar sees it. A box that isn't running is a no-op (its run "
+        "already ended, or never began). `ILLEGAL_TRANSITION` with "
+        "`detail.box` when a running box's port did not take `STOP` -- it left "
+        "the session, or the write failed -- so the box is not stopping.",
     ),
     # ----------------------------------------------------- utility baseline
     Command(
@@ -3002,8 +3005,11 @@ COMMANDS = (
         doc="Discard a session still in `configuring` (the mapping step's "
         "Back): marks it `aborted`, clears any confirmed-but-unstarted mapping "
         "from the runner, drops an unstarted recording setup, and hands the "
-        "rig back to the utility baseline. Nothing on disk is touched. "
-        "`SESSION_INVALID` once a group has run.",
+        "rig back to the utility baseline. Nothing on disk is touched. A "
+        "recording Start All began before any box started is stopped, and its "
+        "run is kept on the aborted session, since RHX's files exist "
+        "(`RECORDING.md`): the reply can then take RHX's stop, about 16 s at "
+        "worst. `SESSION_INVALID` once a group has run.",
     ),
     Command(
         "sessions.confirmMapping",
@@ -3770,7 +3776,13 @@ EVENTS = (
 # --- Error codes ------------------------------------------------------------
 
 ERRORS = (
-    ErrorCode("BAD_MESSAGE", "Malformed JSON, a non-object frame, or invalid args."),
+    ErrorCode(
+        "BAD_MESSAGE",
+        "Malformed JSON, a non-object frame, or args that don't match the "
+        "command's declaration here: checked before any handler runs, with "
+        "`detail.problems` listing each mismatch. Also a value the schema "
+        "can't describe, such as a box number outside 1–6 or a blank id.",
+    ),
     ErrorCode("UNKNOWN_COMMAND", "Unrecognized `cmd`."),
     ErrorCode("UNAUTHORIZED", "Missing or invalid token, or a first message that isn't `auth`."),
     ErrorCode(
@@ -3957,10 +3969,16 @@ ERRORS = (
         "`detail.command` carries what was sent.",
     ),
     ErrorCode(
+        "ARCHIVE_BUSY",
+        "A scan, tidy, data-folder move or move of animals already holds the "
+        "archive (`analytics.rescan`, `sessions.tidy`, `cohorts.setDataFolder`, "
+        "`cohorts.moveAnimals`). Nothing was done; try again when it finishes.",
+    ),
+    ErrorCode(
         "INTERNAL",
-        "Unhandled sidecar exception, a subsystem that isn't running, or an "
-        "analytics walk already in progress. Also the code `sidecar.error` "
-        "carries for a mid-session write failure.",
+        "Unhandled sidecar exception, or a subsystem that isn't running. Also "
+        "the code `sidecar.error` carries for a mid-session write failure. Every "
+        "other refusal has its own code (`ARCHITECTURE.md#dispatch`).",
     ),
 )
 

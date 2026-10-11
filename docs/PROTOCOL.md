@@ -225,7 +225,7 @@ Start one box of the confirmed mapping: open the port (the Mega DTR-resets), awa
 <a id="cmd-port.stopsession"></a>
 #### `port.stopSession`
 
-Sends the literal `STOP` line and does **not** force the transition: the firmware ends the run at its next trial boundary with its own end-of-session strobe, and the port leaves `IN_SESSION` when the sidecar sees it.
+Sends the literal `STOP` line and does **not** force the transition: the firmware ends the run at its next trial boundary with its own end-of-session strobe, and the port leaves `IN_SESSION` when the sidecar sees it. A box that isn't running is a no-op (its run already ended, or never began). `ILLEGAL_TRANSITION` with `detail.box` when a running box's port did not take `STOP` -- it left the session, or the write failed -- so the box is not stopping.
 
 **Args**
 
@@ -704,7 +704,7 @@ Create a session in status `configuring` and make its folder. `SESSION_NOT_READY
 <a id="cmd-sessions.abandon"></a>
 #### `sessions.abandon`
 
-Discard a session still in `configuring` (the mapping step's Back): marks it `aborted`, clears any confirmed-but-unstarted mapping from the runner, drops an unstarted recording setup, and hands the rig back to the utility baseline. Nothing on disk is touched. `SESSION_INVALID` once a group has run.
+Discard a session still in `configuring` (the mapping step's Back): marks it `aborted`, clears any confirmed-but-unstarted mapping from the runner, drops an unstarted recording setup, and hands the rig back to the utility baseline. Nothing on disk is touched. A recording Start All began before any box started is stopped, and its run is kept on the aborted session, since RHX's files exist (`RECORDING.md`): the reply can then take RHX's stop, about 16 s at worst. `SESSION_INVALID` once a group has run.
 
 **Args**
 
@@ -1530,7 +1530,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 
 | Code | Meaning |
 |---|---|
-| `BAD_MESSAGE` | Malformed JSON, a non-object frame, or invalid args. |
+| `BAD_MESSAGE` | Malformed JSON, a non-object frame, or args that don't match the command's declaration here: checked before any handler runs, with `detail.problems` listing each mismatch. Also a value the schema can't describe, such as a box number outside 1–6 or a blank id. |
 | `UNKNOWN_COMMAND` | Unrecognized `cmd`. |
 | `UNAUTHORIZED` | Missing or invalid token, or a first message that isn't `auth`. |
 | `PROTOCOL_VERSION_MISMATCH` | `v` does not match the sidecar's protocol version; rejected rather than parsed best-effort. |
@@ -1566,7 +1566,8 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `INTAN_UNAVAILABLE` | RHX is not reachable: not running, its Remote TCP Control command server not opened, or the socket died. The message says what to click. |
 | `INTAN_NOT_READY` | RHX is reachable but this cannot be done now — RHX is already recording, no recording is configured for this group, a box has no digital input, the rig's wiring has no sync channel, or a scope asked for a channel the box does not own. The message is the operator's next step. |
 | `INTAN_COMMAND_FAILED` | RHX refused a command, or **accepted it and stored something else** (a read-back mismatch — the save-location-with-a-space case). `detail.command` carries what was sent. |
-| `INTERNAL` | Unhandled sidecar exception, a subsystem that isn't running, or an analytics walk already in progress. Also the code `sidecar.error` carries for a mid-session write failure. |
+| `ARCHIVE_BUSY` | A scan, tidy, data-folder move or move of animals already holds the archive (`analytics.rescan`, `sessions.tidy`, `cohorts.setDataFolder`, `cohorts.moveAnimals`). Nothing was done; try again when it finishes. |
+| `INTERNAL` | Unhandled sidecar exception, or a subsystem that isn't running. Also the code `sidecar.error` carries for a mid-session write failure. Every other refusal has its own code (`ARCHITECTURE.md#dispatch`). |
 
 ## Payload shapes
 

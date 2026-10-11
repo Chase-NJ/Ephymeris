@@ -121,7 +121,7 @@ def repin_all(root: Path) -> int:
     """Rebuild every opted-in bundled sketch. Returns how many landed.
 
     IT SCANS THE BUNDLE ITSELF rather than taking a sketch list, and that is not
-    a convenience. The caller's nearest list is `Application.discovery`, whose
+    a convenience. The caller's nearest list is `SketchLibrary.current`, whose
     entries point at the PREVIOUS rebuild once one exists — feeding those back
     in makes every source its own target, and `repin` clears the target first.
     Taking no list is what makes that unrepresentable.

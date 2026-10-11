@@ -30,7 +30,7 @@ from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import fine_mtime
-from tests.live_sidecar import LiveSidecar, Refused
+from tests.live_sidecar import LiveSidecar, Refused, animal
 
 SESSION = "2O-Bdisc_1_2026-09-01"
 
@@ -453,7 +453,7 @@ async def test_a_session_cannot_be_set_up_while_the_folder_moves(
     created = await sidecar.call(
         "cohorts.create", name="Batch A", dataFolder=str(old),
         groups=[{"id": "g1", "name": "Morning", "order": 0}],
-        animals=[{"name": "remy1", "groupId": "g1", "boxNumber": 1}],
+        animals=[animal("remy1", "g1", box=1)],
     )
     cohort_id = created["cohort"]["id"]
     prefix_id = (await sidecar.call("prefixes.create", name="2O-Bdisc"))["prefix"]["id"]

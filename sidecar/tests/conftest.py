@@ -7,9 +7,11 @@ analytics service all go through it — and any command reply dispatched through
 drift. Production leaves this off, so a benign schema lag can never take down
 a live session.
 
-Also two volume fixtures that fake the filesystem boundary: `coarse_volume`,
-for a transfer onto a volume that rounds mtimes, and `hung_volume`, for a
-share that stops answering mid-copy.
+Also fixtures that fake the filesystem boundary, so a test reaches a failure
+through the code's real path rather than by replacing one of its steps:
+`coarse_volume` rounds mtimes, `hung_volume` stops answering mid-copy,
+`other_volume` is a second device a folder can't be renamed onto, and
+`power_cut` kills the process at the nth copy or delete below a folder.
 """
 
 from __future__ import annotations
@@ -91,6 +93,87 @@ def hung_volume(monkeypatch: pytest.MonkeyPatch):
     yield hang
     for volume in volumes:
         volume.release()
+
+
+class _StatOnAnotherDevice:
+    """`os.stat`'s result for a path on the other volume: every field the
+    same but the device."""
+
+    def __init__(self, st: os.stat_result) -> None:
+        self._st = st
+
+    @property
+    def st_dev(self) -> int:
+        return self._st.st_dev + 1
+
+    def __getattr__(self, name: str):  # noqa: ANN204
+        return getattr(self._st, name)
+
+
+@pytest.fixture
+def other_volume(monkeypatch: pytest.MonkeyPatch):
+    """`other_volume(root)`: `root` is the mount point of a second volume, so a
+    folder can't be renamed onto it and has to be copied. A temp dir is one
+    volume; this fakes the device number `os.stat` reports below `root`."""
+    roots: list[Path] = []
+    real = os.stat
+
+    def stat(path, *args, **kwargs):  # noqa: ANN001, ANN202
+        st = real(path, *args, **kwargs)
+        if isinstance(path, (str, os.PathLike)) and any(
+            Path(path).is_relative_to(root) for root in roots
+        ):
+            return _StatOnAnotherDevice(st)
+        return st
+
+    monkeypatch.setattr(os, "stat", stat)
+
+    def mount(root: Path) -> Path:
+        root.mkdir(parents=True, exist_ok=True)  # a mounted volume's root exists
+        roots.append(Path(root))
+        return root
+
+    return mount
+
+
+@pytest.fixture
+def power_cut(monkeypatch: pytest.MonkeyPatch):
+    """`power_cut(op, under, nth=1)`: the `nth` `"copy2"` or `"unlink"` of a path
+    below `under` is where the power goes, raising `SystemExit` the way a
+    killed process stops. A cut copy leaves half the file at its destination.
+    It fires once, so whatever runs after the "restart" works normally."""
+    real_copy2, real_unlink = shutil.copy2, os.unlink
+    cuts: list[dict] = []
+
+    def due(op: str, path) -> bool:  # noqa: ANN001
+        for cut in cuts:
+            if cut["op"] == op and not cut["fired"] and Path(path).is_relative_to(cut["under"]):
+                cut["seen"] += 1
+                if cut["seen"] == cut["nth"]:
+                    cut["fired"] = True
+                    return True
+        return False
+
+    def copy2(src, dst, *, follow_symlinks=True):  # noqa: ANN001, ANN202
+        if due("copy2", dst):
+            data = Path(src).read_bytes()
+            Path(dst).write_bytes(data[: len(data) // 2])
+            raise SystemExit("power cut")
+        return real_copy2(src, dst, follow_symlinks=follow_symlinks)
+
+    def unlink(path, *args, **kwargs):  # noqa: ANN001, ANN202
+        if due("unlink", path):
+            raise SystemExit("power cut")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "copy2", copy2)
+    monkeypatch.setattr(os, "unlink", unlink)
+
+    def arm(op: str, under: Path, nth: int = 1) -> None:
+        assert op in ("copy2", "unlink"), op
+        cuts.append({"op": op, "under": Path(under), "nth": nth, "seen": 0, "fired": False})
+
+    return arm
 
 
 def fine_mtime(*paths: Path) -> None:

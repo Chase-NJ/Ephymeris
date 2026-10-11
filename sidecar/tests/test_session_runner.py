@@ -525,3 +525,92 @@ async def test_a_recording_tap_that_throws_costs_the_run_nothing(tmp_path: Path)
 
     document = json.loads(next((tmp_path / "behavior.json").glob("*.json")).read_text())
     assert document["n_events"] == 2 and document["stop_reason"] == CLEAN_STOP_REASON
+
+
+# --- against the real PortManager (`tests/scripted_board.py`) -------------------
+
+
+def _bench_runner(tmp_path: Path, bench, boxes=(1,)):  # noqa: ANN001, ANN202
+    ended: list[tuple] = []
+
+    async def broadcast(_message) -> None:  # noqa: ANN001
+        return None
+
+    async def on_animal_ended(run, reason) -> None:  # noqa: ANN001
+        ended.append((run, reason))
+
+    runner = SessionRunner(
+        loop=asyncio.get_running_loop(), ports=bench.ports,
+        broadcast=broadcast, on_animal_ended=on_animal_ended,
+    )
+    runner.configure(tmp_path, "2O-Bdisc_25", "g1", [
+        BoxConfig(
+            box=box, animal_id=f"a{box}", animal_name=f"remy{box}", sketch_path="/sk/GRGL_2-Odor",
+            sketch_name="GRGL_2-Odor", start_command="START", config_metadata={},
+            profile=parse_profile(GRGL),
+        )
+        for box in boxes
+    ], duration_s=3600.0, session_id="s1")
+    return runner, ended
+
+
+@pytest.fixture
+async def bench():  # noqa: ANN201
+    from tests.scripted_board import Bench
+
+    made = await Bench(asyncio.get_running_loop(), (1, 2)).plug_in()
+    yield made
+    made.shutdown()
+
+
+async def test_a_box_whose_port_refuses_is_never_a_run(tmp_path: Path, bench) -> None:  # noqa: ANN001
+    """B1: a box left in ERROR (here, by a board that never reported READY)
+    still carries its sketch, so Start reaches the port, and the port refuses.
+    Nothing may be left behind: no run, no time limit, nothing for End to STOP."""
+    from ephymeris_sidecar.ports.states import IllegalTransition, PortState
+
+    bench.ports.handler(1).force_error("board never reported READY")
+    runner, ended = _bench_runner(tmp_path, bench)
+
+    with pytest.raises(IllegalTransition):
+        runner.start_box(1)
+
+    assert runner.running_boxes() == []
+    assert runner.snapshot()[0]["running"] is False
+    await runner.end_all("operator stop")  # nothing to STOP, so nothing raises
+    runner.clear()
+    assert ended == [] and bench.state(1) is PortState.ERROR
+
+
+async def test_a_board_lost_while_its_run_finalizes_stays_in_error(
+    tmp_path: Path, bench, monkeypatch: pytest.MonkeyPatch  # noqa: ANN001
+) -> None:
+    """B17: the clean end awaits the writer's finalize; a board pulled in that
+    window lands the port in ERROR, and the end that follows must not quietly
+    move it to IDLE. ERROR clears only by acknowledgement."""
+    from ephymeris_sidecar.ports.states import PortState
+    from ephymeris_sidecar.sessions import writer as writer_module
+    from tests.scripted_board import until
+
+    finalizing, may_finish = threading.Event(), threading.Event()
+    real_finalize = writer_module.AnimalWriter.finalize
+
+    def slow_finalize(self, reason):  # noqa: ANN001, ANN202
+        finalizing.set()
+        may_finish.wait(timeout=5)
+        return real_finalize(self, reason)
+
+    monkeypatch.setattr(writer_module.AnimalWriter, "finalize", slow_finalize)
+    runner, ended = _bench_runner(tmp_path, bench)
+    runner.start_box(1)
+    board = await bench.run_handshake(1, seed=7)
+    board.say("101\t0\n246\t100\n")  # a trial, then END_SESSION
+    await until(finalizing.is_set)
+
+    board.unplug()
+    await until(lambda: bench.state(1) is PortState.ERROR)
+    may_finish.set()
+    await until(lambda: bool(ended))
+    await asyncio.sleep(0.05)  # let any late transition land
+
+    assert bench.state(1) is PortState.ERROR

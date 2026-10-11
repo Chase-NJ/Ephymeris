@@ -182,13 +182,26 @@ class FakeFlashes:
 class Rig:
     """One lifecycle and everything it was built from."""
 
-    def __init__(self, db: Database, root: Path, *, intan: bool = False) -> None:
+    def __init__(self, db: Database, root: Path, *, intan: bool = False, ports=None) -> None:  # noqa: ANN001
+        """`ports` puts the real `SessionRunner` on those ports in place of
+        `FakeRunner` (`tests/scripted_board.py`)."""
         self.log: list[str] = []
         self.events: list[dict] = []
         self.root = root
         self.sessions = SessionRepository(db)
         self.cohorts = CohortRepository(db)
-        self.runner = FakeRunner(self.log)
+        if ports is None:
+            self.runner = FakeRunner(self.log)
+        else:
+            from ephymeris_sidecar.sessions.runner import SessionRunner
+
+            async def runner_broadcast(message: dict) -> None:
+                self.events.append(message)
+
+            self.runner = SessionRunner(
+                loop=asyncio.get_running_loop(), ports=ports, broadcast=runner_broadcast,
+                on_animal_ended=lambda run, reason: self.lifecycle.animal_ended(run, reason),
+            )
         self.intan = FakeIntan(self.log) if intan else None
         self.utility = FakeUtility(self.log)
         self.flashes = FakeFlashes()
@@ -283,6 +296,22 @@ def rig(db: Database, tmp_path: Path) -> Rig:
 @pytest.fixture
 def recording_rig(db: Database, tmp_path: Path) -> Rig:
     return Rig(db, tmp_path, intan=True)
+
+
+@pytest.fixture
+async def bench():  # noqa: ANN201
+    """Boxes 1 and 2 on a real `PortManager`, boards plugged in."""
+    from tests.scripted_board import Bench
+
+    made = await Bench(asyncio.get_running_loop(), (1, 2)).plug_in()
+    yield made
+    made.shutdown()
+
+
+@pytest.fixture
+async def bench_rig(db: Database, tmp_path: Path, bench) -> Rig:  # noqa: ANN001
+    """The lifecycle over the real runner over the real ports."""
+    return Rig(db, tmp_path, ports=bench.ports)
 
 
 # --- confirm, hold, and the three questions ---------------------------------
@@ -687,6 +716,96 @@ async def test_a_per_box_start_records_the_group_run(rig) -> None:
     stored = rig.sessions.get_session(session.id)
     assert stored.status == "running"
     assert [r.group_id for r in stored.group_runs] == ["g-a"]
+
+
+# --- a start that fails part-way, on the real runner and ports ------------------
+
+
+async def test_a_box_start_the_port_refuses_records_nothing_and_ends(bench_rig, bench) -> None:  # noqa: ANN001
+    """B1: box 1's port is in ERROR from an earlier start whose board never
+    reported READY. Its board still carries the sketch, so Start reaches the
+    port, and the port refuses. Nothing is recorded, and End still ends."""
+    rig = bench_rig
+    session = rig.session()
+    await rig.confirm(session)
+    bench.ports.handler(1).force_error("board never reported READY")
+
+    with pytest.raises(BoxRefused):
+        await rig.lifecycle.start_box(1)
+
+    stored = rig.sessions.get_session(session.id)
+    assert (stored.status, stored.group_runs) == ("configuring", [])
+    assert rig.runner.running_boxes() == []
+    assert not rig.lifecycle.writing
+
+    ended = await rig.lifecycle.end(session.id)
+    assert ended.status == "completed" and rig.lifecycle.held is None
+
+
+async def test_switch_group_after_a_refused_box_start(bench_rig, bench) -> None:  # noqa: ANN001
+    """B1, with another box already running: Switch Group ends that one and
+    the group, and the rig is free for the next."""
+    rig = bench_rig
+    session = rig.session()
+    await rig.confirm(session)
+    await rig.lifecycle.start_box(2)
+    await bench.run_handshake(2)
+    bench.ports.handler(1).force_error("board never reported READY")
+    with pytest.raises(BoxRefused):
+        await rig.lifecycle.start_box(1)
+
+    await rig.lifecycle.end_group(session.id)
+
+    stored = rig.sessions.get_session(session.id)
+    assert [r.ended_at is not None for r in stored.group_runs] == [True]
+    assert [r.box_number for r in rig.sessions.runs_for(session.id)] == [2]
+    assert rig.runner.configured_boxes() == [] and rig.runner.running_boxes() == []
+
+
+async def test_start_all_failing_part_way_records_the_boxes_it_started(bench_rig, bench) -> None:  # noqa: ANN001
+    """B2: box 1 starts, box 2 is refused. Box 1 is a run, so the group has
+    run: the group run and `running` are recorded before the refusal is
+    raised, End ends box 1, and Abandon is refused by name rather than
+    failing inside the runner."""
+    rig = bench_rig
+    session = rig.session()
+    await rig.confirm(session)
+    bench.ports.handler(2).force_error("board never reported READY")
+
+    with pytest.raises(BoxRefused) as refused:
+        await rig.lifecycle.start_all(session.id)
+    assert refused.value.box == 2
+
+    stored = rig.sessions.get_session(session.id)
+    assert stored.status == "running"
+    assert [(r.group_id, r.ended_at) for r in stored.group_runs] == [("g-a", None)]
+    assert rig.runner.running_boxes() == [1]
+    assert rig.events[-1]["evt"] == "session.lifecycle"
+
+    with pytest.raises(SessionRefused, match="only a configuring session"):
+        await rig.lifecycle.abandon(session.id)
+
+    await bench.run_handshake(1)
+    ended = await rig.lifecycle.end(session.id)
+    assert ended.status == "completed"
+    assert [r.box_number for r in rig.sessions.runs_for(session.id)] == [1]
+    assert rig.runner.running_boxes() == []
+
+
+async def test_start_all_refused_at_its_first_box_can_be_abandoned(bench_rig, bench) -> None:  # noqa: ANN001
+    """B2 at k = 1: nothing started, so nothing ran, and the configuring
+    session can still be abandoned."""
+    rig = bench_rig
+    session = rig.session()
+    await rig.confirm(session)
+    bench.ports.handler(1).force_error("board never reported READY")
+
+    with pytest.raises(BoxRefused):
+        await rig.lifecycle.start_all(session.id)
+
+    assert rig.sessions.get_session(session.id).group_runs == []
+    abandoned = await rig.lifecycle.abandon(session.id)
+    assert abandoned.status == "aborted" and rig.lifecycle.held is None
 
 
 # --- resume (DATA.md#continuing-between-groups) -------------------------------

@@ -62,6 +62,36 @@ jobs:
       - run: sh firmware/libraries/BehaviorBox/extras/host_test/run.sh
       - run: sh firmware/libraries/BehaviorBox/extras/host_test/run_box.sh
 
+  # The host tests are the strict type check; this is the real AVR build. The
+  # sketches only compile from a folder the app generated, so generate them the
+  # way a startup does (taskdef/bundled.py) against the default rig, then build
+  # each with --warnings all (firmware/README.md "Building and testing").
+  firmware-compile:
+    name: Firmware compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: sidecar/pyproject.toml
+      - uses: arduino/setup-arduino-cli@v2
+      - run: arduino-cli core update-index && arduino-cli core install arduino:avr
+      - run: pip install -e sidecar
+      - name: Generate the bundled sketches
+        run: python -c "import sys, pathlib; from ephymeris_sidecar.taskdef.bundled import repin_all; n = repin_all(pathlib.Path(sys.argv[1])); print(n, 'sketches'); sys.exit(n == 0)" "$RUNNER_TEMP/sketches"
+      - name: Compile each for the Mega 2560
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for sketch in "$RUNNER_TEMP"/sketches/*/*/; do
+            echo "::group::$sketch"
+            arduino-cli compile --fqbn arduino:avr:mega --warnings all \
+              --libraries firmware/libraries "$sketch"
+            echo "::endgroup::"
+          done
+
   shell:
     name: Tauri shell
     runs-on: windows-latest

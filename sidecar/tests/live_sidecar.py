@@ -20,6 +20,7 @@ from websockets.asyncio.client import ClientConnection, connect
 from ephymeris_sidecar.app import Application
 from ephymeris_sidecar.boards.tool import BoardTool, DetectedBoard, FlashFailed
 from ephymeris_sidecar.protocol import PROTOCOL_VERSION
+from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.server import SidecarServer
 
 TOKEN = "test-token"
@@ -134,3 +135,7 @@ async def live_sidecar(data_dir: Path, tool: BoardTool | None = None) -> AsyncIt
         server.request_shutdown()
         await serving
         await app.stop()
+        # The rig definition pointed the process-wide registry at this
+        # machine's wiring and vocabulary; the next test gets the defaults.
+        registry.set_rig_source(None)
+        registry.set_vocabulary_source(None)

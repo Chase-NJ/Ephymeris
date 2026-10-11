@@ -75,7 +75,8 @@ export function SessionRecording() {
   const intan = useIntanStatus();
 
   // The form as it was left for another tab (`setupResume.ts`). Seeding below
-  // only fills what is still empty, so a restored draft wins over the defaults.
+  // keeps a restored draft's row for every box still mapped, so it wins over
+  // the defaults, and follows the mapping for the rest (`reconcileRows`).
   const draftKey = `record:${sessionId ?? ""}:${groupId}`;
   const [draft] = useState(() => getSetupDraft<RecordingDraft>(draftKey));
 
@@ -116,8 +117,9 @@ export function SessionRecording() {
     [intan.ports],
   );
 
-  // Seed the form once the rig's boxes are in. Never re-seeded on an
-  // `intan.status` tick — that would discard what was typed.
+  // Seed the form once the rig's boxes are in, and follow them when a return
+  // to Boxes changed the mapping. Never re-seeded on an `intan.status` tick,
+  // and a box still mapped keeps what was typed for it.
   useEffect(() => {
     if (boxes.length === 0) return;
     setConfig((current) => current ?? { ...defaults.config });
@@ -151,14 +153,16 @@ export function SessionRecording() {
     });
   }, [presentPorts, intan.ports]);
 
-  // Re-parse a remembered probe map, so the preview is there on arrival.
+  // Re-parse a remembered probe map, so the preview is there on arrival — and
+  // for a box the mapping swapped in, whose row count may not have changed.
+  const rowBoxes = rows.map((r) => r.box).join(",");
   useEffect(() => {
     if (link !== "connected") return;
     for (const row of rows) {
       if (row.probeMapPath && !row.probeMap && !row.probeError) void loadProbeMap(row.box, row.probeMapPath);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [link, rows.length]);
+  }, [link, rowBoxes]);
 
   function patchRow(box: number, changes: Partial<BoxRow>) {
     setRows((current) => current.map((r) => (r.box === box ? { ...r, ...changes } : r)));

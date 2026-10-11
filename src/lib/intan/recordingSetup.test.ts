@@ -82,6 +82,15 @@ describe("reconcileRows", () => {
     expect(rows).toEqual([row(3, "Rat-09", { port: "A" })]);
   });
 
+  it("returns the same rows when the mapping hasn't changed", () => {
+    const typed = [row(3, "Rat-07", { port: "C" }), row(4, "Rat-08")];
+    const boxes = [
+      { box: 3, animalName: "Rat-07" },
+      { box: 4, animalName: "Rat-08" },
+    ];
+    expect(reconcileRows(boxes, remembered, typed)).toBe(typed);
+  });
+
   it("holds the rows while the mapped boxes are still loading", () => {
     const typed = [row(3, "Rat-07", { port: "C" })];
     expect(reconcileRows([], remembered, typed)).toBe(typed);

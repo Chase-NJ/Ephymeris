@@ -46,6 +46,16 @@ function seedRow(box: MappedBox, defaults: RecordingDefaults): BoxRow {
 /**
  * The form's rows for the boxes mapped now, given the rows it already holds (a
  * restored draft, or what was typed).
+ *
+ * Keyed to the CURRENT boxes, never to the rows: a box still mapped keeps what
+ * was typed for it, under the animal mapped there now; a box no longer mapped
+ * is dropped; a newly mapped box is seeded from the remembered defaults. A
+ * draft saved before Back to Boxes otherwise kept a moved animal's old box,
+ * and `intan.configure` named a box with no animal on it (B5).
+ *
+ * The same array comes back when nothing changed, so a repeated answer from
+ * the sidecar neither re-renders nor rewrites the draft. No boxes (not loaded
+ * yet, or the rig not held) keeps the rows as they are.
  */
 export function reconcileRows(
   boxes: readonly MappedBox[],
@@ -53,6 +63,12 @@ export function reconcileRows(
   draftRows: BoxRow[],
 ): BoxRow[] {
   if (boxes.length === 0) return draftRows;
-  if (draftRows.length > 0) return draftRows;
-  return boxes.map((b) => seedRow(b, defaults));
+  const held = new Map(draftRows.map((r) => [r.box, r]));
+  const next = boxes.map((b) => {
+    const kept = held.get(b.box);
+    if (!kept) return seedRow(b, defaults);
+    return kept.animalName === b.animalName ? kept : { ...kept, animalName: b.animalName };
+  });
+  const unchanged = next.length === draftRows.length && next.every((r, i) => r === draftRows[i]);
+  return unchanged ? draftRows : next;
 }

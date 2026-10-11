@@ -143,7 +143,7 @@ def _service(rig: Rig, queued: list) -> LogbookService:
 
     return LogbookService(
         db=rig.db, cohorts=rig.cohorts, sessions=rig.sessions, profiles=rig.profiles,
-        broadcast=broadcast, enqueue_backup=queued.append,
+        archive=rig.archive, broadcast=broadcast, enqueue_backup=queued.append,
     )
 
 

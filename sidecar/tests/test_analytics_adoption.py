@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics import AnalyticsService, reader
+from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive, reader
 from ephymeris_sidecar.analytics.repository import AnalyticsRepository
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
@@ -90,11 +90,13 @@ class LegacyRig:
         async def broadcast(message: dict) -> None:
             pass
 
+        self.archive = CohortArchive(db=db, cohorts=self.cohorts, sessions=self.sessions)
         self.service = AnalyticsService(
             db=db,
             cohorts=self.cohorts,
             sessions=self.sessions,
             broadcast=broadcast,
+            archive=self.archive,
             sketch_lookup=lambda name: (
                 str(self.sketch) if name == "GRGL_2-Odor" else None
             ),
@@ -650,7 +652,7 @@ async def test_a_recovered_session_closes_its_clock_from_its_files(rig: LegacyRi
     await rig.service.rescan(rig.cohort.id)
 
     # Unread, the session is open: a file nobody has read yet can't say.
-    listed, _ = rig.service.adopted_session_entries(rig.cohort.id, [])
+    listed = rig.archive.view(rig.cohort.id).recovered
     assert listed[0].clock_ended_at is None
 
     payload = await rig.service.summary(rig.cohort.id)
@@ -658,7 +660,7 @@ async def test_a_recovered_session_closes_its_clock_from_its_files(rig: LegacyRi
     assert session["clockStartedAt"] == "2026-06-16T12:00:22"
     assert session["clockEndedAt"] == "2026-06-16T12:01:15.000"
 
-    listed, _ = rig.service.adopted_session_entries(rig.cohort.id, [])
+    listed = rig.archive.view(rig.cohort.id).recovered
     assert listed[0].clock_ended_at == "2026-06-16T12:01:15.000"
 
 

@@ -17,19 +17,18 @@ import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from ..cohorts import relocate
 from ..logbook.repository import LogbookRepository
 from ..sessions import tidy as session_tidy
-from ..sessions.models import Session, SessionAnimalRun
+from ..sessions.models import SessionAnimalRun
 from ..sessions.paths import parse_name_date, parse_name_time, parse_session_folder
-from ..sessions.tidy import session_key
 from ..tasks import profile as task_profile
 from ..tasks.profile import TaskProfile
 from . import derive, false_starts, infer, reader
+from .archive import CohortArchive
 from .repository import AdoptedRun, AnalyticsRepository, CachedRun, CacheKey
 
 log = logging.getLogger(__name__)
@@ -49,10 +48,6 @@ INDEX_CHUNK = 32
 
 #: `analytics.recentSessions` default when the caller names no limit.
 DEFAULT_RECENT_LIMIT = 6
-
-
-class AnalyticsBusy(Exception):
-    """An indexing job is already running for this cohort."""
 
 
 @dataclass
@@ -83,6 +78,7 @@ class AnalyticsService:
         sessions: Any,
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         *,
+        archive: CohortArchive,
         min_counted: int = derive.DEFAULT_MIN_COUNTED,
         sketch_lookup: Callable[[str], str | None] | None = None,
     ) -> None:
@@ -102,9 +98,9 @@ class AnalyticsService:
         #: and exactly as
         #: trustworthy, which is to say: marked as such, never as a snapshot.
         self._sketch_lookup = sketch_lookup
-        # One job at a time: `server.py` runs every command as its own task, so
-        # two summary calls really can arrive together.
-        self._lock = asyncio.Lock()
+        #: What every pass reads, and whose lock it runs under: one job at a
+        #: time (`DATA.md#the-cohort-archive`).
+        self._archive = archive
 
     # --- summary -----------------------------------------------------------
 
@@ -123,64 +119,33 @@ class AnalyticsService:
         # relocate, a move or a tidy holds it while it rewrites them, so a read
         # taken before waiting would index what they just changed: the old data
         # folder reported missing and every moved run with it.
-        async with self._lock:
+        async with self._archive.exclusive(wait=True):
             cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
-            sessions = await asyncio.to_thread(self._sessions.list_sessions, cohort_id)
-
-            # Adopted orphans (`DATA.md#orphan-adoption`) ride alongside recorded
-            # runs: payload-only
-            # synthetic sessions grouped from folder names, never database rows.
-            adopted = await asyncio.to_thread(self._repo.adopted_for_cohort, cohort_id)
-            # A recovered file from a session this database recorded counts under
-            # that session rather than as a second one on the same day
-            # (`DATA.md#tidy-records`).
-            owners = _adoption_owners(adopted, sessions)
-            synthetic, _ = _synthetic_sessions(adopted, cohort_id, owners)
-            sessions = _merge_sessions(sessions, synthetic)
+            view = await asyncio.to_thread(self._archive.view, cohort_id)
+            sessions = view.sessions
             if session_ids is not None:
                 wanted = set(session_ids)
                 sessions = [s for s in sessions if s.id in wanted]
 
-            runs = await asyncio.to_thread(self._sessions.runs_for_cohort, cohort_id)
-            runs = runs + [_adopted_to_run(a, owners) for a in adopted]
             session_index = {s.id: index for index, s in enumerate(sessions)}
-            runs = [r for r in runs if r.session_id in session_index]
+            runs = [r for r in view.runs if r.session_id in session_index]
             if animal_ids is not None:
                 wanted_animals = set(animal_ids)
                 runs = [r for r in runs if r.animal_id in wanted_animals]
 
             summaries = await self._index(runs, threshold, cohort_id)
 
+        scored = {run.id: entry.summary for run, entry in zip(runs, summaries)}
         # A recovered session's clock closes from its files — each run's start
         # plus its stream's span (`DATA.md#the-session-clock`) — known only once
         # the index has read them, which it just did.
-        _close_recovered_sessions(
-            synthetic,
-            _stream_ends(
-                adopted,
-                owners,
-                {run.id: entry.summary for run, entry in zip(runs, summaries)},
-            ),
-        )
+        view.close_clocks(scored)
 
         # False starts (`DATA.md#false-starts`): judged over the same runs the
         # index just scored, with whatever a person has ruled. Set aside, not
         # dropped — they ride in their own list, so no metric below can count
         # one by forgetting to filter it.
-        overrides = await asyncio.to_thread(self._repo.false_start_overrides)
-        verdicts = false_starts.classify(
-            (
-                false_starts.RunFacts(
-                    run_id=run.id,
-                    session_id=run.session_id,
-                    animal_id=run.animal_id,
-                    order=false_starts.order_key(run.file_path, run.started_at),
-                    trials=false_starts.trials_of(entry.summary),
-                )
-                for run, entry in zip(runs, summaries)
-            ),
-            overrides,
-        )
+        verdicts = await asyncio.to_thread(self._archive.verdicts, runs, scored)
 
         counts = {
             "runs": 0, "decoded": 0, "noProfile": 0, "missing": 0, "unreadable": 0,
@@ -285,9 +250,7 @@ class AnalyticsService:
         Refuses a run the cohort does not hold, so a stale page cannot write
         an override nothing will ever read.
         """
-        recorded = {run.id for run in self._sessions.runs_for_cohort(cohort_id)}
-        adopted = {entry.id for entry in self._repo.adopted_for_cohort(cohort_id)}
-        if run_id not in recorded | adopted:
+        if run_id not in {run.id for run in self._archive.view(cohort_id).runs}:
             raise KeyError(run_id)
         self._repo.set_false_start(run_id, value)
 
@@ -314,12 +277,7 @@ class AnalyticsService:
         out: list[dict[str, Any]] = []
         warnings: list[dict[str, Any]] = []
         for run_id in run_ids:
-            run = await asyncio.to_thread(self._run_by_id, run_id)
-            if run is None:
-                # Adopted orphans have no session_animal_runs row by design.
-                entry = await asyncio.to_thread(self._repo.adopted_by_id, run_id)
-                if entry is not None:
-                    run = _adopted_to_run(entry)
+            run = await asyncio.to_thread(self._archive.run, run_id)
             if run is None or not run.file_path:
                 warnings.append({"code": "missing", "runId": run_id, "message": "no file"})
                 continue
@@ -383,26 +341,14 @@ class AnalyticsService:
     def _recent_on_disk(self, cohorts: list[Any]) -> list[dict[str, Any]]:
         found: list[dict[str, Any]] = []
         for cohort in cohorts:
-            recorded = {
-                _normalize(s.folder_path)
-                for s in self._sessions.list_sessions(cohort.id, include_aborted=True)
-                if s.folder_path
-            }
-            # Adopted folders are indexed too. Adoption deliberately writes no
-            # `sessions` row (`DATA.md#database-first`), so without this a
-            # folder adopted via
-            # rescan reported `recorded: false` forever — and the Dashboard
-            # badge told the user to run the rescan they had already run. The
-            # synthetic sessions carry the same folder the walk yields
-            # (`reader.session_folder_of`), so the two sides agree by
-            # construction. One indexed read per cohort (`idx_adopted_cohort`)
-            # keeps this Dashboard-cheap.
-            synthetic, _ = _synthetic_sessions(
-                self._repo.adopted_for_cohort(cohort.id), cohort.id
-            )
-            recorded |= {
-                _normalize(s.folder_path) for s in synthetic if s.folder_path
-            }
+            # Adopted folders count as recorded too. Adoption deliberately
+            # writes no `sessions` row (`DATA.md#database-first`), so without
+            # them a folder adopted via rescan reported `recorded: false`
+            # forever — and the Dashboard badge told the user to run the rescan
+            # they had already run. The archive names a recovered file's folder
+            # as the walk yields it (`reader.session_folder_of`), so the two
+            # sides agree by construction.
+            recorded = {_normalize(folder) for folder in self._archive.folders(cohort.id)}
             for session_dir in reader.walk_session_dirs(cohort.data_folder):
                 parsed = parse_session_folder(session_dir.name)
                 if parsed.date is None:
@@ -442,10 +388,7 @@ class AnalyticsService:
         away. Rescan is where that gets resolved because it is the one moment
         the operator has explicitly said *the disk is the truth now*.
         """
-        if self._lock.locked():
-            raise AnalyticsBusy("an analytics scan is already running")
-
-        async with self._lock:
+        async with self._archive.exclusive():
             cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
             folder_exists = await asyncio.to_thread(
                 lambda: Path(cohort.data_folder).expanduser().is_dir()
@@ -657,12 +600,10 @@ class AnalyticsService:
         `apply=False` is the preview the operator confirms; `apply=True`
         re-plans from scratch rather than trusting a plan the client holds,
         because the whole point of the lock is that nothing moved in between.
-        Refused while a scan holds the lock, like a second rescan: both move
-        run records between the rows a summary reads.
+        Refused while anything holds the archive, like a second rescan: both
+        move run records between the rows a summary reads.
         """
-        if self._lock.locked():
-            raise AnalyticsBusy("an analytics scan is running — try again when it finishes")
-        async with self._lock:
+        async with self._archive.exclusive():
             return await asyncio.to_thread(
                 self._tidy, cohort_id, apply, protect, today
             )
@@ -671,19 +612,12 @@ class AnalyticsService:
         self, cohort_id: str, apply: bool, protect: set[str], today: str
     ) -> dict[str, Any]:
         self._cohorts.get(cohort_id)  # CohortNotFound for an unknown id
-        sessions = self._sessions.list_sessions(cohort_id, include_aborted=True)
-        counts = dict(self._sessions.run_counts_by_session(cohort_id))
+        view = self._archive.view(cohort_id, include_aborted=True)
         # Recovered files a record owns are its data as much as its run rows.
-        adopted = self._repo.adopted_for_cohort(cohort_id)
-        _, adopted_counts = _synthetic_sessions(
-            adopted, cohort_id, _adoption_owners(adopted, sessions)
-        )
-        for session_id, n in adopted_counts.items():
-            if not session_id.startswith("adopted:"):
-                counts[session_id] = counts.get(session_id, 0) + n
+        counts = view.run_counts()
 
         planned = session_tidy.plan(
-            sessions,
+            view.recorded,
             run_counts=counts,
             folder_state=_folder_state,
             protect=protect,
@@ -728,42 +662,6 @@ class AnalyticsService:
         return session_tidy.plan_json(
             planned, merged_counts, cohort_id=cohort_id, applied=True
         )
-
-    # --- relocating a cohort's folder (DATA.md#data-folder) ---------------
-
-    async def relocate(self, cohort_id: str, destination: str, move_existing: bool) -> Path:
-        """Change a cohort's data folder, its records' paths following its
-        files, under the lock a rescan takes — a rescan reading the records
-        mid-move would prune every run whose file had just left."""
-        if self._lock.locked():
-            raise AnalyticsBusy("an analytics scan is running — try again when it finishes")
-        async with self._lock:
-            return await asyncio.to_thread(
-                relocate.relocate_cohort, self._db, cohort_id, destination, move_existing
-            )
-
-    # --- moving animals (DATA.md#moving-animals-between-cohorts) ----------
-
-    async def move_animals(
-        self, request: Any, *, apply: bool, busy: str | None
-    ) -> tuple[dict[str, Any], list[str]]:
-        """Preview or carry out a move, under the lock a rescan takes — a move
-        rewrites the records and the folders a walk reads, so neither may see
-        the other half-done.
-
-        Returns the plan's wire shape and, after an apply, the destination
-        files to queue for backup.
-        """
-        from ..cohorts import move_apply  # cohorts.move imports analytics.reader
-
-        if self._lock.locked():
-            raise AnalyticsBusy("an analytics scan is running — try again when it finishes")
-        async with self._lock:
-            if not apply:
-                plan = await asyncio.to_thread(move_apply.preview, self._db, request, busy=busy)
-                return plan.to_json(applied=False), []
-            plan = await asyncio.to_thread(move_apply.apply, self._db, request, busy=busy)
-        return plan.to_json(applied=True), [f.dst for f in plan.files]
 
     # --- carrying adoptions forward (DATA.md#carrying-adoptions-forward) --
 
@@ -1148,27 +1046,6 @@ class AnalyticsService:
         digest = self._repo.remember_profile(inferred) if persist else None
         return inferred, "inferred", digest
 
-    def adopted_session_entries(
-        self, cohort_id: str, recorded: list[Session]
-    ) -> tuple[list[Session], dict[str, int]]:
-        """Synthetic session entries for a cohort's adopted orphans, plus a
-        per-session run count. Reads the database only — `sessions.list`
-        merges these and must never touch the filesystem
-        (`PROTOCOL.md#cmd-sessions.list`).
-
-        An orphan from a folder a `recorded` session owns is counted under
-        that session instead (`DATA.md#tidy-records`), so the counts can name
-        a real session's
-        id: the caller ADDS them to its own."""
-        adopted = self._repo.adopted_for_cohort(cohort_id)
-        owners = _adoption_owners(adopted, recorded)
-        # The ends come from the metrics cache — the database, so the
-        # no-filesystem rule holds; a file the index has not read yet leaves
-        # its session open until the next summary.
-        cached = self._repo.load_cached([entry.id for entry in adopted])
-        ends = _stream_ends(adopted, owners, {rid: c.summary for rid, c in cached.items()})
-        return _synthetic_sessions(adopted, cohort_id, owners, ends)
-
     def _resolve_profile(
         self,
         run: SessionAnimalRun,
@@ -1275,17 +1152,6 @@ class AnalyticsService:
         # decoding can be trusted is `source`, and it stays `sketch-current`.
         digest = self._repo.remember_profile(current)
         return _Resolved(current, "sketch-current", digest)
-
-    def _run_by_id(self, run_id: str) -> SessionAnimalRun | None:
-        with self._db.lock:
-            row = self._db.conn.execute(
-                "SELECT * FROM session_animal_runs WHERE id = ?", (run_id,)
-            ).fetchone()
-        if row is None:
-            return None
-        from ..sessions.repository import _hydrate_run
-
-        return _hydrate_run(row)
 
     # --- progress ----------------------------------------------------------
 
@@ -1659,207 +1525,3 @@ def _orphan_run_id(path: Path) -> str:
     """
     digest = hashlib.sha1(reader.run_identity(path).encode("utf-8")).hexdigest()
     return f"adopted:{digest[:16]}"
-
-
-def _synthetic_session_id(entry: AdoptedRun) -> str:
-    """One id per (prefix, number, date) group — stable across rescans, so a
-    frontend session selection survives a refresh."""
-    return f"adopted:{entry.prefix_name}_{entry.session_number}_{entry.date or 'undated'}"
-
-
-def _adoption_owners(adopted: list[AdoptedRun], recorded: list[Session]) -> dict[str, str]:
-    """Which recorded session each synthetic session actually is
-    (`DATA.md#tidy-records`).
-
-    An orphan is adopted under a synthetic session named from its folder —
-    `adopted:<prefix>_<number>_<date>`. When this database also RECORDED a
-    session with that prefix, number and date, the two are one session: the
-    same folder, the files a crash left without a run record. Listing them
-    separately showed a day that went wrong as two days' worth of sessions.
-
-    The earliest recorded match wins, the one a tidy would keep. Aborted
-    records are never owners (they wrote nothing); callers pass the default
-    `list_sessions`, which excludes them.
-    """
-    owner_of: dict[tuple[str, str, str], str] = {}
-    for session in sorted(recorded, key=lambda s: (s.date, s.started_at, s.id)):
-        if session.id.startswith("adopted:") or session.status == "aborted":
-            continue
-        owner_of.setdefault(
-            session_key(session.prefix_name, session.session_number, session.date),
-            session.id,
-        )
-    owners: dict[str, str] = {}
-    for entry in adopted:
-        synthetic = _synthetic_session_id(entry)
-        if synthetic in owners:
-            continue
-        owner = owner_of.get(
-            session_key(entry.prefix_name, entry.session_number, entry.date or "")
-        )
-        if owner is not None:
-            owners[synthetic] = owner
-    return owners
-
-
-def adopted_runs(adopted: list[AdoptedRun], recorded: list[Session]) -> list[SessionAnimalRun]:
-    """A cohort's adopted orphans as runs, each filed under the session the
-    rest of the app lists it under — its recorded owner if there is one, else
-    its synthetic session (`DATA.md#tidy-records`). For the session log's
-    what-changed (`DATA.md#what-changed`), which reads the database only."""
-    owners = _adoption_owners(adopted, recorded)
-    return [_adopted_to_run(entry, owners) for entry in adopted]
-
-
-def false_start_verdicts(
-    repo: AnalyticsRepository, runs: list[SessionAnimalRun]
-) -> dict[str, false_starts.Verdict]:
-    """The verdicts `AnalyticsService.summary` would reach, from the cache alone.
-
-    For the session log, which must agree with Analytics about which runs
-    count but must not read the archive to do it. A run the index has never
-    scored has no cached trial count, so the rule leaves it counted — the same
-    "couldn't tell, so count it" answer an unscorable run gets.
-    """
-    cached = repo.load_cached([run.id for run in runs])
-    return false_starts.classify(
-        (
-            false_starts.RunFacts(
-                run_id=run.id,
-                session_id=run.session_id,
-                animal_id=run.animal_id,
-                order=false_starts.order_key(run.file_path, run.started_at),
-                trials=false_starts.trials_of(
-                    cached[run.id].summary if run.id in cached else None
-                ),
-            )
-            for run in runs
-        ),
-        repo.false_start_overrides(),
-    )
-
-
-def _adopted_to_run(
-    entry: AdoptedRun, owners: dict[str, str] | None = None
-) -> SessionAnimalRun:
-    """An adopted orphan in `SessionAnimalRun` clothing, so the indexing,
-    caching, and profile ladder treat it exactly like a recorded run. The box
-    number is honestly unknown — a filename doesn't carry one."""
-    run = SessionAnimalRun(
-        id=entry.id,
-        session_id=(owners or {}).get(
-            _synthetic_session_id(entry), _synthetic_session_id(entry)
-        ),
-        animal_id=entry.animal_id,
-        box_number=None,  # type: ignore[arg-type]
-        sketch_path=entry.sketch_path or "",
-        file_path=entry.file_path,
-        started_at=entry.started_at,
-    )
-    # The name the document asked for, kept alongside rather than added to the
-    # model: `SessionAnimalRun` is a persisted row shape and an adopted run is
-    # not persisted as one. `_resolve_profile` reads it to explain an
-    # unresolvable sketch instead of silently scoring nothing.
-    run.sketch_name = entry.sketch_name  # type: ignore[attr-defined]
-    return run
-
-
-def _synthetic_sessions(
-    adopted: list[AdoptedRun],
-    cohort_id: str,
-    owners: dict[str, str] | None = None,
-    ends: dict[str, str] | None = None,
-) -> tuple[list[Session], dict[str, int]]:
-    """Payload-only session entries grouped from adopted runs' folder names.
-
-    Never database rows — a fabricated `sessions` row would corrupt
-    session-number suggestion and the same-day reuse warning (`DATA.md#database-first`).
-
-    A group `owners` maps to a recorded session gets no entry of its own; its
-    count is filed under the recorded session's id instead (`DATA.md#tidy-records`).
-
-    `ends` (`_stream_ends`) closes each session's clock; a session with no
-    entry stays open, which the Log prints as "not recorded".
-    """
-    groups: dict[str, list[AdoptedRun]] = {}
-    for entry in adopted:
-        groups.setdefault(_synthetic_session_id(entry), []).append(entry)
-
-    sessions: list[Session] = []
-    counts: dict[str, int] = {}
-    for session_id, entries in groups.items():
-        owner = (owners or {}).get(session_id)
-        if owner is not None:
-            counts[owner] = counts.get(owner, 0) + len(entries)
-            continue
-        first = min(entries, key=lambda e: e.started_at)
-        sessions.append(
-            Session(
-                id=session_id,
-                cohort_id=cohort_id,
-                prefix_id="",
-                prefix_name=first.prefix_name,
-                session_number=first.session_number,
-                date=first.date or "",
-                started_at=first.started_at,
-                ended_at=(ends or {}).get(session_id),
-                status="completed",
-                folder_path=str(reader.session_folder_of(Path(first.file_path))),
-            )
-        )
-        counts[session_id] = len(entries)
-    return sessions, counts
-
-
-def _stream_end(started_at: str, summary: dict[str, Any] | None) -> datetime | None:
-    """When a recovered run's recorded stream ended: its start plus the
-    stream's span (`durationMs`), the same derivation the session table draws
-    as `~`. Nothing records when a recovered run stopped; its file records how
-    long it ran. `None` for a start without a time of day (a file named with
-    no `HHMMSS`) or a file the index has not read."""
-    duration = (summary or {}).get("durationMs")
-    if not isinstance(duration, (int, float)) or isinstance(duration, bool):
-        return None
-    if "T" not in started_at:
-        return None
-    try:
-        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return start + timedelta(milliseconds=float(duration))
-
-
-def _stream_ends(
-    adopted: list[AdoptedRun],
-    owners: dict[str, str],
-    summaries: dict[str, dict[str, Any]],
-) -> dict[str, str]:
-    """Each synthetic session's clock end (`DATA.md#the-session-clock`): the
-    latest of its runs' stream ends, in the same spelling as their starts.
-    A session whose files have all gone unread has no entry. A group a
-    recorded session owns is skipped — that session has its own clock."""
-    latest: dict[str, datetime] = {}
-    for entry in adopted:
-        session_id = _synthetic_session_id(entry)
-        if session_id in owners:
-            continue
-        end = _stream_end(entry.started_at, summaries.get(entry.id))
-        if end is not None and (session_id not in latest or end > latest[session_id]):
-            latest[session_id] = end
-    return {sid: end.isoformat(timespec="milliseconds") for sid, end in latest.items()}
-
-
-def _close_recovered_sessions(sessions: list[Session], ends: dict[str, str]) -> None:
-    """Stamp `_stream_ends` onto synthetic sessions built before the index
-    had read their files."""
-    for session in sessions:
-        end = ends.get(session.id)
-        if end is not None:
-            session.ended_at = end
-
-
-def _merge_sessions(recorded: list[Session], synthetic: list[Session]) -> list[Session]:
-    """Chronological merge for the shared session axis. String sort is correct
-    here because every date is ISO — legacy `MM_DD_YY` spellings were already
-    converted at adoption time by `parse_session_folder`."""
-    return sorted([*recorded, *synthetic], key=lambda s: (s.date, s.started_at, s.id))

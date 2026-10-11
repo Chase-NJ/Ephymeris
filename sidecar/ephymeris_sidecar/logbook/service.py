@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..analytics import service as analytics_service
 from ..protocol import Evt, event
 from ..sessions.models import Session, SessionNotFound
 from . import diff, mirror
@@ -48,6 +47,7 @@ class LogbookService:
         cohorts: Any,
         sessions: Any,
         profiles: Any,
+        archive: Any,
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         enqueue_backup: Callable[[Path], None] | None = None,
     ) -> None:
@@ -55,6 +55,7 @@ class LogbookService:
         self._cohorts = cohorts
         self._sessions = sessions
         self._profiles = profiles
+        self._archive = archive
         self._broadcast = broadcast
         self._enqueue_backup = enqueue_backup
         self._pending: dict[str, asyncio.TimerHandle] = {}
@@ -108,15 +109,11 @@ class LogbookService:
         chronological history per animal (`DATA.md#what-changed`). Database
         only: a recovered run's task and parameters come from the analytics
         cache, filled the first time the index read its file."""
-        sessions = {
-            s.id: s for s in self._sessions.list_sessions(cohort_id, include_aborted=True)
-        }
-        recorded = self._sessions.runs_for_cohort(cohort_id)
-        entries = self._profiles.adopted_for_cohort(cohort_id)
-        adopted = analytics_service.adopted_runs(
-            entries, [s for s in sessions.values() if s.status != "aborted"]
-        )
-        cached = self._profiles.load_cached([run.id for run in adopted])
+        view = self._archive.view(cohort_id, include_aborted=True)
+        sessions = {s.id: s for s in view.sessions}
+        recorded = view.recorded_runs
+        recovered = view.recovered_runs
+        cached = self._profiles.load_cached([run.id for run in recovered])
         hashes = sorted(
             {r.profile_hash for r in recorded if r.profile_hash}
             | {c.profile_hash for c in cached.values() if c.profile_hash}
@@ -130,20 +127,22 @@ class LogbookService:
         # run after a false start must be compared with the animal's previous
         # SESSION, and dropping the false start's row afterwards would lose
         # that change rather than recover it.
-        verdicts = analytics_service.false_start_verdicts(self._profiles, recorded + adopted)
+        verdicts = self._archive.verdicts(view.runs)
+
+        def day(run: Any) -> str:
+            session = sessions.get(run.session_id)
+            return session.date if session else ""
 
         timeline: list[tuple[tuple[str, str], diff.ComparedRun]] = []
         for run in recorded:
-            session = sessions.get(run.session_id)
-            day = session.date if session else ""
-            timeline.append(((day, run.started_at), diff.from_recorded(run, names)))
-        for run, entry in zip(adopted, entries, strict=True):
+            timeline.append(((day(run), run.started_at), diff.from_recorded(run, names)))
+        for run in recovered:
             cache = cached.get(run.id)
             digest = cache.profile_hash if cache else None
             sketch = getattr(run, "sketch_name", None) or diff.task_label(run, {})
             timeline.append(
                 (
-                    (entry.date or "", run.started_at),
+                    (day(run), run.started_at),
                     diff.ComparedRun(
                         id=run.id,
                         session_id=run.session_id,

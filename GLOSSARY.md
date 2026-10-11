@@ -13,3 +13,13 @@ _Avoid_: rig configuration, rig settings
 **Held session**:
 The one session that holds the rig, from its mapping's confirmation (or a resume) until it ends or is abandoned. It stays held between groups, and it may still read `configuring`.
 _Avoid_: running session, active session
+
+<a id="cohort-archive"></a>
+**Cohort archive**:
+A cohort's sessions and runs as one whole: those this machine recorded, and the recovered runs filed under the sessions they belong to.
+_Avoid_: the cohort's data, history
+
+<a id="recovered-run"></a>
+**Recovered run**:
+A run known only from its file, with no run record behind it, which a rescan adopted. It counts under the recorded session sharing its folder's prefix, number and date, else under a recovered session of its own.
+_Avoid_: orphan (once adopted), synthetic run

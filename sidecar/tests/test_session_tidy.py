@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics.service import _adoption_owners
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.sessions import tidy
 from ephymeris_sidecar.sessions.models import GroupRun
@@ -249,18 +248,6 @@ async def test_a_recovered_file_makes_its_record_not_empty(rig: Rig) -> None:
     await rig.service.rescan(rig.cohort.id)
     assert (await preview(rig))["empty"] == []
     assert rig.sessions.get_session(sid)
-
-
-def test_an_orphan_from_another_session_keeps_its_own_entry(rig: Rig) -> None:
-    sid = rig.add_session("12", DAY)
-    from ephymeris_sidecar.analytics.repository import AdoptedRun
-
-    entry = AdoptedRun(
-        id="x", cohort_id=rig.cohort.id, animal_id="a1", file_path="/f",
-        prefix_name="2O-Bdisc", session_number="13", date=DAY,
-        started_at="t", sketch_name=None, sketch_path=None,
-    )
-    assert _adoption_owners([entry], [rig.sessions.get_session(sid)]) == {}
 
 
 # --- the planner alone -----------------------------------------------------

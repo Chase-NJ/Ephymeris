@@ -59,6 +59,7 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
   - [Failures](#failures)
 - [Reading the archive](#reading-the-archive)
   - [Database first](#database-first)
+  - [The cohort archive](#the-cohort-archive)
   - [Orphan adoption](#orphan-adoption)
   - [Which profile decodes a run](#which-profile-decodes-a-run)
   - [Caching](#caching)
@@ -238,7 +239,7 @@ Relocating is a separate action, `cohorts.setDataFolder` (`relocate`), with two 
 | Same volume | One atomic `rename` of the folder, then the records in one transaction | The folder is demonstrably at the target, so the records are rolled forward at the next start |
 | Another volume | Copy and size-check every file, commit the records, then delete each original whose copy is in place | Undone while copying (only copies whose original is still there are removed); finished after the commit |
 
-It runs under the analytics lock, so no rescan or summary reads the records mid-move, and is refused while a session is set up or running — a session writing into the folder would be writing into one that moves. Pointing without moving rewrites nothing.
+It runs under the [archive lock](#the-cohort-archive), so no rescan or summary reads the records mid-move, and is refused while a session is set up or running — a session writing into the folder would be writing into one that moves. Pointing without moving rewrites nothing.
 
 **Rescan repairs a relocate from before this.** Before it prunes, it re-points (`rehomed`) records left at a folder the cohort was moved out of: a stale path is one outside the cohort's folder with nothing there; the old folder is the root most stale paths agree on, found by which tail of each exists under the cohort's folder; and only paths whose files (or, for a run, its write-ahead `.tsv`) are actually there are rewritten. Anything else is left to the prune's own rules.
 
@@ -352,7 +353,7 @@ The **Log** tab's lab notebook: timestamped notes and a few free fields per sess
 
 Both are derived, never stored, and ride on `Session` and `SessionListItem`. Elapsed time everywhere — the Log header, Mission Control, the PDF — is `clockEndedAt − clockStartedAt`, or `now − clockStartedAt` while open.
 
-A session recovered from files (`adopted:…`, [Orphan adoption](#orphan-adoption)) has no record and no group runs. Its `clockStartedAt` is its earliest file's start, and its `clockEndedAt` the latest of its runs' **stream ends** — a run's start plus its `durationMs`, the span of the recorded stream — read from the [metrics cache](#caching) once the index has read the files (`analytics/service.py`'s `_stream_ends`), and null until then. Nothing recorded when such a run stopped, so the Log and the PDF mark the end and elapsed `~`, as the session table marks a recovered run's end.
+A session recovered from files (`adopted:…`, [Orphan adoption](#orphan-adoption)) has no record and no group runs. Its `clockStartedAt` is its earliest file's start, and its `clockEndedAt` the latest of its runs' **stream ends** — a run's start plus its `durationMs`, the span of the recorded stream — read from the [metrics cache](#caching) once the index has read the files (`analytics/archive.py`'s `_stream_ends`), and null until then. Nothing recorded when such a run stopped, so the Log and the PDF mark the end and elapsed `~`, as the session table marks a recovered run's end.
 
 A note's **T+ offset** (`offsetMs`) is its `at` minus `clockStartedAt`, derived on every read so a tidy merge or an edited `at` can never leave a stale one. A note whose `at` falls outside `[clockStartedAt, clockEndedAt or now]` — one written the next morning about the session — has no offset rather than a misleading one.
 
@@ -763,13 +764,25 @@ Mirroring failures surface as `state: "failed"` on `backup.status` with the unde
 
 ## Reading the archive
 
-`analytics/` reads runs back: `reader.py` (walking and reading files), `service.py` (indexing, adoption, pruning, tidy), `repository.py` (the cache and adoptions), `derive.py` (the [metrics](#derived-metrics)) and `infer.py` (inference).
+`analytics/` reads runs back: `reader.py` (walking and reading files), `archive.py` ([the cohort archive](#the-cohort-archive)), `service.py` (indexing, adoption, pruning, tidy), `repository.py` (the cache and adoptions), `derive.py` (the [metrics](#derived-metrics)) and `infer.py` (inference).
 
 ### Database first
 
 Run records carry a file path, and that is the primary path: the record also carries `animal_id` (immune to renames), the box, timings and stop reason, none of which a filename gives. But it is not complete — files exist that no record points at: crashes between the file write and the commit, files restored from the mirror, sessions copied from the other lab machine, and every pre-Ephymeris archive.
 
 So a **walk exists, but only on an explicit user action** — `analytics.rescan` (the Rescan button). Adopted runs get a deterministic synthetic id so rescanning is idempotent, and they **never** get fabricated `sessions` rows, which would corrupt session-number suggestion and the same-day warning. In summaries they are grouped under synthetic `adopted:<prefix>_<number>_<date>` sessions.
+
+### The cohort archive
+
+`analytics/archive.py`'s `CohortArchive` is the one read of a cohort's sessions and runs: the ones this database recorded and the ones a rescan recovered from files. Every reader takes its `view`: `analytics.summary`, `sessions.list`, the session log's [what changed](#what-changed), [tidy](#tidy-records) and the Dashboard's recent sessions. So no two of them can file a recovered run under different sessions, close its session's clock differently, or disagree about which runs are false starts.
+
+- A recovered run counts under the recorded session that owns its folder ([Tidy records](#tidy-records)), else under its synthetic session, and a session's run count includes the recovered runs filed under it.
+- A recovered session's clock closes from the metrics cache ([The session clock](#the-session-clock)), and a summary closes it again from what it has just read. A run the summary did not select keeps its cached end, so a summary narrowed to some animals never moves a session's end.
+- [False starts](#false-starts) are judged from the summaries a pass has just scored, or from the cache for a reader that opens no file.
+
+The view reads the database only, so `sessions.list` and the log never wait on a file or on the lock.
+
+**The archive lock.** A rescan, a tidy, a [data-folder relocate](#data-folder) and a [move of animals](#moving-animals-between-cohorts) each hold it end to end, and each is refused (`ArchiveBusy`) while anything else holds it. A summary waits for it, then reads its records and indexes them under it. Records read before the wait could be ones that a relocate, a move or a tidy had just rewritten.
 
 > [!CAUTION]
 > **The walk finds format folders by name, at any depth — don't reintroduce an assumption about a prefix level.** One real archive nests session folders under a prefix, another puts them straight under the cohort, and nothing stops a per-year level appearing next. A fixed two-level glob found **zero** of the second archive's 444 files. `session_folder_of` stays correct because it is defined relative to the *format* folder, not the cohort root.
@@ -874,7 +887,7 @@ The cache key (`repository.CacheKey`) is file path, mtime, size, profile hash an
 > [!IMPORTANT]
 > **No analytics operation may slow, stall, or fail a running session.**
 
-- **One indexing job at a time** behind a lock (`AnalyticsBusy` otherwise), so a double-click cannot launch two walks.
+- **One indexing job at a time** behind the [archive lock](#the-cohort-archive); a second rescan is refused (`ArchiveBusy`), so a double-click cannot launch two walks.
 - **Reads are sequential in one worker thread, not a pool** — six boxes are fsyncing per strobe, and a pool would multiply disk contention against the write-ahead log.
 - **Runs go to that worker in chunks** (`INDEX_CHUNK`), still read one after another, small enough that a batch of misses cannot hold the event loop off a live `port.output` flush.
 - **Cache writes go in one transaction per job**; per-run commits would trigger a whole-file backup copy each time.
@@ -924,7 +937,7 @@ A day that goes wrong leaves two kinds of leftover; **Tidy records** (`sessions.
 
 **Never touched:** the session the runner holds and every record sharing its folder; a `configuring` record from today (it may be under an operator's hands); and any record whose folder is unreachable (the same rule as [pruning](#pruning)). The first two are listed in the preview with the reason.
 
-**A recovered file counts under its recorded session without a tidy.** The rescan adopts a recovered `.json` under a synthetic session; when the database also recorded that session, the adopted run is attributed to the recorded one (the earliest, as a tidy would keep) at read time (`service._adoption_owners`) — in summaries and `sessions.list` — and it counts as data, so its record is never judged empty.
+**A recovered file counts under its recorded session without a tidy.** The rescan adopts a recovered `.json` under a synthetic session; when the database also recorded that session, the adopted run is attributed to the recorded one (the earliest, as a tidy would keep) at read time (`archive._adoption_owners`), for [every reader](#the-cohort-archive), and it counts as data, so its record is never judged empty.
 
 ## Derived metrics
 
@@ -1014,7 +1027,7 @@ A run nobody restarted is never a false start, however short; an animal that qui
 | What changed | Compared with nothing and nobody's previous run: the run that restarted it is compared with the animal's previous session (`diff.compare` takes the verdicts). Listed under the changes as set aside |
 | The session clock | Unchanged: the time it took is real elapsed time |
 
-The log computes the same verdicts from the analytics cache (`false_start_verdicts`), never from the archive, so the two agree once Analytics has read the session.
+The log computes the same verdicts from the analytics cache (`CohortArchive.verdicts`), never from the files, so the two agree once Analytics has read the session.
 
 ### Pooled accuracy
 

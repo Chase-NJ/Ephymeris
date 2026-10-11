@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics import AnalyticsService
+from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
 from ephymeris_sidecar.cohorts import move_apply
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.move import MoveRequest, plan_move
@@ -352,7 +352,10 @@ def test_after_a_move_neither_rescan_prunes_or_adopts(lab: Lab) -> None:
     async def broadcast(_message: dict) -> None:
         return None
 
-    service = AnalyticsService(db=lab.db, cohorts=lab.cohorts, sessions=lab.sessions, broadcast=broadcast)
+    archive = CohortArchive(db=lab.db, cohorts=lab.cohorts, sessions=lab.sessions)
+    service = AnalyticsService(
+        db=lab.db, cohorts=lab.cohorts, sessions=lab.sessions, broadcast=broadcast, archive=archive
+    )
     lab.apply("slow1")
 
     for cohort in (lab.a.id, lab.b.id):

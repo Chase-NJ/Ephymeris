@@ -68,6 +68,7 @@ class SidecarServer:
         self._on_client_ready: list[Callable[[ServerConnection], Awaitable[None]]] = []
         self._inflight: set[asyncio.Task[None]] = set()
         self._shutdown = asyncio.Event()
+        self._bound = asyncio.Event()
 
     # --- lifecycle --------------------------------------------------------
 
@@ -88,6 +89,8 @@ class SidecarServer:
     async def run(self) -> None:
         async with serve(self._handle_connection, self.host, self.port) as server:
             bound_port = server.sockets[0].getsockname()[1]
+            self.port = bound_port
+            self._bound.set()
             # The one line stdout is for. Flushed explicitly because stdout is a
             # pipe here, not a tty, and would otherwise sit in the block buffer.
             print(
@@ -97,6 +100,12 @@ class SidecarServer:
             log.info("sidecar listening on %s:%d", self.host, bound_port)
             await self._shutdown.wait()
             log.info("shutting down")
+
+    async def bound_port(self) -> int:
+        """The port `run` listens on, once it does: the one the OS picked when
+        `port` was 0."""
+        await self._bound.wait()
+        return self.port
 
     def request_shutdown(self) -> None:
         self._shutdown.set()

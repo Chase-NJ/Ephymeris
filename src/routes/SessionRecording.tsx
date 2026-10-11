@@ -25,6 +25,7 @@ import { SettingRow } from "@/components/settings/SettingRow";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { useIntanStatus } from "@/lib/intan/context";
 import { summarizeRecordingConfig, type RecordingConfigDefaults } from "@/lib/intan/defaults";
+import { reconcileRows, type BoxRow } from "@/lib/intan/recordingSetup";
 import { channelRange } from "@/lib/intan/scopeMath";
 import { FILE_FORMATS, type ProbeMap, type RecordingBoxConfig, type RecordingConfig } from "@/lib/intan/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
@@ -55,19 +56,6 @@ import { CMD } from "@/lib/ws/protocol";
  * values a recording cannot be wrong about, and every refusal lands in the
  * error strip as the operator's next step.
  */
-
-/** A box's row in the form. `record: false` runs the box behavior-only. */
-interface BoxRow {
-  box: number;
-  animalName: string;
-  record: boolean;
-  port: string;
-  firstChannel: number;
-  lastChannel: number;
-  probeMapPath: string | null;
-  probeMap: ProbeMap | null;
-  probeError: string | null;
-}
 
 interface RecordingDraft {
   config: RecordingConfigDefaults | null;
@@ -133,23 +121,7 @@ export function SessionRecording() {
   useEffect(() => {
     if (boxes.length === 0) return;
     setConfig((current) => current ?? { ...defaults.config });
-    setRows((current) => {
-      if (current.length > 0) return current;
-      return boxes.map((b) => {
-        const memory = defaults.boxes[String(b.box)];
-        return {
-          box: b.box,
-          animalName: b.animalName,
-          record: memory?.record ?? true,
-          port: memory?.port ?? "",
-          firstChannel: memory?.firstChannel ?? 0,
-          lastChannel: memory?.lastChannel ?? -1,
-          probeMapPath: memory?.probeMapPath ?? null,
-          probeMap: null,
-          probeError: null,
-        };
-      });
-    });
+    setRows((current) => reconcileRows(boxes, defaults, current));
     // The defaults are read once, as a starting point.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boxes]);

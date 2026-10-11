@@ -20,7 +20,6 @@ from .analytics import AnalyticsBusy, AnalyticsService
 from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager, BackupNotConfigured
 from .boards import create_board_tool
-from .boards.tool import FlashFailed
 from .cohorts import folders, grouping, move_apply, relocate
 from .cohorts.move import MoveRequest
 from .cohorts.db import DB_FILENAME, Database
@@ -67,12 +66,13 @@ from .taskdef.validate import validate as validate_task
 from .tasks import profile as task_profile
 from .tasks.start_command import build_start_command
 from .debug_run import DebugRuns
+from .ports.flashing import FlashJob, FlashQueue, Origin
 from .ports.handler import DEFAULT_LINE_ENDING, LINE_ENDINGS, OutputLine, PortBusy
 from .ports.manager import BoardNotDetected, PortManager, PortNotBound
 from .ports.states import IllegalTransition, PortState
 from .protocol import Cmd, ErrCode, Evt, event
 from .server import CommandError, SidecarServer
-from .settings import SidecarSettings
+from .settings import BOX_COUNT, SidecarSettings
 from .utility import UtilityBaseline, UtilityUnavailable
 
 log = logging.getLogger(__name__)
@@ -106,6 +106,8 @@ class Application:
         # backend otherwise (`boards/__init__.py`).
         self.tool = create_board_tool(app_data_dir=data_dir)
         self.ports: PortManager | None = None
+        #: Every flash, one at a time, rig-wide (`ports/flashing.py`).
+        self.flashes: FlashQueue | None = None
         self.utility: UtilityBaseline | None = None
         #: Tasks started by hand from Debug Mode, scored live (`debug_run.py`).
         self.debug_runs = DebugRuns()
@@ -173,7 +175,9 @@ class Application:
         self.server.register(Cmd.PORT_PASSTHROUGH_CLOSE, self._passthrough_close)
         self.server.register(Cmd.PORT_SEND, self._port_send)
         self.server.register(Cmd.PORT_SEND_START, self._port_send_start)
-        self.server.register(Cmd.PORT_FLASH, self._port_flash)
+        self.server.register(Cmd.FLASH_ENQUEUE, self._flash_enqueue)
+        self.server.register(Cmd.FLASH_CANCEL, self._flash_cancel)
+        self.server.register(Cmd.FLASH_STATUS, self._flash_status)
         self.server.register(Cmd.PORT_RESET, self._port_reset)
         self.server.register(Cmd.PORT_ERROR_ACK, self._port_error_ack)
         self.server.register(Cmd.UTILITY_ENSURE, self._utility_ensure)
@@ -213,6 +217,7 @@ class Application:
         self.server.register(Cmd.SESSIONS_ABANDON, self._sessions_abandon)
         self.server.register(Cmd.SESSIONS_CONFIRM_MAPPING, self._sessions_confirm_mapping)
         self.server.register(Cmd.SESSIONS_STATUS, self._sessions_status)
+        self.server.register(Cmd.SESSIONS_FLASH, self._sessions_flash)
         self.server.register(Cmd.SESSIONS_START_ALL, self._sessions_start_all)
         self.server.register(Cmd.SESSIONS_END_GROUP, self._sessions_end_group)
         self.server.register(Cmd.SESSIONS_RESUME, self._sessions_resume)
@@ -321,12 +326,20 @@ class Application:
             on_presence=self._handle_presence,
         )
         self.ports.start()
-        self.utility = UtilityBaseline(
+        self.flashes = FlashQueue(
             loop=loop,
             ports=self.ports,
             discovery=lambda: self.discovery,
             broadcast=self.server.broadcast,
             reading=self.rig_definition.reading,
+            on_flashed=self._on_flashed,
+        )
+        self.utility = UtilityBaseline(
+            loop=loop,
+            ports=self.ports,
+            discovery=lambda: self.discovery,
+            broadcast=self.server.broadcast,
+            flashes=self.flashes,
         )
         self.runner = SessionRunner(
             loop=loop,
@@ -358,6 +371,7 @@ class Application:
             rig_reading=self.rig_definition.reading,
             broadcast=self.server.broadcast,
             carried=self.ports.carried,
+            flashes=self.flashes,
         )
 
     async def stop(self) -> None:
@@ -367,6 +381,10 @@ class Application:
             await self.intan.stop()
         # Before the ports go: a lit box has a console open that must be closed
         # through the state machine rather than yanked out from under it.
+        # A flash in progress is abandoned with the process; nothing queued
+        # behind it may start once the ports begin closing.
+        if self.flashes is not None:
+            await self.flashes.stop()
         if self.utility is not None:
             await self.utility.stop()
         if self.ports is not None:
@@ -452,6 +470,8 @@ class Application:
         await send(event(Evt.TASKS_UPDATED, {"tasks": self.task_store.list_entries()}))
         await send(event(Evt.COHORTS_UPDATED, {"cohorts": await self._cohort_summaries()}))
         await send(event(Evt.PREFIXES_UPDATED, {"prefixes": await self._prefix_list()}))
+        if self.flashes is not None:
+            await send(event(Evt.FLASH_QUEUE, self.flashes.status()))
         if self.utility is not None:
             await send(event(Evt.UTILITY_UPDATED, self.utility.status()))
         if self.backup is not None:
@@ -496,6 +516,9 @@ class Application:
         # console closing, an error acknowledged — is covered by one hook.
         if current == PortState.IDLE and self.utility is not None:
             self.utility.ensure([box])
+        # A queued flash may have been waiting on exactly this port.
+        if self.flashes is not None:
+            self.flashes.port_changed(box)
         # A hand-started task is only being listened to while the console is
         # open; a reset or a flash has rebooted the board besides.
         if current != PortState.PASSTHROUGH:
@@ -651,69 +674,71 @@ class Application:
         )
         return {"command": command, "bytesWritten": written}
 
-    async def _port_flash(self, _server, _conn, args, corr) -> dict[str, Any]:  # noqa: ANN001
-        box = _box_arg(args)
-        path = args.get("sketchPath")
+    # --- the flash queue (ARCHITECTURE.md#the-flash-queue) ---
 
-        # Held from the lookup through `note_flashed`: a rig definition write
-        # must not rebuild the folder mid-compile, nor land between the flash
-        # and the belief it records (`TASKS.md#the-rig-definition`).
-        async with self.rig_definition.reading():
-            # Only a discovered sketch is flashable (`TASKS.md#sketch-library`) —
-            # enforced here, not just by the picker only listing discovered sketches.
-            sketch = next((s for s in self.discovery.sketches if s.path == path), None)
-            if sketch is None:
-                raise CommandError(
-                    ErrCode.SKETCH_UNKNOWN,
-                    "That sketch isn't in the sketch library — "
-                    "refresh the list and pick again.",
-                    {"sketchPath": path},
-                )
+    def _require_flashes(self) -> FlashQueue:
+        if self.flashes is None:
+            raise CommandError(ErrCode.INTERNAL, "hardware layer isn't running")
+        return self.flashes
 
-            def on_progress(phase: str, stream: str, text: str) -> None:
-                # Called from loop context; each line rides out as its own event,
-                # tagged with the command that caused it.
-                asyncio.create_task(
-                    self.server.broadcast(
-                        event(
-                            Evt.FLASH_PROGRESS,
-                            {"box": box, "phase": phase, "stream": stream, "text": text},
-                            corr=corr,
-                        )
-                    )
-                )
+    def _on_flashed(self, box: int, sketch_path: str, origin: Origin) -> None:
+        """Every flash that landed, from the queue, before anything yields.
 
-            # `ARCHITECTURE.md#exclusivity`: the session flash sequence needs every
-            # box to land in IDLE so the
-            # runner can claim it, overriding the usual passthrough auto-resume.
-            suppress = args.get("suppressPassthroughResume") is True
-
-            with _mapped_errors(box):
-                state, resumed = await self._require_ports().flash(
-                    box,
-                    sketch.path,
-                    sketch.name,
-                    self.discovery.libraries_path,
-                    on_progress,
-                    suppress_passthrough_resume=suppress,
-                )
-            # Whatever the app just put on that board is now what's on it — the one
-            # place every deliberate flash passes through, so the baseline belief
-            # can't be left claiming a utility sketch a session flash overwrote.
-            #
-            # A flash that is NOT the session sequence is one the operator asked for
-            # by hand, and it is pinned (`utility.py`): this port is about to fall
-            # IDLE, the idle hook is about to ask for a restore, and without the pin
-            # that restore overwrote the task within seconds of it landing.
-            if self.utility is not None:
-                self.utility.note_flashed(box, sketch.path, pin=not suppress)
-                await self.utility.publish()
+        A session or Debug flash is news to the baseline: a Debug flash is one
+        the operator asked for by hand, and it is pinned (`utility.py`). This
+        port is about to fall IDLE, the idle hook is about to ask for a
+        restore, and without the pin that restore overwrote the task within
+        seconds of it landing. A restore reports its own outcome.
+        """
+        if origin != "baseline" and self.utility is not None:
+            self.utility.note_flashed(box, sketch_path, pin=origin == "debug")
+            asyncio.create_task(self.utility.publish())
         # Flashing is precisely what changes a board's interpreter baud, so the
         # cached detection result dies with the old firmware.
         hardware_id = self.settings.hardware_id_for(box)
         if hardware_id is not None:
             self._board_bauds.pop(hardware_id, None)
-        return {"state": state.value, "resumedPassthrough": resumed}
+
+    async def _flash_enqueue(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        """Queue a Debug Mode flash of one sketch onto these boxes."""
+        flashes = self._require_flashes()
+        boxes = _boxes_arg(args)
+        if not boxes:
+            raise CommandError(ErrCode.BAD_MESSAGE, "`boxes` must name at least one box")
+        path = args.get("sketchPath")
+        baud = args.get("baud")
+        if baud is not None and (not isinstance(baud, int) or isinstance(baud, bool)):
+            raise CommandError(ErrCode.BAD_MESSAGE, "`baud` must be an integer")
+        # Only a discovered sketch is flashable (`TASKS.md#sketch-library`) —
+        # enforced here, not just by the picker only listing discovered
+        # sketches, and again when the job runs.
+        if not any(s.path == path for s in self.discovery.sketches):
+            raise CommandError(
+                ErrCode.SKETCH_UNKNOWN,
+                "That sketch isn't in the sketch library — "
+                "refresh the list and pick again.",
+                {"sketchPath": path},
+            )
+        # With a baud the box ends in a console, whichever state it started
+        # in: someone who has just put a sketch on a board wants to talk to it,
+        # and a flash from IDLE would otherwise land with nothing on screen.
+        flashes.submit(
+            FlashJob(box=box, origin="debug", prepare=lambda path=path: path, sketch_path=path, baud=baud)
+            for box in boxes
+        )
+        # Before the reply: a client reading its store on the reply finds its
+        # own jobs there, not the last flash's outcome.
+        await flashes.publish()
+        return flashes.status()
+
+    async def _flash_cancel(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        flashes = self._require_flashes()
+        flashes.cancel(origins=("session", "debug"), boxes=_boxes_arg(args))
+        await flashes.publish()
+        return flashes.status()
+
+    async def _flash_status(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        return self._require_flashes().status()
 
     async def _port_reset(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         box = _box_arg(args)
@@ -1751,6 +1776,17 @@ class Application:
     async def _sessions_active(self, _server, _conn, _args, _corr) -> dict[str, Any]:  # noqa: ANN001
         return await self._require_lifecycle().active()
 
+    async def _sessions_flash(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
+        session_id = _str_arg(args, "sessionId")
+        boxes = _boxes_arg(args)
+        if not boxes:
+            raise CommandError(ErrCode.BAD_MESSAGE, "`boxes` must name at least one box")
+        with _lifecycle_errors():
+            await self._require_lifecycle().flash(session_id, boxes)
+        flashes = self._require_flashes()
+        await flashes.publish()
+        return flashes.status()
+
     async def _sessions_start_all(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
         session_id = _str_arg(args, "sessionId")
         with _lifecycle_errors():
@@ -2140,6 +2176,18 @@ def _box_arg(args: dict[str, Any]) -> int:
     return box
 
 
+def _boxes_arg(args: dict[str, Any]) -> list[int] | None:
+    """An optional `boxes` list, in the order sent, without repeats."""
+    boxes = args.get("boxes")
+    if boxes is None:
+        return None
+    if not isinstance(boxes, list) or any(
+        not isinstance(b, int) or isinstance(b, bool) or not 1 <= b <= BOX_COUNT for b in boxes
+    ):
+        raise CommandError(ErrCode.BAD_MESSAGE, f"`boxes` must be a list of box numbers 1–{BOX_COUNT}")
+    return list(dict.fromkeys(boxes))
+
+
 class _mapped_errors:
     """Translate hardware-layer exceptions into typed protocol errors.
 
@@ -2169,12 +2217,6 @@ class _mapped_errors:
                 ErrCode.ILLEGAL_TRANSITION,
                 str(exc),
                 {"box": self.box, "from": exc.current.value, "to": exc.requested.value},
-            ) from exc
-        if isinstance(exc, FlashFailed):
-            raise CommandError(
-                ErrCode.FLASH_FAILED,
-                exc.message,
-                {"box": self.box, "phase": exc.phase, "output": exc.detail},
             ) from exc
         if isinstance(exc, OSError):
             raise CommandError(ErrCode.PORT_OPEN_FAILED, str(exc), {"box": self.box}) from exc

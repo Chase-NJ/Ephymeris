@@ -119,15 +119,12 @@ export function NodeDetail({
   // own END_SESSION strobe arrives, or the console stops being a console.
   const running = useDebugRunning(box);
 
-  // What the board is actually carrying
-  // (`ARCHITECTURE.md#hardware-utility-baseline`): the
-  // baseline keeps every idle bound box on the configured utility sketch, so
-  // a box the sidecar reports `ready` has that sketch on it *now* — no manual
-  // flash needed for its controls and telemetry to be live. The sidecar's
-  // belief outranks the client-tracked flash, which goes stale the moment a
-  // background restore re-flashes over the user's sketch; conversely, a user
-  // flash of a different sketch moves the box off `ready`, so the tracked
-  // flash correctly takes over until the baseline reclaims the port.
+  // What the board is actually carrying, as the sidecar recorded its last
+  // flash (`ARCHITECTURE.md#what-a-board-carries`): a restore, a session flash
+  // and a Debug flash all land there. The baseline keeps every idle bound box
+  // on the utility sketch, so a box it reports `ready` has that sketch on it
+  // *now* — no manual flash needed for its controls and telemetry to be live —
+  // and is labelled as the baseline.
   const utilityBox = utility.boxes.find((b) => b.box === box);
   const atBaseline =
     utility.configured && utility.sketchPath !== null && utilityBox?.state === "ready";
@@ -136,8 +133,8 @@ export function NodeDetail({
     : flashed;
   // A sketch the operator flashed here by hand, which the baseline is leaving
   // alone until they say otherwise
-  // (`ARCHITECTURE.md#three-rules-it-never-breaks`). Sidecar-reported, so
-  // it survives a reload that forgets the client-tracked `flashed`.
+  // (`ARCHITECTURE.md#three-rules-it-never-breaks`). Sidecar-reported, like
+  // `flashed`, so both survive a reload.
   const pinned = utilityBox?.state === "pinned";
 
   const binding = settings.boxes.find((b) => b.box === box);
@@ -471,7 +468,7 @@ export function NodeDetail({
             label="Sketch"
             value={
               effectiveSketch
-                ? atBaseline && !flashed
+                ? atBaseline
                   ? `${effectiveSketch.name} (baseline)`
                   : effectiveSketch.name
                 : baselineWord(utilityBox?.state)

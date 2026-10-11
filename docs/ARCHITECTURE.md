@@ -40,6 +40,8 @@ are [DATA.md](DATA.md); Intan recording is [RECORDING.md](RECORDING.md).
   - [Exclusivity](#exclusivity)
 - [Flashing reset and passthrough](#flashing-reset-and-passthrough)
   - [Flashing](#flashing)
+  - [The flash queue](#the-flash-queue)
+  - [What a board carries](#what-a-board-carries)
   - [Reset](#reset)
   - [Passthrough read](#passthrough-read)
   - [Passthrough send](#passthrough-send)
@@ -277,8 +279,8 @@ anything else, a bad token, or `AUTH_TIMEOUT_S` (`server.py`) of silence closes 
 
 After `auth`, `Application._replay_state` (`app.py`) sends current state **to that client alone**: one
 `port.state` per box (with `prev` equal to `state`, reason `"initial state"`), then `boards.presence`,
-`sketches.updated`, `tasks.updated`, `cohorts.updated`, `prefixes.updated`, and `utility.updated`,
-`backup.status` and `intan.status` once those services exist. Events are otherwise sent only on change, so
+`sketches.updated`, `tasks.updated`, `cohorts.updated`, `prefixes.updated`, and `flash.queue`,
+`utility.updated`, `backup.status` and `intan.status` once those services exist. Events are otherwise sent only on change, so
 without it a client connecting in a quiet period would have to guess. A replay callback that raises is
 logged and swallowed rather than dropping the connection.
 
@@ -296,20 +298,21 @@ one-way settings sync.
 ### Envelope
 
 ```jsonc
-{ "v": 1, "id": "c7", "cmd": "port.flash", "args": { "box": 1, "sketchPath": "…" } }       // command
+{ "v": 1, "id": "c7", "cmd": "port.reset", "args": { "box": 1 } }                          // command
 { "v": 1, "corr": "c7", "ok": true,  "result": { … } }                                     // reply
 { "v": 1, "corr": "c7", "ok": false, "error": { "code": "…", "message": "…", "detail": null } }
 { "v": 1, "evt": "port.output", "ts": 1721600000.123, "data": { … } }                      // event
 ```
 
 JSON, UTF-8. `v` is the protocol version, `id` a client correlation id unique per connection, `corr`
-echoes it, `ts` is server Unix time in float seconds. Every command gets exactly one reply; long-running
-ones also emit events carrying `corr` (`flash.progress`), so progress is attributable to its request.
+echoes it, `ts` is server Unix time in float seconds. Every command gets exactly one reply. Work that
+outlasts any reply timeout (a flash, a baseline restore) is queued by its command, which replies at once,
+and reports through replayed events instead (`flash.queue`, `utility.updated`).
 
 ### Reply timeouts
 
 `client.ts` applies `DEFAULT_CALL_TIMEOUT_MS`, with longer values in `CALL_TIMEOUT_OVERRIDES` for work that
-runs long (flashing, library refresh, backup sync, analytics indexing, recovery, ending a session or group,
+runs long (waiting out a rig definition write, library refresh, backup sync, analytics indexing, recovery, ending a session or group,
 starting a recording, configuring RHX). **A client timeout does not cancel sidecar work**; the resulting
 `port.state` is what the UI shows.
 
@@ -491,8 +494,8 @@ stateDiagram-v2
     [*] --> IDLE
     IDLE --> PASSTHROUGH: port.passthrough.open
     PASSTHROUGH --> IDLE: port.passthrough.close
-    IDLE --> FLASHING: port.flash
-    PASSTHROUGH --> FLASHING: port.flash, console released
+    IDLE --> FLASHING: flash queue
+    PASSTHROUGH --> FLASHING: flash queue, console released
     IDLE --> RESETTING: port.reset
     PASSTHROUGH --> RESETTING: port.reset, console released
     FLASHING --> IDLE: done, no console or resume suppressed
@@ -523,12 +526,11 @@ transition to the current state is a silent no-op.
 - Entering `FLASHING` or `RESETTING` **force-releases `PASSTHROUGH`** first, closing the port cleanly.
 - **Auto-resume:** a port in `PASSTHROUGH` immediately before a flash or reset returns to it afterwards,
   so the user sees the new sketch's output without another click.
-- **`port.flash` takes `suppressPassthroughResume`** (default `false`). The session flash sequence sets it
-  so every box lands in `IDLE` for the runner; Debug Mode never does — which is also how the utility
-  baseline recognises an operator's flash and **pins** it ([Three rules it never breaks](#three-rules-it-never-breaks)).
-- A Debug Mode flash from `IDLE` lands in `IDLE`, and the **client** then opens passthrough, so the rules
-  above hold and the operator gets a console. The open toggles DTR, so a behavior sketch reboots and
-  prints `READY` into the console it will be started from.
+- **A session or baseline flash suppresses the resume**, so every box lands in `IDLE` for the runner or
+  the baseline ([The flash queue](#the-flash-queue)). Only a Debug Mode flash resumes a console.
+- A Debug Mode flash from `IDLE` lands in `IDLE`, and the queue then opens passthrough at the baud the
+  dialog sent, so the rules above hold and the operator gets a console. The open toggles DTR, so a
+  behavior sketch reboots and prints `READY` into the console it will be started from.
 - **Leaving a state that holds the port closes it before the new state is announced.** Teardown stops
   the port's reader thread and joins it while holding the handler lock, so **a reader thread never
   blocks on that lock**: it takes it in `READ_TIMEOUT_S` slices and gives up once told to stop
@@ -543,9 +545,10 @@ transition to the current state is a silent no-op.
 
 `arduino-cli` compile then upload, FQBN `arduino:avr:mega` (`ports/manager.py`). The sketch must be in the
 current discovery result — the bundled library plus this rig's saved tasks
-([TASKS.md](TASKS.md#sketch-library)) — and `port.flash` enforces that with `SKETCH_UNKNOWN`, not just the
-picker. Progress streams as `flash.progress`. A compile or upload failure moves the port to `ERROR` with
-the parsed message; it never falls back silently to `IDLE`.
+([TASKS.md](TASKS.md#sketch-library)) — and `flash.enqueue` enforces that with `SKETCH_UNKNOWN`, not just
+the picker, and the queue checks again when the flash runs. Progress streams as `flash.progress`, tagged by
+box. A compile or upload failure moves the port to `ERROR` with the parsed message; it never falls back
+silently to `IDLE`.
 
 `boards/__init__.py`'s `create_board_tool` picks a `BoardTool` (`boards/tool.py`) backend:
 `boards/grpc_tool.py`, one long-lived `arduino-cli daemon` over gRPC with live streaming and no spawn per
@@ -564,6 +567,43 @@ vendored in `sidecar/proto/` by `sidecar/scripts/gen_grpc.py`; re-vendor at the 
 > backend prints its real argv (`_command_echo`); the daemon prints its RPC, not dressed as a shell command
 > because no such process runs. A hand-composed echo once omitted `--libraries` and sent an investigation
 > after a missing path instead of the malformed one. Echo from the arguments, or don't echo.
+
+### The flash queue
+
+Every flash goes through one queue in the sidecar (`FlashQueue`, `ports/flashing.py`), the only caller of
+`PortManager.flash`. **One box flashes at a time, rig-wide**, whoever asked: two `arduino-cli` builds at
+once are slower than one after the other on the lab machines, and a half-flashed pair is worse than a
+whole one. The queue runs the first job, in the order queued, whose port is free, so a busy box never holds
+up the rest. Each job holds the rig definition's read side from choosing its sketch until what the board
+carries is recorded ([TASKS.md](TASKS.md#the-rig-definition)).
+
+| Origin | Asked for by | Sketch | Port | Lands in | Pinned |
+|---|---|---|---|---|---|
+| `session` | `sessions.flash`, the placement walk | read from the held mapping **when the job runs** | waits for `IDLE` or `PASSTHROUGH` | `IDLE` | no |
+| `debug` | `flash.enqueue`, Debug Mode | the one asked for | waits for `IDLE` or `PASSTHROUGH` | a console, at the baud sent | yes |
+| `baseline` | the utility baseline's `ensure` | the box utility | never waits: decides at its turn | `IDLE` | — |
+
+A waiting job gives up after `PORT_WAIT_S` (three minutes, `ports/flashing.py`); a port in `ERROR` or a box
+with no board fails it at once. One job failing never stops the rest. `flash.cancel` drops queued session
+and Debug jobs, and a new `sessions.confirmMapping`, an end or an abandon drops the session's; a flash
+already under way always finishes, because stopping an upload part-way leaves a board nobody can name.
+
+What the queue is doing is `flash.queue`, a snapshot of every box's last job and what each board
+[carries](#what-a-board-carries), pushed on every change and **replayed on connect**. The commands that
+queue reply at once, so leaving a page, closing a dialog or reloading loses nothing: the Boxes step and
+Debug Mode's flash dialogs only ask and render.
+
+> [!CAUTION]
+> **Nothing else may call `PortManager.flash`.** A second caller is a second queue: two compiles at once,
+> and a baseline restore that checked `IDLE` before waiting behind another flash. A queued restore decides
+> whether to flash in its `prepare`, synchronously, with **no `await` between that decision and the flash
+> taking the port**, so "only an `IDLE` port" holds at the moment it matters
+> ([Three rules it never breaks](#three-rules-it-never-breaks)).
+
+> [!CAUTION]
+> **A session job reads its sketch from the mapping when it runs, never when it was queued.** A mapping
+> confirmed again in between would otherwise get the old mapping's sketch, and the box would carry a task
+> no row of the new mapping names.
 
 ### What a board carries
 
@@ -652,32 +692,34 @@ box's restore state, which is where a failed restore stays visible.*
 | A session lets go | `sessions.end`, `sessions.endGroup`, `sessions.abandon` (`SessionLifecycle`, `sessions/lifecycle.py`). `endGroup` restores at once because the operator's next act is walking the rig, which wants the lights |
 | On demand | `utility.ensure`: the Rig tab's **Reflash boxes** (the only caller passing `force`), the placement walk, Debug Mode's **Return to baseline** |
 
-What a trigger does to one box (`UtilityBaseline.ensure` and `_restore`). A `utility.ensure` that arrives
-over the wire first unpins the boxes it names; `force` skips the three "not forced" checks:
+What a trigger does to one box (`UtilityBaseline.ensure` queues a baseline job on the
+[flash queue](#the-flash-queue); `_prepare_restore` decides at the job's turn). A `utility.ensure` that
+arrives over the wire first unpins the boxes it names; `force` skips the three "not forced" checks:
 
 ```mermaid
 flowchart TD
     trigger["A trigger names the box"] --> gate{"Rig held, or no<br/>box utility in the library?"}
     gate -->|yes| nothing["Nothing queued"]
-    gate -->|no| queue["Queued: lowest box first,<br/>one flash at a time"]
+    gate -->|no| queue["A baseline job on the flash queue,<br/>in box order; at its turn:"]
     queue --> failedBefore{"Failed before,<br/>not forced?"}
     failedBefore -->|yes| stays["Stays failed"]
     failedBefore -->|no| bound{"Bound and detected?"}
     bound -->|no| unavailable["unavailable"]
-    bound -->|yes| idle{"Port IDLE?"}
-    idle -->|no| busy["busy: left alone"]
-    idle -->|yes| pinned{"Pinned,<br/>not forced?"}
+    bound -->|yes| pinned{"Pinned,<br/>not forced?"}
     pinned -->|yes| keep["pinned: left alone"]
-    pinned -->|no| carries{"Already carries the<br/>utility sketch, not forced?"}
+    pinned -->|no| idle{"Port IDLE?"}
+    idle -->|no| busy["busy: left alone"]
+    idle -->|yes| carries{"Already carries the<br/>utility sketch, not forced?"}
     carries -->|yes| ready["ready"]
-    carries -->|no| flash["port.flash the utility sketch,<br/>landing in IDLE"]
+    carries -->|no| flash["flash the utility sketch,<br/>landing in IDLE"]
     flash -->|ok| ready
     flash -->|error| failed["failed: reported,<br/>ERROR acknowledged automatically"]
 ```
 
-Restores run **one box at a time**, like the session flash sequence, so a cold start is up to six
-sequential flashes. If that proves annoying, defer the cold restore until a box is needed; don't
-parallelise it, which would fight the one-owner rule.
+Restores run **one box at a time**, on the same [flash queue](#the-flash-queue) as every other flash, so a
+cold start is up to six sequential flashes. If that proves annoying, defer the cold restore until a box is
+needed; don't parallelise it, which would fight the one-owner rule. A pinned box reads `pinned` even with
+its console open, because the Debug flash that pinned it ends in that console.
 
 ### Three rules it never breaks
 
@@ -693,10 +735,11 @@ parallelise it, which would fight the one-owner rule.
 > stops returning to baseline; if a release lands early, a restore erases a task mid-setup.
 
 > [!CAUTION]
-> **A deliberate flash is pinned.** A Debug Mode `port.flash` lands in `IDLE`, which is the restore
-> trigger; without the pin the baseline re-flashed itself over the operator's task within seconds,
-> silently, and the box could not be started. The two kinds of flash are told apart by
-> `suppressPassthroughResume` (`note_flashed(..., pin=not suppress)` in `app.py`). A pinned box reports
+> **A deliberate flash is pinned.** A Debug Mode flash passes through `IDLE`, which is the restore
+> trigger; without the pin the baseline re-flashes itself over the operator's task within seconds,
+> silently, and the box cannot be started. The kinds of flash are told apart by the job's origin on the
+> [flash queue](#the-flash-queue) (`note_flashed(..., pin=origin == "debug")` in `app.py`'s `_on_flashed`,
+> called before the idle transition is handled). A pinned box reports
 > `pinned` and is skipped by **every automatic trigger**; only something a person did releases it: any
 > `utility.ensure` naming the box, a session releasing the rig, the board vanishing, or flashing the
 > utility sketch by hand. `force` overrides it. `test_utility.py` wires
@@ -878,9 +921,9 @@ was. `lib/sessions/setupResume.ts` remembers two things:
   waveform mark for a recording). From inside the flow the row still goes to `/`, which is the way to the
   Dashboard itself while a set-up is pending.
 - **drafts** — each step's form, keyed by step and (past Configure) session and group, so a draft can never
-  seed another session's form. A Boxes draft is dropped if the group's animals changed meanwhile; a walk left
-  mid-placement comes back to the review with the mapping re-confirmable (the confirm is idempotent, and the
-  boxes re-flash). A Boxes draft holds each box's sketch and the operator's own overrides, never the merged
+  seed another session's form. A Boxes draft is dropped if the group's animals changed meanwhile. A walk left
+  mid-placement picks up again at the first box no flash was asked for, read from the
+  [flash queue](#the-flash-queue), whose flashes carried on meanwhile. A Boxes draft holds each box's sketch and the operator's own overrides, never the merged
   config, so a default changed during the visit is followed on return ([TASKS.md](TASKS.md#three-layer-merge)).
 
 The memory is dropped on reaching Mission Control and by a deliberate Cancel or End session, and the offer is
@@ -890,13 +933,15 @@ way back in, and the dock's own Resume uses the remembered step when it is this 
 
 ### Flash sequence
 
-Closing an enclosure queues that box; boxes flash **one at a time, in the order closed**, through
-`port.flash` with `suppressPassthroughResume: true`, so each lands in `IDLE` for the runner. The mapping is
-confirmed first because the hold is what stops a freshly flashed, idle box being restored to baseline. A
-queued flash waits up to `PORT_WAIT_MS` (`routes/SessionMapping.tsx`) for its port. A failed flash leaves
-its box in `ERROR`; the acknowledgement is offered on that box's card, and flashing stays disabled while
-any mapped box is faulted. The sidecar does not trust this sequence to have run: a box is started only if
-its board [carries](#what-a-board-carries) the mapped sketch.
+Closing an enclosure asks `sessions.flash` for that box; the sidecar's [flash queue](#the-flash-queue)
+flashes them **one at a time, in the order closed**, each landing in `IDLE` for the runner, and reads each
+box's sketch from the mapping when its turn comes. The mapping is confirmed first because the hold is what
+stops a freshly flashed, idle box being restored to baseline, and because `sessions.flash` refuses a session
+that does not hold the rig. The cards on the Boxes step render the queue's `session` jobs, so leaving the
+step or reloading loses nothing. A failed flash leaves its box in `ERROR`; the acknowledgement is offered on
+that box's card, with the sidecar's reason, and flashing stays disabled while any mapped box is faulted. The
+sidecar does not trust this sequence to have run: a box is started only if its board
+[carries](#what-a-board-carries) the mapped sketch.
 
 ### Recording step
 

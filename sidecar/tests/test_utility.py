@@ -9,12 +9,14 @@ A mock port manager would let every one of those through.
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 
 import pytest
 
 from ephymeris_sidecar.boards.tool import BoardTool, DetectedBoard, FlashFailed
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.ports import manager as manager_module
+from ephymeris_sidecar.ports.flashing import FlashQueue
 from ephymeris_sidecar.ports.manager import FQBN, PortManager
 from ephymeris_sidecar.ports.states import PortState
 from ephymeris_sidecar.settings import SidecarSettings
@@ -140,7 +142,7 @@ async def _noop_presence(_boards):  # noqa: ANN001
 def make_baseline(
     profile: TaskProfile | None = UTILITY_PROFILE,
     sketch_path: str | None = UTILITY_PATH,
-    **extra,
+    reading=nullcontext,  # noqa: ANN001
 ) -> tuple[UtilityBaseline, PortManager, FakeTool, list[dict]]:
     tool = FakeTool()
     manager = PortManager(
@@ -164,6 +166,13 @@ def make_baseline(
     async def broadcast(message: dict) -> None:
         events.append(message)
 
+    flashes = FlashQueue(
+        loop=asyncio.get_event_loop(),
+        ports=manager,
+        discovery=FakeDiscovery,
+        broadcast=broadcast,
+        reading=reading,
+    )
     baseline = UtilityBaseline(
         loop=asyncio.get_event_loop(),
         ports=manager,
@@ -173,19 +182,19 @@ def make_baseline(
         # The fakes have no folders to read an `.ino` from; name the utility
         # the way the real predicate would find it.
         is_utility=lambda sketch: sketch_path is not None and sketch.path == sketch_path,
-        **extra,
+        flashes=flashes,
     )
     baseline.update_settings(settings)
     return baseline, manager, tool, events
 
 
 async def settle(baseline: UtilityBaseline) -> None:
-    """Let the background restore worker run to completion."""
+    """Let the flash queue the baseline restores through run dry."""
     for _ in range(400):
         await asyncio.sleep(0.01)
-        if baseline._worker is None and not baseline._queue:
+        if baseline._flashes.idle:
             return
-    raise AssertionError("baseline worker never finished")
+    raise AssertionError("the flash queue never finished")
 
 
 def box_state(baseline: UtilityBaseline, box: int = 1) -> dict:
@@ -214,8 +223,8 @@ async def test_restores_an_idle_box_once() -> None:
 
 async def test_a_rig_definition_write_waits_for_a_restore_then_gets_its_own() -> None:
     """A write that rebuilt the utility while it was being flashed would have
-    `rebuilt()` undone by the restore's own `believed = entry.path`: the box
-    would read ready on the old build. Holding the read side for the whole
+    `rebuilt()` undone by the restore recording what it flashed: the box would
+    read ready on the old build. The queue holding the read side for the whole
     restore makes the write wait, and its `rebuilt()` restores the box again."""
     from ephymeris_sidecar.rig.definition import _ReadWriteLock
 
@@ -294,8 +303,8 @@ async def test_a_session_flash_invalidates_the_belief() -> None:
     baseline.ensure()
     await settle(baseline)
 
-    # As `port.flash` does it: the flash records what the board carries, then
-    # the baseline hears of it.
+    # As a session flash does it: the flash records what the board carries,
+    # then the baseline hears of it.
     await manager.flash(1, TASK_PATH, "GRGL", None, lambda *a: None,
                         suppress_passthrough_resume=True)
     baseline.note_flashed(1, TASK_PATH)

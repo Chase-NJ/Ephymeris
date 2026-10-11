@@ -11,7 +11,9 @@ import {
 import type {
   ConsoleLine,
   DetectedBoard,
+  FlashBoxStatus,
   FlashedSketch,
+  FlashQueueStatus,
   HardwareStore,
   PortStatus,
   UtilityStatus,
@@ -52,7 +54,8 @@ export function useBoxOutput(box: number): ConsoleLine[] {
   return useSyncExternalStore(subscribe, () => store.getLines(box));
 }
 
-/** The sketch most recently flashed to a box this session, or null. */
+/** The sketch the sidecar last flashed to a box's board, or null when that
+ *  isn't known (`ARCHITECTURE.md#what-a-board-carries`). */
 export function useFlashedSketch(box: number): FlashedSketch | null {
   const store = useHardwareStore();
   const subscribe = useCallback(
@@ -86,6 +89,24 @@ export function useUtilityStatus(): UtilityStatus {
 }
 
 /**
+ * The rig's one flash queue (`ARCHITECTURE.md#the-flash-queue`): what each box's
+ * last flash is doing and what each board carries. Replayed on connect, so a
+ * flash keeps reporting after the component that asked for it unmounts.
+ */
+export function useFlashQueue(): FlashQueueStatus {
+  const store = useHardwareStore();
+  const subscribe = useCallback((cb: () => void) => store.subscribe("flashes", cb), [store]);
+  return useSyncExternalStore(subscribe, () => store.getFlashes());
+}
+
+/** One box's row of the flash queue. */
+export function useBoxFlash(box: number): FlashBoxStatus | null {
+  const store = useHardwareStore();
+  const subscribe = useCallback((cb: () => void) => store.subscribe("flashes", cb), [store]);
+  return useSyncExternalStore(subscribe, () => store.getBoxFlash(box));
+}
+
+/**
  * Several boxes' scrollback at once — Debug's all-boxes view, which reads every
  * targeted box's `STATUS` lines and merges their consoles. A hook per box
  * cannot be called in a loop over a changing set, so this subscribes to each
@@ -96,7 +117,7 @@ export function useBoxOutputs(boxes: readonly number[]): ReadonlyMap<number, Con
   return useKeyed(boxes, "output", (store, box) => store.getLines(box));
 }
 
-/** The client-tracked flash for several boxes — see `useBoxOutputs`. */
+/** What several boxes' boards carry — see `useBoxOutputs`. */
 export function useFlashedSketches(
   boxes: readonly number[],
 ): ReadonlyMap<number, FlashedSketch | null> {

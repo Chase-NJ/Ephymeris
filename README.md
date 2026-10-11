@@ -189,6 +189,8 @@ The guards that matter most:
 - `test_analytics_derive.py`: the metric definitions, and the payload's field names against `CODEC_VERSION`.
 - `test_taskdef.py`: the default strobe vocabulary against the names the firmware emits, in both directions; `test_strobes.py`: vocabulary edits, the archive scan, and the v13 hash re-key.
 - `test_debug_flash.py`: a Debug Mode flash survives the utility baseline, and Debug scoring matches a session's.
+- `test_flash_queue.py`: one flash at a time rig-wide, whoever asked; a queued restore never takes a port
+  that stopped being `IDLE` while it waited.
 - `test_writer.py`: kills a child mid-write to prove the `.tsv` crash guarantee.
 - `test_doc_links.py`: every `FILE.md#anchor` cited anywhere in the repo exists.
 
@@ -282,8 +284,6 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   or route Auto-Balance through the sidecar.
 - **Frontend coverage beyond the pure layer.** Stores (`lib/sessions/store.ts`, `lib/hardware/store.ts`),
   `useSessionFlow`'s refresh rules and every component are untested, and there is no linter.
-- **A "flash all six" in Debug Mode**: whether to have one, whether it halts at the first failure as the
-  session sequence does, and whether it is one command or six.
 - **Settings schema.** The sidecar reads only the keys it needs and ignores the rest, so adding a key is
   deliberately cheap; the set is not final. `settings.taskDefaults` has no editor, so stale entries
   (inert, but present) cannot be cleared.

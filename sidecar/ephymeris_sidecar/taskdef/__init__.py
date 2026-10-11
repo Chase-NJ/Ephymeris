@@ -3,7 +3,7 @@
 A **task definition** is what the operator authors on the Task tab — the trial
 table, how the next trial is chosen, the shaping ramp, and the numbers. The
 **generator** turns one plus this rig's wiring into a compilable sketch folder,
-which `discovery.py` then finds as an ordinary sketch. From there, `port.flash`,
+which `discovery.py` then finds as an ordinary sketch. From there, flashing,
 the session flow, `tasks.getProfile` and Analytics need no special case at all.
 
     model.py     what a definition is

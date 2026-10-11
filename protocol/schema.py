@@ -281,6 +281,65 @@ SHAPES = (
         doc="The whole baseline picture — one snapshot, shared by the command "
         "and the event, so a client never merges two shapes.",
     ),
+    # The flash queue (ARCHITECTURE.md#the-flash-queue)
+    Shape(
+        "FlashOrigin",
+        lit("baseline", "session", "debug"),
+        doc="Who asked for a flash, which fixes how it runs: `baseline` is a "
+        "utility restore (never waits, only takes an `IDLE` port), `session` "
+        "flashes the held mapping's sketch and lands in `IDLE` for the runner, "
+        "`debug` is the operator's own choice and is **pinned** against "
+        "automatic restores (`UtilityBaselineState`).",
+    ),
+    Shape(
+        "FlashJobState",
+        lit("queued", "waiting", "flashing", "done", "failed"),
+        doc="`waiting` = its turn came but its port has another owner; it waits "
+        "up to three minutes. A port in `ERROR`, or a box with no board, fails "
+        "at once.",
+    ),
+    Shape(
+        "FlashJobStatus",
+        obj(
+            f("origin", Ref("FlashOrigin")),
+            f("sketchPath", nullable(STR)),
+            f("sketchName", nullable(STR)),
+            f("state", Ref("FlashJobState")),
+            f(
+                "detail",
+                nullable(STR),
+                doc="Why it waits or failed, the parsed `arduino-cli` message "
+                "included; for a landed `debug` flash, whether its console opened.",
+            ),
+        ),
+        doc="The last flash queued for one box. It stays after it ends, until "
+        "another flash of that box replaces it or a cancel clears it.",
+    ),
+    Shape(
+        "FlashBoxStatus",
+        obj(
+            f("box", INT),
+            f(
+                "job",
+                nullable(Ref("FlashJobStatus")),
+                doc="Null when nothing was queued for it. A restore appears only "
+                "once it decides to flash; `utility.updated` covers the rest.",
+            ),
+            f(
+                "carries",
+                nullable(obj(f("path", STR), f("name", STR))),
+                doc="The sketch this process last flashed to the board now bound "
+                "here (`ARCHITECTURE.md#what-a-board-carries`). Null when that is "
+                "not known: after a restart, a failed flash, or a replug.",
+            ),
+        ),
+    ),
+    Shape(
+        "FlashQueueStatus",
+        obj(f("boxes", ListOf(Ref("FlashBoxStatus")))),
+        doc="The whole flash queue, every box — one snapshot, shared by the "
+        "commands and the `flash.queue` event.",
+    ),
     # Backup Directory mirroring (DATA.md#backup-mirroring)
     Shape(
         "BackupState",
@@ -1749,7 +1808,7 @@ SHAPES = (
     # is chosen, the ramp, and the numbers. Saving one WRITES A SKETCH — the
     # generated folder under `<data_dir>/tasks/` is an ordinary discovered
     # sketch from that moment, which is why nothing below has a flashing
-    # command of its own. `port.flash` already takes it.
+    # command of its own. `flash.enqueue` and `sessions.flash` already take it.
     Shape(
         "TaskDiagnostic",
         obj(
@@ -1769,7 +1828,7 @@ SHAPES = (
             f("id", STR),
             f("name", STR, doc="Also the generated sketch's folder name."),
             f("category", STR),
-            f("path", STR, doc="The generated sketch folder — what `port.flash` takes."),
+            f("path", STR, doc="The generated sketch folder — what a flash takes."),
             f("label", STR),
             f("editedAt", nullable(STR), doc="ISO-8601."),
             f(
@@ -2384,49 +2443,52 @@ COMMANDS = (
         "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
     ),
     Command(
-        "port.flash",
-        args=obj(
-            f("box", INT),
-            f("sketchPath", STR, doc="Must be a path in the current discovery result."),
-            f(
-                "suppressPassthroughResume",
-                BOOL,
-                optional=True,
-                doc="Default false. The session flash sequence sets it so boxes "
-                "land in `IDLE` for the runner to claim "
-                "(`ARCHITECTURE.md#session-lifecycle`). It is also what tells "
-                "the two kinds of flash apart: without it the flash counts as "
-                "a deliberate Debug Mode flash and the box is **pinned** "
-                "against automatic baseline restores (`UtilityBaselineState`).",
-            ),
-        ),
-        result=obj(
-            f("state", Ref("PortStateName")),
-            f(
-                "resumedPassthrough",
-                BOOL,
-                doc="The port was in `PASSTHROUGH` before the flash and was "
-                "reopened afterward.",
-            ),
-        ),
-        doc="Compile and upload. Entering `FLASHING` force-releases "
-        "`PASSTHROUGH` and resumes it afterward unless suppressed "
-        "(`ARCHITECTURE.md#flashing-reset-and-passthrough`). Streams "
-        "`flash.progress` events carrying this command's `corr`. "
-        "`SKETCH_UNKNOWN` for a path outside discovery — the bundled library "
-        "and saved task profiles are the only flashable sketches, enforced "
-        "here and not just by the picker. `FLASH_FAILED` carries the parsed "
-        "`arduino-cli` output. Long-running; the client raises its reply "
-        "timeout, and timing out does not cancel the flash. "
-        "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
-    ),
-    Command(
         "port.reset",
         args=obj(f("box", INT)),
         result=obj(f("state", Ref("PortStateName")), f("resumedPassthrough", BOOL)),
         doc="DTR toggle through `RESETTING`, with the same passthrough "
         "release-and-resume as a flash "
         "(`ARCHITECTURE.md#flashing-reset-and-passthrough`).",
+    ),
+    Command(
+        "flash.enqueue",
+        args=obj(
+            f("boxes", ListOf(INT), doc="Flashed in this order, one at a time."),
+            f("sketchPath", STR, doc="Must be a path in the current discovery result."),
+            f(
+                "baud",
+                INT,
+                optional=True,
+                doc="Open the console at this baud once a box lands, unless the "
+                "flash already resumed one it took. Without it the box lands in "
+                "`IDLE`.",
+            ),
+        ),
+        result=Ref("FlashQueueStatus"),
+        doc="Queue a Debug Mode flash of one sketch onto these boxes "
+        "(`ARCHITECTURE.md#the-flash-queue`). **Returns once they are queued**; "
+        "progress arrives on `flash.queue` and `flash.progress`, and survives "
+        "the dialog closing or the window reloading. Each box waits its turn "
+        "and for its port — taking a console it finds open and resuming it "
+        "after — and is **pinned** against automatic baseline restores once "
+        "flashed (`UtilityBaselineState`). One box failing does not stop the "
+        "rest. `SKETCH_UNKNOWN` for a path outside discovery — the bundled "
+        "library and saved task profiles are the only flashable sketches, "
+        "enforced here and not just by the picker.",
+    ),
+    Command(
+        "flash.cancel",
+        args=obj(f("boxes", ListOf(INT), optional=True, doc="Default: every box.")),
+        result=Ref("FlashQueueStatus"),
+        doc="Drop queued session and Debug flashes. A flash already under way "
+        "finishes: stopping an upload part-way leaves a board nobody can name. "
+        "Never touches a baseline restore.",
+    ),
+    Command(
+        "flash.status",
+        result=Ref("FlashQueueStatus"),
+        doc="The flash queue as it stands. Also replayed on connect as "
+        "`flash.queue`; this exists for a window that attaches later.",
     ),
     Command(
         "port.error.ack",
@@ -2937,6 +2999,24 @@ COMMANDS = (
         "Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).",
     ),
     Command(
+        "sessions.flash",
+        args=obj(
+            f("sessionId", STR),
+            f("boxes", ListOf(INT), doc="Queued in this order — the placement walk's."),
+        ),
+        result=Ref("FlashQueueStatus"),
+        doc="Queue the held mapping's sketches onto these boxes "
+        "(`ARCHITECTURE.md#flash-sequence`). **Returns once they are queued**; "
+        "progress arrives on `flash.queue`, so leaving the Boxes step or "
+        "reloading loses nothing. Each box's sketch is read from the mapping "
+        "when its flash runs, so a mapping confirmed again in between gets its "
+        "own sketch, and a box it no longer maps is skipped. Lands in `IDLE` "
+        "for the runner; never pinned. `SESSION_INVALID` unless this session "
+        "holds the rig and every box is in its mapping and not running. A new "
+        "`sessions.confirmMapping`, `sessions.endGroup`, `sessions.end` or "
+        "`sessions.abandon` drops what is still queued.",
+    ),
+    Command(
         "sessions.status",
         args=obj(f("sessionId", STR)),
         result=obj(
@@ -3027,7 +3107,7 @@ COMMANDS = (
     # ----------------------------------------------------------- task profiles
     #
     # NOTHING HERE FLASHES. Saving generates a sketch folder under
-    # `<data_dir>/tasks/` that `discovery` then finds, so `port.flash` takes it
+    # `<data_dir>/tasks/` that `discovery` then finds, so a flash takes it
     # by path like any other — which is what keeps the session flow,
     # `taskDefaults` and Analytics free of a special case for a profile-backed
     # run.
@@ -3513,8 +3593,16 @@ EVENTS = (
     Event(
         "flash.progress",
         Ref("FlashProgressData"),
-        doc="One line of `arduino-cli` output during `port.flash`, carrying "
-        "the causing command's `corr`.",
+        doc="One line of `arduino-cli` output from a session or Debug flash, "
+        "tagged by `box` (no `corr`: the flash outlives the command that "
+        "queued it). A baseline restore's output is logged, not sent.",
+    ),
+    Event(
+        "flash.queue",
+        Ref("FlashQueueStatus"),
+        doc="The flash queue, whenever a job is queued, waits, starts, ends or "
+        "is cancelled. Replayed on connect "
+        "(`ARCHITECTURE.md#the-flash-queue`).",
     ),
     Event(
         "sketches.updated",
@@ -3677,13 +3765,8 @@ ERRORS = (
     ),
     ErrorCode("PORT_OPEN_FAILED", "Serial open failed — board absent, port busy, or permissions."),
     ErrorCode(
-        "FLASH_FAILED",
-        "Compile or upload failed; `detail` carries the phase and the parsed "
-        "`arduino-cli` output.",
-    ),
-    ErrorCode(
         "SKETCH_UNKNOWN",
-        "`port.flash` or `port.sendStart` named a path outside the current "
+        "`flash.enqueue` or `port.sendStart` named a path outside the current "
         "discovery result. The bundled library and saved task profiles are the "
         "only flashable sketches, enforced here and not just by the picker.",
     ),

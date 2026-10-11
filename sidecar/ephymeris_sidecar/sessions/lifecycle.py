@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable
 
 from ..intan.service import IntanNotReady
+from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
 from ..tasks import profile as task_profile
@@ -142,6 +143,7 @@ class SessionLifecycle:
         rig_reading: Callable[[], AsyncContextManager[None]],
         broadcast: Callable[[dict[str, Any]], Awaitable[None]],
         carried: Callable[[int], CarriedSketch | None],
+        flashes: FlashQueue,
     ) -> None:
         self._sessions = sessions
         self._cohorts = cohorts
@@ -153,6 +155,7 @@ class SessionLifecycle:
         self._rig_reading = rig_reading
         self._broadcast = broadcast
         self._carried = carried
+        self._flashes = flashes
         self._held: str | None = None
         self._lock = asyncio.Lock()
 
@@ -256,6 +259,9 @@ class SessionLifecycle:
                         )
                     )
 
+                # A new mapping starts clean: nothing queued for the last one
+                # may land, and its finished flashes say nothing about this one.
+                self._flashes.cancel(origins=("session",), clear=True)
                 self._runner.configure(
                     Path(session.folder_path),
                     f"{session.prefix_name}_{session.session_number}",
@@ -279,6 +285,43 @@ class SessionLifecycle:
                 if self._utility is not None:
                     self._utility.hold()
             await self.announce()
+
+    async def flash(self, session_id: str, boxes: list[int]) -> None:
+        """Queue the held mapping's sketches onto these boxes
+        (`ARCHITECTURE.md#flash-sequence`). Returns once they are queued.
+
+        Each job reads its box's sketch from the mapping when it runs, not now:
+        a mapping confirmed again before it runs gets that mapping's sketch, and
+        a box it no longer maps is skipped.
+        """
+        async with self._lock:
+            if self._held != session_id:
+                raise SessionRefused(
+                    "this session doesn't hold the rig — confirm its mapping first"
+                )
+            configs = {config.box: config for config in self._runner.box_configs()}
+            running = set(self._runner.running_boxes())
+            for box in boxes:
+                if box not in configs:
+                    raise SessionRefused(f"box {box} isn't in the confirmed mapping")
+                if box in running:
+                    raise SessionRefused(f"box {box} is running — stop it before reflashing")
+            self._flashes.submit(
+                FlashJob(
+                    box=box,
+                    origin="session",
+                    prepare=lambda box=box: self.mapped_sketch(box),
+                    sketch_path=configs[box].sketch_path,
+                )
+                for box in boxes
+            )
+
+    def mapped_sketch(self, box: int) -> str | None:
+        """The sketch the held mapping gives this box, if it may be flashed now."""
+        if self._held is None or box in self._runner.running_boxes():
+            return None
+        config = next((c for c in self._runner.box_configs() if c.box == box), None)
+        return config.sketch_path if config is not None else None
 
     async def start_all(self, session_id: str) -> Session:
         async with self._lock:
@@ -333,6 +376,7 @@ class SessionLifecycle:
         async with self._lock:
             await self._end_all_boxes(session_id)
             session = await asyncio.to_thread(self._close_group_run, session_id)
+            self._flashes.cancel(origins=("session",), clear=True)
             self._clear_runner()
             # The boxes are idle and the operator is about to walk the rig
             # again for the next group, so the baseline comes back now rather
@@ -352,6 +396,7 @@ class SessionLifecycle:
             await asyncio.to_thread(self._close_group_run, session_id)
             session = await asyncio.to_thread(self._sessions.set_status, session_id, "completed")
             if held:
+                self._flashes.cancel(origins=("session",), clear=True)
                 self._clear_runner()
                 self._held = None
             if held or self._held is None:
@@ -419,6 +464,7 @@ class SessionLifecycle:
             # A confirmed-but-unstarted mapping may already sit in the runner —
             # drop it so the next session can't inherit this one's boxes.
             if self._held == session_id:
+                self._flashes.cancel(origins=("session",), clear=True)
                 self._runner.clear()
                 self._held = None
             if self._intan is not None:

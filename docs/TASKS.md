@@ -209,7 +209,7 @@ Two more roots are written by the app and scanned after the bundle. **Order is t
 | Root | Holds | Effect |
 |---|---|---|
 | `<data_dir>/rig/sketches/` | Bundled sketches rebuilt against this rig's wiring ([Rebuilt bundled sketches](#rebuilt-bundled-sketches)) | **Replaces** the bundled entry with the same category and name, keeping `source: "bundled"`. A rebuild is the same sketch with the right pins; offering both would make flashing a coin flip. A folder matching nothing in the bundle is reported, not offered. |
-| `<data_dir>/tasks/` | Sketch folders generated from saved task definitions | **Appends**, as `source: "rig"`. A saved task *is* a discovered sketch, so `port.flash`, the session flow, `tasks.getProfile`, `settings.taskDefaults` and Analytics need no special case. A name colliding with a bundled sketch is reported and dropped (saving already refuses it). |
+| `<data_dir>/tasks/` | Sketch folders generated from saved task definitions | **Appends**, as `source: "rig"`. A saved task *is* a discovered sketch, so flashing, the session flow, `tasks.getProfile`, `settings.taskDefaults` and Analytics need no special case. A name colliding with a bundled sketch is reported and dropped (saving already refuses it). |
 
 ### Folder rules
 

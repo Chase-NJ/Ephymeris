@@ -25,8 +25,10 @@ export const CMD = {
   PORT_PASSTHROUGH_CLOSE: "port.passthrough.close",
   PORT_SEND: "port.send",
   PORT_SEND_START: "port.sendStart",
-  PORT_FLASH: "port.flash",
   PORT_RESET: "port.reset",
+  FLASH_ENQUEUE: "flash.enqueue",
+  FLASH_CANCEL: "flash.cancel",
+  FLASH_STATUS: "flash.status",
   PORT_ERROR_ACK: "port.error.ack",
   PORT_START_SESSION: "port.startSession",
   PORT_STOP_SESSION: "port.stopSession",
@@ -72,6 +74,7 @@ export const CMD = {
   SESSIONS_CREATE: "sessions.create",
   SESSIONS_ABANDON: "sessions.abandon",
   SESSIONS_CONFIRM_MAPPING: "sessions.confirmMapping",
+  SESSIONS_FLASH: "sessions.flash",
   SESSIONS_STATUS: "sessions.status",
   SESSIONS_START_ALL: "sessions.startAll",
   SESSIONS_END_GROUP: "sessions.endGroup",
@@ -134,6 +137,7 @@ export const EVT = {
   PORT_TELEMETRY: "port.telemetry",
   BOARDS_PRESENCE: "boards.presence",
   FLASH_PROGRESS: "flash.progress",
+  FLASH_QUEUE: "flash.queue",
   SKETCHES_UPDATED: "sketches.updated",
   COHORTS_UPDATED: "cohorts.updated",
   PREFIXES_UPDATED: "prefixes.updated",
@@ -166,7 +170,6 @@ export const ERR = {
   SEND_NOT_PASSTHROUGH: "SEND_NOT_PASSTHROUGH",
   PORT_NOT_BOUND: "PORT_NOT_BOUND",
   PORT_OPEN_FAILED: "PORT_OPEN_FAILED",
-  FLASH_FAILED: "FLASH_FAILED",
   SKETCH_UNKNOWN: "SKETCH_UNKNOWN",
   COHORT_NOT_FOUND: "COHORT_NOT_FOUND",
   COHORT_NAME_TAKEN: "COHORT_NAME_TAKEN",
@@ -390,6 +393,59 @@ export interface UtilityStatus {
    */
   message: string | null;
   boxes: UtilityBoxState[];
+}
+
+/**
+ * Who asked for a flash, which fixes how it runs: `baseline` is a utility restore (never waits,
+ * only takes an `IDLE` port), `session` flashes the held mapping's sketch and lands in `IDLE` for
+ * the runner, `debug` is the operator's own choice and is **pinned** against automatic restores
+ * (`UtilityBaselineState`).
+ */
+export type FlashOrigin = "baseline" | "session" | "debug";
+
+/**
+ * `waiting` = its turn came but its port has another owner; it waits up to three minutes. A port
+ * in `ERROR`, or a box with no board, fails at once.
+ */
+export type FlashJobState = "queued" | "waiting" | "flashing" | "done" | "failed";
+
+/**
+ * The last flash queued for one box. It stays after it ends, until another flash of that box
+ * replaces it or a cancel clears it.
+ */
+export interface FlashJobStatus {
+  origin: FlashOrigin;
+  sketchPath: string | null;
+  sketchName: string | null;
+  state: FlashJobState;
+  /**
+   * Why it waits or failed, the parsed `arduino-cli` message included; for a landed `debug`
+   * flash, whether its console opened.
+   */
+  detail: string | null;
+}
+
+export interface FlashBoxStatus {
+  box: number;
+  /**
+   * Null when nothing was queued for it. A restore appears only once it decides to flash;
+   * `utility.updated` covers the rest.
+   */
+  job: FlashJobStatus | null;
+  /**
+   * The sketch this process last flashed to the board now bound here
+   * (`ARCHITECTURE.md#what-a-board-carries`). Null when that is not known: after a restart, a
+   * failed flash, or a replug.
+   */
+  carries: { path: string; name: string } | null;
+}
+
+/**
+ * The whole flash queue, every box — one snapshot, shared by the commands and the `flash.queue`
+ * event.
+ */
+export interface FlashQueueStatus {
+  boxes: FlashBoxStatus[];
 }
 
 /**
@@ -1682,7 +1738,7 @@ export interface TaskEntry {
   /** Also the generated sketch's folder name. */
   name: string;
   category: string;
-  /** The generated sketch folder — what `port.flash` takes. */
+  /** The generated sketch folder — what a flash takes. */
   path: string;
   label: string;
   /** ISO-8601. */
@@ -2153,8 +2209,10 @@ export interface CommandArgsMap {
   "port.passthrough.close": { box: number };
   "port.send": { box: number; text: string; lineEnding?: "none" | "lf" | "cr" | "crlf" };
   "port.sendStart": { box: number; sketchPath: string; config?: Record<string, unknown> };
-  "port.flash": { box: number; sketchPath: string; suppressPassthroughResume?: boolean };
   "port.reset": { box: number };
+  "flash.enqueue": { boxes: number[]; sketchPath: string; baud?: number };
+  "flash.cancel": { boxes?: number[] };
+  "flash.status": Record<string, never>;
   "port.error.ack": { box: number };
   "port.startSession": { box: number };
   "port.stopSession": { box: number };
@@ -2190,6 +2248,7 @@ export interface CommandArgsMap {
   "sessions.create": { cohortId: string; prefixId: string; sessionNumber: string; durationMinutes?: number; recording?: boolean };
   "sessions.abandon": { sessionId: string };
   "sessions.confirmMapping": { sessionId: string; groupId: string; boxes: SessionBoxMapping[] };
+  "sessions.flash": { sessionId: string; boxes: number[] };
   "sessions.status": { sessionId: string };
   "sessions.startAll": { sessionId: string };
   "sessions.endGroup": { sessionId: string };
@@ -2240,8 +2299,10 @@ export interface CommandResultMap {
   "port.passthrough.close": { state: PortStateName };
   "port.send": { bytesWritten: number };
   "port.sendStart": { command: string; bytesWritten: number };
-  "port.flash": { state: PortStateName; resumedPassthrough: boolean };
   "port.reset": { state: PortStateName; resumedPassthrough: boolean };
+  "flash.enqueue": FlashQueueStatus;
+  "flash.cancel": FlashQueueStatus;
+  "flash.status": FlashQueueStatus;
   "port.error.ack": { state: PortStateName };
   "port.startSession": { state: PortStateName };
   "port.stopSession": { state: PortStateName };
@@ -2277,6 +2338,7 @@ export interface CommandResultMap {
   "sessions.create": { session: Session };
   "sessions.abandon": { session: Session };
   "sessions.confirmMapping": { ok: boolean };
+  "sessions.flash": FlashQueueStatus;
   "sessions.status": { session: Session; groupId: string | null; boxes: SessionBox[] };
   "sessions.startAll": { session: Session };
   "sessions.endGroup": { session: Session };
@@ -2326,6 +2388,7 @@ export interface EventDataMap {
   "port.telemetry": PortTelemetry;
   "boards.presence": BoardsPresenceData;
   "flash.progress": FlashProgressData;
+  "flash.queue": FlashQueueStatus;
   "sketches.updated": SketchDiscovery;
   "cohorts.updated": CohortsUpdatedData;
   "prefixes.updated": PrefixesUpdatedData;

@@ -37,8 +37,10 @@ class Cmd:
     PORT_PASSTHROUGH_CLOSE: Final = "port.passthrough.close"
     PORT_SEND: Final = "port.send"
     PORT_SEND_START: Final = "port.sendStart"
-    PORT_FLASH: Final = "port.flash"
     PORT_RESET: Final = "port.reset"
+    FLASH_ENQUEUE: Final = "flash.enqueue"
+    FLASH_CANCEL: Final = "flash.cancel"
+    FLASH_STATUS: Final = "flash.status"
     PORT_ERROR_ACK: Final = "port.error.ack"
     PORT_START_SESSION: Final = "port.startSession"
     PORT_STOP_SESSION: Final = "port.stopSession"
@@ -84,6 +86,7 @@ class Cmd:
     SESSIONS_CREATE: Final = "sessions.create"
     SESSIONS_ABANDON: Final = "sessions.abandon"
     SESSIONS_CONFIRM_MAPPING: Final = "sessions.confirmMapping"
+    SESSIONS_FLASH: Final = "sessions.flash"
     SESSIONS_STATUS: Final = "sessions.status"
     SESSIONS_START_ALL: Final = "sessions.startAll"
     SESSIONS_END_GROUP: Final = "sessions.endGroup"
@@ -149,6 +152,7 @@ class Evt:
     PORT_TELEMETRY: Final = "port.telemetry"
     BOARDS_PRESENCE: Final = "boards.presence"
     FLASH_PROGRESS: Final = "flash.progress"
+    FLASH_QUEUE: Final = "flash.queue"
     SKETCHES_UPDATED: Final = "sketches.updated"
     COHORTS_UPDATED: Final = "cohorts.updated"
     PREFIXES_UPDATED: Final = "prefixes.updated"
@@ -184,7 +188,6 @@ class ErrCode:
     SEND_NOT_PASSTHROUGH: Final = "SEND_NOT_PASSTHROUGH"
     PORT_NOT_BOUND: Final = "PORT_NOT_BOUND"
     PORT_OPEN_FAILED: Final = "PORT_OPEN_FAILED"
-    FLASH_FAILED: Final = "FLASH_FAILED"
     SKETCH_UNKNOWN: Final = "SKETCH_UNKNOWN"
     COHORT_NOT_FOUND: Final = "COHORT_NOT_FOUND"
     COHORT_NAME_TAKEN: Final = "COHORT_NAME_TAKEN"
@@ -243,6 +246,11 @@ SHAPES: Final[dict[str, Any]] = {
     "UtilityBaselineState": ('lit', ('unknown', 'restoring', 'ready', 'busy', 'held', 'pinned', 'unavailable', 'failed')),
     "UtilityBoxState": ('obj', (('box', 'int', False), ('state', ('ref', 'UtilityBaselineState'), False), ('detail', ('union', ('str', 'null')), False), ('identifying', 'bool', False))),
     "UtilityStatus": ('obj', (('configured', 'bool', False), ('sketchPath', ('union', ('str', 'null')), False), ('sketchName', ('union', ('str', 'null')), False), ('canIdentify', 'bool', False), ('held', 'bool', False), ('message', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'UtilityBoxState')), False))),
+    "FlashOrigin": ('lit', ('baseline', 'session', 'debug')),
+    "FlashJobState": ('lit', ('queued', 'waiting', 'flashing', 'done', 'failed')),
+    "FlashJobStatus": ('obj', (('origin', ('ref', 'FlashOrigin'), False), ('sketchPath', ('union', ('str', 'null')), False), ('sketchName', ('union', ('str', 'null')), False), ('state', ('ref', 'FlashJobState'), False), ('detail', ('union', ('str', 'null')), False))),
+    "FlashBoxStatus": ('obj', (('box', 'int', False), ('job', ('union', (('ref', 'FlashJobStatus'), 'null')), False), ('carries', ('union', (('obj', (('path', 'str', False), ('name', 'str', False))), 'null')), False))),
+    "FlashQueueStatus": ('obj', (('boxes', ('list', ('ref', 'FlashBoxStatus')), False),)),
     "BackupState": ('lit', ('disabled', 'pending', 'ok', 'failed')),
     "BackupStatus": ('obj', (('configured', 'bool', False), ('directory', ('union', ('str', 'null')), False), ('state', ('ref', 'BackupState'), False), ('pending', 'int', False), ('tracking', 'int', False), ('mirroredFiles', 'int', False), ('lastSuccessAt', ('union', ('str', 'null')), False), ('lastError', ('union', ('str', 'null')), False), ('syncing', 'bool', False), ('intervalSeconds', 'float', False))),
     "SyncResult": ('obj', (('copied', 'int', False), ('skipped', 'int', False), ('failed', 'int', False), ('errors', ('list', 'str'), False), ('directory', 'str', False))),
@@ -375,8 +383,10 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "port.passthrough.close": ('obj', (('box', 'int', False),)),
     "port.send": ('obj', (('box', 'int', False), ('text', 'str', False), ('lineEnding', ('lit', ('none', 'lf', 'cr', 'crlf')), True))),
     "port.sendStart": ('obj', (('box', 'int', False), ('sketchPath', 'str', False), ('config', ('map', 'any'), True))),
-    "port.flash": ('obj', (('box', 'int', False), ('sketchPath', 'str', False), ('suppressPassthroughResume', 'bool', True))),
     "port.reset": ('obj', (('box', 'int', False),)),
+    "flash.enqueue": ('obj', (('boxes', ('list', 'int'), False), ('sketchPath', 'str', False), ('baud', 'int', True))),
+    "flash.cancel": ('obj', (('boxes', ('list', 'int'), True),)),
+    "flash.status": ('obj', ()),
     "port.error.ack": ('obj', (('box', 'int', False),)),
     "port.startSession": ('obj', (('box', 'int', False),)),
     "port.stopSession": ('obj', (('box', 'int', False),)),
@@ -412,6 +422,7 @@ COMMAND_ARGS: Final[dict[str, Any]] = {
     "sessions.create": ('obj', (('cohortId', 'str', False), ('prefixId', 'str', False), ('sessionNumber', 'str', False), ('durationMinutes', 'int', True), ('recording', 'bool', True))),
     "sessions.abandon": ('obj', (('sessionId', 'str', False),)),
     "sessions.confirmMapping": ('obj', (('sessionId', 'str', False), ('groupId', 'str', False), ('boxes', ('list', ('ref', 'SessionBoxMapping')), False))),
+    "sessions.flash": ('obj', (('sessionId', 'str', False), ('boxes', ('list', 'int'), False))),
     "sessions.status": ('obj', (('sessionId', 'str', False),)),
     "sessions.startAll": ('obj', (('sessionId', 'str', False),)),
     "sessions.endGroup": ('obj', (('sessionId', 'str', False),)),
@@ -461,8 +472,10 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "port.passthrough.close": ('obj', (('state', ('ref', 'PortStateName'), False),)),
     "port.send": ('obj', (('bytesWritten', 'int', False),)),
     "port.sendStart": ('obj', (('command', 'str', False), ('bytesWritten', 'int', False))),
-    "port.flash": ('obj', (('state', ('ref', 'PortStateName'), False), ('resumedPassthrough', 'bool', False))),
     "port.reset": ('obj', (('state', ('ref', 'PortStateName'), False), ('resumedPassthrough', 'bool', False))),
+    "flash.enqueue": ('ref', 'FlashQueueStatus'),
+    "flash.cancel": ('ref', 'FlashQueueStatus'),
+    "flash.status": ('ref', 'FlashQueueStatus'),
     "port.error.ack": ('obj', (('state', ('ref', 'PortStateName'), False),)),
     "port.startSession": ('obj', (('state', ('ref', 'PortStateName'), False),)),
     "port.stopSession": ('obj', (('state', ('ref', 'PortStateName'), False),)),
@@ -498,6 +511,7 @@ COMMAND_RESULTS: Final[dict[str, Any]] = {
     "sessions.create": ('obj', (('session', ('ref', 'Session'), False),)),
     "sessions.abandon": ('obj', (('session', ('ref', 'Session'), False),)),
     "sessions.confirmMapping": ('obj', (('ok', 'bool', False),)),
+    "sessions.flash": ('ref', 'FlashQueueStatus'),
     "sessions.status": ('obj', (('session', ('ref', 'Session'), False), ('groupId', ('union', ('str', 'null')), False), ('boxes', ('list', ('ref', 'SessionBox')), False))),
     "sessions.startAll": ('obj', (('session', ('ref', 'Session'), False),)),
     "sessions.endGroup": ('obj', (('session', ('ref', 'Session'), False),)),
@@ -546,6 +560,7 @@ EVENT_DATA: Final[dict[str, Any]] = {
     "port.telemetry": ('ref', 'PortTelemetry'),
     "boards.presence": ('ref', 'BoardsPresenceData'),
     "flash.progress": ('ref', 'FlashProgressData'),
+    "flash.queue": ('ref', 'FlashQueueStatus'),
     "sketches.updated": ('ref', 'SketchDiscovery'),
     "cohorts.updated": ('ref', 'CohortsUpdatedData'),
     "prefixes.updated": ('ref', 'PrefixesUpdatedData'),

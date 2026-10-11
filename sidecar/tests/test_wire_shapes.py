@@ -31,6 +31,8 @@ from ephymeris_sidecar.protocol import (
 from ephymeris_sidecar.sessions.models import GroupRun, Prefix, Session
 from ephymeris_sidecar.tasks import profile as task_profile
 
+from .test_utility import fake_serial  # noqa: F401 - the queue's flashes open ports
+
 
 # --- Validator semantics ---------------------------------------------------
 
@@ -201,6 +203,36 @@ def test_utility_baseline_payloads_match_schema() -> None:
     }
     assert validate_command_result("utility.ensure", status) == []
     assert validate_event_data("utility.updated", status) == []
+
+
+async def test_flash_queue_status_matches_schema(fake_serial) -> None:  # noqa: ANN001
+    """One snapshot for three commands and an event, run for real: a box
+    flashed, one that failed, one waiting on its port, and boxes with nothing."""
+    import asyncio
+
+    from ephymeris_sidecar.boards.tool import FlashFailed
+    from ephymeris_sidecar.ports.states import PortState
+
+    from .test_flash_queue import Rig
+
+    rig = Rig()
+    rig.queue.submit([rig.job(1, "session"), rig.job(2, "debug", baud=9600)])
+    await rig.settle()
+    rig.tool.fail = FlashFailed("compile", "compile failed")
+    rig.ports.handler(3)._state = PortState.RESETTING
+    rig.queue.submit([rig.job(2, "debug"), rig.job(3, "session")])
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if rig.row(3) and rig.row(3)["state"] == "waiting":
+            break
+
+    status = rig.queue.status()
+    assert {rig.row(b)["state"] for b in (1, 2, 3)} == {"done", "failed", "waiting"}
+    for name in ("flash.enqueue", "flash.cancel", "flash.status", "sessions.flash"):
+        assert validate_command_result(name, status) == [], name
+    assert validate_event_data("flash.queue", status) == []
+    rig.queue.cancel()
+    await rig.queue.stop()
 
 
 def test_analytics_derive_payloads_match_schema() -> None:

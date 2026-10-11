@@ -135,26 +135,6 @@ Debug Mode's **Send START**: builds the `START` line from the named sketch's Tas
 | `command` | string | The line as sent, for the console's record. |
 | `bytesWritten` | number |  |
 
-<a id="cmd-port.flash"></a>
-#### `port.flash`
-
-Compile and upload. Entering `FLASHING` force-releases `PASSTHROUGH` and resumes it afterward unless suppressed (`ARCHITECTURE.md#flashing-reset-and-passthrough`). Streams `flash.progress` events carrying this command's `corr`. `SKETCH_UNKNOWN` for a path outside discovery — the bundled library and saved task profiles are the only flashable sketches, enforced here and not just by the picker. `FLASH_FAILED` carries the parsed `arduino-cli` output. Long-running; the client raises its reply timeout, and timing out does not cancel the flash. Waits for a rig definition write in progress (`TASKS.md#the-rig-definition`).
-
-**Args**
-
-| Field | Type | Notes |
-|---|---|---|
-| `box` | number |  |
-| `sketchPath` | string | Must be a path in the current discovery result. |
-| `suppressPassthroughResume` *(optional)* | boolean | Default false. The session flash sequence sets it so boxes land in `IDLE` for the runner to claim (`ARCHITECTURE.md#session-lifecycle`). It is also what tells the two kinds of flash apart: without it the flash counts as a deliberate Debug Mode flash and the box is **pinned** against automatic baseline restores (`UtilityBaselineState`). |
-
-**Result**
-
-| Field | Type | Notes |
-|---|---|---|
-| `state` | [PortStateName](#shape-portstatename) |  |
-| `resumedPassthrough` | boolean | The port was in `PASSTHROUGH` before the flash and was reopened afterward. |
-
 <a id="cmd-port.reset"></a>
 #### `port.reset`
 
@@ -172,6 +152,41 @@ DTR toggle through `RESETTING`, with the same passthrough release-and-resume as 
 |---|---|---|
 | `state` | [PortStateName](#shape-portstatename) |  |
 | `resumedPassthrough` | boolean |  |
+
+<a id="cmd-flash.enqueue"></a>
+#### `flash.enqueue`
+
+Queue a Debug Mode flash of one sketch onto these boxes (`ARCHITECTURE.md#the-flash-queue`). **Returns once they are queued**; progress arrives on `flash.queue` and `flash.progress`, and survives the dialog closing or the window reloading. Each box waits its turn and for its port — taking a console it finds open and resuming it after — and is **pinned** against automatic baseline restores once flashed (`UtilityBaselineState`). One box failing does not stop the rest. `SKETCH_UNKNOWN` for a path outside discovery — the bundled library and saved task profiles are the only flashable sketches, enforced here and not just by the picker.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `boxes` | number[] | Flashed in this order, one at a time. |
+| `sketchPath` | string | Must be a path in the current discovery result. |
+| `baud` *(optional)* | number | Open the console at this baud once a box lands, unless the flash already resumed one it took. Without it the box lands in `IDLE`. |
+
+**Result:** [FlashQueueStatus](#shape-flashqueuestatus)
+
+<a id="cmd-flash.cancel"></a>
+#### `flash.cancel`
+
+Drop queued session and Debug flashes. A flash already under way finishes: stopping an upload part-way leaves a board nobody can name. Never touches a baseline restore.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `boxes` *(optional)* | number[] | Default: every box. |
+
+**Result:** [FlashQueueStatus](#shape-flashqueuestatus)
+
+<a id="cmd-flash.status"></a>
+#### `flash.status`
+
+The flash queue as it stands. Also replayed on connect as `flash.queue`; this exists for a window that attaches later.
+
+**Result:** [FlashQueueStatus](#shape-flashqueuestatus)
 
 <a id="cmd-port.error.ack"></a>
 #### `port.error.ack`
@@ -721,6 +736,20 @@ Load one group's box → animal → sketch mapping into the runner and build eac
 | Field | Type | Notes |
 |---|---|---|
 | `ok` | boolean |  |
+
+<a id="cmd-sessions.flash"></a>
+#### `sessions.flash`
+
+Queue the held mapping's sketches onto these boxes (`ARCHITECTURE.md#flash-sequence`). **Returns once they are queued**; progress arrives on `flash.queue`, so leaving the Boxes step or reloading loses nothing. Each box's sketch is read from the mapping when its flash runs, so a mapping confirmed again in between gets its own sketch, and a box it no longer maps is skipped. Lands in `IDLE` for the runner; never pinned. `SESSION_INVALID` unless this session holds the rig and every box is in its mapping and not running. A new `sessions.confirmMapping`, `sessions.endGroup`, `sessions.end` or `sessions.abandon` drops what is still queued.
+
+**Args**
+
+| Field | Type | Notes |
+|---|---|---|
+| `sessionId` | string |  |
+| `boxes` | number[] | Queued in this order — the placement walk's. |
+
+**Result:** [FlashQueueStatus](#shape-flashqueuestatus)
 
 <a id="cmd-sessions.status"></a>
 #### `sessions.status`
@@ -1367,9 +1396,16 @@ The out-of-band `arduino-cli board list` poll (`ARCHITECTURE.md#boxes-and-boards
 <a id="evt-flash.progress"></a>
 #### `flash.progress`
 
-One line of `arduino-cli` output during `port.flash`, carrying the causing command's `corr`.
+One line of `arduino-cli` output from a session or Debug flash, tagged by `box` (no `corr`: the flash outlives the command that queued it). A baseline restore's output is logged, not sent.
 
 **Data:** [FlashProgressData](#shape-flashprogressdata)
+
+<a id="evt-flash.queue"></a>
+#### `flash.queue`
+
+The flash queue, whenever a job is queued, waits, starts, ends or is cancelled. Replayed on connect (`ARCHITECTURE.md#the-flash-queue`).
+
+**Data:** [FlashQueueStatus](#shape-flashqueuestatus)
 
 <a id="evt-sketches.updated"></a>
 #### `sketches.updated`
@@ -1502,8 +1538,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `SEND_NOT_PASSTHROUGH` | A console write (`port.send`, `port.sendStart`) to a port not in `PASSTHROUGH`. |
 | `PORT_NOT_BOUND` | No board is bound to that box number. An unbound box still exists on the wire and reports `IDLE`. |
 | `PORT_OPEN_FAILED` | Serial open failed — board absent, port busy, or permissions. |
-| `FLASH_FAILED` | Compile or upload failed; `detail` carries the phase and the parsed `arduino-cli` output. |
-| `SKETCH_UNKNOWN` | `port.flash` or `port.sendStart` named a path outside the current discovery result. The bundled library and saved task profiles are the only flashable sketches, enforced here and not just by the picker. |
+| `SKETCH_UNKNOWN` | `flash.enqueue` or `port.sendStart` named a path outside the current discovery result. The bundled library and saved task profiles are the only flashable sketches, enforced here and not just by the picker. |
 | `COHORT_NOT_FOUND` | No cohort with that id. |
 | `COHORT_NAME_TAKEN` | Name already used by an **active** cohort. Archived cohorts don't reserve names, so this can also reject a `cohorts.restore`. |
 | `COHORT_INVALID` | A cohort validation failure (`DATA.md#cohorts-animals-and-groups`). `detail` carries per-field errors so the editor can show them inline. |
@@ -1931,6 +1966,42 @@ The Tauri-side store's schema; the store is the source of truth (`ARCHITECTURE.m
 | `constellationSlots` | map&lt;string, number&gt; | Box number (string key, JSON) → star index in the chosen constellation. Shell-only. |
 | `taskDefaults` | map&lt;string, map&lt;string, unknown&gt;&gt; | Sketch folder name → this rig's default task parameters for it, keyed by `metadataKey` — the middle layer of the three-layer merge (`TASKS.md#the-start-line`). Keyed by NAME, not path, because the name is what the session file records. Shell-only — the frontend merges these under the profile's own defaults and sends the result as each box's `config` at `sessions.confirmMapping`, so there is exactly one place a value can enter a `START` line and the sidecar never reads these. |
 
+<a id="shape-flashboxstatus"></a>
+#### FlashBoxStatus
+
+| Field | Type | Notes |
+|---|---|---|
+| `box` | number |  |
+| `job` | [FlashJobStatus](#shape-flashjobstatus) \| null | Null when nothing was queued for it. A restore appears only once it decides to flash; `utility.updated` covers the rest. |
+| `carries` | { path: string; name: string } \| null | The sketch this process last flashed to the board now bound here (`ARCHITECTURE.md#what-a-board-carries`). Null when that is not known: after a restart, a failed flash, or a replug. |
+
+<a id="shape-flashjobstate"></a>
+#### FlashJobState
+
+`waiting` = its turn came but its port has another owner; it waits up to three minutes. A port in `ERROR`, or a box with no board, fails at once.
+
+"queued" \| "waiting" \| "flashing" \| "done" \| "failed"
+
+<a id="shape-flashjobstatus"></a>
+#### FlashJobStatus
+
+The last flash queued for one box. It stays after it ends, until another flash of that box replaces it or a cancel clears it.
+
+| Field | Type | Notes |
+|---|---|---|
+| `origin` | [FlashOrigin](#shape-flashorigin) |  |
+| `sketchPath` | string \| null |  |
+| `sketchName` | string \| null |  |
+| `state` | [FlashJobState](#shape-flashjobstate) |  |
+| `detail` | string \| null | Why it waits or failed, the parsed `arduino-cli` message included; for a landed `debug` flash, whether its console opened. |
+
+<a id="shape-flashorigin"></a>
+#### FlashOrigin
+
+Who asked for a flash, which fixes how it runs: `baseline` is a utility restore (never waits, only takes an `IDLE` port), `session` flashes the held mapping's sketch and lands in `IDLE` for the runner, `debug` is the operator's own choice and is **pinned** against automatic restores (`UtilityBaselineState`).
+
+"baseline" \| "session" \| "debug"
+
 <a id="shape-flashprogressdata"></a>
 #### FlashProgressData
 
@@ -1940,6 +2011,15 @@ The Tauri-side store's schema; the store is the source of truth (`ARCHITECTURE.m
 | `phase` | "compile" \| "upload" |  |
 | `stream` | "stdout" \| "stderr" |  |
 | `text` | string |  |
+
+<a id="shape-flashqueuestatus"></a>
+#### FlashQueueStatus
+
+The whole flash queue, every box — one snapshot, shared by the commands and the `flash.queue` event.
+
+| Field | Type | Notes |
+|---|---|---|
+| `boxes` | [FlashBoxStatus](#shape-flashboxstatus)[] |  |
 
 <a id="shape-formeranimal"></a>
 #### FormerAnimal
@@ -2907,7 +2987,7 @@ A row in the profile list, and everything a task card states before the definiti
 | `id` | string |  |
 | `name` | string | Also the generated sketch's folder name. |
 | `category` | string |  |
-| `path` | string | The generated sketch folder — what `port.flash` takes. |
+| `path` | string | The generated sketch folder — what a flash takes. |
 | `label` | string |  |
 | `editedAt` | string \| null | ISO-8601. |
 | `problems` | number | How many diagnostics it currently trips. A COUNT, not the list: this reply is drawn on every route mount and would otherwise grow with the library. |

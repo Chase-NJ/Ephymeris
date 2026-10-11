@@ -174,7 +174,8 @@ arithmetic and decoding that yield a drawing or readout that looks deliberate wh
 derived state machine (`tasks/topology.ts`), its layout (`tasks/graphLayout.ts`), the strategy plane's
 axes (`analytics/view.ts`), cohort appearance, the cohort sky layout and the scope maths. The session
 and hardware stores are tested through `FakeSidecar` (`lib/ws/fakeSidecar.ts`), which lets a test
-order each reply against each event. A component test would need a DOM and a settings context to
+order each reply against each event; `ws/port.contract.test.ts` holds it to the real client's rules,
+so a store test cannot pass on a sequence the client would never produce. A component test would need a DOM and a settings context to
 assert what a screenshot shows better. There is no linter.
 
 **Sidecar: pytest, `sidecar/tests/`.** `conftest.py` sets `EPHYMERIS_WIRE_VALIDATE=1` for the whole suite,

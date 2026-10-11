@@ -5,8 +5,9 @@ The order is what makes it safe, and every step is idempotent:
 
 1. **Journal.** The plan's file list goes into `animal_moves` (`copying`)
    before anything is touched.
-2. **Copy.** Every file to its destination through `<name>.part`, fsync'd,
-   renamed into place, re-read and hash-checked. Nothing in the database
+2. **Copy.** Every file to its destination, verified (`transfer`, the
+   relocate's too): through `<name>.part`, fsync'd, renamed into place,
+   re-read and hash-checked. Nothing in the database
    changes here, so a crash leaves the source exactly as it was — the start-up
    pass deletes the copies this move made and marks it `rolled-back`.
 3. **Commit.** One transaction: the record half is re-planned against the
@@ -27,7 +28,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,13 +35,12 @@ from typing import Any, Callable
 
 from ..sessions.models import GroupRun
 from ..sessions.tidy import Merge, merged_fields
-from . import freshness
+from . import freshness, transfer
 from .db import Database
 from .move import (
     MovePlan,
     MoveRequest,
     SessionMove,
-    _digest,
     _norm,
     plan_files_json,
     plan_move,
@@ -150,25 +149,16 @@ def plan_files(plan: MovePlan) -> list[dict[str, Any]]:
 
 
 def _copy_files(plan: MovePlan, on_copied: Callable[[int, int], None] | None) -> None:
-    todo = [f for f in plan.files if f.action == "copy"]
-    for index, f in enumerate(todo):
-        src, dst = Path(f.src), Path(f.dst)
-        existing = _digest(dst)
-        if existing is not None:
-            if existing[1] != f.sha256:
-                raise OSError(f"{dst} appeared during the move and differs from the file being moved")
-            continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        part = dst.with_name(dst.name + ".part")
-        shutil.copy2(src, part)
-        with part.open("rb+") as handle:
-            os.fsync(handle.fileno())
-        os.replace(part, dst)
-        copied = _digest(dst)
-        if copied is None or copied[1] != f.sha256:
-            raise OSError(f"{dst} did not verify after copying")
-        if on_copied is not None:
-            on_copied(index + 1, len(todo))
+    transfer.copy(_copies(plan_files(plan), "copy"), on_copied)
+
+
+def _copies(files: list[dict[str, Any]], *actions: str) -> list[transfer.FileCopy]:
+    """The journal's file list, as the transfer takes it."""
+    return [
+        transfer.FileCopy(Path(f["src"]), Path(f["dst"]), f["sha256"])
+        for f in files
+        if f["action"] in actions
+    ]
 
 
 # --- step 3: the records ------------------------------------------------------
@@ -423,22 +413,7 @@ def _clean_up(
     """Delete the originals the commit made redundant, and the folders that
     leaves empty. A file whose content changed since it was planned is left
     where it is — it is not the file that was copied."""
-    touched: set[Path] = set()
-    for f in files:
-        if f["action"] == "already":
-            continue
-        src = Path(f["src"])
-        digest = _digest(src)
-        if digest is None:
-            continue
-        if digest[1] != f["sha256"]:
-            log.warning("move: %s changed since it was copied; left in place", src)
-            continue
-        try:
-            src.unlink()
-            touched.add(src.parent)
-        except OSError as exc:
-            log.warning("move: couldn't remove %s: %s", src, exc)
+    touched = transfer.delete_originals(_copies(files, "copy", "present"))
     _remove_emptied(db, touched, source_folder, source_id)
     with db.lock:
         db.conn.execute(
@@ -494,25 +469,9 @@ def _remove_emptied(db: Database, format_dirs: set[Path], source_folder: str, so
 
 def _roll_back(db: Database, journal: str, files: list[dict[str, Any]], reason: str) -> None:
     """Undo a copy the records never followed: delete the destination files
-    this move made — a copy that was already there before it is never touched —
-    and any `.part` left half-written."""
-    for f in files:
-        if f["action"] != "copy":
-            continue
-        dst = Path(f["dst"])
-        part = dst.with_name(dst.name + ".part")
-        try:
-            part.unlink(missing_ok=True)
-        except OSError:
-            pass
-        # Only a copy that is verifiably this move's, and only while the
-        # original is still there: the one rule that makes undoing safe.
-        digest = _digest(dst)
-        if digest is not None and digest[1] == f["sha256"] and Path(f["src"]).is_file():
-            try:
-                dst.unlink()
-            except OSError as exc:
-                log.warning("move: couldn't remove copy %s: %s", dst, exc)
+    this move made — a copy that was already there before it (`present`) is
+    never touched — and any `.part` left half-written."""
+    transfer.undo(_copies(files, "copy"))
     with db.lock:
         db.conn.execute(
             "UPDATE animal_moves SET state = 'rolled-back', error = ?, updated_at = ? WHERE id = ?",

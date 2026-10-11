@@ -20,8 +20,8 @@ import pytest
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
 from ephymeris_sidecar.analytics.service import _orphan_run_id
 from ephymeris_sidecar.cohorts import relocate
-from ephymeris_sidecar.cohorts.db import Database
-from ephymeris_sidecar.cohorts.folders import DataFolderError
+from ephymeris_sidecar.cohorts.db import DATA_PATHS, OTHER_PATHS, Database
+from ephymeris_sidecar.cohorts.folders import DataFolderError, relative_below
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
@@ -189,6 +189,57 @@ def test_a_recording_saved_in_the_session_folder_moves_with_it(
     ephys = archive.new / "2O-Bdisc" / SESSION / "ephys"
     assert archive.recording_paths() == [str(ephys), elsewhere]
     assert (ephys / "rec_260901_090000" / "info.rhd").is_file()
+
+
+def stored_in(archive: Archive, table: str, column: str) -> list[str]:
+    values = [v for (v,) in archive.db.conn.execute(f"SELECT {column} FROM {table}") if v]
+    if column == "recording_json":
+        return [run["path"] for v in values for run in json.loads(v)["runs"]]
+    return values
+
+
+def test_every_path_column_is_rebased(archive: Archive, volume: str) -> None:
+    """Driven by `DATA_PATHS`, so a column added there is checked here: the
+    fixture must store a path below the old folder in each, and after the
+    relocate none is left there."""
+    archive.record()
+    recorded = archive.old / "2O-Bdisc" / SESSION / "behavior.json" / f"remy1_{SESSION}_090001.json"
+    archive.db.conn.execute(
+        "INSERT INTO strobe_scan_cache (file_path, file_mtime_ns, file_size, codes_json)"
+        " VALUES (?, 1, 1, '[101]')",
+        (str(recorded),),
+    )
+    archive.db.conn.commit()
+    for table, column in DATA_PATHS:
+        assert any(
+            relative_below(p, archive.old) is not None for p in stored_in(archive, table, column)
+        ), f"the fixture stores no path below the old folder in {table}.{column}"
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    for table, column in DATA_PATHS:
+        paths = stored_in(archive, table, column)
+        assert not [p for p in paths if relative_below(p, archive.old) is not None], (table, column)
+        assert any(relative_below(p, archive.new) is not None for p in paths), (table, column)
+
+
+def test_every_column_that_could_hold_a_path_is_classified(db: Database) -> None:
+    """A new column naming a path, or JSON that might carry one (as
+    `recording_json` does), must be in `DATA_PATHS`, which a relocate rebases,
+    or in `OTHER_PATHS` with the reason it doesn't."""
+    columns = {
+        (table, row[1])
+        for (table,) in db.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        for row in db.conn.execute(f"PRAGMA table_info({table})")
+    }
+    looks_like_a_path = {
+        (t, c)
+        for t, c in columns
+        if any(word in c for word in ("path", "folder", "json")) or c in ("source", "target")
+    }
+    classified = set(DATA_PATHS) | set(OTHER_PATHS)
+    assert looks_like_a_path - classified == set()
+    assert classified - columns == set(), "a listed column no longer exists"
 
 
 def test_pointing_without_moving_rewrites_nothing(archive: Archive) -> None:
@@ -432,6 +483,40 @@ def test_a_crash_while_copying_removes_the_copy(archive: Archive) -> None:
     assert not any(p.is_file() for p in archive.new.rglob("*"))
     assert archive.all_under(archive.old)
     assert archive.journal() == "rolled-back"
+
+
+def test_a_crash_mid_file_does_not_block_the_retry(
+    archive: Archive, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A copy straight to the real name left a partial file the size-checked
+    undo kept, and the target was then not empty: the retry was refused until
+    someone deleted it by hand. Through `.part`, all a crash leaves is a
+    `.part`, and the undo removes it."""
+    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
+    real = shutil.copy2
+    calls = 0
+
+    def power_cut_on_the_second_file(src: str, dst: str, **kwargs: object) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            Path(dst).write_bytes(Path(src).read_bytes()[:3])
+            raise SystemExit("power cut")
+        return real(src, dst, **kwargs)
+
+    monkeypatch.setattr(shutil, "copy2", power_cut_on_the_second_file)
+    with pytest.raises(SystemExit):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    monkeypatch.undo()
+    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
+    assert any(p.name.endswith(".part") for p in archive.new.rglob("*"))
+
+    relocate.resume(archive.db)
+    assert not any(p.is_file() for p in archive.new.rglob("*"))
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+    assert archive.all_under(archive.new), archive.stored_paths()
+    assert not archive.old.exists()
 
 
 def test_a_crash_after_the_commit_finishes_deleting_the_originals(

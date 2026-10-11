@@ -638,16 +638,55 @@ def test_a_relocate_that_loses_the_old_folder_after_its_copy_leaves_the_journal_
 
 
 def test_a_relocate_still_deleting_holds_up_a_session(
+    archive: Archive, other_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While this process deletes the originals, a session set up from the
+    cohort as read just before the commit would make its folder at the old
+    place, under what is being emptied, and `rmdir` could take it."""
+    other_volume(archive.new.parent)
+    delete_sources = relocate._delete_sources
+    seen: list[tuple[str, bool]] = []
+
+    def delete_and_look(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        seen.append((archive.journal(), relocate.moving(archive.db, archive.cohort.id)))
+        return delete_sources(*args, **kwargs)
+
+    monkeypatch.setattr(relocate, "_delete_sources", delete_and_look)
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert seen == [("committed", True)]
+    assert not relocate.moving(archive.db, archive.cohort.id)
+
+
+def test_originals_a_previous_run_left_in_reach_do_not_hold_up_a_session(
     archive: Archive, other_volume, power_cut
 ) -> None:
-    """While its originals can be reached, a committed relocate is still
-    deleting them. A session set up from the cohort read just before the
-    commit would make its folder at the old place, under what is being
-    emptied, and `rmdir` could take it."""
+    """A journal an earlier process left `committed`, with its old folder
+    back, is finished only by the next start's `resume`. Its commit came
+    before this process read anything, so no session here can hold a stale
+    folder; counting it would refuse the cohort until a restart."""
     commit_then_cut(archive, other_volume, power_cut)
     assert archive.journal() == "committed"
 
-    assert relocate.moving(archive.db, archive.cohort.id)
+    assert not relocate.moving(archive.db, archive.cohort.id)
+
+
+def test_a_delete_that_raises_does_not_leave_the_cohort_held_up(
+    archive: Archive, other_volume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other_volume(archive.new.parent)
+
+    def fail(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise OSError("the delete failed")
+
+    monkeypatch.setattr(relocate, "_delete_sources", fail)
+
+    with pytest.raises(OSError, match="the delete failed"):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert archive.journal() == "committed"
+    assert not relocate.moving(archive.db, archive.cohort.id)
 
 
 def test_a_missing_path_under_a_folder_that_errors_is_out_of_reach(

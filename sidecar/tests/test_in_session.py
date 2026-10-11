@@ -125,7 +125,7 @@ def drain_loop() -> None:
 def test_entry_requires_idle() -> None:
     """`ARCHITECTURE.md#entering-in_session` step 1 — refused if not IDLE, same rule as every other transition."""
     handler, _ = make_handler()
-    handler._state = PortState.PASSTHROUGH
+    handler.open_passthrough("/dev/fake", 115200)
     with pytest.raises(IllegalTransition):
         handler.start_session("/dev/fake", 115200, "START", lambda s: None, lambda c, t: None)
 

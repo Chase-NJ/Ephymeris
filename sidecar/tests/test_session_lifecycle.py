@@ -10,6 +10,7 @@ write to one ordered log, so the ordering rules are what the tests read.
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,6 @@ from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.intan.service import IntanNotReady
 from ephymeris_sidecar.ports.manager import CarriedSketch, sketch_fingerprint
-from ephymeris_sidecar.rig.definition import _ReadWriteLock
 from ephymeris_sidecar.sessions.lifecycle import (
     BoxRefused,
     MappingEntry,
@@ -186,7 +186,7 @@ class Rig:
             utility=self.utility,
             profiles=None,
             logbook=None,
-            rig_reading=_ReadWriteLock().reading,
+            rig_reading=nullcontext,  # no rig definition write in these tests
             broadcast=broadcast,
             carried=self.carried.get,
             flashes=self.flashes,

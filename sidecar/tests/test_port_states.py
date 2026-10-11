@@ -112,7 +112,7 @@ def test_every_verb_edge_is_in_the_table(verb: str) -> None:
         assert can_transition(state, to), f"{verb}: {state.value} -> {to.value}"
 
 
-def test_only_the_acknowledgement_leaves_error() -> None:
+def test_no_verb_but_the_acknowledgement_starts_from_error() -> None:
     assert [verb for verb, (from_, _to) in VERBS.items() if S.ERROR in from_] == [
         "acknowledge_error"
     ]

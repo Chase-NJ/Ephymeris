@@ -2,15 +2,15 @@
 
 `TRANSITIONS` is the superset of every legal move, and cannot say who is
 asking. These drive the app's real handlers, its real idle hook and the real
-flash queue over a real `PortManager`, because each failure here was a legal
-transition asked for by the wrong caller:
+flash queue over a real `PortManager`, because each case is a legal transition
+asked for by the wrong caller:
 
 * a console close that arrives mid-flash, from a UI that last saw the console
-  open, freed the port during the upload;
-* the same close from `ERROR` cleared the fault without the acknowledgement,
-  and the idle hook then queued a baseline restore onto the faulted box;
-* a baseline restore that met a console took it, which only the restore's
-  own `prepare` running with no `await` before the take had prevented.
+  open, is refused and the upload keeps the port;
+* the same close from `ERROR` is refused, so the fault stays until it is
+  acknowledged and the idle hook queues no restore onto the faulted box;
+* a baseline restore that meets a console at the take is refused there,
+  whatever its `prepare` decided.
 """
 
 from __future__ import annotations
@@ -130,8 +130,8 @@ async def test_a_baseline_flash_never_takes_a_console(rig: Rig) -> None:
 
 
 async def test_a_restore_that_meets_a_console_at_the_take_leaves_the_box_busy() -> None:
-    """The baseline's "only an IDLE port" no longer rests on nothing yielding
-    between its decision and the take: here a console opens in between."""
+    """The baseline's "only an IDLE port" holds even when a console opens
+    between its decision and the take."""
     baseline, manager, tool, _ = await make_baseline()
     queue = baseline.flash_queue
     submit = queue.submit

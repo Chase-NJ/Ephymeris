@@ -744,6 +744,46 @@ async def test_rescan_is_idempotent(rig: LegacyRig) -> None:
     assert len(rig.repo.adopted_for_cohort(rig.cohort.id)) == 1
 
 
+def _second_cohort(rig: LegacyRig, folder: Path) -> str:
+    """Another cohort in the same database, attached to `folder`, whose
+    roster also holds a `remy1`, under its own animal id."""
+    cohort = rig.cohorts.create("The Remy's, again", str(folder))
+    group = cohort.groups[0].id
+    rig.cohorts.update(
+        cohort.id,
+        {"animals": [{"id": "b1", "name": "remy1", "groupId": group, "boxNumber": 1}]},
+    )
+    return cohort.id
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["same-folder", "nested-folder"])
+async def test_two_cohorts_over_one_archive_keep_their_own_adoptions(
+    rig: LegacyRig, nested: bool
+) -> None:
+    """B15. The adopted id was keyed on the file stem alone and stored with
+    `INSERT OR REPLACE`, so a second cohort whose folder covers the same file
+    took the first cohort's row on its rescan, and the first took it back on
+    its own. The run left one cohort's history at every rescan of the other."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
+    # Nested: the second cohort is attached to the prefix folder inside the first's.
+    other = _second_cohort(rig, path.parents[2] if nested else rig.root)
+
+    for round_ in (1, 2):
+        mine = await rig.service.rescan(rig.cohort.id)
+        theirs = await rig.service.rescan(other)
+        if round_ == 2:
+            assert (mine["adopted"], theirs["adopted"]) == (0, 0), (
+                "a second round decides nothing: each cohort's row is still its own"
+            )
+
+        assert [e.animal_id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == ["a1"]
+        assert [e.animal_id for e in rig.repo.adopted_for_cohort(other)] == ["b1"]
+        first = await rig.service.summary(rig.cohort.id)
+        second = await rig.service.summary(other)
+        assert [r["animalId"] for r in first["runs"]] == ["a1"], f"round {round_}"
+        assert [r["animalId"] for r in second["runs"]] == ["b1"], f"round {round_}"
+
+
 async def test_a_second_rescan_does_not_read_the_files_again(rig: LegacyRig) -> None:
     """`DATA.md#carrying-adoptions-forward`. Adoption used to be redone in full on every click — every file
     opened, parsed and written back — to recompute the first scan's answer from

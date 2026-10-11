@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from ephymeris_sidecar.analytics.repository import AnalyticsRepository
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.intan.service import IntanNotReady
@@ -28,9 +29,10 @@ from ephymeris_sidecar.sessions.lifecycle import (
     SessionRefused,
     SketchNotCarried,
 )
-from ephymeris_sidecar.sessions.models import GroupRun
+from ephymeris_sidecar.sessions.models import GroupRun, PrefixNameTaken
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from ephymeris_sidecar.sessions.runner import ActiveRun, BoxConfig
+from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
 from tests.live_sidecar import LiveSidecar, Refused, create_cohort, hold_the_rig
 
 TODAY = date.today().isoformat()
@@ -182,9 +184,12 @@ class FakeFlashes:
 class Rig:
     """One lifecycle and everything it was built from."""
 
-    def __init__(self, db: Database, root: Path, *, intan: bool = False, ports=None) -> None:  # noqa: ANN001
+    def __init__(
+        self, db: Database, root: Path, *, intan: bool = False, ports=None, profiles=None  # noqa: ANN001
+    ) -> None:
         """`ports` puts the real `SessionRunner` on those ports in place of
-        `FakeRunner` (`tests/scripted_board.py`)."""
+        `FakeRunner` (`tests/scripted_board.py`); `profiles` is where a
+        finishing run's task profile is snapshotted."""
         self.log: list[str] = []
         self.events: list[dict] = []
         self.root = root
@@ -219,7 +224,7 @@ class Rig:
             runner=self.runner,
             intan=self.intan,
             utility=self.utility,
-            profiles=None,
+            profiles=profiles,
             logbook=None,
             rig_reading=nullcontext,  # no rig definition write in these tests
             broadcast=broadcast,
@@ -692,6 +697,77 @@ async def test_a_run_that_lands_after_the_session_let_go_is_still_recorded(rig) 
 
     assert [r.id for r in rig.sessions.runs_for(session.id)] == ["r-late"]
     assert rig.events[-1]["evt"] == "session.animalEnded"
+
+
+async def test_a_run_never_names_a_profile_another_writers_rollback_threw_away(
+    db: Database, tmp_path: Path
+) -> None:
+    """B14: a finishing run's profile snapshot and its run record land
+    together, whatever another writer does meanwhile
+    (`DATA.md#which-profile-decodes-a-run`).
+
+    The other writer here is the operator adding a prefix whose name is
+    taken, which rolls back. It runs at the moment the profile is being
+    snapshotted: the sqlite trace hook sees the `task_profiles` insert and
+    queues the rival on the loop, ahead of the finalization's next step. On
+    one shared connection, a rollback that lands between the snapshot and the
+    run record throws the snapshot away, and the run is recorded naming a
+    profile hash with no row -- decoded years later by whatever `task.json`
+    is current, which is what the snapshot exists to prevent.
+    """
+    profiles = AnalyticsRepository(db)
+    rig = Rig(db, tmp_path, profiles=profiles)
+    session = rig.session()
+    rig.sessions.create_prefix("Taken")
+    profile = parse_profile({"taskName": "Snapshot me"})
+    loop = asyncio.get_running_loop()
+    refused: list[str] = []
+
+    def rival() -> None:
+        try:
+            rig.sessions.create_prefix("Taken")
+        except PrefixNameTaken:
+            refused.append("Taken")
+
+    fired = False
+
+    def on_statement(sql: str) -> None:
+        nonlocal fired
+        if not fired and "INSERT" in sql.upper() and "task_profiles" in sql:
+            fired = True
+            loop.call_soon_threadsafe(rival)
+
+    config = BoxConfig(
+        box=1,
+        animal_id="C1-1",
+        animal_name="remy1",
+        sketch_path="/sk",
+        sketch_name="sk",
+        start_command="START",
+        config_metadata={},
+        profile=profile,
+    )
+    run = ActiveRun(
+        box=1,
+        config=config,
+        run_id="r-1",
+        started_at="2026-10-10T10:00:00+00:00",
+        address="/dev/fake1",
+        session_id_label="P1_12",
+        session_id=session.id,
+    )
+    db.conn.set_trace_callback(on_statement)
+    try:
+        await rig.lifecycle.animal_ended(run, "end")
+    finally:
+        db.conn.set_trace_callback(None)
+
+    assert refused == ["Taken"], "the rival write ran, and was refused"
+    [recorded] = rig.sessions.runs_for(session.id)
+    assert recorded.profile_hash == profile_hash(profile)
+    assert profiles.load_profile(recorded.profile_hash) is not None, (
+        "the run names a profile snapshot that another writer's rollback discarded"
+    )
 
 
 # --- groups on the fly (ARCHITECTURE.md#group-step) ----------------------------

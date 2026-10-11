@@ -14,6 +14,7 @@ how the generated `PROTOCOL.md` labels its commands, events and shapes.
 
 from __future__ import annotations
 
+# Review II smoke test: one comment line, to exercise the integration branch end to end.
 import re
 import subprocess
 from functools import cache

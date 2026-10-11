@@ -197,6 +197,16 @@ def power_cut(monkeypatch: pytest.MonkeyPatch):
     return arm
 
 
+def rewrite_keeping_stat(path: Path, data: bytes) -> None:
+    """Change a file's bytes behind a stat-keyed cache's back: same size, same
+    mtime. A pass that serves the old answer never read the file; one that
+    read it sees `data`."""
+    st = path.stat()
+    assert len(data) == st.st_size, "a cache keyed on size would notice"
+    path.write_bytes(data)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+
+
 def fine_mtime(*paths: Path) -> None:
     """Give files an mtime a 10 ms volume cannot keep, as NTFS's 100 ns can."""
     for path in paths:

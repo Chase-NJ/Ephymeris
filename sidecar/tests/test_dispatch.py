@@ -67,7 +67,13 @@ async def test_a_busy_archive_is_refused_as_busy(app, tmp_path: Path, cmd: str, 
 
 async def test_a_box_start_the_port_refuses_is_a_port_open_failure(app, monkeypatch) -> None:  # noqa: ANN001
     """The code a port command gives for the same failure, with the box named.
-    Windows says Access is denied for a COM port another program holds."""
+
+    Pins the error table's `OSError` row for a box's command, reached through
+    `BoxRefused`. The runner is patched because a real held COM port no longer
+    refuses here: the serial open runs on the session thread
+    (`PortHandler.claim_session`), so the start replies and the port then goes
+    to ERROR. What still raises synchronously is the runner's own work, or a
+    command like `utility.identify` that writes to the port itself."""
 
     def refused(box: int) -> None:
         raise PermissionError(13, "Access is denied", f"COM{box + 3}")

@@ -299,8 +299,15 @@ anything else, a bad token, or `AUTH_TIMEOUT_S` (`server.py`) of silence closes 
 different code for it: the frontend branches on codes (`SESSION_INVALID` with `detail.boxes`,
 `PORT_OPEN_FAILED`, `ILLEGAL_TRANSITION`, `COHORT_INVALID` and others), and the same failure under two
 codes is handled in one place and shown raw in the other. A new refusal gets a new exception and a row in
-`ERRORS`. A generic type (`KeyError`, `ValueError`) never goes in the table: it would answer for every
-bug that raises one.
+`ERRORS`.
+
+A generic type in the table would answer for every bug that raises one, so only two are read, each
+narrowed: `OSError` answers only on a command naming a box, and never for a socket's `ConnectionError`
+or `TimeoutError`; `KeyError` only as the cause a `BoxRefused` carries from `SessionRunner.start_box`
+(a box outside the confirmed mapping). Three handlers turn a generic exception into a code
+themselves, because only they know it is about their own arguments: `analytics.setFalseStart`
+(`KeyError`, a run not in the cohort) and `analytics.series` (`ValueError`) answer `BAD_MESSAGE`, and
+`sessions.create` answers `SESSION_INVALID` for a session folder that can't be made.
 
 Tests drive a command through this path with `tests/wire.py`'s `dispatch(app, cmd, **args)`, which hands a
 frame to the server's own message handler; `tests/live_sidecar.py` is the same path over a real WebSocket.

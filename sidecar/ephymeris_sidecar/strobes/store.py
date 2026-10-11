@@ -150,11 +150,18 @@ class VocabularyStore:
         return stored
 
     def _write(self, doc: dict) -> None:
-        """Write-then-rename, so a crash mid-save leaves the old document whole."""
+        """Through `<name>.part`, fsync'd, renamed into place — the verified
+        transfer's order (`cohorts/transfer.py`), so a crash mid-save leaves the
+        old document whole. Without the fsync the rename can reach the disk
+        before the bytes, and a power cut leaves an empty or torn file under
+        the real name."""
         self.root.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        os.replace(tmp, self.path)
+        part = self.path.with_name(self.path.name + ".part")
+        with part.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(part, self.path)
 
 
 # --------------------------------------------------------------------------- #

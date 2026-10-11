@@ -63,6 +63,36 @@ def test_the_seed_is_written_once_and_never_over_an_existing_document(tmp_path):
     assert "LASER_ON" in vocab_store.load_strict()["codes"]
 
 
+def test_every_write_is_flushed_to_disk_before_it_replaces_the_document(tmp_path, monkeypatch):
+    """B19, asserted on structure: a power cut cannot be staged in a test. A
+    rename can reach the disk before the bytes it names, so the new file is
+    fsync'd first; otherwise a crash could leave the one document that defines
+    every code empty or torn under its real name."""
+    vocab_store = strobe_store.VocabularyStore(tmp_path)
+    events: list[tuple[str, int]] = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def fsync(fd: int) -> None:
+        events.append(("fsync", os.fstat(fd).st_ino))
+        real_fsync(fd)
+
+    def replace(src, dst) -> None:  # noqa: ANN001
+        events.append(("replace", os.stat(src).st_ino))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "replace", replace)
+
+    vocab_store.ensure_seeded()
+    vocab_store.save(vocab_store.load_strict())
+
+    replaced = [ino for op, ino in events if op == "replace"]
+    assert len(replaced) == 2
+    for ino in replaced:
+        before = events[: events.index(("replace", ino))]
+        assert ("fsync", ino) in before, f"replaced without an fsync first: {events}"
+
+
 def test_a_damaged_document_refuses_edits_but_still_decodes(tmp_path):
     vocab_store = strobe_store.VocabularyStore(tmp_path)
     vocab_store.ensure_seeded()

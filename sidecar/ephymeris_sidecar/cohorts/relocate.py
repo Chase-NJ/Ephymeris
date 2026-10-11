@@ -42,6 +42,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from stat import S_ISDIR
 from typing import Callable
 
 from . import folders, freshness, transfer
@@ -55,6 +56,15 @@ log = logging.getLogger(__name__)
 #: folder: a run file sits at most a prefix, a session folder and a format
 #: folder below it in any layout the walk accepts, with room for a level more.
 _MAX_TAIL = 8
+
+#: Journals a `relocate_cohort` in this process is carrying out, from the
+#: journal's insert until it returns or raises. `moving` counts a `committed`
+#: journal only while it is here: a session set up from the cohort as read
+#: just before the commit would make its folder under the old place while the
+#: delete empties it. One an earlier process left `committed` committed before
+#: this process read anything, so it holds nothing up; the next start's
+#: `resume` finishes it. Read and written under `db.lock`.
+_carrying_out: set[str] = set()
 
 
 def _now() -> str:
@@ -217,7 +227,26 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
              "moving" if same_volume else "copying", _now(), _now()),
         )
         db.conn.commit()
+        _carrying_out.add(journal)
+    try:
+        return _carry_out(db, journal, cohort_id, source, target, same_volume, before, known)
+    finally:
+        with db.lock:
+            _carrying_out.discard(journal)
 
+
+def _carry_out(
+    db: Database,
+    journal: str,
+    cohort_id: str,
+    source: Path,
+    target: Path,
+    same_volume: bool,
+    before: dict[tuple[str, ...], freshness.Stat],
+    known: set[str],
+) -> Path:
+    """Everything after the journal: move or copy, commit the records with
+    the journal, delete the originals."""
     copies: list[transfer.FileCopy] | None = None
     try:
         if same_volume:
@@ -260,8 +289,7 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
         raise failure
 
     if not same_volume:
-        _delete_sources(source, target, copies)
-        _finish(db, journal, "done")
+        _finish_deleting(db, journal, source, target, copies)
     log.info("relocate: moved cohort %s from %s to %s", cohort_id, source, target)
     return target
 
@@ -293,9 +321,56 @@ def resume(db: Database) -> int:
             _finish(db, journal, "rolled-back", "interrupted while copying")
         else:
             log.warning("relocate %s: interrupted after it committed; finishing", journal)
-            _delete_sources(source, target)
-            _finish(db, journal, "done")
+            _finish_deleting(db, journal, source, target)
     return len(rows)
+
+
+def _finish_deleting(
+    db: Database,
+    journal: str,
+    source: Path,
+    target: Path,
+    copies: list[transfer.FileCopy] | None = None,
+) -> None:
+    """After the commit: delete the originals and mark the journal `done`.
+    While the old folder is out of reach nothing there can be deleted, or
+    told apart from deleted, so the journal stays `committed` and the next
+    start that can see it finishes."""
+    if out_of_reach(source):
+        log.warning(
+            "relocate %s: %s can't be reached; its originals wait for the next start",
+            journal, source,
+        )
+        return
+    _delete_sources(source, target, copies)
+    _finish(db, journal, "done")
+
+
+def out_of_reach(path: Path) -> bool:
+    """Whether `path` can't be seen at all — a share that stopped answering,
+    or a volume that isn't mounted — as opposed to there, or demonstrably gone.
+
+    A `stat` that fails other than not-found proves nothing, so it is out of
+    reach. A missing path counts as gone only when, walking up, a folder
+    answers before anything errors: a deleted tree leaves the drive root at
+    worst, an unmounted volume leaves nothing. The prune reads absence the
+    same way (`analytics/service._storage_is_reachable`, `DATA.md#pruning`)."""
+    try:
+        os.stat(path)
+        return False
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return True
+    for ancestor in path.parents:
+        try:
+            if S_ISDIR(os.stat(ancestor).st_mode):
+                return False
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError:
+            return True
+    return True
 
 
 def _commit_records(
@@ -383,14 +458,18 @@ def _check_destination(source: Path, target: Path) -> None:
 def moving(db: Database, cohort_id: str) -> bool:
     """Whether this cohort's folder is part-way through a relocate, so a new
     session must not be set up in it: its folder would be made at the old
-    place while the records move to the new one."""
+    place while the records move to the new one.
+
+    A `committed` relocate counts only while this process is still carrying
+    it out (`_carrying_out`); one a crash left is finished by the next
+    start's `resume`, and the cohort must not wait for it."""
     with db.lock:
-        row = db.conn.execute(
-            "SELECT 1 FROM folder_moves WHERE cohort_id = ?"
-            " AND state IN ('moving', 'copying', 'committed') LIMIT 1",
+        rows = db.conn.execute(
+            "SELECT id, state FROM folder_moves WHERE cohort_id = ?"
+            " AND state IN ('moving', 'copying', 'committed')",
             (cohort_id,),
-        ).fetchone()
-    return row is not None
+        ).fetchall()
+        return any(state != "committed" or journal in _carrying_out for journal, state in rows)
 
 
 def _refuse_open_sessions(conn: sqlite3.Connection, cohort_id: str) -> None:

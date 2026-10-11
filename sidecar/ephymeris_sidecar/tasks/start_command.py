@@ -18,9 +18,14 @@ from .profile import ConfigField, TaskProfile, TaskProfileError
 #: silently lose one of the two values.
 SEED_WIRE_KEY = "SEED"
 
-#: Hard cap on a `START` line, mirroring `START_LINE_MAX` in the firmware's
+#: The firmware's `START` line buffer, mirroring `START_LINE_MAX` in
 #: `libraries/BehaviorBox/BehaviorBox.h`. Two files, one value:
 #: `tests/test_task_profiles.py` reads the header and fails when they disagree.
+#:
+#: It is a buffer size, terminator included: a sketch reads into
+#: `char cmd[START_LINE_MAX]`, so the longest line it keeps whole is one
+#: character shorter. A line of exactly `START_LINE_MAX` characters loses its
+#: last one -- the seed's last digit.
 #:
 #: This is checked rather than trusted because the firmware CANNOT report the
 #: failure: `readLineInto()` truncates an overlong line and drops the rest of the
@@ -105,11 +110,11 @@ def build_start_command(profile: TaskProfile | None, config: dict[str, Any]) -> 
     if not tokens:
         return "START"
     command = "START " + " ".join(tokens)
-    if len(command) + _SEED_TOKEN_BUDGET > START_LINE_MAX:
+    if len(command) + _SEED_TOKEN_BUDGET >= START_LINE_MAX:
         raise TaskProfileError(
             f"{profile.task_name}: the START line this profile builds is "
             f"{len(command) + _SEED_TOKEN_BUDGET} characters, over the firmware's "
-            f"{START_LINE_MAX}-character limit. Shorten some wire keys or declare "
+            f"{START_LINE_MAX - 1}-character limit. Shorten some wire keys or declare "
             f"fewer fields -- the board would truncate the line without reporting it."
         )
     return command

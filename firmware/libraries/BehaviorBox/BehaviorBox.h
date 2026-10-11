@@ -773,12 +773,14 @@ inline bool escalationArmed(const TaskParams &p, int completedTrials)
   P_INT("S" #n "W", stage[n].fluidWellPoll) \
   P_INT("S" #n "O", stage[n].odorPortTimeout)
 
-/*  Hard cap on a START line, mirrored by the host's build_start_command
-    (sidecar/ephymeris_sidecar/tasks/start_command.py). There is no shared source
-    across the two repos, so the two constants must be changed together: the host
-    refuses to build a line longer than this, and readLineInto() truncates
-    anything longer than this SILENTLY -- a lost token is not an error the board
-    can see, it just runs on the wrong value. */
+/*  The START line buffer, terminator included, mirrored by the host's
+    build_start_command (sidecar/ephymeris_sidecar/tasks/start_command.py). There
+    is no shared source across the two repos, so the two constants must be changed
+    together. A sketch declares char cmd[START_LINE_MAX] and readLineInto() keeps
+    one byte for the '\0', so the longest line read whole is START_LINE_MAX - 1
+    characters; the host refuses to build one of START_LINE_MAX or more.
+    readLineInto() truncates a longer line SILENTLY -- a lost token is not an
+    error the board can see, it just runs on the wrong value. */
 #define START_LINE_MAX 640
 
 /*  void clampTaskParams(TaskParams&) ->

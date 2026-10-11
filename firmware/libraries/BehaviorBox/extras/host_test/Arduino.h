@@ -2,7 +2,8 @@
 // It stubs just enough of the Arduino API that the whole header parses. The
 // tests exercise the pure policy classes (parseStartCommand, CorrectionPolicy,
 // AbstentionPenalty, AntiBiasSelector), plus what emitStrobe writes: the pin
-// log and the printed line. Reads are inert.
+// log and the printed line. Reads drain whatever a test queued in _serialIn,
+// so readLineInto() can be fed a line; with nothing queued they are inert.
 #ifndef ARDUINO_H_SHIM
 #define ARDUINO_H_SHIM
 
@@ -60,11 +61,12 @@ inline int digitalRead(int) { return HIGH; }
 // the host would receive. Other overloads print nothing.
 static char _serialOut[256];
 static size_t _serialOutLen = 0;
+static const char *_serialIn = "";
 struct _SerialShim
 {
   void begin(long) {}
-  int available() { return 0; }
-  int read() { return -1; }
+  int available() { return *_serialIn ? 1 : 0; }
+  int read() { return *_serialIn ? (unsigned char)*_serialIn++ : -1; }
   template <class T> size_t print(T) { return 0; }
   template <class T> size_t println(T) { return 0; }
   size_t println(char *s) { return println((const char *)s); }

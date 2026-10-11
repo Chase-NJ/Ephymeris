@@ -328,10 +328,21 @@ class SessionLifecycle:
             # Every box before any box, and before RHX: a refusal starts nothing.
             await self._refuse_unless_carried(self._runner.configured_boxes())
             await self._begin_recording_if_any(session_id)
-            for box in self._runner.configured_boxes():
-                # `start_box` is a no-op for a box already running
-                # (`ARCHITECTURE.md#running-boxes`).
-                self._start_box(box)
+            try:
+                for box in self._runner.configured_boxes():
+                    # `start_box` is a no-op for a box already running
+                    # (`ARCHITECTURE.md#running-boxes`).
+                    self._start_box(box)
+            except BoxRefused:
+                # A box that has started is a run, as for `start_box`: if any
+                # box is running the group has run, and the record says so
+                # before the refusal goes out. Then End and Switch Group see a
+                # running session, and Resume a group that ran.
+                if self._runner.running_boxes():
+                    await asyncio.to_thread(self._open_group_run, session_id, self._runner.group_id)
+                    await asyncio.to_thread(self._sessions.set_status, session_id, "running")
+                    await self.announce()
+                raise
             await asyncio.to_thread(self._open_group_run, session_id, self._runner.group_id)
             session = await asyncio.to_thread(self._sessions.set_status, session_id, "running")
             await self.announce()

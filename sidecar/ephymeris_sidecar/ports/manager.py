@@ -28,7 +28,7 @@ import serial
 
 from ..boards.tool import BoardTool, DetectedBoard
 from ..settings import BOX_COUNT, SidecarSettings
-from .handler import DEFAULT_LINE_ENDING, OutputLine, PortHandler
+from .handler import DEFAULT_LINE_ENDING, OpenSerial, OutputLine, PortHandler, SessionClaim
 from .states import PortState
 
 log = logging.getLogger(__name__)
@@ -108,14 +108,20 @@ class PortManager:
         on_state_change: StateCallback,
         on_output: OutputCallback,
         on_presence: PresenceCallback,
+        open_serial: OpenSerial | None = None,
     ) -> None:
+        """`open_serial` opens every serial port this manager uses (`serial.Serial`
+        when not given), so a test can put a scripted board behind the real
+        state machine."""
         self._loop = loop
         self._tool = tool
         self._on_output = on_output
         self._on_presence = on_presence
+        self._open_serial = open_serial
 
         self._handlers: dict[int, PortHandler] = {
-            box: PortHandler(box, loop, on_state_change) for box in range(1, BOX_COUNT + 1)
+            box: PortHandler(box, loop, on_state_change, open_serial)
+            for box in range(1, BOX_COUNT + 1)
         }
         self._settings = SidecarSettings()
         self._presence: dict[str, DetectedBoard] = {}
@@ -290,38 +296,35 @@ class PortManager:
 
         try:
             # Blocking serial work stays off the event loop.
-            await asyncio.to_thread(_dtr_pulse, address)
+            await asyncio.to_thread(_dtr_pulse, address, self._open_serial or serial.Serial)
         except Exception as exc:
             handler.force_error(f"reset failed: {exc}")
             raise
 
         return self._conclude(handler, address, prior_baud, was_passthrough, "reset complete")
 
-    def start_session(
+    def claim_session(
         self,
         box: int,
         start_command: str,
-        on_ready: "Callable[[int | None], None]",
-        on_strobe: "Callable[[int, int], None]",
-    ) -> PortState:
-        """Enter `IN_SESSION` on one box (`ARCHITECTURE.md#entering-in_session`).
+        *,
+        on_ready: Callable[[int | None], None],
+        on_strobe: Callable[[int, int], None],
+        on_lost: Callable[[str], None],
+    ) -> SessionClaim:
+        """Enter `IN_SESSION` on one box and hand back the run's hold on it
+        (`ARCHITECTURE.md#entering-in_session`).
 
-        The box must be `IDLE` (a session flash leaves it there via
-        `suppress_passthrough_resume`). Baud is the session default.
+        Raises `PortNotBound`, `BoardNotDetected` or `IllegalTransition` before
+        anything starts: the box must be bound, present and `IDLE` (a session
+        flash leaves it there via `suppress_passthrough_resume`). Baud is the
+        session default. `on_ready` and `on_strobe` run on the session thread,
+        `on_lost` on the loop; `SessionClaim` says what each promises.
         """
         address = self.resolve_address(box)
-        handler = self.handler(box)
-        return handler.start_session(
-            address, self._settings.default_baud, start_command, on_ready, on_strobe
+        return self.handler(box).claim_session(
+            address, self._settings.default_baud, start_command, on_ready, on_strobe, on_lost
         )
-
-    def stop_session(self, box: int) -> None:
-        """Send `STOP` to a running box; the board's end strobe ends the run."""
-        self.handler(box).send_session_line("STOP")
-
-    def end_session(self, box: int, reason: str) -> PortState:
-        """Conclude a run cleanly: `IN_SESSION → IDLE`."""
-        return self.handler(box).end_session(reason)
 
     def _conclude(
         self,
@@ -356,8 +359,13 @@ class PortManager:
             self._note_poll_failure(exc)
         else:
             self._poll_failures = 0
-            if self._update_presence(boards):
-                await self._on_presence(self.presence_json())
+            await self.note_boards(boards)
+
+    async def note_boards(self, boards: list[DetectedBoard]) -> None:
+        """Take `boards` as everything now plugged in, as one poll would: a
+        vanished board's box is forgotten, and `on_presence` hears of a change."""
+        if self._update_presence(boards):
+            await self._on_presence(self.presence_json())
 
     async def _poll_loop(self) -> None:
         while True:
@@ -398,14 +406,14 @@ class PortManager:
                     await self._on_output(box, batch)
 
 
-def _dtr_pulse(address: str) -> None:
+def _dtr_pulse(address: str, open_serial: OpenSerial) -> None:
     """The reset sequence (`ARCHITECTURE.md#reset`): dtr low → ~100ms → dtr high.
 
     The Mega2560 R3's auto-reset circuit fires on the DTR edge. Runs in a
     worker thread; the port is opened fresh and closed again, the state
     machine having already released any prior owner.
     """
-    port = serial.Serial()
+    port = open_serial()
     port.port = address
     port.dtr = True
     port.open()

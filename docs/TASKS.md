@@ -767,6 +767,8 @@ It is built sidecar-side at `sessions.confirmMapping` (and by `port.sendStart` i
 > [!CAUTION]
 > **The cap is checked rather than trusted, because the firmware cannot report the failure.** `readLineInto()` truncates an overlong line and drops the rest, so an over-declared profile would run on whichever values happened to fit. `build_start_command` raises instead, naming the length and the limit. `START_LINE_MAX` lives in **two files** — `tasks/start_command.py` and `firmware/libraries/BehaviorBox/BehaviorBox.h` — and `tests/test_task_profiles.py` fails when they disagree.
 
+`START_LINE_MAX` is the firmware's line **buffer**, terminator included: a sketch reads into `char cmd[START_LINE_MAX]`, so the longest line it keeps whole is `START_LINE_MAX - 1` characters, and the host refuses a line of `START_LINE_MAX` or more. A line of exactly `START_LINE_MAX` would lose its last character, which is the seed's last digit. The firmware host test pins what `readLineInto()` keeps; `tests/test_task_profiles.py` pins the host at both edges.
+
 The budget reserves room for the `SEED` token (`_SEED_TOKEN_BUDGET`), because the config half of the line is built at mapping, minutes before the seed is drawn. A `TaskProfileError` here becomes `TASK_PROFILE_INVALID` with the box, and **the mapping is refused**. A profile that fails to *parse* at mapping is instead treated as profile-less (bare `START`).
 
 ### SEED
@@ -1015,7 +1017,7 @@ All raise `TaskProfileError`, surfaced as `TASK_PROFILE_INVALID` ([PROTOCOL.md](
 
 - **Parse:** a non-object root; missing `taskName`; unknown `kind`; malformed `config` (missing keys, unknown type, reserved `SEED`, a core-field collision, duplicates, a default of the wrong type, whitespace in a string default, non-string `group`/`unit`/`help`, non-numeric `min`/`max`/`step`, `min > max`); non-object `strobes` or a non-integer key (snapshots only); a `liveMetrics` entry missing a required key, or naming a code that is not live; malformed `controls` or `telemetry`; `identify` missing a half; `legacyNames` not a list of strings.
 - **Load:** unreadable or invalid JSON (`couldn't read task.json: …`). A missing file is not an error.
-- **Build:** the `START` line plus the seed budget over `START_LINE_MAX`.
+- **Build:** the `START` line plus the seed budget at or over `START_LINE_MAX` ([the length cap](#the-length-cap)).
 
 `tasks.getProfile` returns the error with `sketchPath`. At `sessions.confirmMapping` and `port.sendStart` a profile that fails to parse is downgraded to profile-less (bare `START`); only the length case refuses. `build_legacy_name_index` skips a broken profile so it cannot hide every other sketch's legacy names.
 

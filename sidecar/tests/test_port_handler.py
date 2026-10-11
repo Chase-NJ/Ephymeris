@@ -127,7 +127,7 @@ def announced(changes: list[tuple]) -> list[tuple[PortState, PortState]]:
 def enter(handler: PortHandler, state: PortState) -> None:
     """Put a fresh handler in `state` the way the app does."""
     if state is PortState.IN_SESSION:
-        handler.start_session("/dev/fake", 115200, "START", lambda _seed: None, lambda _c, _t: None)
+        handler.claim_session("/dev/fake", 115200, "START", lambda _seed: None, lambda _c, _t: None)
     elif state is not PortState.IDLE:
         handler.release_for(state, "test")
 

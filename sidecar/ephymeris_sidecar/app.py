@@ -505,17 +505,8 @@ class Application:
                 )
             )
         )
-        # Hard stop (`ARCHITECTURE.md#board-drop`): a box dropping out of
-        # IN_SESSION into ERROR means the
-        # board vanished mid-run. Finalize whatever the write-ahead log durably
-        # captured, with stop_reason "board disconnected". The ERROR itself
-        # clears the normal way, via port.error.ack.
-        if (
-            previous == PortState.IN_SESSION
-            and current == PortState.ERROR
-            and self.runner is not None
-        ):
-            self.runner.board_dropped(box)
+        # A board lost mid-run is the runner's to finalize, and it hears of it
+        # from its own claim on the port (`ARCHITECTURE.md#board-drop`).
         # `ARCHITECTURE.md#when-a-restore-happens`: a box that has just become
         # nobody's is a box that should go back
         # to baseline. Driving this off the transition rather than off each

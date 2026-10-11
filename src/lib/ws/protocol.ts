@@ -1781,9 +1781,9 @@ export interface TaskPreview {
   /** Bytes the built START line would occupy, seed included. */
   startLineLength: number;
   /**
-   * The firmware's cap, so the editor can show headroom without hardcoding it. Over it is TSK107
-   * and a refused generation — `readLineInto()` truncates in silence, so this is checked rather
-   * than trusted.
+   * The firmware's cap, so the editor can show headroom without hardcoding it. At or over it is
+   * TSK107 and a refused generation — `readLineInto()` truncates in silence, so this is checked
+   * rather than trusted.
    */
   startLineMax: number;
   /** What this definition compiles to. */

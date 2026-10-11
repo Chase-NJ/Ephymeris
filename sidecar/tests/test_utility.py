@@ -10,16 +10,22 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import nullcontext
+from pathlib import Path
 
 import pytest
 
 from ephymeris_sidecar.boards.tool import BoardTool, DetectedBoard, FlashFailed
+from ephymeris_sidecar.hardware.store import HardwareStore
 from ephymeris_sidecar.ports import handler as handler_module
 from ephymeris_sidecar.ports import manager as manager_module
 from ephymeris_sidecar.ports.flashing import FlashQueue
 from ephymeris_sidecar.ports.manager import FQBN, PortManager
 from ephymeris_sidecar.ports.states import PortState
+from ephymeris_sidecar.rig import registry
+from ephymeris_sidecar.rig.definition import RigDefinition
 from ephymeris_sidecar.settings import SidecarSettings
+from ephymeris_sidecar.strobes.store import VocabularyStore
+from ephymeris_sidecar.taskdef.store import TaskStore
 from ephymeris_sidecar.tasks.profile import (
     Identify,
     TaskProfile,
@@ -42,9 +48,11 @@ class FakeTool(BoardTool):
     def __init__(self) -> None:
         self.uploads: list[str] = []
         self.fail: FlashFailed | None = None
+        #: What the board list reports, by hardware id. Remove one to unplug it.
+        self.boards = {HWID: DetectedBoard(hardware_id=HWID, address=ADDRESS, fqbn=FQBN)}
 
     async def list_boards(self) -> list[DetectedBoard]:
-        return [DetectedBoard(hardware_id=HWID, address=ADDRESS, fqbn=FQBN)]
+        return list(self.boards.values())
 
     async def compile(self, sketch_dir, fqbn, libraries_path, on_line) -> None:  # noqa: ANN001
         if self.fail:
@@ -139,7 +147,7 @@ async def _noop_presence(_boards):  # noqa: ANN001
     pass
 
 
-def make_baseline(
+async def make_baseline(
     profile: TaskProfile | None = UTILITY_PROFILE,
     sketch_path: str | None = UTILITY_PATH,
     reading=nullcontext,  # noqa: ANN001
@@ -159,7 +167,7 @@ def make_baseline(
         }
     )
     manager.update_settings(settings)
-    manager._presence = {HWID: DetectedBoard(hardware_id=HWID, address=ADDRESS, fqbn=FQBN)}
+    await manager.poll_once()
 
     events: list[dict] = []
 
@@ -185,6 +193,8 @@ def make_baseline(
         flashes=flashes,
     )
     baseline.update_settings(settings)
+    #: The queue this test built for it, which `settle` waits on.
+    baseline.flash_queue = flashes
     return baseline, manager, tool, events
 
 
@@ -192,9 +202,34 @@ async def settle(baseline: UtilityBaseline) -> None:
     """Let the flash queue the baseline restores through run dry."""
     for _ in range(400):
         await asyncio.sleep(0.01)
-        if baseline._flashes.idle:
+        if baseline.flash_queue.idle:
             return
     raise AssertionError("the flash queue never finished")
+
+
+@pytest.fixture
+def rig_definition(tmp_path: Path):
+    """A real rig definition over empty stores: the lock a write takes."""
+    vocabulary = VocabularyStore(tmp_path)
+    vocabulary.ensure_seeded()
+    definition = RigDefinition(
+        hardware=HardwareStore(tmp_path),
+        vocabulary=vocabulary,
+        tasks=TaskStore(tmp_path),
+        repin=lambda: 0,
+        in_use=lambda: False,
+        rescan=_nothing,
+        after_rebuild=_nothing,
+        broadcast=_nothing,
+    )
+    yield definition
+    # It pointed the process-wide registry at these stores.
+    registry.set_rig_source(None)
+    registry.set_vocabulary_source(None)
+
+
+async def _nothing(*_args) -> None:  # noqa: ANN002
+    return None
 
 
 def box_state(baseline: UtilityBaseline, box: int = 1) -> dict:
@@ -205,7 +240,7 @@ def box_state(baseline: UtilityBaseline, box: int = 1) -> dict:
 
 
 async def test_restores_an_idle_box_once() -> None:
-    baseline, manager, tool, _ = make_baseline()
+    baseline, manager, tool, _ = await make_baseline()
 
     baseline.ensure()
     await settle(baseline)
@@ -221,15 +256,12 @@ async def test_restores_an_idle_box_once() -> None:
     assert tool.uploads == [UTILITY_PATH]
 
 
-async def test_a_rig_definition_write_waits_for_a_restore_then_gets_its_own() -> None:
+async def test_a_rig_definition_write_waits_for_a_restore_then_gets_its_own(rig_definition) -> None:  # noqa: ANN001
     """A write that rebuilt the utility while it was being flashed would have
     `rebuilt()` undone by the restore recording what it flashed: the box would
     read ready on the old build. The queue holding the read side for the whole
     restore makes the write wait, and its `rebuilt()` restores the box again."""
-    from ephymeris_sidecar.rig.definition import _ReadWriteLock
-
-    lock = _ReadWriteLock()
-    baseline, _manager, tool, _ = make_baseline(reading=lock.reading)
+    baseline, _manager, tool, _ = await make_baseline(reading=rig_definition.reading)
     uploading = asyncio.Event()
     release = asyncio.Event()
     upload = tool.upload
@@ -244,7 +276,7 @@ async def test_a_rig_definition_write_waits_for_a_restore_then_gets_its_own() ->
     await asyncio.wait_for(uploading.wait(), 5)
 
     async def write() -> None:
-        async with lock.writing():
+        async with rig_definition.writing():
             baseline.rebuilt()
 
     rebuild = asyncio.create_task(write())
@@ -259,7 +291,7 @@ async def test_a_rig_definition_write_waits_for_a_restore_then_gets_its_own() ->
 
 
 async def test_force_reflashes_a_ready_box() -> None:
-    baseline, _manager, tool, _ = make_baseline()
+    baseline, _manager, tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
 
@@ -271,7 +303,7 @@ async def test_force_reflashes_a_ready_box() -> None:
 
 async def test_never_takes_a_port_someone_else_owns() -> None:
     """`ARCHITECTURE.md#three-rules-it-never-breaks` — a console the user opened is not a restore opportunity."""
-    baseline, manager, tool, _ = make_baseline()
+    baseline, manager, tool, _ = await make_baseline()
     manager.open_passthrough(1)
 
     baseline.ensure()
@@ -284,7 +316,7 @@ async def test_never_takes_a_port_someone_else_owns() -> None:
 
 async def test_hold_suspends_restores_until_released() -> None:
     """The session window: restoring here would erase the task sketch."""
-    baseline, _manager, tool, _ = make_baseline()
+    baseline, _manager, tool, _ = await make_baseline()
     baseline.hold()
 
     baseline.ensure()
@@ -299,7 +331,7 @@ async def test_hold_suspends_restores_until_released() -> None:
 
 
 async def test_a_session_flash_invalidates_the_belief() -> None:
-    baseline, manager, tool, _ = make_baseline()
+    baseline, manager, tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
 
@@ -317,7 +349,7 @@ async def test_a_session_flash_invalidates_the_belief() -> None:
 
 async def test_a_failed_restore_clears_the_error_and_stops_retrying() -> None:
     """A background action must not leave the rig needing manual clearing."""
-    baseline, manager, tool, _ = make_baseline()
+    baseline, manager, tool, _ = await make_baseline()
     tool.fail = FlashFailed("compile", "compile failed", detail="avr-g++: error")
 
     baseline.ensure()
@@ -339,17 +371,18 @@ async def test_a_failed_restore_clears_the_error_and_stops_retrying() -> None:
 
 
 async def test_a_vanished_board_drops_the_belief() -> None:
-    baseline, manager, tool, _ = make_baseline()
+    baseline, manager, tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
 
     # As the presence poll does it: the manager notices, then the baseline.
-    board = manager._presence[HWID]
-    manager._update_presence([])
+    board = tool.boards.pop(HWID)  # unplugged
+    await manager.poll_once()
     baseline.note_presence([])
     assert box_state(baseline)["state"] == "unavailable"
 
-    manager._update_presence([board])
+    tool.boards[HWID] = board  # plugged back in
+    await manager.poll_once()
     baseline.note_presence([HWID])
     baseline.ensure()
     await settle(baseline)
@@ -362,7 +395,7 @@ async def test_a_vanished_board_drops_the_belief() -> None:
 
 async def test_a_non_utility_sketch_is_refused_with_a_reason() -> None:
     behavior = TaskProfile(task_name="GRGL", kind="behavior")
-    baseline, _manager, tool, _ = make_baseline(profile=behavior)
+    baseline, _manager, tool, _ = await make_baseline(profile=behavior)
 
     baseline.ensure()
     await settle(baseline)
@@ -374,7 +407,7 @@ async def test_a_non_utility_sketch_is_refused_with_a_reason() -> None:
 async def test_a_library_without_a_box_utility_says_so() -> None:
     """The utility is generated and found, never chosen — so its absence is a
     damaged install worth a sentence, and nothing is flashed."""
-    baseline, _manager, tool, _ = make_baseline(profile=None, sketch_path=None)
+    baseline, _manager, tool, _ = await make_baseline(profile=None, sketch_path=None)
     baseline.ensure()
     await settle(baseline)
     status = baseline.status()
@@ -387,7 +420,7 @@ async def test_a_library_without_a_box_utility_says_so() -> None:
 async def test_a_rebuilt_utility_is_restored_to_every_box_that_carried_the_old_one() -> None:
     """A rewiring rebuilds the utility; every box still carries the old build
     (old pins, old channel names), so believing it current would be wrong."""
-    baseline, _manager, tool, _ = make_baseline()
+    baseline, _manager, tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
     assert tool.uploads == [UTILITY_PATH]
@@ -401,7 +434,7 @@ async def test_a_rebuilt_utility_is_restored_to_every_box_that_carried_the_old_o
 
 
 async def test_identify_lights_a_baseline_box_and_puts_it_out(fake_serial) -> None:
-    baseline, manager, _tool, _ = make_baseline()
+    baseline, manager, _tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
 
@@ -419,7 +452,7 @@ async def test_identify_lights_a_baseline_box_and_puts_it_out(fake_serial) -> No
 
 
 async def test_identify_leaves_a_users_console_open(fake_serial) -> None:
-    baseline, manager, _tool, _ = make_baseline()
+    baseline, manager, _tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
     manager.open_passthrough(1)
@@ -433,7 +466,7 @@ async def test_identify_leaves_a_users_console_open(fake_serial) -> None:
 
 async def test_identify_reports_a_silent_board_rather_than_claiming_success() -> None:
     """The baud-mismatch case — sent into the void must not read as delivered."""
-    baseline, _manager, _tool, _ = make_baseline()
+    baseline, _manager, _tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
     FakeSerial.answers = False
@@ -445,7 +478,7 @@ async def test_identify_reports_a_silent_board_rather_than_claiming_success() ->
 
 
 async def test_identify_declines_a_box_not_at_baseline() -> None:
-    baseline, _manager, _tool, _ = make_baseline()
+    baseline, _manager, _tool, _ = await make_baseline()
 
     delivered, _state = await baseline.identify(1, True)
 
@@ -454,14 +487,14 @@ async def test_identify_declines_a_box_not_at_baseline() -> None:
 
 async def test_identify_without_an_identify_pair_is_a_typed_refusal() -> None:
     plain = TaskProfile(task_name="Box Utility", kind="utility")
-    baseline, _manager, _tool, _ = make_baseline(profile=plain)
+    baseline, _manager, _tool, _ = await make_baseline(profile=plain)
 
     with pytest.raises(UtilityUnavailable):
         await baseline.identify(1, True)
 
 
 async def test_stop_extinguishes_everything(fake_serial) -> None:
-    baseline, manager, _tool, _ = make_baseline()
+    baseline, manager, _tool, _ = await make_baseline()
     baseline.ensure()
     await settle(baseline)
     await baseline.identify(1, True)

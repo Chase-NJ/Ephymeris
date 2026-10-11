@@ -27,8 +27,7 @@ import pytest
 
 from ephymeris_sidecar import app as app_module
 from ephymeris_sidecar.app import Application
-from ephymeris_sidecar.rig.definition import _ReadWriteLock
-from ephymeris_sidecar.boards.tool import DetectedBoard
+from ephymeris_sidecar.rig.definition import RigDefinition
 from ephymeris_sidecar.debug_run import DebugRuns
 from ephymeris_sidecar.ports.flashing import FlashJob, FlashQueue
 from ephymeris_sidecar.ports.handler import OutputLine
@@ -54,6 +53,7 @@ from .test_utility import (  # noqa: F401 - fake_serial is an autouse fixture
     _noop_presence,
     box_state,
     fake_serial,
+    rig_definition,
     settle,
 )
 
@@ -81,7 +81,7 @@ TASK_PROFILE = parse_profile(
 )
 
 
-def make_app() -> SimpleNamespace:
+async def make_app(rig_definition: RigDefinition) -> SimpleNamespace:
     """The slice of `Application` the port handlers touch, over real parts.
 
     A stand-in rather than the real class because constructing `Application`
@@ -105,7 +105,7 @@ def make_app() -> SimpleNamespace:
         tool=tool,
         events=events,
         _board_bauds={},
-        rig_definition=SimpleNamespace(reading=_ReadWriteLock().reading),
+        rig_definition=rig_definition,
     )
 
     def on_state_change(*args) -> None:  # noqa: ANN002
@@ -127,7 +127,7 @@ def make_app() -> SimpleNamespace:
         }
     )
     manager.update_settings(settings)
-    manager._presence = {HWID: DetectedBoard(hardware_id=HWID, address=ADDRESS, fqbn=FQBN)}
+    await manager.poll_once()
 
     flashes = FlashQueue(
         loop=loop,
@@ -147,6 +147,7 @@ def make_app() -> SimpleNamespace:
         flashes=flashes,
     )
     utility.update_settings(settings)
+    utility.flash_queue = flashes  # what `settle` waits on
 
     app.settings = settings
     app.flashes = flashes
@@ -175,8 +176,8 @@ async def at_baseline(app: SimpleNamespace) -> None:
 # --- the pin ----------------------------------------------------------------
 
 
-async def test_the_pin_outlasts_every_automatic_trigger() -> None:
-    app = make_app()
+async def test_the_pin_outlasts_every_automatic_trigger(rig_definition) -> None:
+    app = await make_app(rig_definition)
     await at_baseline(app)
     await flash(app, TASK_PATH)
 
@@ -195,10 +196,10 @@ async def test_the_pin_outlasts_every_automatic_trigger() -> None:
     assert box_state(app.utility)["state"] == "pinned"
 
 
-async def test_a_session_flash_is_not_pinned() -> None:
+async def test_a_session_flash_is_not_pinned(rig_definition) -> None:
     """A session flash is its own origin; its sketches are exactly what the
     baseline is meant to reclaim afterwards."""
-    app = make_app()
+    app = await make_app(rig_definition)
     await at_baseline(app)
     app.utility.hold()
 
@@ -217,8 +218,8 @@ async def test_a_session_flash_is_not_pinned() -> None:
     assert box_state(app.utility)["state"] == "ready"
 
 
-async def test_asking_over_the_wire_releases_the_pin() -> None:
-    app = make_app()
+async def test_asking_over_the_wire_releases_the_pin(rig_definition) -> None:
+    app = await make_app(rig_definition)
     await at_baseline(app)
     await flash(app, TASK_PATH)
     await settle(app.utility)
@@ -230,8 +231,8 @@ async def test_asking_over_the_wire_releases_the_pin() -> None:
     assert box_state(app.utility)["state"] == "ready"
 
 
-async def test_a_wire_ensure_for_other_boxes_leaves_the_pin() -> None:
-    app = make_app()
+async def test_a_wire_ensure_for_other_boxes_leaves_the_pin(rig_definition) -> None:
+    app = await make_app(rig_definition)
     await at_baseline(app)
     await flash(app, TASK_PATH)
 
@@ -242,10 +243,10 @@ async def test_a_wire_ensure_for_other_boxes_leaves_the_pin() -> None:
     assert box_state(app.utility)["state"] == "pinned"
 
 
-async def test_a_released_pin_waits_for_the_console_to_close() -> None:
+async def test_a_released_pin_waits_for_the_console_to_close(rig_definition) -> None:
     """Return to baseline with the console still open: never take the port,
     but do not forget the request either — the idle hook finishes the job."""
-    app = make_app()
+    app = await make_app(rig_definition)
     await at_baseline(app)
     await flash(app, TASK_PATH)
     app.ports.open_passthrough(1)
@@ -261,8 +262,8 @@ async def test_a_released_pin_waits_for_the_console_to_close() -> None:
     assert app.tool.uploads == [UTILITY_PATH, TASK_PATH, UTILITY_PATH]
 
 
-async def test_a_session_releasing_the_rig_clears_the_pin() -> None:
-    app = make_app()
+async def test_a_session_releasing_the_rig_clears_the_pin(rig_definition) -> None:
+    app = await make_app(rig_definition)
     await at_baseline(app)
     await flash(app, TASK_PATH)
 
@@ -274,8 +275,8 @@ async def test_a_session_releasing_the_rig_clears_the_pin() -> None:
     assert app.tool.uploads == [UTILITY_PATH, TASK_PATH, UTILITY_PATH]
 
 
-async def test_a_vanished_board_takes_its_pin_with_it() -> None:
-    app = make_app()
+async def test_a_vanished_board_takes_its_pin_with_it(rig_definition) -> None:
+    app = await make_app(rig_definition)
     await at_baseline(app)
     await flash(app, TASK_PATH)
 
@@ -288,8 +289,8 @@ async def test_a_vanished_board_takes_its_pin_with_it() -> None:
     assert app.tool.uploads == [UTILITY_PATH, TASK_PATH, UTILITY_PATH]
 
 
-async def test_flashing_the_utility_sketch_by_hand_is_a_return_to_baseline() -> None:
-    app = make_app()
+async def test_flashing_the_utility_sketch_by_hand_is_a_return_to_baseline(rig_definition) -> None:
+    app = await make_app(rig_definition)
     await at_baseline(app)
     await flash(app, TASK_PATH)
 
@@ -318,9 +319,9 @@ async def send_start(app: SimpleNamespace, **args) -> dict:  # noqa: ANN003
 
 
 async def test_send_start_writes_the_line_a_session_would_build(
-    task_profile_on_disk, fake_serial  # noqa: ANN001
+    rig_definition, task_profile_on_disk, fake_serial,  # noqa: ANN001
 ) -> None:
-    app = make_app()
+    app = await make_app(rig_definition)
     app.ports.open_passthrough(1)
 
     reply = await send_start(app, sketchPath=TASK_PATH, config={"iti": 2500})
@@ -333,23 +334,23 @@ async def test_send_start_writes_the_line_a_session_would_build(
 
 
 async def test_send_start_without_config_uses_the_profile_defaults(
-    task_profile_on_disk,  # noqa: ANN001
+    rig_definition, task_profile_on_disk,  # noqa: ANN001
 ) -> None:
-    app = make_app()
+    app = await make_app(rig_definition)
     app.ports.open_passthrough(1)
     reply = await send_start(app, sketchPath=TASK_PATH)
     assert reply["command"] == "START ITI=4000 RW=40"
 
 
-async def test_send_start_needs_an_open_console(task_profile_on_disk) -> None:  # noqa: ANN001
-    app = make_app()
+async def test_send_start_needs_an_open_console(rig_definition, task_profile_on_disk) -> None:  # noqa: ANN001
+    app = await make_app(rig_definition)
     with pytest.raises(CommandError) as err:
         await send_start(app, sketchPath=TASK_PATH)
     assert err.value.code == ErrCode.SEND_NOT_PASSTHROUGH
 
 
-async def test_send_start_refuses_an_undiscovered_sketch(task_profile_on_disk) -> None:  # noqa: ANN001
-    app = make_app()
+async def test_send_start_refuses_an_undiscovered_sketch(rig_definition, task_profile_on_disk) -> None:  # noqa: ANN001
+    app = await make_app(rig_definition)
     app.ports.open_passthrough(1)
     with pytest.raises(CommandError) as err:
         await send_start(app, sketchPath="/somewhere/else")
@@ -386,8 +387,8 @@ async def started(app: SimpleNamespace) -> None:
     await send_start(app, sketchPath=TASK_PATH)
 
 
-async def test_send_start_arms_a_run_and_says_so(grgl_on_disk) -> None:  # noqa: ANN001
-    app = make_app()
+async def test_send_start_arms_a_run_and_says_so(rig_definition, grgl_on_disk) -> None:  # noqa: ANN001
+    app = await make_app(rig_definition)
     await started(app)
 
     opening = telemetry(app)[-1]
@@ -395,9 +396,9 @@ async def test_send_start_arms_a_run_and_says_so(grgl_on_disk) -> None:  # noqa:
     assert [m["value"] for m in opening["metrics"]] == [None] * len(grgl_on_disk.live_metrics)
 
 
-async def test_a_debug_run_scores_exactly_as_a_session_would(grgl_on_disk) -> None:  # noqa: ANN001
+async def test_a_debug_run_scores_exactly_as_a_session_would(rig_definition, grgl_on_disk) -> None:  # noqa: ANN001
     """The pin that matters: one definition of P(hit), not a bench copy of it."""
-    app = make_app()
+    app = await make_app(rig_definition)
     await started(app)
 
     for code in STREAM[:-1]:
@@ -410,8 +411,8 @@ async def test_a_debug_run_scores_exactly_as_a_session_would(grgl_on_disk) -> No
     assert telemetry(app)[-1]["running"] is True
 
 
-async def test_one_payload_per_batch_carrying_the_latest_values(grgl_on_disk) -> None:  # noqa: ANN001
-    app = make_app()
+async def test_one_payload_per_batch_carrying_the_latest_values(rig_definition, grgl_on_disk) -> None:  # noqa: ANN001
+    app = await make_app(rig_definition)
     await started(app)
     before = len(telemetry(app))
 
@@ -422,9 +423,9 @@ async def test_one_payload_per_batch_carrying_the_latest_values(grgl_on_disk) ->
     assert by_id["p_r_odor1"] == {"id": "p_r_odor1", "value": 2 / 3, "n": 3}
 
 
-async def test_the_boards_end_strobe_ends_the_run(grgl_on_disk) -> None:  # noqa: ANN001
+async def test_the_boards_end_strobe_ends_the_run(rig_definition, grgl_on_disk) -> None:  # noqa: ANN001
     """End sends STOP; what ENDS the run is the board answering with 246."""
-    app = make_app()
+    app = await make_app(rig_definition)
     await started(app)
     await Application._handle_output(app, 1, rx(*STREAM))
 
@@ -436,8 +437,8 @@ async def test_the_boards_end_strobe_ends_the_run(grgl_on_disk) -> None:  # noqa
     assert len(telemetry(app)) == count
 
 
-async def test_console_chatter_and_echoes_are_not_strobes(grgl_on_disk) -> None:  # noqa: ANN001
-    app = make_app()
+async def test_console_chatter_and_echoes_are_not_strobes(rig_definition, grgl_on_disk) -> None:  # noqa: ANN001
+    app = await make_app(rig_definition)
     await started(app)
     before = len(telemetry(app))
 
@@ -453,8 +454,8 @@ async def test_console_chatter_and_echoes_are_not_strobes(grgl_on_disk) -> None:
     assert len(telemetry(app)) == before
 
 
-async def test_closing_the_console_ends_the_run(grgl_on_disk) -> None:  # noqa: ANN001
-    app = make_app()
+async def test_closing_the_console_ends_the_run(rig_definition, grgl_on_disk) -> None:  # noqa: ANN001
+    app = await make_app(rig_definition)
     await started(app)
 
     app.ports.close_passthrough(1)
@@ -465,17 +466,17 @@ async def test_closing_the_console_ends_the_run(grgl_on_disk) -> None:  # noqa: 
     assert telemetry(app)[-1]["running"] is False
 
 
-async def test_nothing_is_scored_until_a_run_is_armed(grgl_on_disk) -> None:  # noqa: ANN001
+async def test_nothing_is_scored_until_a_run_is_armed(rig_definition, grgl_on_disk) -> None:  # noqa: ANN001
     """A START typed by hand runs the task; there is no profile to score it by."""
-    app = make_app()
+    app = await make_app(rig_definition)
     app.ports.open_passthrough(1)
     await Application._handle_output(app, 1, rx(*STREAM))
     assert telemetry(app) == []
 
 
-async def test_a_profile_less_sketch_still_reports_running(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_profile_less_sketch_still_reports_running(rig_definition, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_module.task_profile, "load_profile", lambda _path: None)
-    app = make_app()
+    app = await make_app(rig_definition)
     await started(app)
     assert telemetry(app)[-1] == {"box": 1, "running": True, "metrics": []}
 

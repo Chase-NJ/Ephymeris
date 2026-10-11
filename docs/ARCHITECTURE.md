@@ -1305,6 +1305,15 @@ Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and 
 > which is capped and trimmed oldest-first. A real session emits thousands of strobes; deriving from the
 > ring would silently drop the early trials — the part of a learning curve you most want.
 
+**The session store forgets a run when the sidecar reports the next one began**, never on a click, so a
+refused start leaves the last run on screen. A port entering `IN_SESSION` (a real transition, not the
+connect replay) clears that box; Debug Mode's `port.telemetry` going from not running to running, which
+the sidecar sends only once a `START` is on the wire, clears that box; a `session.lifecycle` answer that
+shows a newly confirmed mapping clears every box. The payload carries no confirmation id, so "newly
+confirmed" means a mapping none of whose boxes has started, and either not the one last shown or the same
+one again after a box entered `IN_SESSION`. Debug Mode's **Send START** waits for the sketch's Task Profile,
+since without it the rig's `taskDefaults` cannot be merged (`startConfig`).
+
 Mission Control's elapsed time and the session log's T+ offsets read one clock, the **session clock**
 (`clockStartedAt`, [DATA.md](DATA.md#the-session-clock)) — the first group's start, not the record's
 creation in Step 1. The quick note (**n**, or a box panel's **Note about box N**) writes to the log

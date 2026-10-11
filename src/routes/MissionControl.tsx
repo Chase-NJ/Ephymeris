@@ -43,7 +43,6 @@ import {
   useBoxEnded,
   useBoxTelemetry,
   useBoxWriteError,
-  useSessionStore,
 } from "@/lib/sessions/context";
 import { missionControlHint, stepUrl } from "@/lib/sessions/flow";
 import type { SessionBox } from "@/lib/sessions/types";
@@ -103,7 +102,6 @@ export function MissionControl() {
   const { id: sessionId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { client, status } = useSidecar();
-  const sessionStore = useSessionStore();
 
   const [actionError, setActionError] = useState<string | null>(null);
   /** Boxes the last start was refused for, unflashed (`ARCHITECTURE.md#what-a-board-carries`). */
@@ -310,13 +308,10 @@ export function MissionControl() {
     }
   }
 
-  // Restarting a finished box begins a new run — its old stop message and
-  // telemetry must not linger over the fresh one. Cleared only after the
-  // start command succeeds, so a rejected start keeps the message.
-  async function startOne(box: number) {
-    await startBox(client, box);
-    sessionStore.resetBox(box);
-  }
+  // Restarting a finished box begins a new run, and its old stop message and
+  // telemetry must not linger over the fresh one: the session store forgets
+  // them when the port enters IN_SESSION, so a rejected start keeps them.
+  const startOne = (box: number) => startBox(client, box);
 
   // Back to a choice of group for a never-confirmed session: Step 2 needs a
   // group, and the record doesn't carry one.
@@ -504,10 +499,7 @@ export function MissionControl() {
                   variant="primary"
                   disabled={busy || !connected || boxes.length === 0}
                   onClick={() =>
-                    void run(async () => {
-                      await startAll(client, sessionId!);
-                      sessionStore.resetFinishedBoxes();
-                    })
+                    void run(() => startAll(client, sessionId!))
                   }
                 >
                   <Play size={13} strokeWidth={2} />

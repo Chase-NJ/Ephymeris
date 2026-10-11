@@ -7,6 +7,11 @@
  * pushed per metric update rather than batched — far lower frequency than raw
  * strobes, per `PROTOCOL.md#evt-session.telemetry`), and the active-session answer
  * (queried via `sessions.active` on connect, kept live by `session.lifecycle`).
+ *
+ * It also notices on its own when a run begins, and forgets the last one: no
+ * caller tells it, because a caller can only guess when the sidecar's run
+ * began, and Debug Mode's guess came before a START that could still be
+ * refused (`ARCHITECTURE.md#live-session-views`). See `attach` for the three events.
  */
 
 import type { SidecarPort } from "../ws/port";
@@ -90,6 +95,15 @@ export class SessionStore {
    */
   private active: ActiveSessions | null = null;
   private activeLoaded = false;
+  /**
+   * Boxes whose port is `IN_SESSION`, on `port.state`'s word. Only for telling
+   * a run still being written apart from a mapping no box has started.
+   */
+  private live = new Set<number>();
+  /** The running slot of the last active answer, as JSON, to tell a repeat. */
+  private shownRunning: string | null = null;
+  /** A box entered `IN_SESSION` since that answer. */
+  private ranSinceShown = false;
   private subs = new Map<string, Set<() => void>>();
 
   attach(client: SidecarPort): () => void {
@@ -109,9 +123,7 @@ export class SessionStore {
             ask();
             return;
           }
-          this.active = result;
-          this.activeLoaded = true;
-          this.notify("active");
+          this.takeActive(result);
         })
         .catch(() => {
           // A failed discovery just leaves activeLoaded false; the next
@@ -121,9 +133,22 @@ export class SessionStore {
     const offs = [
       client.on(EVT.SESSION_LIFECYCLE, (data) => {
         broadcasts += 1;
-        this.active = data;
-        this.activeLoaded = true;
-        this.notify("active");
+        this.takeActive(data);
+      }),
+
+      // A session run begins: the box's last run, Debug or session, is not
+      // this one's. A connect replays every box with `prev` equal to `state`,
+      // which is no transition, so a running box keeps what it has gathered.
+      client.on(EVT.PORT_STATE, (d) => {
+        if (typeof d?.box !== "number") return;
+        if (d.state !== "IN_SESSION") {
+          this.live.delete(d.box);
+          return;
+        }
+        this.live.add(d.box);
+        if (d.prev === "IN_SESSION") return;
+        this.ranSinceShown = true;
+        this.forgetBox(d.box);
       }),
 
       client.onStatus((status) => {
@@ -146,8 +171,13 @@ export class SessionStore {
       // history: a port in PASSTHROUGH cannot also be IN_SESSION, so the two
       // sources can never be writing one box at once, and sharing the slot is
       // what lets Debug Mode mount Mission Control's own components unchanged.
+      //
+      // The sidecar arms a Debug run only once its START is on the wire, so
+      // the arm (running false -> true) is when the last run is forgotten; a
+      // refused START never arms and leaves it on screen.
       client.on(EVT.PORT_TELEMETRY, (d) => {
         if (typeof d?.box !== "number") return;
+        if (d.running && !this.debugRunning.has(d.box)) this.forgetBox(d.box);
         this.telemetry.set(d.box, d.metrics ?? NO_METRICS);
         this.appendHistory(d.box, d.metrics ?? NO_METRICS);
         if (d.running) this.debugRunning.add(d.box);
@@ -269,8 +299,49 @@ export class SessionStore {
     }
   }
 
-  /** Clear per-run state when a new group's boxes are confirmed. */
-  resetRun(): void {
+  /**
+   * Take a new active answer, broadcast or asked for, and forget the last run
+   * if it shows a newly confirmed mapping.
+   *
+   * The payload carries no confirmation id, so "newly confirmed" is read from
+   * what it does carry: a mapping none of whose boxes has started (the runner
+   * clears `startedAt` and `ended` only when a mapping is confirmed), which is
+   * either not the one last shown, or the same one again after a box has run
+   * since. Confirming the same group twice, with a per-box start and its end
+   * in between, repeats the last broadcast exactly, and only that run tells
+   * them apart. A repeat with no run between is some other announce (a
+   * session created, a tidy) and changes nothing.
+   */
+  private takeActive(next: ActiveSessions): void {
+    const shown = JSON.stringify(next.running);
+    if (
+      this.noneStarted(next.running) &&
+      (shown !== this.shownRunning || this.ranSinceShown)
+    ) {
+      this.forgetRun();
+    }
+    this.shownRunning = shown;
+    this.ranSinceShown = false;
+    this.active = next;
+    this.activeLoaded = true;
+    this.notify("active");
+  }
+
+  /**
+   * A mapping is held and no box of it has begun a run. A box still
+   * `IN_SESSION` on its port has: the runner lets go of a run before its
+   * files are written and its port is released, and an announce landing then
+   * reads as never started.
+   */
+  private noneStarted(running: ActiveSessions["running"]): boolean {
+    if (!running?.groupId || running.boxes.length === 0) return false;
+    return running.boxes.every(
+      (b) => !b.running && b.startedAt === null && !b.ended && !this.live.has(b.box),
+    );
+  }
+
+  /** Forget every box's run: a new group's boxes were confirmed. */
+  private forgetRun(): void {
     this.telemetry.clear();
     this.history.clear();
     this.ended.clear();
@@ -285,8 +356,8 @@ export class SessionStore {
     }
   }
 
-  /** Forget one box's finished run when it starts again mid-group. */
-  resetBox(box: number): void {
+  /** Forget one box's run: it began another. */
+  private forgetBox(box: number): void {
     this.telemetry.delete(box);
     this.history.delete(box);
     this.ended.delete(box);
@@ -299,11 +370,6 @@ export class SessionStore {
     this.notify(`ended:${box}`);
     this.notify(`writeError:${box}`);
     this.notify("ended");
-  }
-
-  /** Reset every box that has a finished run on record. */
-  resetFinishedBoxes(): void {
-    for (const box of [...this.ended.keys()]) this.resetBox(box);
   }
 
   // --- subscriptions ----------------------------------------------------

@@ -5,6 +5,10 @@
  * gets wrong (`ARCHITECTURE.md#replay-on-connect`), and a real socket cannot
  * pin it.
  *
+ * Otherwise it behaves as `SidecarClient` does, and `port.contract.test.ts`
+ * runs the same rules against both: a call made while not connected is
+ * refused at once, and leaving `connected` fails every call still waiting.
+ *
  * Imported only by tests; nothing in the app reaches it.
  */
 
@@ -55,6 +59,9 @@ export class FakeSidecar implements SidecarPort {
 
   call<C extends CommandName>(cmd: C, ...rest: CallRest<C>): Promise<CommandResultMap[C]>;
   call(cmd: CommandName, args: unknown = {}): Promise<unknown> {
+    if (this.status !== "connected") {
+      return Promise.reject(new Error("sidecar is not connected"));
+    }
     return new Promise((resolve, reject) => {
       this.waiting.push({ cmd, args, resolve, reject });
     });
@@ -120,6 +127,11 @@ export class FakeSidecar implements SidecarPort {
   setStatus(status: ConnectionStatus): void {
     if (this.status === status) return;
     this.status = status;
+    if (status !== "connected") {
+      for (const call of this.waiting.splice(0)) {
+        call.reject(new Error("sidecar connection closed"));
+      }
+    }
     for (const handler of this.statusHandlers) handler(status);
   }
 

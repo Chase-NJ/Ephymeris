@@ -56,11 +56,15 @@ describe("the active-session answer", () => {
     expect(store.getActive()).toEqual(configuring("a"));
   });
 
-  it("is asked for again on every reconnect", () => {
-    const { sidecar } = attached("connected");
+  it("is asked for again on every reconnect", async () => {
+    const { sidecar, store } = attached("connected");
+    // The drop fails the ask in flight, as the real client does.
     sidecar.setStatus("reconnecting");
     sidecar.setStatus("connected");
-    expect(sidecar.asked(CMD.SESSIONS_ACTIVE)).toHaveLength(2);
+    expect(sidecar.asked(CMD.SESSIONS_ACTIVE)).toHaveLength(1);
+
+    await sidecar.reply(CMD.SESSIONS_ACTIVE, configuring("after"));
+    expect(store.getActive()).toEqual(configuring("after"));
   });
 
   it("is replaced wholesale by each lifecycle broadcast", () => {

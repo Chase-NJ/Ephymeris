@@ -90,6 +90,19 @@ describe("what each board carries", () => {
     expect(store.getFlashed(4)).toEqual({ path: "/sketches/GRGL", name: "GRGL" });
   });
 
+  it("attached before the connection is up, takes the queue from the connect replay", async () => {
+    // Its ask is refused at once, as the real client refuses any call before
+    // it connects; the replay that follows the connection carries the queue.
+    const sidecar = new FakeSidecar("connecting");
+    const store = new HardwareStore();
+    store.attach(sidecar);
+    await Promise.resolve();
+
+    sidecar.setStatus("connected");
+    sidecar.emit(EVT.FLASH_QUEUE, carrying({ 4: "/sketches/GRGL" }));
+    expect(store.getFlashed(4)).toEqual({ path: "/sketches/GRGL", name: "GRGL" });
+  });
+
   it("follows the queue and keeps an unchanged sketch's identity", () => {
     const { sidecar, store } = attached();
     sidecar.emit(EVT.FLASH_QUEUE, carrying({ 1: "/sketches/A", 2: "/sketches/B" }));

@@ -12,7 +12,7 @@ been broken can each be pinned:
 from __future__ import annotations
 
 from ephymeris_sidecar.tasks.profile import parse_profile
-from ephymeris_sidecar.tasks.seed import SEED_MAX, SEED_MIN, new_trial_seed
+from ephymeris_sidecar.tasks.seed import new_trial_seed
 from ephymeris_sidecar.tasks.start_command import build_start_command, with_trial_seed
 
 
@@ -23,8 +23,7 @@ def test_a_seed_never_lands_on_a_value_the_firmware_would_discard() -> None:
     folds into a different number from the one we logged."""
     for _ in range(2000):
         seed = new_trial_seed()
-        assert SEED_MIN <= seed <= SEED_MAX
-        assert seed != 0
+        assert 1 <= seed <= 2**31 - 2
 
 
 def test_seeds_do_not_repeat_across_a_run_of_draws() -> None:

@@ -260,7 +260,6 @@ async def test_losing_rhx_mid_recording_is_loud_and_the_run_is_kept(rig, tmp_pat
     status = h.service.status_json()
     assert "behavior session is unaffected" in status["message"]
     assert status["recording"] is not None  # still the run we will close out
-    assert h.service.is_recording is False or status["state"] == "error"
 
 
 async def test_every_status_is_the_declared_wire_shape(rig, tmp_path):

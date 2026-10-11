@@ -25,9 +25,18 @@ import { SettingRow } from "@/components/settings/SettingRow";
 import { errorMessage } from "@/lib/cohorts/commands";
 import { useIntanStatus } from "@/lib/intan/context";
 import { summarizeRecordingConfig, type RecordingConfigDefaults } from "@/lib/intan/defaults";
-import { reconcileRows, type BoxRow } from "@/lib/intan/recordingSetup";
+import {
+  assignPorts,
+  configurePayload,
+  presentPorts,
+  reconcileRows,
+  recordingReadiness,
+  rememberedDefaults,
+  saveDirectory,
+  type BoxRow,
+} from "@/lib/intan/recordingSetup";
 import { channelRange } from "@/lib/intan/scopeMath";
-import { FILE_FORMATS, type ProbeMap, type RecordingBoxConfig, type RecordingConfig } from "@/lib/intan/types";
+import { FILE_FORMATS, type ProbeMap } from "@/lib/intan/types";
 import { CASCADE, RISE, springPanel } from "@/lib/motion";
 import { stepUrl } from "@/lib/sessions/flow";
 import { getSetupDraft, setSetupDraft } from "@/lib/sessions/setupResume";
@@ -97,25 +106,8 @@ export function SessionRecording() {
   }, [draftKey, config, saveRoot, editing, rows]);
 
   const sessionFolder = session?.folderPath ?? null;
-  const folderName = sessionFolder ? (sessionFolder.split(/[\\/]/).filter(Boolean).pop() ?? "") : "";
-  // Beside the behavior data by default; under a root of the operator's
-  // choosing otherwise — electrophysiology is large and often lives on its own
-  // drive. Either way the session's folder name is kept, so the two halves of
-  // one session can be matched by eye.
-  const saveDirectory = sessionFolder
-    ? saveRoot
-      ? `${saveRoot.replace(/[\\/]+$/, "")}/${folderName}`
-      : `${sessionFolder.replace(/[\\/]+$/, "")}/ephys`
-    : "";
-
-  const presentPorts = useMemo(
-    () =>
-      Object.entries(intan.ports)
-        .filter(([, count]) => count > 0)
-        .map(([letter]) => letter)
-        .sort(),
-    [intan.ports],
-  );
+  const directory = saveDirectory(sessionFolder, saveRoot);
+  const present = useMemo(() => presentPorts(intan.ports), [intan.ports]);
 
   // Seed the form once the rig's boxes are in, and follow them when a return
   // to Boxes changed the mapping. Never re-seeded on an `intan.status` tick,
@@ -129,29 +121,10 @@ export function SessionRecording() {
   }, [boxes]);
 
   // Once RHX reports its ports, give each unassigned box the next free one
-  // with its whole range. A guess the operator can see and change, which beats
-  // a blank they must fill for every box every session.
+  // with its whole range (`assignPorts`).
   useEffect(() => {
-    if (presentPorts.length === 0) return;
-    setRows((current) => {
-      const taken = new Set(current.filter((r) => r.port).map((r) => r.port));
-      let changed = false;
-      const next = current.map((row) => {
-        let { port, lastChannel } = row;
-        if (!port || !presentPorts.includes(port)) {
-          port = presentPorts.find((p) => !taken.has(p)) ?? presentPorts[0] ?? "";
-          taken.add(port);
-          lastChannel = -1;
-        }
-        const count = intan.ports[port] ?? 0;
-        if (lastChannel < 0 || lastChannel >= count) lastChannel = Math.max(0, count - 1);
-        if (port === row.port && lastChannel === row.lastChannel) return row;
-        changed = true;
-        return { ...row, port, lastChannel, firstChannel: Math.min(row.firstChannel, lastChannel) };
-      });
-      return changed ? next : current;
-    });
-  }, [presentPorts, intan.ports]);
+    setRows((current) => assignPorts(current, intan.ports));
+  }, [intan.ports]);
 
   // Re-parse a remembered probe map, so the preview is there on arrival — and
   // for a box the mapping swapped in, whose row count may not have changed.
@@ -190,111 +163,28 @@ export function SessionRecording() {
     if (typeof picked === "string") await loadProbeMap(box, picked);
   }
 
-  // --- readiness --------------------------------------------------------
-
   const recorded = rows.filter((r) => r.record);
-  const unbound = recorded.filter(
-    (r) => !settings.boxes.find((b) => b.box === r.box)?.intanDigitalIn,
+  const { checks, overlap, savesSomething, firstProblem, ready, hint } = recordingReadiness(
+    rows,
+    config,
+    intan,
+    settings.boxes,
+    directory,
   );
-  const overlap = useMemo(() => {
-    const seen = new Map<string, number>();
-    for (const row of recorded) {
-      for (const name of channelRange(row.port, row.firstChannel, row.lastChannel)) {
-        const other = seen.get(name);
-        if (other !== undefined && other !== row.box) return `${name} is claimed by box ${other} and box ${row.box}`;
-        seen.set(name, row.box);
-      }
-    }
-    return null;
-  }, [recorded]);
-  const savesSomething =
-    !!config && (config.saveWideband || config.saveSpikes || config.saveLowpass || config.saveHighpass);
-
-  const checks: { ok: boolean; label: string; fix?: { label: string; to: string } }[] = [
-    {
-      ok: intan.connected,
-      label: intan.connected
-        ? `RHX ${intan.version ?? ""} · ${intan.controller ?? "controller"} · ${
-            intan.sampleRate ? `${intan.sampleRate / 1000} kS/s` : "—"
-          }${intan.synthetic ? " · synthetic" : ""}`
-        : "RHX is not connected — in RHX: Network → Remote TCP Control → Connect (Commands tab)",
-      fix: { label: "Open Recording", to: "/recording" },
-    },
-    {
-      ok: intan.connected && intan.runMode !== "record" && intan.runMode !== "trigger",
-      label:
-        intan.runMode === "record" || intan.runMode === "trigger"
-          ? "RHX is already recording — stop it in RHX first"
-          : "RHX is not recording",
-    },
-    {
-      ok: intan.connected && presentPorts.length > 0,
-      label:
-        presentPorts.length > 0
-          ? `Headstage on port ${presentPorts.join(", ")}`
-          : "No headstage detected on any port",
-    },
-    {
-      ok: intan.rigHasSync,
-      label: intan.rigHasSync
-        ? "This rig's wiring has a sync channel"
-        : "This rig's wiring has no sync channel, so no box pulses on its events",
-      fix: { label: "Open wiring", to: "/config/wiring" },
-    },
-    {
-      ok: recorded.length > 0 && unbound.length === 0,
-      label:
-        recorded.length === 0
-          ? "No box is set to record"
-          : unbound.length === 0
-            ? "Every recorded box has an Intan digital input"
-            : `Box ${unbound.map((r) => r.box).join(", ")} has no Intan digital input bound`,
-      fix: { label: "Open Recording", to: "/recording" },
-    },
-  ];
   const okCount = checks.filter((c) => c.ok).length;
-  const firstProblem = checks.find((c) => !c.ok)?.label ?? overlap ?? (!savesSomething ? "Nothing would be saved" : null);
-  const ready = checks.every((c) => c.ok) && !overlap && savesSomething && saveDirectory !== "";
-
-  const hint = !intan.connected
-    ? "Connect Ephymeris to Intan RHX."
-    : !ready
-      ? "Finish the recording setup."
-      : "Ready — continue to Mission Control.";
 
   async function applyAndContinue() {
     if (!config || !sessionId) return;
     setBusy(true);
     setError(null);
     try {
-      const boxes: RecordingBoxConfig[] = recorded.map((r) => ({
-        box: r.box,
-        port: r.port,
-        firstChannel: r.firstChannel,
-        lastChannel: r.lastChannel,
-        probeMapPath: r.probeMap ? r.probeMapPath : null,
-      }));
-      const full: RecordingConfig = { ...config, saveDirectory, boxes };
-      await client.call(CMD.INTAN_CONFIGURE, { sessionId, groupId, config: full });
-
-      // Remembered as the next recording's starting point — not the save
-      // directory (it is per session) and not the boxes list (it is per group).
-      void save({
-        saveRoot,
-        config,
-        boxes: Object.fromEntries(
-          rows.map((r) => [
-            String(r.box),
-            {
-              record: r.record,
-              port: r.port,
-              firstChannel: r.firstChannel,
-              lastChannel: r.lastChannel,
-              probeMapPath: r.probeMapPath,
-            },
-          ]),
-        ),
+      await client.call(CMD.INTAN_CONFIGURE, {
+        sessionId,
+        groupId,
+        config: configurePayload(rows, config, saveRoot, sessionFolder),
       });
+      // Remembered as the next recording's starting point.
+      void save(rememberedDefaults(rows, config, saveRoot));
       navigate(stepUrl.control(sessionId!));
     } catch (err) {
       setError(errorMessage(err));
@@ -312,7 +202,7 @@ export function SessionRecording() {
     }
   }
 
-  const portOptions = presentPorts.map((p) => ({
+  const portOptions = present.map((p) => ({
     value: p,
     label: `Port ${p}`,
     detail: `${intan.ports[p] ?? 0} ch`,
@@ -399,9 +289,9 @@ export function SessionRecording() {
                   <div className="border-b border-halo px-4 py-3">
                     <div className="text-[13px] font-medium text-starlight">Save location</div>
                     <div className="mt-1 font-mono text-[11px] break-all text-static" data-selectable>
-                      {saveDirectory || "—"}
+                      {directory || "—"}
                     </div>
-                    {/\s/.test(saveDirectory) && (
+                    {/\s/.test(directory) && (
                       <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--color-status-warning)" }}>
                         This path contains a space. If RHX does not keep it exactly as given, Ephymeris
                         refuses to start rather than let RHX record somewhere else.
@@ -515,7 +405,7 @@ export function SessionRecording() {
                                   size="regular"
                                   value={row.port}
                                   options={portOptions}
-                                  placeholder={intan.connected && presentPorts.length === 0 ? "no headstage" : "— port —"}
+                                  placeholder={intan.connected && present.length === 0 ? "no headstage" : "— port —"}
                                   className="w-40"
                                   onChange={(port) =>
                                     patchRow(row.box, {

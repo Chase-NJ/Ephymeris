@@ -21,6 +21,7 @@ from ephymeris_sidecar.cohorts.move import MoveRequest, plan_move
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import GroupRun, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
+from tests.conftest import fine_mtime
 
 
 class Lab:
@@ -289,24 +290,51 @@ def test_notes_md_is_never_moved(lab: Lab) -> None:
     assert not (lab.folder("1", "2026-07-22", lab.b_root) / "notes.md").exists()
 
 
-def test_the_cache_follows_the_run_and_stays_warm(lab: Lab) -> None:
-    old = lab.runs(lab.a.id)["run-2-slow1"][1]
+def cache_row(lab: Lab, path: str, key: tuple[int, int]) -> None:
     lab.db.conn.execute(
         "INSERT INTO run_metrics_cache (run_id, file_path, file_mtime_ns, file_size,"
         " profile_source, codec_version, computed_at, status, summary_json)"
-        " VALUES ('run-2-slow1', ?, 1, 1, 'snapshot', 1, 'now', 'ok', '{}')",
-        (old,),
+        " VALUES ('run-2-slow1', ?, ?, ?, 'snapshot', 1, 'now', 'ok', '{}')",
+        (path, *key),
     )
     lab.db.conn.commit()
 
+
+def cached_key(lab: Lab) -> tuple[str, int, int]:
+    return tuple(
+        lab.db.conn.execute(
+            "SELECT file_path, file_mtime_ns, file_size FROM run_metrics_cache"
+            " WHERE run_id = 'run-2-slow1'"
+        ).fetchone()
+    )
+
+
+def test_the_cache_follows_the_run_and_stays_warm(lab: Lab, coarse_volume: None) -> None:
+    """Even on a volume that rounds the copy's mtime: the content is the same."""
+    old = Path(lab.runs(lab.a.id)["run-2-slow1"][1])
+    fine_mtime(old)
+    cache_row(lab, str(old), (old.stat().st_mtime_ns, old.stat().st_size))
+
     lab.apply("slow1")
 
-    row = lab.db.conn.execute(
-        "SELECT file_path, file_mtime_ns, file_size FROM run_metrics_cache WHERE run_id = 'run-2-slow1'"
-    ).fetchone()
-    new = Path(row[0])
-    assert str(lab.b_root) in row[0]
-    assert (row[1], row[2]) == (new.stat().st_mtime_ns, new.stat().st_size)
+    path, mtime, size = cached_key(lab)
+    new = Path(path).stat()
+    assert str(lab.b_root) in path
+    assert (mtime, size) == (new.st_mtime_ns, new.st_size)
+    assert mtime != 1_760_000_000_123_456_789, "the copy's mtime was rounded"
+
+
+def test_a_stale_cache_row_stays_stale(lab: Lab) -> None:
+    """Made fresh by the move, it would serve a summary of content the file no
+    longer has."""
+    old = lab.runs(lab.a.id)["run-2-slow1"][1]
+    cache_row(lab, old, (1, 1))
+
+    lab.apply("slow1")
+
+    path, mtime, size = cached_key(lab)
+    assert str(lab.b_root) in path
+    assert (mtime, size) == (1, 1)
 
 
 def test_a_legacy_layout_moves_in_its_own_spelling(db: Database, tmp_path: Path) -> None:

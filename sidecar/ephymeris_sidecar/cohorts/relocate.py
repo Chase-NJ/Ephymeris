@@ -13,9 +13,15 @@ So the paths move with the files, in the order that makes it safe:
   records follow in one transaction. A crash between the two is rolled forward
   at the next start: the folder is demonstrably at the target, so the records
   are what's behind.
-* **Another volume** — copy and verify, commit the records, then delete the
-  originals; the animal move's order (`DATA.md#moving-animals-between-cohorts`).
-  A crash while copying is undone, after the commit finished.
+* **Another volume** — copy, fsync and verify, commit the records, then
+  delete the originals; the animal move's order
+  (`DATA.md#moving-animals-between-cohorts`). A crash while copying is undone,
+  after the commit finished.
+
+Either way the cache and adoption rows carry their freshness keys to the
+moved files (`freshness.carry`): a copy's mtime is rounded on a coarser
+volume, and a key left at the original's would send every recovered run back
+to being matched by name.
 
 And for cohorts relocated before this existed, `rehome` re-points records left
 at an old folder to the files now under the cohort's — run by Rescan before it
@@ -33,7 +39,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import folders
+from . import folders, freshness
 from .db import Database
 from .folders import DataFolderError, relative_below, resolved
 from .models import CohortNotFound
@@ -151,6 +157,9 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
 
     _check_destination(source, target)
     same_volume = _same_volume(source, target)
+    # Taken before anything moves: after a rename there is no original left
+    # to stat, and a key is carried only if it was fresh for the original.
+    before = _stats(source)
     journal = str(uuid.uuid4())
     with db.lock:
         db.conn.execute(
@@ -178,7 +187,7 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
     failure: BaseException | None = None
     with db.lock:
         try:
-            _commit_records(db.conn, cohort_id, source, target)
+            _commit_records(db.conn, cohort_id, source, target, before)
             db.conn.execute(
                 "UPDATE folder_moves SET state = ?, updated_at = ? WHERE id = ?",
                 ("done" if same_volume else "committed", _now(), journal),
@@ -218,6 +227,8 @@ def resume(db: Database) -> int:
         source, target = Path(source_s), Path(target_s)
         if state == "moving":
             if not source.exists() and target.exists():
+                # The originals' stats went with the crash, so the keys stay
+                # as they were; a rename keeps mtimes, so they still hold.
                 log.warning("relocate %s: the folder moved before a crash; finishing", journal)
                 with db.lock:
                     _commit_records(db.conn, cohort_id, source, target)
@@ -236,12 +247,54 @@ def resume(db: Database) -> int:
     return len(rows)
 
 
-def _commit_records(conn: sqlite3.Connection, cohort_id: str, source: Path, target: Path) -> None:
+def _commit_records(
+    conn: sqlite3.Connection,
+    cohort_id: str,
+    source: Path,
+    target: Path,
+    before: dict[tuple[str, ...], freshness.Stat] | None = None,
+) -> None:
     rewrite_paths(conn, cohort_id, source, target)
+    if before:
+        _carry_keys(conn, target, before)
     conn.execute(
         "UPDATE cohorts SET data_folder = ?, updated_at = ? WHERE id = ?",
         (str(target), _now(), cohort_id),
     )
+
+
+def _carry_keys(
+    conn: sqlite3.Connection, target: Path, before: dict[tuple[str, ...], freshness.Stat]
+) -> None:
+    """Re-key every row below `target` from its original's stat. The target
+    was empty, so whatever lies below it is this relocate's."""
+    paths = {
+        p
+        for table in freshness.KEYED_TABLES
+        for (p,) in conn.execute(f"SELECT file_path FROM {table}")
+        if p
+    }
+    moved = []
+    for path in paths:
+        rel = relative_below(path, target)
+        if rel is not None:
+            moved.append((path, before.get(_key(rel))))
+    freshness.carry(conn, moved)
+
+
+def _stats(root: Path) -> dict[tuple[str, ...], freshness.Stat]:
+    """Every file's stat below `root`, by its case-folded relative path —
+    how `relative_below` compares the records' spellings."""
+    out: dict[tuple[str, ...], freshness.Stat] = {}
+    for path in _files(root):
+        stat = freshness.stat_of(path)
+        if stat is not None:
+            out[_key(path.relative_to(root))] = stat
+    return out
+
+
+def _key(rel: Path) -> tuple[str, ...]:
+    return tuple(part.casefold() for part in rel.parts)
 
 
 def _set_folder(db: Database, cohort_id: str, folder: Path) -> None:
@@ -304,10 +357,19 @@ def _counterpart_matches(path: Path, mirror: Path) -> bool:
 
 
 def _copy_tree(source: Path, target: Path) -> None:
-    shutil.copytree(source, target, copy_function=shutil.copy2, dirs_exist_ok=True)
+    shutil.copytree(source, target, copy_function=_copy_durably, dirs_exist_ok=True)
     for path in _files(source):
         if not _counterpart_matches(path, target / path.relative_to(source)):
             raise OSError(f"{target / path.relative_to(source)} did not copy intact")
+
+
+def _copy_durably(src: str, dst: str) -> str:
+    """`copy2`, then fsync: the originals are deleted right after the commit,
+    and a copy still in the OS cache is not yet a copy."""
+    out = shutil.copy2(src, dst)
+    with open(out, "rb+") as handle:
+        os.fsync(handle.fileno())
+    return out
 
 
 def _remove_copies(source: Path, target: Path) -> None:

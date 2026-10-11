@@ -35,6 +35,7 @@ from typing import Any, Callable
 
 from ..sessions.models import GroupRun
 from ..sessions.tidy import Merge, merged_fields
+from . import freshness
 from .db import Database
 from .move import (
     MovePlan,
@@ -114,8 +115,7 @@ def apply(
                     "Something changed while the files were being copied. Nothing was moved; "
                     "try again.",
                 )
-            stats = _dest_stats(again)
-            _apply_records(conn, again, stats)
+            _apply_records(conn, again)
             conn.execute(
                 "UPDATE animal_moves SET state = 'committed', updated_at = ? WHERE id = ?",
                 (_now(), journal),
@@ -171,24 +171,10 @@ def _copy_files(plan: MovePlan, on_copied: Callable[[int, int], None] | None) ->
             on_copied(index + 1, len(todo))
 
 
-def _dest_stats(plan: MovePlan) -> dict[str, tuple[int, int]]:
-    """The destination files' stat, normalized path → (mtime_ns, size): the
-    freshness key the adoption and cache rows are re-keyed to, so neither
-    re-reads a file whose content is the same."""
-    out: dict[str, tuple[int, int]] = {}
-    for f in plan.files:
-        try:
-            stat = Path(f.dst).stat()
-        except OSError:
-            continue
-        out[_norm(f.dst)] = (stat.st_mtime_ns, stat.st_size)
-    return out
-
-
 # --- step 3: the records ------------------------------------------------------
 
 
-def _apply_records(conn: Any, plan: MovePlan, stats: dict[str, tuple[int, int]]) -> None:
+def _apply_records(conn: Any, plan: MovePlan) -> None:
     source, dest = plan.source, plan.dest
     now = _now()
     mapped = {a.source_id: a.dest_id for a in plan.animals}
@@ -257,7 +243,10 @@ def _apply_records(conn: Any, plan: MovePlan, stats: dict[str, tuple[int, int]])
             "UPDATE session_animal_runs SET file_path = ?, animal_id = ? WHERE id = ?",
             (new_path, plan.run_animals[run_id], run_id),
         )
-        _rekey_cache(conn, run_id, new_path, stats)
+        if new_path is not None:
+            conn.execute(
+                "UPDATE run_metrics_cache SET file_path = ? WHERE run_id = ?", (new_path, run_id)
+            )
 
     for adopted_id, (new_path, animal_id) in plan.adopted.items():
         # A destination adoption of the same file under another id would trip
@@ -266,40 +255,33 @@ def _apply_records(conn: Any, plan: MovePlan, stats: dict[str, tuple[int, int]])
             "DELETE FROM adopted_runs WHERE cohort_id = ? AND file_path = ? AND id != ?",
             (dest.id, new_path, adopted_id),
         )
-        stat = stats.get(_norm(new_path))
         conn.execute(
-            "UPDATE adopted_runs SET cohort_id = ?, file_path = ?, animal_id = ?,"
-            " file_mtime_ns = ?, file_size = ? WHERE id = ?",
-            (dest.id, new_path, animal_id, stat[0] if stat else None, stat[1] if stat else None, adopted_id),
+            "UPDATE adopted_runs SET cohort_id = ?, file_path = ?, animal_id = ? WHERE id = ?",
+            (dest.id, new_path, animal_id, adopted_id),
         )
-        _rekey_cache(conn, adopted_id, new_path, stats)
+        conn.execute(
+            "UPDATE run_metrics_cache SET file_path = ? WHERE run_id = ?", (new_path, adopted_id)
+        )
 
     for f in plan.files:
-        stat = stats.get(_norm(f.dst))
-        if stat is not None:
-            conn.execute(
-                "UPDATE OR REPLACE strobe_scan_cache SET file_path = ?, file_mtime_ns = ?,"
-                " file_size = ? WHERE file_path = ?",
-                (f.dst, stat[0], stat[1], f.src),
-            )
+        conn.execute(
+            "UPDATE OR REPLACE strobe_scan_cache SET file_path = ? WHERE file_path = ?",
+            (f.dst, f.src),
+        )
+
+    # The content is hash-verified identical, so a row that was fresh for the
+    # original is fresh for the copy; the originals are still there to ask.
+    originals = {_norm(f.dst): f.src for f in plan.files if f.action != "already"}
+    stored = {
+        *(p for p in plan.run_paths.values() if p),
+        *(p for p, _ in plan.adopted.values()),
+        *(f.dst for f in plan.files),
+    }
+    freshness.carry(
+        conn, ((p, freshness.stat_of(originals.get(_norm(p)))) for p in stored)
+    )
 
     conn.execute("UPDATE cohorts SET updated_at = ? WHERE id IN (?, ?)", (now, source.id, dest.id))
-
-
-def _rekey_cache(conn: Any, run_id: str, new_path: str | None, stats: dict[str, tuple[int, int]]) -> None:
-    """Point a run's cached summary at its new file. The content is
-    hash-verified identical, so the summary is still the right answer."""
-    if new_path is None:
-        return
-    stat = stats.get(_norm(new_path))
-    if stat is None:
-        conn.execute("DELETE FROM run_metrics_cache WHERE run_id = ?", (run_id,))
-        return
-    conn.execute(
-        "UPDATE run_metrics_cache SET file_path = ?, file_mtime_ns = ?, file_size = ?"
-        " WHERE run_id = ?",
-        (new_path, stat[0], stat[1], run_id),
-    )
 
 
 def _apply_session(

@@ -1114,7 +1114,7 @@ at any point before the run's release, the writer's finalize included, leaves th
 *The box's own panel names the fault. **Acknowledge** sends `port.error.ack`, the only way out of `ERROR`.
 The operator's procedure is [USER-GUIDE.md](USER-GUIDE.md#when-a-box-shows-error-or-a-board-disconnects).*
 
-Every way a run ends, side by side (`SessionRunner.finalize_box`, `end_all`, `_on_lost`):
+Every way a run ends, side by side (`SessionRunner.finalize_box`, `end_all`, and the claim's `on_lost`):
 
 ```mermaid
 flowchart TD

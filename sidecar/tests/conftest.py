@@ -10,12 +10,14 @@ a live session.
 Also fixtures that fake the filesystem boundary, so a test reaches a failure
 through the code's real path rather than by replacing one of its steps:
 `coarse_volume` rounds mtimes, `hung_volume` stops answering mid-copy,
-`other_volume` is a second device a folder can't be renamed onto, and
-`power_cut` kills the process at the nth copy or delete below a folder.
+`other_volume` is a second device a folder can't be renamed onto,
+`unreachable_volume` can't be read at all, and `power_cut` kills the process
+at the nth copy or delete below a folder.
 """
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import threading
@@ -134,6 +136,25 @@ def other_volume(monkeypatch: pytest.MonkeyPatch):
         return root
 
     return mount
+
+
+@pytest.fixture
+def unreachable_volume(monkeypatch: pytest.MonkeyPatch):
+    """`unreachable_volume(root)`: a share that stopped answering. Every `os.stat`
+    below `root` fails with `EIO`, which says nothing about whether the files
+    are there."""
+    roots: list[Path] = []
+    real = os.stat
+
+    def stat(path, *args, **kwargs):  # noqa: ANN001, ANN202
+        if isinstance(path, (str, os.PathLike)) and any(
+            Path(path).is_relative_to(root) for root in roots
+        ):
+            raise OSError(errno.EIO, os.strerror(errno.EIO), str(path))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat)
+    return roots.append
 
 
 @pytest.fixture

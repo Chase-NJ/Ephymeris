@@ -166,13 +166,13 @@ async def test_a_folder_with_any_file_is_data_and_is_never_removed(rig: Rig) -> 
     assert folder.exists()
 
 
-async def test_an_unreachable_folder_is_never_read_as_empty(rig: Rig, monkeypatch) -> None:
-    """An unmounted drive says nothing about what the folder holds (`DATA.md#pruning`'s
-    reachable-and-absent rule, the prune's own)."""
-    from ephymeris_sidecar.analytics import service
-
+async def test_an_unreachable_folder_is_never_read_as_empty(
+    rig: Rig, unreachable_volume
+) -> None:
+    """A share that stopped answering says nothing about what the folder holds
+    (`DATA.md#pruning`'s reachable-and-absent rule, the prune's own)."""
     rig.add_session("12", DAY)
-    monkeypatch.setattr(service, "_folder_state", lambda _path: None)
+    unreachable_volume(rig.root)
     assert (await preview(rig))["empty"] == []
 
 

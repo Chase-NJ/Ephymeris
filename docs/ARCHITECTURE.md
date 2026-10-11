@@ -986,7 +986,10 @@ happened to see, because live session events are [not replayed](#replay-on-conne
 from the runner's per-box `startedAt`, never a client stopwatch, so a reload resumes mid-count. Whether a box has finished this group is the runner's
 per-box `ended`, re-asked with `sessions.status` on each `session.animalEnded`, so a reload over a finished
 group still opens the wrap-up. Whether the session has run at all is its status: any box's start, by Start
-All or one at a time, moves it to `running`. A per-box write failure is pushed as `sidecar.error`.
+All or one at a time, moves it to `running`. **A box that has started is a run**: a Start All refused at
+box *k* records the group run and `running` for the boxes it did start before the refusal goes out, so End
+and Switch Group end them and Resume finds a group that ran. A per-box write failure is pushed as
+`sidecar.error`.
 
 ### Entering IN_SESSION
 

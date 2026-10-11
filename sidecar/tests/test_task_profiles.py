@@ -655,9 +655,11 @@ def test_the_cap_reserves_room_for_the_seed_appended_later() -> None:
 
 
 def _profile_whose_seeded_line_is(length: int) -> dict:
-    """A one-field profile whose line, with the widest seed appended, is
-    exactly `length` characters: `START X=aaa… SEED=2147483646`."""
-    value_len = length - len("START X=") - len(" SEED=2147483646")
+    """A one-field profile whose line, with the widest seed `seed.py` draws
+    appended, is exactly `length` characters: `START X=aaa… SEED=…`."""
+    from ephymeris_sidecar.tasks.start_command import with_trial_seed
+
+    value_len = length - len(with_trial_seed("START X=", 2**31 - 2))
     return {"taskName": "Edge", "config": [
         {"metadataKey": "x", "wireKey": "X", "label": "x", "type": "string", "default": "a" * value_len}
     ]}

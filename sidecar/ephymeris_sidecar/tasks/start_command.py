@@ -22,10 +22,8 @@ SEED_WIRE_KEY = "SEED"
 #: `libraries/BehaviorBox/BehaviorBox.h`. Two files, one value:
 #: `tests/test_task_profiles.py` reads the header and fails when they disagree.
 #:
-#: It is a buffer size, terminator included: a sketch reads into
-#: `char cmd[START_LINE_MAX]`, so the longest line it keeps whole is one
-#: character shorter. A line of exactly `START_LINE_MAX` characters loses its
-#: last one -- the seed's last digit.
+#: It is a buffer size, terminator included, so a line must be shorter than it
+#: (`TASKS.md#the-length-cap`).
 #:
 #: This is checked rather than trusted because the firmware CANNOT report the
 #: failure: `readLineInto()` truncates an overlong line and drops the rest of the

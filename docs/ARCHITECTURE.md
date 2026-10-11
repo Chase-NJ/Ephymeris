@@ -933,8 +933,9 @@ was. `lib/sessions/setupResume.ts` remembers two things:
   config, so a default changed during the visit is followed on return ([TASKS.md](TASKS.md#three-layer-merge)).
   A Record draft follows the mapping: a box still mapped keeps its row as typed, a box no longer mapped is
   dropped, and a newly mapped one starts from the recording defaults (`reconcileRows`,
-  `lib/intan/recordingSetup.ts`), so a return to Boxes that moved an animal cannot leave `intan.configure`
-  naming the box it left.
+  `lib/intan/recordingSetup.ts`) and, with no remembered port RHX still reports, is guessed onto a free one
+  (`assignPorts`), so a return to Boxes that moved an animal cannot leave `intan.configure` naming the box it
+  left.
 
 The memory is dropped on reaching Mission Control and by a deliberate Cancel or End session, and the offer is
 withheld whenever `sessions.active` no longer reports the session, because the sidecar is the authority on

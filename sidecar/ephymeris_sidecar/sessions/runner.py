@@ -488,8 +488,13 @@ class SessionRunner:
         # run carries its own `session_id`, so a late one would still be
         # recorded against the right session, but after the group had closed
         # -- `DATA.md#orphan-adoption`.)
-        while self._finalizations:
-            await asyncio.gather(*list(self._finalizations), return_exceptions=True)
+        #
+        # Only the unfinished ones: a task that just finished stays in the set
+        # until its `discard` callback runs on the loop, and a gather over
+        # finished tasks completes without yielding, so waiting on them spins
+        # here forever and starves the loop that would run it.
+        while pending := [t for t in self._finalizations if not t.done()]:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     # --- internals --------------------------------------------------------
 

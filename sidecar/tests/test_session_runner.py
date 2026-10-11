@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -439,6 +440,30 @@ async def test_the_operator_can_stop_waiting(tmp_path: Path) -> None:
 
     assert asyncio.get_event_loop().time() - started < 5.0
     assert [reason for _, reason in ended] == ["operator stop"]
+
+
+def test_the_end_does_not_spin_on_a_finalization_that_just_finished(tmp_path: Path) -> None:
+    """A board's own end strobe finalizes its run in a tracked task. When that
+    task finished in the same loop turn `end_all` reached its drain, it was
+    still in the set, waiting for its `discard` callback, and a gather over
+    finished tasks never yields: `end_all` spun forever and starved the loop.
+    It hung CI one run in a few dozen; here the state is set up directly.
+
+    On a thread of its own, so a regression fails instead of hanging the suite."""
+
+    async def scenario() -> None:
+        runner, _ports, _events, _ended = make_runner(tmp_path)
+        loop = asyncio.get_running_loop()
+        finished = loop.create_future()
+        finished.set_result(None)
+        runner._finalizations.add(finished)  # type: ignore[arg-type]
+        loop.call_soon(runner._finalizations.discard, finished)  # its callback, queued
+        await runner.end_all("operator stop")
+
+    thread = threading.Thread(target=asyncio.run, args=(scenario(),), daemon=True)
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive(), "end_all spun on a finished finalization"
 
 
 async def test_the_default_end_is_unchanged(tmp_path: Path) -> None:

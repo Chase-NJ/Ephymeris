@@ -306,7 +306,7 @@ Both transfers that copy a cohort's files to another place, a [relocate](#data-f
 | Undo, before the records commit | Removes any `.part`, and each copy whose original is still there **with the same content** |
 | Delete originals, after the commit | Removes each original whose copy is there **with the same content**; one changed since it was copied is left in place |
 
-An original that can't be seen at all, a share that stopped answering or a drive not plugged in, is never read as deleted. Its transfer deletes nothing and leaves its journal `committed`, and the next start that can reach it finishes. Absence counts as gone only while something above it is readable, the [prune's](#pruning) rule (`relocate.out_of_reach`).
+An original that can't be seen at all, a share that stopped answering or a drive not plugged in, is never read as deleted. Its transfer deletes nothing and leaves its journal `committed`, and the next start that can reach it finishes. `relocate.out_of_reach` decides: a `stat` that fails other than not-found is out of reach, and a missing original counts as gone only when, walking up its folders, one answers before any errors. That is how the [prune](#pruning) reads absence too.
 
 > [!CAUTION]
 > **Neither step that deletes trusts a remembered hash alone.** Both read the file they keep as well as the one they remove, so a file whose content exists nowhere else is never deleted: not a copy of an original edited since, and not an original whose copy has gone. A crash can leave only a `.part`, never a partial file under its real name, so a retry is never blocked by debris the undo kept.

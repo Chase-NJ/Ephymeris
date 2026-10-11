@@ -42,6 +42,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from stat import S_ISDIR
 from typing import Callable
 
 from . import folders, freshness, transfer
@@ -309,9 +310,11 @@ def out_of_reach(path: Path) -> bool:
     """Whether `path` can't be seen at all — a share that stopped answering,
     or a volume that isn't mounted — as opposed to there, or demonstrably gone.
 
-    Absence counts as gone only while some ancestor is readable, the rule
-    the prune keeps (`DATA.md#pruning`): a deleted tree leaves the drive root
-    at worst, an unmounted volume leaves nothing."""
+    A `stat` that fails other than not-found proves nothing, so it is out of
+    reach. A missing path counts as gone only when, walking up, a folder
+    answers before anything errors: a deleted tree leaves the drive root at
+    worst, an unmounted volume leaves nothing. The prune reads absence the
+    same way (`analytics/service._storage_is_reachable`, `DATA.md#pruning`)."""
     try:
         os.stat(path)
         return False
@@ -319,7 +322,15 @@ def out_of_reach(path: Path) -> bool:
         pass
     except OSError:
         return True
-    return not any(os.path.isdir(ancestor) for ancestor in path.parents)
+    for ancestor in path.parents:
+        try:
+            if S_ISDIR(os.stat(ancestor).st_mode):
+                return False
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError:
+            return True
+    return True
 
 
 def _commit_records(

@@ -99,15 +99,22 @@ class FakeRunner:
 
 
 class FakeIntan:
+    """`IntanService`'s lifecycle-facing surface, held to its contract below."""
+
     def __init__(self, log: list[str]) -> None:
         self.log = log
-        self.configured = True
+        #: The (session, group) the Record step set a recording up for.
+        self.set_up_for: tuple[str, str] | None = None
         self.is_recording = False
         self.force_stop = asyncio.Event()
         self.gate: asyncio.Event | None = None
 
-    def configured_for(self, _session_id: str, _group_id: str) -> bool:
-        return self.configured
+    def set_up(self, session_id: str, group_id: str) -> None:
+        """What the Record step's `intan.configure` leaves behind."""
+        self.set_up_for = (session_id, group_id)
+
+    def configured_for(self, session_id: str, group_id: str) -> bool:
+        return self.set_up_for == (session_id, group_id)
 
     async def start_recording(self) -> None:
         self.log.append("rhx start")
@@ -122,6 +129,8 @@ class FakeIntan:
 
     def release(self) -> None:
         self.log.append("rhx release")
+        if not self.is_recording:
+            self.set_up_for = None
 
     def note_waiting(self, _boxes: list[int]) -> None:
         pass
@@ -189,6 +198,8 @@ class Rig:
         async def broadcast(message: dict) -> None:
             self.events.append(message)
 
+        #: Whether `confirm` also does the Record step for a recording session.
+        self.record_step = True
         self.lifecycle = SessionLifecycle(
             sessions=self.sessions,
             cohorts=self.cohorts,
@@ -243,6 +254,8 @@ class Rig:
         """Confirm, then flash every mapped box as the placement walk does."""
         entries = self.mapping(session)
         await self.lifecycle.confirm_mapping(session.id, group_id, entries)
+        if self.intan is not None and session.recording is not None and self.record_step:
+            self.intan.set_up(session.id, group_id)
         if flash:
             for entry in entries:
                 self.flash(entry.box, Path(entry.sketch_path))
@@ -541,7 +554,7 @@ async def test_the_recording_starts_before_any_box(recording_rig) -> None:
 
 async def test_a_recording_not_set_up_refuses_before_any_box_starts(recording_rig) -> None:
     rig = recording_rig
-    rig.intan.configured = False
+    rig.record_step = False
     session = rig.session(recording=True)
     await rig.confirm(session)
     with pytest.raises(IntanNotReady):
@@ -898,3 +911,80 @@ async def test_a_runner_reports_a_row_per_mapped_box(runner) -> None:  # noqa: A
     assert [(r["box"], r["animalId"], r["running"]) for r in rows] == [
         (1, "a1", False), (2, "a2", True),
     ]
+
+
+# --- FakeIntan keeps the real service's contract -------------------------------
+
+
+@pytest.fixture(params=["FakeIntan", "IntanService"])
+async def intan(request: pytest.FixtureRequest, tmp_path: Path):  # noqa: ANN201
+    """`(service, set_up)`: `set_up(session, group)` does what the Record step's
+    `intan.configure` does, for the fake or against a fake RHX."""
+    if request.param == "FakeIntan":
+        fake = FakeIntan([])
+
+        async def set_up(session_id: str, group_id: str) -> None:
+            fake.set_up(session_id, group_id)
+
+        yield fake, set_up
+        return
+
+    from ephymeris_sidecar.intan.service import IntanService
+    from tests.fake_rhx import FakeRhx
+    from tests.test_intan_service import config, settings_for
+
+    rhx = await FakeRhx().start()
+
+    async def nothing(_message: dict) -> None:
+        return None
+
+    service = IntanService(
+        loop=asyncio.get_running_loop(), broadcast=nothing,
+        settings=settings_for(rhx, {1: 2, 3: 5}), rig_has_sync=lambda: True,
+        pre_roll_s=0.0, post_roll_s=0.0, poll_s=0.05,
+    )
+    service.start()
+
+    async def set_up(session_id: str, group_id: str) -> None:
+        await service.configure(session_id, group_id, config(tmp_path), "x")
+
+    try:
+        yield service, set_up
+    finally:
+        await service.stop()
+        await rhx.stop()
+
+
+async def test_a_recording_is_set_up_for_one_session_and_group(intan) -> None:  # noqa: ANN001
+    service, set_up = intan
+    assert not service.configured_for("s1", "g1")
+    await set_up("s1", "g1")
+    assert service.configured_for("s1", "g1")
+    assert not service.configured_for("s1", "g2")
+    assert not service.configured_for("s2", "g1")
+
+
+async def test_a_recording_runs_from_start_to_stop(intan) -> None:  # noqa: ANN001
+    service, set_up = intan
+    await set_up("s1", "g1")
+    assert not service.is_recording
+    await service.start_recording()
+    assert service.is_recording
+    assert await service.stop_recording() is not None
+    assert not service.is_recording
+
+
+async def test_letting_go_forgets_a_set_up_that_never_recorded(intan) -> None:  # noqa: ANN001
+    service, set_up = intan
+    await set_up("s1", "g1")
+    service.release()
+    assert not service.configured_for("s1", "g1")
+
+
+async def test_letting_go_leaves_a_running_recording_alone(intan) -> None:  # noqa: ANN001
+    service, set_up = intan
+    await set_up("s1", "g1")
+    await service.start_recording()
+    service.release()
+    assert service.is_recording
+    await service.stop_recording()

@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import shutil
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -137,11 +138,10 @@ def archive(db: Database, tmp_path: Path) -> Archive:
 
 
 @pytest.fixture(params=["same-volume", "other-volume"])
-def volume(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
-    """Both paths: a folder rename, and copy-commit-delete. A temp dir is one
-    volume, so the second is forced."""
+def volume(request: pytest.FixtureRequest, archive: Archive, other_volume) -> str:
+    """Both paths: a folder rename, and copy-commit-delete onto another drive."""
     if request.param == "other-volume":
-        monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
+        other_volume(archive.new.parent)
     return request.param
 
 
@@ -264,16 +264,17 @@ def test_a_destination_inside_the_folder_is_refused(archive: Archive) -> None:
     assert archive.all_under(archive.old)
 
 
-def test_a_failed_commit_puts_the_files_back(
-    archive: Archive, volume: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def fail(*_args, **_kwargs) -> None:
-        raise RuntimeError("disk full")
-
-    monkeypatch.setattr(relocate, "_commit_records", fail)
-    with pytest.raises(RuntimeError):
+def test_a_failed_commit_puts_the_files_back(archive: Archive, volume: str) -> None:
+    """The commit's last write is refused, after every path in it was rewritten."""
+    archive.db.conn.execute(
+        "CREATE TEMP TRIGGER refuse_commit BEFORE UPDATE OF data_folder ON cohorts"
+        " BEGIN SELECT RAISE(ABORT, 'disk full'); END"
+    )
+    before = archive.stored_paths()
+    with pytest.raises(sqlite3.IntegrityError, match="disk full"):
         relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
 
+    assert archive.stored_paths() == before
     assert archive.all_under(archive.old)
     assert not any(p.is_file() for p in archive.new.rglob("*")) if archive.new.exists() else True
     assert archive.journal() == "rolled-back"
@@ -305,12 +306,12 @@ def keys(archive: Archive, table: str, column: str, value: str) -> tuple:
 
 
 def test_a_recovered_run_keeps_its_animal_on_a_coarser_volume(
-    archive: Archive, coarse_volume: None, monkeypatch: pytest.MonkeyPatch
+    archive: Archive, coarse_volume: None, other_volume
 ) -> None:
     """The copy's mtime is rounded, so a key left at the original's sent the
     recovered run back to being matched by name — and the name it carries
     had since passed to another animal."""
-    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
+    other_volume(archive.new.parent)
     fine_mtime(*archive.old.rglob("*_110000.*"))
     rescan(archive)  # adopted from the file, with its stat
     archive.db.conn.execute("UPDATE animals SET name = 'remy-A' WHERE id = 'a1'")
@@ -359,9 +360,9 @@ def test_only_a_key_fresh_for_the_original_is_carried(
 
 
 def test_every_copy_is_flushed_before_an_original_goes(
-    archive: Archive, monkeypatch: pytest.MonkeyPatch
+    archive: Archive, monkeypatch: pytest.MonkeyPatch, other_volume
 ) -> None:
-    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
+    other_volume(archive.new.parent)
     originals = [p for p in archive.old.rglob("*") if p.is_file()]
     real = os.fsync
     flushed: list[bool] = []
@@ -394,17 +395,26 @@ def test_an_open_session_refuses_the_move(archive: Archive, volume: str) -> None
 
 
 def test_a_session_recorded_during_the_copy_abandons_the_move(
-    archive: Archive, monkeypatch: pytest.MonkeyPatch
+    archive: Archive, other_volume, hung_volume
 ) -> None:
     """Its file is written at the old place after the copy passed it. Moving
     its records anyway pointed them at nothing, and the next Rescan pruned
     the run."""
-    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
-    real_copy = relocate._copy_tree
+    other_volume(archive.new.parent)
+    drive = hung_volume(archive.new.parent)
     late_folder = archive.old / "2O-Bdisc" / "2O-Bdisc_2_2026-09-02"
+    outcome: list[BaseException] = []
 
-    def copy_while_a_session_runs(source: Path, target: Path) -> None:
-        real_copy(source, target)
+    def move() -> None:
+        try:
+            relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+        except BaseException as exc:  # noqa: BLE001 - handed back to the test thread
+            outcome.append(exc)
+
+    mover = threading.Thread(target=move)
+    mover.start()
+    try:
+        assert drive.entered.wait(5), "the relocate never began copying"
         [prefix] = archive.sessions.list_prefixes()
         session = archive.sessions.create_session(
             archive.cohort.id, prefix, "2", "2026-09-02", str(late_folder)
@@ -418,11 +428,13 @@ def test_a_session_recorded_during_the_copy_abandons_the_move(
             )
         )
         archive.sessions.set_status(session.id, "completed")
+    finally:
+        drive.release()
+        mover.join(10)
 
-    monkeypatch.setattr(relocate, "_copy_tree", copy_while_a_session_runs)
-    with pytest.raises(DataFolderError, match="while its data was being copied"):
-        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
-
+    [error] = outcome
+    assert isinstance(error, DataFolderError)
+    assert "while its data was being copied" in str(error)
     assert archive.cohorts.get(archive.cohort.id).data_folder == str(archive.old)
     assert archive.all_under(archive.old), archive.stored_paths()
     assert not any(p.is_file() for p in archive.new.rglob("*"))
@@ -486,29 +498,16 @@ def test_a_crash_while_copying_removes_the_copy(archive: Archive) -> None:
 
 
 def test_a_crash_mid_file_does_not_block_the_retry(
-    archive: Archive, monkeypatch: pytest.MonkeyPatch
+    archive: Archive, other_volume, power_cut
 ) -> None:
     """A copy straight to the real name left a partial file the size-checked
     undo kept, and the target was then not empty: the retry was refused until
     someone deleted it by hand. Through `.part`, all a crash leaves is a
     `.part`, and the undo removes it."""
-    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
-    real = shutil.copy2
-    calls = 0
-
-    def power_cut_on_the_second_file(src: str, dst: str, **kwargs: object) -> str:
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            Path(dst).write_bytes(Path(src).read_bytes()[:3])
-            raise SystemExit("power cut")
-        return real(src, dst, **kwargs)
-
-    monkeypatch.setattr(shutil, "copy2", power_cut_on_the_second_file)
+    other_volume(archive.new.parent)
+    power_cut("copy2", archive.new, nth=2)
     with pytest.raises(SystemExit):
         relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
-    monkeypatch.undo()
-    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
     assert any(p.name.endswith(".part") for p in archive.new.rglob("*"))
 
     relocate.resume(archive.db)
@@ -520,17 +519,12 @@ def test_a_crash_mid_file_does_not_block_the_retry(
 
 
 def test_a_crash_after_the_commit_finishes_deleting_the_originals(
-    archive: Archive, monkeypatch: pytest.MonkeyPatch
+    archive: Archive, other_volume, power_cut
 ) -> None:
-    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
-
-    def die(*_args, **_kwargs) -> None:
-        raise SystemExit("power cut")
-
-    monkeypatch.setattr(relocate, "_delete_sources", die)
+    other_volume(archive.new.parent)
+    power_cut("unlink", archive.old)  # the first original to go
     with pytest.raises(SystemExit):
         relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
-    monkeypatch.undo()
     assert archive.all_under(archive.new)
     assert any(p.is_file() for p in archive.old.rglob("*")), "originals still there"
 
@@ -619,19 +613,13 @@ def test_rehome_leaves_a_healthy_cohort_alone(archive: Archive) -> None:
 
 
 def test_a_summary_waiting_on_a_relocate_reads_the_new_paths(
-    archive: Archive, monkeypatch: pytest.MonkeyPatch
+    archive: Archive, other_volume, hung_volume
 ) -> None:
     """A summary that arrives mid-relocate waits for it, then reads the records
     the relocate left — not the ones it found before waiting, whose files
     have just left."""
-    gate = threading.Event()
-    real = relocate.relocate_cohort
-
-    def held_open(*args: object) -> Path:
-        gate.wait(timeout=5)
-        return real(*args)
-
-    monkeypatch.setattr(relocate, "relocate_cohort", held_open)
+    other_volume(archive.new.parent)
+    drive = hung_volume(archive.new.parent)
 
     async def broadcast(_message: dict) -> None:
         return None
@@ -648,10 +636,11 @@ def test_a_summary_waiting_on_a_relocate_reads_the_new_paths(
         moving = asyncio.create_task(
             archive.cohort_archive.relocate(archive.cohort.id, str(archive.new), True)
         )
-        await asyncio.sleep(0.05)  # the relocate holds the lock
+        # Mid-copy, holding the archive lock.
+        assert await asyncio.to_thread(drive.entered.wait, 5), "the relocate never began copying"
         summary = asyncio.create_task(service.summary(archive.cohort.id))
         await asyncio.sleep(0.2)  # long enough for any read taken before waiting
-        gate.set()
+        drive.release()
         await moving
         return await summary
 

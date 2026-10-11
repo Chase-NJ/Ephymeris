@@ -27,6 +27,7 @@ from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.protocol import validate_command_result
 from ephymeris_sidecar.sessions.paths import parse_name_time, parse_session_folder
 from ephymeris_sidecar.sessions.repository import SessionRepository
+from tests.conftest import rewrite_keeping_stat
 
 GRGL = {
     "taskName": "GRGL 2-Odor Discrimination",
@@ -730,9 +731,7 @@ async def test_rescan_is_idempotent(rig: LegacyRig) -> None:
     assert len(rig.repo.adopted_for_cohort(rig.cohort.id)) == 1
 
 
-async def test_a_second_rescan_does_not_read_the_files_again(
-    rig: LegacyRig, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_second_rescan_does_not_read_the_files_again(rig: LegacyRig) -> None:
     """`DATA.md#carrying-adoptions-forward`. Adoption used to be redone in full on every click — every file
     opened, parsed and written back — to recompute the first scan's answer from
     the same inputs. On the machine whose archive is a network share that was
@@ -742,14 +741,11 @@ async def test_a_second_rescan_does_not_read_the_files_again(
     first = await rig.service.rescan(rig.cohort.id)
     assert first["adopted"] == 3
 
-    reads: list[Path] = []
-    real_read = reader.read_run
-    monkeypatch.setattr(
-        reader, "read_run", lambda p: (reads.append(Path(p)), real_read(p))[1]
-    )
+    for run_file in reader.walk_session_files(rig.root):
+        rewrite_keeping_stat(run_file, b"x" * run_file.stat().st_size)
     second = await rig.service.rescan(rig.cohort.id)
 
-    assert reads == [], "not one file was opened"
+    assert second["orphans"] == [], "not one file was read: each now reads as unreadable"
     assert second["scanned"] == 3, "still reported honestly"
     assert second["adopted"] == 0, "nothing new was decided"
     assert len(rig.repo.adopted_for_cohort(rig.cohort.id)) == 3

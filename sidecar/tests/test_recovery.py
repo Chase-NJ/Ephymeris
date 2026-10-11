@@ -44,7 +44,7 @@ PROFILE = {
 
 def crash_a_run(session_folder: Path, animal: str = "remy1") -> Path:
     """Write a real header + strobes through the real writer, then 'lose power'
-    — close the handle without `finalize`, so no footer and no `.json`."""
+    — drop it without `finalize`, so no footer and no `.json`."""
     files = resolve_animal_files(
         session_folder, animal, "2O-Bdisc", "25", datetime(2026, 7, 22, 11, 31, 23)
     )
@@ -55,7 +55,7 @@ def crash_a_run(session_folder: Path, animal: str = "remy1") -> Path:
     writer.open_files()
     for code, ts in STROBES:
         writer.record(code, ts)
-    writer._tsv.close()  # the crash: no footer, no .json, no .mat
+    del writer  # the crash: its handle closes as a dead process's does, unfinalized
     return files.tsv
 
 

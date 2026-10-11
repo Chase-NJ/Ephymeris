@@ -197,21 +197,24 @@ async def test_folder_mates_never_write_at_once(rig: Rig, monkeypatch) -> None:
 
     inside, most = 0, 0
     guard = threading.Lock()
-    real_write = mirror.write_mirror
+    real_replace = os.replace
 
-    def slow_write(folder: Path, text: str) -> Path | None:
+    def slow_replace(src, dst, *args, **kwargs):  # noqa: ANN001, ANN202
+        """A slow volume: long enough that an unqueued second write lands inside it."""
         nonlocal inside, most
+        if Path(dst).name != "notes.md":
+            return real_replace(src, dst, *args, **kwargs)
         with guard:
             inside += 1
             most = max(most, inside)
         time.sleep(0.05)
         try:
-            return real_write(folder, text)
+            return real_replace(src, dst, *args, **kwargs)
         finally:
             with guard:
                 inside -= 1
 
-    monkeypatch.setattr(mirror, "write_mirror", slow_write)
+    monkeypatch.setattr(os, "replace", slow_replace)
     await asyncio.gather(
         asyncio.to_thread(logbook.write_mirror, first),
         asyncio.to_thread(logbook.write_mirror, second),

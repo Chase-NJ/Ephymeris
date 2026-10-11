@@ -17,7 +17,7 @@ import pytest
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
 from ephymeris_sidecar.cohorts import move_apply, relocate
 from ephymeris_sidecar.cohorts.db import Database
-from ephymeris_sidecar.cohorts.move import MoveRequest, plan_move
+from ephymeris_sidecar.cohorts.move import MoveRequest
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import GroupRun, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
@@ -475,38 +475,26 @@ def test_nested_data_folders_refuse(lab: Lab) -> None:
 # --- crashes -----------------------------------------------------------------------
 
 
-def test_a_crash_while_copying_is_undone_at_the_next_start(lab: Lab) -> None:
+def test_a_crash_while_copying_is_undone_at_the_next_start(lab: Lab, power_cut) -> None:
     before = lab.files(lab.a_root)
-    with lab.db.lock:
-        plan = plan_move(lab.db.conn, lab.request("slow1"))
-        lab.db.conn.execute(
-            "INSERT INTO animal_moves (id, source_cohort_id, dest_cohort_id, state, plan_json,"
-            " created_at, updated_at) VALUES ('j1', ?, ?, 'copying', ?, 'now', 'now')",
-            (lab.a.id, lab.b.id, json.dumps({"files": move_apply.plan_files(plan)})),
-        )
-        lab.db.conn.commit()
-    move_apply._copy_files(plan, None)  # ... and the process dies here
-    assert lab.files(lab.b_root)
+    power_cut("copy2", lab.b_root, nth=2)
+    with pytest.raises(SystemExit):
+        lab.apply("slow1")
+    assert lab.files(lab.b_root), "the first file was copied before the cut"
 
     assert move_apply.resume(lab.db) == 1
 
     assert lab.files(lab.b_root) == set()
     assert lab.files(lab.a_root) == before
     assert {a for a, _ in lab.runs(lab.a.id).values()} == {"remy1", "remy2", "slow1"}
-    state = lab.db.conn.execute("SELECT state FROM animal_moves WHERE id = 'j1'").fetchone()[0]
+    [state] = lab.db.conn.execute("SELECT state FROM animal_moves").fetchone()
     assert state == "rolled-back"
 
 
-def test_a_crash_after_the_commit_is_finished_at_the_next_start(
-    lab: Lab, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def die(*_args, **_kwargs) -> None:
-        raise SystemExit("power cut")
-
-    monkeypatch.setattr(move_apply, "_clean_up", die)
+def test_a_crash_after_the_commit_is_finished_at_the_next_start(lab: Lab, power_cut) -> None:
+    power_cut("unlink", lab.a_root)  # the first original to go
     with pytest.raises(SystemExit):
         lab.apply("slow1")
-    monkeypatch.undo()
     assert any("slow1" in f for f in lab.files(lab.a_root)), "originals still there"
 
     assert move_apply.resume(lab.db) == 1
@@ -515,13 +503,10 @@ def test_a_crash_after_the_commit_is_finished_at_the_next_start(
     assert all(Path(p).is_file() for _, p in lab.runs(lab.b.id).values())
 
 
-def test_records_changing_under_the_copy_abandon_the_move(
-    lab: Lab, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    real_copy = move_apply._copy_files
-
-    def copy_then_record(plan, on_copied) -> None:
-        real_copy(plan, on_copied)
+def test_records_changing_under_the_copy_abandon_the_move(lab: Lab) -> None:
+    def record_once_copied(done: int, total: int) -> None:
+        if done < total:
+            return
         with lab.db.lock:
             lab.db.conn.execute(
                 "INSERT INTO session_animal_runs (id, session_id, animal_id, box_number,"
@@ -531,11 +516,10 @@ def test_records_changing_under_the_copy_abandon_the_move(
             )
             lab.db.conn.commit()
 
-    monkeypatch.setattr(move_apply, "_copy_files", copy_then_record)
     before = lab.files(lab.a_root)
 
     with pytest.raises(move_apply.MoveRefused):
-        lab.apply("slow1")
+        move_apply.apply(lab.db, lab.request("slow1"), on_copied=record_once_copied)
 
     assert lab.files(lab.b_root) == set()
     assert lab.files(lab.a_root) == before

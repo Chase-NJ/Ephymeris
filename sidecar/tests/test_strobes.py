@@ -28,6 +28,7 @@ from ephymeris_sidecar.strobes.usage import ArchiveScanner, firmware_refs
 from ephymeris_sidecar.taskdef import generate
 from ephymeris_sidecar.taskdef import store as task_store_mod
 from ephymeris_sidecar.tasks import profile as task_profile
+from tests.conftest import rewrite_keeping_stat
 from tests.fixtures import task_definitions as presets
 
 
@@ -406,18 +407,27 @@ def test_the_archive_scan_finds_codes_in_json_and_orphaned_tsvs(tmp_path, db):
     assert index.unreachable_roots == [str(tmp_path / "gone")]
 
 
-def test_a_second_scan_is_answered_from_the_cache(tmp_path, db, monkeypatch):
+def test_a_second_scan_is_answered_from_the_cache(tmp_path, db):
     cohort = tmp_path / "cohort"
-    _write_run(cohort / "P" / "S1" / "behavior.json", "rat1", [116])
+    run = _write_run(cohort / "P" / "S1" / "behavior.json", "rat1", [116])
     ArchiveScanner(db).scan([str(cohort)])
 
-    from ephymeris_sidecar.analytics import reader
+    rewrite_keeping_stat(run, run.read_bytes().replace(b"116", b"117"))
+    index = ArchiveScanner(db).scan([str(cohort)])
+    assert (index.count(116), index.count(117)) == (1, 0)
 
-    def explode(_path):  # noqa: ANN001, ANN202
-        raise AssertionError("re-read a file whose stat had not changed")
 
-    monkeypatch.setattr(reader, "read_run", explode)
-    assert ArchiveScanner(db).scan([str(cohort)]).count(116) == 1
+def test_a_second_scan_answers_an_orphaned_tsv_from_the_cache(tmp_path, db):
+    """An orphaned `.tsv` is read by its own path through the scanner, so the
+    `.json` case says nothing about it."""
+    tsv = tmp_path / "cohort" / "P" / "S2" / "behavior.tsv" / "rat2.tsv"
+    tsv.parent.mkdir(parents=True)
+    tsv.write_text("# rat: rat2\n221\t0\n300\t5\n", encoding="utf-8")
+    ArchiveScanner(db).scan([str(tmp_path / "cohort")])
+
+    rewrite_keeping_stat(tsv, tsv.read_bytes().replace(b"300", b"301"))
+    index = ArchiveScanner(db).scan([str(tmp_path / "cohort")])
+    assert (index.count(300), index.count(301)) == (1, 0)
 
 
 # --------------------------------------------------------------------------- #

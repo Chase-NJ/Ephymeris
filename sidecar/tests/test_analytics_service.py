@@ -11,6 +11,7 @@ so a good half of these are about files that are wrong in some way.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -19,14 +20,14 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
-from ephymeris_sidecar.analytics import derive, reader
+from ephymeris_sidecar.analytics import derive
 from ephymeris_sidecar.analytics.repository import AnalyticsRepository
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import Prefix, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
-from ephymeris_sidecar.tasks import profile as task_profile
 from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
+from tests.conftest import rewrite_keeping_stat
 
 GRGL = {
     "taskName": "GRGL 2-Odor Discrimination",
@@ -519,9 +520,7 @@ async def test_the_cache_key_includes_the_codec_version(
     assert recomputed.key.codec_version == derive.CODEC_VERSION
 
 
-async def test_a_cache_hit_never_reopens_the_file(
-    rig: Rig, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_cache_hit_never_reopens_the_file(rig: Rig) -> None:
     """The cache key is answerable from a stat, so a warm pass reads no bytes.
 
     This is what a networked archive actually feels: before, a persisted cache
@@ -531,10 +530,8 @@ async def test_a_cache_hit_never_reopens_the_file(
     rig.add_run(session, "a1", HIT_1 * 5)
     first = await rig.service.summary(rig.cohort.id)
 
-    def boom(*args: object, **kwargs: object) -> None:
-        raise AssertionError("a cache hit must not open the file")
-
-    monkeypatch.setattr(reader, "parse_run", boom)
+    run_file = Path(rig.sessions.runs_for(session)[0].file_path)
+    rewrite_keeping_stat(run_file, b"x" * run_file.stat().st_size)
     assert await rig.service.summary(rig.cohort.id) == first
 
 
@@ -560,24 +557,24 @@ async def test_the_profile_is_resolved_once_per_pass(
     for animal in ("a1", "a2"):
         rig.add_run(session, animal, HIT_1 * 5, snapshot=False)
 
-    reads = 0
-    real = task_profile.load_profile
+    reads: list[str] = []
+    real_open = io.open
 
-    def counted(path: str) -> object:
-        nonlocal reads
-        reads += 1
-        return real(path)
+    def counting_open(file, *args, **kwargs):  # noqa: ANN001, ANN202
+        if isinstance(file, (str, os.PathLike)) and Path(file).name == "task.json":
+            reads.append(str(file))
+        return real_open(file, *args, **kwargs)
 
-    monkeypatch.setattr(task_profile, "load_profile", counted)
+    monkeypatch.setattr(io, "open", counting_open)
     await rig.service.summary(rig.cohort.id)
-    assert reads == 1
+    assert len(reads) == 1
 
     # ...and the memo does not survive the pass. Profiles resolve at read time
     # on purpose (`DATA.md#caching`) — a memo that outlived one indexing job
     # would freeze an edited task.json.
-    reads = 0
+    reads.clear()
     await rig.service.summary(rig.cohort.id)
-    assert reads == 1
+    assert len(reads) == 1
 
 
 async def test_progress_is_published_while_indexing(rig: Rig) -> None:

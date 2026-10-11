@@ -407,11 +407,13 @@ def _check_destination(source: Path, target: Path) -> None:
 def moving(db: Database, cohort_id: str) -> bool:
     """Whether this cohort's folder is part-way through a relocate, so a new
     session must not be set up in it: its folder would be made at the old
-    place while the records move to the new one."""
+    place while the records move to the new one. Not once it has committed:
+    the cohort's folder is the new one by then, and what is left is deleting
+    originals, which may wait for a drive to come back (`resume`)."""
     with db.lock:
         row = db.conn.execute(
             "SELECT 1 FROM folder_moves WHERE cohort_id = ?"
-            " AND state IN ('moving', 'copying', 'committed') LIMIT 1",
+            " AND state IN ('moving', 'copying') LIMIT 1",
             (cohort_id,),
         ).fetchone()
     return row is not None

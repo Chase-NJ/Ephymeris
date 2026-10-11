@@ -102,6 +102,24 @@ class Archive:
     def journal(self) -> str:
         return self.db.conn.execute("SELECT state FROM folder_moves").fetchone()[0]
 
+    def record(self) -> str:
+        """Two recorded group runs: one saved in the default place, under the
+        session folder, and one under a save root of its own. Returns the
+        second, which no relocate of this cohort may touch."""
+        ephys = self.old / "2O-Bdisc" / SESSION / "ephys"
+        (ephys / "rec_260901_090000").mkdir(parents=True)
+        (ephys / "rec_260901_090000" / "info.rhd").write_bytes(b"rhd")
+        elsewhere = str(self.root / "rhx" / SESSION)
+        self.sessions.set_recording(
+            self.session_id,
+            {"runs": [{"groupId": "g", "path": str(ephys)}, {"groupId": "h", "path": elsewhere}]},
+        )
+        return elsewhere
+
+    def recording_paths(self) -> list[str]:
+        recording = self.sessions.get_session(self.session_id).recording or {}
+        return [run["path"] for run in recording["runs"]]
+
 
 @pytest.fixture
 def db(tmp_path: Path):
@@ -159,6 +177,18 @@ def test_the_records_survive_the_next_rescan(archive: Archive, volume: str) -> N
     assert result["rehomed"] == 0
     [run] = archive.sessions.runs_for_cohort(archive.cohort.id)
     assert (run.box_number, run.stop_reason) == (2, "BF_END_SESSION received")
+
+
+def test_a_recording_saved_in_the_session_folder_moves_with_it(
+    archive: Archive, volume: str
+) -> None:
+    elsewhere = archive.record()
+
+    relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    ephys = archive.new / "2O-Bdisc" / SESSION / "ephys"
+    assert archive.recording_paths() == [str(ephys), elsewhere]
+    assert (ephys / "rec_260901_090000" / "info.rhd").is_file()
 
 
 def test_pointing_without_moving_rewrites_nothing(archive: Archive) -> None:
@@ -392,6 +422,28 @@ def test_rescan_re_points_records_an_old_relocate_left_behind(archive: Archive) 
     assert archive.all_under(archive.new), archive.stored_paths()
     [run] = archive.sessions.runs_for_cohort(archive.cohort.id)
     assert run.stop_reason == "BF_END_SESSION received"
+
+
+def test_rescan_re_points_a_recording_an_old_relocate_left_behind(archive: Archive) -> None:
+    elsewhere = archive.record()
+    old_way(archive)
+
+    async def broadcast(_message: dict) -> None:
+        return None
+
+    service = AnalyticsService(
+        db=archive.db,
+        cohorts=archive.cohorts,
+        sessions=archive.sessions,
+        broadcast=broadcast,
+        archive=archive.cohort_archive,
+    )
+    asyncio.run(service.rescan(archive.cohort.id))
+
+    assert archive.recording_paths() == [
+        str(archive.new / "2O-Bdisc" / SESSION / "ephys"),
+        elsewhere,
+    ]
 
 
 def test_a_record_whose_file_is_not_at_the_new_place_is_left_for_the_prune(

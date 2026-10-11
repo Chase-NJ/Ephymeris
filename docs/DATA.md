@@ -239,11 +239,11 @@ Relocating is a separate action, `cohorts.setDataFolder` (`relocate`), with two 
 | Same volume | One atomic `rename` of the folder, then the records in one transaction | The folder is demonstrably at the target, so the records are rolled forward at the next start |
 | Another volume | Copy, fsync and size-check every file, commit the records, then delete each original whose copy is in place | Undone while copying (only copies whose original is still there are removed); finished after the commit |
 
-The cache and adoption rows [carry their freshness keys](#caching) to the moved files, so nothing that was fresh is re-read. A session's RHX recording in its default place, `<session folder>/ephys`, moves with the folder, but the path its record stores (`recording_json`) is not rewritten.
+The cache and adoption rows [carry their freshness keys](#caching) to the moved files, so nothing that was fresh is re-read. Where each recorded group run told RHX to save (`recording_json`) moves too when it lies inside the folder, as the default `<session folder>/ephys` does; a save location elsewhere is left alone.
 
 It runs under the [archive lock](#the-cohort-archive), so no rescan or summary reads the records mid-move, and is refused while a session is set up or running — a session writing into the folder would be writing into one that moves. Pointing without moving rewrites nothing.
 
-**Rescan repairs a relocate from before this.** Before it prunes, it re-points (`rehomed`) records left at a folder the cohort was moved out of: a stale path is one outside the cohort's folder with nothing there; the old folder is the root most stale paths agree on, found by which tail of each exists under the cohort's folder; and only paths whose files (or, for a run, its write-ahead `.tsv`) are actually there are rewritten. Anything else is left to the prune's own rules.
+**Rescan repairs a relocate from before this.** Before it prunes, it re-points (`rehomed`) records left at a folder the cohort was moved out of: a stale path is one outside the cohort's folder with nothing there; the old folder is the root most stale paths agree on, found by which tail of each exists under the cohort's folder; and only paths whose files (or, for a run, its write-ahead `.tsv`) are actually there are rewritten, a recording's save location among them. Anything else is left to the prune's own rules.
 
 ### Moving animals between cohorts
 

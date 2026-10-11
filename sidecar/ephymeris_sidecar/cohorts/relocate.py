@@ -30,6 +30,7 @@ prunes, so the repair happens instead of the loss.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -38,6 +39,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from . import folders, freshness
 from .db import Database
@@ -70,6 +72,10 @@ def rewrite_paths(
     """Point every path this cohort's records store below `old_root` at the
     same place below `new_root`. Never commits; returns how many rows changed.
 
+    That includes where each recorded group run told RHX to save: by default
+    `<session folder>/ephys`, which moves with the folder
+    (`RECORDING.md#what-is-written`). A save location elsewhere is left alone.
+
     `only_existing` is the repair's caution: a path moves only when what it
     names is there — the file, or for a run its write-ahead `.tsv`, which
     recovery rebuilds the rest from (`DATA.md#crash-recovery`).
@@ -92,12 +98,18 @@ def rewrite_paths(
             return False
 
     changed = 0
-    for session_id, folder in conn.execute(
-        "SELECT id, folder_path FROM sessions WHERE cohort_id = ?", (cohort_id,)
+    for session_id, folder, recording_json in conn.execute(
+        "SELECT id, folder_path, recording_json FROM sessions WHERE cohort_id = ?", (cohort_id,)
     ).fetchall():
         new = rebased(folder)
         if new and (not only_existing or present(new, run=False)):
             conn.execute("UPDATE sessions SET folder_path = ? WHERE id = ?", (new, session_id))
+            changed += 1
+        recording = _rebased_recording(recording_json, rebased, present, only_existing)
+        if recording is not None:
+            conn.execute(
+                "UPDATE sessions SET recording_json = ? WHERE id = ?", (recording, session_id)
+            )
             changed += 1
     for run_id, path in conn.execute(
         "SELECT r.id, r.file_path FROM session_animal_runs r"
@@ -129,6 +141,31 @@ def rewrite_paths(
                 (new, path),
             )
     return changed
+
+
+def _rebased_recording(
+    recording_json: str | None,
+    rebased: Callable[[str | None], str | None],
+    present: Callable[..., bool],
+    only_existing: bool,
+) -> str | None:
+    """The session's recording with each run's save location rebased, or None
+    when none of them moves."""
+    if not recording_json:
+        return None
+    try:
+        recording = json.loads(recording_json)
+        runs = recording.get("runs", [])
+    except (ValueError, AttributeError):
+        return None
+    moved = False
+    for run in runs if isinstance(runs, list) else []:
+        path = run.get("path") if isinstance(run, dict) else None
+        new = rebased(path) if isinstance(path, str) else None
+        if new and (not only_existing or present(new, run=False)):
+            run["path"] = new
+            moved = True
+    return json.dumps(recording) if moved else None
 
 
 # --- the relocate ------------------------------------------------------------------

@@ -295,10 +295,6 @@ macOS as run-from-source. Packaged-only path bugs exist (Windows verbatim `\\?\`
   gated. Revisit if it proves too easy to trigger.
 - **Code-signing the installer.** It would remove the SmartScreen dialog on a first install. Updates
   are already signed for the updater, which is a separate key and doesn't affect SmartScreen.
-- **RHX recording paths after a relocate.** A recording in its default place, `<session folder>/ephys`,
-  moves with a relocated cohort folder, but the path `sessions.recording_json` stores for it is not
-  rewritten, and moving animals leaves it in the source's folder. Nothing in the app opens it. Rewrite it
-  with the folder, or leave it as where RHX was told to save.
 - **`kind` in a task profile is a convention**, not a schema gate: a `utility` profile carrying
   `liveMetrics` is accepted and never scored. Enforce it only if it causes confusion.
 

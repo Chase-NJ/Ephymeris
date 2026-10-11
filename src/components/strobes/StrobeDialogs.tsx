@@ -299,7 +299,7 @@ export function RemoveDialog({
     setProgress(null);
     setError(null);
     const off = client.on(EVT.STROBES_SCAN_PROGRESS, (data) => {
-      if (!cancelled) setProgress(data as StrobeScanProgress);
+      if (!cancelled) setProgress(data);
     });
     void strobeUsage(client, name, true)
       .then((u) => {

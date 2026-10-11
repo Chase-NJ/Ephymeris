@@ -67,9 +67,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   // Discovery results arrive unsolicited whenever the sidecar rescans.
   useEffect(() => {
-    return client.on(EVT.SKETCHES_UPDATED, (data) => {
-      setDiscovery(data as SketchDiscovery);
-    });
+    return client.on(EVT.SKETCHES_UPDATED, setDiscovery);
   }, [client]);
 
   const update = useCallback(
@@ -91,8 +89,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const refreshSketches = useCallback(async () => {
     if (client.getStatus() !== "connected") return;
     try {
-      const result = await client.call(CMD.SKETCHES_REFRESH);
-      setDiscovery(result as SketchDiscovery);
+      setDiscovery(await client.call(CMD.SKETCHES_REFRESH));
     } catch (err) {
       console.error("sketch refresh failed", err);
     }

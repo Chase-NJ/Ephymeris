@@ -23,8 +23,7 @@ export class CohortStore {
 
   attach(client: SidecarClient): () => void {
     return client.on(EVT.COHORTS_UPDATED, (data) => {
-      const payload = data as { cohorts?: CohortSummary[] } | null;
-      this.cohorts = payload?.cohorts ?? NO_COHORTS;
+      this.cohorts = data?.cohorts ?? NO_COHORTS;
       this.loaded = true;
       this.notify();
     });

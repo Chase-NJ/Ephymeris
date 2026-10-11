@@ -91,8 +91,7 @@ export function FlashDialog({
 
   useEffect(() => {
     if (!open) return;
-    return client.on(EVT.FLASH_PROGRESS, (data) => {
-      const d = data as { box: number } & Omit<ProgressEntry, "id">;
+    return client.on(EVT.FLASH_PROGRESS, (d) => {
       if (d.box !== box) return;
       seq.current += 1;
       setLog((prev) => [

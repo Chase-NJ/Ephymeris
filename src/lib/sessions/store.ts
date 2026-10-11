@@ -10,11 +10,10 @@
  */
 
 import type { SidecarClient } from "../ws/client";
-import { CMD, EVT, type PortTelemetry, type SidecarErrorData } from "../ws/protocol";
+import { CMD, EVT } from "../ws/protocol";
 import type {
   ActiveSessions,
   AnimalEnded,
-  BoxTelemetry,
   Prefix,
   TelemetryMetric,
 } from "./types";
@@ -97,7 +96,7 @@ export class SessionStore {
     let detached = false;
     const offs = [
       client.on(EVT.SESSION_LIFECYCLE, (data) => {
-        this.active = data as ActiveSessions;
+        this.active = data;
         this.activeLoaded = true;
         this.notify("active");
       }),
@@ -108,7 +107,7 @@ export class SessionStore {
           .call(CMD.SESSIONS_ACTIVE)
           .then((result) => {
             if (detached) return;
-            this.active = result as ActiveSessions;
+            this.active = result;
             this.activeLoaded = true;
             this.notify("active");
           })
@@ -119,13 +118,11 @@ export class SessionStore {
       }),
 
       client.on(EVT.PREFIXES_UPDATED, (data) => {
-        const payload = data as { prefixes?: Prefix[] } | null;
-        this.prefixes = payload?.prefixes ?? NO_PREFIXES;
+        this.prefixes = data?.prefixes ?? NO_PREFIXES;
         this.notify("prefixes");
       }),
 
-      client.on(EVT.SESSION_TELEMETRY, (data) => {
-        const d = data as BoxTelemetry;
+      client.on(EVT.SESSION_TELEMETRY, (d) => {
         if (typeof d?.box !== "number") return;
         this.telemetry.set(d.box, d.metrics ?? NO_METRICS);
         this.appendHistory(d.box, d.metrics ?? NO_METRICS);
@@ -136,8 +133,7 @@ export class SessionStore {
       // history: a port in PASSTHROUGH cannot also be IN_SESSION, so the two
       // sources can never be writing one box at once, and sharing the slot is
       // what lets Debug Mode mount Mission Control's own components unchanged.
-      client.on(EVT.PORT_TELEMETRY, (data) => {
-        const d = data as PortTelemetry;
+      client.on(EVT.PORT_TELEMETRY, (d) => {
         if (typeof d?.box !== "number") return;
         this.telemetry.set(d.box, d.metrics ?? NO_METRICS);
         this.appendHistory(d.box, d.metrics ?? NO_METRICS);
@@ -147,8 +143,7 @@ export class SessionStore {
         this.notify(`debug:${d.box}`);
       }),
 
-      client.on(EVT.PORT_OUTPUT, (data) => {
-        const d = data as { box: number; lines: Array<{ dir: string; text: string }> };
+      client.on(EVT.PORT_OUTPUT, (d) => {
         if (typeof d?.box !== "number" || !d.lines?.length) return;
         let log = this.strobes.get(d.box);
         let added = false;
@@ -170,16 +165,14 @@ export class SessionStore {
         this.notify("strobes");
       }),
 
-      client.on(EVT.SIDECAR_ERROR, (data) => {
-        const d = data as SidecarErrorData | null;
+      client.on(EVT.SIDECAR_ERROR, (d) => {
         const box = (d?.detail as { box?: unknown } | null)?.box;
         if (typeof box !== "number" || typeof d?.message !== "string") return;
         this.writeErrors.set(box, d.message);
         this.notify(`writeError:${box}`);
       }),
 
-      client.on(EVT.SESSION_ANIMAL_ENDED, (data) => {
-        const d = data as AnimalEnded;
+      client.on(EVT.SESSION_ANIMAL_ENDED, (d) => {
         if (typeof d?.box !== "number") return;
         this.ended.set(d.box, d);
         this.notify(`ended:${d.box}`);

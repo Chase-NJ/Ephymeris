@@ -111,8 +111,7 @@ export function useHandshakeTest(): {
       let resolveReady: (() => void) | null = null;
       // Subscribe before opening: boot output starts the instant the open
       // asserts DTR, and the first batch would otherwise race the listener.
-      const off = client.on(EVT.PORT_OUTPUT, (data) => {
-        const d = data as { box: number; lines: Array<{ dir: string; text: string }> };
+      const off = client.on(EVT.PORT_OUTPUT, (d) => {
         if (d.box !== box) return;
         for (const line of d.lines) {
           if (line.dir !== "rx") continue;

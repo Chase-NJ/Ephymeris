@@ -75,8 +75,7 @@ export class AnalyticsStore {
   }
 
   attach(client: SidecarClient): () => void {
-    const offProgress = client.on(EVT.ANALYTICS_PROGRESS, (data) => {
-      const next = data as AnalyticsProgress | null;
+    const offProgress = client.on(EVT.ANALYTICS_PROGRESS, (next) => {
       // Bucketed by cohort so switching mid-scan can't paint the wrong
       // panel's progress.
       if (next && next.cohortId === this.cohortId) {
@@ -95,9 +94,7 @@ export class AnalyticsStore {
     // so a cached summary of a cohort that changed is stale. Only that
     // cohort's: the broadcast carries every cohort's `updatedAt`.
     const offCohorts = client.on(EVT.COHORTS_UPDATED, (data) => {
-      const cohorts = (data as { cohorts?: Array<{ id: string; updatedAt: string }> } | null)
-        ?.cohorts;
-      for (const cohort of cohorts ?? []) {
+      for (const cohort of data?.cohorts ?? []) {
         const seen = this.stamps.get(cohort.id);
         this.stamps.set(cohort.id, cohort.updatedAt);
         if (seen !== cohort.updatedAt && this.summaries.has(cohort.id)) {

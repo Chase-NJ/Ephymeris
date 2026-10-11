@@ -89,9 +89,7 @@ export function Task() {
 
   useEffect(
     () =>
-      client.on(EVT.TASKS_UPDATED, (data) =>
-        setTasks((data as { tasks: TaskEntry[] }).tasks),
-      ),
+      client.on(EVT.TASKS_UPDATED, (data) => setTasks(data.tasks)),
     [client],
   );
 

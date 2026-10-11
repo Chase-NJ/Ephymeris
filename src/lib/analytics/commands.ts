@@ -27,9 +27,7 @@ export async function listSessions(
   cohortId: string,
   includeAborted = false,
 ): Promise<SessionListItem[]> {
-  const result = (await client.call(CMD.SESSIONS_LIST, { cohortId, includeAborted })) as {
-    sessions: SessionListItem[];
-  };
+  const result = await client.call(CMD.SESSIONS_LIST, { cohortId, includeAborted });
   return result.sessions;
 }
 
@@ -54,7 +52,7 @@ export async function getSummary(
   client: SidecarClient,
   cohortId: string,
 ): Promise<AnalyticsSummary> {
-  return (await client.call(CMD.ANALYTICS_SUMMARY, { cohortId })) as AnalyticsSummary;
+  return client.call(CMD.ANALYTICS_SUMMARY, { cohortId });
 }
 
 /** Within-session trajectories. Plural so one session is one call, not six. */
@@ -63,7 +61,7 @@ export async function getSeries(
   runIds: string[],
   mode: "rolling" | "cumulative" = "rolling",
 ): Promise<SeriesResult> {
-  return (await client.call(CMD.ANALYTICS_SERIES, { runIds, mode })) as SeriesResult;
+  return client.call(CMD.ANALYTICS_SERIES, { runIds, mode });
 }
 
 /**
@@ -76,10 +74,10 @@ export async function recentSessions(
   client: SidecarClient,
   limit?: number,
 ): Promise<DiskSession[]> {
-  const result = (await client.call(
+  const result = await client.call(
     CMD.ANALYTICS_RECENT_SESSIONS,
     limit === undefined ? {} : { limit },
-  )) as { sessions: DiskSession[] };
+  );
   return result.sessions;
 }
 
@@ -88,7 +86,7 @@ export async function rescan(
   client: SidecarClient,
   cohortId: string,
 ): Promise<RescanResult> {
-  return (await client.call(CMD.ANALYTICS_RESCAN, { cohortId })) as RescanResult;
+  return client.call(CMD.ANALYTICS_RESCAN, { cohortId });
 }
 
 /**
@@ -101,7 +99,7 @@ export async function recover(
   client: SidecarClient,
   cohortId: string,
 ): Promise<RecoverResult> {
-  return (await client.call(CMD.SESSIONS_RECOVER, { cohortId })) as RecoverResult;
+  return client.call(CMD.SESSIONS_RECOVER, { cohortId });
 }
 
 /**
@@ -114,7 +112,7 @@ export async function tidyRecords(
   cohortId: string,
   apply: boolean,
 ): Promise<TidyPlan> {
-  return (await client.call(CMD.SESSIONS_TIDY, { cohortId, apply })) as TidyPlan;
+  return client.call(CMD.SESSIONS_TIDY, { cohortId, apply });
 }
 
 export function errorMessage(err: unknown): string {

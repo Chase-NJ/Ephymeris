@@ -14,7 +14,7 @@ import type {
 } from "./types";
 
 export async function createPrefix(client: SidecarClient, name: string): Promise<Prefix> {
-  const r = (await client.call(CMD.PREFIXES_CREATE, { name })) as { prefix: Prefix };
+  const r = await client.call(CMD.PREFIXES_CREATE, { name });
   return r.prefix;
 }
 
@@ -45,10 +45,7 @@ export async function suggestSessionNumber(
   client: SidecarClient,
   prefixId: string,
 ): Promise<{ suggestion: string | null; sameDayNumbers: string[] }> {
-  const r = (await client.call(CMD.SESSIONS_SUGGEST_NUMBER, { prefixId })) as {
-    suggestion: string | null;
-    sameDayNumbers: string[];
-  };
+  const r = await client.call(CMD.SESSIONS_SUGGEST_NUMBER, { prefixId });
   return { suggestion: r.suggestion, sameDayNumbers: r.sameDayNumbers ?? [] };
 }
 
@@ -60,7 +57,7 @@ export async function createSession(
   durationMinutes?: number,
   recording = false,
 ): Promise<Session> {
-  const r = (await client.call(CMD.SESSIONS_CREATE, {
+  const r = await client.call(CMD.SESSIONS_CREATE, {
     cohortId,
     prefixId,
     sessionNumber,
@@ -68,7 +65,7 @@ export async function createSession(
     ...(durationMinutes !== undefined ? { durationMinutes } : {}),
     // Also an Intan recording (`RECORDING.md`). Omitted = behavior only.
     ...(recording ? { recording: true } : {}),
-  })) as { session: Session };
+  });
   return r.session;
 }
 
@@ -118,13 +115,11 @@ export async function sessionStatus(
   client: SidecarClient,
   sessionId: string,
 ): Promise<SessionSnapshot> {
-  return (await client.call(CMD.SESSIONS_STATUS, { sessionId })) as SessionSnapshot;
+  return client.call(CMD.SESSIONS_STATUS, { sessionId });
 }
 
 export async function startAll(client: SidecarClient, sessionId: string): Promise<Session> {
-  const r = (await client.call(CMD.SESSIONS_START_ALL, { sessionId })) as {
-    session: Session;
-  };
+  const r = await client.call(CMD.SESSIONS_START_ALL, { sessionId });
   return r.session;
 }
 
@@ -134,9 +129,7 @@ export async function startAll(client: SidecarClient, sessionId: string): Promis
  * the next group — any group — on the group step, or ends the session.
  */
 export async function endGroup(client: SidecarClient, sessionId: string): Promise<Session> {
-  const r = (await client.call(CMD.SESSIONS_END_GROUP, { sessionId })) as {
-    session: Session;
-  };
+  const r = await client.call(CMD.SESSIONS_END_GROUP, { sessionId });
   return r.session;
 }
 
@@ -148,12 +141,12 @@ export async function resumeSession(
   client: SidecarClient,
   sessionId: string,
 ): Promise<Session> {
-  const r = (await client.call(CMD.SESSIONS_RESUME, { sessionId })) as { session: Session };
+  const r = await client.call(CMD.SESSIONS_RESUME, { sessionId });
   return r.session;
 }
 
 export async function endSession(client: SidecarClient, sessionId: string): Promise<Session> {
-  const r = (await client.call(CMD.SESSIONS_END, { sessionId })) as { session: Session };
+  const r = await client.call(CMD.SESSIONS_END, { sessionId });
   return r.session;
 }
 

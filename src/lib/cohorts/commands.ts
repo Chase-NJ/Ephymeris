@@ -17,7 +17,7 @@ import type {
 } from "./types";
 
 export async function getCohort(client: SidecarClient, id: string): Promise<Cohort> {
-  const result = (await client.call(CMD.COHORTS_GET, { id })) as { cohort: Cohort };
+  const result = await client.call(CMD.COHORTS_GET, { id });
   return result.cohort;
 }
 
@@ -43,7 +43,7 @@ export async function createCohort(
   if (options.dataFolder) args.dataFolder = options.dataFolder;
   if (options.animals && options.animals.length > 0) args.animals = options.animals;
   if (options.groups && options.groups.length > 0) args.groups = options.groups;
-  const result = (await client.call(CMD.COHORTS_CREATE, args)) as { cohort: Cohort };
+  const result = await client.call(CMD.COHORTS_CREATE, args);
   return result.cohort;
 }
 
@@ -52,19 +52,17 @@ export async function updateCohort(
   id: string,
   patch: CohortPatch,
 ): Promise<Cohort> {
-  const result = (await client.call(CMD.COHORTS_UPDATE, { id, patch })) as {
-    cohort: Cohort;
-  };
+  const result = await client.call(CMD.COHORTS_UPDATE, { id, patch });
   return result.cohort;
 }
 
 export async function archiveCohort(client: SidecarClient, id: string): Promise<Cohort> {
-  const result = (await client.call(CMD.COHORTS_ARCHIVE, { id })) as { cohort: Cohort };
+  const result = await client.call(CMD.COHORTS_ARCHIVE, { id });
   return result.cohort;
 }
 
 export async function restoreCohort(client: SidecarClient, id: string): Promise<Cohort> {
-  const result = (await client.call(CMD.COHORTS_RESTORE, { id })) as { cohort: Cohort };
+  const result = await client.call(CMD.COHORTS_RESTORE, { id });
   return result.cohort;
 }
 
@@ -80,11 +78,11 @@ export async function setDataFolder(
   path: string,
   moveExisting: boolean,
 ): Promise<Cohort> {
-  const result = (await client.call(CMD.COHORTS_SET_DATA_FOLDER, {
+  const result = await client.call(CMD.COHORTS_SET_DATA_FOLDER, {
     id,
     path,
     moveExisting,
-  })) as { cohort: Cohort };
+  });
   return result.cohort;
 }
 
@@ -105,7 +103,7 @@ export async function moveAnimals(
     apply: boolean;
   },
 ): Promise<AnimalMovePlan> {
-  return (await client.call(CMD.COHORTS_MOVE_ANIMALS, args)) as AnimalMovePlan;
+  return client.call(CMD.COHORTS_MOVE_ANIMALS, args);
 }
 
 /** The plan a refused apply carries, so the dialog can show why. */

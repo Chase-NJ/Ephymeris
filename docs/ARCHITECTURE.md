@@ -250,9 +250,10 @@ release is fixed forward, by publishing a newer one.
 `protocol/schema.py` is the single authority for every command, event, error code and payload shape.
 `protocol/generate.py` writes three committed files from it — never edit them by hand:
 `sidecar/ephymeris_sidecar/protocol.py` (names, specs, the validator), `src/lib/ws/protocol.ts` (names and
-the `CommandArgsMap`/`CommandResultMap`/`EventDataMap` that make `client.call` fully typed) and
+the `CommandArgsMap`/`CommandResultMap`/`EventDataMap` that type `client.call` and `client.on`) and
 `docs/PROTOCOL.md` (the reference). Frontend domain type files re-export the generated shapes; don't
-re-declare a wire shape by hand. Every command except `auth` is registered in `app.py`; `server.py`
+re-declare a wire shape by hand, and don't cast a reply or an event's `data`: a cast compiles past the
+drift this typing exists to catch. Every command except `auth` is registered in `app.py`; `server.py`
 handles `auth` before dispatch.
 
 ### Changing the wire

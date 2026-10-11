@@ -164,3 +164,55 @@ async def test_a_restore_that_meets_a_console_at_the_take_leaves_the_box_busy() 
     await settle(baseline)
     assert tool.uploads == [UTILITY_PATH]
     assert box_state(baseline)["state"] == "ready"
+
+
+# --- a refusal after the take is a failed flash, not a refused one ----------
+
+
+def fault_during_upload(tool, manager) -> None:  # noqa: ANN001
+    """The port leaves `FLASHING` while the upload runs, so landing it is refused."""
+    upload = tool.upload
+
+    async def upload_then_fault(*args) -> None:  # noqa: ANN002
+        await upload(*args)
+        manager.handler(1).force_error("board vanished during the upload")
+
+    tool.upload = upload_then_fault
+
+
+async def test_a_restore_refused_at_landing_is_a_failed_restore() -> None:
+    baseline, manager, tool, _ = await make_baseline()
+    fault_during_upload(tool, manager)
+
+    baseline.ensure([1])
+    await settle(baseline)
+
+    assert tool.uploads == [UTILITY_PATH]
+    assert box_state(baseline)["state"] == "failed"
+    # A failed flash leaves the board carrying nothing anyone can name.
+    assert manager.carried(1) is None
+    # And a failed restore's ERROR is acknowledged by the baseline itself.
+    assert manager.handler(1).state is PortState.IDLE
+
+
+@pytest.mark.parametrize(
+    ("origin", "console"), [("session", False), ("debug", False), ("debug", True)]
+)
+async def test_a_flash_refused_at_landing_is_a_failed_flash(
+    rig: Rig, origin: str, console: bool
+) -> None:
+    """Landing in `IDLE`, or resuming the console the flash took."""
+    if console:
+        rig.ports.open_passthrough(1)
+    fault_during_upload(rig.tool, rig.ports)
+    heard: list[BaseException | None] = []
+
+    rig.queue.submit([rig.job(1, origin, finished=heard.append)])
+    await rig.settle()
+
+    assert rig.uploaded() == ["1"]
+    assert rig.row(1)["state"] == "failed"
+    assert len(heard) == 1 and heard[0] is not None
+    assert rig.ports.carried(1) is None
+    assert rig.flashed == []
+    assert rig.ports.handler(1).state is PortState.ERROR

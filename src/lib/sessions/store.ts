@@ -9,7 +9,7 @@
  * (queried via `sessions.active` on connect, kept live by `session.lifecycle`).
  */
 
-import type { SidecarClient } from "../ws/client";
+import type { SidecarPort } from "../ws/port";
 import { CMD, EVT } from "../ws/protocol";
 import type {
   ActiveSessions,
@@ -92,29 +92,42 @@ export class SessionStore {
   private activeLoaded = false;
   private subs = new Map<string, Set<() => void>>();
 
-  attach(client: SidecarClient): () => void {
+  attach(client: SidecarPort): () => void {
     let detached = false;
+    let broadcasts = 0;
+    const ask = () => {
+      const seen = broadcasts;
+      client
+        .call(CMD.SESSIONS_ACTIVE)
+        .then((result) => {
+          if (detached) return;
+          // A broadcast landed while this was in flight, and either may be the
+          // newer: the sidecar can read part of this answer before a transition
+          // and send it after that transition's broadcast. Ask again rather than
+          // roll the screen back (`ARCHITECTURE.md#replay-on-connect`).
+          if (broadcasts !== seen) {
+            ask();
+            return;
+          }
+          this.active = result;
+          this.activeLoaded = true;
+          this.notify("active");
+        })
+        .catch(() => {
+          // A failed discovery just leaves activeLoaded false; the next
+          // reconnect or lifecycle broadcast will fill it in.
+        });
+    };
     const offs = [
       client.on(EVT.SESSION_LIFECYCLE, (data) => {
+        broadcasts += 1;
         this.active = data;
         this.activeLoaded = true;
         this.notify("active");
       }),
 
       client.onStatus((status) => {
-        if (status !== "connected") return;
-        client
-          .call(CMD.SESSIONS_ACTIVE)
-          .then((result) => {
-            if (detached) return;
-            this.active = result;
-            this.activeLoaded = true;
-            this.notify("active");
-          })
-          .catch(() => {
-            // A failed discovery just leaves activeLoaded false; the next
-            // reconnect or lifecycle broadcast will fill it in.
-          });
+        if (status === "connected") ask();
       }),
 
       client.on(EVT.PREFIXES_UPDATED, (data) => {

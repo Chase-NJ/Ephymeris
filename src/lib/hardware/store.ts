@@ -12,7 +12,7 @@
  * port state; it only records what the sidecar reported (`ARCHITECTURE.md#invariants`).
  */
 
-import type { SidecarClient } from "../ws/client";
+import type { SidecarPort } from "../ws/port";
 import {
   CMD,
   EVT,
@@ -105,7 +105,7 @@ export class HardwareStore {
   private seq = 0;
 
   /** Wire up to the client's event stream. Returns a detach function. */
-  attach(client: SidecarClient): () => void {
+  attach(client: SidecarPort): () => void {
     const offs = [
       client.on(EVT.PORT_STATE, (d) => {
         if (!this.statuses.has(d.box)) return;

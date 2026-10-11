@@ -17,11 +17,11 @@ import { useEffect, useState } from "react";
 
 import { getSeries } from "./commands";
 import type { RunSeries, RunSummary } from "./types";
-import type { SidecarClient } from "../ws/client";
+import type { SidecarPort } from "../ws/port";
 
 const NONE: RunSeries[] = [];
 
-export function useRunSeries(client: SidecarClient, runs: RunSummary[]): RunSeries[] {
+export function useRunSeries(client: SidecarPort, runs: RunSummary[]): RunSeries[] {
   const [series, setSeries] = useState<RunSeries[]>(NONE);
   // The sidecar rejects the whole request past MAX_SERIES_RUNS (24), not the
   // excess. A session normally holds ≤6 runs, but restarts and duplicate

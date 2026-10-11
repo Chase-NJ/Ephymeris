@@ -12,7 +12,7 @@
  * should not pay that twice.
  */
 
-import type { SidecarClient } from "../ws/client";
+import type { SidecarPort } from "../ws/port";
 import { EVT } from "../ws/protocol";
 import { getSummary, listSessions } from "./commands";
 import type {
@@ -74,7 +74,7 @@ export class AnalyticsStore {
     this.subscribers.get(key)?.forEach((callback) => callback());
   }
 
-  attach(client: SidecarClient): () => void {
+  attach(client: SidecarPort): () => void {
     const offProgress = client.on(EVT.ANALYTICS_PROGRESS, (next) => {
       // Bucketed by cohort so switching mid-scan can't paint the wrong
       // panel's progress.
@@ -196,7 +196,7 @@ export class AnalyticsStore {
    * lets each panel's `useMemo` depend on `[summary, selection]` and stay
    * cheap.
    */
-  async load(client: SidecarClient, cohortId: string, force = false): Promise<void> {
+  async load(client: SidecarPort, cohortId: string, force = false): Promise<void> {
     if (!force && this.summaries.has(cohortId)) return;
     const existing = this.inflight.get(cohortId);
     if (existing) {
@@ -256,7 +256,7 @@ export class AnalyticsStore {
    * whether the cohort is readable. A blank page between two near-identical
    * summaries would be the larger change on screen.
    */
-  async refreshSummary(client: SidecarClient, cohortId: string): Promise<void> {
+  async refreshSummary(client: SidecarPort, cohortId: string): Promise<void> {
     const started = this.version;
     const summary = await getSummary(client, cohortId);
     if (this.version !== started) return;
@@ -300,7 +300,7 @@ export class AnalyticsStore {
    * notice instead of last time's numbers. When data can't be trusted, show
    * nothing rather than something stale.
    */
-  async refresh(client: SidecarClient, cohortId: string): Promise<void> {
+  async refresh(client: SidecarPort, cohortId: string): Promise<void> {
     this.invalidate(cohortId);
     await this.load(client, cohortId, true);
   }

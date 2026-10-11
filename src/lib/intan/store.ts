@@ -1,4 +1,4 @@
-import type { SidecarClient } from "@/lib/ws/client";
+import type { SidecarPort } from "@/lib/ws/port";
 import { CMD, EVT } from "@/lib/ws/protocol";
 
 import type { IntanStatus, ScopeData } from "./types";
@@ -38,7 +38,7 @@ export class IntanStore {
   private readonly subs = new Set<() => void>();
   private readonly scopeSubs = new Map<string, Set<ScopeListener>>();
 
-  attach(client: SidecarClient): () => void {
+  attach(client: SidecarPort): () => void {
     const offs = [
       client.on(EVT.INTAN_STATUS, (data) => {
         this.status = data;

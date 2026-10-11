@@ -1,5 +1,5 @@
 import { CMD } from "@/lib/ws/protocol";
-import type { SidecarClient } from "@/lib/ws/client";
+import type { SidecarPort } from "@/lib/ws/port";
 
 import type { TaskDefinition } from "./types";
 
@@ -17,23 +17,23 @@ import type { TaskDefinition } from "./types";
  * keeps the session flow free of a special case for a profile-backed run.
  */
 
-export async function listTasks(client: SidecarClient) {
+export async function listTasks(client: SidecarPort) {
   return client.call(CMD.TASKS_LIST, {});
 }
 
-export async function getTask(client: SidecarClient, taskId: string) {
+export async function getTask(client: SidecarPort, taskId: string) {
   return client.call(CMD.TASKS_GET, { taskId });
 }
 
-export async function previewTask(client: SidecarClient, definition: TaskDefinition) {
+export async function previewTask(client: SidecarPort, definition: TaskDefinition) {
   return client.call(CMD.TASKS_PREVIEW, { definition });
 }
 
-export async function saveTask(client: SidecarClient, definition: TaskDefinition) {
+export async function saveTask(client: SidecarPort, definition: TaskDefinition) {
   return client.call(CMD.TASKS_SAVE, { definition });
 }
 
-export async function deleteTask(client: SidecarClient, taskId: string) {
+export async function deleteTask(client: SidecarPort, taskId: string) {
   return client.call(CMD.TASKS_DELETE, { taskId });
 }
 

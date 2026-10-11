@@ -368,6 +368,15 @@ int main() {
     assert(_pinLog[2].us - _pinLog[1].us >= (unsigned long)BOX_SYNC_GAP_US);    // the LOW between
     assert(_pinLog[3].us - _pinLog[2].us >= (unsigned long)BOX_SYNC_PULSE_US); }
 
+  // --- emitStrobe: the line the app parses (^\d{1,3}\t\d+$), code zero-padded
+  //     to three digits, then the ms since beginSession(). 7 is no vocabulary
+  //     code; it is the smallest input that shows the padding.
+  { _ms = 0; TrialClock clock; clock.beginSession();
+    _ms = 1500;
+    _serialOutLen = 0; _serialOut[0] = '\0';
+    emitStrobe(clock, 7);
+    assert(strcmp(_serialOut, "007\t1500\r\n") == 0); }
+
   // initBoxHardware() claims the line and parks it LOW: a floating input on the
   // controller reads as noise, i.e. as events.
   { _pinLogCount = 0;

@@ -1,8 +1,8 @@
 // Minimal host shim so BehaviorBox.h compiles off-target for logic testing.
-// It stubs just enough of the Arduino API that the whole header parses; the
-// tests only *exercise* the pure policy classes (parseStartCommand,
-// CorrectionPolicy, AbstentionPenalty, AntiBiasSelector), never the hardware or
-// serial paths -- those just need their symbols declared to compile.
+// It stubs just enough of the Arduino API that the whole header parses. The
+// tests exercise the pure policy classes (parseStartCommand, CorrectionPolicy,
+// AbstentionPenalty, AntiBiasSelector), plus what emitStrobe writes: the pin
+// log and the printed line. Reads are inert.
 #ifndef ARDUINO_H_SHIM
 #define ARDUINO_H_SHIM
 
@@ -56,6 +56,10 @@ inline void digitalWrite(int pin, int level)
 inline int digitalRead(int) { return HIGH; }
 
 // ---- Serial ----
+// A printed line is kept, with Arduino's "\r\n", so a test can read back what
+// the host would receive. Other overloads print nothing.
+static char _serialOut[256];
+static size_t _serialOutLen = 0;
 struct _SerialShim
 {
   void begin(long) {}
@@ -63,6 +67,13 @@ struct _SerialShim
   int read() { return -1; }
   template <class T> size_t print(T) { return 0; }
   template <class T> size_t println(T) { return 0; }
+  size_t println(char *s) { return println((const char *)s); }
+  size_t println(const char *s)
+  {
+    int n = snprintf(_serialOut + _serialOutLen, sizeof(_serialOut) - _serialOutLen, "%s\r\n", s);
+    if (n > 0) _serialOutLen = _bb_min(_serialOutLen + (size_t)n, sizeof(_serialOut) - 1);
+    return n > 0 ? (size_t)n : 0;
+  }
   size_t println() { return 0; }
 };
 static _SerialShim Serial;

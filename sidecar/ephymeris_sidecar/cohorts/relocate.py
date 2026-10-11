@@ -57,6 +57,15 @@ log = logging.getLogger(__name__)
 #: folder below it in any layout the walk accepts, with room for a level more.
 _MAX_TAIL = 8
 
+#: Journals a `relocate_cohort` in this process is carrying out, from the
+#: journal's insert until it returns or raises. `moving` counts a `committed`
+#: journal only while it is here: a session set up from the cohort as read
+#: just before the commit would make its folder under the old place while the
+#: delete empties it. One an earlier process left `committed` committed before
+#: this process read anything, so it holds nothing up; the next start's
+#: `resume` finishes it. Read and written under `db.lock`.
+_carrying_out: set[str] = set()
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -218,7 +227,26 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
              "moving" if same_volume else "copying", _now(), _now()),
         )
         db.conn.commit()
+        _carrying_out.add(journal)
+    try:
+        return _carry_out(db, journal, cohort_id, source, target, same_volume, before, known)
+    finally:
+        with db.lock:
+            _carrying_out.discard(journal)
 
+
+def _carry_out(
+    db: Database,
+    journal: str,
+    cohort_id: str,
+    source: Path,
+    target: Path,
+    same_volume: bool,
+    before: dict[tuple[str, ...], freshness.Stat],
+    known: set[str],
+) -> Path:
+    """Everything after the journal: move or copy, commit the records with
+    the journal, delete the originals."""
     copies: list[transfer.FileCopy] | None = None
     try:
         if same_volume:
@@ -432,19 +460,16 @@ def moving(db: Database, cohort_id: str) -> bool:
     session must not be set up in it: its folder would be made at the old
     place while the records move to the new one.
 
-    A committed relocate counts while it is still deleting the originals: a
-    session set up from the cohort as read just before the commit would make
-    its folder under the old place, which the delete is emptying. Not once
-    the old folder is out of reach: what is left then waits for a drive that
-    may not come back for weeks (`resume`), and the cohort must not wait with
-    it."""
+    A `committed` relocate counts only while this process is still carrying
+    it out (`_carrying_out`); one a crash left is finished by the next
+    start's `resume`, and the cohort must not wait for it."""
     with db.lock:
         rows = db.conn.execute(
-            "SELECT state, source FROM folder_moves WHERE cohort_id = ?"
+            "SELECT id, state FROM folder_moves WHERE cohort_id = ?"
             " AND state IN ('moving', 'copying', 'committed')",
             (cohort_id,),
         ).fetchall()
-    return any(state != "committed" or not out_of_reach(Path(source)) for state, source in rows)
+        return any(state != "committed" or journal in _carrying_out for journal, state in rows)
 
 
 def _refuse_open_sessions(conn: sqlite3.Connection, cohort_id: str) -> None:

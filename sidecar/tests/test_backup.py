@@ -15,6 +15,7 @@ mechanism is easy to test shallowly:
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from pathlib import Path
 
@@ -30,6 +31,10 @@ from ephymeris_sidecar.backup.manager import (
 )
 from ephymeris_sidecar.backup.paths import MirrorLayout, mirror_segments
 from ephymeris_sidecar.cohorts.db import Database
+from ephymeris_sidecar.cohorts.repository import CohortRepository
+from ephymeris_sidecar.sessions.runner import BoxConfig, SessionRunner
+from ephymeris_sidecar.tasks.profile import parse_profile
+from tests.test_session_runner import GRGL, FakePorts, wait_until
 
 
 # --- mirror layout (`DATA.md#mirror-layout`) -------------------------------
@@ -463,3 +468,82 @@ async def test_sync_now_skips_what_is_already_current(db: Database, tmp_path: Pa
 
     assert second["copied"] == 0
     assert second["skipped"] == 1
+
+
+# --- isolation: a slow or dead target never reaches a session (`DATA.md#backup-mirroring`) ---
+
+
+async def test_a_hung_backup_target_never_holds_up_a_run(
+    db: Database, tmp_path: Path, hung_volume
+) -> None:
+    """The mirror's copy of a live `.tsv` is stuck on a share that stopped
+    answering, and the run still logs its strobes and finalizes. Its files reach
+    the mirror once the share comes back."""
+    data, mirror = tmp_path / "Batch A", tmp_path / "mirror"
+    share = hung_volume(mirror)
+    backup = make_manager(db, [str(data)], interval=0.01)
+    await backup.configure(str(mirror))
+
+    ended: list[str] = []
+
+    async def on_animal_ended(_run, reason: str) -> None:
+        ended.append(reason)
+
+    async def broadcast(_message: dict) -> None:
+        return None
+
+    ports = FakePorts()
+    runner = SessionRunner(
+        loop=asyncio.get_event_loop(), ports=ports, broadcast=broadcast,
+        on_animal_ended=on_animal_ended, backup=backup,
+    )
+    runner.configure(data, "2O-Bdisc_25", "g1", [BoxConfig(
+        box=1, animal_id="a1", animal_name="remy1", sketch_path="/sk/GRGL",
+        sketch_name="GRGL", start_command="START", config_metadata={},
+        profile=parse_profile(GRGL),
+    )], session_id="s1")
+
+    try:
+        runner.start_box(1)  # tracked before the first pass, so the .tsv is what hangs
+        ports.on_ready(None)
+        ports.on_strobe(101, 0)
+        backup.start()
+        assert await asyncio.to_thread(share.entered.wait, 5), "the mirror never began a copy"
+
+        ports.on_strobe(249, 100)
+        ports.on_strobe(246, 200)  # END_SESSION
+        await wait_until(lambda: bool(ended))
+
+        assert share.stuck, "the run finished only once the share let go"
+        document = next((data / "behavior.json").glob("*.json"))
+        assert json.loads(document.read_text(encoding="utf-8"))["n_events"] == 3
+    finally:
+        share.release()
+
+    await wait_until(lambda: (mirror / "Batch A" / "behavior.json" / document.name).is_file())
+    await backup.stop()
+
+
+async def test_a_hung_database_backup_never_holds_up_a_cohort_write(
+    db: Database, tmp_path: Path, hung_volume
+) -> None:
+    """The database copy is stuck on the share, and a cohort can still be saved:
+    the copy goes out from a local snapshot with nothing locked
+    (`DATA.md#the-database-copy`)."""
+    mirror = tmp_path / "mirror"
+    share = hung_volume(mirror)
+    backup = make_manager(db, [], interval=0.01)
+    await backup.configure(str(mirror))  # a new target backs the database up at once
+    backup.start()
+
+    try:
+        assert await asyncio.to_thread(share.entered.wait, 5), "the mirror never began a copy"
+        cohort = await asyncio.wait_for(
+            asyncio.to_thread(CohortRepository(db).create, "Batch B", str(tmp_path / "Batch B")),
+            timeout=5,
+        )
+        assert share.stuck, "the write finished only once the share let go"
+        assert CohortRepository(db).get(cohort.id).name == "Batch B"
+    finally:
+        share.release()
+    await backup.stop()

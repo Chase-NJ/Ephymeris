@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable
 
 from ..intan.service import IntanNotReady
 from ..ports.flashing import FlashJob, FlashQueue
+from ..ports.handler import PortBusy
 from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
 from ..tasks import profile as task_profile
@@ -370,11 +371,20 @@ class SessionLifecycle:
 
     def stop_box(self, box: int) -> None:
         """Ask one box to stop at its next trial boundary (`port.stopSession`).
-        Not a transition: the run ends when the board says so."""
-        try:
-            self._runner.stop_box(box)
-        except Exception as exc:
-            raise BoxRefused(box) from exc
+        Not a transition: the run ends when the board says so.
+
+        A box not running has nothing to stop: its run already ended, or never
+        began. A running box whose port did not take `STOP` -- it left the
+        session, or the write failed -- is refused by box, so the operator is
+        not told it is stopping when it is not.
+        """
+        if box not in self._runner.running_boxes():
+            return
+        if not self._runner.stop_box(box):
+            raise BoxRefused(box) from PortBusy(
+                f"box {box} did not take STOP: its port has left the session, or the "
+                "write failed"
+            )
 
     async def end_group(self, session_id: str) -> Session:
         """End the group on the rig and wait BETWEEN GROUPS

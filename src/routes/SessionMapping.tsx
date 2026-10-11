@@ -8,7 +8,14 @@ import {
   Undo2,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { Button } from "@/components/common/controls";
@@ -44,13 +51,22 @@ import {
 } from "@/lib/sessions/flashCards";
 import { stepUrl } from "@/lib/sessions/flow";
 import {
+  WALK_START,
+  confirmPayload,
+  isPlaced,
+  mappingReadiness,
+  placementOrder as orderOfPlacement,
+  seedMappings,
+  walkReducer,
+  walkStop,
+} from "@/lib/sessions/placementWalk";
+import {
   clearSetupResume,
   getSetupDraft,
   setSetupDraft,
 } from "@/lib/sessions/setupResume";
 import {
   animalsInGroup,
-  defaultConfig,
   sketchName,
   type BoxMapping,
   type TaskProfile,
@@ -91,9 +107,6 @@ import {
  * reloading loses no flash, and coming back picks the walk up where it was.
  */
 
-/** `review` edits the mapping, `placing` walks the rig, `placed` flashes. */
-type Phase = "review" | "placing" | "placed";
-
 /** What the current box's identify light is doing, as far as we know. */
 type Light = {
   box: number;
@@ -129,8 +142,10 @@ export function SessionMapping() {
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [phase, setPhase] = useState<Phase>("review");
-  const [placeIndex, setPlaceIndex] = useState(0);
+  // `review` edits the mapping, `placing` walks the rig, `placed` flashes
+  // (`walkReducer`).
+  const [walk, dispatchWalk] = useReducer(walkReducer, WALK_START);
+  const { phase, index: placeIndex } = walk;
   const [light, setLight] = useState<Light | null>(null);
 
   const connected = status === "connected";
@@ -160,27 +175,8 @@ export function SessionMapping() {
     const seedKey = `${cohort.id}:${groupId}`;
     if (seeded.current === seedKey) return;
     seeded.current = seedKey;
-    // A draft is only trusted while it still describes this group: an
-    // animal moved or removed in Cohorts meanwhile starts the step over.
-    const animals = animalsInGroup(cohort, groupId);
-    const sameAnimals =
-      draft !== undefined &&
-      draft.length === animals.length &&
-      draft.every((m) => animals.some((a) => a.id === m.animalId));
-    // The draft holds only the operator's own edits, so restoring it cannot
-    // carry a default that changed during the visit (`TASKS.md#three-layer-merge`).
-    if (sameAnimals) {
-      setMappings(draft);
-      return;
-    }
-    setMappings(
-      animals.map((a) => ({
-        box: a.boxNumber as number,
-        animalId: a.id,
-        sketchPath: null,
-        overrides: {},
-      })),
-    );
+    // A draft is only trusted while it still describes this group (`seedMappings`).
+    setMappings(seedMappings(animalsInGroup(cohort, groupId), draft));
     // The draft is read once, at mount, as a starting point.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cohort, groupId]);
@@ -289,64 +285,19 @@ export function SessionMapping() {
     [cohort],
   );
 
-  // Two animals can't share a box — reassigning one here has to displace the
-  // other, and the user is the one who decides which.
-  const duplicateBox = useMemo(() => {
-    const seen = new Set<number>();
-    for (const m of mappings) {
-      if (seen.has(m.box)) return m.box;
-      seen.add(m.box);
-    }
-    return null;
-  }, [mappings]);
-
-  // Confirm merges each box's config from its profile, so it waits for every
-  // chosen profile: without one the rig layer and the operator's edits would
-  // both be dropped from the line.
-  const allChosen =
-    mappings.length > 0 &&
-    mappings.every(
-      (m) => m.sketchPath !== null && profiles[m.sketchPath] !== undefined,
-    ) &&
-    duplicateBox === null;
-
-  // A failed flash leaves its box in `ERROR`, and `ERROR → FLASHING` is
-  // refused (`ARCHITECTURE.md#transitions`) — so without an ack here, the most
+  // Whether Confirm may be pressed (`mappingReadiness`). A failed flash leaves
+  // its box in `ERROR`, which is acknowledged here: without that, the most
   // likely place to *hit* a flash failure was also the one place you couldn't
   // recover from it without a detour through Debug Mode.
-  const erroredBoxes = useMemo(
-    () =>
-      mappings
-        .filter((m) => portStates[m.box]?.state === "ERROR")
-        .map((m) => m.box),
-    [mappings, portStates],
+  const readiness = useMemo(
+    () => mappingReadiness(mappings, profiles, portStates, configuredBoxes),
+    [mappings, profiles, portStates, configuredBoxes],
   );
+  const { duplicateBox, erroredBoxes, unconfiguredBoxes } = readiness;
 
-  /**
-   * Mapped boxes with no board behind them. Flashing one is a guaranteed
-   * failure, found only once the walk reaches it with the rest of the rig
-   * already flashed — so it is worth saying before the button is pressed
-   * rather than discovering it halfway through the rig.
-   */
-  const unconfiguredBoxes = useMemo(
-    () =>
-      [...new Set(mappings.map((m) => m.box))]
-        .filter((box) => !configuredBoxes.has(box))
-        .sort((a, b) => a - b),
-    [mappings, configuredBoxes],
-  );
-
-  /**
-   * The walk order is by **box number**, never by animal: the operator is
-   * walking down a bench, and sending them from box 5 to box 2 and back is how
-   * an animal ends up in the wrong chamber.
-   */
-  const placementOrder = useMemo(
-    () => [...mappings].sort((a, b) => a.box - b.box),
-    [mappings],
-  );
-  const current =
-    phase === "placing" ? (placementOrder[placeIndex] ?? null) : null;
+  // Walked by box number, never by animal (`placementOrder`).
+  const placementOrder = useMemo(() => orderOfPlacement(mappings), [mappings]);
+  const current = walkStop(walk, placementOrder);
   const currentBox = current?.box ?? null;
 
   // A rig with no utility sketch still gets the guided walk — it just names the
@@ -454,21 +405,20 @@ export function SessionMapping() {
    * Back on this step with this group's mapping confirmed and flashes asked
    * for — a visit to another tab, or a reload, mid-walk: pick the walk up at
    * the first box nobody asked to flash, instead of offering to confirm again.
-   * Once per visit, and only while the walk is still to resume.
+   * Once per visit, and only while the walk is still to resume (`walkReducer`
+   * ignores it otherwise).
    */
-  const resumed = useRef(false);
   useEffect(() => {
-    if (resumed.current || phase !== "review" || placementOrder.length === 0) return;
     if (!held || rigGroupId !== groupId) return;
-    const at = resumeWalkAt(
-      flashQueue,
-      placementOrder.map((m) => m.box),
-    );
-    if (at === null) return;
-    resumed.current = true;
-    setPlaceIndex(at);
-    setPhase(at >= placementOrder.length ? "placed" : "placing");
-  }, [phase, placementOrder, held, rigGroupId, groupId, flashQueue]);
+    dispatchWalk({
+      type: "resume",
+      at: resumeWalkAt(
+        flashQueue,
+        placementOrder.map((m) => m.box),
+      ),
+      count: placementOrder.length,
+    });
+  }, [placementOrder, held, rigGroupId, groupId, flashQueue]);
 
   /**
    * Confirm the mapping and start the walk — or, for the operator who has
@@ -484,7 +434,7 @@ export function SessionMapping() {
    * flight.
    */
   async function startPlacement(skipWalk = false) {
-    if (!sessionId || !allChosen) return;
+    if (!sessionId || !readiness.allChosen) return;
     setBusy(true);
     setError(null);
     try {
@@ -493,35 +443,24 @@ export function SessionMapping() {
           .call(CMD.UTILITY_ENSURE, { boxes: placementOrder.map((m) => m.box) })
           .catch(() => undefined);
       }
-      // Merged here, from the profiles as they are now — never from a value
-      // seeded earlier (`TASKS.md#three-layer-merge`).
+      // Merged here, from the profiles as they are now (`confirmPayload`).
       await confirmMapping(
         client,
         sessionId,
         groupId,
-        mappings.map(({ overrides, ...m }) => ({
-          ...m,
-          config: defaultConfig(
-            m.sketchPath ? (profiles[m.sketchPath] ?? null) : null,
-            rigDefaults(m.sketchPath),
-            overrides,
-          ),
-        })),
+        confirmPayload(mappings, profiles, settings.taskDefaults),
       );
-      // The confirm cleared the last mapping's flashes; a walk that leaves
-      // from here and comes back resumes this one.
-      resumed.current = true;
+      dispatchWalk({
+        type: "confirmed",
+        skipWalk,
+        count: placementOrder.length,
+      });
       if (skipWalk) {
-        setPlaceIndex(placementOrder.length);
-        setPhase("placed");
         await flashSessionBoxes(
           client,
           sessionId,
           placementOrder.map((m) => m.box),
         );
-      } else {
-        setPlaceIndex(0);
-        setPhase("placing");
       }
     } catch (err) {
       setError(errorMessage(err));
@@ -533,25 +472,19 @@ export function SessionMapping() {
   /** The walk again, without re-confirming: boxes already flashed stay flashed. */
   function walkAgain() {
     setError(null);
-    setPlaceIndex(0);
-    setPhase("placing");
+    dispatchWalk({ type: "walkAgain" });
   }
 
   function advancePlacement() {
     if (current) enqueue([current.box]);
-    if (placeIndex + 1 >= placementOrder.length) {
-      setPhase("placed");
-      setLight(null);
-    } else {
-      setPlaceIndex((n) => n + 1);
-    }
+    if (placeIndex + 1 >= placementOrder.length) setLight(null);
+    dispatchWalk({ type: "advance", count: placementOrder.length });
   }
 
   /** Every remaining box at once — the operator did the walk without us. */
   function placeAll() {
     enqueue(placementOrder.slice(placeIndex).map((m) => m.box));
-    setPlaceIndex(placementOrder.length);
-    setPhase("placed");
+    dispatchWalk({ type: "placeAll", count: placementOrder.length });
     setLight(null);
   }
 
@@ -565,13 +498,9 @@ export function SessionMapping() {
         client,
         mappings.map((m) => m.box),
       ).catch(() => undefined);
-      // A deliberate return to the review: not a walk to pick up again.
-      resumed.current = true;
-      setPhase("review");
       setLight(null);
-    } else {
-      setPlaceIndex((n) => n - 1);
     }
+    dispatchWalk({ type: "retreat" });
   }
 
   async function acknowledge(box: number) {
@@ -614,15 +543,8 @@ export function SessionMapping() {
           // none to pick, and the picker alone cannot say so.
           sketches.length === 0
           ? "No sketches found — the app's bundled sketch library is missing. Reinstall Ephymeris."
-          : erroredBoxes.length > 0
-            ? `Box ${erroredBoxes.join(", ")} needs acknowledging before it can flash.`
-            : duplicateBox !== null
-              ? `Two animals share box ${duplicateBox} — move one first.`
-              : !allChosen
-                ? mappings.every((m) => m.sketchPath !== null)
-                  ? "Reading the chosen sketches' parameters…"
-                  : "Pick a sketch for every box, then confirm."
-                : "Confirm the boxes, then place the animals one at a time.";
+          : (readiness.problem ??
+            "Confirm the boxes, then place the animals one at a time.");
 
   return (
     // Same scaffold as the Dashboard and step 1: the sky is continuous across
@@ -775,12 +697,11 @@ export function SessionMapping() {
                 // stops accepting clicks: mid-walk, changing a box the operator has
                 // already filled would silently invalidate the animals behind them.
                 const dimmed = phase === "placing" && !isCurrent;
-                const placed =
-                  phase === "placed" ||
-                  (phase === "placing" &&
-                    placementOrder.findIndex(
-                      (m) => m.animalId === mapping.animalId,
-                    ) < placeIndex);
+                const placed = isPlaced(
+                  walk,
+                  placementOrder,
+                  mapping.animalId,
+                );
                 return (
                   <motion.div
                     key={mapping.animalId}
@@ -1013,13 +934,7 @@ export function SessionMapping() {
                 <Button
                   variant="primary"
                   onClick={() => void startPlacement()}
-                  disabled={
-                    !allChosen ||
-                    busy ||
-                    !connected ||
-                    mappings.length === 0 ||
-                    erroredBoxes.length > 0
-                  }
+                  disabled={!readiness.ready || busy || !connected}
                   {...(erroredBoxes.length > 0
                     ? {
                         title:
@@ -1035,13 +950,7 @@ export function SessionMapping() {
                 <Button
                   variant="ghost"
                   onClick={() => void startPlacement(true)}
-                  disabled={
-                    !allChosen ||
-                    busy ||
-                    !connected ||
-                    mappings.length === 0 ||
-                    erroredBoxes.length > 0
-                  }
+                  disabled={!readiness.ready || busy || !connected}
                 >
                   <CheckCheck size={13} strokeWidth={1.75} />
                   They&rsquo;re already in — flash all

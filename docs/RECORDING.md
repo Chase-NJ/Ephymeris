@@ -459,8 +459,8 @@ moves them only with a [relocated](DATA.md#data-folder) cohort folder they sit i
 
 **`sessions.recording_json`** ([DATA.md](DATA.md#sqlite-database)): `{"runs": [...]}`, one per group run
 (path, base filename, RHX's file timestamp, format, sample rate, start/end, and per box its DIN, port,
-channels and probe-map file). `NULL` means behavior only. A save location inside the cohort folder follows
-a [relocate](DATA.md#data-folder) of it.
+channels and probe-map file). `NULL` means behavior only. A save location inside a cohort folder follows
+a [relocate](DATA.md#data-folder) of that folder, whichever cohort the session belongs to.
 
 **Each animal's document** ([DATA.md](DATA.md#per-animal-files)) gains flat `intan_*` fields, also in the
 `.tsv` header so a crash-recovered file keeps them:

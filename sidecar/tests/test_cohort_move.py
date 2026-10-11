@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
-from ephymeris_sidecar.cohorts import move_apply
+from ephymeris_sidecar.cohorts import move_apply, relocate
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.cohorts.move import MoveRequest, plan_move
 from ephymeris_sidecar.cohorts.repository import CohortRepository
@@ -288,6 +288,26 @@ def test_notes_md_is_never_moved(lab: Lab) -> None:
     lab.apply("slow1")
     assert (lab.folder("1", "2026-07-22") / "notes.md").is_file()
     assert not (lab.folder("1", "2026-07-22", lab.b_root) / "notes.md").exists()
+
+
+def test_a_moved_recording_follows_a_relocate_of_the_folder_it_stayed_in(
+    lab: Lab, tmp_path: Path
+) -> None:
+    """The recording stays in A's folder, so the session now B's points there;
+    relocating A moved the files and left B's record at the old place."""
+    ephys = lab.folder("2", "2026-07-23") / "ephys" / "rec_260723_100000"
+    ephys.mkdir(parents=True)
+    (ephys / "info.rhd").write_bytes(b"rhd")
+    lab.sessions.set_recording(lab.s2, {"runs": [{"groupId": "ga", "path": str(ephys)}]})
+    lab.apply("slow1")  # session 2 is slow1's alone: it moves whole
+    assert lab.sessions.get_session(lab.s2).recording["runs"][0]["path"] == str(ephys)
+
+    new_a = tmp_path / "elsewhere" / "A"
+    relocate.relocate_cohort(lab.db, lab.a.id, str(new_a), True)
+
+    [run] = lab.sessions.get_session(lab.s2).recording["runs"]
+    assert run["path"] == str(new_a / ephys.relative_to(lab.a_root))
+    assert (Path(run["path"]) / "info.rhd").is_file()
 
 
 def cache_row(lab: Lab, path: str, key: tuple[int, int]) -> None:

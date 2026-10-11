@@ -18,6 +18,11 @@ So the paths move with the files, in the order that makes it safe:
   (`DATA.md#moving-animals-between-cohorts`). A crash while copying is undone,
   after the commit finished.
 
+Neither starts while a session of the cohort is open, and the copy checks
+again at commit: a session recorded while it ran has its files at the old
+place, so its records must not move. A rename is over before anyone could set
+one up, and `moving` lets `sessions.create` refuse meanwhile.
+
 Either way the cache and adoption rows carry their freshness keys to the
 moved files (`freshness.carry`): a copy's mtime is rounded on a coarser
 volume, and a key left at the original's would send every recovered run back
@@ -74,7 +79,8 @@ def rewrite_paths(
 
     That includes where each recorded group run told RHX to save: by default
     `<session folder>/ephys`, which moves with the folder
-    (`RECORDING.md#what-is-written`). A save location elsewhere is left alone.
+    (`RECORDING.md#what-is-written`), whichever cohort's session it now is. A
+    save location elsewhere is left alone.
 
     `only_existing` is the repair's caution: a path moves only when what it
     names is there — the file, or for a run its write-ahead `.tsv`, which
@@ -98,13 +104,18 @@ def rewrite_paths(
             return False
 
     changed = 0
-    for session_id, folder, recording_json in conn.execute(
-        "SELECT id, folder_path, recording_json FROM sessions WHERE cohort_id = ?", (cohort_id,)
+    for session_id, folder in conn.execute(
+        "SELECT id, folder_path FROM sessions WHERE cohort_id = ?", (cohort_id,)
     ).fetchall():
         new = rebased(folder)
         if new and (not only_existing or present(new, run=False)):
             conn.execute("UPDATE sessions SET folder_path = ? WHERE id = ?", (new, session_id))
             changed += 1
+    # Every cohort's: a session moved to another cohort keeps its recording
+    # where RHX wrote it, in this folder (`DATA.md#moving-animals-between-cohorts`).
+    for session_id, recording_json in conn.execute(
+        "SELECT id, recording_json FROM sessions WHERE recording_json IS NOT NULL"
+    ).fetchall():
         recording = _rebased_recording(recording_json, rebased, present, only_existing)
         if recording is not None:
             conn.execute(
@@ -199,6 +210,8 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
     before = _stats(source)
     journal = str(uuid.uuid4())
     with db.lock:
+        _refuse_open_sessions(db.conn, cohort_id)
+        known = _record_ids(db.conn, cohort_id)
         db.conn.execute(
             "INSERT INTO folder_moves (id, cohort_id, source, target, state, created_at,"
             " updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -224,6 +237,8 @@ def relocate_cohort(db: Database, cohort_id: str, destination: str, move_existin
     failure: BaseException | None = None
     with db.lock:
         try:
+            if not same_volume:
+                _refuse_records_since(db.conn, cohort_id, known)
             _commit_records(db.conn, cohort_id, source, target, before)
             db.conn.execute(
                 "UPDATE folder_moves SET state = ?, updated_at = ? WHERE id = ?",
@@ -364,6 +379,59 @@ def _check_destination(source: Path, target: Path) -> None:
         )
     if relative_below(target, source) is not None:
         raise DataFolderError(f"{target} is inside the folder being moved.")
+
+
+def moving(db: Database, cohort_id: str) -> bool:
+    """Whether this cohort's folder is part-way through a relocate, so a new
+    session must not be set up in it: its folder would be made at the old
+    place while the records move to the new one."""
+    with db.lock:
+        row = db.conn.execute(
+            "SELECT 1 FROM folder_moves WHERE cohort_id = ?"
+            " AND state IN ('moving', 'copying', 'committed') LIMIT 1",
+            (cohort_id,),
+        ).fetchone()
+    return row is not None
+
+
+def _refuse_open_sessions(conn: sqlite3.Connection, cohort_id: str) -> None:
+    """A session still open writes into the folder, or will: its runner was
+    given a path below the old place, which the records are about to leave."""
+    row = conn.execute(
+        "SELECT prefix_name, session_number, date FROM sessions WHERE cohort_id = ?"
+        " AND status IN ('configuring', 'running') ORDER BY date LIMIT 1",
+        (cohort_id,),
+    ).fetchone()
+    if row is not None:
+        raise DataFolderError(
+            f"{row[0]}_{row[1]} ({row[2]}) is still open. Close it out, or run Tidy "
+            "records, then move the data folder."
+        )
+
+
+def _record_ids(conn: sqlite3.Connection, cohort_id: str) -> set[str]:
+    return {
+        row[0]
+        for row in conn.execute(
+            "SELECT id FROM sessions WHERE cohort_id = ?"
+            " UNION ALL SELECT r.id FROM session_animal_runs r"
+            " JOIN sessions s ON s.id = r.session_id WHERE s.cohort_id = ?",
+            (cohort_id, cohort_id),
+        )
+    }
+
+
+def _refuse_records_since(conn: sqlite3.Connection, cohort_id: str, known: set[str]) -> None:
+    """The copy's own check at commit: a session or run recorded while it ran
+    wrote its files at the old place, after the copy had passed them. Moving
+    its records would point them at files that are not there, and the next
+    Rescan would prune them (`DATA.md#pruning`)."""
+    _refuse_open_sessions(conn, cohort_id)
+    if _record_ids(conn, cohort_id) - known:
+        raise DataFolderError(
+            "A session was recorded in this cohort while its data was being copied. "
+            "Nothing was moved; move the data folder again."
+        )
 
 
 def _same(a: Path, b: Path) -> bool:

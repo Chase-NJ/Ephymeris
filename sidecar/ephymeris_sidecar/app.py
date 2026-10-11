@@ -1715,6 +1715,14 @@ class Application:
         if prefix is None:
             raise CommandError(ErrCode.SESSION_INVALID, "Unknown session prefix.")
 
+        # The folder would be made at the old place while the records move to
+        # the new one (`DATA.md#data-folder`).
+        if await asyncio.to_thread(relocate.moving, self.db, cohort_id):
+            raise CommandError(
+                ErrCode.SESSION_INVALID,
+                "This cohort's data folder is being moved. Set up the session once it finishes.",
+            )
+
         when = datetime.now()
         folder = resolve_session_folder(
             cohort.data_folder, prefix.name, session_number, when

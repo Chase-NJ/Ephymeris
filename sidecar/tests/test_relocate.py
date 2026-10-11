@@ -326,6 +326,72 @@ def test_every_copy_is_flushed_before_an_original_goes(
     assert not archive.old.exists()
 
 
+# --- sessions while it moves --------------------------------------------------------
+
+
+def test_an_open_session_refuses_the_move(archive: Archive, volume: str) -> None:
+    """Its runner was given, or will be given, a folder at the old place."""
+    archive.sessions.set_status(archive.session_id, "configuring")
+    before = archive.stored_paths()
+
+    with pytest.raises(DataFolderError, match="still open"):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert archive.stored_paths() == before
+    assert archive.all_under(archive.old)
+    assert archive.db.conn.execute("SELECT count(*) FROM folder_moves").fetchone()[0] == 0
+
+
+def test_a_session_recorded_during_the_copy_abandons_the_move(
+    archive: Archive, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its file is written at the old place after the copy passed it. Moving
+    its records anyway pointed them at nothing, and the next Rescan pruned
+    the run."""
+    monkeypatch.setattr(relocate, "_same_volume", lambda _s, _t: False)
+    real_copy = relocate._copy_tree
+    late_folder = archive.old / "2O-Bdisc" / "2O-Bdisc_2_2026-09-02"
+
+    def copy_while_a_session_runs(source: Path, target: Path) -> None:
+        real_copy(source, target)
+        [prefix] = archive.sessions.list_prefixes()
+        session = archive.sessions.create_session(
+            archive.cohort.id, prefix, "2", "2026-09-02", str(late_folder)
+        )
+        path = Archive.write(late_folder, "remy1_2O-Bdisc_2_2026-09-02_090001")
+        archive.sessions.record_animal_run(
+            SessionAnimalRun(
+                id="run-late", session_id=session.id, animal_id="a1", box_number=2,
+                sketch_path="GRGL", file_path=str(path), started_at="2026-09-02T09:00:01+00:00",
+                stop_reason="BF_END_SESSION received",
+            )
+        )
+        archive.sessions.set_status(session.id, "completed")
+
+    monkeypatch.setattr(relocate, "_copy_tree", copy_while_a_session_runs)
+    with pytest.raises(DataFolderError, match="while its data was being copied"):
+        relocate.relocate_cohort(archive.db, archive.cohort.id, str(archive.new), True)
+
+    assert archive.cohorts.get(archive.cohort.id).data_folder == str(archive.old)
+    assert archive.all_under(archive.old), archive.stored_paths()
+    assert not any(p.is_file() for p in archive.new.rglob("*"))
+    assert archive.journal() == "rolled-back"
+    assert rescan(archive)["pruned"] == {"runs": 0, "sessions": 0, "adopted": 0}
+
+
+def test_a_session_cannot_be_set_up_while_the_folder_moves(archive: Archive) -> None:
+    """`sessions.create` asks: the folder it makes would be at the old place."""
+    assert not relocate.moving(archive.db, archive.cohort.id)
+    for state in ("moving", "copying", "committed"):
+        archive.db.conn.execute("DELETE FROM folder_moves")
+        journal(archive, state)
+        assert relocate.moving(archive.db, archive.cohort.id), state
+    for state in ("done", "rolled-back"):
+        archive.db.conn.execute("DELETE FROM folder_moves")
+        journal(archive, state)
+        assert not relocate.moving(archive.db, archive.cohort.id), state
+
+
 # --- crashes -----------------------------------------------------------------------
 
 

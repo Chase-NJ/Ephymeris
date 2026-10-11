@@ -13,7 +13,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from websockets.asyncio.client import ClientConnection, connect
 
@@ -91,6 +91,18 @@ class LiveSidecar:
 
     async def call(self, cmd: str, **args: Any) -> Any:
         return await self.reply(await self.send(cmd, **args))
+
+    def latest(self, evt: str) -> Any:
+        """The newest payload of `evt`, or None if it never arrived."""
+        return next((e["data"] for e in reversed(self.events) if e["evt"] == evt), None)
+
+    async def until(self, predicate: Callable[[], bool], timeout: float = 10.0) -> None:
+        """Wait for `predicate`, which reads events or the fakes; fail after `timeout`."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while not predicate():
+            if asyncio.get_running_loop().time() > deadline:
+                raise AssertionError("timed out waiting on the sidecar")
+            await asyncio.sleep(0.01)
 
     async def close(self) -> None:
         self._reader.cancel()

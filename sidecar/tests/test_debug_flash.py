@@ -33,7 +33,6 @@ from ephymeris_sidecar.debug_run import DebugRuns
 from ephymeris_sidecar.ports.flashing import FlashJob, FlashQueue
 from ephymeris_sidecar.ports.handler import OutputLine
 from ephymeris_sidecar.ports.manager import FQBN, PortManager
-from ephymeris_sidecar.ports.states import PortState
 from ephymeris_sidecar.protocol import ErrCode, Evt
 from ephymeris_sidecar.server import CommandError
 from ephymeris_sidecar.settings import SidecarSettings
@@ -41,6 +40,7 @@ from ephymeris_sidecar.tasks.metrics import MetricSet
 from ephymeris_sidecar.tasks.profile import load_profile, parse_profile
 from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.utility import UtilityBaseline
+from tests.live_sidecar import live_sidecar
 
 from .test_utility import (  # noqa: F401 - fake_serial is an autouse fixture
     ADDRESS,
@@ -173,23 +173,6 @@ async def at_baseline(app: SimpleNamespace) -> None:
 
 
 # --- the pin ----------------------------------------------------------------
-
-
-async def test_a_debug_flash_from_idle_is_not_overwritten() -> None:
-    """The reported bug, end to end through the real handler and idle hook."""
-    app = make_app()
-    await at_baseline(app)
-
-    await flash(app, TASK_PATH)
-    assert app.ports.handler(1).state is PortState.IDLE
-    # Let the queued idle hook fire and the worker it starts run dry.
-    await asyncio.sleep(0)
-    await settle(app.utility)
-
-    assert app.tool.uploads == [UTILITY_PATH, TASK_PATH]
-    state = box_state(app.utility)
-    assert state["state"] == "pinned"
-    assert "GRGL" in state["detail"]
 
 
 async def test_the_pin_outlasts_every_automatic_trigger() -> None:
@@ -495,3 +478,32 @@ async def test_a_profile_less_sketch_still_reports_running(monkeypatch: pytest.M
     app = make_app()
     await started(app)
     assert telemetry(app)[-1] == {"box": 1, "running": True, "metrics": []}
+
+
+# --- over the wire ------------------------------------------------------------
+
+
+async def test_a_debug_flash_from_idle_is_not_overwritten(tmp_path: Path) -> None:
+    """The reported bug through the whole sidecar: the real discovery, profiles,
+    idle hook and baseline, with only the board and its serial port faked. The
+    stand-in harness above wires the hooks itself, so it cannot see
+    `Application.start` wiring one wrong; this test can."""
+    tool = FakeTool()
+    async with live_sidecar(tmp_path / "app", tool=tool) as sidecar:
+        await sidecar.call("settings.push", defaultBaud=9600, boxes=[{"box": 1, "hardwareId": HWID}])
+        sketches = (await sidecar.call("sketches.refresh"))["sketches"]
+        utility = next(s["path"] for s in sketches if s["name"] == "BOX_Utility")
+        grgl = next(s["path"] for s in sketches if s["name"] == "GRGL")
+
+        def box_1() -> dict:
+            status = sidecar.latest("utility.updated") or {"boxes": []}
+            return next((b for b in status["boxes"] if b["box"] == 1), {})
+
+        await sidecar.until(lambda: box_1().get("state") == "ready")
+        assert tool.uploads == [utility]
+
+        await sidecar.call("flash.enqueue", boxes=[1], sketchPath=grgl)
+        await sidecar.until(lambda: box_1().get("state") == "pinned")
+
+        assert tool.uploads == [utility, grgl]
+        assert "GRGL" in box_1()["detail"]

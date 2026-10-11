@@ -55,6 +55,7 @@ def logbook(rig: Rig) -> LogbookService:
         cohorts=rig.cohorts,
         sessions=rig.sessions,
         profiles=rig.profiles,
+        archive=rig.archive,
         broadcast=broadcast,
     )
 

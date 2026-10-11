@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from . import discovery
-from .analytics import AnalyticsBusy, AnalyticsService
+from .analytics import AnalyticsService, ArchiveBusy, CohortArchive
 from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager, BackupNotConfigured
 from .boards import create_board_tool
@@ -117,6 +117,7 @@ class Application:
         self.sessions = SessionRepository(self.db)
         self.runner: SessionRunner | None = None
         self.backup: BackupManager | None = None
+        self.archive: CohortArchive | None = None
         self.analytics: AnalyticsService | None = None
         #: The session log (`DATA.md#the-session-log`). Off the session path:
         #: the runner never calls it, and its `notes.md` writes never block a reply.
@@ -291,11 +292,13 @@ class Application:
         # a cohort edit (`DATA.md#the-database-copy`).
         self.db.on_commit(self.backup.mark_db_dirty)
         self.backup.start()
+        self.archive = CohortArchive(db=self.db, cohorts=self.cohorts, sessions=self.sessions)
         self.analytics = AnalyticsService(
             db=self.db,
             cohorts=self.cohorts,
             sessions=self.sessions,
             broadcast=self.server.broadcast,
+            archive=self.archive,
             sketch_lookup=self._sketch_path_for_name,
         )
         # A move a crash interrupted is finished or undone before anything can
@@ -315,6 +318,7 @@ class Application:
             cohorts=self.cohorts,
             sessions=self.sessions,
             profiles=self.profiles,
+            archive=self.archive,
             broadcast=self.server.broadcast,
             enqueue_backup=self.backup.enqueue,
         )
@@ -894,8 +898,8 @@ class Application:
 
         with _cohort_errors():
             try:
-                await self._require_analytics().relocate(cohort_id, path, move_existing)
-            except AnalyticsBusy as exc:
+                await self._require_archive().relocate(cohort_id, path, move_existing)
+            except ArchiveBusy as exc:
                 raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
             cohort = await asyncio.to_thread(self.cohorts.get, cohort_id)
         await self._broadcast_cohorts()
@@ -923,10 +927,10 @@ class Application:
             busy = "A session is set up or running. Finish it, then move the animals."
         with _cohort_errors():
             try:
-                result, copied = await self._require_analytics().move_animals(
+                result, copied = await self._require_archive().move_animals(
                     request, apply=args.get("apply") is True, busy=busy
                 )
-            except AnalyticsBusy as exc:
+            except ArchiveBusy as exc:
                 raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
             except move_apply.MoveRefused as exc:
                 raise CommandError(
@@ -1491,6 +1495,11 @@ class Application:
 
     # --- analytics (PROTOCOL.md#analytics) ---------------------------------
 
+    def _require_archive(self) -> CohortArchive:
+        if self.archive is None:
+            raise CommandError(ErrCode.INTERNAL, "analytics isn't running")
+        return self.archive
+
     def _require_analytics(self) -> AnalyticsService:
         if self.analytics is None:
             raise CommandError(ErrCode.INTERNAL, "analytics isn't running")
@@ -1534,29 +1543,17 @@ class Application:
         """
         cohort_id = _str_arg(args, "cohortId")
         include_aborted = args.get("includeAborted") is True
-        sessions = await asyncio.to_thread(
-            self.sessions.list_sessions, cohort_id, include_aborted=include_aborted
+        # Recovered sessions (DATA.md#orphan-adoption) are listed beside the
+        # recorded ones so the Analytics selectors cover the whole archive; the
+        # archive reads the database only, so the no-filesystem rule holds.
+        view = await asyncio.to_thread(
+            self._require_archive().view, cohort_id, include_aborted=include_aborted
         )
-        counts = await asyncio.to_thread(self.sessions.run_counts_by_session, cohort_id)
-        # Adopted orphans (DATA.md#orphan-adoption) appear as payload-only synthetic
-        # sessions so the Analytics selectors cover the whole archive. Both
-        # sources are database reads — the no-filesystem rule holds.
-        synthetic, synthetic_counts = await asyncio.to_thread(
-            self._require_analytics().adopted_session_entries, cohort_id, sessions
-        )
-        merged = sorted(
-            [*sessions, *synthetic], key=lambda s: (s.date, s.started_at, s.id)
-        )
+        counts = view.run_counts()
         return {
             "sessions": [
-                session.to_list_item(
-                    index + 1,
-                    # Added, not either-or: a recorded session also counts
-                    # the recovered files attributed to it (DATA.md#tidy-records).
-                    run_count=counts.get(session.id, 0)
-                    + synthetic_counts.get(session.id, 0),
-                )
-                for index, session in enumerate(merged)
+                session.to_list_item(index + 1, run_count=counts.get(session.id, 0))
+                for index, session in enumerate(view.sessions)
             ]
         }
 
@@ -1613,7 +1610,7 @@ class Application:
                 return await self._require_analytics().rescan(
                     cohort_id, adopt_orphans=args.get("adoptOrphans") is not False
                 )
-            except AnalyticsBusy as exc:
+            except ArchiveBusy as exc:
                 raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
 
     async def _sessions_tidy(self, _server, _conn, args, _corr) -> dict[str, Any]:  # noqa: ANN001
@@ -1634,7 +1631,7 @@ class Application:
                     protect=protect,
                     today=datetime.now().date().isoformat(),
                 )
-            except AnalyticsBusy as exc:
+            except ArchiveBusy as exc:
                 raise CommandError(ErrCode.INTERNAL, str(exc)) from exc
         if result["applied"]:
             # Stale and set-up rows may have gone from the Dashboard's dock.

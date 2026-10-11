@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics import AnalyticsService
+from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
 from ephymeris_sidecar.analytics import derive, reader
 from ephymeris_sidecar.analytics.repository import AnalyticsRepository
 from ephymeris_sidecar.cohorts.db import Database
@@ -86,8 +86,13 @@ class Rig:
         async def broadcast(message: dict) -> None:
             self.events.append(message)
 
+        self.archive = CohortArchive(db=db, cohorts=self.cohorts, sessions=self.sessions)
         self.service = AnalyticsService(
-            db=db, cohorts=self.cohorts, sessions=self.sessions, broadcast=broadcast
+            db=db,
+            cohorts=self.cohorts,
+            sessions=self.sessions,
+            broadcast=broadcast,
+            archive=self.archive,
         )
 
     def write_sketch(self, profile: dict | None = GRGL) -> None:

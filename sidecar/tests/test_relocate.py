@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics import AnalyticsService
+from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
 from ephymeris_sidecar.analytics.service import _orphan_run_id
 from ephymeris_sidecar.cohorts import relocate
 from ephymeris_sidecar.cohorts.db import Database
@@ -40,6 +40,7 @@ class Archive:
         self.new = root / "elsewhere" / "Batch A"
         self.cohorts = CohortRepository(db)
         self.sessions = SessionRepository(db)
+        self.cohort_archive = CohortArchive(db=db, cohorts=self.cohorts, sessions=self.sessions)
         self.cohort = self.cohorts.create(
             "Batch A",
             str(self.old),
@@ -145,7 +146,11 @@ def test_the_records_survive_the_next_rescan(archive: Archive, volume: str) -> N
         return None
 
     service = AnalyticsService(
-        db=archive.db, cohorts=archive.cohorts, sessions=archive.sessions, broadcast=broadcast
+        db=archive.db,
+        cohorts=archive.cohorts,
+        sessions=archive.sessions,
+        broadcast=broadcast,
+        archive=archive.cohort_archive,
     )
     result = asyncio.run(service.rescan(archive.cohort.id))
 
@@ -273,7 +278,11 @@ def test_rescan_re_points_records_an_old_relocate_left_behind(archive: Archive) 
         return None
 
     service = AnalyticsService(
-        db=archive.db, cohorts=archive.cohorts, sessions=archive.sessions, broadcast=broadcast
+        db=archive.db,
+        cohorts=archive.cohorts,
+        sessions=archive.sessions,
+        broadcast=broadcast,
+        archive=archive.cohort_archive,
     )
     result = asyncio.run(service.rescan(archive.cohort.id))
 
@@ -326,11 +335,17 @@ def test_a_summary_waiting_on_a_relocate_reads_the_new_paths(
         return None
 
     service = AnalyticsService(
-        db=archive.db, cohorts=archive.cohorts, sessions=archive.sessions, broadcast=broadcast
+        db=archive.db,
+        cohorts=archive.cohorts,
+        sessions=archive.sessions,
+        broadcast=broadcast,
+        archive=archive.cohort_archive,
     )
 
     async def scenario() -> dict:
-        moving = asyncio.create_task(service.relocate(archive.cohort.id, str(archive.new), True))
+        moving = asyncio.create_task(
+            archive.cohort_archive.relocate(archive.cohort.id, str(archive.new), True)
+        )
         await asyncio.sleep(0.05)  # the relocate holds the lock
         summary = asyncio.create_task(service.summary(archive.cohort.id))
         await asyncio.sleep(0.2)  # long enough for any read taken before waiting

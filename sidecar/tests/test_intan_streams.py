@@ -1,7 +1,12 @@
-"""RHX's data sockets. Every test goes through `pack_*`, the parser's inverse,
-so what is exercised is the framing itself and not a second description of it."""
+"""RHX's data sockets. Most tests go through `pack_*`, the parser's inverse,
+so what is exercised is the framing itself and not a second description of it.
+The golden tests below are the exception: their bytes come from Intan's format
+(`RECORDING.md#data-sockets`), so a mistake `pack_*` shares with the parser,
+which every fake-RHX test would carry too, still fails."""
 
 from __future__ import annotations
+
+import struct
 
 from ephymeris_sidecar.intan.streams import (
     FRAMES_PER_BLOCK,
@@ -30,6 +35,32 @@ def stream(layout: FrameLayout, blocks: int, start: int = 0, **kwargs) -> bytes:
         pack_waveform_block(layout, block(layout, start + n * FRAMES_PER_BLOCK, **kwargs))
         for n in range(blocks)
     )
+
+
+def test_a_waveform_block_written_to_intan_s_format_parses_to_its_samples():
+    """Golden bytes: magic 0x2EF07A08, then 128 frames of an `int32` timestamp
+    and one `uint16` per output in RHX's order (a channel's wide band before its
+    high band, the digital word last). The next block's magic confirms the end."""
+    frames = b"".join(
+        struct.pack("<iHHH", -1 + i, 1000 + i, 2000 + i, 0b101) for i in range(128)
+    )
+    data = struct.pack("<I", 0x2EF07A08) + frames + struct.pack("<I", 0x2EF07A08)
+
+    layout = FrameLayout(amplifier=(("A-001", "wide"), ("A-001", "high")), digital_in=True)
+    [got] = WaveformParser(layout).feed(data)
+
+    assert got.timestamps[:2] == (-1, 0)
+    assert got.timestamps[-1] == 126
+    assert got.amplifier[("A-001", "wide")][:2] == (1000, 1001)
+    assert got.amplifier[("A-001", "high")][:2] == (2000, 2001)
+    assert got.digital_in[0] == 0b101
+
+
+def test_a_spike_chunk_written_to_intan_s_format_parses_to_its_fields():
+    """Golden bytes: 14 bytes of magic 0x3AE2710F, a 5-character native channel
+    name, a `uint32` timestamp and a `uint8` unit id."""
+    data = struct.pack("<I5sIB", 0x3AE2710F, b"A-009", 3_000_000_000, 2)
+    assert SpikeParser().feed(data) == [Spike(channel="A-009", timestamp=3_000_000_000, unit=2)]
 
 
 def test_the_block_size_is_intan_s_own_arithmetic():

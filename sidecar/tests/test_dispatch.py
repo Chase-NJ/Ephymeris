@@ -49,6 +49,8 @@ async def _cohort(app, folder: Path) -> dict:  # noqa: ANN001
         }),
         ("analytics.rescan", lambda c, tmp: {"cohortId": c["id"]}),
         ("sessions.tidy", lambda c, tmp: {"cohortId": c["id"], "apply": True}),
+        # B11: a recover writes files into the folder a relocate may be moving.
+        ("sessions.recover", lambda c, tmp: {"cohortId": c["id"]}),
     ],
 )
 async def test_a_busy_archive_is_refused_as_busy(app, tmp_path: Path, cmd: str, args) -> None:  # noqa: ANN001
@@ -60,6 +62,29 @@ async def test_a_busy_archive_is_refused_as_busy(app, tmp_path: Path, cmd: str, 
             await dispatch(app, cmd, **args(cohort, tmp_path))
     assert refused.value.code == "ARCHIVE_BUSY"
     assert "try again" in refused.value.message
+
+
+# --- B7 and candidate 4: an archive write while a box writes ----------------------
+
+
+@pytest.mark.parametrize(
+    ("cmd", "args"),
+    [
+        # B7: a walk while a box writes can adopt a file its record is about to claim.
+        ("analytics.rescan", lambda c, tmp: {"cohortId": c["id"]}),
+        ("sessions.recover", lambda c, tmp: {"cohortId": c["id"]}),
+        ("cohorts.setDataFolder", lambda c, tmp: {"id": c["id"], "path": str(tmp / "elsewhere"), "moveExisting": True}),
+    ],
+)
+async def test_an_archive_write_while_a_box_writes_is_refused_as_rig_in_use(
+    app, tmp_path: Path, monkeypatch, cmd: str, args  # noqa: ANN001
+) -> None:
+    """"The rig is in use" is one code, whichever archive write asked."""
+    cohort = await _cohort(app, tmp_path / "Batch A")
+    monkeypatch.setattr(app.runner, "running_boxes", lambda: [2])
+    with pytest.raises(Refused) as refused:
+        await dispatch(app, cmd, **args(cohort, tmp_path))
+    assert refused.value.code == "RIG_IN_USE"
 
 
 # --- B10: a box whose port refuses to open --------------------------------------

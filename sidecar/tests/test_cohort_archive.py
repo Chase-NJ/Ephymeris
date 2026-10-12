@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics import ArchiveBusy
+from ephymeris_sidecar.analytics import ArchiveBusy, reader
 from ephymeris_sidecar.cohorts.db import Database
 from tests.test_analytics_adoption import LegacyRig
 from tests.test_analytics_service import HIT_1, Rig
@@ -123,6 +123,30 @@ async def test_a_filtered_summary_leaves_a_recovered_clock_where_it_was(
     assert narrowed["sessions"][0]["clockEndedAt"] == "2026-06-16T12:01:15.000"
     [listed] = legacy.archive.view(legacy.cohort.id).recovered
     assert listed.clock_ended_at == "2026-06-16T12:01:15.000"
+
+
+async def test_a_run_recorded_while_a_rescan_walks_counts_once(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A box finalizing during a rescan: its `.json` lands and its record
+    commits after the rescan read the records but before its walk returned.
+    The walk adopts the file; every reader still sees one run."""
+    sid = rig.add_session("12", DAY)
+    # The session's folder is there from the start, as a live session's is.
+    (Path(rig.sessions.get_session(sid).folder_path) / "behavior.tsv").mkdir(parents=True)
+    walk = reader.walk_session_files
+
+    def finalized_mid_walk(folder):  # noqa: ANN001, ANN202
+        rig.add_run(sid, "a1", HIT_1)
+        return walk(folder)
+
+    monkeypatch.setattr(reader, "walk_session_files", finalized_mid_walk)
+    await rig.service.rescan(rig.cohort.id)
+
+    view = rig.archive.view(rig.cohort.id)
+    assert [run.id for run in view.runs] == [f"r-{sid[:6]}-a1"]
+    assert view.run_counts() == {sid: 1}
+    assert len((await rig.service.summary(rig.cohort.id))["runs"]) == 1
 
 
 async def test_a_writer_is_refused_while_the_archive_is_held(rig: Rig) -> None:

@@ -333,7 +333,10 @@ reload, and a query flag would have to survive every one of those.
 
 **After mapping, not before**: the step asks which headstage port each *mapped* box is on. It runs **once
 per group** (animals, ports and probes change between groups) and opens prefilled from
-`settings.recordingDefaults`, which it writes back on Continue.
+`settings.recordingDefaults`, which it writes back on Continue. What it remembers is split the way the
+hardware is. Whether a box records, its port and its channel range are the **box's** wiring, remembered by
+box. A probe map is the **animal's** implant, remembered by animal id (`probeMaps`) and offered on whichever
+box the animal is on now; an animal with none remembered starts blank.
 
 - **Readiness**: RHX connected, not already recording, a headstage present, the wiring has a sync channel,
   every recorded box has a digital input. Each failing line links to where it is fixed.

@@ -128,15 +128,16 @@ export function SessionRecording() {
   }, [intan.ports]);
 
   // Re-parse a remembered probe map, so the preview is there on arrival — and
-  // for a box the mapping swapped in, whose row count may not have changed.
-  const rowBoxes = rows.map((r) => r.box).join(",");
+  // whenever reconciling brought a row a probe map it hasn't parsed, which a
+  // swap does without changing which boxes there are.
+  const rowProbes = rows.map((r) => `${r.box}:${r.probeMapPath ?? ""}`).join("\u0000");
   useEffect(() => {
     if (link !== "connected") return;
     for (const row of rows) {
       if (row.probeMapPath && !row.probeMap && !row.probeError) void loadProbeMap(row.box, row.probeMapPath);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [link, rowBoxes]);
+  }, [link, rowProbes]);
 
   function patchRow(box: number, changes: Partial<BoxRow>) {
     setRows((current) => current.map((r) => (r.box === box ? { ...r, ...changes } : r)));

@@ -35,9 +35,17 @@ export interface MappedBox {
 
 // --- the rows -----------------------------------------------------------------
 
-/** A new row for a box, from what the last Record step remembered for it. */
-function seedRow(box: MappedBox, defaults: RecordingDefaults): BoxRow {
+/**
+ * A new row for a box: its wiring from what the box remembers, and its probe
+ * map from its animal — the one chosen for it this visit (`chosen`, a draft
+ * row of the same animal on another box), else the one remembered for it,
+ * else none.
+ */
+function seedRow(box: MappedBox, defaults: RecordingDefaults, chosen: BoxRow | undefined): BoxRow {
   const memory = defaults.boxes[String(box.box)];
+  const probe = chosen
+    ? { probeMapPath: chosen.probeMapPath, probeMap: chosen.probeMap, probeError: chosen.probeError }
+    : { probeMapPath: defaults.probeMaps[box.animalId] ?? null, probeMap: null, probeError: null };
   return {
     box: box.box,
     animalId: box.animalId,
@@ -46,9 +54,7 @@ function seedRow(box: MappedBox, defaults: RecordingDefaults): BoxRow {
     port: memory?.port ?? "",
     firstChannel: memory?.firstChannel ?? 0,
     lastChannel: memory?.lastChannel ?? -1,
-    probeMapPath: memory?.probeMapPath ?? null,
-    probeMap: null,
-    probeError: null,
+    ...probe,
   };
 }
 
@@ -60,10 +66,8 @@ function seedRow(box: MappedBox, defaults: RecordingDefaults): BoxRow {
  * - the same animal on the same box keeps what was typed for it (under its
  *   current name, should it have been renamed);
  * - a box no longer mapped is dropped;
- * - a newly mapped box is seeded from the remembered defaults;
- * - a box whose animal changed is reset: seeded like a new box, except that it
- *   takes no probe map. Port and range are the box's wiring, but a probe map is
- *   the animal's implant, and the box's memory may hold the previous animal's.
+ * - a newly mapped box, or one whose animal changed, gets a fresh row
+ *   (`seedRow`): the box's wiring, and its animal's probe map.
  *
  * The same array comes back when nothing changed, so a repeated answer from
  * the sidecar neither re-renders nor rewrites the draft. No boxes (not loaded
@@ -75,11 +79,11 @@ export function reconcileRows(
   draftRows: BoxRow[],
 ): BoxRow[] {
   if (boxes.length === 0) return draftRows;
-  const held = new Map(draftRows.map((r) => [r.box, r]));
+  const byBox = new Map(draftRows.map((r) => [r.box, r]));
+  const byAnimal = new Map(draftRows.map((r) => [r.animalId, r]));
   const next = boxes.map((b) => {
-    const kept = held.get(b.box);
-    if (!kept) return seedRow(b, defaults);
-    if (kept.animalId !== b.animalId) return { ...seedRow(b, defaults), probeMapPath: null };
+    const kept = byBox.get(b.box);
+    if (!kept || kept.animalId !== b.animalId) return seedRow(b, defaults, byAnimal.get(b.animalId));
     return kept.animalName === b.animalName ? kept : { ...kept, animalName: b.animalName };
   });
   const unchanged = next.length === draftRows.length && next.every((r, i) => r === draftRows[i]);
@@ -277,7 +281,10 @@ export function configurePayload(
 /**
  * What a confirmed Record step leaves as the next one's starting point — not
  * the save directory (it is per session) and not the boxes list (it is per
- * group), but each box's port, range and probe, behavior-only boxes included.
+ * group), but each box's port and range under the box, behavior-only boxes
+ * included, and each row's probe map under its animal. `probeMaps` is what was
+ * remembered before: an animal not on the form keeps its entry, and one whose
+ * row has no probe map forgets it.
  */
 export function rememberedDefaults(
   rows: readonly BoxRow[],
@@ -285,20 +292,19 @@ export function rememberedDefaults(
   saveRoot: string | null,
   probeMaps: Readonly<Record<string, string>>,
 ): RecordingDefaults {
+  const nextMaps: Record<string, string> = { ...probeMaps };
+  for (const r of rows) {
+    if (r.probeMapPath) nextMaps[r.animalId] = r.probeMapPath;
+    else delete nextMaps[r.animalId];
+  }
   return {
     saveRoot,
     config,
-    probeMaps: { ...probeMaps },
+    probeMaps: nextMaps,
     boxes: Object.fromEntries(
       rows.map((r) => [
         String(r.box),
-        {
-          record: r.record,
-          port: r.port,
-          firstChannel: r.firstChannel,
-          lastChannel: r.lastChannel,
-          probeMapPath: r.probeMapPath,
-        },
+        { record: r.record, port: r.port, firstChannel: r.firstChannel, lastChannel: r.lastChannel },
       ]),
     ),
   };

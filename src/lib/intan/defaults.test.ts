@@ -36,8 +36,15 @@ describe("normalizeRecordingDefaults", () => {
     expect(DEFAULT_RECORDING_DEFAULTS.saveRoot).toBeNull();
   });
 
-  it("loads what the Record step stored before probe maps followed the animal, with none remembered", () => {
-    expect(normalizeRecordingDefaults(STORED_BY_THE_STEP)).toEqual({ ...STORED_BY_THE_STEP, probeMaps: {} });
+  it("loads what the Record step stored before probe maps followed the animal, ignoring each box's old one", () => {
+    expect(normalizeRecordingDefaults(STORED_BY_THE_STEP)).toEqual({
+      ...STORED_BY_THE_STEP,
+      boxes: {
+        "1": { record: true, port: "A", firstChannel: 0, lastChannel: -1 },
+        "3": { record: false, port: "", firstChannel: 0, lastChannel: -1 },
+      },
+      probeMaps: {},
+    });
   });
 
   it("keeps each animal's remembered probe map, and drops one that isn't a path", () => {
@@ -81,7 +88,6 @@ describe("normalizeRecordingDefaults", () => {
       port: "A",
       firstChannel: 4,
       lastChannel: -1,
-      probeMapPath: null,
     });
   });
 

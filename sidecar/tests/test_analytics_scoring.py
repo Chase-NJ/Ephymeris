@@ -75,6 +75,27 @@ async def test_a_read_only_series_writes_no_task_profile(rig: Rig) -> None:
     assert not rig.db.conn.in_transaction
 
 
+async def test_a_pass_commits_its_profiles_and_rows_once(rig: Rig) -> None:
+    """One unit of work per pass (`DATA.md#transactions`): the profiles a pass
+    scored with and the rows it recomputed commit together, and the backup
+    hears one commit per pass, not one per run (`DATA.md#the-database-copy`).
+    A warm pass that changed nothing announces nothing."""
+    session = rig.add_session("1", "2026-07-22")
+    for animal in ("a1", "a2"):
+        rig.add_run(session, animal, HIT_1 * 15 + MISS_1 * 5, snapshot=False)
+    announced: list[None] = []
+    rig.db.on_commit(lambda: announced.append(None))
+
+    await rig.service.summary(rig.cohort.id)
+    assert len(announced) == 1
+    assert _profile_rows(rig.db) == 1, "the task.json the runs decoded with"
+    assert not rig.db.conn.in_transaction
+
+    await rig.service.summary(rig.cohort.id)
+    assert len(announced) == 1, "an all-hit pass changed nothing"
+    assert not rig.db.conn.in_transaction
+
+
 # --- B9: series off the event loop ------------------------------------------
 
 

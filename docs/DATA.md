@@ -716,7 +716,7 @@ with db.write() as tx:                 # the lock, then BEGIN IMMEDIATE
 - **`db.read()`** holds the lock for reading; inside the thread's own unit it is that unit, so a read sees the unit's own rows.
 - **What a commit announces.** The database hook ([backup](#the-database-copy)) fires once per committed unit that changed a row, under the lock right after `COMMIT`. A unit that rolled back, or changed nothing, announces nothing. `tx.on_commit(fn)` runs `fn` once after the commit, with the lock free.
 
-Two writers still leave a write open without a unit: a finalization snapshots the run's [profile](#which-profile-decodes-a-run) and records the run in a second step, and the analytics indexing pass remembers profiles and commits them with its cache rows at the end of the job ([one transaction per job](#never-at-the-expense-of-a-session)).
+A finalization snapshots the run's [profile](#which-profile-decodes-a-run) and records the run in one unit. Apart, a rollback by any other writer between the two would leave the run naming a profile hash with no `task_profiles` row. The analytics indexing pass remembers profiles without a unit and commits them with its cache rows at the end of the job ([one transaction per job](#never-at-the-expense-of-a-session)), so its write stays open for the whole pass.
 
 ### Changing the schema
 

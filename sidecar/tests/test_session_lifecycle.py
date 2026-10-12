@@ -247,6 +247,7 @@ class Rig:
         #: Whether `confirm` also does the Record step for a recording session.
         self.record_step = True
         self.lifecycle = SessionLifecycle(
+            db=db,
             sessions=self.sessions,
             cohorts=self.cohorts,
             runner=self.runner,
@@ -967,10 +968,10 @@ async def test_a_box_writes_until_its_run_is_recorded(  # noqa: ANN001
         may_finalize.wait(timeout=5)
         return real_finalize(self, reason)
 
-    def slow_record(run):  # noqa: ANN001, ANN202
+    def slow_record(run, **unit):  # noqa: ANN001, ANN003, ANN202
         recording.set()
         may_record.wait(timeout=5)
-        return real_record(run)
+        return real_record(run, **unit)
 
     monkeypatch.setattr(writer_module.AnimalWriter, "finalize", slow_finalize)
     monkeypatch.setattr(rig.sessions, "record_animal_run", slow_record)

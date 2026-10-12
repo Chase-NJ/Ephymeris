@@ -33,6 +33,7 @@ from .runner import ActiveRun, BoxConfig
 
 if TYPE_CHECKING:
     from ..analytics.repository import AnalyticsRepository
+    from ..cohorts.db import Database
     from ..cohorts.repository import CohortRepository
     from ..intan.service import IntanService
     from ..logbook.service import LogbookService
@@ -168,6 +169,7 @@ class SessionLifecycle:
     def __init__(
         self,
         *,
+        db: Database,
         sessions: SessionRepository,
         cohorts: CohortRepository,
         runner: SessionRunner,
@@ -180,6 +182,9 @@ class SessionLifecycle:
         carried: Callable[[int], CarriedSketch | None],
         flashes: FlashQueue,
     ) -> None:
+        #: Where a finishing run's profile snapshot and record land together,
+        #: in one unit of work (`DATA.md#transactions`).
+        self._db = db
         self._sessions = sessions
         self._cohorts = cohorts
         self._runner = runner
@@ -576,19 +581,6 @@ class SessionLifecycle:
         finalization may land after the session that started it let go.
         """
         if run.session_id:
-            # Snapshot the profile that actually decoded this run
-            # (`DATA.md#which-profile-decodes-a-run`). A `task.json` lives
-            # beside its sketch and can be edited or deleted long after a
-            # session, so without this the run would silently be
-            # re-interpreted years later with whatever codes are current.
-            profile_hash = None
-            if run.config.profile is not None:
-                try:
-                    profile_hash = await asyncio.to_thread(
-                        self._profiles.remember_profile, run.config.profile
-                    )
-                except Exception:  # noqa: BLE001 - never fail a finalization over this
-                    log.exception("couldn't snapshot the task profile for box %d", run.box)
             # The parameters this run actually ran on
             # (`TASKS.md#three-layer-merge`). They already reach the session
             # file; recording them here is what makes them queryable, and what
@@ -596,7 +588,7 @@ class SessionLifecycle:
             # apart — `profile_hash` cannot, it covers only the declaration.
             run_config = dict(run.config.config_metadata) or None
             await asyncio.to_thread(
-                self._sessions.record_animal_run,
+                self._record_run,
                 SessionAnimalRun(
                     id=run.run_id,
                     session_id=run.session_id,
@@ -607,10 +599,11 @@ class SessionLifecycle:
                     started_at=run.started_at,
                     ended_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     stop_reason=reason,
-                    profile_hash=profile_hash,
+                    profile_hash=None,
                     config=run_config,
                     params_hash=task_profile.params_hash(run_config),
                 ),
+                run.config.profile,
             )
         if self._intan is not None:
             self._intan.box_ended(run.box, run.config.animal_name, reason)
@@ -635,6 +628,32 @@ class SessionLifecycle:
                 log.exception("logbook: couldn't announce box %d's run", run.box)
 
     # --- internals ----------------------------------------------------------
+
+    def _record_run(
+        self, record: SessionAnimalRun, profile: task_profile.TaskProfile | None
+    ) -> None:
+        """Snapshot the run's profile and record the run, in one unit of work
+        (`DATA.md#transactions`). Runs in a worker thread.
+
+        The snapshot is the profile that actually decoded this run
+        (`DATA.md#which-profile-decodes-a-run`): a `task.json` lives beside
+        its sketch and can be edited or deleted long after a session, so
+        without it the run would silently be re-interpreted years later with
+        whatever codes are current. One unit, because apart, another writer's
+        rollback between the two would throw the snapshot away and leave the
+        run naming a profile with no row.
+        """
+        with self._db.write() as tx:
+            if profile is not None:
+                try:
+                    record = replace(
+                        record, profile_hash=self._profiles.remember_profile(profile, tx=tx)
+                    )
+                except Exception:  # noqa: BLE001 - never fail a finalization over this
+                    log.exception(
+                        "couldn't snapshot the task profile for box %d", record.box_number
+                    )
+            self._sessions.record_animal_run(record, tx=tx)
 
     async def _refuse_unless_carried(self, boxes: list[int]) -> None:
         """Refuse unless each box's board carries the build of its mapped sketch

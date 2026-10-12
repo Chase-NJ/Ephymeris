@@ -355,6 +355,26 @@ describe("applyParsedProbeMap", () => {
     ]);
   });
 
+  // A parse is asked for on mount, before `sessions.status` answers. If the
+  // animals swapped meanwhile, `reconcileRows` gives box 3 to another animal
+  // before the reply lands, and that animal must not get the old map.
+  it("drops a reply for a path the row on that box no longer has, after a swap", () => {
+    const rows = [row(3, "Rat-09", { probeMapPath: "/maps/rat09.xml" })];
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toBe(rows);
+  });
+
+  it("drops an older reply that lands after the operator chose another map", () => {
+    const newer: ProbeMap = { name: "newer", pages: [], siteCount: 32 };
+    const rows = [row(3, "Rat-07", { probeMapPath: "/maps/newer.xml", probeMap: newer })];
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toBe(rows);
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { error: "late failure" })).toBe(rows);
+  });
+
+  it("drops a reply for a row whose probe map was removed meanwhile", () => {
+    const rows = [row(3, "Rat-07")];
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toBe(rows);
+  });
+
   it("records why a map didn't parse on the row that asked for it", () => {
     const rows = [row(3, "Rat-07", { probeMapPath: "/maps/broken.xml" })];
     expect(applyParsedProbeMap(rows, 3, "/maps/broken.xml", { error: "not a probe map" })).toEqual([

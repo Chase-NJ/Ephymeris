@@ -14,6 +14,8 @@ import type { IntanStatus, ProbeMap, RecordingBoxConfig, RecordingConfig } from 
 /** A box's row in the form. `record: false` runs the box behavior-only. */
 export interface BoxRow {
   box: number;
+  /** The animal the row was filled in for. */
+  animalId: string;
   animalName: string;
   record: boolean;
   port: string;
@@ -27,6 +29,7 @@ export interface BoxRow {
 /** A mapped box as the sidecar reports it; only what a row needs. */
 export interface MappedBox {
   box: number;
+  animalId: string;
   animalName: string;
 }
 
@@ -37,6 +40,7 @@ function seedRow(box: MappedBox, defaults: RecordingDefaults): BoxRow {
   const memory = defaults.boxes[String(box.box)];
   return {
     box: box.box,
+    animalId: box.animalId,
     animalName: box.animalName,
     record: memory?.record ?? true,
     port: memory?.port ?? "",
@@ -72,7 +76,9 @@ export function reconcileRows(
   const next = boxes.map((b) => {
     const kept = held.get(b.box);
     if (!kept) return seedRow(b, defaults);
-    return kept.animalName === b.animalName ? kept : { ...kept, animalName: b.animalName };
+    return kept.animalId === b.animalId && kept.animalName === b.animalName
+      ? kept
+      : { ...kept, animalId: b.animalId, animalName: b.animalName };
   });
   const unchanged = next.length === draftRows.length && next.every((r, i) => r === draftRows[i]);
   return unchanged ? draftRows : next;

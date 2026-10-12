@@ -11,6 +11,7 @@ import {
   saveDirectory,
   type BoxRow,
   type IntanFacts,
+  type MappedBox,
 } from "./recordingSetup";
 import type { ProbeMap } from "./types";
 
@@ -23,9 +24,15 @@ const remembered: RecordingDefaults = {
   },
 };
 
+/** A mapped box as the sidecar reports it; the animal's id is derived from its name. */
+function mapped(box: number, animalName: string): MappedBox {
+  return { box, animalId: `id-${animalName}`, animalName };
+}
+
 function row(box: number, animalName: string, changes: Partial<BoxRow> = {}): BoxRow {
   return {
     box,
+    animalId: `id-${animalName}`,
     animalName,
     record: true,
     port: "",
@@ -42,8 +49,8 @@ describe("reconcileRows", () => {
   it("seeds each mapped box from what the last Record step remembered for it", () => {
     const rows = reconcileRows(
       [
-        { box: 3, animalName: "Rat-07" },
-        { box: 4, animalName: "Rat-08" },
+        mapped(3, "Rat-07"),
+        mapped(4, "Rat-08"),
       ],
       remembered,
       [],
@@ -56,14 +63,14 @@ describe("reconcileRows", () => {
 
   it("keeps what was typed for a box that is still mapped", () => {
     const typed = [row(3, "Rat-07", { port: "C", firstChannel: 8, lastChannel: 23 })];
-    expect(reconcileRows([{ box: 3, animalName: "Rat-07" }], remembered, typed)).toEqual(typed);
+    expect(reconcileRows([mapped(3, "Rat-07")], remembered, typed)).toEqual(typed);
   });
 
   // B5: Back to Boxes, move the animal from box 3 to box 5, return to Record.
   // The draft still holds box 3's row; `intan.configure` must not name box 3.
   it("follows an animal moved from box 3 to box 5 after the draft was saved (B5)", () => {
     const draft = [row(3, "Rat-07", { port: "A", lastChannel: 31 })];
-    const rows = reconcileRows([{ box: 5, animalName: "Rat-07" }], remembered, draft);
+    const rows = reconcileRows([mapped(5, "Rat-07")], remembered, draft);
     expect(rows.map((r) => r.box)).toEqual([5]);
     expect(rows[0]).toEqual(row(5, "Rat-07", { record: false, port: "B", firstChannel: 4, lastChannel: 15 }));
   });
@@ -75,8 +82,8 @@ describe("reconcileRows", () => {
     ];
     const rows = reconcileRows(
       [
-        { box: 4, animalName: "Rat-08" },
-        { box: 5, animalName: "Rat-07" },
+        mapped(4, "Rat-08"),
+        mapped(5, "Rat-07"),
       ],
       remembered,
       draft,
@@ -89,15 +96,15 @@ describe("reconcileRows", () => {
 
   it("names the animal mapped now on a box kept from the draft (B5)", () => {
     const draft = [row(3, "Rat-07", { port: "A" })];
-    const rows = reconcileRows([{ box: 3, animalName: "Rat-09" }], remembered, draft);
+    const rows = reconcileRows([mapped(3, "Rat-09")], remembered, draft);
     expect(rows).toEqual([row(3, "Rat-09", { port: "A" })]);
   });
 
   it("returns the same rows when the mapping hasn't changed", () => {
     const typed = [row(3, "Rat-07", { port: "C" }), row(4, "Rat-08")];
     const boxes = [
-      { box: 3, animalName: "Rat-07" },
-      { box: 4, animalName: "Rat-08" },
+      mapped(3, "Rat-07"),
+      mapped(4, "Rat-08"),
     ];
     expect(reconcileRows(boxes, remembered, typed)).toBe(typed);
   });
@@ -250,7 +257,7 @@ describe("configurePayload", () => {
 
   it("follows a moved animal: rows reconciled to box 5 configure box 5, never box 3 (B5)", () => {
     const draft = [row(3, "Rat-07", { port: "A", lastChannel: 31 })];
-    const rows = assignPorts(reconcileRows([{ box: 5, animalName: "Rat-07" }], DEFAULT_RECORDING_DEFAULTS, draft), {
+    const rows = assignPorts(reconcileRows([mapped(5, "Rat-07")], DEFAULT_RECORDING_DEFAULTS, draft), {
       A: 32,
     });
     expect(configurePayload(rows, config, null, "/s").boxes.map((b) => b.box)).toEqual([5]);

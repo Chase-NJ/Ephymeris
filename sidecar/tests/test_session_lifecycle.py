@@ -785,11 +785,11 @@ async def test_a_run_never_names_a_profile_another_writers_rollback_threw_away(
         session_id_label="P1_12",
         session_id=session.id,
     )
-    db.conn.set_trace_callback(on_statement)
+    db._conn.set_trace_callback(on_statement)
     try:
         await rig.lifecycle.animal_ended(run, "end")
     finally:
-        db.conn.set_trace_callback(None)
+        db._conn.set_trace_callback(None)
 
     assert refused == ["Taken"], "the rival write ran, and was refused"
     [recorded] = rig.sessions.runs_for(session.id)

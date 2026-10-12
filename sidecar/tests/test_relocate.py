@@ -29,7 +29,7 @@ from ephymeris_sidecar.cohorts.folders import DataFolderError, relative_below
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.sessions.models import SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
-from tests.conftest import fine_mtime
+from tests.conftest import fine_mtime, statements
 from tests.live_sidecar import LiveSidecar, Refused, animal
 from tests.test_analytics_service import Changes, Lifecycle
 
@@ -101,7 +101,7 @@ class Archive:
         return path
 
     def stored_paths(self) -> list[str]:
-        rows = self.db.conn.execute(
+        rows = statements(self.db).execute(
             "SELECT folder_path FROM sessions UNION ALL SELECT file_path FROM session_animal_runs"
             " UNION ALL SELECT file_path FROM adopted_runs UNION ALL"
             " SELECT file_path FROM run_metrics_cache"
@@ -112,7 +112,7 @@ class Archive:
         return all(Path(p).exists() and str(folder) in p for p in self.stored_paths())
 
     def journal(self) -> str:
-        return self.db.conn.execute("SELECT state FROM folder_moves").fetchone()[0]
+        return statements(self.db).execute("SELECT state FROM folder_moves").fetchone()[0]
 
     def record(self) -> str:
         """Two recorded group runs: one saved in the default place, under the
@@ -203,7 +203,7 @@ def test_a_recording_saved_in_the_session_folder_moves_with_it(
 
 
 def stored_in(archive: Archive, table: str, column: str) -> list[str]:
-    values = [v for (v,) in archive.db.conn.execute(f"SELECT {column} FROM {table}") if v]
+    values = [v for (v,) in statements(archive.db).execute(f"SELECT {column} FROM {table}") if v]
     if column == "recording_json":
         return [run["path"] for v in values for run in json.loads(v)["runs"]]
     return values
@@ -215,12 +215,11 @@ def test_every_path_column_is_rebased(archive: Archive, volume: str) -> None:
     relocate none is left there."""
     archive.record()
     recorded = archive.old / "2O-Bdisc" / SESSION / "behavior.json" / f"remy1_{SESSION}_090001.json"
-    archive.db.conn.execute(
+    statements(archive.db).execute(
         "INSERT INTO strobe_scan_cache (file_path, file_mtime_ns, file_size, codes_json)"
         " VALUES (?, 1, 1, '[101]')",
         (str(recorded),),
     )
-    archive.db.conn.commit()
     for table, column in DATA_PATHS:
         assert any(
             relative_below(p, archive.old) is not None for p in stored_in(archive, table, column)
@@ -240,8 +239,8 @@ def test_every_column_that_could_hold_a_path_is_classified(db: Database) -> None
     or in `OTHER_PATHS` with the reason it doesn't."""
     columns = {
         (table, row[1])
-        for (table,) in db.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        for row in db.conn.execute(f"PRAGMA table_info({table})")
+        for (table,) in statements(db).execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        for row in statements(db).execute(f"PRAGMA table_info({table})")
     }
     looks_like_a_path = {
         (t, c)
@@ -277,7 +276,7 @@ def test_a_destination_inside_the_folder_is_refused(archive: Archive) -> None:
 
 def test_a_failed_commit_puts_the_files_back(archive: Archive, volume: str) -> None:
     """The commit's last write is refused, after every path in it was rewritten."""
-    archive.db.conn.execute(
+    statements(archive.db).execute(
         "CREATE TEMP TRIGGER refuse_commit BEFORE UPDATE OF data_folder ON cohorts"
         " BEGIN SELECT RAISE(ABORT, 'disk full'); END"
     )
@@ -397,7 +396,7 @@ def test_an_open_session_refuses_the_move(archive: Archive, volume: str) -> None
 
     assert archive.stored_paths() == before
     assert archive.all_under(archive.old)
-    assert archive.db.conn.execute("SELECT count(*) FROM folder_moves").fetchone()[0] == 0
+    assert statements(archive.db).execute("SELECT count(*) FROM folder_moves").fetchone()[0] == 0
 
 
 def test_a_session_recorded_during_the_copy_abandons_the_move(
@@ -490,12 +489,11 @@ async def test_a_session_cannot_be_set_up_while_the_folder_moves(
 
 
 def journal(archive: Archive, state: str) -> None:
-    archive.db.conn.execute(
+    statements(archive.db).execute(
         "INSERT INTO folder_moves (id, cohort_id, source, target, state, created_at, updated_at)"
         " VALUES ('j', ?, ?, ?, ?, 'now', 'now')",
         (archive.cohort.id, str(archive.old), str(archive.new), state),
     )
-    archive.db.conn.commit()
 
 
 def test_a_crash_after_the_rename_is_finished_at_the_next_start(archive: Archive) -> None:

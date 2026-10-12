@@ -2,7 +2,8 @@
 
 One connection guarded by a lock rather than a pool: the write volume here is a
 handful of statements per user action, and a single serialized connection is far
-easier to reason about than concurrent writers. Callers run operations through
+easier to reason about than concurrent writers. It is reached only through units
+of work, `Database.write` and `Database.read` (`DATA.md#transactions`). Callers run operations through
 `asyncio.to_thread` so the event loop — which also owns six serial ports — never
 blocks on disk.
 
@@ -652,25 +653,6 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 }
 
 
-class _TrackedConnection(sqlite3.Connection):
-    """A connection that reports every successful commit.
-
-    Backup triggering hangs off this rather than off a call in each repository
-    method (`DATA.md#the-database-copy`). Two reasons: there is no write path that can
-    forget to announce itself, and the trigger is genuinely "the database
-    changed" rather than the narrower "a cohort changed" — `session_animal_runs`
-    is written at finalization during an unattended overnight run, and is not a
-    cohort edit by any reading.
-    """
-
-    on_commit: Callable[[], None] | None = None
-
-    def commit(self) -> None:
-        super().commit()
-        if self.on_commit is not None:
-            self.on_commit()
-
-
 def _existing_version(conn: sqlite3.Connection) -> int | None:
     """The version of the database already in this file, or `None` if fresh.
 
@@ -719,8 +701,10 @@ class NestedWrite(RuntimeError):
 
 
 class WriteInProgress(RuntimeError):
-    """A snapshot found a write still open on the connection, and refused
-    rather than wait on it forever (`DATA.md#the-database-copy`). Try later."""
+    """A write is open on the connection where none may be: a snapshot taken
+    inside a unit of work, or a write begun outside any unit. Refused rather
+    than waited on forever or adopted (`DATA.md#the-database-copy`,
+    `DATA.md#transactions`)."""
 
 
 class Query:
@@ -760,18 +744,9 @@ class Tx(Query):
         self._after.append(callback)
 
 
-def _undo(conn: sqlite3.Connection, adopted: bool) -> None:
-    """Roll back one unit of work: its savepoint, inside a write a caller left
-    open, or else its whole transaction. Never raises over the error that
-    brought it here; if the savepoint is already gone (SQLite rolled the
-    transaction back itself), what is left is rolled back whole."""
-    try:
-        if adopted:
-            conn.execute("ROLLBACK TO unit_of_work")
-            conn.execute("RELEASE unit_of_work")
-            return
-    except sqlite3.Error:
-        log.exception("couldn't roll a unit of work back to its savepoint")
+def _undo(conn: sqlite3.Connection) -> None:
+    """Roll back one unit of work. Never raises over the error that brought
+    it here; SQLite may already have rolled the transaction back itself."""
     if conn.in_transaction:
         try:
             conn.execute("ROLLBACK")
@@ -795,8 +770,6 @@ class Database:
         """Register a post-commit hook (the backup manager's dirty mark).
         When it fires: `DATA.md#transactions`."""
         self._on_commit = callback
-        if self._conn is not None:
-            self._conn.on_commit = callback  # type: ignore[attr-defined]
 
     # --- the unit of work (DATA.md#transactions) ---------------------------
 
@@ -820,14 +793,13 @@ class Database:
 
         follow_ups: list[Callable[[], None]] = []
         with self._lock:
-            conn = self.conn
-            # A write some caller left open without a unit (the indexing
-            # pass's remembered profiles, `DATA.md#transactions`). Its rows
-            # are not this unit's to roll back, so the unit runs as a savepoint
-            # inside it; its COMMIT makes both durable, as any commit on the
-            # one connection does.
-            adopted = conn.in_transaction
-            conn.execute("SAVEPOINT unit_of_work" if adopted else "BEGIN IMMEDIATE")
+            conn = self._connected()
+            if conn.in_transaction:
+                # Only a unit begins a transaction, and every unit ends its
+                # own before the lock is free; one open here is a bug, and its
+                # rows are not this unit's to commit or roll back.
+                raise WriteInProgress("a write is open outside any unit of work")
+            conn.execute("BEGIN IMMEDIATE")
             before = conn.total_changes
             unit = Tx(conn)
             self._tx = unit
@@ -838,13 +810,11 @@ class Database:
                     self._tx = None
                     unit._close()
                 changed = conn.total_changes != before
-                # COMMIT releases the savepoint too; were it to fail, the
-                # savepoint is still there for `_undo` to roll back to.
                 conn.execute("COMMIT")
             except BaseException:
-                _undo(conn, adopted)
+                _undo(conn)
                 raise
-            if (changed or adopted) and self._on_commit is not None:
+            if changed and self._on_commit is not None:
                 try:
                     self._on_commit()
                 except Exception:  # noqa: BLE001 - committed regardless
@@ -859,16 +829,38 @@ class Database:
     @contextmanager
     def read(self) -> Iterator[Query]:
         """Statements under the lock, for reading. Inside this thread's own
-        unit of work, that unit -- so a read sees the unit's own rows."""
+        unit of work, that unit -- so a read sees the unit's own rows.
+
+        Outside a unit the connection is `query_only` for the block, so a
+        read cannot write; one that begins a transaction is rolled back and
+        refused, so the lock is never free with a transaction open.
+        """
         if self._tx is not None and self._tx._thread == threading.get_ident():
             yield self._tx
             return
         with self._lock:
-            query = Query(self.conn)
+            conn = self._connected()
+            # Open already is a bug outside this read (the snapshot refuses it);
+            # not this read's to roll back.
+            already_open = conn.in_transaction
+            conn.execute("PRAGMA query_only = ON")
+            query = Query(conn)
             try:
                 yield query
             finally:
                 query._close()
+                left_open = conn.in_transaction and not already_open
+                if left_open:
+                    _undo(conn)
+                conn.execute("PRAGMA query_only = OFF")
+            if left_open:
+                raise WriteInProgress("a read began a transaction")
+
+    @property
+    def in_transaction(self) -> bool:
+        """Whether a transaction is open on the connection: only ever inside
+        a unit of work (`DATA.md#transactions`)."""
+        return self._connected().in_transaction
 
     def connect(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -876,9 +868,7 @@ class Database:
             self.path,
             # Safe because every access goes through `self._lock`.
             check_same_thread=False,
-            factory=_TrackedConnection,
         )
-        conn.on_commit = self._on_commit
         conn.row_factory = sqlite3.Row
         # Not on by default in SQLite; without it the ON DELETE CASCADE above
         # is silently inert and deleting a cohort would orphan its animals.
@@ -901,6 +891,11 @@ class Database:
         # possibly-networked target before the app has even finished starting.
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
+        if self._on_commit is not None:
+            self._on_commit()
+        # From here the only transactions are the ones `write` begins
+        # (`DATA.md#transactions`): no statement opens one implicitly.
+        conn.isolation_level = None
         self._conn = conn
         log.info("cohort database ready at %s (schema v%d)", self.path, SCHEMA_VERSION)
 
@@ -922,17 +917,18 @@ class Database:
         latency block every cohort read in the app; the backup manager
         snapshots locally and does the slow copy afterwards with nothing held.
 
-        Raises `WriteInProgress`, copying nothing, if a write is open on the
-        connection -- inside this thread's own unit of work, or left open by a
-        caller without one (`DATA.md#the-database-copy`).
+        Waits for any unit of work on another thread to end. Raises
+        `WriteInProgress`, copying nothing, inside this thread's own unit, or
+        if a bug left a write open (`DATA.md#the-database-copy`).
         """
         destination.parent.mkdir(parents=True, exist_ok=True)
         with self.read():
-            if self.conn.in_transaction:
+            conn = self._connected()
+            if conn.in_transaction:
                 raise WriteInProgress("a write is still open; snapshot later")
             target = sqlite3.connect(destination)
             try:
-                self.conn.backup(target)
+                conn.backup(target)
             finally:
                 target.close()
         # Trim the WAL/journal companions a fresh connect may have left behind,
@@ -944,12 +940,7 @@ class Database:
             except OSError:
                 pass
 
-    @property
-    def lock(self) -> threading.Lock:
-        return self._lock
-
-    @property
-    def conn(self) -> sqlite3.Connection:
+    def _connected(self) -> sqlite3.Connection:
         if self._conn is None:
             raise RuntimeError("database is not connected")
         return self._conn

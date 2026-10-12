@@ -25,7 +25,7 @@ from ephymeris_sidecar.strobes.store import StrobeRefused
 from ephymeris_sidecar.strobes.usage import ArchiveScanner, firmware_refs
 from ephymeris_sidecar.taskdef import generate
 from ephymeris_sidecar.tasks import profile as task_profile
-from tests.conftest import rewrite_keeping_stat
+from tests.conftest import rewrite_keeping_stat, statements
 from tests.fixtures import task_definitions as presets
 from tests.live_sidecar import LiveSidecar, Refused, create_cohort, hold_the_rig, sketch_path
 
@@ -368,8 +368,8 @@ def test_v13_rekeys_stored_profiles_and_every_run_follows(tmp_path):
 
     db = Database(path)
     db.connect()
-    rows = db.conn.execute("SELECT hash, first_seen_at FROM task_profiles").fetchall()
-    cached = db.conn.execute("SELECT DISTINCT profile_hash, scored_profile_hash FROM run_metrics_cache").fetchall()
+    rows = statements(db).execute("SELECT hash, first_seen_at FROM task_profiles").fetchall()
+    cached = statements(db).execute("SELECT DISTINCT profile_hash, scored_profile_hash FROM run_metrics_cache").fetchall()
     db.close()
 
     expected = task_profile.profile_hash(task_profile.parse_profile(json.loads(old_a)))
@@ -641,7 +641,7 @@ def test_a_row_cached_by_an_older_reader_is_read_again(tmp_path, db):
     cohort = tmp_path / "cohort"
     path = _write_run(cohort / "P" / "S1" / "behavior.json", "rat1", [233])
     stat = path.stat()
-    db.conn.execute(
+    statements(db).execute(
         "INSERT INTO strobe_scan_cache VALUES (?, ?, ?, '[]')",
         (str(path), stat.st_mtime_ns, stat.st_size),
     )

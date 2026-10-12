@@ -32,6 +32,7 @@ from ephymeris_sidecar.cohorts.db import (
     add_column,
     table_columns,
 )
+from tests.conftest import statements
 
 #: The schema exactly as it stood at v1 — cohorts, groups, animals, and nothing
 #: else. v2 added prefixes / sessions / session_animal_runs.
@@ -160,12 +161,12 @@ def test_a_v1_database_gains_the_columns_later_versions_added(tmp_path: Path) ->
     db = Database(path)
     db.connect()
     try:
-        assert "cage" in table_columns(db.conn, "animals")
-        runs = table_columns(db.conn, "session_animal_runs")
+        assert "cage" in table_columns(statements(db), "animals")
+        runs = table_columns(statements(db), "session_animal_runs")
         assert "profile_hash" in runs
         assert "config_json" in runs and "params_hash" in runs
-        assert "duration_minutes" in table_columns(db.conn, "sessions")
-        assert "cage" in table_columns(db.conn, "animals")
+        assert "duration_minutes" in table_columns(statements(db), "sessions")
+        assert "cage" in table_columns(statements(db), "animals")
     finally:
         db.close()
 
@@ -178,7 +179,7 @@ def test_upgrading_preserves_existing_rows(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        row = db.conn.execute("SELECT name, data_folder FROM cohorts").fetchone()
+        row = statements(db).execute("SELECT name, data_folder FROM cohorts").fetchone()
     finally:
         db.close()
 
@@ -227,10 +228,10 @@ def test_a_registered_migration_adds_a_column_to_an_existing_database(
     db = Database(path)
     db.connect()
     try:
-        assert "experimenter" in table_columns(db.conn, "cohorts")
+        assert "experimenter" in table_columns(statements(db), "cohorts")
         # The column is real and writable, not just present in the metadata.
-        db.conn.execute("UPDATE cohorts SET experimenter = 'CJ' WHERE id = 'c1'")
-        assert db.conn.execute("SELECT experimenter FROM cohorts").fetchone()[0] == "CJ"
+        statements(db).execute("UPDATE cohorts SET experimenter = 'CJ' WHERE id = 'c1'")
+        assert statements(db).execute("SELECT experimenter FROM cohorts").fetchone()[0] == "CJ"
     finally:
         db.close()
 
@@ -356,10 +357,10 @@ def test_v2_gains_the_profile_hash_column(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        assert "profile_hash" in table_columns(db.conn, "session_animal_runs")
+        assert "profile_hash" in table_columns(statements(db), "session_animal_runs")
         # Writable, not merely present in the metadata.
-        db.conn.execute("UPDATE session_animal_runs SET profile_hash = '3f8a' WHERE id = 'r1'")
-        assert db.conn.execute(
+        statements(db).execute("UPDATE session_animal_runs SET profile_hash = '3f8a' WHERE id = 'r1'")
+        assert statements(db).execute(
             "SELECT profile_hash FROM session_animal_runs"
         ).fetchone()[0] == "3f8a"
     finally:
@@ -387,7 +388,7 @@ def test_upgrading_from_v2_preserves_existing_runs(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        row = db.conn.execute("SELECT animal_id, profile_hash FROM session_animal_runs").fetchone()
+        row = statements(db).execute("SELECT animal_id, profile_hash FROM session_animal_runs").fetchone()
     finally:
         db.close()
 
@@ -435,10 +436,10 @@ def test_v3_gains_the_duration_minutes_column(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        assert "duration_minutes" in table_columns(db.conn, "sessions")
+        assert "duration_minutes" in table_columns(statements(db), "sessions")
         # Writable, not merely present in the metadata.
-        db.conn.execute("UPDATE sessions SET duration_minutes = 60 WHERE id = 's1'")
-        assert db.conn.execute(
+        statements(db).execute("UPDATE sessions SET duration_minutes = 60 WHERE id = 's1'")
+        assert statements(db).execute(
             "SELECT duration_minutes FROM sessions"
         ).fetchone()[0] == 60
     finally:
@@ -455,7 +456,7 @@ def test_upgrading_from_v3_leaves_old_sessions_unlimited(tmp_path: Path) -> None
     db = Database(path)
     db.connect()
     try:
-        row = db.conn.execute("SELECT duration_minutes FROM sessions").fetchone()
+        row = statements(db).execute("SELECT duration_minutes FROM sessions").fetchone()
     finally:
         db.close()
 
@@ -492,15 +493,15 @@ def test_v5_gains_the_run_parameter_columns(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        columns = table_columns(db.conn, "session_animal_runs")
+        columns = table_columns(statements(db), "session_animal_runs")
         assert "config_json" in columns
         assert "params_hash" in columns
         # Writable, not merely present in the metadata.
-        db.conn.execute(
+        statements(db).execute(
             "UPDATE session_animal_runs SET config_json = ?, params_hash = ? WHERE id = 'r1'",
             ('{"odor_poke_hold": 500}', "abc123"),
         )
-        row = db.conn.execute(
+        row = statements(db).execute(
             "SELECT config_json, params_hash FROM session_animal_runs"
         ).fetchone()
         assert row["config_json"] == '{"odor_poke_hold": 500}'
@@ -521,7 +522,7 @@ def test_upgrading_from_v5_leaves_old_runs_without_parameters(tmp_path: Path) ->
     db = Database(path)
     db.connect()
     try:
-        row = db.conn.execute(
+        row = statements(db).execute(
             "SELECT config_json, params_hash FROM session_animal_runs"
         ).fetchone()
     finally:
@@ -544,7 +545,7 @@ def test_the_params_index_applies_after_the_migration(tmp_path: Path) -> None:
     try:
         names = {
             row["name"]
-            for row in db.conn.execute(
+            for row in statements(db).execute(
                 "SELECT name FROM sqlite_master WHERE type = 'index'"
             )
         }
@@ -562,12 +563,12 @@ def test_a_v2_database_gets_both_column_migrations(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        runs = table_columns(db.conn, "session_animal_runs")
+        runs = table_columns(statements(db), "session_animal_runs")
         assert "profile_hash" in runs
         assert "config_json" in runs and "params_hash" in runs
-        assert "duration_minutes" in table_columns(db.conn, "sessions")
-        assert "cage" in table_columns(db.conn, "animals")
-        assert "file_mtime_ns" in table_columns(db.conn, "adopted_runs")
+        assert "duration_minutes" in table_columns(statements(db), "sessions")
+        assert "cage" in table_columns(statements(db), "animals")
+        assert "file_mtime_ns" in table_columns(statements(db), "adopted_runs")
     finally:
         db.close()
 
@@ -626,16 +627,16 @@ def test_v6_gains_the_adoption_stat_columns(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        columns = table_columns(db.conn, "adopted_runs")
+        columns = table_columns(statements(db), "adopted_runs")
         assert "file_mtime_ns" in columns
         assert "file_size" in columns
         # Writable, not merely present in the metadata.
-        db.conn.execute(
+        statements(db).execute(
             "UPDATE adopted_runs SET file_mtime_ns = ?, file_size = ?"
             " WHERE id = 'adopted:abc'",
             (1234567890, 4096),
         )
-        row = db.conn.execute(
+        row = statements(db).execute(
             "SELECT file_mtime_ns, file_size FROM adopted_runs"
         ).fetchone()
         assert (row["file_mtime_ns"], row["file_size"]) == (1234567890, 4096)
@@ -657,7 +658,7 @@ def test_an_adoption_from_before_v7_is_never_treated_as_fresh(tmp_path: Path) ->
     db = Database(path)
     db.connect()
     try:
-        row = db.conn.execute(
+        row = statements(db).execute(
             "SELECT file_mtime_ns, file_size FROM adopted_runs"
         ).fetchone()
     finally:
@@ -734,16 +735,16 @@ def test_v7_gains_the_recorded_run_columns(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        columns = table_columns(db.conn, "run_metrics_cache")
+        columns = table_columns(statements(db), "run_metrics_cache")
         assert "params_hash" in columns
         assert "scored_profile_hash" in columns
         # Writable, not merely present in the metadata.
-        db.conn.execute(
+        statements(db).execute(
             "UPDATE run_metrics_cache SET params_hash = ?, scored_profile_hash = ?"
             " WHERE run_id = 'r1'",
             ("deadbeefdeadbeef", "1111222233334444"),
         )
-        row = db.conn.execute(
+        row = statements(db).execute(
             "SELECT params_hash, scored_profile_hash FROM run_metrics_cache"
             " WHERE run_id = 'r1'"
         ).fetchone()
@@ -766,7 +767,7 @@ def test_a_resolved_cache_row_survives_the_migration(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        row = db.conn.execute(
+        row = statements(db).execute(
             "SELECT profile_hash, scored_profile_hash, params_hash"
             " FROM run_metrics_cache WHERE run_id = 'r1'"
         ).fetchone()
@@ -796,7 +797,7 @@ def test_an_inferred_cache_row_is_dropped_so_it_recomputes(tmp_path: Path) -> No
     db = Database(path)
     db.connect()
     try:
-        rows = db.conn.execute("SELECT run_id FROM run_metrics_cache").fetchall()
+        rows = statements(db).execute("SELECT run_id FROM run_metrics_cache").fetchall()
     finally:
         db.close()
 
@@ -819,7 +820,7 @@ def test_a_newer_database_still_opens(tmp_path: Path, caplog: pytest.LogCaptureF
     with caplog.at_level("ERROR"):
         db.connect()
     try:
-        assert db.conn.execute("SELECT COUNT(*) FROM cohorts").fetchone()[0] == 1
+        assert statements(db).execute("SELECT COUNT(*) FROM cohorts").fetchone()[0] == 1
     finally:
         db.close()
 
@@ -882,13 +883,13 @@ def test_v8_gains_the_cohort_appearance_column(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        assert "appearance_json" in table_columns(db.conn, "cohorts")
+        assert "appearance_json" in table_columns(statements(db), "cohorts")
         # Writable, not merely present in the metadata.
-        db.conn.execute(
+        statements(db).execute(
             "UPDATE cohorts SET appearance_json = ? WHERE id = 'c1'",
             ('{"type": "gas", "hue": 41, "ring": true, "seed": 7734}',),
         )
-        row = db.conn.execute(
+        row = statements(db).execute(
             "SELECT appearance_json FROM cohorts WHERE id = 'c1'"
         ).fetchone()
         assert row["appearance_json"].startswith('{"type": "gas"')
@@ -914,7 +915,7 @@ def test_a_cohort_from_before_v9_has_no_stored_appearance(tmp_path: Path) -> Non
     db = Database(path)
     db.connect()
     try:
-        row = db.conn.execute(
+        row = statements(db).execute(
             "SELECT name, appearance_json FROM cohorts WHERE id = 'c1'"
         ).fetchone()
         assert row["name"] == "Batch A"          # the row survived
@@ -1002,7 +1003,7 @@ def test_v9_gains_the_session_recording_column(tmp_path: Path) -> None:
     db = Database(path)
     db.connect()
     try:
-        assert "recording_json" in table_columns(db.conn, "sessions")
+        assert "recording_json" in table_columns(statements(db), "sessions")
         repo = SessionRepository(db)
         # A session from before the column is behavior-only: NULL, not {}.
         assert repo.get_session("s-old").recording is None

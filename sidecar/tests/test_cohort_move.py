@@ -24,7 +24,7 @@ from ephymeris_sidecar.logbook.models import SessionNote
 from ephymeris_sidecar.logbook.repository import LogbookRepository
 from ephymeris_sidecar.sessions.models import GroupRun, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
-from tests.conftest import fine_mtime
+from tests.conftest import fine_mtime, statements
 from tests.test_analytics_service import Changes, Lifecycle
 
 
@@ -270,8 +270,7 @@ def test_the_labs_split_is_repaired_from_its_files(lab: Lab) -> None:
     slow1. The dangling id is named from its files and joins B's animal."""
     # A state only an older app could leave, so it is written the way the
     # migration tests write old schemas: by hand.
-    lab.db.conn.execute("DELETE FROM animals WHERE id = 'slow1'")
-    lab.db.conn.commit()
+    statements(lab.db).execute("DELETE FROM animals WHERE id = 'slow1'")
     give_b(lab, "slow1", "b-slow")
     [former] = lab.cohorts.get(lab.a.id).former_animals
     assert (former.id, former.name, former.source) == ("slow1", "slow1", "files")
@@ -537,7 +536,7 @@ def test_a_crash_while_copying_is_undone_at_the_next_start(lab: Lab, power_cut) 
     assert lab.files(lab.b_root) == set()
     assert lab.files(lab.a_root) == before
     assert {a for a, _ in lab.runs(lab.a.id).values()} == {"remy1", "remy2", "slow1"}
-    [state] = lab.db.conn.execute("SELECT state FROM animal_moves").fetchone()
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
     assert state == "rolled-back"
 
 
@@ -566,7 +565,7 @@ def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
 
     unreachable_volume(lab.a_root)
     move_apply.resume(lab.db)
-    [state] = lab.db.conn.execute("SELECT state FROM animal_moves").fetchone()
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
     assert state == "committed"
 
     monkeypatch.undo()  # the share answers again (and every other fake goes)
@@ -575,7 +574,7 @@ def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
     assert move_apply.resume(lab.db) == 1
 
     assert not any("slow1" in f for f in lab.files(lab.a_root))
-    [state] = lab.db.conn.execute("SELECT state FROM animal_moves").fetchone()
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
     assert state == "done"
 
 

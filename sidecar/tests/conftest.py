@@ -243,6 +243,38 @@ def rewrite_keeping_stat(path: Path, data: bytes) -> None:
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
 
 
+class _Rows(list):
+    """Fetched rows, answering the cursor calls tests make on them."""
+
+    def fetchone(self):  # noqa: ANN201
+        return self[0] if self else None
+
+    def fetchall(self) -> list:
+        return list(self)
+
+
+class Statements:
+    """Ad-hoc SQL against a `Database` through its public units of work
+    (`DATA.md#transactions`): a read in `db.read()`, anything else in a unit
+    of its own. For a test that sets up a state no repository writes, or
+    looks at one no repository reads."""
+
+    def __init__(self, db) -> None:  # noqa: ANN001
+        self._db = db
+
+    def execute(self, sql: str, params=()) -> _Rows:  # noqa: ANN001
+        verb = sql.lstrip().split(None, 1)[0].upper()
+        if verb in ("SELECT", "WITH") or (verb == "PRAGMA" and "=" not in sql):
+            with self._db.read() as q:
+                return _Rows(q.execute(sql, params).fetchall())
+        with self._db.write() as tx:
+            return _Rows(tx.execute(sql, params).fetchall())
+
+
+def statements(db) -> Statements:  # noqa: ANN001
+    return Statements(db)
+
+
 def fine_mtime(*paths: Path) -> None:
     """Give files an mtime a 10 ms volume cannot keep, as NTFS's 100 ns can."""
     for path in paths:

@@ -1,11 +1,11 @@
 {
-  "version": "1.1.3-alpha.216",
-  "notes": "Ephymeris v1.1.3-alpha.216",
-  "pub_date": "2026-10-12T09:19:47Z",
+  "version": "1.1.3-alpha.217",
+  "notes": "Ephymeris v1.1.3-alpha.217",
+  "pub_date": "2026-10-12T14:48:42Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTamJ1WThDd1BueitpdXN4ck93S0xLcDNhd0lxSEVvWmQrcHZXRCtnT2VQa3ZpWlFheHRwR2g2bFpXczBuclZNSm5pNjhLWm5qZ2RCSGtlWlF6WnlSK3VCTDFXc2FCb1FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNzk2NzE0CWZpbGU6RXBoeW1lcmlzXzEuMS4zLWFscGhhLjIxNl94NjQtc2V0dXAuZXhlCkZrNEpKVUUxektncGNSOHhvVTFVcTUxajRBZ09hWHgvWmowc3Q0SkloUXl2aUpZbkxDNDAwTnVwOTFUR2FwR3JiMTZlQkFtNVZBdmNCQldsNlpkbkRBPT0K",
-      "url": "https://github.com/Chase-NJ/Ephymeris/releases/download/v1.1.3-alpha.216/Ephymeris_1.1.3-alpha.216_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTamJ1WThDd1BuenlNN2did0dLS0p3VEcrNS9DQnNwRmkrNHIrc2hTSk53SFNPLzduQVZldXQ5ZjhnYU0rU04rcXZPS044a051N3MwbWl0SUxxcTZnRzh5OFJxQjlWbFFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxODE2NDk5CWZpbGU6RXBoeW1lcmlzXzEuMS4zLWFscGhhLjIxN194NjQtc2V0dXAuZXhlCkdJdjhTMlVlZ0xqZGlhT0t3bEp3cDk4SnIzak5MWTJzVUkwUE5QWGdBT0tHMDd6aEdQMkxKQmFCU1h1T053Ky85UzNvdlllSW1XZm1LdWdkcUxqSEJBPT0K",
+      "url": "https://github.com/Chase-NJ/Ephymeris/releases/download/v1.1.3-alpha.217/Ephymeris_1.1.3-alpha.217_x64-setup.exe"
     }
   }
 }

@@ -33,6 +33,7 @@ from .protocol import ErrCode
 from .rig.definition import RigInUse, VocabularyInUse, WiringWouldBreakTasks
 from .server import Args, CommandError, ErrorTable, resolve_error
 from .sessions.lifecycle import (
+    BoxesNotMapped,
     BoxRefused,
     MappingRefused,
     SessionRefused,
@@ -143,6 +144,9 @@ ERRORS: ErrorTable = [
     (UtilityUnavailable, _boxed(ErrCode.UTILITY_UNAVAILABLE)),
     # --- sessions ---
     (SketchNotCarried, lambda e, _a: CommandError(ErrCode.SESSION_INVALID, str(e), {"boxes": e.boxes})),
+    # `intan.configure` naming boxes outside the held mapping. The client
+    # reads `detail.boxes` as "flash these" only on a Start's refusal.
+    (BoxesNotMapped, lambda e, _a: CommandError(ErrCode.SESSION_INVALID, str(e), {"boxes": e.boxes})),
     (SessionRefused, _fixed(ErrCode.SESSION_INVALID)),
     (MappingRefused, _boxed(ErrCode.TASK_PROFILE_INVALID)),
     (SessionNotFound, _fixed(ErrCode.SESSION_INVALID, "That session no longer exists.")),

@@ -3416,8 +3416,10 @@ COMMANDS = (
         "the first problem: the rig's wiring declares no `sync` channel, a box "
         "with no digital input, a port with no headstage, two boxes claiming "
         "one channel, or nothing selected to save. `SESSION_INVALID` for a "
-        "session that is not a recording. Long-running; the client raises its "
-        "reply timeout.",
+        "session that is not a recording, and, with `detail.boxes`, for boxes "
+        "this session and group's confirmed mapping doesn't have (all of them "
+        "when the mapping isn't held), before RHX is touched. Long-running; "
+        "the client raises its reply timeout.",
     ),
     Command(
         "intan.parseProbeMap",

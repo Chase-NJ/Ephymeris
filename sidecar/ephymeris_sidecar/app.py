@@ -1525,13 +1525,14 @@ class Application:
             _filename_token(part)
             for part in (session.prefix_name, session.session_number, session.date, group_name)
         )
-        runner = self.runner
-        animals = {
-            cfg.box: cfg.animal_name for cfg in (runner.box_configs() if runner else [])
-        }
+        rows = config.get("boxes") or []
+        # A box the held mapping lacks would reach RHX with no animal
+        # (`RECORDING.md#record-step`).
+        mapped = self._require_lifecycle().mapped_boxes(
+            session_id, group_id, (b["box"] for b in rows)
+        )
         mapping = ", ".join(
-            f"box {b['box']}={animals.get(b['box'], '?')} port {b.get('port')}"
-            for b in config.get("boxes") or []
+            f"box {b['box']}={mapped[b['box']].animal_name} port {b.get('port')}" for b in rows
         )
         notes = (
             f"Ephymeris {session.prefix_name} {session.session_number} {session.date}",

@@ -341,7 +341,9 @@ per group** (animals, ports and probes change between groups) and opens prefille
   under a chosen root (recordings are large and often live on their own drive; the shared folder name lets
   the two halves match by eye), with the defaults collapsed to one summary behind an Edit door.
 - **Boxes**: per mapped box, Record or Behavior only, its DIN, headstage port, channel range and optional
-  probe-map XML. Two boxes may share a port on disjoint ranges; an overlap is refused.
+  probe-map XML. Two boxes may share a port on disjoint ranges; an overlap is refused. A box the group's
+  confirmed mapping doesn't have is refused before RHX is touched (`SessionLifecycle.mapped_boxes`), so
+  RHX's notes always name each box's animal.
 
 ![The Set Up the Recording step: Readiness 5/5 (RHX version and controller, RHX is not recording, headstage on port A, the wiring has a sync channel, every recorded box has a digital input), Saving with a save location ending in /ephys and a warning that the path contains a space, "Using your defaults" with Edit for this session, and the first box's Record or Behavior only choice with its port, channels 0 to 15 and probe map](images/record-step.webp)
 

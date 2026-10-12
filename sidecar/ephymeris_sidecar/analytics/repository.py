@@ -385,8 +385,10 @@ class AnalyticsRepository:
             ).fetchone()
         return _hydrate_adopted(row) if row is not None else None
 
-    def store(self, entries: list[CachedRun]) -> None:
-        """Write cache rows in **one transaction**.
+    def store(self, entries: list[CachedRun], *, tx: Tx | None = None) -> None:
+        """Write cache rows in **one transaction**, or in `tx`'s unit of work
+        when given one (`DATA.md#transactions`): the indexing pass writes its
+        rows with the profiles it scored them under.
 
         Every commit marks the whole database dirty for backup
         (`DATA.md#the-database-copy`), so committing per row would trigger repeated
@@ -395,8 +397,8 @@ class AnalyticsRepository:
         """
         if not entries:
             return
-        with self._db.lock:
-            self._db.conn.executemany(
+        with self._db.write(tx) as unit:
+            unit.executemany(
                 "INSERT OR REPLACE INTO run_metrics_cache"
                 " (run_id, file_path, file_mtime_ns, file_size, profile_hash,"
                 "  scored_profile_hash, profile_source, params_hash, config_json,"
@@ -422,7 +424,6 @@ class AnalyticsRepository:
                     for entry in entries
                 ],
             )
-            self._db.conn.commit()
 
 
 @dataclass(frozen=True)

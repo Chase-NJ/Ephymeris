@@ -65,7 +65,7 @@ class AnalyticsService:
         #: scorer each time it reads one (`DATA.md#orphan-adoption`).
         self._sketch_lookup = sketch_lookup
         #: Every score, decoded run and cache row (`DATA.md#caching`).
-        self._scorer = RunScorer(self._repo, sketch_lookup)
+        self._scorer = RunScorer(db, sketch_lookup)
         #: What every pass reads, and whose lock it runs under: one job at a
         #: time (`DATA.md#the-cohort-archive`).
         self._archive = archive

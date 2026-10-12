@@ -27,6 +27,7 @@ import logging
 from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 
+from ..cohorts.db import Database
 from ..rig import registry
 from ..rig.registry import Vocabulary
 from ..sessions.models import SessionAnimalRun
@@ -140,10 +141,13 @@ class Decoded:
 class RunScorer:
     def __init__(
         self,
-        repo: AnalyticsRepository,
+        db: Database,
         sketch_lookup: Callable[[str], str | None] | None = None,
     ) -> None:
-        self._repo = repo
+        #: The database itself, not only its repository: a pass's write is one
+        #: unit of work (`DATA.md#transactions`).
+        self._db = db
+        self._repo = AnalyticsRepository(db)
         #: Resolve a document's `sketch` *name* to a sketch in this install's
         #: library, for adopted orphans whose run record never existed
         #: (`DATA.md#orphan-adoption`). The honest analog of the
@@ -205,20 +209,23 @@ class RunScorer:
         return out
 
     def _write(self, fresh: list[CachedRun], profiles: dict[str, TaskProfile]) -> None:
-        """The pass's one transaction: every profile it decoded with, then
-        every row it recomputed (`DATA.md#never-at-the-expense-of-a-session`).
+        """The pass's one unit of work (`DATA.md#transactions`): every profile
+        it decoded with, then every row it recomputed — so no row names a
+        `scored_profile_hash` without its `task_profiles` row, and the pass
+        commits once (`DATA.md#never-at-the-expense-of-a-session`).
 
         The profiles are content-addressed `INSERT OR IGNORE`s, so the hundredth
-        pass over the same archive adds nothing. They are written even on an
-        all-hit pass: resolution still read today's `task.json`, and without
-        its blob a profile group has no `taskName` to label itself with.
+        pass over the same archive adds nothing, and a unit that changed nothing
+        announces nothing to the backup. They are written even on an all-hit
+        pass: resolution still read today's `task.json`, and without its blob a
+        profile group has no `taskName` to label itself with.
         """
-        for profile in profiles.values():
-            self._repo.remember_profile(profile)
-        if fresh:
-            self._repo.store(fresh)
-        else:
-            self._repo.flush()
+        if not fresh and not profiles:
+            return
+        with self._db.write() as tx:
+            for profile in profiles.values():
+                self._repo.remember_profile(profile, tx=tx)
+            self._repo.store(fresh, tx=tx)
 
     def _score_chunk(
         self,

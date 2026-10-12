@@ -716,7 +716,7 @@ with db.write() as tx:                 # the lock, then BEGIN IMMEDIATE
 - **`db.read()`** holds the lock for reading; inside the thread's own unit it is that unit, so a read sees the unit's own rows.
 - **What a commit announces.** The database hook ([backup](#the-database-copy)) fires once per committed unit that changed a row, under the lock right after `COMMIT`. A unit that rolled back, or changed nothing, announces nothing. `tx.on_commit(fn)` runs `fn` once after the commit, with the lock free.
 
-A finalization snapshots the run's [profile](#which-profile-decodes-a-run) and records the run in one unit. Apart, a rollback by any other writer between the two would leave the run naming a profile hash with no `task_profiles` row. The analytics indexing pass remembers profiles without a unit and commits them with its cache rows at the end of the job ([one transaction per job](#never-at-the-expense-of-a-session)), so its write stays open for the whole pass.
+A finalization snapshots the run's [profile](#which-profile-decodes-a-run) and records the run in one unit. Apart, a rollback by any other writer between the two would leave the run naming a profile hash with no `task_profiles` row. The analytics indexing pass writes nothing until its end: it collects the profiles it scored with and writes them with its cache rows in one unit ([one transaction per job](#never-at-the-expense-of-a-session)), so no cached row names a scored profile hash without its `task_profiles` row, and a pass that changed nothing announces nothing.
 
 ### Changing the schema
 
@@ -957,7 +957,7 @@ It is computed on every pass (about 2 ms), never remembered. A version moves for
 
 - **Profile resolution is memoized per indexing pass, never across passes**, so an edited `task.json` takes effect on the next summary.
 - **Nothing in the cache depends on `minCountedTrials`.** `lowConfidence` is judged against each request's threshold on every row served (`derive.with_threshold`), hit or miss.
-- **A pass writes once.** The profiles it decoded with and the rows it recomputed go in one transaction at its end; `analytics.series` writes nothing.
+- **A pass writes once.** The profiles it decoded with and the rows it recomputed go in one [unit of work](#transactions) at its end; `analytics.series` writes nothing.
 - **A reader that opens no file reads only rows of the current version** (`load_cached(…, version=…)`): the [archive](#the-cohort-archive)'s session clocks, its false-start verdicts and the session log's [what changed](#what-changed). Another version's row is one the next summary recomputes; until then the run counts as unread.
 - **Never delete a cache entry because a file vanished** on the read path — mark it stale and keep serving it. The read path cannot tell a deletion from an unplugged drive; only [pruning](#pruning) can. The kept row is re-keyed with no stat, so the file's return is always a miss.
 - **A corrupt file caches its negative result** (`unreadable`) under the same key and surfaces as a warning. One bad `.json` must never blank a year of history.

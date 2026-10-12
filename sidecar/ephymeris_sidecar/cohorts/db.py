@@ -792,11 +792,7 @@ class Database:
 
     def on_commit(self, callback: Callable[[], None] | None) -> None:
         """Register a post-commit hook (the backup manager's dirty mark).
-
-        Fired once per committed unit of work that changed a row, under the
-        lock right after `COMMIT` (`DATA.md#the-database-copy`). A unit that
-        rolls back, or changed nothing, announces nothing.
-        """
+        When it fires: `DATA.md#transactions`."""
         self._on_commit = callback
         if self._conn is not None:
             self._conn.on_commit = callback  # type: ignore[attr-defined]

@@ -627,10 +627,10 @@ def rehome(db: Database, cohort_id: str) -> int:
     if not votes:
         return 0
     old_root = votes.most_common(1)[0][0]
-    # One unit of work, which always ends: `changed` does not count the
-    # strobe-scan cache rows `rewrite_paths` also re-points, so committing
-    # only when it was non-zero could leave those writes open -- for another
-    # writer's rollback to discard, and a due backup to refuse (#55).
+    # One unit of work, which always commits or rolls back: `changed` does
+    # not count the strobe-scan cache rows `rewrite_paths` also re-points, so
+    # it can't decide whether there is anything to commit
+    # (`DATA.md#transactions`).
     with db.write() as tx:
         changed = rewrite_paths(tx, cohort_id, old_root, folder, only_existing=True)
     if changed:

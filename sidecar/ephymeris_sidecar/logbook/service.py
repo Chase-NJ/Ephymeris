@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..analytics.scoring import current_version
 from ..protocol import Evt, event
 from ..sessions.models import Session, SessionNotFound
 from . import diff, mirror
@@ -113,7 +114,9 @@ class LogbookService:
         sessions = {s.id: s for s in view.sessions}
         recorded = view.recorded_runs
         recovered = view.recovered_runs
-        cached = self._profiles.load_cached([run.id for run in recovered])
+        cached = self._profiles.load_cached(
+            [run.id for run in recovered], version=current_version()
+        )
         hashes = sorted(
             {r.profile_hash for r in recorded if r.profile_hash}
             | {c.profile_hash for c in cached.values() if c.profile_hash}

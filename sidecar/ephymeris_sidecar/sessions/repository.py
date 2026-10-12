@@ -341,6 +341,14 @@ class SessionRepository:
                 _forget_resolutions_in(unit, chunk)
         return removed
 
+    def run(self, run_id: str) -> SessionAnimalRun | None:
+        """One recorded run by id, or None."""
+        with self._db.read() as q:
+            row = q.execute(
+                "SELECT * FROM session_animal_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        return None if row is None else _hydrate_run(row)
+
     def runs_for(self, session_id: str) -> list[SessionAnimalRun]:
         with self._db.read() as q:
             rows = q.execute(

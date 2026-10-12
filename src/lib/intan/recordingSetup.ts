@@ -93,13 +93,18 @@ export function reconcileRows(
 /** What `intan.parseProbeMap` answered for one path. */
 export type ProbeMapParse = { probeMap: ProbeMap } | { error: string };
 
-/** The rows with a probe-map parse applied to the row on `box`. */
+/**
+ * The rows with a parse of `path` applied to the row on `box` — only while
+ * that row still has that path. A reply lands after the fact: meanwhile the
+ * box may have gone to another animal (a swap reconciled after the parse was
+ * asked for), or the operator chose another map or removed it. Those replies
+ * are dropped, and the same array comes back.
+ */
 export function applyParsedProbeMap(rows: BoxRow[], box: number, path: string, parsed: ProbeMapParse): BoxRow[] {
+  if (!rows.some((r) => r.box === box && r.probeMapPath === path)) return rows;
   const patch =
-    "probeMap" in parsed
-      ? { probeMapPath: path, probeMap: parsed.probeMap, probeError: null }
-      : { probeMapPath: path, probeMap: null, probeError: parsed.error };
-  return rows.map((r) => (r.box === box ? { ...r, ...patch } : r));
+    "probeMap" in parsed ? { probeMap: parsed.probeMap, probeError: null } : { probeMap: null, probeError: parsed.error };
+  return rows.map((r) => (r.box === box && r.probeMapPath === path ? { ...r, ...patch } : r));
 }
 
 // --- ports ------------------------------------------------------------------

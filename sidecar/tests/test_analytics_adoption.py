@@ -13,6 +13,7 @@ corrupt session-number suggestion and the same-day reuse warning.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import replace
@@ -815,6 +816,44 @@ def test_storing_an_adoption_never_takes_another_cohorts_row(rig: LegacyRig) -> 
         ("adopted:held-by-the-other", "b1")
     ], "the other cohort's row stands"
     assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == ["adopted:new"]
+
+
+def _stem_only_id(path: Path) -> str:
+    """The id an adoption stored before ids named their cohort: the run
+    identity alone. Spelled out here, not imported, so a change to the minting
+    cannot quietly change what these tests treat as an existing row."""
+    digest = hashlib.sha1(path.stem.casefold().encode("utf-8")).hexdigest()
+    return f"adopted:{digest[:16]}"
+
+
+def _stored_adoption(rig: LegacyRig, path: Path, *, with_stat: bool) -> AdoptedRun:
+    """A row for `path` as an earlier build stored it, under its stem-only id."""
+    stat = path.stat()
+    entry = AdoptedRun(
+        id=_stem_only_id(path), cohort_id=rig.cohort.id, animal_id="a1",
+        file_path=str(path), prefix_name="2O-Bdisc", session_number="01",
+        date="2026-06-16", started_at="2026-06-16T12:00:22", sketch_name=None,
+        sketch_path=None,
+        file_mtime_ns=stat.st_mtime_ns if with_stat else None,
+        file_size=stat.st_size if with_stat else None,
+    )
+    rig.repo.store_adopted([entry])
+    return entry
+
+
+async def test_a_rescan_keeps_the_id_a_held_adoption_was_stored_under(
+    rig: LegacyRig,
+) -> None:
+    """A rescan never re-keys a row its cohort holds: a person's ruling and the
+    cached scores are keyed by that id (`DATA.md#false-starts`). The row has no
+    stat, so the rescan reads the file again and rewrites the row."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    held = _stored_adoption(rig, path, with_stat=False)
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["adopted"] == 1, "read again and rewritten"
+    assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == [held.id]
 
 
 async def test_a_second_rescan_does_not_read_the_files_again(rig: LegacyRig) -> None:

@@ -352,14 +352,19 @@ async def test_the_database_backup_is_debounced(db: Database, tmp_path: Path) ->
 async def test_a_due_database_backup_never_waits_on_a_write_left_open(
     db: Database, tmp_path: Path
 ) -> None:
-    """A backup that falls due between a finishing run's profile snapshot and
-    its run record must still finish (`DATA.md#the-database-copy`).
+    """A backup that falls due while a write is open on the connection must
+    still finish its pass, and copy the database once the write has ended
+    (`DATA.md#the-database-copy`, #55).
 
     The snapshot holds the database lock while SQLite's online backup copies
     the file. If the shared connection has a write still open when it starts,
     the backup reports busy and Python retries it forever -- with the lock
     held, so the write can never be finished and every database call in the
     app waits behind it: the next run record, every cohort read.
+
+    The open write here is the analytics indexing pass's: it remembers each
+    run's profile without committing, and commits with its cache rows at the
+    end of the job (`DATA.md#transactions`).
     """
     manager = make_manager(db, [], db_debounce=0.0)
     db.on_commit(manager.mark_db_dirty)
@@ -368,9 +373,8 @@ async def test_a_due_database_backup_never_waits_on_a_write_left_open(
     await manager._pass()
 
     SessionRepository(db).create_prefix("x")  # due: a commit, no quiet period
-    profile = parse_profile({"taskName": "Snapshot me"})
-    # What `SessionLifecycle.animal_ended` does before it records the run.
-    digest = AnalyticsRepository(db).remember_profile(profile)
+    profiles = AnalyticsRepository(db)
+    digest = profiles.remember_profile(parse_profile({"taskName": "Snapshot me"}))
 
     try:
         await asyncio.wait_for(manager._pass(), timeout=3.0)
@@ -378,13 +382,18 @@ async def test_a_due_database_backup_never_waits_on_a_write_left_open(
         # Free the stuck backup thread (it holds the lock) before failing.
         db.conn.rollback()
         pytest.fail("the database backup waited forever on a write left open")
+    assert manager.status()["state"] == "ok", "a deferred copy is not a failed one"
+
+    profiles.flush()  # the indexing pass ends, and commits
+    await manager._pass()
 
     conn = sqlite3.connect(mirror / DB_MIRROR_NAME)
     try:
+        names = [row[0] for row in conn.execute("SELECT name FROM prefixes")]
         hashes = [row[0] for row in conn.execute("SELECT hash FROM task_profiles")]
     finally:
         conn.close()
-    assert hashes == [digest], "the mirror holds the committed snapshot"
+    assert (names, hashes) == (["x"], [digest]), "copied once the write ended"
 
 
 @pytest.mark.asyncio

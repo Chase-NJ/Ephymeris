@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable
 
+from ..cohorts.db import WriteInProgress
 from .paths import MirrorLayout
 
 log = logging.getLogger(__name__)
@@ -302,7 +303,13 @@ class BackupManager:
             return
         with self._lock:
             marked = self._db_dirty_at
-        await asyncio.to_thread(self._write_db_backup, target)
+        try:
+            await asyncio.to_thread(self._write_db_backup, target)
+        except WriteInProgress:
+            # Not a failure of the target: the mark stays, and the next pass
+            # snapshots once the write has ended.
+            log.debug("database backup deferred: a write is still open")
+            return
         with self._lock:
             # A commit landing during the copy re-dirties it; only clear the
             # mark we actually acted on, so that write isn't silently lost.
@@ -380,6 +387,9 @@ class BackupManager:
             self.mark_db_dirty()
             try:
                 await asyncio.to_thread(self._write_db_backup, target)
+            except WriteInProgress:
+                # The mark set above stays; the next pass copies it.
+                log.info("backup sync: database copy deferred to the next pass")
             except OSError as exc:
                 result["failed"] += 1
                 result["errors"].append(f"{DB_MIRROR_NAME}: {exc}")

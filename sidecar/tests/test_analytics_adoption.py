@@ -997,9 +997,9 @@ async def test_a_carried_row_is_not_rewritten(rig: LegacyRig) -> None:
     [before] = rig.repo.adopted_for_cohort(rig.cohort.id)
 
     commits: list[int] = []
-    rig.db.conn.on_commit = lambda: commits.append(1)
+    rig.db.on_commit(lambda: commits.append(1))
     await rig.service.rescan(rig.cohort.id)
-    rig.db.conn.on_commit = None
+    rig.db.on_commit(None)
 
     assert commits == [], "no write at all when nothing changed"
     [after] = rig.repo.adopted_for_cohort(rig.cohort.id)
@@ -1375,7 +1375,7 @@ async def test_a_cache_hit_pass_leaves_no_open_transaction(rig: LegacyRig) -> No
     await rig.service.summary(rig.cohort.id)
     await rig.service.summary(rig.cohort.id)
 
-    assert not rig.db.conn.in_transaction
+    assert not rig.db.in_transaction
 
 
 # --- a real archive's shape (see DATA.md#orphan-adoption) -------------------

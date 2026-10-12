@@ -1,7 +1,7 @@
 """Session-log persistence — `DATA.md#the-session-log`.
 
 Synchronous; callers wrap in `asyncio.to_thread`. Shares the cohort database
-and its lock, like `SessionRepository`. Validation that needs the cohort (is
+and its units of work, like `SessionRepository` (`DATA.md#transactions`). Validation that needs the cohort (is
 this animal in it?) is the service's; this module checks only what the row
 itself can say.
 """
@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from ..cohorts.db import Database
+from ..cohorts.db import Database, Tx
 from .models import (
     MAX_BODY,
     MAX_FIELD,
@@ -75,10 +75,10 @@ class LogbookRepository:
 
     # --- notes ------------------------------------------------------------
 
-    def add(self, note: SessionNote) -> SessionNote:
+    def add(self, note: SessionNote, *, tx: Tx | None = None) -> SessionNote:
         check_note(note)
-        with self._db.lock:
-            self._db.conn.execute(
+        with self._db.write(tx) as unit:
+            unit.execute(
                 "INSERT INTO session_notes"
                 " (id, session_id, cohort_id, at, created_at, edited_at, deleted_at,"
                 "  tag, scope_kind, animal_id, box_number, body, carry_forward,"
@@ -98,23 +98,22 @@ class LogbookRepository:
                     int(note.carry_forward),
                 ),
             )
-            self._db.conn.commit()
         return self.get(note.id)
 
     def get(self, note_id: str, *, include_deleted: bool = False) -> SessionNote:
-        with self._db.lock:
-            row = self._db.conn.execute(
+        with self._db.read() as q:
+            row = q.execute(
                 "SELECT * FROM session_notes WHERE id = ?", (note_id,)
             ).fetchone()
         if row is None or (row["deleted_at"] and not include_deleted):
             raise NoteNotFound(note_id)
         return _hydrate(row)
 
-    def save(self, note: SessionNote) -> SessionNote:
+    def save(self, note: SessionNote, *, tx: Tx | None = None) -> SessionNote:
         """Write an edited note back, stamping `edited_at`."""
         check_note(note)
-        with self._db.lock:
-            self._db.conn.execute(
+        with self._db.write(tx) as unit:
+            unit.execute(
                 "UPDATE session_notes SET at = ?, edited_at = ?, tag = ?, scope_kind = ?,"
                 " animal_id = ?, box_number = ?, body = ?, carry_forward = ?"
                 " WHERE id = ? AND deleted_at IS NULL",
@@ -130,33 +129,32 @@ class LogbookRepository:
                     note.id,
                 ),
             )
-            self._db.conn.commit()
         return self.get(note.id)
 
-    def soft_delete(self, note_id: str) -> SessionNote:
+    def soft_delete(self, note_id: str, *, tx: Tx | None = None) -> SessionNote:
         note = self.get(note_id)
-        with self._db.lock:
-            self._db.conn.execute(
+        with self._db.write(tx) as unit:
+            unit.execute(
                 "UPDATE session_notes SET deleted_at = ? WHERE id = ?", (now_iso(), note_id)
             )
-            self._db.conn.commit()
         return note
 
-    def set_resolved(self, note_id: str, resolved: bool, session_id: str | None) -> SessionNote:
+    def set_resolved(
+        self, note_id: str, resolved: bool, session_id: str | None, *, tx: Tx | None = None
+    ) -> SessionNote:
         note = self.get(note_id)
         if not note.carry_forward:
             raise NoteInvalid("Only a carry-forward note can be resolved.")
-        with self._db.lock:
-            self._db.conn.execute(
+        with self._db.write(tx) as unit:
+            unit.execute(
                 "UPDATE session_notes SET resolved_at = ?, resolved_in_session = ? WHERE id = ?",
                 (now_iso() if resolved else None, session_id if resolved else None, note_id),
             )
-            self._db.conn.commit()
         return self.get(note_id)
 
     def notes_for_cohort(self, cohort_id: str) -> list[SessionNote]:
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT * FROM session_notes WHERE cohort_id = ? AND deleted_at IS NULL"
                 " ORDER BY at, created_at",
                 (cohort_id,),
@@ -167,8 +165,8 @@ class LogbookRepository:
         if not session_ids:
             return []
         marks = ",".join("?" * len(session_ids))
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 f"SELECT * FROM session_notes WHERE session_id IN ({marks})"
                 " AND deleted_at IS NULL ORDER BY at, created_at",
                 tuple(session_ids),
@@ -176,8 +174,8 @@ class LogbookRepository:
         return [_hydrate(r) for r in rows]
 
     def open_flags(self, cohort_id: str) -> list[SessionNote]:
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT * FROM session_notes WHERE cohort_id = ? AND carry_forward = 1"
                 " AND resolved_at IS NULL AND deleted_at IS NULL ORDER BY at, created_at",
                 (cohort_id,),
@@ -187,15 +185,15 @@ class LogbookRepository:
     # --- session fields ---------------------------------------------------
 
     def get_log(self, session_id: str) -> SessionLog | None:
-        with self._db.lock:
-            row = self._db.conn.execute(
+        with self._db.read() as q:
+            row = q.execute(
                 "SELECT * FROM session_logs WHERE session_id = ?", (session_id,)
             ).fetchone()
         return None if row is None else _hydrate_log(row)
 
     def logs_for_cohort(self, cohort_id: str) -> list[SessionLog]:
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT l.* FROM session_logs l JOIN sessions s ON s.id = l.session_id"
                 " WHERE s.cohort_id = ?",
                 (cohort_id,),
@@ -206,15 +204,17 @@ class LogbookRepository:
         if not session_ids:
             return []
         marks = ",".join("?" * len(session_ids))
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 f"SELECT * FROM session_logs WHERE session_id IN ({marks})",
                 tuple(session_ids),
             ).fetchall()
         by_id = {row["session_id"]: _hydrate_log(row) for row in rows}
         return [by_id[sid] for sid in session_ids if sid in by_id]
 
-    def upsert_log(self, session_id: str, fields: dict[str, Any]) -> SessionLog:
+    def upsert_log(
+        self, session_id: str, fields: dict[str, Any], *, tx: Tx | None = None
+    ) -> SessionLog:
         """Set `operator` and/or `summary`; a key absent from `fields` is kept."""
         current = self.get_log(session_id) or SessionLog(session_id=session_id)
         operator = fields.get("operator", current.operator)
@@ -222,15 +222,14 @@ class LogbookRepository:
         for name, value in (("operator", operator), ("summary", summary)):
             if value is not None and len(value) > MAX_FIELD * (5 if name == "summary" else 1):
                 raise NoteInvalid(f"The {name} is too long.")
-        with self._db.lock:
-            self._db.conn.execute(
+        with self._db.write(tx) as unit:
+            unit.execute(
                 "INSERT INTO session_logs (session_id, operator, summary, updated_at)"
                 " VALUES (?, ?, ?, ?)"
                 " ON CONFLICT(session_id) DO UPDATE SET operator = excluded.operator,"
                 " summary = excluded.summary, updated_at = excluded.updated_at",
                 (session_id, _blank_to_none(operator), _blank_to_none(summary), now_iso()),
             )
-            self._db.conn.commit()
         return self.get_log(session_id) or SessionLog(session_id=session_id)
 
     # --- what tidy and prune must keep (DATA.md#tidy-records) ---------------
@@ -238,13 +237,13 @@ class LogbookRepository:
     def annotated_session_ids(self, cohort_id: str) -> set[str]:
         """Sessions carrying anything the operator wrote — a live note or a
         non-blank log field. Those are user data, never an empty record."""
-        with self._db.lock:
-            noted = self._db.conn.execute(
+        with self._db.read() as q:
+            noted = q.execute(
                 "SELECT DISTINCT session_id FROM session_notes"
                 " WHERE cohort_id = ? AND deleted_at IS NULL",
                 (cohort_id,),
             ).fetchall()
-            logged = self._db.conn.execute(
+            logged = q.execute(
                 "SELECT l.session_id FROM session_logs l JOIN sessions s ON s.id = l.session_id"
                 " WHERE s.cohort_id = ? AND (TRIM(COALESCE(l.operator, '')) != ''"
                 " OR TRIM(COALESCE(l.summary, '')) != '')",

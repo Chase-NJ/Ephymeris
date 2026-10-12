@@ -281,7 +281,9 @@ Like [Tidy records](#tidy-records), it previews first (`apply: false`), and an a
 
 The session's operator and summary are copied too. A copied carry-forward flag is open in both cohorts, and resolving one does not resolve the other.
 
-**Caches follow.** `run_metrics_cache`, adoption and strobe-scan rows take the new path and [carry their freshness keys](#caching): the content is hash-verified identical, so a summary that was right for the original is right for the copy. Copied files are queued for [backup](#backup-mirroring); the mirror is additive, so the old copies stay in the source's mirror folder.
+**Caches follow.** `run_metrics_cache`, adoption and strobe-scan rows take the new path (all but an adoption that joins a run the destination already holds, below) and [carry their freshness keys](#caching): the content is hash-verified identical, so a summary that was right for the original is right for the copy. Copied files are queued for [backup](#backup-mirroring); the mirror is additive, so the old copies stay in the source's mirror folder.
+
+**A run the destination already holds.** One run copied into both cohorts, at different places, is [adopted](#orphan-adoption) by each. A moved adoption whose run identity the destination already holds **joins that row** rather than becoming a second: the held row keeps its id, which its cached scores and any [ruling](#false-starts) are keyed by; the moved row's ruling is carried onto it unless the held row has one of its own; and the moved row goes, with its cached scores. Its file is still copied, so the destination's folder holds two copies of the run, which a [rescan](#orphan-adoption) reads as one.
 
 **Refused**, with nothing touched, when: a session is held or a box runs anywhere in the app (copying competes with the write-ahead log's fsync); either cohort has an open (`configuring`/`running`) session; either data folder is unreachable; the folders are the same or one is inside the other; a destination file exists **with different content**; a run file lies outside the source's folder (left by a data-folder move from before records followed one; a rescan [re-points it](#data-folder)); two moved animals share a name; or the destination is archived. An identical file already at the destination is not a refusal.
 
@@ -573,7 +575,7 @@ The Recover button chains an `analytics.rescan`, so recovered files are adopted 
 
 ## SQLite database
 
-`ephymeris.db` lives in the **app data directory**, not in `dataDirectory`: that folder is where lab members browse session output, and an opaque database file does not belong among session files. Owned by `cohorts/db.py`: one connection behind a lock, called through `asyncio.to_thread` so the event loop never blocks on disk. The current version is `SCHEMA_VERSION` in that file.
+`ephymeris.db` lives in the **app data directory**, not in `dataDirectory`: that folder is where lab members browse session output, and an opaque database file does not belong among session files. Owned by `cohorts/db.py`: one connection behind a lock, reached only through [units of work](#transactions), called through `asyncio.to_thread` so the event loop never blocks on disk. The current version is `SCHEMA_VERSION` in that file.
 
 ### Tables
 
@@ -712,11 +714,12 @@ with db.write() as tx:                 # the lock, then BEGIN IMMEDIATE
 
 - **Join or own.** A repository method given `tx=` runs inside that unit and commits nothing; given none, it is its own unit. Only the unit's opener commits.
 - **No nesting.** Opening a second unit on the thread that holds one raises `NestedWrite`, as does joining a unit from another thread or after it ended. Pass the open unit instead.
-- **A rollback undoes only its own work.** A unit opened while some caller has left a write open runs as a savepoint inside it, so its rollback leaves that write alone. Its commit makes that write durable too, as any commit on the one connection does, and so always announces.
-- **`db.read()`** holds the lock for reading; inside the thread's own unit it is that unit, so a read sees the unit's own rows.
+- **No transaction is ever open while the lock is free.** Only a unit begins one: the connection begins none implicitly, and nothing outside `cohorts/db.py` can reach it. So a rollback undoes only its own unit's work, and no commit makes another writer's half-done work durable. A unit that finds a transaction already open, which only a bug could leave, refuses with `WriteInProgress` rather than adopt it.
+- **A unit SQLite rolled back writes nothing more.** A statement SQLite answers by rolling the whole transaction back (a full disk, an I/O error, an interrupt) ends the unit: any later statement in it, the error once caught, raises `TransactionAborted` instead of committing on its own, and the unit commits and announces nothing. A finalization whose profile snapshot does this records the run again on its own, without the snapshot.
+- **`db.read()`** holds the lock for reading, with the connection `query_only`, so a read cannot write; one that begins a transaction is rolled back and refused. Inside the thread's own unit it is that unit, so a read sees the unit's own rows.
 - **What a commit announces.** The database hook ([backup](#the-database-copy)) fires once per committed unit that changed a row, under the lock right after `COMMIT`. A unit that rolled back, or changed nothing, announces nothing. `tx.on_commit(fn)` runs `fn` once after the commit, with the lock free.
 
-A finalization snapshots the run's [profile](#which-profile-decodes-a-run) and records the run in one unit. Apart, a rollback by any other writer between the two would leave the run naming a profile hash with no `task_profiles` row. The analytics indexing pass writes nothing until its end: it collects the profiles it scored with and writes them with its cache rows in one unit ([one transaction per job](#never-at-the-expense-of-a-session)), so no cached row names a scored profile hash without its `task_profiles` row, and a pass that changed nothing announces nothing.
+A finalization snapshots the run's [profile](#which-profile-decodes-a-run) and records the run in one unit. Apart, a rollback by any other writer between the two would leave the run naming a profile hash with no `task_profiles` row. The analytics indexing pass writes nothing until its end: it collects the profiles it scored with and writes them with its cache rows in one unit ([one transaction per job](#never-at-the-expense-of-a-session)), so no cached row names a scored profile hash without its `task_profiles` row, and a pass that changed nothing announces nothing. A [tidy](#tidy-records) is one unit, so a merge the database refuses undoes the ones before it; a [relocate](#data-folder) and a [move](#moving-animals-between-cohorts) write each journal step, and their records with their `committed` step, as units of their own.
 
 ### Changing the schema
 
@@ -790,12 +793,12 @@ Two relocated cohort folders sharing a basename both get a short path-derived su
 
 ### The database copy
 
-`ephymeris.db` is mirrored on **every commit**, debounced by `DB_DEBOUNCE_S` (5 s) because a roster edit commits many times in quick succession.
+`ephymeris.db` is mirrored on **every committed unit of work that changed a row** ([Transactions](#transactions)), debounced by `DB_DEBOUNCE_S` (5 s) because a roster edit commits many times in quick succession.
 
 > [!NOTE]
-> **The trigger hangs off the commit itself** (`_TrackedConnection`, and each [unit of work](#transactions)'s `COMMIT`), not a call in each repository method: no write path can forget to announce itself, and the trigger is truly "the database changed" — `session_animal_runs` is written during unattended overnight runs.
+> **The trigger hangs off the commit itself**, each [unit of work](#transactions)'s `COMMIT` and startup's one, not a call in each repository method: no write path can forget to announce itself, and the trigger is truly "the database changed" — `session_animal_runs` is written during unattended overnight runs.
 
-**The snapshot never runs with a write open.** SQLite's online backup answers busy to an open write on its source, and Python retries busy forever — here holding the lock that every way out of the write needs, which would stall every database call in the app. So `snapshot_to` raises `WriteInProgress` instead, the pass leaves the database marked dirty, and a later pass copies it once the write has ended. A copy still deferred after `DB_DEFER_WARN_S` (60 s) is logged as a warning, once per stretch: writes end in seconds, so one open that long was left by something that died. A "Sync now" that meets one reports the database copy as not done.
+**The snapshot never runs with a write open.** SQLite's online backup answers busy to an open write on its source, and Python retries busy forever — here holding the lock that every way out of the write needs, which would stall every database call in the app. The snapshot takes the lock, so it waits for any unit of work to end, and [no transaction is open while the lock is free](#transactions). Were one open anyway — a bug — `snapshot_to` raises `WriteInProgress` instead of waiting: the pass leaves the database marked dirty and a later pass copies it, a copy still deferred after `DB_DEFER_WARN_S` (60 s) is logged as a warning once per stretch, and a "Sync now" that meets one reports the database copy as not done.
 
 **The copy is two-step.** `Database.snapshot_to` uses SQLite's online backup API (a plain copy of a live database can capture a torn page), but that holds the lock, so it writes to a **local** temp file first and the slow copy to the mirror happens with nothing locked. Pointing it straight at a network share would let the share's latency block every database read.
 

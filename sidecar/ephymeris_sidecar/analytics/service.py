@@ -637,15 +637,18 @@ class AnalyticsService:
 
         # A merged record's count is its whole day, for the reply.
         merged_counts = dict(counts)
-        for merge in planned.merges:
-            fields = session_tidy.merged_fields(merge)
-            self._sessions.absorb_sessions(
-                merge.keep.id, [s.id for s in merge.absorb], **fields
-            )
-            merged_counts[merge.keep.id] = sum(
-                counts.get(s.id, 0) for s in (merge.keep, *merge.absorb)
-            )
-        self._sessions.discard_sessions([e.session.id for e in planned.empty])
+        # One unit of work (`DATA.md#transactions`): a merge the database
+        # refuses undoes the ones before it, so a cohort is never half-tidied.
+        with self._db.write() as tx:
+            for merge in planned.merges:
+                fields = session_tidy.merged_fields(merge)
+                self._sessions.absorb_sessions(
+                    merge.keep.id, [s.id for s in merge.absorb], **fields, tx=tx
+                )
+                merged_counts[merge.keep.id] = sum(
+                    counts.get(s.id, 0) for s in (merge.keep, *merge.absorb)
+                )
+            self._sessions.discard_sessions([e.session.id for e in planned.empty], tx=tx)
 
         # Folders last, and only a folder no surviving record points at and
         # that still holds no file — re-checked now, not trusted from the plan.

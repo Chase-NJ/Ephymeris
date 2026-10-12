@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable, Iterable
 
-from ..cohorts.db import NestedWrite
+from ..cohorts.db import NestedWrite, TransactionAborted
 from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
@@ -643,20 +643,33 @@ class SessionLifecycle:
         whatever codes are current. One unit, because apart, another writer's
         rollback between the two would throw the snapshot away and leave the
         run naming a profile with no row.
+
+        A snapshot that fails never costs the run: it is recorded with no
+        profile hash. When the failure took the whole unit with it -- SQLite
+        rolled the transaction back, as a full disk or an I/O error may -- the
+        run is recorded again on its own, in a unit of its own. If that fails
+        too, the finalization fails loudly.
         """
-        with self._db.write() as tx:
-            if profile is not None:
-                try:
-                    record = replace(
-                        record, profile_hash=self._profiles.remember_profile(profile, tx=tx)
-                    )
-                except NestedWrite:
-                    raise  # a wiring mistake, not a profile that won't snapshot
-                except Exception:  # noqa: BLE001 - never fail a finalization over this
-                    log.exception(
-                        "couldn't snapshot the task profile for box %d", record.box_number
-                    )
-            self._sessions.record_animal_run(record, tx=tx)
+        try:
+            with self._db.write() as tx:
+                if profile is not None:
+                    try:
+                        record = replace(
+                            record, profile_hash=self._profiles.remember_profile(profile, tx=tx)
+                        )
+                    except NestedWrite:
+                        raise  # a wiring mistake, not a profile that won't snapshot
+                    except Exception:  # noqa: BLE001 - never fail a finalization over this
+                        log.exception(
+                            "couldn't snapshot the task profile for box %d", record.box_number
+                        )
+                self._sessions.record_animal_run(record, tx=tx)
+        except TransactionAborted:
+            log.warning(
+                "box %d: the profile snapshot rolled its unit back; recording the run without it",
+                record.box_number,
+            )
+            self._sessions.record_animal_run(replace(record, profile_hash=None))
 
     async def _refuse_unless_carried(self, boxes: list[int]) -> None:
         """Refuse unless each box's board carries the build of its mapped sketch

@@ -1,9 +1,9 @@
 """Cohort persistence and validation — `DATA.md#data-model`, `DATA.md#validation`,
 `DATA.md#archive-and-delete`.
 
-Synchronous by design; callers wrap these in `asyncio.to_thread`. Every method
-takes the database lock, so a single mutation is atomic with respect to any
-other.
+Synchronous by design; callers wrap these in `asyncio.to_thread`. Every write
+is a unit of work (`DATA.md#transactions`) -- its own, or the caller's `tx` --
+so a single mutation is atomic with respect to any other.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from .db import Database
+from .db import Database, Query, Tx
 from .members import former_members, referenced_animal_ids
 from .models import (
     MAX_BOX,
@@ -51,12 +51,12 @@ class CohortRepository:
     # --- reads ------------------------------------------------------------
 
     def list_cohorts(self) -> list[Cohort]:
-        with self._db.lock:
-            return self._load_all(self._db.conn)
+        with self._db.read() as q:
+            return self._load_all(q)
 
     def get(self, cohort_id: str) -> Cohort:
-        with self._db.lock:
-            cohort = self._load_one(self._db.conn, cohort_id)
+        with self._db.read() as q:
+            cohort = self._load_one(q, cohort_id)
         if cohort is None:
             raise CohortNotFound(cohort_id)
         return cohort
@@ -69,6 +69,8 @@ class CohortRepository:
         data_folder: str,
         animals: Any = None,
         groups: Any = None,
+        *,
+        tx: Tx | None = None,
     ) -> Cohort:
         """Create a cohort, optionally with its whole roster in one go.
 
@@ -93,11 +95,10 @@ class CohortRepository:
 
         now = _now()
         cohort_id = _new_id()
-        with self._db.lock:
-            conn = self._db.conn
-            self._assert_name_free(conn, clean, exclude_id=None)
-            _assert_ids_free(conn, parsed_animals, cohort_id)
-            try:
+        try:
+            with self._db.write(tx) as conn:
+                self._assert_name_free(conn, clean, exclude_id=None)
+                _assert_ids_free(conn, parsed_animals, cohort_id)
                 conn.execute(
                     "INSERT INTO cohorts (id, name, data_folder, created_at, updated_at)"
                     " VALUES (?, ?, ?, ?, ?)",
@@ -128,15 +129,13 @@ class CohortRepository:
                             animal.notes,
                         ),
                     )
-                conn.commit()
-            except sqlite3.IntegrityError as exc:  # pragma: no cover - raced insert
-                conn.rollback()
-                raise NameTaken(clean) from exc
-            cohort = self._load_one(conn, cohort_id)
+                cohort = self._load_one(conn, cohort_id)
+        except sqlite3.IntegrityError as exc:  # pragma: no cover - raced insert
+            raise NameTaken(clean) from exc
         assert cohort is not None
         return cohort
 
-    def update(self, cohort_id: str, patch: dict[str, Any]) -> Cohort:
+    def update(self, cohort_id: str, patch: dict[str, Any], *, tx: Tx | None = None) -> Cohort:
         """Apply a name/animals/groups patch.
 
         Animals and groups are replaced wholesale when present, which is what
@@ -149,38 +148,37 @@ class CohortRepository:
         placeholder and goes, as before. Posting a former member's id again
         restores it, history and all.
         """
-        with self._db.lock:
-            conn = self._db.conn
-            existing = self._load_one(conn, cohort_id)
-            if existing is None:
-                raise CohortNotFound(cohort_id)
+        try:
+            with self._db.write(tx) as conn:
+                existing = self._load_one(conn, cohort_id)
+                if existing is None:
+                    raise CohortNotFound(cohort_id)
 
-            name = existing.name
-            if "name" in patch:
-                name = (patch["name"] or "").strip()
-                if not name:
-                    raise ValidationError({"name": "Give the cohort a name."})
-                self._assert_name_free(conn, name, exclude_id=cohort_id)
+                name = existing.name
+                if "name" in patch:
+                    name = (patch["name"] or "").strip()
+                    if not name:
+                        raise ValidationError({"name": "Give the cohort a name."})
+                    self._assert_name_free(conn, name, exclude_id=cohort_id)
 
-            groups = (
-                _parse_groups(patch["groups"]) if "groups" in patch else existing.groups
-            )
-            animals = (
-                _parse_animals(patch["animals"]) if "animals" in patch else existing.animals
-            )
-            _validate(animals, groups)
-            if "animals" in patch:
-                _assert_ids_free(conn, animals, cohort_id)
+                groups = (
+                    _parse_groups(patch["groups"]) if "groups" in patch else existing.groups
+                )
+                animals = (
+                    _parse_animals(patch["animals"]) if "animals" in patch else existing.animals
+                )
+                _validate(animals, groups)
+                if "animals" in patch:
+                    _assert_ids_free(conn, animals, cohort_id)
 
-            # Absent leaves it alone; an explicit null RESETS the world to the
-            # one derived from the cohort's id. The two are different requests
-            # and `"appearance" in patch` is the only thing that tells them
-            # apart, which is why this reads the key rather than the value.
-            appearance = existing.appearance
-            if "appearance" in patch:
-                appearance = Appearance.from_json(patch["appearance"])
+                # Absent leaves it alone; an explicit null RESETS the world to the
+                # one derived from the cohort's id. The two are different requests
+                # and `"appearance" in patch` is the only thing that tells them
+                # apart, which is why this reads the key rather than the value.
+                appearance = existing.appearance
+                if "appearance" in patch:
+                    appearance = Appearance.from_json(patch["appearance"])
 
-            try:
                 conn.execute(
                     "UPDATE cohorts SET name = ?, appearance_json = ?, updated_at = ?"
                     " WHERE id = ?",
@@ -221,88 +219,80 @@ class CohortRepository:
                                 animal.notes,
                             ),
                         )
-                conn.commit()
-            except sqlite3.IntegrityError as exc:
-                conn.rollback()
-                raise ValidationError({"_": f"Couldn't save the cohort: {exc}"}) from exc
-
-            cohort = self._load_one(conn, cohort_id)
+                cohort = self._load_one(conn, cohort_id)
+        except sqlite3.IntegrityError as exc:
+            raise ValidationError({"_": f"Couldn't save the cohort: {exc}"}) from exc
         assert cohort is not None
         return cohort
 
-    def set_data_folder(self, cohort_id: str, path: str) -> Cohort:
-        with self._db.lock:
-            conn = self._db.conn
+    def set_data_folder(self, cohort_id: str, path: str, *, tx: Tx | None = None) -> Cohort:
+        with self._db.write(tx) as unit:
+            conn = unit
             if self._load_one(conn, cohort_id) is None:
                 raise CohortNotFound(cohort_id)
             conn.execute(
                 "UPDATE cohorts SET data_folder = ?, updated_at = ? WHERE id = ?",
                 (path, _now(), cohort_id),
             )
-            conn.commit()
             cohort = self._load_one(conn, cohort_id)
         assert cohort is not None
         return cohort
 
-    def archive(self, cohort_id: str) -> Cohort:
-        return self._set_archived(cohort_id, _now())
+    def archive(self, cohort_id: str, *, tx: Tx | None = None) -> Cohort:
+        return self._set_archived(cohort_id, _now(), tx=tx)
 
-    def restore(self, cohort_id: str) -> Cohort:
-        with self._db.lock:
-            conn = self._db.conn
+    def restore(self, cohort_id: str, *, tx: Tx | None = None) -> Cohort:
+        with self._db.write(tx) as conn:
             existing = self._load_one(conn, cohort_id)
             if existing is None:
                 raise CohortNotFound(cohort_id)
             # An archived name is free for reuse (`DATA.md#validation`), so the original may have
             # been claimed while this one was away.
             self._assert_name_free(conn, existing.name, exclude_id=cohort_id)
-        return self._set_archived(cohort_id, None)
+            return self._set_archived(cohort_id, None, tx=conn)
 
-    def purge(self, cohort_id: str) -> None:
+    def purge(self, cohort_id: str, *, tx: Tx | None = None) -> None:
         """Remove a record without the archive-first guard (`DATA.md#archive-and-delete`).
 
         Rollback only: used when the cohort row was written but a subsequent
         step of the same operation failed. Never reachable from the wire.
         """
-        with self._db.lock:
-            self._db.conn.execute("DELETE FROM cohorts WHERE id = ?", (cohort_id,))
-            self._db.conn.commit()
+        with self._db.write(tx) as unit:
+            unit.execute("DELETE FROM cohorts WHERE id = ?", (cohort_id,))
 
-    def delete(self, cohort_id: str) -> None:
+    def delete(self, cohort_id: str, *, tx: Tx | None = None) -> None:
         """Permanent delete — the two-step guard (`DATA.md#archive-and-delete`).
 
         Removes only the app's own bookkeeping. The cohort's `dataFolder` on
         disk is never touched.
         """
-        with self._db.lock:
-            conn = self._db.conn
+        with self._db.write(tx) as unit:
+            conn = unit
             existing = self._load_one(conn, cohort_id)
             if existing is None:
                 raise CohortNotFound(cohort_id)
             if not existing.archived:
                 raise NotArchived(cohort_id)
             conn.execute("DELETE FROM cohorts WHERE id = ?", (cohort_id,))
-            conn.commit()
 
     # --- internals --------------------------------------------------------
 
-    def _set_archived(self, cohort_id: str, value: str | None) -> Cohort:
-        with self._db.lock:
-            conn = self._db.conn
+    def _set_archived(self, cohort_id: str, value: str | None, *, tx: Tx | None = None) -> Cohort:
+        with self._db.write(tx) as unit:
+            conn = unit
             if self._load_one(conn, cohort_id) is None:
                 raise CohortNotFound(cohort_id)
             conn.execute(
                 "UPDATE cohorts SET archived_at = ?, updated_at = ? WHERE id = ?",
                 (value, _now(), cohort_id),
             )
-            conn.commit()
             cohort = self._load_one(conn, cohort_id)
         assert cohort is not None
         return cohort
 
     @staticmethod
     def _assert_name_free(
-        conn: sqlite3.Connection, name: str, exclude_id: str | None
+        conn: Query, name: str, exclude_id: str | None
     ) -> None:
         row = conn.execute(
             "SELECT id FROM cohorts"
@@ -314,12 +304,12 @@ class CohortRepository:
             raise NameTaken(name)
 
     @staticmethod
-    def _load_all(conn: sqlite3.Connection) -> list[Cohort]:
+    def _load_all(conn: Query) -> list[Cohort]:
         rows = conn.execute("SELECT * FROM cohorts ORDER BY created_at DESC").fetchall()
         return [CohortRepository._hydrate(conn, row) for row in rows]
 
     @staticmethod
-    def _load_one(conn: sqlite3.Connection, cohort_id: str) -> Cohort | None:
+    def _load_one(conn: Query, cohort_id: str) -> Cohort | None:
         """One cohort, with its former members — which a listing never needs,
         and which cost a pass over the cohort's history to find."""
         row = conn.execute("SELECT * FROM cohorts WHERE id = ?", (cohort_id,)).fetchone()
@@ -330,7 +320,7 @@ class CohortRepository:
         return cohort
 
     @staticmethod
-    def _hydrate(conn: sqlite3.Connection, row: sqlite3.Row) -> Cohort:
+    def _hydrate(conn: Query, row: sqlite3.Row) -> Cohort:
         groups = [
             Group(id=g["id"], name=g["name"], order=g["order"])
             for g in conn.execute(
@@ -365,7 +355,7 @@ class CohortRepository:
         )
 
 
-def _assert_ids_free(conn: sqlite3.Connection, animals: list[Animal], cohort_id: str) -> None:
+def _assert_ids_free(conn: Query, animals: list[Animal], cohort_id: str) -> None:
     """Refuse a posted animal id that is another cohort's, active or former.
 
     Ids are global primary keys, so this used to surface as an integrity
@@ -392,7 +382,7 @@ def _assert_ids_free(conn: sqlite3.Connection, animals: list[Animal], cohort_id:
 
 
 def _keep_former(
-    conn: sqlite3.Connection, cohort_id: str, existing: Cohort, posted: list[Animal]
+    conn: Query, cohort_id: str, existing: Cohort, posted: list[Animal]
 ) -> None:
     """Turn roster removals with history into former members, and posted
     former members back into roster animals (`DATA.md#former-members`).

@@ -2,7 +2,8 @@
 `DATA.md#which-profile-decodes-a-run`, `DATA.md#caching`.
 
 Synchronous, like every other repository here; callers wrap in
-`asyncio.to_thread`. Shares the cohort database and its lock.
+`asyncio.to_thread`. Shares the cohort database; each write is its own unit
+of work, or joins the caller's (`tx`, `DATA.md#transactions`).
 
 Two tables, both new at schema v3:
 
@@ -79,14 +80,9 @@ class AnalyticsRepository:
         """Store a profile if unseen, and return its hash.
 
         Content-addressed, so the hundredth run of the same task adds nothing.
-        Given a unit of work (`tx`), the row lands with it
-        (`DATA.md#transactions`): a finalization records its run in the same
-        unit, so the run never names a snapshot that isn't there.
-
-        Without one it does **not** commit — the indexing pass batches
-        (`DATA.md#never-at-the-expense-of-a-session`) and commits with its
-        `store`, or `flush`, leaving its write open in between
-        (`DATA.md#transactions`).
+        Joins `tx` when given (`DATA.md#transactions`): a finalization records
+        its run, and a scoring pass its cache rows, in the unit that snapshots
+        the profile they name.
         """
         digest = profile_hash(profile)
         row = (
@@ -101,53 +97,34 @@ class AnalyticsRepository:
             " (hash, task_name, kind, profile_json, first_seen_at)"
             " VALUES (?, ?, ?, ?, ?)"
         )
-        if tx is not None:
-            with self._db.write(tx) as unit:
-                unit.execute(sql, row)
-            return digest
-        with self._db.lock:
-            self._db.conn.execute(sql, row)
+        with self._db.write(tx) as unit:
+            unit.execute(sql, row)
         return digest
 
     # --- false-start overrides (DATA.md#false-starts) -----------------------
 
     def false_start_overrides(self) -> dict[str, bool]:
         """Every run a person has ruled on: run id -> set aside or not."""
-        with self._db.lock:
-            rows = self._db.conn.execute("SELECT run_id, false_start FROM run_flags").fetchall()
+        with self._db.read() as q:
+            rows = q.execute("SELECT run_id, false_start FROM run_flags").fetchall()
         return {row["run_id"]: bool(row["false_start"]) for row in rows}
 
-    def set_false_start(self, run_id: str, value: bool | None) -> None:
+    def set_false_start(self, run_id: str, value: bool | None, *, tx: Tx | None = None) -> None:
         """Record a person's ruling, or with None hand the run back to the rule."""
-        with self._db.lock:
+        with self._db.write(tx) as unit:
             if value is None:
-                self._db.conn.execute("DELETE FROM run_flags WHERE run_id = ?", (run_id,))
+                unit.execute("DELETE FROM run_flags WHERE run_id = ?", (run_id,))
             else:
-                self._db.conn.execute(
+                unit.execute(
                     "INSERT OR REPLACE INTO run_flags (run_id, false_start, set_at)"
                     " VALUES (?, ?, ?)",
                     (run_id, int(value), _now()),
                 )
-            self._db.conn.commit()
-
-    def flush(self) -> None:
-        """Commit whatever `remember_profile` left pending.
-
-        `remember_profile` deliberately doesn't commit so an indexing pass
-        commits once (`DATA.md#never-at-the-expense-of-a-session`). When that
-        pass turns out to be all cache hits
-        there is no `store` to ride along with, and the inserts would sit in an
-        open transaction until the connection closed — holding a write lock and
-        then discarding work that would just be redone next pass.
-        """
-        with self._db.lock:
-            if self._db.conn.in_transaction:
-                self._db.conn.commit()
 
     def load_profile(self, digest: str) -> TaskProfile | None:
         """Rebuild a snapshotted profile. `to_json` round-trips through the parser."""
-        with self._db.lock:
-            row = self._db.conn.execute(
+        with self._db.read() as q:
+            row = q.execute(
                 "SELECT profile_json FROM task_profiles WHERE hash = ?", (digest,)
             ).fetchone()
         if row is None:
@@ -163,8 +140,8 @@ class AnalyticsRepository:
         if not hashes:
             return {}
         marks = ",".join("?" * len(hashes))
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 f"SELECT hash, task_name, kind FROM task_profiles WHERE hash IN ({marks})",
                 tuple(hashes),
             ).fetchall()
@@ -192,8 +169,8 @@ class AnalyticsRepository:
         # variable limit (999 by default on older builds).
         for chunk in _chunks(run_ids, 400):
             marks = ",".join("?" * len(chunk))
-            with self._db.lock:
-                rows = self._db.conn.execute(
+            with self._db.read() as q:
+                rows = q.execute(
                     f"SELECT * FROM run_metrics_cache WHERE run_id IN ({marks}){same_version}",
                     (*chunk, *tail),
                 ).fetchall()
@@ -232,6 +209,7 @@ class AnalyticsRepository:
         entries: list["AdoptedRun"],
         *,
         earlier_ids: dict[str, list[str]] | None = None,
+        tx: Tx | None = None,
     ) -> int:
         """Record adoptions in one transaction — same commit discipline as
         `store` — and return how many were written.
@@ -250,12 +228,12 @@ class AnalyticsRepository:
         """
         if not entries:
             return 0
-        with self._db.lock:
+        with self._db.write(tx) as unit:
             owners: dict[str, str] = {}
             for chunk in _chunks([entry.id for entry in entries], 400):
                 marks = ",".join("?" * len(chunk))
                 owners.update(
-                    self._db.conn.execute(
+                    unit.execute(
                         f"SELECT id, cohort_id FROM adopted_runs WHERE id IN ({marks})",
                         tuple(chunk),
                     ).fetchall()
@@ -272,7 +250,7 @@ class AnalyticsRepository:
             entries = ours
             if not entries:
                 return 0
-            self._db.conn.executemany(
+            unit.executemany(
                 "INSERT OR REPLACE INTO adopted_runs"
                 " (id, cohort_id, animal_id, file_path, prefix_name,"
                 "  session_number, date, started_at, sketch_name, sketch_path,"
@@ -297,12 +275,12 @@ class AnalyticsRepository:
                     for entry in entries
                 ],
             )
-            self._move_rulings(entries, earlier_ids or {})
-            self._db.conn.commit()
+            self._move_rulings(unit, entries, earlier_ids or {})
         return len(entries)
 
+    @staticmethod
     def _move_rulings(
-        self, entries: list["AdoptedRun"], earlier_ids: dict[str, list[str]]
+        unit: Tx, entries: list["AdoptedRun"], earlier_ids: dict[str, list[str]]
     ) -> None:
         """Move a ruling left on an id no row holds any more onto the entry
         that now holds its run (`DATA.md#false-starts`). Inside
@@ -312,7 +290,7 @@ class AnalyticsRepository:
         moves. Never one a row still holds, and never over a ruling the entry
         already has (`UPDATE OR IGNORE`).
         """
-        conn = self._db.conn
+        conn = unit
         for entry in entries:
             for earlier in earlier_ids.get(entry.id, []):
                 if earlier == entry.id:
@@ -329,15 +307,15 @@ class AnalyticsRepository:
                     break
 
     def adopted_for_cohort(self, cohort_id: str) -> list["AdoptedRun"]:
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT * FROM adopted_runs WHERE cohort_id = ?"
                 " ORDER BY date, started_at, file_path",
                 (cohort_id,),
             ).fetchall()
         return [_hydrate_adopted(row) for row in rows]
 
-    def delete_adopted(self, ids: list[str]) -> int:
+    def delete_adopted(self, ids: list[str], *, tx: Tx | None = None) -> int:
         """Drop adoptions whose files the disk no longer has (`DATA.md#pruning`).
 
         Safe in a way pruning a *recorded* run is not: an adopted row holds
@@ -348,17 +326,16 @@ class AnalyticsRepository:
         if not ids:
             return 0
         removed = 0
-        with self._db.lock:
+        with self._db.write(tx) as unit:
             for chunk in _chunks(ids, 400):
                 marks = ",".join("?" * len(chunk))
-                cursor = self._db.conn.execute(
+                cursor = unit.execute(
                     f"DELETE FROM adopted_runs WHERE id IN ({marks})", tuple(chunk)
                 )
                 removed += cursor.rowcount
-            self._db.conn.commit()
         return removed
 
-    def forget_cached(self, run_ids: list[str]) -> None:
+    def forget_cached(self, run_ids: list[str], *, tx: Tx | None = None) -> None:
         """Drop cached summaries for runs that no longer exist.
 
         The cache is what actually *serves* a deleted session's numbers: a
@@ -369,18 +346,17 @@ class AnalyticsRepository:
         """
         if not run_ids:
             return
-        with self._db.lock:
+        with self._db.write(tx) as unit:
             for chunk in _chunks(run_ids, 400):
                 marks = ",".join("?" * len(chunk))
-                self._db.conn.execute(
+                unit.execute(
                     f"DELETE FROM run_metrics_cache WHERE run_id IN ({marks})",
                     tuple(chunk),
                 )
-            self._db.conn.commit()
 
     def adopted_by_id(self, run_id: str) -> "AdoptedRun | None":
-        with self._db.lock:
-            row = self._db.conn.execute(
+        with self._db.read() as q:
+            row = q.execute(
                 "SELECT * FROM adopted_runs WHERE id = ?", (run_id,)
             ).fetchone()
         return _hydrate_adopted(row) if row is not None else None

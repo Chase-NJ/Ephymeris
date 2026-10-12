@@ -61,7 +61,7 @@ def test_a_unit_commits_when_it_ends(db: Database) -> None:
         add_prefix(tx, "b")
         assert prefixes(db) == [], "nothing is visible until the unit ends"
     assert prefixes(db) == ["a", "b"]
-    assert not db.conn.in_transaction
+    assert not db.in_transaction
 
 
 def test_a_unit_that_raises_leaves_nothing_behind(db: Database) -> None:
@@ -70,36 +70,116 @@ def test_a_unit_that_raises_leaves_nothing_behind(db: Database) -> None:
             add_prefix(tx, "a")
             raise RuntimeError("boom")
     assert prefixes(db) == []
-    assert not db.conn.in_transaction
+    assert not db.in_transaction
 
 
 def test_a_rollback_undoes_only_its_own_work(db: Database) -> None:
-    """B14's guarantee. A profile the indexing pass remembered and has not
-    committed yet (`AnalyticsRepository.remember_profile` without a unit,
-    until that pass gets one) survives another writer's failed unit."""
-    profiles = AnalyticsRepository(db)
-    digest = profiles.remember_profile(parse_profile({"taskName": "Pending"}))
+    """B14's guarantee: a writer's failed unit leaves another's committed
+    unit alone."""
+    digest = AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Kept"}))
 
     with pytest.raises(sqlite3.IntegrityError):
         with db.write() as tx:
             add_prefix(tx, "a")
             add_prefix(tx, "a")  # the name is unique
 
-    profiles.flush()
     assert prefixes(db) == []
     assert committed(db, "SELECT hash FROM task_profiles") == [(digest,)]
 
 
-def test_a_unit_that_commits_over_a_write_left_open_makes_both_durable(db: Database) -> None:
-    """As any commit on the one connection does, and it says so."""
-    digest = AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Pending"}))
+def leave_a_write_open(db: Database) -> None:
+    """A write begun outside any unit of work, as only a bug could now."""
+    db._conn.execute("BEGIN")
+    db._conn.execute("INSERT INTO prefixes (id, name) VALUES ('open', 'open')")
+
+
+def test_a_unit_never_adopts_a_write_left_open(db: Database) -> None:
+    """Its rows are not the unit's to commit or roll back: refused, loudly."""
+    leave_a_write_open(db)
     seen = commits_of(db)
+    with pytest.raises(WriteInProgress):
+        with db.write() as tx:
+            add_prefix(tx, "a")
+    db._conn.execute("ROLLBACK")
+    assert prefixes(db) == []
+    assert seen == []
+
+
+def test_a_unit_sqlite_rolled_back_writes_nothing_more(db: Database) -> None:
+    """A statement SQLite answers by rolling the whole transaction back (as a
+    full disk, an I/O error or an interrupt may) ends the unit. Were the
+    statements after it, once caught, to run anyway, each would commit on its
+    own -- half a unit, durable, announced to nobody. Here a TEMP trigger
+    stands in for the full disk."""
+    with db.write() as tx:
+        tx.execute(
+            "CREATE TEMP TRIGGER disk_full BEFORE INSERT ON prefixes WHEN NEW.name = 'full'"
+            " BEGIN SELECT RAISE(ROLLBACK, 'disk full'); END"
+        )
+    seen = commits_of(db)
+
+    with pytest.raises(Exception) as caught:
+        with db.write() as tx:
+            add_prefix(tx, "before")
+            with pytest.raises(sqlite3.DatabaseError, match="disk full"):
+                add_prefix(tx, "full")
+            add_prefix(tx, "after")  # caught above, as a caller may
+
+    assert prefixes(db) == [], "nothing of the unit is durable"
+    assert seen == []
+    assert not db.in_transaction
+    assert type(caught.value).__name__ == "TransactionAborted", caught.value
+
+
+# --- no transaction open while the lock is free (#55) -----------------------
+
+
+def test_a_read_cannot_write(db: Database) -> None:
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        with db.read() as q:
+            add_prefix(q, "a")
+    assert prefixes(db) == []
+    assert not db.in_transaction
+    with db.write() as tx:  # and writes still work after it
+        add_prefix(tx, "b")
+    assert prefixes(db) == ["b"]
+
+
+def test_a_read_that_begins_a_transaction_is_rolled_back_and_refused(db: Database) -> None:
+    with pytest.raises(WriteInProgress):
+        with db.read() as q:
+            q.execute("BEGIN")
+    assert not db.in_transaction
+
+
+def test_no_path_leaves_a_transaction_open_when_the_lock_is_free(
+    db: Database, tmp_path: Path
+) -> None:
+    """#55's invariant across the ways in: a unit that commits, one that
+    raises, a joined method that raises, a read, and every repository write
+    a finalization and a scoring pass make."""
+    from ephymeris_sidecar.sessions.models import PrefixNameTaken
+    from ephymeris_sidecar.sessions.repository import SessionRepository
+
+    def free_and_closed() -> bool:
+        return not db._lock.locked() and not db.in_transaction
+
     with db.write() as tx:
         add_prefix(tx, "a")
-    assert prefixes(db) == ["a"]
-    assert committed(db, "SELECT hash FROM task_profiles") == [(digest,)]
-    assert seen == [1]
-    assert not db.conn.in_transaction
+    assert free_and_closed()
+    with pytest.raises(RuntimeError):
+        with db.write() as tx:
+            add_prefix(tx, "b")
+            raise RuntimeError
+    assert free_and_closed()
+    with pytest.raises(PrefixNameTaken):
+        SessionRepository(db).create_prefix("a")
+    assert free_and_closed()
+    with db.read() as q:
+        q.execute("SELECT * FROM prefixes").fetchall()
+    assert free_and_closed()
+    AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "T"}))
+    assert free_and_closed()
 
 
 # --- one unit, shared ---------------------------------------------------------
@@ -168,9 +248,9 @@ def test_a_read_inside_a_unit_sees_the_units_own_rows(db: Database) -> None:
 
 def test_a_read_holds_the_lock(db: Database) -> None:
     with db.read() as q:
-        assert db.lock.locked()
+        assert db._lock.locked()
         q.execute("SELECT 1")
-    assert not db.lock.locked()
+    assert not db._lock.locked()
 
 
 # --- what commits announce (DATA.md#the-database-copy) ------------------------
@@ -211,7 +291,7 @@ def test_a_units_own_follow_up_runs_once_after_the_lock_is_free(db: Database) ->
     ran: list[list[str]] = []
 
     def follow_up() -> None:
-        assert not db.lock.locked()
+        assert not db._lock.locked()
         with db.read() as q:  # free to use the database
             ran.append([r[0] for r in q.execute("SELECT name FROM prefixes")])
 
@@ -236,7 +316,7 @@ def test_a_snapshot_refuses_a_write_left_open_rather_than_waiting_on_it(
 ) -> None:
     """`Connection.backup` retries a busy source forever, and here it would
     do so holding the lock that every way out of the write needs (#55)."""
-    AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Pending"}))
+    leave_a_write_open(db)
     done = threading.Event()
     raised: list[BaseException] = []
 
@@ -249,7 +329,7 @@ def test_a_snapshot_refuses_a_write_left_open_rather_than_waiting_on_it(
 
     threading.Thread(target=snapshot, daemon=True).start()
     if not done.wait(3):
-        db.conn.rollback()  # free the stuck thread, which holds the lock
+        db._conn.execute("ROLLBACK")  # free the stuck thread, which holds the lock
         pytest.fail("the snapshot waited on the open write")
     assert len(raised) == 1 and isinstance(raised[0], WriteInProgress)
 

@@ -18,11 +18,11 @@ import asyncio
 import json
 import logging
 import sqlite3
+import threading
 from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics.repository import AnalyticsRepository
 from ephymeris_sidecar.backup.manager import (
     DB_MIRROR_NAME,
     DB_SNAPSHOT_DIR,
@@ -349,52 +349,97 @@ async def test_the_database_backup_is_debounced(db: Database, tmp_path: Path) ->
     assert not (tmp_path / "mirror" / DB_MIRROR_NAME).exists()
 
 
+def leave_a_write_open(db: Database) -> None:
+    """A write begun outside any unit of work. No code path does this
+    (`DATA.md#transactions`); the backup's guard against it is for a bug."""
+    db._conn.execute("BEGIN")
+    db._conn.execute("INSERT INTO prefixes (id, name) VALUES ('open', 'open')")
+
+
+def end_the_open_write(db: Database, how: str) -> None:
+    db._conn.execute(how)
+
+
+def mirrored(mirror: Path) -> list[str]:
+    conn = sqlite3.connect(mirror / DB_MIRROR_NAME)
+    try:
+        return sorted(row[0] for row in conn.execute("SELECT name FROM prefixes"))
+    finally:
+        conn.close()
+
+
 @pytest.mark.asyncio
-async def test_a_due_database_backup_never_waits_on_a_write_left_open(
+async def test_a_due_database_backup_waits_for_a_unit_of_work_and_copies_it_whole(
     db: Database, tmp_path: Path
 ) -> None:
-    """A backup that falls due while a write is open on the connection must
-    still finish its pass, and copy the database once the write has ended
-    (`DATA.md#the-database-copy`, #55).
+    """A backup that falls due while a unit of work is open on another thread
+    waits for the unit to end, then copies what it committed (#55,
+    `DATA.md#the-database-copy`).
 
     The snapshot holds the database lock while SQLite's online backup copies
-    the file. If the shared connection has a write still open when it starts,
-    the backup reports busy and Python retries it forever -- with the lock
-    held, so the write can never be finished and every database call in the
-    app waits behind it: the next run record, every cohort read.
-
-    The open write here is the analytics indexing pass's: it remembers each
-    run's profile without committing, and commits with its cache rows at the
-    end of the job (`DATA.md#transactions`).
+    the file. A write left open on the shared connection outside the lock made
+    the backup report busy and Python retry it forever -- with the lock held,
+    so nothing could finish the write and every database call in the app
+    waited behind it. A unit of work holds the lock from BEGIN to COMMIT, so
+    the snapshot can only ever see a connection with no write open.
     """
     manager = make_manager(db, [], db_debounce=0.0)
     db.on_commit(manager.mark_db_dirty)
     mirror = tmp_path / "mirror"
     await manager.configure(str(mirror))
     await manager._pass()
-
     SessionRepository(db).create_prefix("x")  # due: a commit, no quiet period
-    profiles = AnalyticsRepository(db)
-    digest = profiles.remember_profile(parse_profile({"taskName": "Snapshot me"}))
+
+    inside, may_commit = threading.Event(), threading.Event()
+
+    def unit() -> None:
+        with db.write() as tx:
+            tx.execute("INSERT INTO prefixes (id, name) VALUES ('y', 'y')")
+            inside.set()
+            may_commit.wait(5)
+
+    writer = threading.Thread(target=unit)
+    writer.start()
+    assert inside.wait(5)
+    passing = asyncio.create_task(manager._pass())
+    await asyncio.sleep(0.2)
+    assert not passing.done(), "the snapshot waits for the unit"
+    may_commit.set()
+    try:
+        await asyncio.wait_for(passing, timeout=3.0)
+    finally:
+        writer.join(5)
+
+    assert mirrored(mirror) == ["x", "y"]
+    assert manager.status()["state"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_a_backup_meeting_a_write_left_open_defers_rather_than_waits(
+    db: Database, tmp_path: Path
+) -> None:
+    """The guard behind the invariant: were a write ever left open outside a
+    unit, the pass finishes and is not a failure, and the copy lands once the
+    write has ended (`DATA.md#the-database-copy`)."""
+    manager = make_manager(db, [], db_debounce=0.0)
+    db.on_commit(manager.mark_db_dirty)
+    mirror = tmp_path / "mirror"
+    await manager.configure(str(mirror))
+    await manager._pass()
+    SessionRepository(db).create_prefix("x")
+    leave_a_write_open(db)
 
     try:
         await asyncio.wait_for(manager._pass(), timeout=3.0)
     except asyncio.TimeoutError:
         # Free the stuck backup thread (it holds the lock) before failing.
-        db.conn.rollback()
+        end_the_open_write(db, "ROLLBACK")
         pytest.fail("the database backup waited forever on a write left open")
     assert manager.status()["state"] == "ok", "a deferred copy is not a failed one"
 
-    profiles.flush()  # the indexing pass ends, and commits
+    end_the_open_write(db, "COMMIT")
     await manager._pass()
-
-    conn = sqlite3.connect(mirror / DB_MIRROR_NAME)
-    try:
-        names = [row[0] for row in conn.execute("SELECT name FROM prefixes")]
-        hashes = [row[0] for row in conn.execute("SELECT hash FROM task_profiles")]
-    finally:
-        conn.close()
-    assert (names, hashes) == (["x"], [digest]), "copied once the write ended"
+    assert mirrored(mirror) == ["open", "x"], "copied once the write ended"
 
 
 @pytest.mark.asyncio
@@ -411,19 +456,12 @@ async def test_a_deferred_copy_keeps_the_database_marked_until_it_is_made(
     await manager._pass()
 
     SessionRepository(db).create_prefix("x")
-    AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Abandoned"}))
+    leave_a_write_open(db)
     await asyncio.wait_for(manager._pass(), timeout=3.0)  # deferred
 
-    db.conn.rollback()  # the write ends without a commit: no hook
+    end_the_open_write(db, "ROLLBACK")  # no hook
     await manager._pass()
-
-    conn = sqlite3.connect(mirror / DB_MIRROR_NAME)
-    try:
-        names = [row[0] for row in conn.execute("SELECT name FROM prefixes")]
-        hashes = [row[0] for row in conn.execute("SELECT hash FROM task_profiles")]
-    finally:
-        conn.close()
-    assert (names, hashes) == (["x"], [])
+    assert mirrored(mirror) == ["x"]
 
 
 @pytest.mark.asyncio
@@ -437,14 +475,14 @@ async def test_a_copy_deferred_too_long_is_warned_about_once(
     await manager.configure(str(tmp_path / "mirror"))
     await manager._pass()
     SessionRepository(db).create_prefix("x")
-    AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Abandoned"}))
+    leave_a_write_open(db)
 
     with caplog.at_level(logging.WARNING, logger="ephymeris_sidecar.backup.manager"):
         await manager._pass()
         await manager._pass()
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1 and "deferred" in warnings[0].getMessage()
-    db.conn.rollback()
+    end_the_open_write(db, "ROLLBACK")
 
 
 @pytest.mark.asyncio
@@ -456,14 +494,14 @@ async def test_a_sync_now_that_meets_an_open_write_says_the_database_was_not_cop
     deferred as done (`DATA.md#the-database-copy`)."""
     manager = make_manager(db, [], db_debounce=3600.0)
     await manager.configure(str(tmp_path / "mirror"))
-    AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Pending"}))
+    leave_a_write_open(db)
 
     result = await asyncio.wait_for(manager.sync_now(), timeout=3.0)
 
     assert result["failed"] == 1
     assert DB_MIRROR_NAME in result["errors"][0]
     assert manager.status()["state"] == "failed"
-    db.conn.rollback()
+    end_the_open_write(db, "ROLLBACK")
 
 
 @pytest.mark.asyncio

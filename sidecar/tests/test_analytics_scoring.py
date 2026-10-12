@@ -27,7 +27,7 @@ from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.rig import registry
 from ephymeris_sidecar.rig.registry import Vocabulary
 from ephymeris_sidecar.tasks import profile as task_profile
-from tests.conftest import rewrite_keeping_stat
+from tests.conftest import rewrite_keeping_stat, statements
 from tests.test_analytics_service import GRGL, HIT_1, HIT_3, MISS_1, Rig
 
 
@@ -57,8 +57,7 @@ def _a_canary_per_test():
 
 
 def _profile_rows(db: Database) -> int:
-    with db.lock:
-        return db.conn.execute("SELECT COUNT(*) FROM task_profiles").fetchone()[0]
+    return statements(db).execute("SELECT COUNT(*) FROM task_profiles").fetchone()[0]
 
 
 # --- persist=False ----------------------------------------------------------
@@ -81,7 +80,7 @@ async def test_a_read_only_series_writes_no_task_profile(rig: Rig) -> None:
 
     assert payload["series"][0]["metrics"], "the run decoded from today's task.json"
     assert _profile_rows(rig.db) == before
-    assert not rig.db.conn.in_transaction
+    assert not rig.db.in_transaction
 
 
 async def test_a_pass_commits_its_profiles_and_rows_once(rig: Rig) -> None:
@@ -98,11 +97,11 @@ async def test_a_pass_commits_its_profiles_and_rows_once(rig: Rig) -> None:
     await rig.service.summary(rig.cohort.id)
     assert len(announced) == 1
     assert _profile_rows(rig.db) == 1, "the task.json the runs decoded with"
-    assert not rig.db.conn.in_transaction
+    assert not rig.db.in_transaction
 
     await rig.service.summary(rig.cohort.id)
     assert len(announced) == 1, "an all-hit pass changed nothing"
-    assert not rig.db.conn.in_transaction
+    assert not rig.db.in_transaction
 
 
 # --- series off the event loop ----------------------------------------------
@@ -229,11 +228,10 @@ async def test_a_relaunch_with_nothing_changed_keeps_every_warm_row(rig: Rig) ->
     _carry_profile(Path(rig.sessions.runs_for(other)[0].file_path), TUNED, odor_poke_hold=10)
     inferred = rig.add_session("3", "2026-07-24")
     blind = rig.add_run(inferred, "a2", (HIT_1 + HIT_3) * 12, snapshot=False)
-    with rig.db.lock:  # recorded with no sketch at all: nothing to resolve
-        rig.db.conn.execute(
-            "UPDATE session_animal_runs SET sketch_path = '' WHERE id = ?", (blind,)
-        )
-        rig.db.conn.commit()
+    # Recorded with no sketch at all: nothing to resolve.
+    statements(rig.db).execute(
+        "UPDATE session_animal_runs SET sketch_path = '' WHERE id = ?", (blind,)
+    )
     first = await rig.service.summary(rig.cohort.id)
     assert sorted(r["profileSource"] for r in first["runs"]) == [
         "inferred", "sketch-current", "snapshot", "snapshot",

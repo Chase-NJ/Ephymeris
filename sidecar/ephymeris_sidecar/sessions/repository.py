@@ -1,7 +1,8 @@
 """Prefix and session persistence — `DATA.md#sessions-and-runs`.
 
-Synchronous; callers wrap in `asyncio.to_thread`. Shares the cohort database
-and its lock, so a session write is atomic against a concurrent cohort edit.
+Synchronous; callers wrap in `asyncio.to_thread`. Shares the cohort database.
+Each write method is its own unit of work, or joins the caller's when given
+`tx` (`DATA.md#transactions`).
 """
 
 from __future__ import annotations
@@ -99,38 +100,35 @@ class SessionRepository:
     # --- prefixes ---------------------------------------------------------
 
     def list_prefixes(self) -> list[Prefix]:
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT * FROM prefixes ORDER BY name COLLATE NOCASE"
             ).fetchall()
         return [Prefix(id=r["id"], name=r["name"]) for r in rows]
 
-    def create_prefix(self, name: str) -> Prefix:
+    def create_prefix(self, name: str, *, tx: Tx | None = None) -> Prefix:
         clean = (name or "").strip()
         if not clean:
             raise PrefixNameTaken("A prefix needs a name.")
         prefix = Prefix(id=_new_id(), name=clean)
-        with self._db.lock:
-            try:
-                self._db.conn.execute(
+        try:
+            with self._db.write(tx) as unit:
+                unit.execute(
                     "INSERT INTO prefixes (id, name) VALUES (?, ?)",
                     (prefix.id, prefix.name),
                 )
-                self._db.conn.commit()
-            except sqlite3.IntegrityError as exc:
-                self._db.conn.rollback()
-                raise PrefixNameTaken(clean) from exc
+        except sqlite3.IntegrityError as exc:
+            raise PrefixNameTaken(clean) from exc
         return prefix
 
-    def delete_prefix(self, prefix_id: str) -> None:
+    def delete_prefix(self, prefix_id: str, *, tx: Tx | None = None) -> None:
         """Non-destructive on disk — only removes the dropdown entry (`DATA.md#prefixes`)."""
-        with self._db.lock:
-            self._db.conn.execute("DELETE FROM prefixes WHERE id = ?", (prefix_id,))
-            self._db.conn.commit()
+        with self._db.write(tx) as unit:
+            unit.execute("DELETE FROM prefixes WHERE id = ?", (prefix_id,))
 
     def get_prefix(self, prefix_id: str) -> Prefix | None:
-        with self._db.lock:
-            row = self._db.conn.execute(
+        with self._db.read() as q:
+            row = q.execute(
                 "SELECT * FROM prefixes WHERE id = ?", (prefix_id,)
             ).fetchone()
         return None if row is None else Prefix(id=row["id"], name=row["name"])
@@ -144,8 +142,8 @@ class SessionRepository:
         text (`DATA.md#session-records`), so non-numeric values are simply ignored here. Aborted
         sessions never wrote data, so they don't claim their number.
         """
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT session_number FROM sessions"
                 " WHERE prefix_id = ? AND status != 'aborted'",
                 (prefix_id,),
@@ -167,8 +165,8 @@ class SessionRepository:
         sessions are excluded: they wrote nothing, so there is no folder the
         warning could truthfully be about.
         """
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT session_number FROM sessions"
                 " WHERE prefix_id = ? AND date = ? AND status != 'aborted'",
                 (prefix_id, date),
@@ -186,6 +184,7 @@ class SessionRepository:
         folder_path: str,
         duration_minutes: int | None = None,
         recording: bool = False,
+        tx: Tx | None = None,
     ) -> Session:
         session = Session(
             id=_new_id(),
@@ -200,8 +199,8 @@ class SessionRepository:
             duration_minutes=duration_minutes,
             recording={"runs": []} if recording else None,
         )
-        with self._db.lock:
-            self._db.conn.execute(
+        with self._db.write(tx) as unit:
+            unit.execute(
                 "INSERT INTO sessions"
                 " (id, cohort_id, prefix_id, prefix_name, session_number, date,"
                 "  started_at, ended_at, status, folder_path, group_runs,"
@@ -223,45 +222,47 @@ class SessionRepository:
                     json.dumps(session.recording) if session.recording is not None else None,
                 ),
             )
-            self._db.conn.commit()
         return session
 
     def get_session(self, session_id: str) -> Session:
-        with self._db.lock:
-            row = self._db.conn.execute(
+        with self._db.read() as q:
+            row = q.execute(
                 "SELECT * FROM sessions WHERE id = ?", (session_id,)
             ).fetchone()
         if row is None:
             raise SessionNotFound(session_id)
         return self._hydrate(row)
 
-    def set_status(self, session_id: str, status: SessionStatus) -> Session:
+    def set_status(
+        self, session_id: str, status: SessionStatus, *, tx: Tx | None = None
+    ) -> Session:
         ended = self._now() if status in ("completed", "aborted") else None
-        with self._db.lock:
-            self._db.conn.execute(
+        with self._db.write(tx) as unit:
+            unit.execute(
                 "UPDATE sessions SET status = ?,"
                 " ended_at = COALESCE(?, ended_at) WHERE id = ?",
                 (status, ended, session_id),
             )
-            self._db.conn.commit()
         return self.get_session(session_id)
 
-    def set_group_runs(self, session_id: str, runs: list[GroupRun]) -> Session:
-        with self._db.lock:
-            self._db.conn.execute(
+    def set_group_runs(
+        self, session_id: str, runs: list[GroupRun], *, tx: Tx | None = None
+    ) -> Session:
+        with self._db.write(tx) as unit:
+            unit.execute(
                 "UPDATE sessions SET group_runs = ? WHERE id = ?",
                 (json.dumps([r.to_json() for r in runs]), session_id),
             )
-            self._db.conn.commit()
         return self.get_session(session_id)
 
-    def set_recording(self, session_id: str, recording: dict[str, Any]) -> Session:
-        with self._db.lock:
-            self._db.conn.execute(
+    def set_recording(
+        self, session_id: str, recording: dict[str, Any], *, tx: Tx | None = None
+    ) -> Session:
+        with self._db.write(tx) as unit:
+            unit.execute(
                 "UPDATE sessions SET recording_json = ? WHERE id = ?",
                 (json.dumps(recording), session_id),
             )
-            self._db.conn.commit()
         return self.get_session(session_id)
 
     # --- animal runs (written at finalization) ----------------------------
@@ -305,22 +306,21 @@ class SessionRepository:
     # Here that is inverted and holds all the same — the data is already gone,
     # and the record is what's left over.
 
-    def delete_runs(self, run_ids: list[str]) -> int:
+    def delete_runs(self, run_ids: list[str], *, tx: Tx | None = None) -> int:
         if not run_ids:
             return 0
         removed = 0
-        with self._db.lock:
+        with self._db.write(tx) as unit:
             for chunk in _id_chunks(run_ids):
                 marks = ",".join("?" * len(chunk))
-                cursor = self._db.conn.execute(
+                cursor = unit.execute(
                     f"DELETE FROM session_animal_runs WHERE id IN ({marks})",
                     tuple(chunk),
                 )
                 removed += cursor.rowcount
-            self._db.conn.commit()
         return removed
 
-    def delete_sessions(self, session_ids: list[str]) -> int:
+    def delete_sessions(self, session_ids: list[str], *, tx: Tx | None = None) -> int:
         """Drop session rows. The caller decides which; this only enforces the
         one rule no caller may override — **a session that is still open is
         never deleted.** `configuring` and `running` describe a session the
@@ -329,22 +329,29 @@ class SessionRepository:
         if not session_ids:
             return 0
         removed = 0
-        with self._db.lock:
+        with self._db.write(tx) as unit:
             for chunk in _id_chunks(session_ids):
                 marks = ",".join("?" * len(chunk))
-                cursor = self._db.conn.execute(
+                cursor = unit.execute(
                     f"DELETE FROM sessions WHERE id IN ({marks})"
                     " AND status NOT IN ('configuring', 'running')",
                     tuple(chunk),
                 )
                 removed += cursor.rowcount
-                _forget_resolutions_in(self._db.conn, chunk)
-            self._db.conn.commit()
+                _forget_resolutions_in(unit, chunk)
         return removed
 
+    def run(self, run_id: str) -> SessionAnimalRun | None:
+        """One recorded run by id, or None."""
+        with self._db.read() as q:
+            row = q.execute(
+                "SELECT * FROM session_animal_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        return None if row is None else _hydrate_run(row)
+
     def runs_for(self, session_id: str) -> list[SessionAnimalRun]:
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT * FROM session_animal_runs WHERE session_id = ? ORDER BY started_at",
                 (session_id,),
             ).fetchall()
@@ -357,8 +364,8 @@ class SessionRepository:
         single `analytics.summary` payload, and per-session calls would mean a
         round trip per session.
         """
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT r.* FROM session_animal_runs r"
                 " JOIN sessions s ON s.id = r.session_id"
                 " WHERE s.cohort_id = ?"
@@ -382,8 +389,8 @@ class SessionRepository:
         animal failed.
         """
         clause = "" if include_aborted else " AND status != 'aborted'"
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 f"SELECT * FROM sessions WHERE cohort_id = ?{clause}"
                 " ORDER BY date, started_at",
                 (cohort_id,),
@@ -396,16 +403,16 @@ class SessionRepository:
         unlike `list_sessions`, because the caller by definition doesn't know
         a cohort id yet.
         """
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT * FROM sessions WHERE status IN ('configuring', 'running')"
                 " ORDER BY date, started_at"
             ).fetchall()
         return [self._hydrate(row) for row in rows]
 
     def run_counts_by_session(self, cohort_id: str) -> dict[str, int]:
-        with self._db.lock:
-            rows = self._db.conn.execute(
+        with self._db.read() as q:
+            rows = q.execute(
                 "SELECT r.session_id AS sid, COUNT(*) AS n FROM session_animal_runs r"
                 " JOIN sessions s ON s.id = r.session_id"
                 " WHERE s.cohort_id = ? GROUP BY r.session_id",
@@ -431,6 +438,7 @@ class SessionRepository:
         started_at: str,
         ended_at: str | None,
         status: SessionStatus,
+        tx: Tx | None = None,
     ) -> Session:
         """Fold `absorb_ids` into `keep_id` in one transaction.
 
@@ -444,75 +452,69 @@ class SessionRepository:
         kept one, and the records' operator and summary fields are merged —
         before the absorbed rows go, since their log rows cascade with them.
         """
-        with self._db.lock:
-            conn = self._db.conn
-            try:
-                logs = {
-                    row["session_id"]: SessionLog(
-                        session_id=row["session_id"],
-                        operator=row["operator"],
-                        summary=row["summary"],
-                        updated_at=row["updated_at"],
-                    )
-                    for chunk in _id_chunks([keep_id, *absorb_ids])
-                    for row in conn.execute(
-                        "SELECT * FROM session_logs WHERE session_id IN"
-                        f" ({','.join('?' * len(chunk))})",
-                        tuple(chunk),
-                    ).fetchall()
-                }
-                merged_log = merge_logs(
-                    keep_id, [logs[sid] for sid in [keep_id, *absorb_ids] if sid in logs]
+        with self._db.write(tx) as conn:
+            logs = {
+                row["session_id"]: SessionLog(
+                    session_id=row["session_id"],
+                    operator=row["operator"],
+                    summary=row["summary"],
+                    updated_at=row["updated_at"],
                 )
-                for chunk in _id_chunks(absorb_ids):
-                    marks = ",".join("?" * len(chunk))
-                    conn.execute(
-                        f"UPDATE session_animal_runs SET session_id = ?"
-                        f" WHERE session_id IN ({marks})",
-                        (keep_id, *chunk),
-                    )
-                    conn.execute(
-                        f"UPDATE session_notes SET session_id = ? WHERE session_id IN ({marks})",
-                        (keep_id, *chunk),
-                    )
-                    conn.execute(
-                        "UPDATE session_notes SET resolved_in_session = ?"
-                        f" WHERE resolved_in_session IN ({marks})",
-                        (keep_id, *chunk),
-                    )
-                    conn.execute(f"DELETE FROM sessions WHERE id IN ({marks})", tuple(chunk))
-                if merged_log is not None:
-                    conn.execute(
-                        "INSERT INTO session_logs (session_id, operator, summary, updated_at)"
-                        " VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET"
-                        " operator = excluded.operator, summary = excluded.summary,"
-                        " updated_at = excluded.updated_at",
-                        (
-                            keep_id,
-                            merged_log.operator,
-                            merged_log.summary,
-                            merged_log.updated_at or self._now(),
-                        ),
-                    )
+                for chunk in _id_chunks([keep_id, *absorb_ids])
+                for row in conn.execute(
+                    "SELECT * FROM session_logs WHERE session_id IN"
+                    f" ({','.join('?' * len(chunk))})",
+                    tuple(chunk),
+                ).fetchall()
+            }
+            merged_log = merge_logs(
+                keep_id, [logs[sid] for sid in [keep_id, *absorb_ids] if sid in logs]
+            )
+            for chunk in _id_chunks(absorb_ids):
+                marks = ",".join("?" * len(chunk))
                 conn.execute(
-                    "UPDATE sessions SET group_runs = ?, recording_json = ?,"
-                    " started_at = ?, ended_at = ?, status = ? WHERE id = ?",
+                    f"UPDATE session_animal_runs SET session_id = ?"
+                    f" WHERE session_id IN ({marks})",
+                    (keep_id, *chunk),
+                )
+                conn.execute(
+                    f"UPDATE session_notes SET session_id = ? WHERE session_id IN ({marks})",
+                    (keep_id, *chunk),
+                )
+                conn.execute(
+                    "UPDATE session_notes SET resolved_in_session = ?"
+                    f" WHERE resolved_in_session IN ({marks})",
+                    (keep_id, *chunk),
+                )
+                conn.execute(f"DELETE FROM sessions WHERE id IN ({marks})", tuple(chunk))
+            if merged_log is not None:
+                conn.execute(
+                    "INSERT INTO session_logs (session_id, operator, summary, updated_at)"
+                    " VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET"
+                    " operator = excluded.operator, summary = excluded.summary,"
+                    " updated_at = excluded.updated_at",
                     (
-                        json.dumps([r.to_json() for r in group_runs]),
-                        json.dumps(recording) if recording is not None else None,
-                        started_at,
-                        ended_at,
-                        status,
                         keep_id,
+                        merged_log.operator,
+                        merged_log.summary,
+                        merged_log.updated_at or self._now(),
                     ),
                 )
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
+            conn.execute(
+                "UPDATE sessions SET group_runs = ?, recording_json = ?,"
+                " started_at = ?, ended_at = ?, status = ? WHERE id = ?",
+                (
+                    json.dumps([r.to_json() for r in group_runs]),
+                    json.dumps(recording) if recording is not None else None,
+                    started_at,
+                    ended_at,
+                    status,
+                    keep_id,
+                ),
+            )
         return self.get_session(keep_id)
 
-    def discard_sessions(self, session_ids: list[str]) -> int:
+    def discard_sessions(self, session_ids: list[str], *, tx: Tx | None = None) -> int:
         """Delete records the tidy found empty — whatever their status.
 
         Unlike `delete_sessions` this does not refuse an open status: a
@@ -524,15 +526,14 @@ class SessionRepository:
         if not session_ids:
             return 0
         removed = 0
-        with self._db.lock:
+        with self._db.write(tx) as unit:
             for chunk in _id_chunks(session_ids):
                 marks = ",".join("?" * len(chunk))
-                cursor = self._db.conn.execute(
+                cursor = unit.execute(
                     f"DELETE FROM sessions WHERE id IN ({marks})", tuple(chunk)
                 )
                 removed += cursor.rowcount
-                _forget_resolutions_in(self._db.conn, chunk)
-            self._db.conn.commit()
+                _forget_resolutions_in(unit, chunk)
         return removed
 
     # --- internals --------------------------------------------------------

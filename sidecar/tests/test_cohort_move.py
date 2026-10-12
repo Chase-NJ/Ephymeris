@@ -24,7 +24,7 @@ from ephymeris_sidecar.logbook.models import SessionNote
 from ephymeris_sidecar.logbook.repository import LogbookRepository
 from ephymeris_sidecar.sessions.models import GroupRun, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
-from tests.conftest import fine_mtime
+from tests.conftest import fine_mtime, statements
 from tests.test_analytics_service import Changes, Lifecycle
 
 
@@ -270,8 +270,7 @@ def test_the_labs_split_is_repaired_from_its_files(lab: Lab) -> None:
     slow1. The dangling id is named from its files and joins B's animal."""
     # A state only an older app could leave, so it is written the way the
     # migration tests write old schemas: by hand.
-    lab.db.conn.execute("DELETE FROM animals WHERE id = 'slow1'")
-    lab.db.conn.commit()
+    statements(lab.db).execute("DELETE FROM animals WHERE id = 'slow1'")
     give_b(lab, "slow1", "b-slow")
     [former] = lab.cohorts.get(lab.a.id).former_animals
     assert (former.id, former.name, former.source) == ("slow1", "slow1", "files")
@@ -280,6 +279,94 @@ def test_the_labs_split_is_repaired_from_its_files(lab: Lab) -> None:
 
     assert lab.cohorts.get(lab.a.id).former_animals == []
     assert {a for a, _ in lab.runs(lab.b.id).values()} == {"b-slow"}
+
+
+TWICE_COPIED = "slow1_2O-Bdisc_9_2026-07-24_100003"
+
+
+def one_run_adopted_by_both(lab: Lab) -> AnalyticsRepository:
+    """#63's shape: one run of slow1 copied into A's folder and, at another
+    place, into B's; each cohort adopted it (`adopted:a`, `adopted:b`), and B
+    has its own slow1 the moved animal joins."""
+    from ephymeris_sidecar.analytics.repository import AdoptedRun
+
+    give_b(lab, "slow1", "b-slow")
+
+    def copy_of_the_run(root: Path, under: str) -> Path:
+        folder = root / under / "2O-Bdisc_9_2026-07-24" / "behavior.json"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{TWICE_COPIED}.json"
+        path.write_text(
+            json.dumps({"rat": "slow1", "sketch": "GRGL", "ts_data": [[101, 0], [249, 10]]}),
+            encoding="utf-8",
+        )
+        return path
+
+    def adoption(row_id: str, cohort_id: str, animal_id: str, path: Path) -> AdoptedRun:
+        return AdoptedRun(
+            id=row_id, cohort_id=cohort_id, animal_id=animal_id, file_path=str(path),
+            prefix_name="2O-Bdisc", session_number="9", date="2026-07-24",
+            started_at="2026-07-24T10:00:03", sketch_name="GRGL", sketch_path=None,
+        )
+
+    repo = AnalyticsRepository(lab.db)
+    repo.store_adopted(
+        [adoption("adopted:a", lab.a.id, "slow1", copy_of_the_run(lab.a_root, "2O-Bdisc"))]
+    )
+    repo.store_adopted(
+        [adoption("adopted:b", lab.b.id, "b-slow", copy_of_the_run(lab.b_root, "copies"))]
+    )
+    return repo
+
+
+def test_a_moved_adoption_joins_the_run_the_destination_already_holds(lab: Lab) -> None:
+    """#63. Moving the animal must leave the destination holding the run once
+    -- under its own row, which its scores are keyed by -- with the ruling
+    made in the source carried across, not two rows counting the run twice
+    (`DATA.md#moving-animals-between-cohorts`)."""
+    repo = one_run_adopted_by_both(lab)
+    repo.set_false_start("adopted:a", True)
+
+    lab.apply("slow1")
+
+    held = [
+        e.id for e in repo.adopted_for_cohort(lab.b.id)
+        if e.file_path.endswith(f"{TWICE_COPIED}.json")
+    ]
+    assert held == ["adopted:b"], "one row for the run, the destination's own"
+    assert repo.adopted_for_cohort(lab.a.id) == []
+    assert repo.false_start_overrides() == {"adopted:b": True}, "the ruling came with it"
+
+
+def test_the_destinations_own_ruling_on_a_joined_run_stands(lab: Lab) -> None:
+    """A ruling the destination already made on the run is its own decision;
+    the moved row's ruling does not overwrite it."""
+    repo = one_run_adopted_by_both(lab)
+    repo.set_false_start("adopted:a", True)
+    repo.set_false_start("adopted:b", False)
+
+    lab.apply("slow1")
+
+    assert repo.false_start_overrides() == {"adopted:b": False}
+
+
+def test_a_joined_runs_moved_scores_go_with_its_row(lab: Lab) -> None:
+    """The moved row's cached scores name an id no row holds any more; left,
+    they would sit in the cache nothing reads or prunes."""
+    repo = one_run_adopted_by_both(lab)
+    for run_id in ("adopted:a", "adopted:b"):
+        repo.store([
+            CachedRun(
+                run_id=run_id, status="ok", detail=None, profile_hash=None,
+                profile_source="snapshot", params_hash=None, config=None, summary={},
+                key=CacheKey(file_path=f"/{run_id}", mtime_ns=1, size=1, profile_hash=None,
+                             codec_version=1),
+            )
+        ])
+
+    lab.apply("slow1")
+
+    assert sorted(repo.load_cached(["adopted:a", "adopted:b"])) == ["adopted:b"]
 
 
 def test_a_former_member_moves_as_a_former_member(lab: Lab) -> None:
@@ -496,7 +583,7 @@ def test_a_crash_while_copying_is_undone_at_the_next_start(lab: Lab, power_cut) 
     assert lab.files(lab.b_root) == set()
     assert lab.files(lab.a_root) == before
     assert {a for a, _ in lab.runs(lab.a.id).values()} == {"remy1", "remy2", "slow1"}
-    [state] = lab.db.conn.execute("SELECT state FROM animal_moves").fetchone()
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
     assert state == "rolled-back"
 
 
@@ -525,7 +612,7 @@ def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
 
     unreachable_volume(lab.a_root)
     move_apply.resume(lab.db)
-    [state] = lab.db.conn.execute("SELECT state FROM animal_moves").fetchone()
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
     assert state == "committed"
 
     monkeypatch.undo()  # the share answers again (and every other fake goes)
@@ -534,7 +621,7 @@ def test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry(
     assert move_apply.resume(lab.db) == 1
 
     assert not any("slow1" in f for f in lab.files(lab.a_root))
-    [state] = lab.db.conn.execute("SELECT state FROM animal_moves").fetchone()
+    [state] = statements(lab.db).execute("SELECT state FROM animal_moves").fetchone()
     assert state == "done"
 
 

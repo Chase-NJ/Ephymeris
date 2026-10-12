@@ -275,14 +275,9 @@ class CohortArchive:
     def run(self, run_id: str) -> SessionAnimalRun | None:
         """One run, recorded or recovered, by id. A recovered run is filed
         under its synthetic session here, whoever owns it."""
-        with self._db.lock:
-            row = self._db.conn.execute(
-                "SELECT * FROM session_animal_runs WHERE id = ?", (run_id,)
-            ).fetchone()
-        if row is not None:
-            from ..sessions.repository import _hydrate_run
-
-            return _hydrate_run(row)
+        recorded = self._sessions.run(run_id)
+        if recorded is not None:
+            return recorded
         entry = self._repo.adopted_by_id(run_id)
         return _adopted_to_run(entry) if entry is not None else None
 

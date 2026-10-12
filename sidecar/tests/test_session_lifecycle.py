@@ -66,6 +66,10 @@ class FakeRunner:
     def running_boxes(self) -> list[int]:
         return sorted(self.running)
 
+    def writing_boxes(self) -> list[int]:
+        """The fake's runs finish the moment they end, so writing is running."""
+        return sorted(self.running)
+
     def start_box(self, box: int) -> None:
         if box not in self.configs:
             raise KeyError(box)
@@ -1330,6 +1334,14 @@ async def test_a_runner_starts_a_box_once(runner) -> None:  # noqa: ANN001
     runner.start_box(1)
     runner.start_box(1)
     assert runner.running_boxes() == [1]
+
+
+async def test_a_running_box_is_writing_until_its_run_is_ended(runner) -> None:  # noqa: ANN001
+    assert runner.writing_boxes() == []
+    runner.start_box(1)
+    assert runner.writing_boxes() == [1]
+    await runner.end_all("operator stop")
+    assert runner.writing_boxes() == []
 
 
 async def test_a_runner_will_not_forget_a_mapping_while_a_box_runs(runner) -> None:  # noqa: ANN001

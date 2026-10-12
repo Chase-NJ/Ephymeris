@@ -256,7 +256,7 @@ def recover_cohort(data_folder: str) -> dict[str, Any]:
     different answers.
     """
     folder_exists = Path(data_folder).expanduser().is_dir()
-    orphans = reader.walk_orphaned_tsvs(data_folder) if folder_exists else []
+    orphans = reader.walk_orphaned_tsvs(data_folder, parse_json=True) if folder_exists else []
     entries = [recover_file(path) for path in orphans]
     recovered = sum(1 for e in entries if e["status"] == "recovered")
     return {

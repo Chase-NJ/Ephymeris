@@ -356,12 +356,12 @@ def test_a_torn_json_is_offered_for_recovery_and_rebuilt(tmp_path: Path) -> None
     torn.parent.mkdir(parents=True, exist_ok=True)
     torn.write_text('{\n  "rat": "remy1",\n  "serial_po', encoding="utf-8")
 
-    assert reader.walk_orphaned_tsvs(tmp_path) == [tsv]
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == [tsv]
     result = recovery.recover_cohort(str(tmp_path))
 
     assert result["recovered"] == 1
     assert json.loads(torn.read_text(encoding="utf-8")) == finalized_document()
-    assert reader.walk_orphaned_tsvs(tmp_path) == []
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == []
 
 
 @pytest.mark.parametrize(("nth", "cut"), [(1, ".json"), (2, ".mat")])
@@ -386,7 +386,7 @@ def test_a_power_cut_while_finalizing_leaves_nothing_torn(
 
     assert _whole_or_absent(files.json)
     assert _whole_or_absent(files.mat)
-    assert reader.walk_orphaned_tsvs(tmp_path) == ([files.tsv] if cut == ".json" else [])
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == ([files.tsv] if cut == ".json" else [])
 
 
 def test_a_power_cut_while_recovering_leaves_the_run_offered(tmp_path: Path, power_cut) -> None:  # noqa: ANN001
@@ -396,7 +396,7 @@ def test_a_power_cut_while_recovering_leaves_the_run_offered(tmp_path: Path, pow
         recovery.recover_file(tsv)
 
     assert _whole_or_absent(reader.sibling_json(tsv))
-    assert reader.walk_orphaned_tsvs(tmp_path) == [tsv]
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == [tsv]
     assert recovery.recover_cohort(str(tmp_path))["recovered"] == 1
 
 

@@ -799,6 +799,41 @@ async def test_a_run_never_names_a_profile_another_writers_rollback_threw_away(
     )
 
 
+async def test_a_run_whose_profile_snapshot_aborts_the_unit_is_still_recorded_and_announced(
+    db: Database, tmp_path: Path
+) -> None:
+    """A profile snapshot SQLite answers by rolling the whole unit back (a
+    full disk, an I/O error) must not cost the run: it is recorded without a
+    snapshot, as any snapshot failure is, and the finalization goes on to
+    announce it (`DATA.md#transactions`). A TEMP trigger stands in for the
+    full disk."""
+    rig = Rig(db, tmp_path, profiles=AnalyticsRepository(db))
+    session = rig.session()
+    with db.write() as tx:
+        tx.execute(
+            "CREATE TEMP TRIGGER disk_full BEFORE INSERT ON task_profiles"
+            " BEGIN SELECT RAISE(ROLLBACK, 'disk full'); END"
+        )
+    commits: list[int] = []
+    db.on_commit(lambda: commits.append(1))
+    config = BoxConfig(
+        box=1, animal_id="C1-1", animal_name="remy1", sketch_path="/sk", sketch_name="sk",
+        start_command="START", config_metadata={},
+        profile=parse_profile({"taskName": "Snapshot me"}),
+    )
+    run = ActiveRun(
+        box=1, config=config, run_id="r-1", started_at="2026-10-10T10:00:00+00:00",
+        address="/dev/fake1", session_id_label="P1_12", session_id=session.id,
+    )
+
+    await rig.lifecycle.animal_ended(run, "end")
+
+    [recorded] = rig.sessions.runs_for(session.id)
+    assert recorded.profile_hash is None
+    assert rig.events[-1]["evt"] == "session.animalEnded"
+    assert commits == [1], "the record was announced to the backup"
+
+
 # --- groups on the fly (ARCHITECTURE.md#group-step) ----------------------------
 
 

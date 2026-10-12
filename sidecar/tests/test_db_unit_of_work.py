@@ -105,6 +105,32 @@ def test_a_unit_never_adopts_a_write_left_open(db: Database) -> None:
     assert seen == []
 
 
+def test_a_unit_sqlite_rolled_back_writes_nothing_more(db: Database) -> None:
+    """A statement SQLite answers by rolling the whole transaction back (as a
+    full disk, an I/O error or an interrupt may) ends the unit. Were the
+    statements after it, once caught, to run anyway, each would commit on its
+    own -- half a unit, durable, announced to nobody. Here a TEMP trigger
+    stands in for the full disk."""
+    with db.write() as tx:
+        tx.execute(
+            "CREATE TEMP TRIGGER disk_full BEFORE INSERT ON prefixes WHEN NEW.name = 'full'"
+            " BEGIN SELECT RAISE(ROLLBACK, 'disk full'); END"
+        )
+    seen = commits_of(db)
+
+    with pytest.raises(Exception) as caught:
+        with db.write() as tx:
+            add_prefix(tx, "before")
+            with pytest.raises(sqlite3.DatabaseError, match="disk full"):
+                add_prefix(tx, "full")
+            add_prefix(tx, "after")  # caught above, as a caller may
+
+    assert prefixes(db) == [], "nothing of the unit is durable"
+    assert seen == []
+    assert not db.in_transaction
+    assert type(caught.value).__name__ == "TransactionAborted", caught.value
+
+
 # --- no transaction open while the lock is free (#55) -----------------------
 
 

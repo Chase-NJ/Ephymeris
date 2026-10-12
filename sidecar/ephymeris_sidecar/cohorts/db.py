@@ -297,10 +297,11 @@ CREATE TABLE IF NOT EXISTS run_flags (
 -- `rat` name. Deliberately NOT a sessions or session_animal_runs row: a
 -- fabricated session row would corrupt session-number suggestion and the
 -- same-day reuse warning. The id is minted from the cohort and the run
--- identity and kept once stored, so re-running the rescan is idempotent. No foreign key on animal_id, same as
--- session_animal_runs — the roster is deleted and re-inserted wholesale on
--- every edit, and adoption storing the *id* is what makes an adopted run
--- survive the animal being renamed afterward.
+-- identity and kept once stored, so re-running the rescan is idempotent.
+-- No foreign key on animal_id, same as session_animal_runs — the roster is
+-- deleted and re-inserted wholesale on every edit, and adoption storing the
+-- *id* is what makes an adopted run survive the animal being renamed
+-- afterward.
 CREATE TABLE IF NOT EXISTS adopted_runs (
     id             TEXT PRIMARY KEY,
     cohort_id      TEXT NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,

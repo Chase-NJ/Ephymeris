@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, replace
-from typing import Awaitable, Callable
+from dataclasses import dataclass, field, replace
+from typing import Any, Awaitable, Callable
 
 from ..sessions.models import SessionAnimalRun
 from ..tasks import profile as task_profile
@@ -58,6 +58,45 @@ _ProfileMemo = dict[tuple[str, str, str], tuple[_Resolved, str]]
 Progress = Callable[[int, int], Awaitable[None]]
 
 
+@dataclass
+class _Pass:
+    """What one pass over runs shares, and nothing that outlives it.
+
+    `remember` collects the profiles the pass decoded with, by digest, for
+    `score` to write in the one transaction that ends the pass. `None` makes
+    the pass read-only — `decode`'s — so nothing is collected and nothing can
+    be written (`DATA.md#caching`).
+    """
+
+    memo: _ProfileMemo = field(default_factory=dict)
+    remember: dict[str, TaskProfile] | None = field(default_factory=dict)
+
+    def digest(self, profile: TaskProfile) -> str:
+        """The profile's content address, collected for writing if this pass
+        writes. Pure: the hash is computed, not looked up."""
+        digest = task_profile.profile_hash(profile)
+        if self.remember is not None:
+            self.remember.setdefault(digest, profile)
+        return digest
+
+
+@dataclass(frozen=True)
+class Decoded:
+    """One run read and decoded, for a chart (`DATA.md#learning-curves`).
+
+    `document` is None exactly when the file could not be read; `status` and
+    `detail` then say why. `profile`, `source` and `digest` are what `score`
+    would score the same file with.
+    """
+
+    status: str  # 'ok' | 'missing' | 'unreadable'
+    detail: str | None
+    document: dict[str, Any] | None
+    profile: TaskProfile | None
+    source: str
+    digest: str | None
+
+
 class RunScorer:
     def __init__(
         self,
@@ -94,7 +133,7 @@ class RunScorer:
         out: list[CachedRun] = []
         fresh: list[CachedRun] = []
         total = len(runs)
-        memo: _ProfileMemo = {}
+        pass_ = _Pass()
 
         if progress is not None:
             await progress(0, total)
@@ -102,7 +141,7 @@ class RunScorer:
         for start in range(0, total, INDEX_CHUNK):
             chunk = runs[start : start + INDEX_CHUNK]
             entries = await asyncio.to_thread(
-                self._score_chunk, chunk, cached, min_counted, memo
+                self._score_chunk, chunk, cached, min_counted, pass_
             )
             for run, entry in zip(chunk, entries):
                 if cached.get(run.id) is not entry:
@@ -117,23 +156,34 @@ class RunScorer:
                 emitted = done
                 await progress(done, total)
 
-        if fresh:
-            await asyncio.to_thread(self._repo.store, fresh)
-        else:
-            # An all-cache-hit pass still resolved profiles, which may have
-            # remembered blobs that nothing else is going to commit.
-            await asyncio.to_thread(self._repo.flush)
+        await asyncio.to_thread(self._write, fresh, pass_.remember or {})
         if progress is not None:
             await progress(total, total)
         log.info("analytics: scored %d runs (%d recomputed)", total, len(fresh))
         return out
+
+    def _write(self, fresh: list[CachedRun], profiles: dict[str, TaskProfile]) -> None:
+        """The pass's one transaction: every profile it decoded with, then
+        every row it recomputed (`DATA.md#never-at-the-expense-of-a-session`).
+
+        The profiles are content-addressed `INSERT OR IGNORE`s, so the hundredth
+        pass over the same archive adds nothing. They are written even on an
+        all-hit pass: resolution still read today's `task.json`, and without
+        its blob a profile group has no `taskName` to label itself with.
+        """
+        for profile in profiles.values():
+            self._repo.remember_profile(profile)
+        if fresh:
+            self._repo.store(fresh)
+        else:
+            self._repo.flush()
 
     def _score_chunk(
         self,
         runs: list[SessionAnimalRun],
         cached: dict[str, CachedRun],
         min_counted: int,
-        memo: _ProfileMemo,
+        pass_: _Pass,
     ) -> list[CachedRun]:
         """One worker-thread hop's worth of runs.
 
@@ -144,16 +194,16 @@ class RunScorer:
         hop per run, which at archive scale costs more than the reads do once
         the cache is warm.
         """
-        return [self._score_one(r, cached.get(r.id), min_counted, memo) for r in runs]
+        return [self._score_one(r, cached.get(r.id), min_counted, pass_) for r in runs]
 
     def _score_one(
         self,
         run: SessionAnimalRun,
         cached: CachedRun | None,
         min_counted: int,
-        memo: _ProfileMemo | None = None,
+        pass_: _Pass,
     ) -> CachedRun:
-        resolved = self._resolve_profile(run, memo)
+        resolved = self._resolve_profile(run, pass_)
 
         if not run.file_path:
             return CachedRun(
@@ -227,7 +277,7 @@ class RunScorer:
                 key=key,
             )
 
-        profile, source, digest = self._scoring_profile(resolved, result.document)
+        profile, source, digest = self._scoring_profile(resolved, result.document, pass_)
         summary = derive.summarize(result.document, profile, min_counted=min_counted)
         payload = summary.to_json()
         detail = summary.detail
@@ -259,24 +309,48 @@ class RunScorer:
     # --- one run, for a chart ----------------------------------------------
 
     def resolve_for_series(self, run: SessionAnimalRun) -> _Resolved:
-        """Interim: `series`'s half of the ladder until `decode` replaces it."""
-        return self._resolve_profile(run)
+        """Interim: `series`'s half of the ladder until it calls `decode`."""
+        return self._resolve_profile(run, _Pass(remember=None))
 
     def scoring_profile_for_series(
-        self, resolved: _Resolved, document: dict
+        self, resolved: _Resolved, document: dict[str, Any]
     ) -> TaskProfile | None:
-        """Interim: `series`'s half of the ladder until `decode` replaces it."""
-        profile, _, _ = self._scoring_profile(resolved, document, persist=False)
+        """Interim: `series`'s half of the ladder until it calls `decode`."""
+        profile, _, _ = self._scoring_profile(resolved, document, _Pass(remember=None))
         return profile
+
+    def decode(self, run: SessionAnimalRun) -> Decoded:
+        """Read one run and settle the profile it decodes with — the same
+        ladder `score` scores with, so a chart draws the trials the summary
+        counted.
+
+        Synchronous and blocking: the caller runs it in a worker thread
+        (`DATA.md#never-at-the-expense-of-a-session`). **It never writes**: the
+        read-only `series` path must leave nothing behind, not even an
+        uncommitted insert for the next writer's commit to carry.
+        """
+        result = (
+            reader.read_run(run.file_path)
+            if run.file_path
+            else reader.ReadResult(status="missing", detail="no file")
+        )
+        pass_ = _Pass(remember=None)
+        resolved = self._resolve_profile(run, pass_)
+        if not result.ok or result.document is None:
+            return Decoded(
+                result.status, result.detail, None,
+                resolved.profile, resolved.source, resolved.digest,
+            )
+        profile, source, digest = self._scoring_profile(resolved, result.document, pass_)
+        return Decoded("ok", None, result.document, profile, source, digest)
 
     # --- the ladder --------------------------------------------------------
 
     def _scoring_profile(
         self,
         resolved: _Resolved,
-        document: dict,
-        *,
-        persist: bool = True,
+        document: dict[str, Any],
+        pass_: _Pass,
     ) -> tuple[TaskProfile | None, str, str | None]:
         """The profile a run is actually scored with — the ladder's last rungs.
 
@@ -304,9 +378,8 @@ class RunScorer:
         `profileHash` that says the two runs are comparable.
 
         Both the embedded and the inferred profile are remembered
-        content-addressed like any other, so profile *groups* work unchanged.
-        `persist=False` for the read-only `series` path, which must not leave
-        an uncommitted insert behind the summary pass's batching.
+        content-addressed like any other, so profile *groups* work unchanged —
+        by the pass, at its end, and never by a read-only one.
 
         The cache key deliberately keeps the *resolution* digest (None when
         nothing resolved), not the digest reached here: both of these rungs are
@@ -327,8 +400,7 @@ class RunScorer:
             # the run was configured from, recorded at the time of the run. It
             # arrived by a different road than the database's copy; when both
             # exist they are the same bytes and the cheaper road is taken above.
-            digest = self._repo.remember_profile(embedded) if persist else None
-            return embedded, "snapshot", digest
+            return embedded, "snapshot", pass_.digest(embedded)
 
         if resolved.profile is not None and resolved.profile.live_metrics:
             return resolved.profile, resolved.source, resolved.digest
@@ -339,14 +411,9 @@ class RunScorer:
         )
         if inferred is None:
             return resolved.profile, resolved.source, resolved.digest
-        digest = self._repo.remember_profile(inferred) if persist else None
-        return inferred, "inferred", digest
+        return inferred, "inferred", pass_.digest(inferred)
 
-    def _resolve_profile(
-        self,
-        run: SessionAnimalRun,
-        memo: _ProfileMemo | None = None,
-    ) -> _Resolved:
+    def _resolve_profile(self, run: SessionAnimalRun, pass_: _Pass) -> _Resolved:
         """Snapshot, then today's `task.json`, then nothing
         (`DATA.md#which-profile-decodes-a-run`).
 
@@ -354,9 +421,9 @@ class RunScorer:
         recorded `sketch_path` may have been renamed, moved, or dropped from
         the sketch library since the run.
 
-        `memo` collapses the repeated work of one indexing pass — a whole
-        archive is usually one or two sketches, and without it every run pays
-        its own `task.json` read, sha256, and `INSERT OR IGNORE`.
+        The pass's memo collapses its repeated work — a whole archive is
+        usually one or two sketches, and without it every run pays its own
+        `task.json` read and sha256.
 
         **It is scoped to the pass and must stay that way.** Resolution happens
         at read time on purpose (`DATA.md#which-profile-decodes-a-run`): a
@@ -371,8 +438,8 @@ class RunScorer:
             run.sketch_path or "",
             getattr(run, "sketch_name", None) or "",
         )
-        if memo is not None and key in memo:
-            resolved, sketch_path = memo[key]
+        if key in pass_.memo:
+            resolved, sketch_path = pass_.memo[key]
             # Replay the path the first run of this key resolved to. It is not
             # bookkeeping: `summary` reports `sketchPath` per run
             # (`DATA.md#which-profile-decodes-a-run`), so
@@ -381,15 +448,14 @@ class RunScorer:
             run.sketch_path = sketch_path
             return resolved
 
-        resolved = self._resolve_profile_uncached(run)
-        if memo is not None:
-            memo[key] = (resolved, run.sketch_path)
+        resolved = self._resolve_profile_uncached(run, pass_)
+        pass_.memo[key] = (resolved, run.sketch_path)
         return resolved
 
     # NOTE: this resolves the *declared* rungs only. The inference rung lives
     # in `_scoring_profile`, after the file is read — it needs the codes, and
     # resolution deliberately runs before any file is opened.
-    def _resolve_profile_uncached(self, run: SessionAnimalRun) -> _Resolved:
+    def _resolve_profile_uncached(self, run: SessionAnimalRun, pass_: _Pass) -> _Resolved:
         if run.profile_hash:
             stored = self._repo.load_profile(run.profile_hash)
             if stored is not None:
@@ -440,11 +506,10 @@ class RunScorer:
                 None,
                 "no task.json was found beside this run's sketch",
             )
-        # Store the blob even though this is only a fallback decode. Content-
-        # addressed and commit-free, so it costs nothing after the first run —
-        # and without it a profile group has no `taskName` to label itself
-        # with, which is every group in an archive that predates snapshots.
+        # Remember the blob even though this is only a fallback decode (the
+        # pass writes it at its end; a read-only pass doesn't): without it a
+        # profile group has no `taskName` to label itself with, which is every
+        # group in an archive that predates snapshots.
         # This does **not** promote the run to `snapshot`: how much the
         # decoding can be trusted is `source`, and it stays `sketch-current`.
-        digest = self._repo.remember_profile(current)
-        return _Resolved(current, "sketch-current", digest)
+        return _Resolved(current, "sketch-current", pass_.digest(current))

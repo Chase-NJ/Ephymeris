@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -363,6 +364,38 @@ def test_the_canary_is_the_same_in_every_process() -> None:
         for seed in ("0", "1", "4242")
     }
     assert answers == {CANARY}
+
+
+async def test_a_reader_that_opens_no_file_ignores_another_versions_row(
+    db: Database, tmp_path: Path
+) -> None:
+    """The archive view closes a recovered session's clock from the cache
+    (`DATA.md#the-cohort-archive`), and the session log and false starts read
+    it the same way, without opening a file. A row from another version is
+    what a summary would recompute, so those readers must not serve it either:
+    until a summary rescores the run, its session stays open rather than
+    closing on the old answer."""
+    from tests.test_analytics_adoption import LegacyRig
+
+    legacy = LegacyRig(db, tmp_path / "legacy")
+    legacy.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
+    await legacy.service.rescan(legacy.cohort.id)
+    await legacy.service.summary(legacy.cohort.id)
+    [session] = legacy.archive.view(legacy.cohort.id).recovered
+    assert session.ended_at is not None, "closed from the current row"
+
+    [entry] = legacy.repo.load_cached([r.id for r in legacy.archive.view(legacy.cohort.id).runs]).values()
+    legacy.repo.store([
+        replace(
+            entry,
+            key=replace(entry.key, codec_version=8),
+            summary={**entry.summary, "durationMs": entry.summary["durationMs"] + 3_600_000},
+        )
+    ])
+
+    [session] = legacy.archive.view(legacy.cohort.id).recovered
+    assert session.ended_at is None, "a v8 row closed the session clock"
+    assert legacy.repo.load_cached([entry.run_id], version=scoring.current_version()) == {}
 
 
 @pytest.fixture

@@ -547,7 +547,7 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 
 `.json` and `.mat` are not append-friendly and don't need to be; they are built once in `AnimalWriter.finalize`. Finalization is **idempotent** (the first `stop_reason` wins, so a board-drop racing an operator stop cannot rewrite history), and the two structured writes are **best-effort**: an `OSError` is logged, not raised. The `.tsv` is already closed and durable by then, so failing to produce a convenience format must never look like failing to save data.
 
-Each is written **whole or not at all** (`write_atomic`): into `<name>.part`, fsync'd, then renamed over the real name, as a [verified transfer](#verified-transfer) copies. A power cut while finalizing leaves at most a `.part`, which no walk reads, so the run is a `.tsv` with no `.json` that [Recover](#crash-recovery) rebuilds, never a torn document under the name every reader opens. Recovery writes the same way.
+Each is written **whole or not at all** (`write_atomic`): into a `.part` beside it named for the writing process and thread, fsync'd, then renamed over the real name, as a [verified transfer](#verified-transfer) copies. Two writers of one file each land whole, and the last rename wins. A power cut while finalizing leaves at most a `.part`, which no walk reads, so the run is a `.tsv` with no `.json` that [Recover](#crash-recovery) rebuilds, never a torn document under the name every reader opens. Recovery writes the same way.
 
 ### What is guaranteed
 

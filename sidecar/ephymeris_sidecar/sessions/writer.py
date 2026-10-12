@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -29,21 +30,25 @@ class WriteError(Exception):
     """A `.tsv` write failed mid-session (disk full, permissions)."""
 
 
-#: Where a structured file is written before it takes its real name.
+#: How the file a structured file is written into before it takes its real
+#: name ends.
 PART_SUFFIX = ".part"
 
 
 def write_atomic(path: Path, data: str | bytes | Callable[[Path], None]) -> None:
     """Write `path` whole or not at all (`DATA.md#built-once-at-the-end`).
 
-    Into `<name>.part`, fsync'd, then renamed over the real name: the steps
-    `cohorts/transfer.py` copies with. A power cut leaves at most a `.part`,
-    which no walk reads, never a torn file under the name every reader opens.
-    `data` is the text or bytes, or a function that writes a file at the path
-    it is given (`matwriter.savemat`). Raises what the write raised, with the
-    `.part` removed.
+    Into a `.part` beside it, fsync'd, then renamed over the real name: the
+    steps `cohorts/transfer.py` copies with. A power cut leaves at most a
+    `.part`, which no walk reads, never a torn file under the name every
+    reader opens. The `.part` is named for this process and thread, as the
+    backup mirror's are, so two writers of one file never share one: each
+    lands whole and the last rename wins. `data` is the text or bytes, or a
+    function that writes a file at the path it is given
+    (`matwriter.savemat`). Raises what the write raised, with its `.part`
+    removed.
     """
-    part = path.with_name(path.name + PART_SUFFIX)
+    part = path.with_name(f"{path.name}.{os.getpid()}-{threading.get_ident()}{PART_SUFFIX}")
     try:
         if callable(data):
             data(part)

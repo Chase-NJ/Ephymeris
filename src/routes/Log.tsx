@@ -132,6 +132,8 @@ export function Log() {
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
+          // Owns its own exit, as every route must (`AppShell`).
+          exit={{ opacity: 0 }}
           transition={springPanel}
           className="pointer-events-none absolute inset-0"
         >
@@ -168,6 +170,7 @@ export function Log() {
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0 }}
         transition={springPanel}
         className="absolute inset-0 flex flex-col"
       >

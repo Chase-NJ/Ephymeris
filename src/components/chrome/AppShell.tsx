@@ -1,5 +1,19 @@
-import { AnimatePresence, MotionConfig, motion } from "framer-motion";
-import { useRef } from "react";
+import {
+  AnimatePresence,
+  MotionConfig,
+  PresenceContext,
+  motion,
+  usePresence,
+} from "framer-motion";
+import {
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ContextType,
+  type ReactNode,
+} from "react";
 import { Outlet, useLocation, useOutlet } from "react-router";
 
 import { ExportProgress } from "./ExportProgress";
@@ -155,10 +169,121 @@ function RouteTransition() {
         transition={springSnappy}
         className="h-full"
       >
-        {outlet ?? <Outlet />}
+        <BoundedExit>{outlet ?? <Outlet />}</BoundedExit>
       </motion.div>
     </AnimatePresence>
   );
+}
+
+/**
+ * The longest a leaving page may stay mounted, in ms. Every route's exit
+ * settles in about 520 ms on `springPanel`, so this is over twice the
+ * slowest real one. It only ever cuts short an exit that was not going to
+ * finish.
+ */
+const EXIT_DEADLINE_MS = 1200;
+
+type Presence = NonNullable<ContextType<typeof PresenceContext>>;
+
+/**
+ * **A leaving page always leaves.** The page's own exits still run and still
+ * decide when it goes. The difference is that no single one of them can keep it
+ * on screen forever.
+ *
+ * `AnimatePresence` removes an exiting child only once every motion node inside
+ * it has reported its exit finished, and only once **all** its exiting children
+ * have. So one exit that never reports pins that page in the content area, and
+ * every page left after it too: pinned, unclickable, stacked over the current
+ * one, until you navigate back to the stuck page itself (re-entering is the one
+ * thing that clears its unfinished mark). Two ordinary things never report:
+ *
+ *   - **A node that mounts while its page is already leaving.** framer
+ *     registers it as unfinished and only starts an exit when presence
+ *     *changes*, which for it never happens. Data landing on a page the operator
+ *     just left (a sidecar event, an Analytics load) is enough.
+ *   - **A nested `<AnimatePresence propagate>` with nothing in it.** It reports
+ *     done only from its own children's exits, and there are none to run. Debug
+ *     had one, and leaving Debug with no box open (every Back) piled up every
+ *     page after it.
+ *
+ * So the page's motion nodes report to this scope rather than to the route's
+ * presence. It forwards one completion upward when the page's exits are done,
+ * or at `EXIT_DEADLINE_MS`, whichever comes first. A node that mounts mid-exit
+ * has nothing to animate out, so it counts as finished.
+ */
+function BoundedExit({ children }: { children: ReactNode }) {
+  const route = useContext(PresenceContext);
+  const [isPresent, safeToRemove] = usePresence();
+
+  // The page's registered exits, by framer's node id: `true` once finished.
+  const exits = useRef(new Map<string | number, boolean>()).current;
+  const state = useRef({ present: isPresent, released: false, release: safeToRemove });
+
+  // Written during render, not in an effect: children start their exits in
+  // their own layout effects, which run *before* this component's, so an effect
+  // here would hand them last render's presence.
+  useMemo(() => {
+    state.current.present = isPresent;
+    state.current.released = false;
+    // A presence flip restarts every exit, the way `PresenceChild` does.
+    for (const id of exits.keys()) exits.set(id, false);
+  }, [isPresent, exits]);
+  useLayoutEffect(() => {
+    state.current.release = safeToRemove;
+  });
+
+  const scope = useMemo((): Presence | null => {
+    if (!route) return null;
+    const leave = () => {
+      const s = state.current;
+      if (s.present || s.released) return;
+      s.released = true;
+      s.release?.();
+    };
+    const settle = () => {
+      for (const done of exits.values()) if (!done) return;
+      leave();
+    };
+    return {
+      ...route,
+      onExitComplete: (id) => {
+        exits.set(id, true);
+        settle();
+      },
+      register: (id) => {
+        exits.set(id, !state.current.present);
+        return () => {
+          exits.delete(id);
+          settle();
+        };
+      },
+    };
+  }, [route, exits]);
+
+  useEffect(() => {
+    const s = state.current;
+    if (isPresent || s.released) return;
+    // Nothing on the page has an exit: leave now, as `PresenceChild` would.
+    if (![...exits.values()].includes(false)) {
+      s.released = true;
+      s.release?.();
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (s.present || s.released) return;
+      if (import.meta.env.DEV) {
+        console.warn(
+          `A page's exit did not finish within ${EXIT_DEADLINE_MS} ms; removing it anyway (AppShell's BoundedExit).`,
+        );
+      }
+      s.released = true;
+      s.release?.();
+    }, EXIT_DEADLINE_MS);
+    return () => clearTimeout(timer);
+  }, [isPresent, exits]);
+
+  if (!scope) return children;
+  return <PresenceContext.Provider value={scope}>{children}</PresenceContext.Provider>;
 }
 
 /** How far a step slides, in px. Small on purpose — this is a hint of travel,

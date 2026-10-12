@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useIsPresent } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
@@ -115,6 +115,9 @@ export function DebugMode() {
    */
   useDeparture(useCallback(() => setRigSelection(null), []));
 
+  // False once this route is leaving; the panel leaves with it (below).
+  const routePresent = useIsPresent();
+
   return (
     // The same scaffold as the Dashboard, on purpose: the sky fills the whole
     // content area and everything else floats over it. Sharing the geometry is
@@ -168,12 +171,16 @@ export function DebugMode() {
           Dashboard's Rig tile is where a rig with nothing bound gets told so,
           and where it gets the Config link to fix it.
 
-          `propagate`: a nested `AnimatePresence` starts its own presence scope,
-          so without it leaving the route (by the sidebar, say) never ran the
-          panel's `exit` — it sat opaque until the route's other exits settled,
-          then vanished in one frame. */}
-      <AnimatePresence propagate>
-        {selected !== null && (
+          A nested `AnimatePresence` starts its own presence scope, so the panel
+          has to be told the route is leaving, or it sits opaque until the
+          route's other exits settle and then vanishes in one frame. It is told
+          by dropping out of its own presence along with the route, which runs
+          its slide-out there. Not `propagate`: that makes the route wait on
+          this scope, and an empty scope (no box open, which is every Back)
+          never reports done, so the route never left (`AppShell`'s
+          `BoundedExit`). */}
+      <AnimatePresence>
+        {selected !== null && routePresent && (
           <NodeDetail
             key={selected}
             box={selected}

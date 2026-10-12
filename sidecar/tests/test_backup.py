@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 from pathlib import Path
 
@@ -394,6 +395,56 @@ async def test_a_due_database_backup_never_waits_on_a_write_left_open(
     finally:
         conn.close()
     assert (names, hashes) == (["x"], [digest]), "copied once the write ended"
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_copy_keeps_the_database_marked_until_it_is_made(
+    db: Database, tmp_path: Path
+) -> None:
+    """The commit before the open write is still owed a copy when that write
+    ends without one (`DATA.md#the-database-copy`): rolled back, nothing
+    announces again, so only the mark the deferral kept gets it copied."""
+    manager = make_manager(db, [], db_debounce=0.0)
+    db.on_commit(manager.mark_db_dirty)
+    mirror = tmp_path / "mirror"
+    await manager.configure(str(mirror))
+    await manager._pass()
+
+    SessionRepository(db).create_prefix("x")
+    AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Abandoned"}))
+    await asyncio.wait_for(manager._pass(), timeout=3.0)  # deferred
+
+    db.conn.rollback()  # the write ends without a commit: no hook
+    await manager._pass()
+
+    conn = sqlite3.connect(mirror / DB_MIRROR_NAME)
+    try:
+        names = [row[0] for row in conn.execute("SELECT name FROM prefixes")]
+        hashes = [row[0] for row in conn.execute("SELECT hash FROM task_profiles")]
+    finally:
+        conn.close()
+    assert (names, hashes) == (["x"], [])
+
+
+@pytest.mark.asyncio
+async def test_a_copy_deferred_too_long_is_warned_about_once(
+    db: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A write left open by something that died would otherwise defer every
+    copy while Settings reads ok (`DATA.md#the-database-copy`)."""
+    manager = make_manager(db, [], db_debounce=0.0, db_defer_warn=0.0)
+    db.on_commit(manager.mark_db_dirty)
+    await manager.configure(str(tmp_path / "mirror"))
+    await manager._pass()
+    SessionRepository(db).create_prefix("x")
+    AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Abandoned"}))
+
+    with caplog.at_level(logging.WARNING, logger="ephymeris_sidecar.backup.manager"):
+        await manager._pass()
+        await manager._pass()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "deferred" in warnings[0].getMessage()
+    db.conn.rollback()
 
 
 @pytest.mark.asyncio

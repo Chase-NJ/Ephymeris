@@ -103,6 +103,41 @@ async def test_two_records_of_one_session_merge_into_the_earliest(rig: Rig) -> N
     assert {r["sessionId"] for r in summary["runs"]} == {first}
 
 
+async def test_a_tidy_refused_part_way_changes_nothing(rig: Rig, db: Database) -> None:
+    """Tidy is one unit of work (`DATA.md#tidy-records`, `DATA.md#transactions`):
+    a merge the database refuses undoes the merges before it, rather than
+    leaving the cohort half-tidied. The refusal is SQLite's own -- a trigger
+    on deleting the last merge's absorbed record."""
+    days = {}
+    for number in ("12", "13"):
+        rig.clock.at = f"2026-07-22T08:5{number[-1]}:00"
+        first = rig.add_session(number, DAY)
+        rig.clock.at = f"2026-07-22T12:5{number[-1]}:00"
+        second = rig.add_session(number, DAY)
+        rig.add_run(first, "a1", HIT_1 * 5)
+        rig.add_run(second, "a2", HIT_3 * 5)
+        days[number] = (first, second)
+    plan = await preview(rig)
+    assert len(plan["merges"]) == 2
+    refused = plan["merges"][-1]["absorb"][0]["sessionId"]
+    before = sorted(s.id for s in rig.sessions.list_sessions(rig.cohort.id))
+    runs_before = sorted((r.id, r.session_id) for r in rig.sessions.runs_for_cohort(rig.cohort.id))
+
+    with db.write() as tx:
+        tx.execute(
+            "CREATE TEMP TRIGGER refuse_absorb BEFORE DELETE ON sessions"
+            f" WHEN OLD.id = '{refused}' BEGIN SELECT RAISE(ABORT, 'refused'); END"
+        )
+    with pytest.raises(Exception, match="refused"):
+        await apply(rig)
+
+    assert sorted(s.id for s in rig.sessions.list_sessions(rig.cohort.id)) == before
+    assert (
+        sorted((r.id, r.session_id) for r in rig.sessions.runs_for_cohort(rig.cohort.id))
+        == runs_before
+    ), "the first merge's runs went back under their own records"
+
+
 async def test_a_preview_changes_nothing(rig: Rig) -> None:
     first = rig.add_session("12", DAY)
     second = rig.add_session("12", DAY)

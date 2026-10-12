@@ -207,13 +207,51 @@ class AnalyticsRepository:
 
     # --- adopted orphans (DATA.md#orphan-adoption) ----------------------
 
-    def store_adopted(self, entries: list["AdoptedRun"]) -> None:
+    def store_adopted(
+        self,
+        entries: list["AdoptedRun"],
+        *,
+        earlier_ids: dict[str, list[str]] | None = None,
+    ) -> int:
         """Record adoptions in one transaction — same commit discipline as
-        `store`, and `INSERT OR REPLACE` on the deterministic id makes a
-        re-run refresh rather than duplicate."""
+        `store` — and return how many were written.
+
+        `INSERT OR REPLACE` on the id makes a re-run refresh a row rather than
+        duplicate it. It never takes a row another cohort holds: moving a run
+        between cohorts is a move's job (`DATA.md#moving-animals-between-cohorts`),
+        and a replace would silently drop the run from that cohort's history
+        (`DATA.md#orphan-adoption`). Such an entry is left out and logged; the
+        rest of the batch is written.
+
+        `earlier_ids` maps an entry's id to ids the same run may have been
+        stored under before; a ruling on one moves to the entry when no row
+        holds it any more (`_move_rulings`). The caller names only entries it
+        adopts afresh.
+        """
         if not entries:
-            return
+            return 0
         with self._db.lock:
+            owners: dict[str, str] = {}
+            for chunk in _chunks([entry.id for entry in entries], 400):
+                marks = ",".join("?" * len(chunk))
+                owners.update(
+                    self._db.conn.execute(
+                        f"SELECT id, cohort_id FROM adopted_runs WHERE id IN ({marks})",
+                        tuple(chunk),
+                    ).fetchall()
+                )
+            ours = [e for e in entries if owners.get(e.id, e.cohort_id) == e.cohort_id]
+            for entry in (e for e in entries if owners.get(e.id, e.cohort_id) != e.cohort_id):
+                log.warning(
+                    "adoption of %s for cohort %s left out: cohort %s holds its id %s",
+                    entry.file_path,
+                    entry.cohort_id,
+                    owners[entry.id],
+                    entry.id,
+                )
+            entries = ours
+            if not entries:
+                return 0
             self._db.conn.executemany(
                 "INSERT OR REPLACE INTO adopted_runs"
                 " (id, cohort_id, animal_id, file_path, prefix_name,"
@@ -239,7 +277,36 @@ class AnalyticsRepository:
                     for entry in entries
                 ],
             )
+            self._move_rulings(entries, earlier_ids or {})
             self._db.conn.commit()
+        return len(entries)
+
+    def _move_rulings(
+        self, entries: list["AdoptedRun"], earlier_ids: dict[str, list[str]]
+    ) -> None:
+        """Move a ruling left on an id no row holds any more onto the entry
+        that now holds its run (`DATA.md#false-starts`). Inside
+        `store_adopted`'s transaction, so the row and its ruling land together.
+
+        Each entry's candidates are tried in order and the first ruling found
+        moves. Never one a row still holds, and never over a ruling the entry
+        already has (`UPDATE OR IGNORE`).
+        """
+        conn = self._db.conn
+        for entry in entries:
+            for earlier in earlier_ids.get(entry.id, []):
+                if earlier == entry.id:
+                    continue
+                if conn.execute(
+                    "SELECT 1 FROM adopted_runs WHERE id = ?", (earlier,)
+                ).fetchone() is not None:
+                    continue
+                moved = conn.execute(
+                    "UPDATE OR IGNORE run_flags SET run_id = ? WHERE run_id = ?",
+                    (entry.id, earlier),
+                ).rowcount
+                if moved:
+                    break
 
     def adopted_for_cohort(self, cohort_id: str) -> list["AdoptedRun"]:
         with self._db.lock:

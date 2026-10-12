@@ -13,6 +13,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from ephymeris_sidecar.analytics import reader
 from ephymeris_sidecar.protocol import validate_command_result
 from ephymeris_sidecar.sessions import recovery
@@ -340,3 +342,75 @@ def test_the_name_column_is_admitted_only_in_a_legacy_file(tmp_path: Path) -> No
     parsed = recovery.parse_tsv(tsv)
     assert parsed.dialect == "ephymeris"
     assert [246, 9000] not in parsed.events
+
+
+# --- a torn structured file (`DATA.md#crash-safety`) ---------------------------
+
+
+def test_a_torn_json_is_offered_for_recovery_and_rebuilt(tmp_path: Path) -> None:
+    """A `.json` the power cut short under its real name is no `.json` at
+    all: its `.tsv` holds the run, and Recover offers it until the document
+    parses."""
+    tsv = crash_a_run(tmp_path)
+    torn = reader.sibling_json(tsv)
+    torn.parent.mkdir(parents=True, exist_ok=True)
+    torn.write_text('{\n  "rat": "remy1",\n  "serial_po', encoding="utf-8")
+
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == [tsv]
+    result = recovery.recover_cohort(str(tmp_path))
+
+    assert result["recovered"] == 1
+    assert json.loads(torn.read_text(encoding="utf-8")) == finalized_document()
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == []
+
+
+@pytest.mark.parametrize(("nth", "cut"), [(1, ".json"), (2, ".mat")])
+def test_a_power_cut_while_finalizing_leaves_nothing_torn(
+    tmp_path: Path, power_cut, nth: int, cut: str  # noqa: ANN001
+) -> None:
+    """Whichever structured file the power goes out on, nothing half-written
+    sits under its real name. A run cut at its `.json` is a `.tsv` Recover
+    finds, not a document every reader trips on."""
+    files = resolve_animal_files(
+        tmp_path, "remy1", "2O-Bdisc", "25", datetime(2026, 7, 22, 11, 31, 23)
+    )
+    writer = AnimalWriter(
+        files.tsv, files.json, files.mat, dict(CORE), dict(CONFIG), profile_snapshot=PROFILE
+    )
+    writer.open_files()
+    for code, ts in STROBES:
+        writer.record(code, ts)
+    power_cut("write", tmp_path, nth=nth)  # the .tsv was opened before the cut was armed
+    with pytest.raises(SystemExit):
+        writer.finalize("BF_END_SESSION received")
+
+    assert _whole_or_absent(files.json)
+    assert _whole_or_absent(files.mat)
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == ([files.tsv] if cut == ".json" else [])
+
+
+def test_a_power_cut_while_recovering_leaves_the_run_offered(tmp_path: Path, power_cut) -> None:  # noqa: ANN001
+    tsv = crash_a_run(tmp_path)
+    power_cut("write", tmp_path)
+    with pytest.raises(SystemExit):
+        recovery.recover_file(tsv)
+
+    assert _whole_or_absent(reader.sibling_json(tsv))
+    assert reader.walk_orphaned_tsvs(tmp_path, parse_json=True) == [tsv]
+    assert recovery.recover_cohort(str(tmp_path))["recovered"] == 1
+
+
+def _whole_or_absent(path: Path) -> bool:
+    """Nothing at `path`, or a document that reads back whole."""
+    if not path.exists():
+        return True
+    try:
+        if path.suffix == ".json":
+            json.loads(path.read_text(encoding="utf-8"))
+        else:
+            import scipy.io
+
+            scipy.io.loadmat(str(path))
+    except Exception:  # noqa: BLE001 - any failure to read it back is a torn file
+        return False
+    return True

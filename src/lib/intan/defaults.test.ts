@@ -36,8 +36,26 @@ describe("normalizeRecordingDefaults", () => {
     expect(DEFAULT_RECORDING_DEFAULTS.saveRoot).toBeNull();
   });
 
-  it("round-trips what the Record step stored before the shape existed", () => {
-    expect(normalizeRecordingDefaults(STORED_BY_THE_STEP)).toEqual(STORED_BY_THE_STEP);
+  it("loads what the Record step stored before probe maps followed the animal, ignoring each box's old one", () => {
+    expect(normalizeRecordingDefaults(STORED_BY_THE_STEP)).toEqual({
+      ...STORED_BY_THE_STEP,
+      boxes: {
+        "1": { record: true, port: "A", firstChannel: 0, lastChannel: -1 },
+        "3": { record: false, port: "", firstChannel: 0, lastChannel: -1 },
+      },
+      probeMaps: {},
+    });
+  });
+
+  it("keeps each animal's remembered probe map, and drops one that isn't a path", () => {
+    const out = normalizeRecordingDefaults({
+      ...STORED_BY_THE_STEP,
+      probeMaps: { "rat-07": "C:/maps/rat07.xml", "rat-09": "   ", "rat-11": 4, "": "C:/maps/x.xml" },
+    });
+    expect(out.probeMaps).toEqual({ "rat-07": "C:/maps/rat07.xml" });
+    expect(normalizeRecordingDefaults({ ...STORED_BY_THE_STEP, probeMaps: ["C:/maps/rat07.xml"] }).probeMaps).toEqual(
+      {},
+    );
   });
 
   it("heals per key, keeping every value that is still legal", () => {
@@ -70,7 +88,6 @@ describe("normalizeRecordingDefaults", () => {
       port: "A",
       firstChannel: 4,
       lastChannel: -1,
-      probeMapPath: null,
     });
   });
 

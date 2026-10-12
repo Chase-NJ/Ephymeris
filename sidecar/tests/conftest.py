@@ -12,12 +12,14 @@ through the code's real path rather than by replacing one of its steps:
 `coarse_volume` rounds mtimes, `hung_volume` stops answering mid-copy,
 `other_volume` is a second device a folder can't be renamed onto,
 `unreachable_volume` can't be read at all, and `power_cut` kills the process
-at the nth copy or delete below a folder.
+at the nth copy, delete or file write below a folder.
 """
 
 from __future__ import annotations
 
+import builtins
 import errno
+import io
 import json
 import os
 import shutil
@@ -161,11 +163,13 @@ def unreachable_volume(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture
 def power_cut(monkeypatch: pytest.MonkeyPatch):
-    """`power_cut(op, under, nth=1)`: the `nth` `"copy2"` or `"unlink"` of a path
-    below `under` is where the power goes, raising `SystemExit` the way a
-    killed process stops. A cut copy leaves half the file at its destination.
-    It fires once, so whatever runs after the "restart" works normally."""
-    real_copy2, real_unlink = shutil.copy2, os.unlink
+    """`power_cut(op, under, nth=1)`: the `nth` `"copy2"`, `"unlink"` or
+    `"write"` of a path below `under` is where the power goes, raising
+    `SystemExit` the way a killed process stops. A cut copy leaves half the
+    file at its destination; a cut write (the first write to a file opened for
+    writing, however it was opened) leaves half of what it was writing. It
+    fires once, so whatever runs after the "restart" works normally."""
+    real_copy2, real_unlink, real_open = shutil.copy2, os.unlink, builtins.open
     cuts: list[dict] = []
 
     def due(op: str, path) -> bool:  # noqa: ANN001
@@ -189,11 +193,41 @@ def power_cut(monkeypatch: pytest.MonkeyPatch):
             raise SystemExit("power cut")
         return real_unlink(path, *args, **kwargs)
 
+    class CutFile:
+        """A file the power goes out on halfway through its first write."""
+
+        def __init__(self, handle) -> None:  # noqa: ANN001
+            self._handle = handle
+
+        def write(self, data):  # noqa: ANN001, ANN202
+            self._handle.write(data[: len(data) // 2])
+            self._handle.close()
+            raise SystemExit("power cut")
+
+        def __getattr__(self, name: str):  # noqa: ANN204
+            return getattr(self._handle, name)
+
+        def __enter__(self):  # noqa: ANN204
+            return self
+
+        def __exit__(self, *exc) -> bool:  # noqa: ANN002
+            self._handle.close()
+            return False
+
+    def open_(file, mode="r", *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        handle = real_open(file, mode, *args, **kwargs)
+        writing = any(flag in mode for flag in "wxa+")
+        if writing and isinstance(file, (str, os.PathLike)) and due("write", file):
+            return CutFile(handle)
+        return handle
+
     monkeypatch.setattr(shutil, "copy2", copy2)
     monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(builtins, "open", open_)
+    monkeypatch.setattr(io, "open", open_)
 
     def arm(op: str, under: Path, nth: int = 1) -> None:
-        assert op in ("copy2", "unlink"), op
+        assert op in ("copy2", "unlink", "write"), op
         cuts.append({"op": op, "under": Path(under), "nth": nth, "seen": 0, "fired": False})
 
     return arm

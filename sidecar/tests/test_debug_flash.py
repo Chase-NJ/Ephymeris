@@ -20,6 +20,7 @@ The second half covers what makes a flashed task usable from the console:
 from __future__ import annotations
 
 import asyncio
+import functools
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,14 +33,16 @@ from ephymeris_sidecar.debug_run import DebugRuns
 from ephymeris_sidecar.ports.flashing import FlashJob, FlashQueue
 from ephymeris_sidecar.ports.handler import OutputLine
 from ephymeris_sidecar.ports.manager import FQBN, PortManager
-from ephymeris_sidecar.protocol import ErrCode, Evt
-from ephymeris_sidecar.server import CommandError
+from ephymeris_sidecar.protocol import Cmd, ErrCode, Evt
+from ephymeris_sidecar.server import SidecarServer
 from ephymeris_sidecar.settings import SidecarSettings
 from ephymeris_sidecar.tasks.metrics import MetricSet
 from ephymeris_sidecar.tasks.profile import load_profile, parse_profile
 from ephymeris_sidecar.tasks.start_command import build_start_command
 from ephymeris_sidecar.utility import UtilityBaseline
-from tests.live_sidecar import live_sidecar
+from ephymeris_sidecar.wire_errors import ERRORS
+from tests.live_sidecar import Refused, live_sidecar, settings
+from tests.wire import dispatch
 
 from .test_utility import (  # noqa: F401 - fake_serial is an autouse fixture
     ADDRESS,
@@ -87,6 +90,8 @@ async def make_app(rig_definition: RigDefinition) -> SimpleNamespace:
     A stand-in rather than the real class because constructing `Application`
     spawns a board tool and opens a database; the handlers under test read six
     attributes, and every one of them that carries a rule is the real object.
+    The commands go through a real `SidecarServer` -- argument checks, the
+    error table -- by `tests/wire.py`'s `dispatch`.
     """
     loop = asyncio.get_event_loop()
     tool = FakeTool()
@@ -95,9 +100,15 @@ async def make_app(rig_definition: RigDefinition) -> SimpleNamespace:
     async def broadcast(message: dict) -> None:
         events.append(message)
 
+    server = SidecarServer("127.0.0.1", 0, "unused")
+    server.broadcast = broadcast  # type: ignore[method-assign]
+    server.map_errors(ERRORS)
     app = SimpleNamespace(
-        server=SimpleNamespace(broadcast=broadcast),
-        discovery=FakeDiscovery,
+        server=server,
+        sketches=SimpleNamespace(
+            current=FakeDiscovery,
+            find=lambda path: next((s for s in FakeDiscovery.sketches if s.path == path), None),
+        ),
         runner=None,
         utility=None,
         flashes=None,
@@ -156,14 +167,20 @@ async def make_app(rig_definition: RigDefinition) -> SimpleNamespace:
     app._require_ports = lambda: manager
     app._require_utility = lambda: utility
     app._require_flashes = lambda: flashes
+    for cmd, handler in {
+        Cmd.FLASH_ENQUEUE: Application._flash_enqueue,
+        Cmd.UTILITY_ENSURE: Application._utility_ensure,
+        Cmd.PORT_SEND_START: Application._port_send_start,
+        Cmd.PORT_PASSTHROUGH_CLOSE: Application._passthrough_close,
+        Cmd.PORT_ERROR_ACK: Application._port_error_ack,
+    }.items():
+        server.register(cmd, functools.partial(handler, app))
     return app
 
 
 async def flash(app: SimpleNamespace, path: str, **extra) -> None:  # noqa: ANN003
     """A Debug Mode flash of box 1, as the dialog asks for it, run to the end."""
-    await Application._flash_enqueue(
-        app, None, None, {"boxes": [1], "sketchPath": path, **extra}, None
-    )
+    await dispatch(app, "flash.enqueue", boxes=[1], sketchPath=path, **extra)
     await settle(app.utility)
 
 
@@ -224,7 +241,7 @@ async def test_asking_over_the_wire_releases_the_pin(rig_definition) -> None:
     await flash(app, TASK_PATH)
     await settle(app.utility)
 
-    await Application._utility_ensure(app, None, None, {"boxes": [1]}, None)
+    await dispatch(app, "utility.ensure", boxes=[1])
     await settle(app.utility)
 
     assert app.tool.uploads == [UTILITY_PATH, TASK_PATH, UTILITY_PATH]
@@ -236,7 +253,7 @@ async def test_a_wire_ensure_for_other_boxes_leaves_the_pin(rig_definition) -> N
     await at_baseline(app)
     await flash(app, TASK_PATH)
 
-    await Application._utility_ensure(app, None, None, {"boxes": [2, 3]}, None)
+    await dispatch(app, "utility.ensure", boxes=[2, 3])
     await settle(app.utility)
 
     assert app.tool.uploads == [UTILITY_PATH, TASK_PATH]
@@ -251,7 +268,7 @@ async def test_a_released_pin_waits_for_the_console_to_close(rig_definition) -> 
     await flash(app, TASK_PATH)
     app.ports.open_passthrough(1)
 
-    await Application._utility_ensure(app, None, None, {"boxes": [1]}, None)
+    await dispatch(app, "utility.ensure", boxes=[1])
     await settle(app.utility)
     assert app.tool.uploads == [UTILITY_PATH, TASK_PATH]
     assert box_state(app.utility)["state"] == "busy"
@@ -315,7 +332,7 @@ def task_profile_on_disk(monkeypatch: pytest.MonkeyPatch):
 
 
 async def send_start(app: SimpleNamespace, **args) -> dict:  # noqa: ANN003
-    return await Application._port_send_start(app, None, None, {"box": 1, **args}, None)
+    return await dispatch(app, "port.sendStart", box=1, **args)
 
 
 async def test_send_start_writes_the_line_a_session_would_build(
@@ -344,7 +361,7 @@ async def test_send_start_without_config_uses_the_profile_defaults(
 
 async def test_send_start_needs_an_open_console(rig_definition, task_profile_on_disk) -> None:  # noqa: ANN001
     app = await make_app(rig_definition)
-    with pytest.raises(CommandError) as err:
+    with pytest.raises(Refused) as err:
         await send_start(app, sketchPath=TASK_PATH)
     assert err.value.code == ErrCode.SEND_NOT_PASSTHROUGH
 
@@ -352,7 +369,7 @@ async def test_send_start_needs_an_open_console(rig_definition, task_profile_on_
 async def test_send_start_refuses_an_undiscovered_sketch(rig_definition, task_profile_on_disk) -> None:  # noqa: ANN001
     app = await make_app(rig_definition)
     app.ports.open_passthrough(1)
-    with pytest.raises(CommandError) as err:
+    with pytest.raises(Refused) as err:
         await send_start(app, sketchPath="/somewhere/else")
     assert err.value.code == ErrCode.SKETCH_UNKNOWN
 
@@ -491,7 +508,7 @@ async def test_a_debug_flash_from_idle_is_not_overwritten(tmp_path: Path) -> Non
     `Application.start` wiring one wrong; this test can."""
     tool = FakeTool()
     async with live_sidecar(tmp_path / "app", tool=tool) as sidecar:
-        await sidecar.call("settings.push", defaultBaud=9600, boxes=[{"box": 1, "hardwareId": HWID}])
+        await sidecar.call("settings.push", settings=settings(bound={1: HWID}))
         sketches = (await sidecar.call("sketches.refresh"))["sketches"]
         utility = next(s["path"] for s in sketches if s["name"] == "BOX_Utility")
         grgl = next(s["path"] for s in sketches if s["name"] == "GRGL")

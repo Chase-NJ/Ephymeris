@@ -2544,7 +2544,10 @@ COMMANDS = (
         doc="Sends the literal `STOP` line and does **not** force the "
         "transition: the firmware ends the run at its next trial boundary with "
         "its own end-of-session strobe, and the port leaves `IN_SESSION` when "
-        "the sidecar sees it.",
+        "the sidecar sees it. A box that isn't running is a no-op (its run "
+        "already ended, or never began). `ILLEGAL_TRANSITION` with "
+        "`detail.box` when a running box's port did not take `STOP` -- it left "
+        "the session, or the write failed -- so the box is not stopping.",
     ),
     # ----------------------------------------------------- utility baseline
     Command(
@@ -2867,9 +2870,11 @@ COMMANDS = (
         doc="The explicit relocate, distinct from renaming "
         "(`DATA.md#data-folder`). Moving the contents moves the records' "
         "stored paths with the files, journalled so a crash is finished or "
-        "undone at the next start; refused (`DATA_FOLDER_INVALID`) while a "
-        "session is set up or running, and `INTERNAL` while an analytics walk "
-        "runs. Long-running; the client raises its reply timeout.",
+        "undone at the next start; refused (`RIG_IN_USE`) while a "
+        "session is set up or running, and `ARCHIVE_BUSY` while another "
+        "archive write runs. Broadcasts `cohorts.updated` and "
+        "`session.lifecycle`, and `logbook.updated` for the cohort. "
+        "Long-running; the client raises its reply timeout.",
     ),
     Command(
         "cohorts.moveAnimals",
@@ -2899,8 +2904,10 @@ COMMANDS = (
         "are copied. An apply re-plans rather than replaying the preview, and "
         "is crash-safe: interrupted, it is finished or undone at the next "
         "start. `ANIMAL_MOVE_REFUSED` (with the plan in `detail`) when the "
-        "apply's plan has refusals; `INTERNAL` while an analytics walk runs. "
-        "Broadcasts `cohorts.updated` and `logbook.updated` after an apply. "
+        "apply's plan has refusals, a session set up or running anywhere "
+        "among them; `ARCHIVE_BUSY` while another archive write runs. "
+        "Broadcasts `cohorts.updated`, `session.lifecycle` and "
+        "`logbook.updated` after an apply. "
         "Long-running; the client raises its reply timeout.",
     ),
     Command(
@@ -3002,8 +3009,11 @@ COMMANDS = (
         doc="Discard a session still in `configuring` (the mapping step's "
         "Back): marks it `aborted`, clears any confirmed-but-unstarted mapping "
         "from the runner, drops an unstarted recording setup, and hands the "
-        "rig back to the utility baseline. Nothing on disk is touched. "
-        "`SESSION_INVALID` once a group has run.",
+        "rig back to the utility baseline. Nothing on disk is touched. A "
+        "recording Start All began before any box started is stopped, and its "
+        "run is kept on the aborted session, since RHX's files exist "
+        "(`RECORDING.md`): the reply can then take RHX's stop, about 16 s at "
+        "worst. `SESSION_INVALID` once a group has run.",
     ),
     Command(
         "sessions.confirmMapping",
@@ -3313,9 +3323,12 @@ COMMANDS = (
         "points at are adopted, and records pointing at files the disk no "
         "longer has are pruned — after records an earlier relocate left at "
         "the old folder are re-pointed (`rehomed`). Publishes "
-        "`analytics.progress`. `INTERNAL` "
-        "when another analytics walk is already running. Long-running; the "
-        "client raises its reply timeout.",
+        "`analytics.progress`. `ARCHIVE_BUSY` while another archive write "
+        "runs; `RIG_IN_USE` while any box is running, since a run finishing "
+        "during the walk would be found twice. Broadcasts `cohorts.updated`, "
+        "`session.lifecycle` and `logbook.updated` when it adopted, pruned or "
+        "re-pointed anything. Long-running; the client raises its reply "
+        "timeout.",
     ),
     Command(
         "analytics.recentSessions",
@@ -3346,9 +3359,11 @@ COMMANDS = (
         "footer-less (crashed) one gets 'recovered after crash'; a "
         "pre-Ephymeris log, which never had a footer, gets 'recovered from a "
         "legacy log'. "
-        "`SESSION_INVALID` while any box is running — a live run's `.tsv` has "
-        "no `.json` yet and is not an orphan. Long-running; the client raises "
-        "its reply timeout.",
+        "A `.json` that does not parse counts as missing. `RIG_IN_USE` while "
+        "any box is running — a live run's `.tsv` has no `.json` yet and is "
+        "not an orphan; `ARCHIVE_BUSY` while another archive write runs. "
+        "Queues what it wrote for backup. Long-running; the client raises its "
+        "reply timeout.",
     ),
     Command(
         "sessions.tidy",
@@ -3364,8 +3379,9 @@ COMMANDS = (
         "than replaying the preview. **Database only**, except the empty "
         "folder of a deleted record. Never touches the held session (or its "
         "folder-mates) nor a set-up from today; those are listed in "
-        "`skipped`. Broadcasts `session.lifecycle` after an apply. `INTERNAL` "
-        "when another analytics walk is already running.",
+        "`skipped`. Broadcasts `cohorts.updated`, `session.lifecycle` and "
+        "`logbook.updated` after an apply. `ARCHIVE_BUSY` while another "
+        "archive write runs.",
     ),
     # --------------------------------------------------------- Intan recording
     #
@@ -3410,8 +3426,12 @@ COMMANDS = (
         "the first problem: the rig's wiring declares no `sync` channel, a box "
         "with no digital input, a port with no headstage, two boxes claiming "
         "one channel, or nothing selected to save. `SESSION_INVALID` for a "
-        "session that is not a recording. Long-running; the client raises its "
-        "reply timeout.",
+        "session that is not a recording, and, with `detail.boxes`, for boxes "
+        "this group's confirmed mapping doesn't have (all of them unless the "
+        "held session is this one with this group's mapping), before RHX is "
+        "touched. The setup is for the mapping as confirmed now: confirming it "
+        "again makes Start refuse until this runs again. Long-running; the "
+        "client raises its reply timeout.",
     ),
     Command(
         "intan.parseProbeMap",
@@ -3770,7 +3790,13 @@ EVENTS = (
 # --- Error codes ------------------------------------------------------------
 
 ERRORS = (
-    ErrorCode("BAD_MESSAGE", "Malformed JSON, a non-object frame, or invalid args."),
+    ErrorCode(
+        "BAD_MESSAGE",
+        "Malformed JSON, a non-object frame, or args that don't match the "
+        "command's declaration here: checked before any handler runs, with "
+        "`detail.problems` listing each mismatch. Also a value the schema "
+        "can't describe, such as a box number outside 1–6 or a blank id.",
+    ),
     ErrorCode("UNKNOWN_COMMAND", "Unrecognized `cmd`."),
     ErrorCode("UNAUTHORIZED", "Missing or invalid token, or a first message that isn't `auth`."),
     ErrorCode(
@@ -3877,7 +3903,11 @@ ERRORS = (
         "`hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while "
         "a session is set up or a box is running. Each regenerates sketch "
         "folders a box was or will be flashed from, under a session whose "
-        "profiles were read from the old ones (`TASKS.md#the-rig-definition`).",
+        "profiles were read from the old ones (`TASKS.md#the-rig-definition`). "
+        "Also an archive write the rig refuses (`DATA.md#the-cohort-archive`): "
+        "`cohorts.setDataFolder` moving the contents while a session is set up "
+        "or a box is running, and `analytics.rescan` or `sessions.recover` "
+        "while a box is running.",
     ),
     ErrorCode(
         "RIG_WOULD_BREAK_TASKS",
@@ -3945,7 +3975,8 @@ ERRORS = (
     ErrorCode(
         "INTAN_NOT_READY",
         "RHX is reachable but this cannot be done now — RHX is already "
-        "recording, no recording is configured for this group, a box has no "
+        "recording, no recording is configured for this group as its mapping "
+        "was last confirmed, a box has no "
         "digital input, the rig's wiring has no sync channel, or a scope asked "
         "for a channel the box does not own. The message is the operator's "
         "next step.",
@@ -3957,10 +3988,17 @@ ERRORS = (
         "`detail.command` carries what was sent.",
     ),
     ErrorCode(
+        "ARCHIVE_BUSY",
+        "A scan, tidy, recover, data-folder move or move of animals already "
+        "holds the archive (`analytics.rescan`, `sessions.tidy`, "
+        "`sessions.recover`, `cohorts.setDataFolder`, `cohorts.moveAnimals`). "
+        "Nothing was done; try again when it finishes.",
+    ),
+    ErrorCode(
         "INTERNAL",
-        "Unhandled sidecar exception, a subsystem that isn't running, or an "
-        "analytics walk already in progress. Also the code `sidecar.error` "
-        "carries for a mid-session write failure.",
+        "Unhandled sidecar exception, or a subsystem that isn't running. Also "
+        "the code `sidecar.error` carries for a mid-session write failure. Every "
+        "other refusal has its own code (`ARCHITECTURE.md#dispatch`).",
     ),
 )
 

@@ -18,6 +18,7 @@ are [DATA.md](DATA.md); Intan recording is [RECORDING.md](RECORDING.md).
   - [Source of truth and generated files](#source-of-truth-and-generated-files)
   - [Changing the wire](#changing-the-wire)
   - [Connection and authentication](#connection-and-authentication)
+  - [Dispatch](#dispatch)
   - [Replay on connect](#replay-on-connect)
   - [Reconnection](#reconnection)
   - [Envelope](#envelope)
@@ -255,7 +256,7 @@ the `CommandArgsMap`/`CommandResultMap`/`EventDataMap` that type `client.call` a
 `docs/PROTOCOL.md` (the reference). Frontend domain type files re-export the generated shapes; don't
 re-declare a wire shape by hand, and don't cast a reply or an event's `data`: a cast compiles past the
 drift this typing exists to catch. Every command except `auth` is registered in `app.py`; `server.py`
-handles `auth` before dispatch.
+handles `auth` before dispatch ([Dispatch](#dispatch)).
 
 ### Changing the wire
 
@@ -268,8 +269,9 @@ handles `auth` before dispatch.
 Shapes are guarded on both sides. A stale TypeScript shape fails `npm run typecheck`. In the sidecar,
 `EPHYMERIS_WIRE_VALIDATE=1` checks every event payload and dispatched reply against the schema; the test
 suite sets it globally (`tests/conftest.py`), production leaves it off. `tests/test_wire_shapes.py` pins
-the real `to_json` emitters to the schema — extend it when adding an emitter. Nothing verifies that a
-command *has* a handler.
+the real `to_json` emitters to the schema — extend it when adding an emitter. `Application.register`
+refuses to start with a declared command that has no handler, and `server.register` refuses a command
+the schema doesn't declare.
 
 ### Connection and authentication
 
@@ -277,14 +279,53 @@ The server sends `server.hello` on connect. The client's **first** message must 
 anything else, a bad token, or `AUTH_TIMEOUT_S` (`server.py`) of silence closes the connection with code
 `1008`. The token travels in a message body so it never lands where a URL would be logged.
 
+### Dispatch
+
+`SidecarServer` (`server.py`) is the one place a command meets the wire, in this order:
+
+1. **Arguments are checked against the schema** (`validate_command_args`) before any handler runs: a
+   missing or unknown field, a wrong type, a `null` where none is allowed or a fraction where an int is
+   declared is `BAD_MESSAGE`, with `detail.problems`. Always on, unlike the reply check. A handler reads
+   its arguments as declared and checks only what the schema can't say: a box number within 1–6, a
+   non-blank id, a non-empty list.
+2. **The handler runs**: `handler(args) -> result`. It never sees the connection or the envelope.
+3. **An exception becomes its code through one table**, `ERRORS` in `wire_errors.py`. Domain modules raise
+   their own exceptions and never import `CommandError`; a mapper reads the box from the exception or the
+   command's `box` argument. An exception the table doesn't answer is `INTERNAL`, logged. A handler
+   raises `CommandError` itself only for a value the schema can't describe.
+4. **The reply is checked** against the schema when `EPHYMERIS_WIRE_VALIDATE=1`.
+
+**One exception type, one code, everywhere.** Don't catch a domain exception in a handler to pick a
+different code for it: the frontend branches on codes (`SESSION_INVALID` with `detail.boxes`,
+`PORT_OPEN_FAILED`, `ILLEGAL_TRANSITION`, `COHORT_INVALID` and others), and the same failure under two
+codes is handled in one place and shown raw in the other. A new refusal gets a new exception and a row in
+`ERRORS`.
+
+A generic type in the table would answer for every bug that raises one, so only two are read, each
+narrowed: `OSError` answers only on a command naming a box, and never for a socket's `ConnectionError`
+or `TimeoutError`; `KeyError` only as the cause a `BoxRefused` carries from `SessionRunner.start_box`
+(a box outside the confirmed mapping). Three handlers turn a generic exception into a code
+themselves, because only they know it is about their own arguments: `analytics.setFalseStart`
+(`KeyError`, a run not in the cohort) and `analytics.series` (`ValueError`) answer `BAD_MESSAGE`, and
+`sessions.create` answers `SESSION_INVALID` for a session folder that can't be made.
+
+Tests drive a command through this path with `tests/wire.py`'s `dispatch(app, cmd, **args)`, which hands a
+frame to the server's own message handler; `tests/live_sidecar.py` is the same path over a real WebSocket.
+
 ### Replay on connect
 
-After `auth`, `Application._replay_state` (`app.py`) sends current state **to that client alone**: one
-`port.state` per box (with `prev` equal to `state`, reason `"initial state"`), then `boards.presence`,
-`sketches.updated`, `tasks.updated`, `cohorts.updated`, `prefixes.updated`, and `flash.queue`,
-`utility.updated`, `backup.status` and `intan.status` once those services exist. Events are otherwise sent only on change, so
-without it a client connecting in a quiet period would have to guess. A replay callback that raises is
-logged and swallowed rather than dropping the connection.
+After `auth`, the server sends every registered **snapshot** to that client alone, in registration order
+(`Application.register`): one `port.state` per box (with `prev` equal to `state`, reason
+`"initial state"`), one `port.telemetry` per hand-started Debug run (`debug_run.py`), then
+`boards.presence`, `sketches.updated`, `tasks.updated`, `cohorts.updated`, `prefixes.updated`,
+`flash.queue`, `utility.updated`, `backup.status` and `intan.status`. Events are otherwise sent only on
+change, so without it a client connecting in a quiet period, or a webview that reloaded, would have to
+guess. A snapshot that raises is logged and skipped rather than dropping the connection.
+
+A snapshot is registered once with `server.register_snapshot(evt, provider)`, and `server.publish(evt)`
+broadcasts the same provider's payload, so what a client that reconnects is told can't drift from what
+one that stayed was told. State an event carries belongs in a snapshot; an event that reports a change
+(`port.output`, a `port.state` transition) is broadcast as it happens.
 
 **Live session state is not replayed.** A reconnecting client asks: `sessions.active` to discover what is
 running with no prior ids, or `sessions.status` for a session it knows. The runner is the authority on the
@@ -317,7 +358,7 @@ and reports through replayed events instead (`flash.queue`, `utility.updated`).
 ### Reply timeouts
 
 `client.ts` applies `DEFAULT_CALL_TIMEOUT_MS`, with longer values in `CALL_TIMEOUT_OVERRIDES` for work that
-runs long (waiting out a rig definition write, library refresh, backup sync, analytics indexing, recovery, ending a session or group,
+runs long (waiting out a rig definition write, library refresh, backup sync, analytics indexing, recovery, ending or abandoning a session, ending a group,
 starting a recording, configuring RHX). **A client timeout does not cancel sidecar work**; the resulting
 `port.state` is what the UI shows.
 
@@ -386,7 +427,7 @@ sidecar's receiving end: `sidecar/ephymeris_sidecar/settings.py`.
 | `defaultBaud` | Rig | yes | Starting baud per console ([Baud](#baud)) |
 | `boxes` | Rig (board, label), Recording (`intanDigitalIn`) | yes | The box list ([Box bindings](#box-bindings)) |
 | `intan` | Recording | yes | RHX's command, waveform and spike ports. No host: RHX is always local |
-| `recordingDefaults` | Recording, and the Record step | no | What a recording saves, thresholds, save root, per-box memory (`src/lib/intan/defaults.ts`) |
+| `recordingDefaults` | Recording, and the Record step | no | What a recording saves, thresholds, save root, per-box wiring and per-animal probe maps (`src/lib/intan/defaults.ts`) |
 | `reducedMotion` | Settings | no | Forces reduced motion on; the system preference applies on top |
 | `constellation` | Rig | no | Zodiac layout of the status constellation, validated against the catalogue on load |
 | `constellationSlots` | Rig (drag, and box add/remove) | no | Which star each box sits on. `reconcileSlots` is the single authority and runs in the same write as a box add or remove |
@@ -864,7 +905,10 @@ session is in progress asks it, and it answers three different questions:
 |---|---|---|
 | `held` | A session holds the rig, from its mapping's confirmation or a resume until it ends or is abandoned | `sessions.tidy`, which never touches it |
 | `in_use` | A session is held, or any box is running | every rig definition write, the data-folder relocate, moving animals |
-| `writing` | Any box is running, so a live `.tsv` has no `.json` yet | `sessions.recover` |
+| `writing` | Any box is running, or finishing until its run is recorded: a `.tsv` has no `.json` yet, or a `.json` has no record claiming it yet | `sessions.recover`, `analytics.rescan` |
+
+Every archive write asks through `CohortArchive.write`, once it holds the archive lock, never before
+([DATA.md](DATA.md#the-cohort-archive)).
 
 A finished run records against the session it was started under (`ActiveRun.session_id`), not against
 whichever session is held when it lands.
@@ -971,6 +1015,13 @@ was. `lib/sessions/setupResume.ts` remembers two things:
   mid-placement picks up again at the first box no flash was asked for, read from the
   [flash queue](#the-flash-queue), whose flashes carried on meanwhile. A Boxes draft holds each box's sketch and the operator's own overrides, never the merged
   config, so a default changed during the visit is followed on return ([TASKS.md](TASKS.md#three-layer-merge)).
+  A Record draft follows the mapping (`reconcileRows`, `lib/intan/recordingSetup.ts`). The same animal on
+  the same box keeps its row as typed, and a box no longer mapped is dropped. A newly mapped box, or one
+  whose animal changed, gets a fresh row: the box's remembered wiring and the **animal's** probe map
+  ([RECORDING.md](RECORDING.md#record-step)), the one chosen for it earlier in this visit if any, else the
+  remembered one. With no remembered port RHX still reports, it is guessed onto a free one (`assignPorts`).
+  So a return to Boxes that moved or swapped animals cannot leave `intan.configure` naming the box an animal
+  left, or carrying another animal's probe map.
 
 The memory is dropped on reaching Mission Control and by a deliberate Cancel or End session, and the offer is
 withheld whenever `sessions.active` no longer reports the session, because the sidecar is the authority on
@@ -1368,7 +1419,8 @@ Mission Control's star panel and Debug Mode's live tile share `MetricStrip` and 
 **The session store forgets a run when the sidecar reports the next one began**, never on a click, so a
 refused start leaves the last run on screen. A port entering `IN_SESSION` (a real transition, not the
 connect replay) clears that box. Debug Mode's `port.telemetry` going from not running to running, which
-the sidecar sends only once a `START` is on the wire, clears that box. A confirmed mapping clears every
+the sidecar sends only once a `START` is on the wire (and replays on connect while that run lasts),
+clears that box. A confirmed mapping clears every
 box: the `ActiveSessions` payload carries `confirmations`, which `sessions.confirmMapping` increments, and
 the store clears on a value it has not seen. `session.lifecycle` broadcasts and `sessions.active` answers
 both count, so a mapping confirmed while a window was disconnected clears it on reconnect. The first answer
@@ -1536,7 +1588,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `rig/` | The rig definition: `registry.py` (channel and strobe registries, context-local hypotheticals), `definition.py` (impact check, writes, the read/write lock), `schema/` (including the default vocabulary seed), `hardware/` pinouts, `paths.py` | [TASKS.md](TASKS.md#the-rig-definition) |
 | `strobes/` | The machine's strobe vocabulary: `store.py` (`<data_dir>/strobes/vocabulary.json`, seeding, every edit, import merge), `usage.py` (firmware references, the cached archive scan) | [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `hardware/` | The operator's `rig.json`: `store.py` (load, validate, save), `service.py` (located problems) | [TASKS.md](TASKS.md#rig-wiring) |
-| `analytics/` | `archive.py` (the cohort archive: recorded and recovered sessions in one read, and the archive lock), `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `false_starts.py` (which runs are set aside), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#the-cohort-archive), [DATA.md](DATA.md#derived-metrics), [DATA.md](DATA.md#false-starts) |
+| `analytics/` | `archive.py` (the cohort archive: recorded and recovered sessions in one read, and the one way to write it: the archive lock, the rig asked under it, `on_changed`), `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `false_starts.py` (which runs are set aside), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#the-cohort-archive), [DATA.md](DATA.md#derived-metrics), [DATA.md](DATA.md#false-starts) |
 | `backup/` | `manager.py` (the mirror), `paths.py` (cohort-anchored paths) | [DATA.md](DATA.md#backup-mirroring) |
 | `logbook/` | The session log: `models.py`, `repository.py`, `service.py`, `diff.py` (what changed), `mirror.py` (`notes.md`) | [DATA.md](DATA.md#the-session-log) |
 | `intan/` | `client.py`, `streams.py`, `analysis.py`, `probemap.py`, `service.py` | [RECORDING.md](RECORDING.md) |
@@ -1552,7 +1604,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 |---|---|---|
 | `main.tsx`, `App.tsx` | Provider trees (main, scope) and the router | [Routes](#routes) |
 | `lib/ws/`, `lib/settings/`, `lib/hardware/` | Port, its client and fake, and protocol; settings `schema.ts`; hardware store, `useHandshakeTest.ts`, `useRig.ts` | [Wire protocol](#wire-protocol), [Settings](#settings) |
-| `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `flow.ts` and `useSessionFlow`, `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults and scope maths | [Session lifecycle](#session-lifecycle) |
+| `lib/sessions/`, `lib/cohorts/`, `lib/analytics/`, `lib/intan/` | Domain stores; `defaultConfig`, `flow.ts` and `useSessionFlow`, `placementWalk.ts` (the Boxes step's rules and walk), `liveTrials.ts`, `stars.ts`; `appearance.ts`; `view.ts`; recording defaults, `recordingSetup.ts` (the Record step's rows, readiness and `intan.configure`) and scope maths | [Session lifecycle](#session-lifecycle) |
 | `lib/tasks/`, `lib/taskdef/`, `lib/strobes/` | `topology.ts`, `graphLayout.ts`, `editorLayout.ts`, `orrery.ts`, `useGlidingWidth.ts`, `useLiveNode.ts`; task commands, `lines.ts` (odor lines and onsets), `selection.ts` (mode scope); vocabulary commands and `useStrobeVocabulary` | [TASKS.md](TASKS.md#derived-state-machine), [TASKS.md](TASKS.md#editor) |
 | `lib/exports/` | `jobs.ts`, the export progress store | [Export progress](#export-progress) |
 | `lib/updates/`, `components/settings/UpdatesTile.tsx` | The update store and checks, `installBlocker`, the Settings tile | [Updates](#updates) |

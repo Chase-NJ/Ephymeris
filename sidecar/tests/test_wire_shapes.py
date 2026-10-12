@@ -376,7 +376,7 @@ def test_a_populated_discovery_matches_schema(
     payload = discover(generated_root=generated, pinned_root=pinned).to_json()
     assert {s["source"] for s in payload["sketches"]} == {"bundled", "rig"}
     assert validate(("ref", "SketchDiscovery"), payload) == []
-    # Through the event builder too, which is what `_replay_state` sends.
+    # Through the event builder too, which is what the connect replay sends.
     assert event(Evt.SKETCHES_UPDATED, payload)["data"] == payload
 
 

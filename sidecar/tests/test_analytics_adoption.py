@@ -13,8 +13,10 @@ corrupt session-number suggestion and the same-day reuse warning.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -22,13 +24,16 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive, reader
-from ephymeris_sidecar.analytics.repository import AnalyticsRepository
+from ephymeris_sidecar.analytics.repository import AdoptedRun, AnalyticsRepository
+from ephymeris_sidecar.cohorts import move_apply
 from ephymeris_sidecar.cohorts.db import Database
+from ephymeris_sidecar.cohorts.move import MoveRequest
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.protocol import validate_command_result
 from ephymeris_sidecar.sessions.paths import parse_name_time, parse_session_folder
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import rewrite_keeping_stat
+from tests.test_analytics_service import Changes, Lifecycle
 
 GRGL = {
     "taskName": "GRGL 2-Odor Discrimination",
@@ -92,7 +97,9 @@ class LegacyRig:
         async def broadcast(message: dict) -> None:
             pass
 
-        self.archive = CohortArchive(db=db, cohorts=self.cohorts, sessions=self.sessions)
+        self.archive = CohortArchive(
+            db=db, cohorts=self.cohorts, sessions=self.sessions, rig=Lifecycle(), on_changed=Changes()
+        )
         self.service = AnalyticsService(
             db=db,
             cohorts=self.cohorts,
@@ -733,7 +740,7 @@ async def test_a_sketch_is_resolved_at_read_time_not_frozen_at_adoption(
 
 
 async def test_rescan_is_idempotent(rig: LegacyRig) -> None:
-    """The synthetic id is derived from the path, so a second walk refreshes
+    """The synthetic id is kept per cohort and run, so a second walk refreshes
     rather than duplicating — a user may click Rescan twice."""
     rig.add_legacy_run("remy1", HIT_1 * 5)
     await rig.service.rescan(rig.cohort.id)
@@ -742,6 +749,216 @@ async def test_rescan_is_idempotent(rig: LegacyRig) -> None:
     payload = await rig.service.summary(rig.cohort.id)
     assert len(payload["runs"]) == 1
     assert len(rig.repo.adopted_for_cohort(rig.cohort.id)) == 1
+
+
+def _second_cohort(rig: LegacyRig, folder: Path) -> str:
+    """Another cohort in the same database, attached to `folder`, whose
+    roster also holds a `remy1`, under its own animal id."""
+    cohort = rig.cohorts.create("The Remy's, again", str(folder))
+    group = cohort.groups[0].id
+    rig.cohorts.update(
+        cohort.id,
+        {"animals": [{"id": "b1", "name": "remy1", "groupId": group, "boxNumber": 1}]},
+    )
+    return cohort.id
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["same-folder", "nested-folder"])
+async def test_two_cohorts_over_one_archive_keep_their_own_adoptions(
+    rig: LegacyRig, nested: bool
+) -> None:
+    """B15. Two cohorts whose folders hold the same file each keep their own
+    adoption of it, under their own animal, however their rescans interleave:
+    the id names the cohort (`DATA.md#orphan-adoption`)."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
+    # Nested: the second cohort is attached to the prefix folder inside the first's.
+    other = _second_cohort(rig, path.parents[2] if nested else rig.root)
+
+    for round_ in (1, 2):
+        mine = await rig.service.rescan(rig.cohort.id)
+        theirs = await rig.service.rescan(other)
+        if round_ == 2:
+            assert (mine["adopted"], theirs["adopted"]) == (0, 0), (
+                "a second round decides nothing: each cohort's row is still its own"
+            )
+
+        assert [e.animal_id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == ["a1"]
+        assert [e.animal_id for e in rig.repo.adopted_for_cohort(other)] == ["b1"]
+        first = await rig.service.summary(rig.cohort.id)
+        second = await rig.service.summary(other)
+        assert [r["animalId"] for r in first["runs"]] == ["a1"], f"round {round_}"
+        assert [r["animalId"] for r in second["runs"]] == ["b1"], f"round {round_}"
+
+
+def test_storing_an_adoption_never_takes_another_cohorts_row(rig: LegacyRig) -> None:
+    """B15. Storing an adoption never takes a row another cohort holds. Taking
+    a run from one cohort to another is a move's job
+    (`DATA.md#moving-animals-between-cohorts`), never a rescan's: the write
+    that would do it is left out, and the rest of its batch lands."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    spare = rig.add_legacy_run("remy2", HIT_1 * 5)
+    other = _second_cohort(rig, rig.root)
+    theirs = AdoptedRun(
+        id="adopted:held-by-the-other", cohort_id=other, animal_id="b1",
+        file_path=str(path), prefix_name="2O-Bdisc", session_number="01",
+        date="2026-06-16", started_at="2026-06-16T12:00:22", sketch_name=None,
+        sketch_path=None,
+    )
+    rig.repo.store_adopted([theirs])
+
+    rig.repo.store_adopted([
+        replace(theirs, cohort_id=rig.cohort.id, animal_id="a1"),
+        replace(
+            theirs, id="adopted:new", cohort_id=rig.cohort.id,
+            animal_id="a2", file_path=str(spare),
+        ),
+    ])
+
+    assert [(e.id, e.animal_id) for e in rig.repo.adopted_for_cohort(other)] == [
+        ("adopted:held-by-the-other", "b1")
+    ], "the other cohort's row stands"
+    assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == ["adopted:new"]
+
+
+def _stem_only_id(path: Path) -> str:
+    """The id an adoption stored before ids named their cohort: the run
+    identity alone. Spelled out here, not imported, so a change to the minting
+    cannot quietly change what these tests treat as an existing row."""
+    digest = hashlib.sha1(path.stem.casefold().encode("utf-8")).hexdigest()
+    return f"adopted:{digest[:16]}"
+
+
+def _stored_adoption(rig: LegacyRig, path: Path, *, with_stat: bool) -> AdoptedRun:
+    """A row for `path` as an earlier build stored it, under its stem-only id."""
+    stat = path.stat()
+    entry = AdoptedRun(
+        id=_stem_only_id(path), cohort_id=rig.cohort.id, animal_id="a1",
+        file_path=str(path), prefix_name="2O-Bdisc", session_number="01",
+        date="2026-06-16", started_at="2026-06-16T12:00:22", sketch_name=None,
+        sketch_path=None,
+        file_mtime_ns=stat.st_mtime_ns if with_stat else None,
+        file_size=stat.st_size if with_stat else None,
+    )
+    rig.repo.store_adopted([entry])
+    return entry
+
+
+async def test_a_rescan_keeps_the_id_a_held_adoption_was_stored_under(
+    rig: LegacyRig,
+) -> None:
+    """A rescan never re-keys a row its cohort holds: a person's ruling and the
+    cached scores are keyed by that id (`DATA.md#false-starts`). The row has no
+    stat, so the rescan reads the file again and rewrites the row."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    held = _stored_adoption(rig, path, with_stat=False)
+
+    result = await rig.service.rescan(rig.cohort.id)
+
+    assert result["adopted"] == 1, "read again and rewritten"
+    assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == [held.id]
+
+
+async def test_a_ruling_follows_a_stem_keyed_run_re_adopted_from_a_new_place(
+    rig: LegacyRig,
+) -> None:
+    """A person's false-start ruling on a run stored under its stem-only id
+    (`DATA.md#false-starts`) survives the run's file moving within the archive.
+    The prune drops the row, since its file is gone; the walk finds the file at
+    its new place and adopts it under a new id; and the ruling goes with it
+    rather than staying behind on an id no row holds."""
+    old = rig.add_legacy_run("remy1", HIT_1 * 5, group="01_2O-Bdisc")
+    held = _stored_adoption(rig, old, with_stat=True)
+    rig.repo.set_false_start(held.id, True)
+
+    # The operator refiles the session folder under another grouping by hand.
+    session = old.parents[1]
+    (rig.root / "ALL").mkdir()
+    shutil.move(session, rig.root / "ALL" / session.name)
+    await rig.service.rescan(rig.cohort.id)
+
+    [row] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert row.file_path != str(old), "re-adopted from its new place"
+    assert rig.repo.false_start_overrides() == {row.id: True}
+    payload = await rig.service.summary(rig.cohort.id)
+    assert [r["runId"] for r in payload["falseStarts"]] == [row.id]
+    assert payload["runs"] == []
+
+
+async def test_a_ruling_stays_with_the_cohort_whose_row_holds_it(rig: LegacyRig) -> None:
+    """A ruling moves only off an id no row holds. While one cohort still holds
+    the run under its stem-only id, another cohort adopting the same file does
+    not take that cohort's ruling (`DATA.md#false-starts`)."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    held = _stored_adoption(rig, path, with_stat=True)
+    rig.repo.set_false_start(held.id, True)
+    other = _second_cohort(rig, rig.root)
+
+    await rig.service.rescan(other)
+    await rig.service.rescan(rig.cohort.id)
+
+    [theirs] = rig.repo.adopted_for_cohort(other)
+    assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == [held.id]
+    assert rig.repo.false_start_overrides() == {held.id: True}
+    assert theirs.id != held.id
+
+
+async def test_a_ruling_follows_a_moved_run_re_adopted_in_its_new_cohort(
+    rig: LegacyRig, tmp_path: Path
+) -> None:
+    """A moved run keeps the id its first cohort stored it under
+    (`DATA.md#moving-animals-between-cohorts`). When the destination's operator
+    refiles its session folder, the prune drops that row and the walk adopts the
+    run again under the destination's own id; a person's ruling goes with it
+    (`DATA.md#false-starts`)."""
+    rig.add_legacy_run("remy1", HIT_1 * 5)
+    await rig.service.rescan(rig.cohort.id)
+    [adopted] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    rig.repo.set_false_start(adopted.id, True)
+
+    dest_folder = tmp_path / "data" / "Slow learners"
+    dest_folder.mkdir(parents=True)
+    dest = rig.cohorts.create("Slow learners", str(dest_folder))
+    move_apply.apply(rig.db, MoveRequest(rig.cohort.id, ["a1"], dest.id))
+    [moved] = rig.repo.adopted_for_cohort(dest.id)
+    assert moved.id == adopted.id, "a move keeps the row's id"
+
+    session = Path(moved.file_path).parents[1]
+    (dest_folder / "ALL").mkdir()
+    shutil.move(session, dest_folder / "ALL" / session.name)
+    await rig.service.rescan(dest.id)
+
+    [row] = rig.repo.adopted_for_cohort(dest.id)
+    assert row.id != adopted.id, "adopted again under the destination's id"
+    assert rig.repo.false_start_overrides() == {row.id: True}
+
+
+async def test_a_re_read_takes_no_ruling_off_another_cohorts_pruned_row(
+    rig: LegacyRig, tmp_path: Path
+) -> None:
+    """A ruling follows a run only into a row adopted afresh. A cohort reading
+    a run it already holds keeps that row's own standing, and never takes the
+    ruling another cohort's pruned row left (`DATA.md#false-starts`)."""
+    ours = rig.add_legacy_run("remy1", HIT_1 * 5)
+    held = _stored_adoption(rig, ours, with_stat=True)
+    rig.repo.set_false_start(held.id, True)
+    elsewhere = tmp_path / "elsewhere"
+    copy = elsewhere / ours.relative_to(rig.root)
+    copy.parent.mkdir(parents=True)
+    shutil.copy2(ours, copy)
+    other = _second_cohort(rig, elsewhere)
+    await rig.service.rescan(other)
+    [theirs] = rig.repo.adopted_for_cohort(other)
+
+    ours.unlink()
+    await rig.service.rescan(rig.cohort.id)
+    assert rig.repo.adopted_for_cohort(rig.cohort.id) == [], "pruned"
+
+    later = theirs.file_mtime_ns + 10**9
+    os.utime(copy, ns=(later, later))
+    result = await rig.service.rescan(other)
+
+    assert result["adopted"] == 1, "read again under the id it holds"
+    assert rig.repo.false_start_overrides() == {held.id: True}
 
 
 async def test_a_second_rescan_does_not_read_the_files_again(rig: LegacyRig) -> None:

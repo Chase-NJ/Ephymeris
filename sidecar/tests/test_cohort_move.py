@@ -25,6 +25,7 @@ from ephymeris_sidecar.logbook.repository import LogbookRepository
 from ephymeris_sidecar.sessions.models import GroupRun, SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import fine_mtime
+from tests.test_analytics_service import Changes, Lifecycle
 
 
 class Lab:
@@ -405,7 +406,10 @@ def test_after_a_move_neither_rescan_prunes_or_adopts(lab: Lab) -> None:
     async def broadcast(_message: dict) -> None:
         return None
 
-    archive = CohortArchive(db=lab.db, cohorts=lab.cohorts, sessions=lab.sessions)
+    archive = CohortArchive(
+        db=lab.db, cohorts=lab.cohorts, sessions=lab.sessions,
+        rig=Lifecycle(), on_changed=Changes(),
+    )
     service = AnalyticsService(
         db=lab.db, cohorts=lab.cohorts, sessions=lab.sessions, broadcast=broadcast, archive=archive
     )

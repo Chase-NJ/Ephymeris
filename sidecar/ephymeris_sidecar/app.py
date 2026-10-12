@@ -1528,9 +1528,11 @@ class Application:
         rows = config.get("boxes") or []
         # A box the held mapping lacks would reach RHX with no animal
         # (`RECORDING.md#record-step`).
-        mapped = self._require_lifecycle().mapped_boxes(
-            session_id, group_id, (b["box"] for b in rows)
-        )
+        lifecycle = self._require_lifecycle()
+        mapped = lifecycle.mapped_boxes(session_id, group_id, (b["box"] for b in rows))
+        # Read with the mapping, before RHX is awaited: a confirmation landing
+        # during the setup leaves it for the earlier one, which Start refuses.
+        confirmation = lifecycle.confirmations
         mapping = ", ".join(
             f"box {b['box']}={mapped[b['box']].animal_name} port {b.get('port')}" for b in rows
         )
@@ -1539,7 +1541,7 @@ class Application:
             f"cohort {cohort.name} group {group_name}",
             mapping,
         )
-        await intan.configure(session_id, group_id, config, base, notes)
+        await intan.configure(session_id, group_id, config, base, notes, confirmation=confirmation)
         return intan.status_json()
 
     async def _intan_parse_probe_map(self, args: Args) -> dict[str, Any]:

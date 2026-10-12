@@ -216,6 +216,12 @@ class SessionLifecycle:
         """Any box running, so a live `.tsv` with no `.json` yet exists."""
         return bool(self._runner.running_boxes())
 
+    @property
+    def confirmations(self) -> int:
+        """Mappings confirmed since this process started. A recording set up
+        for one confirmation starts for that one only (`RECORDING.md#record-step`)."""
+        return self._confirmations
+
     # --- reads --------------------------------------------------------------
 
     async def status(self, session_id: str) -> dict[str, Any]:
@@ -690,7 +696,9 @@ class SessionLifecycle:
             return
         # Raises the refusal that names what is wrong: nothing set up, or RHX
         # out of reach (`RECORDING.md#when-rhx-goes-away`).
-        self._intan.refuse_unless_ready(session_id, self._runner.group_id)
+        self._intan.refuse_unless_ready(
+            session_id, self._runner.group_id, self._confirmations
+        )
         await self._intan.start_recording()
 
     async def _end_all_boxes(self, session_id: str) -> None:

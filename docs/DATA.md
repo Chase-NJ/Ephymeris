@@ -547,6 +547,8 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 
 `.json` and `.mat` are not append-friendly and don't need to be; they are built once in `AnimalWriter.finalize`. Finalization is **idempotent** (the first `stop_reason` wins, so a board-drop racing an operator stop cannot rewrite history), and the two structured writes are **best-effort**: an `OSError` is logged, not raised. The `.tsv` is already closed and durable by then, so failing to produce a convenience format must never look like failing to save data.
 
+Each is written **whole or not at all** (`write_atomic`): into `<name>.part`, fsync'd, then renamed over the real name, as a [verified transfer](#verified-transfer) copies. A power cut while finalizing leaves at most a `.part`, which no walk reads, so the run is a `.tsv` with no `.json` that [Recover](#crash-recovery) rebuilds, never a torn document under the name every reader opens. Recovery writes the same way.
+
 ### What is guaranteed
 
 - **Guaranteed:** if the PC loses power mid-session, every strobe through the last completed line is on disk in the `.tsv`, human-readable, with at most the in-flight line at risk.
@@ -555,7 +557,7 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 
 ## Crash recovery
 
-`sessions/recovery.py` (`sessions.recover`, the **Recover** button in Analytics) finds a cohort's orphaned `.tsv` files — logs with no `.json` sibling — and rebuilds `.json` and `.mat` from them. It is a pure file transformation, the inverse of `AnimalWriter`: **not** session resumption, and it never talks to a board.
+`sessions/recovery.py` (`sessions.recover`, the **Recover** button in Analytics) finds a cohort's orphaned `.tsv` files — logs with no `.json` sibling, or one that does not parse — and rebuilds `.json` and `.mat` from them. A `.json` that does not parse, torn by a power cut or by a copy someone made by hand, counts as missing, so the run is offered until a whole document replaces it. A sibling that can't be read at all counts as present: recovery fails toward writing nothing. It is a pure file transformation, the inverse of `AnimalWriter`: **not** session resumption, and it never talks to a board.
 
 - **It shares the archive walker** (`analytics/reader.py`'s `walk_orphaned_tsvs`, over `_walk_format_dirs`), so every legacy layout [adoption](#orphan-adoption) reads, recovery reads too, and it backfills in the same layout (a `recovery_tsv/` orphan gets `behavior_json/` and `behavior_mat/`).
 - **A footer wins.** A `.tsv` with a footer finalized cleanly and only its best-effort `.json` write failed (the disk-full case); it keeps its recorded `stop_reason`. Only a footer-less log gets `stop_reason: "recovered after crash"` (`RECOVERED_STOP_REASON`).

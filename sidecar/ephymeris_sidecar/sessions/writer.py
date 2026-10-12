@@ -17,7 +17,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..tasks.profile import SNAPSHOT_KEY
 from . import matwriter
@@ -27,6 +27,41 @@ log = logging.getLogger(__name__)
 
 class WriteError(Exception):
     """A `.tsv` write failed mid-session (disk full, permissions)."""
+
+
+#: Where a structured file is written before it takes its real name.
+PART_SUFFIX = ".part"
+
+
+def write_atomic(path: Path, data: str | bytes | Callable[[Path], None]) -> None:
+    """Write `path` whole or not at all (`DATA.md#built-once-at-the-end`).
+
+    Into `<name>.part`, fsync'd, then renamed over the real name: the steps
+    `cohorts/transfer.py` copies with. A power cut leaves at most a `.part`,
+    which no walk reads, never a torn file under the name every reader opens.
+    `data` is the text or bytes, or a function that writes a file at the path
+    it is given (`matwriter.savemat`). Raises what the write raised, with the
+    `.part` removed.
+    """
+    part = path.with_name(path.name + PART_SUFFIX)
+    try:
+        if callable(data):
+            data(part)
+            handle = os.open(part, os.O_RDWR)
+            try:
+                os.fsync(handle)
+            finally:
+                os.close(handle)
+        else:
+            raw = data if isinstance(data, bytes) else data.encode("utf-8")
+            with open(part, "wb") as fh:
+                fh.write(raw)
+                fh.flush()
+                os.fsync(fh.fileno())
+        os.replace(part, path)
+    except Exception:
+        part.unlink(missing_ok=True)
+        raise
 
 
 class AnimalWriter:
@@ -146,14 +181,15 @@ class AnimalWriter:
 
         # Structured formats, built once from the same list (`DATA.md#built-once-at-the-end`). A failure
         # here doesn't cost data — the .tsv already holds everything durably.
+        # Each whole or not at all (`write_atomic`): a torn `.json` would read as
+        # a finished run that is unreadable, where a missing one is a `.tsv`
+        # Recover rebuilds.
         try:
-            self._json_path.write_text(
-                json.dumps(document, indent=2), encoding="utf-8"
-            )
+            write_atomic(self._json_path, json.dumps(document, indent=2))
         except OSError as exc:
             log.error("couldn't write %s: %s", self._json_path, exc)
         try:
-            matwriter.savemat(str(self._mat_path), document)
+            write_atomic(self._mat_path, lambda part: matwriter.savemat(str(part), document))
         except Exception as exc:  # noqa: BLE001 - scipy missing or a value it can't write
             log.error("couldn't write %s: %s", self._mat_path, exc)
 

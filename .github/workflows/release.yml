@@ -1,6 +1,8 @@
 # Pushing a tag like v1.1.1-alpha builds the Windows installer on a clean machine, signs
 # it for the updater, and attaches both to a DRAFT release. Nothing reaches the lab until
 # the draft is published, which is when publish-update.yml points installed copies at it.
+#
+# To ship main without a tag, use ship-main.yml instead.
 
 name: Release
 
@@ -12,16 +14,14 @@ permissions:
   contents: write # create the release and upload the installer
 
 jobs:
-  installer:
-    runs-on: windows-latest
+  # The tag is the version. Refuse a tag that disagrees with what the app
+  # will call itself, rather than ship an installer named one thing that
+  # reports another.
+  version:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      # The tag is the version. Refuse a tag that disagrees with what the app
-      # will call itself, rather than ship an installer named one thing that
-      # reports another.
       - name: Tag matches package.json and tauri.conf.json
-        shell: bash
         run: |
           tag="${GITHUB_REF_NAME#v}"
           pkg=$(node -p "require('./package.json').version")
@@ -29,45 +29,27 @@ jobs:
           echo "tag=$tag package.json=$pkg tauri.conf.json=$conf"
           [ "$tag" = "$pkg" ] && [ "$tag" = "$conf" ]
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-      # Stable Rust ships with the runner image; installing it again is one more
-      # download that can fail. Cargo.toml's rust-version is far behind it.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      # Pinned: this copy ships inside the installer, and the action's default
-      # picks up release candidates. Move it on purpose, after a lab compile.
-      - uses: arduino/setup-arduino-cli@v2
-        with:
-          version: "1.5.1"
+  installer:
+    needs: version
+    uses: ./.github/workflows/installer.yml
+    secrets: inherit
 
-      # package-resources.mjs freezes from exactly sidecar/.venv.
-      - uses: actions/setup-python@v6
+  draft:
+    needs: installer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.13"
-      - run: |
-          python -m venv sidecar\.venv
-          sidecar\.venv\Scripts\pip.exe install -e "sidecar[dev]"
-
-      - run: npm ci
-      # tauri.updater.conf.json turns on the updater's signature, which needs the
-      # private key; a local `npm run package` leaves it off and needs no key.
-      - run: npm run package -- --config src-tauri/tauri.updater.conf.json
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
+          name: installer
+          path: installer
       - name: Draft a release with the installer and its signature
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
             --draft --prerelease \
             --title "Ephymeris $GITHUB_REF_NAME" \
             --generate-notes \
-            src-tauri/target/release/bundle/nsis/*-setup.exe \
-            src-tauri/target/release/bundle/nsis/*-setup.exe.sig
+            installer/*-setup.exe \
+            installer/*-setup.exe.sig

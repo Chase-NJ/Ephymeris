@@ -213,12 +213,20 @@ An installed copy updates itself from published releases. Three parts, each owni
 
 | Part | Does |
 |---|---|
-| `release.yml` | Builds the installer with `tauri.updater.conf.json` merged in, which signs it with the `TAURI_SIGNING_PRIVATE_KEY` secret, and drafts a release carrying `*-setup.exe` and `*-setup.exe.sig` |
-| `publish-update.yml` | When a draft is **published**, writes `latest.json` (version, signature, installer URL) to the `updates` branch. That file is the feed: the endpoint in `tauri.conf.json` is its `raw.githubusercontent.com` URL |
+| `release.yml`, `ship-main.yml` | Build the installer (`installer.yml`) with `tauri.updater.conf.json` merged in, which signs it with the `TAURI_SIGNING_PRIVATE_KEY` secret, and put up a release carrying `*-setup.exe` and `*-setup.exe.sig`: `release.yml` a draft from a version tag, `ship-main.yml` a published build of `main` |
+| `publish-update.yml` | When a draft is **published**, or when `ship-main.yml` calls it, writes `latest.json` (version, signature, installer URL) to the `updates` branch. That file is the feed: the endpoint in `tauri.conf.json` is its `raw.githubusercontent.com` URL |
 | `src-tauri/src/updater.rs` | `update_check` asks the feed; `update_install` downloads the installer, which the plugin refuses unless its signature matches `plugins.updater.pubkey`, then stops the sidecar and hands over to it |
 
 The feed lives on a branch rather than as a release asset because GitHub's latest-release link skips
 pre-releases. Publishing is shipping: a draft is invisible to the feed, and nothing else moves it.
+
+**Shipping main.** `ship-main.yml` skips the version bump and the tag. It stamps the build
+`<package.json version>.<commit count>` (`scripts/ship-version.mjs`), merged into `tauri.conf.json` at
+build time, so `1.1.3-alpha` ships as `1.1.3-alpha.214`: newer than the release it follows, older than
+the next. A tagged release bumps `package.json`, so the main builds after it count up from there. Running
+the workflow is the decision to ship, so it publishes its release and calls `publish-update.yml` itself:
+a release its own token publishes would not trigger that workflow. It runs only by hand, never on a
+push, because whatever it ships is what runs the lab's next session.
 
 **Stopping the sidecar first.** On Windows the plugin launches the NSIS installer (`installMode:
 "passive"`) and exits the app at once. The shell first closes the sidecar's stdin and waits up to 12 s

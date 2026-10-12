@@ -1,0 +1,90 @@
+# Ships main as it stands to every installed copy: no version bump, no tag, no draft.
+# Run it by hand (Actions -> Ship main -> Run workflow, or `gh workflow run ship-main.yml`).
+#
+# The build calls itself package.json's version plus main's commit count (1.1.3-alpha ->
+# 1.1.3-alpha.214, scripts/ship-version.mjs), is signed like a tagged release, goes up as an
+# already-published pre-release, and the feed is pointed at it in the same run. Installed
+# copies then find it on their next check and install it when the operator clicks, exactly
+# as for a tagged release (docs/ARCHITECTURE.md#updates).
+#
+# By hand rather than on every push: whatever this ships is what runs the lab's next
+# session, and that should be a decision rather than a side effect of merging.
+
+name: Ship main
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release and push the feed
+
+concurrency:
+  group: ship-main
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Only main ships
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Ship main runs from main, not $GITHUB_REF_NAME"
+          exit 1
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the commit count is the version's last part
+
+      - id: version
+        name: Version, and that it moves the feed forward
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          feed=$(curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/updates/latest.json | jq -r .version)
+          version=$(node scripts/ship-version.mjs "$(git rev-list --count HEAD)" "$feed")
+          echo "feed=$feed ship=$version"
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::v$version is already released. To point the feed at it again, run Publish update with that tag"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  installer:
+    needs: version
+    uses: ./.github/workflows/installer.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+    secrets: inherit
+
+  # Published, not drafted: running this workflow was the decision to ship. A tag pushed by
+  # the workflow's own token starts no other workflow, so release.yml does not also run.
+  release:
+    needs: [version, installer]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer
+          path: installer
+      - name: Publish a pre-release with the installer and its signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.version.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease --latest=false \
+            --title "Ephymeris $TAG" \
+            --notes "Built from main at ${GITHUB_SHA::7} by Ship main." \
+            --generate-notes \
+            installer/*-setup.exe \
+            installer/*-setup.exe.sig
+
+  feed:
+    needs: [version, release]
+    uses: ./.github/workflows/publish-update.yml
+    with:
+      tag: v${{ needs.version.outputs.version }}

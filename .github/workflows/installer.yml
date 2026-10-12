@@ -1,0 +1,87 @@
+# Builds the signed Windows installer on a clean machine and hands it on as the `installer`
+# artifact (`*-setup.exe` and its `.sig`). Called, never run on its own: release.yml builds
+# a tagged version with it, ship-main.yml a build of main.
+#
+# One copy of these steps, so a tagged release and a main build can't drift apart in what
+# they bundle.
+
+name: Installer
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Overrides tauri.conf.json's version; empty builds the version as committed"
+        type: string
+        default: ""
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      # Stable Rust ships with the runner image; installing it again is one more
+      # download that can fail. Cargo.toml's rust-version is far behind it.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # Pinned: this copy ships inside the installer, and the action's default
+      # picks up release candidates. Move it on purpose, after a lab compile.
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: "1.5.1"
+
+      # package-resources.mjs freezes from exactly sidecar/.venv.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m venv sidecar\.venv
+          sidecar\.venv\Scripts\pip.exe install -e "sidecar[dev]"
+
+      - run: npm ci
+
+      # The app reports tauri.conf.json's version (getVersion) and the updater compares
+      # against it, so an override merged in at build time is the whole of a version bump.
+      - name: Version override
+        if: inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ version: process.env.VERSION }))' \
+            "$RUNNER_TEMP/version.conf.json"
+          echo "VERSION_CONFIG=--config $RUNNER_TEMP/version.conf.json" >> "$GITHUB_ENV"
+
+      # tauri.updater.conf.json turns on the updater's signature, which needs the
+      # private key; a local `npm run package` leaves it off and needs no key.
+      - shell: bash
+        run: npm run package -- --config src-tauri/tauri.updater.conf.json $VERSION_CONFIG
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # The installer's name carries the version it was built as. Refuse one that
+      # doesn't carry the version asked for, rather than ship it under the wrong one.
+      - name: Installer carries the version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          ls src-tauri/target/release/bundle/nsis/
+          ls "src-tauri/target/release/bundle/nsis/Ephymeris_${VERSION}_x64-setup.exe.sig"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/*-setup.exe.sig
+          if-no-files-found: error
+          retention-days: 7

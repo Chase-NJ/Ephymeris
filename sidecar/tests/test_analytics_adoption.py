@@ -29,6 +29,7 @@ from ephymeris_sidecar.protocol import validate_command_result
 from ephymeris_sidecar.sessions.paths import parse_name_time, parse_session_folder
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import rewrite_keeping_stat
+from tests.test_analytics_service import Changes, Lifecycle
 
 GRGL = {
     "taskName": "GRGL 2-Odor Discrimination",
@@ -92,7 +93,9 @@ class LegacyRig:
         async def broadcast(message: dict) -> None:
             pass
 
-        self.archive = CohortArchive(db=db, cohorts=self.cohorts, sessions=self.sessions)
+        self.archive = CohortArchive(
+            db=db, cohorts=self.cohorts, sessions=self.sessions, rig=Lifecycle(), on_changed=Changes()
+        )
         self.service = AnalyticsService(
             db=db,
             cohorts=self.cohorts,

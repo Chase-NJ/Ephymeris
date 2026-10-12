@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .analytics import AnalyticsService, CohortArchive
+from .analytics.archive import ArchiveChange
 from .analytics.repository import AnalyticsRepository
 from .backup import BackupManager
 from .boards import create_board_tool
@@ -24,7 +25,6 @@ from .cohorts import folders, grouping, move_apply, relocate
 from .cohorts.move import MoveRequest
 from .cohorts.db import DB_FILENAME, Database
 from .cohorts.repository import CohortRepository
-from .sessions import recovery
 from .sessions.paths import resolve_session_folder
 from .hardware import service as hardware_service
 from .hardware import store as hardware_store
@@ -58,6 +58,29 @@ from .utility import UtilityBaseline
 from .wire_errors import ERRORS
 
 log = logging.getLogger(__name__)
+
+
+class _LifecycleRig:
+    """The session lifecycle's answers for the archive, which is built before
+    the lifecycle is: no lifecycle yet means nothing holds the rig."""
+
+    def __init__(self, app: Application) -> None:
+        self._app = app
+
+    @property
+    def held(self) -> str | None:
+        lifecycle = self._app.lifecycle
+        return lifecycle.held if lifecycle is not None else None
+
+    @property
+    def in_use(self) -> bool:
+        lifecycle = self._app.lifecycle
+        return lifecycle is not None and lifecycle.in_use
+
+    @property
+    def writing(self) -> bool:
+        lifecycle = self._app.lifecycle
+        return lifecycle is not None and lifecycle.writing
 
 
 class Application:
@@ -306,7 +329,13 @@ class Application:
         # a cohort edit (`DATA.md#the-database-copy`).
         self.db.on_commit(self.backup.mark_db_dirty)
         self.backup.start()
-        self.archive = CohortArchive(db=self.db, cohorts=self.cohorts, sessions=self.sessions)
+        self.archive = CohortArchive(
+            db=self.db,
+            cohorts=self.cohorts,
+            sessions=self.sessions,
+            rig=_LifecycleRig(self),
+            on_changed=self._archive_changed,
+        )
         self.analytics = AnalyticsService(
             db=self.db,
             cohorts=self.cohorts,
@@ -827,15 +856,8 @@ class Application:
         cohort_id = _str_arg(args, "id")
         path = _str_arg(args, "path")
         move_existing = args.get("moveExisting") is True
-        if move_existing and self.lifecycle is not None and self.lifecycle.in_use:
-            raise CommandError(
-                ErrCode.DATA_FOLDER_INVALID,
-                "A session is set up or running. Finish it, then move the data folder.",
-            )
-
         await self._require_archive().relocate(cohort_id, path, move_existing)
         cohort = await asyncio.to_thread(self.cohorts.get, cohort_id)
-        await self._broadcast_cohorts()
         return {"cohort": cohort.to_json()}
 
     async def _cohorts_move_animals(self, args: Args) -> dict[str, Any]:
@@ -852,28 +874,9 @@ class Application:
             dest_id=_str_arg(args, "destinationCohortId"),
             dest_group_id=args.get("destinationGroupId"),
         )
-        busy = None
-        if self.lifecycle is not None and self.lifecycle.in_use:
-            busy = "A session is set up or running. Finish it, then move the animals."
-        result, copied = await self._require_archive().move_animals(
-            request, apply=args.get("apply") is True, busy=busy
+        return await self._require_archive().move_animals(
+            request, apply=args.get("apply") is True
         )
-        if result["applied"]:
-            if self.backup is not None and copied:
-                self.backup.enqueue(*copied)
-            await self._broadcast_cohorts()
-            await self._require_lifecycle().announce()
-            if self.logbook is not None:
-                # Notes moved and copied, and both folders' notes.md re-render —
-                # including a source session whose every note moved away, which
-                # has none left to be found by but still a stale notes.md.
-                annotated = await asyncio.to_thread(
-                    self.logbook.repo.annotated_session_ids, request.source_id
-                )
-                touched = {s["sessionId"] for s in result["sessions"]}
-                await self.logbook.refresh(request.source_id, sorted(set(annotated) | touched))
-                await self.logbook.refresh(request.dest_id)
-        return result
 
     async def _cohorts_suggest_groups(self, args: Args) -> dict[str, Any]:
         """Auto-Balance preview (`DATA.md#auto-balance`). Computes only — the
@@ -891,6 +894,25 @@ class Application:
 
     async def _broadcast_cohorts(self) -> None:
         await self.server.publish(Evt.COHORTS_UPDATED)
+
+    async def _archive_changed(self, change: ArchiveChange) -> None:
+        """Everyone who hears an archive write (`DATA.md#the-cohort-archive`),
+        once it is done: the backup mirror, the cohort list, the Dashboard's
+        dock and the session log of each cohort it touched."""
+        if self.backup is not None and change.files_to_back_up:
+            self.backup.enqueue(*change.files_to_back_up)
+        if change.cohort_ids:
+            await self._broadcast_cohorts()
+            # Stale and set-up rows may have gone from the dock.
+            if self.lifecycle is not None:
+                await self.lifecycle.announce()
+        if self.logbook is not None:
+            for cohort_id in sorted(change.cohort_ids):
+                await self.logbook.refresh(cohort_id)
+            # A move's source session whose every note moved away has none left
+            # to be found by, but still a stale notes.md.
+            for session_id in sorted(change.session_ids):
+                self.logbook.schedule_mirror(session_id)
 
     # --- prefixes (DATA.md#prefixes) ----------------------------------
 
@@ -1262,21 +1284,11 @@ class Application:
         touched, whatever the plan says; everything else the planner decides.
         """
         cohort_id = _str_arg(args, "cohortId")
-        held = self.lifecycle.held if self.lifecycle is not None else None
-        protect = {held} if held else set()
-        result = await self._require_analytics().tidy(
+        return await self._require_analytics().tidy(
             cohort_id,
             apply=args.get("apply") is True,
-            protect=protect,
             today=datetime.now().date().isoformat(),
         )
-        if result["applied"]:
-            # Stale and set-up rows may have gone from the Dashboard's dock.
-            await self._require_lifecycle().announce()
-            # Notes may have moved to the kept record (`DATA.md#tidy-records`).
-            if self.logbook is not None:
-                await self.logbook.refresh(cohort_id)
-        return result
 
     async def _analytics_recent_sessions(self, args: Args) -> dict[str, Any]:
         """Folder-name recency across every active cohort — cheap on purpose,
@@ -1284,23 +1296,9 @@ class Application:
         return await self._require_analytics().recent_sessions(args.get("limit"))
 
     async def _sessions_recover(self, args: Args) -> dict[str, Any]:
-        """The crash-recovery backfill (`DATA.md#crash-recovery`).
-
-        Guarded against a running session: a live box's `.tsv` legitimately
-        has no `.json` yet, and "recovering" it would mint a half-session
-        document the real finalization then overwrites. One session runs at a
-        time app-wide, so any running box means hands off every archive.
-        """
-        cohort_id = _str_arg(args, "cohortId")
-        if self.lifecycle is not None and self.lifecycle.writing:
-            raise CommandError(
-                ErrCode.SESSION_INVALID,
-                "a session is running — its live .tsv files would look like "
-                "orphans. End the session, then recover.",
-            )
-        cohort = await asyncio.to_thread(self.cohorts.get, cohort_id)
-        result = await asyncio.to_thread(recovery.recover_cohort, cohort.data_folder)
-        return {**result, "cohortId": cohort_id}
+        """The crash-recovery backfill (`DATA.md#crash-recovery`), through the
+        archive (`CohortArchive.recover`)."""
+        return await self._require_archive().recover(_str_arg(args, "cohortId"))
 
     # --- sessions (PROTOCOL.md#prefixes-and-sessions) ---------------------
 

@@ -213,8 +213,9 @@ class SessionLifecycle:
 
     @property
     def writing(self) -> bool:
-        """Any box running, so a live `.tsv` with no `.json` yet exists."""
-        return bool(self._runner.running_boxes())
+        """Any box running, or finishing until its run is recorded: a live
+        `.tsv` with no `.json` yet, or a `.json` no record claims yet."""
+        return bool(self._runner.writing_boxes())
 
     @property
     def confirmations(self) -> int:

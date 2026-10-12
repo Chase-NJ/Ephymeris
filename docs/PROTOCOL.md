@@ -566,7 +566,7 @@ Permanent delete of the bookkeeping only. `COHORT_NOT_ARCHIVED` unless archived 
 <a id="cmd-cohorts.setdatafolder"></a>
 #### `cohorts.setDataFolder`
 
-The explicit relocate, distinct from renaming (`DATA.md#data-folder`). Moving the contents moves the records' stored paths with the files, journalled so a crash is finished or undone at the next start; refused (`DATA_FOLDER_INVALID`) while a session is set up or running, and `INTERNAL` while an analytics walk runs. Long-running; the client raises its reply timeout.
+The explicit relocate, distinct from renaming (`DATA.md#data-folder`). Moving the contents moves the records' stored paths with the files, journalled so a crash is finished or undone at the next start; refused (`RIG_IN_USE`) while a session is set up or running, and `ARCHIVE_BUSY` while another archive write runs. Broadcasts `cohorts.updated` and `session.lifecycle`, and `logbook.updated` for the cohort. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -585,7 +585,7 @@ The explicit relocate, distinct from renaming (`DATA.md#data-folder`). Moving th
 <a id="cmd-cohorts.moveanimals"></a>
 #### `cohorts.moveAnimals`
 
-Move animals, their files and their history to another cohort (`DATA.md#moving-animals-between-cohorts`). The files move into the destination's data folder; run records, recovered runs and notes about the animals follow, and notes about a session both cohorts ran are copied. An apply re-plans rather than replaying the preview, and is crash-safe: interrupted, it is finished or undone at the next start. `ANIMAL_MOVE_REFUSED` (with the plan in `detail`) when the apply's plan has refusals; `INTERNAL` while an analytics walk runs. Broadcasts `cohorts.updated` and `logbook.updated` after an apply. Long-running; the client raises its reply timeout.
+Move animals, their files and their history to another cohort (`DATA.md#moving-animals-between-cohorts`). The files move into the destination's data folder; run records, recovered runs and notes about the animals follow, and notes about a session both cohorts ran are copied. An apply re-plans rather than replaying the preview, and is crash-safe: interrupted, it is finished or undone at the next start. `ANIMAL_MOVE_REFUSED` (with the plan in `detail`) when the apply's plan has refusals, a session set up or running anywhere among them; `ARCHIVE_BUSY` while another archive write runs. Broadcasts `cohorts.updated`, `session.lifecycle` and `logbook.updated` after an apply. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -1014,7 +1014,7 @@ Per-run learning-curve data (`DATA.md#derived-metrics`), plus each run's strateg
 <a id="cmd-analytics.rescan"></a>
 #### `analytics.rescan`
 
-The explicit archive walk (`DATA.md#reading-the-archive`) — expensive reconciliation is a deliberate user action, never a side effect of opening a view. Reconciles **both ways**: files no record points at are adopted, and records pointing at files the disk no longer has are pruned — after records an earlier relocate left at the old folder are re-pointed (`rehomed`). Publishes `analytics.progress`. `INTERNAL` when another analytics walk is already running. Long-running; the client raises its reply timeout.
+The explicit archive walk (`DATA.md#reading-the-archive`) — expensive reconciliation is a deliberate user action, never a side effect of opening a view. Reconciles **both ways**: files no record points at are adopted, and records pointing at files the disk no longer has are pruned — after records an earlier relocate left at the old folder are re-pointed (`rehomed`). Publishes `analytics.progress`. `ARCHIVE_BUSY` while another archive write runs; `RIG_IN_USE` while any box is running, since a run finishing during the walk would be found twice. Broadcasts `cohorts.updated`, `session.lifecycle` and `logbook.updated` when it adopted, pruned or re-pointed anything. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -1045,7 +1045,7 @@ The N most recent session folders across every active cohort's archive, by folde
 <a id="cmd-sessions.recover"></a>
 #### `sessions.recover`
 
-The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds `.json`/`.mat` from orphaned write-ahead `.tsv` files, using the same traversal as `analytics.rescan` and the same explicit-action discipline. A `.tsv` with a footer keeps its recorded stop reason; a footer-less (crashed) one gets 'recovered after crash'; a pre-Ephymeris log, which never had a footer, gets 'recovered from a legacy log'. `SESSION_INVALID` while any box is running — a live run's `.tsv` has no `.json` yet and is not an orphan. Long-running; the client raises its reply timeout.
+The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds `.json`/`.mat` from orphaned write-ahead `.tsv` files, using the same traversal as `analytics.rescan` and the same explicit-action discipline. A `.tsv` with a footer keeps its recorded stop reason; a footer-less (crashed) one gets 'recovered after crash'; a pre-Ephymeris log, which never had a footer, gets 'recovered from a legacy log'. A `.json` that does not parse counts as missing. `RIG_IN_USE` while any box is running — a live run's `.tsv` has no `.json` yet and is not an orphan; `ARCHIVE_BUSY` while another archive write runs. Queues what it wrote for backup. Long-running; the client raises its reply timeout.
 
 **Args**
 
@@ -1058,7 +1058,7 @@ The crash-recovery backfill (`DATA.md#crash-recovery`): rebuilds `.json`/`.mat` 
 <a id="cmd-sessions.tidy"></a>
 #### `sessions.tidy`
 
-Merge session records that share prefix, number and date — one folder, split by a day that went wrong — into the earliest record holding data, and delete records with no run, recording or file behind them (`DATA.md#reading-the-archive`). An apply re-plans rather than replaying the preview. **Database only**, except the empty folder of a deleted record. Never touches the held session (or its folder-mates) nor a set-up from today; those are listed in `skipped`. Broadcasts `session.lifecycle` after an apply. `INTERNAL` when another analytics walk is already running.
+Merge session records that share prefix, number and date — one folder, split by a day that went wrong — into the earliest record holding data, and delete records with no run, recording or file behind them (`DATA.md#reading-the-archive`). An apply re-plans rather than replaying the preview. **Database only**, except the empty folder of a deleted record. Never touches the held session (or its folder-mates) nor a set-up from today; those are listed in `skipped`. Broadcasts `cohorts.updated`, `session.lifecycle` and `logbook.updated` after an apply. `ARCHIVE_BUSY` while another archive write runs.
 
 **Args**
 
@@ -1552,7 +1552,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `BACKUP_UNAVAILABLE` | `backup.syncNow` with no `backupDirectory` set, or with a sync already running. An ordinary mirroring failure is never a command error; it appears on `backup.status`. |
 | `UTILITY_UNAVAILABLE` | A `utility.*` command when the box utility can't be used at all — the install's sketch library has none, or its profile is unreadable or not a utility profile; for `utility.identify`, also a profile with no `identify` pair. A box-level problem never raises this: it is that box's `state` in the snapshot, because 'box 4 has no board' is a fact about the rig, not a failure of the command. |
 | `RIG_INVALID` | The wiring document is not a wiring document — wrong shape, or too large. NOT a wiring MISTAKE: a document that is well-formed and describes an impossible box is a successful `hardware.preview` reply carrying located problems. |
-| `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). |
+| `RIG_IN_USE` | `hardware.save`, `hardware.reset`, `tasks.save` or `tasks.delete` while a session is set up or a box is running. Each regenerates sketch folders a box was or will be flashed from, under a session whose profiles were read from the old ones (`TASKS.md#the-rig-definition`). Also an archive write the rig refuses (`DATA.md#the-cohort-archive`): `cohorts.setDataFolder` moving the contents while a session is set up or a box is running, and `analytics.rescan` or `sessions.recover` while a box is running. |
 | `RIG_WOULD_BREAK_TASKS` | `hardware.save` without `confirm` on a change that would stop a saved task profile generating. `detail.breaks` lists them. Retry with `confirm: true` to proceed — the app does not veto a rewiring, it refuses to let one happen unnoticed. |
 | `STROBE_INVALID` | A strobe edit the vocabulary cannot take: a malformed or duplicate name, a code that is not free, a blank meaning, an unknown name, or an import file that is not a vocabulary. |
 | `STROBE_REQUIRED` | Retiring or removing a code a response-port slot reports with, or one the shared firmware library names. Never passable with `confirm`. |
@@ -1566,7 +1566,7 @@ One live view's payload, only while that scope is open (`RECORDING.md#live-windo
 | `INTAN_UNAVAILABLE` | RHX is not reachable: not running, its Remote TCP Control command server not opened, or the socket died. The message says what to click. |
 | `INTAN_NOT_READY` | RHX is reachable but this cannot be done now — RHX is already recording, no recording is configured for this group as its mapping was last confirmed, a box has no digital input, the rig's wiring has no sync channel, or a scope asked for a channel the box does not own. The message is the operator's next step. |
 | `INTAN_COMMAND_FAILED` | RHX refused a command, or **accepted it and stored something else** (a read-back mismatch — the save-location-with-a-space case). `detail.command` carries what was sent. |
-| `ARCHIVE_BUSY` | A scan, tidy, data-folder move or move of animals already holds the archive (`analytics.rescan`, `sessions.tidy`, `cohorts.setDataFolder`, `cohorts.moveAnimals`). Nothing was done; try again when it finishes. |
+| `ARCHIVE_BUSY` | A scan, tidy, recover, data-folder move or move of animals already holds the archive (`analytics.rescan`, `sessions.tidy`, `sessions.recover`, `cohorts.setDataFolder`, `cohorts.moveAnimals`). Nothing was done; try again when it finishes. |
 | `INTERNAL` | Unhandled sidecar exception, or a subsystem that isn't running. Also the code `sidecar.error` carries for a mid-session write failure. Every other refusal has its own code (`ARCHITECTURE.md#dispatch`). |
 
 ## Payload shapes

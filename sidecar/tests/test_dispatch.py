@@ -49,6 +49,8 @@ async def _cohort(app, folder: Path) -> dict:  # noqa: ANN001
         }),
         ("analytics.rescan", lambda c, tmp: {"cohortId": c["id"]}),
         ("sessions.tidy", lambda c, tmp: {"cohortId": c["id"], "apply": True}),
+        # B11: a recover writes files into the folder a relocate may be moving.
+        ("sessions.recover", lambda c, tmp: {"cohortId": c["id"]}),
     ],
 )
 async def test_a_busy_archive_is_refused_as_busy(app, tmp_path: Path, cmd: str, args) -> None:  # noqa: ANN001
@@ -60,6 +62,76 @@ async def test_a_busy_archive_is_refused_as_busy(app, tmp_path: Path, cmd: str, 
             await dispatch(app, cmd, **args(cohort, tmp_path))
     assert refused.value.code == "ARCHIVE_BUSY"
     assert "try again" in refused.value.message
+
+
+# --- B7 and candidate 4: an archive write while a box writes ----------------------
+
+
+@pytest.mark.parametrize(
+    ("cmd", "args"),
+    [
+        # B7: a walk while a box writes can adopt a file its record is about to claim.
+        ("analytics.rescan", lambda c, tmp: {"cohortId": c["id"]}),
+        ("sessions.recover", lambda c, tmp: {"cohortId": c["id"]}),
+        ("cohorts.setDataFolder", lambda c, tmp: {"id": c["id"], "path": str(tmp / "elsewhere"), "moveExisting": True}),
+    ],
+)
+async def test_an_archive_write_while_a_box_writes_is_refused_as_rig_in_use(
+    app, tmp_path: Path, monkeypatch, cmd: str, args  # noqa: ANN001
+) -> None:
+    """"The rig is in use" is one code, whichever archive write asked."""
+    cohort = await _cohort(app, tmp_path / "Batch A")
+    monkeypatch.setattr(app.runner, "running_boxes", lambda: [2])
+    with pytest.raises(Refused) as refused:
+        await dispatch(app, cmd, **args(cohort, tmp_path))
+    assert refused.value.code == "RIG_IN_USE"
+
+
+async def test_a_move_while_the_rig_is_in_use_carries_the_refusal_in_its_plan(
+    app, tmp_path: Path, monkeypatch  # noqa: ANN001
+) -> None:
+    """The move dialog shows a refused plan's reasons (`refusedPlan`), so a
+    rig in use stays one of them rather than a code of its own."""
+    source = await _cohort(app, tmp_path / "Batch A")
+    dest = (await dispatch(
+        app, "cohorts.create", name="Batch B", dataFolder=str(tmp_path / "Batch B"),
+        groups=[{"id": "g2", "name": "Evening", "order": 0}], animals=[],
+    ))["cohort"]
+    monkeypatch.setattr(app.runner, "running_boxes", lambda: [2])
+    args = {
+        "cohortId": source["id"], "animalIds": [source["animals"][0]["id"]],
+        "destinationCohortId": dest["id"],
+    }
+    preview = await dispatch(app, "cohorts.moveAnimals", **args, apply=False)
+    assert "busy" in [r["code"] for r in preview["refused"]]
+    with pytest.raises(Refused) as refused:
+        await dispatch(app, "cohorts.moveAnimals", **args, apply=True)
+    assert refused.value.code == "ANIMAL_MOVE_REFUSED"
+    assert "busy" in [r["code"] for r in refused.value.detail["refused"]]
+
+
+async def test_an_archive_write_is_followed_up_in_one_place(app, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    """What a recover wrote is mirrored, and a relocate is announced to every
+    client, without either handler wiring its own follow-up."""
+    from tests.test_recovery import crash_a_run
+
+    cohort = await _cohort(app, tmp_path / "Batch A")
+    tsv = crash_a_run(tmp_path / "Batch A" / "2O-Bdisc" / "2O-Bdisc_25_2026-07-22")
+    queued: list = []
+    monkeypatch.setattr(app.backup, "enqueue", lambda *paths: queued.extend(map(str, paths)))
+    published: list[str] = []
+
+    async def publish(evt: str) -> None:
+        published.append(evt)
+
+    monkeypatch.setattr(app.server, "publish", publish)
+
+    await dispatch(app, "sessions.recover", cohortId=cohort["id"])
+    assert str(tsv.parent.parent / "behavior.json" / f"{tsv.stem}.json") in queued
+    assert published == []
+
+    await dispatch(app, "cohorts.setDataFolder", id=cohort["id"], path=str(tmp_path / "C"), moveExisting=True)
+    assert published == ["cohorts.updated"]
 
 
 # --- B10: a box whose port refuses to open --------------------------------------

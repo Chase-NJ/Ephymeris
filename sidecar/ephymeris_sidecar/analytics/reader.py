@@ -303,8 +303,9 @@ def walk_session_files(cohort_folder: str | Path) -> list[Path]:
     return sorted(found)
 
 
-def walk_orphaned_tsvs(cohort_folder: str | Path) -> list[Path]:
-    """Every `.tsv` under one cohort's data folder with no `.json` sibling.
+def walk_orphaned_tsvs(cohort_folder: str | Path, *, parse_json: bool = False) -> list[Path]:
+    """Every `.tsv` under one cohort's data folder with no `.json` sibling
+    (or, with `parse_json`, one that does not parse).
 
     The crash-recovery backfill's discovery pass (`DATA.md#crash-recovery`)
     — the same traversal as `walk_session_files`, looking at the *other*
@@ -314,7 +315,12 @@ def walk_orphaned_tsvs(cohort_folder: str | Path) -> list[Path]:
     way, the write-ahead log
     is the surviving authority and the file is worth offering for recovery.
 
-    A sibling that can't even be `stat`ed is treated as present: recovery
+    `parse_json` is the recovery's: a `.json` that does not parse is a write
+    the power cut short (`DATA.md#crash-recovery`), so it counts as missing and
+    the run is offered again. It opens every finalized run's `.json`, so only
+    the explicit Recover asks for it; the strobe usage scan, which walks
+    every archive whenever the vocabulary editor asks, keeps to a stat. A
+    sibling that can't be `stat`ed or read is treated as present: recovery
     writes files, and "I couldn't check" must fail toward writing nothing.
     """
     orphans: list[Path] = []
@@ -326,11 +332,25 @@ def walk_orphaned_tsvs(cohort_folder: str | Path) -> list[Path]:
             if not name.endswith(".tsv") or is_sidecar_file(path):
                 continue
             try:
-                if not sibling_json(path).is_file():
+                json_path = sibling_json(path)
+                present = _has_whole_json(json_path) if parse_json else json_path.is_file()
+                if not present:
                     orphans.append(path)
             except OSError as exc:  # pragma: no cover - unreadable mount
                 log.warning("couldn't check %s's sibling: %s", path, exc)
     return sorted(orphans)
+
+
+def _has_whole_json(path: Path) -> bool:
+    """A file is there and parses as JSON. Raises `OSError` when it can't tell."""
+    if not path.is_file():
+        return False
+    try:
+        json.loads(path.read_bytes())
+    except ValueError:
+        log.warning("%s does not parse; offering its .tsv for recovery", path)
+        return False
+    return True
 
 
 def walk_session_dirs(cohort_folder: str | Path) -> list[Path]:

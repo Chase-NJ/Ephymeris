@@ -31,6 +31,7 @@ from ephymeris_sidecar.sessions.models import SessionAnimalRun
 from ephymeris_sidecar.sessions.repository import SessionRepository
 from tests.conftest import fine_mtime
 from tests.live_sidecar import LiveSidecar, Refused, animal
+from tests.test_analytics_service import Changes, Lifecycle
 
 SESSION = "2O-Bdisc_1_2026-09-01"
 
@@ -46,7 +47,10 @@ class Archive:
         self.new = root / "elsewhere" / "Batch A"
         self.cohorts = CohortRepository(db)
         self.sessions = SessionRepository(db)
-        self.cohort_archive = CohortArchive(db=db, cohorts=self.cohorts, sessions=self.sessions)
+        self.cohort_archive = CohortArchive(
+            db=db, cohorts=self.cohorts, sessions=self.sessions,
+            rig=Lifecycle(), on_changed=Changes(),
+        )
         self.cohort = self.cohorts.create(
             "Batch A",
             str(self.old),

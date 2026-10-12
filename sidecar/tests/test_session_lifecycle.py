@@ -66,6 +66,10 @@ class FakeRunner:
     def running_boxes(self) -> list[int]:
         return sorted(self.running)
 
+    def writing_boxes(self) -> list[int]:
+        """The fake's runs finish the moment they end, so writing is running."""
+        return sorted(self.running)
+
     def start_box(self, box: int) -> None:
         if box not in self.configs:
             raise KeyError(box)
@@ -862,6 +866,76 @@ async def test_start_all_refused_at_its_first_box_can_be_abandoned(bench_rig, be
     assert abandoned.status == "aborted" and rig.lifecycle.held is None
 
 
+async def test_a_box_writes_until_its_run_is_recorded(  # noqa: ANN001
+    bench_rig, bench, db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A box ending has left the running boxes while its `.json` lands and
+    its record commits. A rescan then would adopt the file its record is
+    about to claim, and a recover would write that same `.json` beside the
+    finalization: both are refused until the run is recorded."""
+    import threading
+
+    from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive
+    from ephymeris_sidecar.analytics.archive import RigInUse
+    from ephymeris_sidecar.sessions import writer as writer_module
+    from tests.test_analytics_service import Changes
+
+    rig = bench_rig
+    finalizing, may_finalize = threading.Event(), threading.Event()
+    recording, may_record = threading.Event(), threading.Event()
+    real_finalize = writer_module.AnimalWriter.finalize
+    real_record = rig.sessions.record_animal_run
+
+    def slow_finalize(self, reason):  # noqa: ANN001, ANN202
+        finalizing.set()
+        may_finalize.wait(timeout=5)
+        return real_finalize(self, reason)
+
+    def slow_record(run):  # noqa: ANN001, ANN202
+        recording.set()
+        may_record.wait(timeout=5)
+        return real_record(run)
+
+    monkeypatch.setattr(writer_module.AnimalWriter, "finalize", slow_finalize)
+    monkeypatch.setattr(rig.sessions, "record_animal_run", slow_record)
+
+    async def nothing(_message: dict) -> None:
+        return None
+
+    archive = CohortArchive(
+        db=db, cohorts=rig.cohorts, sessions=rig.sessions, rig=rig.lifecycle, on_changed=Changes()
+    )
+    service = AnalyticsService(
+        db=db, cohorts=rig.cohorts, sessions=rig.sessions, broadcast=nothing, archive=archive
+    )
+
+    async def both_refused(cohort_id: str) -> None:
+        with pytest.raises(RigInUse):
+            await service.rescan(cohort_id)
+        with pytest.raises(RigInUse):
+            await archive.recover(cohort_id)
+
+    session = rig.session()
+    await rig.confirm(session)
+    await rig.lifecycle.start_box(1)
+    await bench.run_handshake(1, seed=7)
+    ending = asyncio.create_task(rig.lifecycle.end(session.id))
+
+    await until(finalizing.is_set)
+    assert rig.runner.running_boxes() == []
+    await both_refused(session.cohort_id)
+
+    may_finalize.set()
+    await until(recording.is_set)
+    await both_refused(session.cohort_id)
+
+    may_record.set()
+    await ending
+    await until(lambda: not rig.lifecycle.writing)
+    assert [r.box_number for r in rig.sessions.runs_for(session.id)] == [1]
+    assert (await archive.recover(session.cohort_id))["scanned"] == 0
+
+
 # --- RHX unreachable while a group records (RECORDING.md#when-rhx-goes-away) ---
 
 
@@ -1267,6 +1341,14 @@ async def test_a_runner_starts_a_box_once(runner) -> None:  # noqa: ANN001
     runner.start_box(1)
     runner.start_box(1)
     assert runner.running_boxes() == [1]
+
+
+async def test_a_running_box_is_writing_until_its_run_is_ended(runner) -> None:  # noqa: ANN001
+    assert runner.writing_boxes() == []
+    runner.start_box(1)
+    assert runner.writing_boxes() == [1]
+    await runner.end_all("operator stop")
+    assert runner.writing_boxes() == []
 
 
 async def test_a_runner_will_not_forget_a_mapping_while_a_box_runs(runner) -> None:  # noqa: ANN001

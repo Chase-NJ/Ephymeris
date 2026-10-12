@@ -122,6 +122,9 @@ class SessionRunner:
         # `end_all` drains this so a caller that clears session state right
         # after it returns can't strand a finalization mid-write.
         self._finalizations: set[asyncio.Task] = set()
+        # Boxes whose run has left `_active` but is still being written: its
+        # `.json` landing, its record committing. One entry per finalization.
+        self._finalizing: list[int] = []
         self._session_folder: Path | None = None
         self._session_id_label: str = ""
         self._session_id: str = ""
@@ -208,6 +211,11 @@ class SessionRunner:
 
     def running_boxes(self) -> list[int]:
         return sorted(self._active)
+
+    def writing_boxes(self) -> list[int]:
+        """Boxes whose files are still being written: running, or finalizing
+        until their run is recorded (`ARCHITECTURE.md#session-lifecycle`)."""
+        return sorted({*self.running_boxes(), *self._finalizing})
 
     def configured_boxes(self) -> list[int]:
         return sorted(self._configs)
@@ -435,6 +443,15 @@ class SessionRunner:
             return
         run.resolved = True
         self._active.pop(box, None)
+        # Still writing until the run is recorded: a walk of the archive in
+        # between would find the `.json` with no record claiming it.
+        self._finalizing.append(box)
+        try:
+            await self._finalize(box, run, reason)
+        finally:
+            self._finalizing.remove(box)
+
+    async def _finalize(self, box: int, run: ActiveRun, reason: str) -> None:
         if run.deadline is not None:
             run.deadline.cancel()
             run.deadline = None

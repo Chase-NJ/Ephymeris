@@ -8,7 +8,9 @@ unlabelled, and a stale header strobes numbers the app decodes differently.
 
 from __future__ import annotations
 
+import builtins
 import copy
+import io
 import json
 import os
 import sqlite3
@@ -441,6 +443,32 @@ def test_a_second_scan_is_answered_from_the_cache(tmp_path, db):
     rewrite_keeping_stat(run, run.read_bytes().replace(b"116", b"117"))
     index = ArchiveScanner(db).scan([str(cohort)])
     assert (index.count(116), index.count(117)) == (1, 0)
+
+
+def test_a_second_scan_opens_no_file_it_has_cached(tmp_path, db, monkeypatch):
+    """A finalized run, `.json` beside its `.tsv`: once scanned, neither is
+    opened again while its stat holds. On a network share every open is a
+    round trip, and the scan runs whenever the vocabulary editor asks."""
+    session = tmp_path / "cohort" / "P" / "S1"
+    _write_run(session / "behavior.json", "rat1", [116])
+    (session / "behavior.tsv").mkdir(parents=True)
+    (session / "behavior.tsv" / "rat1.tsv").write_text("# rat: rat1\n116\t0\n", encoding="utf-8")
+    ArchiveScanner(db).scan([str(tmp_path / "cohort")])
+
+    opened: list[str] = []
+    real_open = builtins.open
+
+    def open_(file, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if isinstance(file, (str, os.PathLike)) and Path(file).is_relative_to(session):
+            opened.append(Path(file).name)
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", open_)
+    monkeypatch.setattr(io, "open", open_)
+    index = ArchiveScanner(db).scan([str(tmp_path / "cohort")])
+
+    assert index.count(116) == 1
+    assert opened == []
 
 
 def test_a_second_scan_answers_an_orphaned_tsv_from_the_cache(tmp_path, db):

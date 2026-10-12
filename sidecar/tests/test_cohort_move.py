@@ -281,21 +281,21 @@ def test_the_labs_split_is_repaired_from_its_files(lab: Lab) -> None:
     assert {a for a, _ in lab.runs(lab.b.id).values()} == {"b-slow"}
 
 
-def test_a_moved_adoption_joins_the_run_the_destination_already_holds(lab: Lab) -> None:
-    """#63. One run copied into both cohorts, at different places, is adopted
-    by each. Moving the animal must leave the destination holding it once --
-    under its own row, which its scores are keyed by -- with the ruling made
-    in the source carried across, not two rows counting the run twice
-    (`DATA.md#moving-animals-between-cohorts`)."""
+TWICE_COPIED = "slow1_2O-Bdisc_9_2026-07-24_100003"
+
+
+def one_run_adopted_by_both(lab: Lab) -> AnalyticsRepository:
+    """#63's shape: one run of slow1 copied into A's folder and, at another
+    place, into B's; each cohort adopted it (`adopted:a`, `adopted:b`), and B
+    has its own slow1 the moved animal joins."""
     from ephymeris_sidecar.analytics.repository import AdoptedRun
 
     give_b(lab, "slow1", "b-slow")
-    stem = "slow1_2O-Bdisc_9_2026-07-24_100003"
 
     def copy_of_the_run(root: Path, under: str) -> Path:
         folder = root / under / "2O-Bdisc_9_2026-07-24" / "behavior.json"
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{stem}.json"
+        path = folder / f"{TWICE_COPIED}.json"
         path.write_text(
             json.dumps({"rat": "slow1", "sketch": "GRGL", "ts_data": [[101, 0], [249, 10]]}),
             encoding="utf-8",
@@ -310,16 +310,63 @@ def test_a_moved_adoption_joins_the_run_the_destination_already_holds(lab: Lab) 
         )
 
     repo = AnalyticsRepository(lab.db)
-    repo.store_adopted([adoption("adopted:a", lab.a.id, "slow1", copy_of_the_run(lab.a_root, "2O-Bdisc"))])
-    repo.store_adopted([adoption("adopted:b", lab.b.id, "b-slow", copy_of_the_run(lab.b_root, "copies"))])
+    repo.store_adopted(
+        [adoption("adopted:a", lab.a.id, "slow1", copy_of_the_run(lab.a_root, "2O-Bdisc"))]
+    )
+    repo.store_adopted(
+        [adoption("adopted:b", lab.b.id, "b-slow", copy_of_the_run(lab.b_root, "copies"))]
+    )
+    return repo
+
+
+def test_a_moved_adoption_joins_the_run_the_destination_already_holds(lab: Lab) -> None:
+    """#63. Moving the animal must leave the destination holding the run once
+    -- under its own row, which its scores are keyed by -- with the ruling
+    made in the source carried across, not two rows counting the run twice
+    (`DATA.md#moving-animals-between-cohorts`)."""
+    repo = one_run_adopted_by_both(lab)
     repo.set_false_start("adopted:a", True)
 
     lab.apply("slow1")
 
-    held = [e.id for e in repo.adopted_for_cohort(lab.b.id) if e.file_path.endswith(f"{stem}.json")]
+    held = [
+        e.id for e in repo.adopted_for_cohort(lab.b.id)
+        if e.file_path.endswith(f"{TWICE_COPIED}.json")
+    ]
     assert held == ["adopted:b"], "one row for the run, the destination's own"
     assert repo.adopted_for_cohort(lab.a.id) == []
     assert repo.false_start_overrides() == {"adopted:b": True}, "the ruling came with it"
+
+
+def test_the_destinations_own_ruling_on_a_joined_run_stands(lab: Lab) -> None:
+    """A ruling the destination already made on the run is its own decision;
+    the moved row's ruling does not overwrite it."""
+    repo = one_run_adopted_by_both(lab)
+    repo.set_false_start("adopted:a", True)
+    repo.set_false_start("adopted:b", False)
+
+    lab.apply("slow1")
+
+    assert repo.false_start_overrides() == {"adopted:b": False}
+
+
+def test_a_joined_runs_moved_scores_go_with_its_row(lab: Lab) -> None:
+    """The moved row's cached scores name an id no row holds any more; left,
+    they would sit in the cache nothing reads or prunes."""
+    repo = one_run_adopted_by_both(lab)
+    for run_id in ("adopted:a", "adopted:b"):
+        repo.store([
+            CachedRun(
+                run_id=run_id, status="ok", detail=None, profile_hash=None,
+                profile_source="snapshot", params_hash=None, config=None, summary={},
+                key=CacheKey(file_path=f"/{run_id}", mtime_ns=1, size=1, profile_hash=None,
+                             codec_version=1),
+            )
+        ])
+
+    lab.apply("slow1")
+
+    assert sorted(repo.load_cached(["adopted:a", "adopted:b"])) == ["adopted:b"]
 
 
 def test_a_former_member_moves_as_a_former_member(lab: Lab) -> None:

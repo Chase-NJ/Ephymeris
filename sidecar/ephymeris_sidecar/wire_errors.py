@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from .analytics import ArchiveBusy
+from .analytics.archive import RigInUse as ArchiveRigInUse
 from .backup import BackupNotConfigured
 from .cohorts.folders import DataFolderError
 from .cohorts.models import CohortNotFound, NameTaken, NotArchived, ValidationError
@@ -172,6 +173,8 @@ ERRORS: ErrorTable = [
         ErrCode.ANIMAL_MOVE_REFUSED, str(e), e.plan.to_json(applied=False)
     )),
     (ArchiveBusy, _fixed(ErrCode.ARCHIVE_BUSY)),
+    # A write the rig being in use refuses: one code, as for the rig definition below.
+    (ArchiveRigInUse, _fixed(ErrCode.RIG_IN_USE)),
     (BackupNotConfigured, _fixed(ErrCode.BACKUP_UNAVAILABLE)),
     # --- the rig definition (TASKS.md#the-rig-definition) ---
     (VocabularyInUse, _fixed(ErrCode.STROBE_SESSION_RUNNING)),

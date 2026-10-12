@@ -15,9 +15,11 @@ from pathlib import Path
 import pytest
 
 from ephymeris_sidecar.analytics import ArchiveBusy, reader
+from ephymeris_sidecar.analytics.archive import ArchiveChange, RigInUse
 from ephymeris_sidecar.cohorts.db import Database
 from tests.test_analytics_adoption import LegacyRig
 from tests.test_analytics_service import HIT_1, Rig
+from tests.test_recovery import crash_a_run
 
 DAY = "2026-07-22"
 
@@ -150,16 +152,80 @@ async def test_a_run_recorded_while_a_rescan_walks_counts_once(
 
 
 async def test_a_writer_is_refused_while_the_archive_is_held(rig: Rig) -> None:
-    """A rescan, a tidy, a relocate and a move each refuse rather than queue."""
+    """A rescan, a tidy, a relocate, a move and a recover each refuse rather than queue."""
     async with rig.archive.exclusive():
         with pytest.raises(ArchiveBusy):
             await rig.service.rescan(rig.cohort.id)
         with pytest.raises(ArchiveBusy):
-            await rig.service.tidy(rig.cohort.id, apply=False, protect=set(), today=DAY)
+            await rig.service.tidy(rig.cohort.id, apply=False, today=DAY)
         with pytest.raises(ArchiveBusy):
             await rig.archive.relocate(rig.cohort.id, str(rig.root / "elsewhere"), True)
         with pytest.raises(ArchiveBusy):
-            await rig.archive.move_animals(object(), apply=False, busy=None)
+            await rig.archive.move_animals(object(), apply=False)
+        with pytest.raises(ArchiveBusy):
+            await rig.archive.recover(rig.cohort.id)
+
+
+async def test_a_write_hears_the_rig_as_it_stands_once_it_holds_the_archive(rig: Rig) -> None:
+    """A box that starts while a rescan waits its turn is the rescan's to see:
+    the rig is asked under the lock, never before it."""
+    release = asyncio.Event()
+
+    async def hold() -> None:
+        async with rig.archive.exclusive(wait=True):
+            await release.wait()
+
+    holder = asyncio.create_task(hold())
+    await asyncio.sleep(0)
+    rig.lifecycle.writing = True
+    release.set()
+    await holder
+    with pytest.raises(RigInUse):
+        await rig.service.rescan(rig.cohort.id)
+    with pytest.raises(RigInUse):
+        await rig.archive.recover(rig.cohort.id)
+    assert rig.changes == []
+
+
+async def test_a_tidy_leaves_the_session_holding_the_rig_when_it_runs(rig: Rig) -> None:
+    """An empty record a tidy would delete, held by the time the tidy holds
+    the archive."""
+    held = rig.add_session("12", DAY)
+    preview = await rig.service.tidy(rig.cohort.id, apply=False, today=DAY)
+    assert [e["session"]["sessionId"] for e in preview["empty"]] == [held]
+
+    rig.lifecycle.held = held
+    plan = await rig.service.tidy(rig.cohort.id, apply=True, today=DAY)
+    assert plan["empty"] == []
+    assert rig.sessions.get_session(held).id == held
+
+
+async def test_every_write_is_heard_once_when_it_changed_something(rig: Rig) -> None:
+    """`on_changed` is the one place an archive write is followed up; a
+    preview, or a walk that found nothing new, tells it nothing."""
+    await rig.service.tidy(rig.cohort.id, apply=False, today=DAY)
+    await rig.service.rescan(rig.cohort.id)
+    assert rig.changes == []
+
+    _recovered_file(rig, "13", "remy2")
+    await rig.service.rescan(rig.cohort.id)
+    await rig.service.tidy(rig.cohort.id, apply=True, today=DAY)
+    await rig.archive.relocate(rig.cohort.id, str(rig.root), False)
+    assert rig.changes == [ArchiveChange(cohort_ids=frozenset({rig.cohort.id}))] * 3
+
+
+async def test_a_recovery_queues_what_it_wrote_for_backup(rig: Rig) -> None:
+    session = rig.root / "2O-Bdisc" / f"2O-Bdisc_14_{DAY}"
+    tsv = crash_a_run(session)
+    result = await rig.archive.recover(rig.cohort.id)
+
+    assert result["recovered"] == 1 and result["cohortId"] == rig.cohort.id
+    [change] = rig.changes
+    assert set(change.files_to_back_up) == {
+        str(reader.sibling_json(tsv)),
+        str(reader.sibling_mat(tsv)),
+    }
+    assert change.cohort_ids == frozenset()
 
 
 async def test_a_summary_waits_for_the_archive(rig: Rig) -> None:

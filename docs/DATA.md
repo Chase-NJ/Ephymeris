@@ -566,7 +566,7 @@ Each is written **whole or not at all** (`write_atomic`): into `<name>.part`, fs
 - Strobe lines must match the live parser's strict `^\d{1,3}\t\d+$`, so a torn final line costs only itself.
 - **The lab's pre-Ephymeris logs are a second dialect**, recognised by their first line, `event_code\tevent_ms\tevent_name` (`LEGACY_HEADER`). After it come `# key\tvalue` comments (the run's parameters, read in flat and coerced as above), strobe lines with a third column naming the code (`code\tms\tBF_NAME` — the name is dropped; the [strobe vocabulary](TASKS.md#strobe-vocabulary) decodes the number) and CRLF line endings. The third column is admitted **only** in such a file; this app's own logs keep the strict rule.
 - **A legacy log never had a footer**, so its absence says nothing about how the run ended: a recovered legacy run records `stop_reason: "recovered from a legacy log"` (`RECOVERED_LEGACY_STOP_REASON`), never "after crash". It names no animal or sketch either, and recovery adds neither — adoption reads the animal from the filename ([below](#orphan-adoption)) and Analytics infers the conditions from the strobes. A legacy log that is only its header line — the old software opened one for every run, started or not — is refused rather than recovered as an empty run.
-- **Rejected while any box is running:** a live run's `.tsv` legitimately has no `.json` yet.
+- **Rejected while any box is running:** a live run's `.tsv` legitimately has no `.json` yet. It is an [archive write](#the-cohort-archive), so it also waits for no other, and the files it writes are queued for backup.
 
 The Recover button chains an `analytics.rescan`, so recovered files are adopted in the same click. It is a `sessions.*` command because it **writes** session files; analytics never writes the archive.
 
@@ -808,7 +808,19 @@ So a **walk exists, but only on an explicit user action** — `analytics.rescan`
 
 The view reads the database only, so `sessions.list` and the log never wait on a file or on the lock.
 
-**The archive lock.** A rescan, a tidy, a [data-folder relocate](#data-folder) and a [move of animals](#moving-animals-between-cohorts) each hold it end to end, and each is refused (`ArchiveBusy`) while anything else holds it. A summary waits for it, then reads its records and indexes them under it. Records read before the wait could be ones that a relocate, a move or a tidy had just rewritten.
+**Every write goes through the archive** (`CohortArchive.write`): a rescan, a tidy, a [recover](#crash-recovery), a [data-folder relocate](#data-folder) and a [move of animals](#moving-animals-between-cohorts). Each holds the archive lock end to end and is refused (`ArchiveBusy`) while anything else holds it. A summary waits for the lock, then reads its records and indexes them under it. Records read before the wait could be ones that a relocate, a move or a tidy had just rewritten.
+
+**The rig is asked once the lock is held**, never before, so a session set up or a box started while a caller decided cannot slip past:
+
+| Write | While a session is set up or a box runs | While a box runs |
+|---|---|---|
+| Relocate, moving the contents | Refused, `RIG_IN_USE` | Refused, `RIG_IN_USE` |
+| Move of animals | A refusal in its plan (`busy`) | A refusal in its plan (`busy`) |
+| Tidy | Leaves the held session alone | Leaves the held session alone |
+| Rescan | Runs | Refused, `RIG_IN_USE`: a run finishing during the walk would be adopted as well as recorded |
+| Recover | Runs | Refused, `RIG_IN_USE`: a live run's `.tsv` has no `.json` yet |
+
+**One place hears a write.** Once a write is done and the lock released, `on_changed` is told what it changed (`ArchiveChange`), and that is the only follow-up: the app queues the files it wrote for [backup](#backup-mirroring), publishes `cohorts.updated` and `session.lifecycle`, and refreshes the [session log](#the-session-log) of each cohort it touched. A preview, or a rescan that found nothing new, changed nothing and tells no one.
 
 > [!CAUTION]
 > **The walk finds format folders by name, at any depth — don't reintroduce an assumption about a prefix level.** One real archive nests session folders under a prefix, another puts them straight under the cohort, and nothing stops a per-year level appearing next. A fixed two-level glob found **zero** of the second archive's 444 files. `session_folder_of` stays correct because it is defined relative to the *format* folder, not the cohort root.

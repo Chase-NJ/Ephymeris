@@ -65,6 +65,15 @@ def _boxed(code: str) -> Any:
     return mapper
 
 
+def _listing_boxes(code: str) -> Any:
+    """`code` with the exception's `boxes` as `{"boxes": [...]}`."""
+
+    def mapper(exc: BaseException, _args: Args) -> CommandError:
+        return CommandError(code, str(exc), {"boxes": exc.boxes})
+
+    return mapper
+
+
 def _fixed(code: str, message: str | None = None) -> Any:
     def mapper(exc: BaseException, _args: Args) -> CommandError:
         return CommandError(code, message if message is not None else str(exc))
@@ -143,10 +152,10 @@ ERRORS: ErrorTable = [
     (IllegalTransition, _illegal_transition),
     (UtilityUnavailable, _boxed(ErrCode.UTILITY_UNAVAILABLE)),
     # --- sessions ---
-    (SketchNotCarried, lambda e, _a: CommandError(ErrCode.SESSION_INVALID, str(e), {"boxes": e.boxes})),
+    (SketchNotCarried, _listing_boxes(ErrCode.SESSION_INVALID)),
     # `intan.configure` naming boxes outside the held mapping. The client
     # reads `detail.boxes` as "flash these" only on a Start's refusal.
-    (BoxesNotMapped, lambda e, _a: CommandError(ErrCode.SESSION_INVALID, str(e), {"boxes": e.boxes})),
+    (BoxesNotMapped, _listing_boxes(ErrCode.SESSION_INVALID)),
     (SessionRefused, _fixed(ErrCode.SESSION_INVALID)),
     (MappingRefused, _boxed(ErrCode.TASK_PROFILE_INVALID)),
     (SessionNotFound, _fixed(ErrCode.SESSION_INVALID, "That session no longer exists.")),

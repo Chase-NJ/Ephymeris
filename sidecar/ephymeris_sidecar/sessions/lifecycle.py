@@ -65,8 +65,8 @@ class BoxesNotMapped(SessionRefused):
     """A recording was set up for boxes the held mapping doesn't have
     (`SessionLifecycle.mapped_boxes`). Nothing reached RHX."""
 
-    def __init__(self, boxes: list[int], *, held: bool) -> None:
-        if not held:
+    def __init__(self, boxes: list[int], *, this_group: bool) -> None:
+        if not this_group:
             message = "Confirm this group's mapping before setting up its recording."
         else:
             names = ", ".join(str(b) for b in boxes)
@@ -240,15 +240,16 @@ class SessionLifecycle:
         setup names them (`RECORDING.md#record-step`).
 
         Raises `BoxesNotMapped` naming every box the mapping lacks: all of them
-        unless this session and group hold the rig, because the runner carries
-        one group's mapping and its box 1 is not another group's box 1.
+        unless the held session is this one and its mapping is this group's,
+        because the runner carries one group's mapping and its box 1 is not
+        another group's box 1.
         """
         wanted = list(dict.fromkeys(boxes))
-        held = self._held == session_id and self._runner.group_id == group_id
-        configs = {c.box: c for c in self._runner.box_configs()} if held else {}
+        this_group = self._held == session_id and self._runner.group_id == group_id
+        configs = {c.box: c for c in self._runner.box_configs()} if this_group else {}
         missing = [box for box in wanted if box not in configs]
         if missing:
-            raise BoxesNotMapped(missing, held=held)
+            raise BoxesNotMapped(missing, this_group=this_group)
         return {box: configs[box] for box in wanted}
 
     async def active(self) -> dict[str, Any]:

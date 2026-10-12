@@ -5,6 +5,14 @@
 service asks it to score a pass of runs (`score`) or to decode one run for a
 chart (`decode`), and holds no part of either.
 
+**The key's version covers every input a cached row depends on**
+(`score_version`): `SCORE_VERSION`, a fingerprint of what this code answers
+for a fixed set of canary runs, and this machine's strobe vocabulary. A
+change to the maths, the payload's shape, inference, the recorded config or
+the parsing of an embedded profile moves the canary's answers, so the
+version, so every warm row is recomputed — without anyone remembering to bump
+anything (`DATA.md#caching`).
+
 > **No analytics operation may slow, stall, or fail a session**
 > (`DATA.md#never-at-the-expense-of-a-session`). Reads are sequential in one
 > worker thread, in chunks, and a pass writes in one transaction.
@@ -13,10 +21,14 @@ chart (`decode`), and holds no part of either.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 
+from ..rig import registry
+from ..rig.registry import Vocabulary
 from ..sessions.models import SessionAnimalRun
 from ..tasks import profile as task_profile
 from ..tasks.profile import TaskProfile
@@ -33,6 +45,28 @@ PROGRESS_EVERY = 10
 #: event loop gets to breathe between batches, so it is kept small enough that
 #: a chunk of cache misses can't stall a live `port.output` batch.
 INDEX_CHUNK = 32
+
+#: The part of the cache version a person sets (`DATA.md#caching`). The rest
+#: of it is computed (`score_version`): the canary's answers move by themselves
+#: whenever scoring does, for every input the canary reaches. Bump this for a
+#: change the canary cannot see — and prefer adding a canary case that shows
+#: it, which keeps the next such change honest too.
+#:
+#: Until v8 this was `derive.CODEC_VERSION`, and covered derive's maths alone:
+#: v3 added the trial-outcome tally (`DATA.md#rewarded-and-response-accuracy`);
+#: v4 split it per declared condition (`DATA.md#per-condition-tally`); v5 fixed
+#: the pooled figure's trial counts to span every declared condition; v6 added
+#: the engagement ladder (`DATA.md#engagement-ladder`); v7 added the inference
+#: rung (`infer.py`) — the maths didn't move, but every cached "no-metrics" row
+#: predated the rung; v8 added `hits` and `answerSide` to every metric summary.
+#: **v8's maths did not move either, and that was the trap**: a cached row is
+#: served verbatim, so every run indexed before it answered without
+#: `answerSide`, and the strategy plane concluded the profile was silent when
+#: the CACHE was.
+#: v9 (Review II, B8): the version covers inference, the recorded config,
+#: embedded-profile parsing and the vocabulary as well, by construction. Every
+#: row cached under v8 is recomputed once.
+SCORE_VERSION = 9
 
 
 @dataclass
@@ -68,6 +102,12 @@ class _Pass:
     be written (`DATA.md#caching`).
     """
 
+    #: The strobe vocabulary, read once for the whole pass: inference reads
+    #: this copy and the key's version hashes this copy, so the two cannot
+    #: disagree about which vocabulary a row was scored under.
+    vocabulary: Vocabulary
+    #: The version every row this pass writes is keyed under.
+    version: int = 0
     memo: _ProfileMemo = field(default_factory=dict)
     remember: dict[str, TaskProfile] | None = field(default_factory=dict)
 
@@ -129,11 +169,13 @@ class RunScorer:
         against it (`DATA.md#never-at-the-expense-of-a-session`). The caller
         holds the archive lock.
         """
+        vocabulary = await asyncio.to_thread(registry.vocabulary)
+        version = await asyncio.to_thread(current_version, vocabulary)
         cached = await asyncio.to_thread(self._repo.load_cached, [r.id for r in runs])
         out: list[CachedRun] = []
         fresh: list[CachedRun] = []
         total = len(runs)
-        pass_ = _Pass()
+        pass_ = _Pass(vocabulary, version=version)
 
         if progress is not None:
             await progress(0, total)
@@ -215,7 +257,7 @@ class RunScorer:
                 params_hash=None,
                 config=None,
                 summary=derive.RunSummary(status="missing").to_json(),
-                key=CacheKey("", None, None, resolved.digest, derive.CODEC_VERSION),
+                key=CacheKey("", None, None, resolved.digest, pass_.version),
             )
 
         # Stat, not read. The cache key is answerable from the stat alone, so a
@@ -231,7 +273,17 @@ class RunScorer:
             # This stays *before* the key comparison: a vanished file has no
             # stat to build a key from.
             if cached is not None and cached.status == "ok":
-                return CachedRun(**{**cached.__dict__, "stale": True})
+                # Re-keyed with no stat, so the file's return is always a miss:
+                # the row may be from an older version, and it is the stat
+                # that keeps it from being served as a hit once there is a
+                # file to read again. Keyed at this version, the readers that
+                # open no file (`CohortArchive.view`) keep seeing the last
+                # good summary meanwhile.
+                return replace(
+                    cached,
+                    stale=True,
+                    key=CacheKey(run.file_path, None, None, resolved.digest, pass_.version),
+                )
             return CachedRun(
                 run_id=run.id,
                 status="missing",
@@ -241,7 +293,7 @@ class RunScorer:
                 params_hash=None,
                 config=None,
                 summary=derive.RunSummary(status="missing", detail=stat.detail).to_json(),
-                key=CacheKey(run.file_path, None, None, resolved.digest, derive.CODEC_VERSION),
+                key=CacheKey(run.file_path, None, None, resolved.digest, pass_.version),
             )
 
         key = CacheKey(
@@ -249,7 +301,7 @@ class RunScorer:
             mtime_ns=stat.mtime_ns,
             size=stat.size,
             profile_hash=resolved.digest,
-            codec_version=derive.CODEC_VERSION,
+            codec_version=pass_.version,
         )
         if cached is not None and cached.key == key:
             return cached
@@ -277,34 +329,7 @@ class RunScorer:
                 key=key,
             )
 
-        profile, source, digest = self._scoring_profile(resolved, result.document, pass_)
-        summary = derive.summarize(result.document, profile, min_counted=min_counted)
-        payload = summary.to_json()
-        detail = summary.detail
-        if summary.status == "no-metrics" and not detail and resolved.reason:
-            # A run that scored nothing is the one case where the operator most
-            # needs to know *why* — "no metrics" alone is indistinguishable
-            # from a genuinely profile-less sketch and offers nothing to fix.
-            detail = resolved.reason
-            payload["detail"] = detail
-        # What the FILE says it ran on. Only ever read for a run this database
-        # has no row for (`DATA.md#the-embedded-task-profile`) — the row's own
-        # `params_hash` and `config` win where there is one — so this costs a
-        # dictionary comprehension on the runs that would otherwise report no
-        # parameters at all. The values ride along for the session log's
-        # what-changed (`DATA.md#what-changed`).
-        recorded = task_profile.recorded_config(result.document, profile)
-        return CachedRun(
-            run_id=run.id,
-            status=summary.status,
-            detail=detail,
-            profile_hash=digest,
-            profile_source=source,
-            params_hash=task_profile.params_hash(recorded),
-            config=recorded,
-            summary=payload,
-            key=key,
-        )
+        return _scored(run.id, resolved, result.document, key, min_counted, pass_)
 
     # --- one run, for a chart ----------------------------------------------
 
@@ -323,84 +348,17 @@ class RunScorer:
             if run.file_path
             else reader.ReadResult(status="missing", detail="no file")
         )
-        pass_ = _Pass(remember=None)
+        pass_ = _Pass(registry.vocabulary(), remember=None)
         resolved = self._resolve_profile(run, pass_)
         if not result.ok or result.document is None:
             return Decoded(
                 result.status, result.detail, None,
                 resolved.profile, resolved.source, resolved.digest,
             )
-        profile, source, digest = self._scoring_profile(resolved, result.document, pass_)
+        profile, source, digest = _settle(resolved, result.document, pass_)
         return Decoded("ok", None, result.document, profile, source, digest)
 
     # --- the ladder --------------------------------------------------------
-
-    def _scoring_profile(
-        self,
-        resolved: _Resolved,
-        document: dict[str, Any],
-        pass_: _Pass,
-    ) -> tuple[TaskProfile | None, str, str | None]:
-        """The profile a run is actually scored with — the ladder's last rungs.
-
-        Two of the four rungs need the document and therefore live here rather
-        than in `_resolve_profile`, which deliberately runs before any file is
-        opened:
-
-        1. the database snapshot, resolved already — the profile this rig
-           recorded the run with;
-        2. **the file's own snapshot** (`DATA.md#the-embedded-task-profile`),
-           which is the same claim made by
-           the file instead of by this machine's database, and is what lets a
-           session recorded on another rig decode exactly as it does at home;
-        3. today's `task.json` at the recorded sketch path — resolved already,
-           and only as trustworthy as that sounds;
-        4. the profile **inferred from the stream itself** (`infer.py`), which
-           every run of this firmware lineage supports because the strobe
-           registry is append-only.
-
-        **The file's snapshot outranks the live `task.json`, and that ordering
-        is the point.** Both are "a declaration for this sketch"; only one of
-        them is the declaration this run actually used. Ranking them the other
-        way would mean a rig that happens to have a same-named task scores a
-        visiting file against its own edit of it — silently, and with a
-        `profileHash` that says the two runs are comparable.
-
-        Both the embedded and the inferred profile are remembered
-        content-addressed like any other, so profile *groups* work unchanged —
-        by the pass, at its end, and never by a read-only one.
-
-        The cache key deliberately keeps the *resolution* digest (None when
-        nothing resolved), not the digest reached here: both of these rungs are
-        functions of the file's content, which the key already covers via
-        mtime/size, and of `CODEC_VERSION`, which gates the definition of
-        scoring itself.
-        """
-        if (
-            resolved.source == "snapshot"
-            and resolved.profile is not None
-            and resolved.profile.live_metrics
-        ):
-            return resolved.profile, resolved.source, resolved.digest
-
-        embedded = task_profile.embedded_profile(document)
-        if embedded is not None and embedded.live_metrics:
-            # Reported as a snapshot because that is what it is — the profile
-            # the run was configured from, recorded at the time of the run. It
-            # arrived by a different road than the database's copy; when both
-            # exist they are the same bytes and the cheaper road is taken above.
-            return embedded, "snapshot", pass_.digest(embedded)
-
-        if resolved.profile is not None and resolved.profile.live_metrics:
-            return resolved.profile, resolved.source, resolved.digest
-        sketch = document.get("sketch")
-        inferred = infer.infer_profile(
-            derive.codes_of(document),
-            sketch_name=sketch if isinstance(sketch, str) and sketch else None,
-        )
-        if inferred is None:
-            return resolved.profile, resolved.source, resolved.digest
-        return inferred, "inferred", pass_.digest(inferred)
 
     def _resolve_profile(self, run: SessionAnimalRun, pass_: _Pass) -> _Resolved:
         """Snapshot, then today's `task.json`, then nothing
@@ -442,7 +400,7 @@ class RunScorer:
         return resolved
 
     # NOTE: this resolves the *declared* rungs only. The inference rung lives
-    # in `_scoring_profile`, after the file is read — it needs the codes, and
+    # in `_settle`, after the file is read — it needs the codes, and
     # resolution deliberately runs before any file is opened.
     def _resolve_profile_uncached(self, run: SessionAnimalRun, pass_: _Pass) -> _Resolved:
         if run.profile_hash:
@@ -502,3 +460,272 @@ class RunScorer:
         # This does **not** promote the run to `snapshot`: how much the
         # decoding can be trusted is `source`, and it stays `sketch-current`.
         return _Resolved(current, "sketch-current", pass_.digest(current))
+
+
+# --- the ladder's last rungs, and scoring ---------------------------------
+
+
+def _settle(
+resolved: _Resolved, document: dict[str, Any], pass_: _Pass
+) -> tuple[TaskProfile | None, str, str | None]:
+    """The profile a run is actually scored with — the ladder's last rungs.
+
+    Two of the four rungs need the document and therefore live here rather
+    than in `RunScorer._resolve_profile`, which deliberately runs before any
+    file is opened:
+
+    1. the database snapshot, resolved already — the profile this rig
+       recorded the run with;
+    2. **the file's own snapshot** (`DATA.md#the-embedded-task-profile`),
+       which is the same claim made by
+       the file instead of by this machine's database, and is what lets a
+       session recorded on another rig decode exactly as it does at home;
+    3. today's `task.json` at the recorded sketch path — resolved already,
+       and only as trustworthy as that sounds;
+    4. the profile **inferred from the stream itself** (`infer.py`), which
+       every run of this firmware lineage supports because the strobe
+       registry is append-only.
+
+    **The file's snapshot outranks the live `task.json`, and that ordering
+    is the point.** Both are "a declaration for this sketch"; only one of
+    them is the declaration this run actually used. Ranking them the other
+    way would mean a rig that happens to have a same-named task scores a
+    visiting file against its own edit of it — silently, and with a
+    `profileHash` that says the two runs are comparable.
+
+    Both the embedded and the inferred profile are remembered
+    content-addressed like any other, so profile *groups* work unchanged —
+    by the pass, at its end, and never by a read-only one.
+
+    The cache key deliberately keeps the *resolution* digest (None when
+    nothing resolved), not the digest reached here: both of these rungs are
+    functions of the file's content, which the key already covers via
+    mtime/size, and of the code and vocabulary that read it, which the key's
+    version covers (`score_version`).
+    """
+    if (
+        resolved.source == "snapshot"
+        and resolved.profile is not None
+        and resolved.profile.live_metrics
+    ):
+        return resolved.profile, resolved.source, resolved.digest
+
+    embedded = task_profile.embedded_profile(document)
+    if embedded is not None and embedded.live_metrics:
+        # Reported as a snapshot because that is what it is — the profile
+        # the run was configured from, recorded at the time of the run. It
+        # arrived by a different road than the database's copy; when both
+        # exist they are the same bytes and the cheaper road is taken above.
+        return embedded, "snapshot", pass_.digest(embedded)
+
+    if resolved.profile is not None and resolved.profile.live_metrics:
+        return resolved.profile, resolved.source, resolved.digest
+    sketch = document.get("sketch")
+    inferred = infer.infer_profile(
+        derive.codes_of(document),
+        sketch_name=sketch if isinstance(sketch, str) and sketch else None,
+        vocabulary=pass_.vocabulary,
+    )
+    if inferred is None:
+        return resolved.profile, resolved.source, resolved.digest
+    return inferred, "inferred", pass_.digest(inferred)
+
+
+def _scored(
+    run_id: str,
+    resolved: _Resolved,
+    document: dict[str, Any],
+    key: CacheKey,
+    min_counted: int,
+    pass_: _Pass,
+) -> CachedRun:
+    """Score one read document: the cache row `score` stores, and what the
+    canary fingerprints. One function for both, so the canary cannot measure
+    a path the real pass doesn't take."""
+    profile, source, digest = _settle(resolved, document, pass_)
+    summary = derive.summarize(document, profile, min_counted=min_counted)
+    payload = summary.to_json()
+    detail = summary.detail
+    if summary.status == "no-metrics" and not detail and resolved.reason:
+        # A run that scored nothing is the one case where the operator most
+        # needs to know *why* — "no metrics" alone is indistinguishable
+        # from a genuinely profile-less sketch and offers nothing to fix.
+        detail = resolved.reason
+        payload["detail"] = detail
+    # What the FILE says it ran on. Only ever read for a run this database
+    # has no row for (`DATA.md#the-embedded-task-profile`) — the row's own
+    # `params_hash` and `config` win where there is one — so this costs a
+    # dictionary comprehension on the runs that would otherwise report no
+    # parameters at all. The values ride along for the session log's
+    # what-changed (`DATA.md#what-changed`).
+    recorded = task_profile.recorded_config(document, profile)
+    return CachedRun(
+        run_id=run_id,
+        status=summary.status,
+        detail=detail,
+        profile_hash=digest,
+        profile_source=source,
+        params_hash=task_profile.params_hash(recorded),
+        config=recorded,
+        summary=payload,
+        key=key,
+    )
+
+
+# --- the version (`DATA.md#caching`) --------------------------------------
+
+
+def current_version(vocabulary: Vocabulary | None = None) -> int:
+    """The version a cached row must carry to be served now
+    (`DATA.md#caching`), under `vocabulary` or the one in force.
+
+    Computed afresh on every call — the canary is about two milliseconds of
+    scoring — so nothing can hold a version that no longer describes the code.
+    Blocking; call it from a worker thread.
+    """
+    return score_version(
+        canary_fingerprint(),
+        vocabulary if vocabulary is not None else registry.vocabulary(),
+    )
+
+
+def score_version(canary: str, vocabulary: Vocabulary) -> int:
+    """`SCORE_VERSION` in the high bits, and in the low 32 a hash of the
+    canary's fingerprint and the vocabulary.
+
+    An integer because that is what the cache's `codec_version` column has
+    always held; `version >> 32` reads back `SCORE_VERSION`. It can never equal
+    a version from before v9 (those were single digits), so every such row is
+    recomputed once.
+    """
+    canon = json.dumps(
+        {
+            "codes": {str(code): name for code, name in vocabulary.code_map().items()},
+            "slots": {str(slot): fields for slot, fields in vocabulary.port_slots.items()},
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    mixed = hashlib.sha256(f"{canary}\n{canon}".encode("utf-8")).digest()
+    return (SCORE_VERSION << 32) | int.from_bytes(mixed[:4], "big")
+
+
+def canary_fingerprint() -> str:
+    """What this code answers for a fixed set of runs, hashed.
+
+    The runs cover every rung of the ladder (`DATA.md#which-profile-decodes-a-run`)
+    — a database snapshot, the file's own snapshot with recorded parameters,
+    a damaged one, today's `task.json`, inference with a withheld and an
+    unanswered condition, a stream with no condition at all, a utility profile,
+    a short run and an unclean stop — and each goes through `_scored`, the
+    function a real pass scores with. Every field a cache row keeps is hashed:
+    status, detail, both digests' profile, source, recorded parameters and the
+    full payload, keys included. So any change to what a row would hold moves
+    this, and with it the version.
+
+    The codes come from the **shipped seed** vocabulary, by name, so this
+    measures the code and not this machine's vocabulary, which `score_version`
+    hashes separately. A case that raises is answered by its exception's
+    name: the version stays deterministic and analytics stays up.
+    """
+    seed = Vocabulary(registry.default_vocabulary_document())
+    answers: dict[str, Any] = {}
+    for name, resolved, document in _canary_runs(seed):
+        try:
+            entry = _scored(
+                name,
+                resolved,
+                document,
+                CacheKey("", None, None, None, 0),
+                derive.DEFAULT_MIN_COUNTED,
+                _Pass(seed, remember=None),
+            )
+            answers[name] = {
+                "status": entry.status,
+                "detail": entry.detail,
+                "profileHash": entry.profile_hash,
+                "source": entry.profile_source,
+                "paramsHash": entry.params_hash,
+                "config": entry.config,
+                "summary": entry.summary,
+            }
+        except Exception as exc:  # noqa: BLE001 - the version must not take analytics down
+            log.warning("analytics: score canary %s raised %r", name, exc)
+            answers[name] = {"error": type(exc).__name__}
+    canon = json.dumps(answers, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+def _canary_runs(seed: Vocabulary) -> list[tuple[str, _Resolved, dict[str, Any]]]:
+    """The canary: (name, what resolution found, the document) per case."""
+    code = seed.code_of
+
+    def trial(onset: str, *answer: str) -> list[int]:
+        return [code("LIGHTS_ON"), code("ODOR_POKE"), code(onset), code("ODOR_UNPOKE"),
+                *(code(name) for name in answer)]
+
+    session = (
+        trial("ODOR_1_ON", "WATER_POKE_R", "FLUID_R", "STOP_FLUID_G_R") * 6
+        + trial("ODOR_1_ON", "WATER_POKE_L", "WATER_POKE_ERROR_L") * 2
+        + trial("ODOR_1_ON", "WATER_POKE_R", "WATER_UNPOKE_EARLY_R")
+        + trial("ODOR_3_ON", "WATER_POKE_L", "FLUID_L", "STOP_FLUID_G_L") * 5
+        + trial("ODOR_3_ON", "WATER_POKE_R", "WATER_POKE_ERROR_R") * 3
+        + trial("ODOR_5_ON", "WATER_POKE_NONE") * 2
+        + [code("LIGHTS_ON"), code("ODOR_POKE"), code("ODOR_7_ON"), code("ODOR_UNPOKE_EARLY")] * 2
+        + [code("LIGHTS_ON"), code("LAZY_RAT"), code("LIGHTS_OFF")]
+    )
+
+    def document(codes: list[int], **extra: Any) -> dict[str, Any]:
+        stream = [code("START_SESSION"), *codes, code("END_SESSION")]
+        return {
+            "rat": "canary",
+            "sketch": "Score canary",
+            "stop_reason": derive.CLEAN_STOP_REASON,
+            "trial_seed": 7,
+            "odor_poke_hold": 300,
+            "n_events": len(stream),
+            "ts_data": [[c, i * 250] for i, c in enumerate(stream)],
+            **extra,
+        }
+
+    declared: dict[str, Any] = {
+        "taskName": "Score canary",
+        "strobes": {str(c): n for c, n in seed.code_map().items()},
+        "config": [
+            {"metadataKey": "odor_poke_hold", "wireKey": "OPH", "label": "Odor poke hold",
+             "type": "int", "default": 500},
+        ],
+        "liveMetrics": [
+            {"id": "p_r_odor1", "label": "P(R | Odor 1)", "triggerCode": code("ODOR_1_ON"),
+             "successCode": code("WATER_POKE_R"), "alternateCode": code("WATER_POKE_L"),
+             "windowSize": 5},
+            {"id": "p_l_odor3", "label": "P(L | Odor 3)", "triggerCode": code("ODOR_3_ON"),
+             "successCode": code("WATER_POKE_L"), "alternateCode": code("WATER_POKE_R"),
+             "windowSize": 5},
+        ],
+    }
+    snapshot = task_profile.parse_profile(declared)
+    utility = task_profile.parse_profile({**declared, "kind": "utility"})
+    today = task_profile.parse_profile(
+        {k: v for k, v in declared.items() if k != "strobes"}, seed
+    )
+    nothing = _Resolved(None, "unavailable", None, "the canary resolves nothing")
+
+    def held(profile: TaskProfile, source: str) -> _Resolved:
+        return _Resolved(profile, source, task_profile.profile_hash(profile))
+
+    unclean = document(session[: len(session) // 2], stop_reason="host stopped")
+    del unclean["trial_seed"]
+    return [
+        ("database-snapshot", held(snapshot, "snapshot"), document(session)),
+        ("embedded", nothing, document(session, **{task_profile.SNAPSHOT_KEY: declared})),
+        # Not an object at all, so it falls through without a parse warning:
+        # this runs on every pass and every archive read.
+        ("embedded-damaged", nothing, document(session, **{task_profile.SNAPSHOT_KEY: "torn"})),
+        ("sketch-current", held(today, "sketch-current"), document(session)),
+        ("inferred", nothing, document(session)),
+        ("no-condition", nothing, document([code("WATER_POKE_R")] * 3)),
+        ("utility", held(utility, "snapshot"), document(session)),
+        ("short", held(snapshot, "snapshot"), document(session[:12])),
+        ("unclean", held(snapshot, "snapshot"), unclean),
+    ]

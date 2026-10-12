@@ -12,14 +12,18 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import subprocess
+import sys
 import threading
 from pathlib import Path
 
 import pytest
 
-from ephymeris_sidecar.analytics import AnalyticsService, derive, infer
+from ephymeris_sidecar.analytics import AnalyticsService, derive, infer, scoring
 from ephymeris_sidecar.cohorts.db import Database
 from ephymeris_sidecar.rig import registry
+from ephymeris_sidecar.rig.registry import Vocabulary
 from ephymeris_sidecar.tasks import profile as task_profile
 from tests.conftest import rewrite_keeping_stat
 from tests.test_analytics_service import GRGL, HIT_1, HIT_3, MISS_1, Rig
@@ -273,6 +277,92 @@ async def test_a_change_to_the_recorded_config_reaches_a_warm_row(
     run = (await _relaunched(rig).summary(rig.cohort.id))["runs"][0]
 
     assert run["paramsHash"] is None, "a warm row answered for the old recorded config"
+
+
+# --- the one pin (`DATA.md#caching`) ---------------------------------------
+
+#: What today's scoring answers for the canary runs (`scoring.canary_fingerprint`).
+CANARY = "76e5b25d07bdb550887afc0366191714251c0304d6cb9425e41f574728dcf353"
+
+
+def test_the_score_version_pins_every_input() -> None:
+    """THE PIN. The cache version is `SCORE_VERSION` plus a hash of what the
+    scoring code answers for a fixed set of canary runs and of this machine's
+    vocabulary (`scoring.score_version`). So it moves BY ITSELF whenever any
+    input to a cached row changes what the row would hold — and a warm cache
+    can no longer serve an answer older than the code asking.
+
+    This literal is the tripwire, not the mechanism. It fails when scoring's
+    answers change, to say what that costs: every machine re-reads its whole
+    archive once on upgrade. If that is intended, update CANARY; nothing needs
+    bumping. If the canary DIDN'T move for a change that alters a cached row,
+    the canary is blind to it: add a case to `scoring._canary_runs` that shows
+    it (or, failing that, bump `SCORE_VERSION`).
+    """
+    assert scoring.SCORE_VERSION == 9
+    assert scoring.canary_fingerprint() == CANARY, (
+        "scoring's answers changed: every cache re-reads once (DATA.md#caching)"
+    )
+    version = scoring.current_version()
+    assert version >> 32 == scoring.SCORE_VERSION
+    assert version != 8, "every row cached before v9 is recomputed"
+
+
+def _set(owner: object, name: str, value: object):
+    return lambda mp: mp.setattr(owner, name, value)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        _set(infer, "INFERRED_WINDOW", infer.INFERRED_WINDOW + 1),
+        _set(derive, "wilson_interval", lambda hits, n, z=1.0: (0.0, 1.0)),
+        _set(derive, "OVERALL_ID", "__pooled__"),
+        _set(task_profile, "embedded_profile", lambda document: None),
+        _set(task_profile, "recorded_config", lambda document, profile: None),
+        _set(task_profile, "params_hash", lambda config: "same-for-all"),
+        _set(
+            derive.RunSummary, "to_json",
+            (lambda real: lambda self: {**real(self), "added": True})(derive.RunSummary.to_json),
+        ),
+    ],
+    ids=[
+        "inference window", "derive maths", "payload value", "embedded-profile parsing",
+        "recorded config", "params hash", "payload shape",
+    ],
+)
+def test_the_canary_sees_every_input(monkeypatch: pytest.MonkeyPatch, change) -> None:
+    """Why the pin is worth anything: each input B8 named, changed, moves the
+    canary. A change the canary can't see would leave the version where it
+    was, which is the bug this replaces."""
+    before = scoring.canary_fingerprint()
+    change(monkeypatch)
+    assert scoring.canary_fingerprint() != before
+
+
+def test_the_version_moves_with_the_vocabulary() -> None:
+    document = registry.default_vocabulary_document()
+    seed = Vocabulary(document)
+    document["codes"]["ODOR_99_ON"] = {**document["codes"]["ODOR_1_ON"], "code": _free_code(document)}
+    grown = Vocabulary(document)
+    assert scoring.score_version(CANARY, seed) != scoring.score_version(CANARY, grown)
+
+
+def test_the_canary_is_the_same_in_every_process() -> None:
+    """The version is persisted, so it must not depend on anything a process
+    picks at random: a hash seed changing set order would move it on every
+    launch and re-read the archive at each app start."""
+    script = "from ephymeris_sidecar.analytics import scoring; print(scoring.canary_fingerprint())"
+    answers = {
+        subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, check=True,
+            cwd=Path(__file__).resolve().parents[1],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+        ).stdout.strip()
+        for seed in ("0", "1", "4242")
+    }
+    assert answers == {CANARY}
 
 
 @pytest.fixture

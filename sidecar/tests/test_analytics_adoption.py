@@ -582,25 +582,23 @@ async def test_a_warm_cache_cannot_answer_with_an_older_payload_shape(
 
     A cached row is served verbatim, so a payload written before a field existed
     goes on being returned after it does — silently, because nothing about a
-    cache hit looks wrong. `CODEC_VERSION` is the only thing standing between
-    that and a panel drawing the wrong conclusion, which is why adding a FIELD
-    counts as a codec change even when the arithmetic never moved.
+    cache hit looks wrong. The key's version is the only thing standing between
+    that and a panel drawing the wrong conclusion (`scoring.score_version`), and
+    v8 is the version this exact row was left at: the one before `answerSide`.
     """
-    from ephymeris_sidecar.analytics import derive
-
     rig.library.clear()
     rig.add_legacy_run("remy1", ([101, 249] + [103, 248]) * 12)
     await rig.service.rescan(rig.cohort.id)
     first = await rig.service.summary(rig.cohort.id)
 
-    # Forge exactly the stale row: the cache as an older codec left it, its
-    # payload shaped before `answerSide` existed.
+    # Forge exactly the stale row: the cache as v8 left it, its payload shaped
+    # before `answerSide` existed.
     cached = rig.repo.load_cached([r["runId"] for r in first["runs"]])
     assert cached, "the summary cached the run"
     rig.repo.store([
         replace(
             entry,
-            key=replace(entry.key, codec_version=derive.CODEC_VERSION - 1),
+            key=replace(entry.key, codec_version=8),
             summary={
                 **entry.summary,
                 "metrics": [
@@ -614,7 +612,7 @@ async def test_a_warm_cache_cannot_answer_with_an_older_payload_shape(
 
     run = (await rig.service.summary(rig.cohort.id))["runs"][0]
     assert all(m["answerSide"] for m in run["metrics"]), (
-        "a row from an older codec must be recomputed, not served"
+        "a row from an older version must be recomputed, not served"
     )
 
 

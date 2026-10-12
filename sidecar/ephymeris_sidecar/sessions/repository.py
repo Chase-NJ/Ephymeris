@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from ..cohorts.db import Database
+from ..cohorts.db import Database, Tx
 from ..logbook.models import SessionLog, merge_logs
 from .models import (
     GroupRun,
@@ -266,9 +266,11 @@ class SessionRepository:
 
     # --- animal runs (written at finalization) ----------------------------
 
-    def record_animal_run(self, run: SessionAnimalRun) -> None:
-        with self._db.lock:
-            self._db.conn.execute(
+    def record_animal_run(self, run: SessionAnimalRun, *, tx: Tx | None = None) -> None:
+        """Record a finished run: in `tx` when given, else as its own unit of
+        work (`DATA.md#transactions`)."""
+        with self._db.write(tx) as unit:
+            unit.execute(
                 "INSERT OR REPLACE INTO session_animal_runs"
                 " (id, session_id, animal_id, box_number, sketch_path, file_path,"
                 "  started_at, ended_at, stop_reason, profile_hash, config_json,"
@@ -289,7 +291,6 @@ class SessionRepository:
                     run.params_hash,
                 ),
             )
-            self._db.conn.commit()
 
     # --- pruning (DATA.md#pruning) -------------------------------------------
     #

@@ -26,8 +26,9 @@ import logging
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Iterable, Iterator
 
 log = logging.getLogger(__name__)
 
@@ -711,18 +712,163 @@ def _migrate(conn: sqlite3.Connection, found: int) -> None:
             MIGRATIONS[target](conn)
 
 
+class NestedWrite(RuntimeError):
+    """A unit of work was opened inside another on the same thread, or a unit
+    was joined, or used, other than on its thread while it is open
+    (`DATA.md#transactions`). Pass the open unit (`tx=`) to share it."""
+
+
+class WriteInProgress(RuntimeError):
+    """A snapshot found a write still open on the connection, and refused
+    rather than wait on it forever (`DATA.md#the-database-copy`). Try later."""
+
+
+class Query:
+    """Statements under the database lock. No commit and no rollback: the
+    unit of work that opened it decides those."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn: sqlite3.Connection | None = conn
+
+    def execute(self, sql: str, params: Any = ()) -> sqlite3.Cursor:
+        return self._open().execute(sql, params)
+
+    def executemany(self, sql: str, rows: Iterable[Any]) -> sqlite3.Cursor:
+        return self._open().executemany(sql, rows)
+
+    def _open(self) -> sqlite3.Connection:
+        if self._conn is None:
+            raise NestedWrite("this unit of work has already ended")
+        return self._conn
+
+    def _close(self) -> None:
+        self._conn = None
+
+
+class Tx(Query):
+    """One unit of work (`Database.write`)."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        super().__init__(conn)
+        self._thread = threading.get_ident()
+        self._after: list[Callable[[], None]] = []
+
+    def on_commit(self, callback: Callable[[], None]) -> None:
+        """Run `callback` once this unit has committed, after the lock is
+        released, so it may use the database. Dropped if the unit rolls back."""
+        self._open()
+        self._after.append(callback)
+
+
+def _undo(conn: sqlite3.Connection, adopted: bool) -> None:
+    """Roll back one unit of work: its savepoint, inside a write a caller left
+    open, or else its whole transaction. Never raises over the error that
+    brought it here; if the savepoint is already gone (SQLite rolled the
+    transaction back itself), what is left is rolled back whole."""
+    try:
+        if adopted:
+            conn.execute("ROLLBACK TO unit_of_work")
+            conn.execute("RELEASE unit_of_work")
+            return
+    except sqlite3.Error:
+        log.exception("couldn't roll a unit of work back to its savepoint")
+    if conn.in_transaction:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:  # pragma: no cover - nothing left to try
+            log.exception("couldn't roll back a unit of work")
+
+
 class Database:
+    """The one connection, its lock, and the units of work on it
+    (`DATA.md#transactions`)."""
+
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
         self._on_commit: Callable[[], None] | None = None
+        #: The open unit of work, and so the thread holding the lock for it.
+        self._tx: Tx | None = None
 
     def on_commit(self, callback: Callable[[], None] | None) -> None:
-        """Register a post-commit hook (the backup manager's dirty mark)."""
+        """Register a post-commit hook (the backup manager's dirty mark).
+        When it fires: `DATA.md#transactions`."""
         self._on_commit = callback
         if self._conn is not None:
             self._conn.on_commit = callback  # type: ignore[attr-defined]
+
+    # --- the unit of work (DATA.md#transactions) ---------------------------
+
+    @contextmanager
+    def write(self, tx: Tx | None = None) -> Iterator[Tx]:
+        """A unit of work: the lock, a transaction, `COMMIT` when the block
+        ends and `ROLLBACK` if it raises. Only the opener commits.
+
+        Pass an open unit as `tx` to join it instead: the block runs inside
+        that unit and commits nothing. A unit is joined only on the thread
+        that opened it, and opening a second one there raises `NestedWrite`
+        rather than deadlocking on the lock or committing early.
+        """
+        if tx is not None:
+            if tx is not self._tx or tx._thread != threading.get_ident():
+                raise NestedWrite("only this thread's open unit of work can be joined")
+            yield tx
+            return
+        if self._tx is not None and self._tx._thread == threading.get_ident():
+            raise NestedWrite("a unit of work is already open on this thread; pass it as tx=")
+
+        follow_ups: list[Callable[[], None]] = []
+        with self._lock:
+            conn = self.conn
+            # A write some caller left open without a unit (the indexing
+            # pass's remembered profiles, `DATA.md#transactions`). Its rows
+            # are not this unit's to roll back, so the unit runs as a savepoint
+            # inside it; its COMMIT makes both durable, as any commit on the
+            # one connection does.
+            adopted = conn.in_transaction
+            conn.execute("SAVEPOINT unit_of_work" if adopted else "BEGIN IMMEDIATE")
+            before = conn.total_changes
+            unit = Tx(conn)
+            self._tx = unit
+            try:
+                try:
+                    yield unit
+                finally:
+                    self._tx = None
+                    unit._close()
+                changed = conn.total_changes != before
+                # COMMIT releases the savepoint too; were it to fail, the
+                # savepoint is still there for `_undo` to roll back to.
+                conn.execute("COMMIT")
+            except BaseException:
+                _undo(conn, adopted)
+                raise
+            if (changed or adopted) and self._on_commit is not None:
+                try:
+                    self._on_commit()
+                except Exception:  # noqa: BLE001 - committed regardless
+                    log.exception("the database's commit hook failed")
+            follow_ups = unit._after
+        for callback in follow_ups:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - the unit is committed regardless
+                log.exception("a follow-up to a committed unit of work failed")
+
+    @contextmanager
+    def read(self) -> Iterator[Query]:
+        """Statements under the lock, for reading. Inside this thread's own
+        unit of work, that unit -- so a read sees the unit's own rows."""
+        if self._tx is not None and self._tx._thread == threading.get_ident():
+            yield self._tx
+            return
+        with self._lock:
+            query = Query(self.conn)
+            try:
+                yield query
+            finally:
+                query._close()
 
     def connect(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -775,14 +921,20 @@ class Database:
         so pointing this straight at a network share would let that share's
         latency block every cohort read in the app; the backup manager
         snapshots locally and does the slow copy afterwards with nothing held.
+
+        Raises `WriteInProgress`, copying nothing, if a write is open on the
+        connection -- inside this thread's own unit of work, or left open by a
+        caller without one (`DATA.md#the-database-copy`).
         """
         destination.parent.mkdir(parents=True, exist_ok=True)
-        target = sqlite3.connect(destination)
-        try:
-            with self._lock:
+        with self.read():
+            if self.conn.in_transaction:
+                raise WriteInProgress("a write is still open; snapshot later")
+            target = sqlite3.connect(destination)
+            try:
                 self.conn.backup(target)
-        finally:
-            target.close()
+            finally:
+                target.close()
         # Trim the WAL/journal companions a fresh connect may have left behind,
         # so what gets mirrored out is a single self-contained file.
         for suffix in ("-wal", "-shm"):

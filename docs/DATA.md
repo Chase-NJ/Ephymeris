@@ -1065,7 +1065,7 @@ A box is started, something is wrong, it is stopped within a minute and started 
 
 A run nobody restarted is never a false start, however short; an animal that quit after four trials is data. A run whose trials are unknown, because no profile could score it or the index has not read it yet, is never set aside by the rule: "couldn't tell" fails toward counting.
 
-**A person can overrule it either way.** `analytics.setFalseStart` writes `run_flags`: `true` sets a run aside, `false` counts it whatever the rule says ("restored"), `null` hands it back to the rule. Overrides are keyed by run id, which for an adopted run is the id its cohort holds it under ([Orphan adoption](#orphan-adoption)), so a decision survives a rescan. A run stored under the stem-only id adoption once minted, then pruned and adopted again under a new id, takes its ruling with it (`store_adopted`), unless a row still holds the old id.
+**A person can overrule it either way.** `analytics.setFalseStart` writes `run_flags`: `true` sets a run aside, `false` counts it whatever the rule says ("restored"), `null` hands it back to the rule. Overrides are keyed by run id, which for an adopted run is the id its cohort holds it under ([Orphan adoption](#orphan-adoption)), so a decision survives a rescan. When a rescan prunes a run's row and adopts the run afresh under a new id — its file refiled, and the row held under its stem-only id or under the id of the cohort a [move](#moving-animals-between-cohorts) brought it from — the ruling moves to the new row (`_earlier_ids`, `store_adopted`). It never moves off an id a row still holds, and a cohort reading a run it already holds never takes another cohort's ruling.
 
 | Where | What a false start does there |
 |---|---|

@@ -211,7 +211,7 @@ class AnalyticsRepository:
         self,
         entries: list["AdoptedRun"],
         *,
-        earlier_ids: dict[str, str] | None = None,
+        earlier_ids: dict[str, list[str]] | None = None,
     ) -> int:
         """Record adoptions in one transaction — same commit discipline as
         `store` — and return how many were written.
@@ -223,9 +223,10 @@ class AnalyticsRepository:
         (`DATA.md#orphan-adoption`). Such an entry is left out and logged; the
         rest of the batch is written.
 
-        `earlier_ids` maps an entry's id to an id the same run may have been
-        stored under before; a ruling on that id moves to the entry when no
-        row holds it any more (`DATA.md#false-starts`).
+        `earlier_ids` maps an entry's id to ids the same run may have been
+        stored under before; a ruling on one moves to the entry when no row
+        holds it any more (`_move_rulings`). The caller names only entries it
+        adopts afresh.
         """
         if not entries:
             return 0
@@ -276,23 +277,36 @@ class AnalyticsRepository:
                     for entry in entries
                 ],
             )
-            # A ruling left on an id no row holds any more — a run stored
-            # under its stem-only id, pruned, and adopted again under a new
-            # one — follows the run (`DATA.md#false-starts`). Never one a row
-            # still holds, and never over a ruling the new id already has.
-            for entry in entries:
-                earlier = (earlier_ids or {}).get(entry.id)
-                if earlier is None or earlier == entry.id:
-                    continue
-                if self._db.conn.execute(
-                    "SELECT 1 FROM adopted_runs WHERE id = ?", (earlier,)
-                ).fetchone() is None:
-                    self._db.conn.execute(
-                        "UPDATE OR IGNORE run_flags SET run_id = ? WHERE run_id = ?",
-                        (entry.id, earlier),
-                    )
+            self._move_rulings(entries, earlier_ids or {})
             self._db.conn.commit()
         return len(entries)
+
+    def _move_rulings(
+        self, entries: list["AdoptedRun"], earlier_ids: dict[str, list[str]]
+    ) -> None:
+        """Move a ruling left on an id no row holds any more onto the entry
+        that now holds its run (`DATA.md#false-starts`). Inside
+        `store_adopted`'s transaction, so the row and its ruling land together.
+
+        Each entry's candidates are tried in order and the first ruling found
+        moves. Never one a row still holds, and never over a ruling the entry
+        already has (`UPDATE OR IGNORE`).
+        """
+        conn = self._db.conn
+        for entry in entries:
+            for earlier in earlier_ids.get(entry.id, []):
+                if earlier == entry.id:
+                    continue
+                if conn.execute(
+                    "SELECT 1 FROM adopted_runs WHERE id = ?", (earlier,)
+                ).fetchone() is not None:
+                    continue
+                moved = conn.execute(
+                    "UPDATE OR IGNORE run_flags SET run_id = ? WHERE run_id = ?",
+                    (entry.id, earlier),
+                ).rowcount
+                if moved:
+                    break
 
     def adopted_for_cohort(self, cohort_id: str) -> list["AdoptedRun"]:
         with self._db.lock:

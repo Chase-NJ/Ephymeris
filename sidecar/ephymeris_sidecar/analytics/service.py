@@ -410,10 +410,10 @@ class AnalyticsService:
             # Prune before the walk, so `known` is built from surviving records
             # and a run whose file *moved* is re-adopted in the same pass
             # rather than pruned on one scan and re-found on the next.
-            pruned = (
+            pruned, dropped = (
                 await asyncio.to_thread(self._prune, cohort_id)
                 if adopt_orphans and folder_exists
-                else {"runs": 0, "sessions": 0, "adopted": 0}
+                else ({"runs": 0, "sessions": 0, "adopted": 0}, {})
             )
             runs = await asyncio.to_thread(self._sessions.runs_for_cohort, cohort_id)
             known = {
@@ -492,11 +492,7 @@ class AnalyticsService:
                 # holds is never taken.
                 adopted = await asyncio.to_thread(
                     lambda: self._repo.store_adopted(
-                        adoptable,
-                        earlier_ids={
-                            entry.id: _stem_only_run_id(Path(entry.file_path))
-                            for entry in adoptable
-                        },
+                        adoptable, earlier_ids=_earlier_ids(adoptable, held, dropped)
                     )
                 )
             if carried:
@@ -526,8 +522,12 @@ class AnalyticsService:
 
     # --- pruning (DATA.md#pruning) -----------------------------------------
 
-    def _prune(self, cohort_id: str) -> dict[str, int]:
+    def _prune(self, cohort_id: str) -> tuple[dict[str, int], dict[str, str]]:
         """Drop records for files the disk demonstrably no longer has.
+
+        Returns the counts, and the id of each adoption it dropped by run
+        identity: a run whose file only moved is adopted again by the same
+        rescan, and a ruling on the dropped id follows it (`_earlier_ids`).
 
         One worker-thread hop for the whole pass, like the rest of this module:
         it is a stat per record and a handful of batched `DELETE`s, and the
@@ -558,11 +558,13 @@ class AnalyticsService:
             for run in self._sessions.runs_for_cohort(cohort_id)
             if run.file_path
         }
-        removed_adopted = [
-            entry.id
+        removed = [
+            entry
             for entry in self._repo.adopted_for_cohort(cohort_id)
             if _is_gone(entry.file_path) or _normalize(entry.file_path) in claimed
         ]
+        removed_adopted = [entry.id for entry in removed]
+        dropped = {reader.run_identity(Path(entry.file_path)): entry.id for entry in removed}
 
         adopted_count = self._repo.delete_adopted(removed_adopted)
         # The cache is the thing that was actually still serving numbers, so it
@@ -604,7 +606,7 @@ class AnalyticsService:
             "runs": run_count,
             "sessions": session_count,
             "adopted": adopted_count,
-        }
+        }, dropped
 
     # --- tidying records (DATA.md#tidy-records) ----------------------------
 
@@ -1555,13 +1557,34 @@ def _orphan_run_id(cohort_id: str, path: Path) -> str:
 
 
 def _stem_only_run_id(path: Path) -> str:
-    """The id an adoption of this run was stored under before ids named their
-    cohort: the run identity alone.
+    """The stem-only id: the run identity alone, with no cohort.
 
-    Rows stored that way keep it (`_orphan_run_id`), so it is still the key of
-    any ruling a person made on such a run. A row that is pruned and adopted
-    again gets a new id, and the ruling is moved to it by `store_adopted`
-    (`DATA.md#false-starts`).
+    A row held under its stem-only id keeps it (`_orphan_run_id`), so it is
+    the key of any ruling a person made on that run. When such a row is pruned
+    and its run adopted afresh, the ruling moves to the new id (`_earlier_ids`,
+    `DATA.md#false-starts`).
     """
     digest = hashlib.sha1(reader.run_identity(path).encode("utf-8")).hexdigest()
     return f"adopted:{digest[:16]}"
+
+
+def _earlier_ids(
+    adoptable: list[AdoptedRun], held: dict[str, str], dropped: dict[str, str]
+) -> dict[str, list[str]]:
+    """The ids a ruling on each freshly adopted run may still sit on
+    (`DATA.md#false-starts`), for `store_adopted` to move it from.
+
+    Only for a run the cohort did not hold: a row read again keeps its own id
+    and its own ruling, and never takes one another cohort's pruned row left.
+    First the id of a row this rescan's prune just dropped for the same run,
+    which a move kept from the cohort that first adopted it; then the
+    stem-only id.
+    """
+    out: dict[str, list[str]] = {}
+    for entry in adoptable:
+        identity = reader.run_identity(Path(entry.file_path))
+        if held.get(identity) is not None:
+            continue
+        candidates = [dropped[identity]] if identity in dropped else []
+        out[entry.id] = [*candidates, _stem_only_run_id(Path(entry.file_path))]
+    return out

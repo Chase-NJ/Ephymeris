@@ -20,6 +20,7 @@ import shutil
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -68,9 +69,20 @@ def db(tmp_path: Path):
 
 
 class LegacyRig:
-    """A cohort pointed at a hand-managed archive, with no run records at all."""
+    """A cohort pointed at a hand-managed archive, with no run records at all.
 
-    def __init__(self, db: Database, tmp_path: Path) -> None:
+    The sketch library the service resolves names against is `library`, a
+    plain name -> path map that a test empties or refills; a test that needs a
+    lookup of another shape passes `sketch_lookup` instead.
+    """
+
+    def __init__(
+        self,
+        db: Database,
+        tmp_path: Path,
+        *,
+        sketch_lookup: Callable[[str], str | None] | None = None,
+    ) -> None:
         self.db = db
         self.root = tmp_path / "data" / "The Remy's"
         self.cohorts = CohortRepository(db)
@@ -79,6 +91,7 @@ class LegacyRig:
         self.sketch = tmp_path / "sketches" / "GRGL_2-Odor"
         self.sketch.mkdir(parents=True, exist_ok=True)
         (self.sketch / "task.json").write_text(json.dumps(GRGL), encoding="utf-8")
+        self.library: dict[str, str] = {"GRGL_2-Odor": str(self.sketch)}
 
         self.root.mkdir(parents=True, exist_ok=True)
         self.cohort = self.cohorts.create("The Remy's", str(self.root))
@@ -106,9 +119,7 @@ class LegacyRig:
             sessions=self.sessions,
             broadcast=broadcast,
             archive=self.archive,
-            sketch_lookup=lambda name: (
-                str(self.sketch) if name == "GRGL_2-Odor" else None
-            ),
+            sketch_lookup=sketch_lookup or self.library.get,
         )
 
     def add_legacy_run(
@@ -380,7 +391,7 @@ async def test_a_run_from_another_rig_still_names_its_program(
     Program column has to be able to say: read off the path alone every such
     run displays as "unknown", which claims the record is silent when it is
     not."""
-    rig.service._sketch_lookup = lambda name: None  # this rig has no such task
+    rig.library.clear()  # this rig has no such task
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5, sketch="GRGL 4-Odor")
     await rig.service.rescan(rig.cohort.id)
 
@@ -409,7 +420,7 @@ async def test_a_file_that_carries_its_profile_decodes_as_a_snapshot(
     """
     from ephymeris_sidecar.tasks.profile import parse_profile, profile_hash
 
-    rig.service._sketch_lookup = lambda name: None
+    rig.library.clear()
     rig.add_legacy_run(
         "remy1", HIT_1 * 15 + MISS_1 * 5, sketch="GRGL 4-Odor", profile=GRGL
     )
@@ -488,7 +499,7 @@ async def test_a_scored_profile_hash_survives_the_cache(rig: LegacyRig) -> None:
     profile group the moment the cache warmed. Both rungs are checked: they
     reach a scoring profile by the same road and would break together.
     """
-    rig.service._sketch_lookup = lambda name: None
+    rig.library.clear()
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)                  # inferred
     rig.add_legacy_run("remy2", HIT_1 * 15 + MISS_1 * 5, profile=GRGL)    # embedded
     await rig.service.rescan(rig.cohort.id)
@@ -521,7 +532,7 @@ async def test_a_four_odor_run_from_another_rig_can_be_put_on_the_plane(
     from ephymeris_sidecar.analytics import derive
     from ephymeris_sidecar.tasks.profile import parse_profile
 
-    rig.service._sketch_lookup = lambda name: None
+    rig.library.clear()
     # Odors 1 and 2 answered right, 3 and 4 answered left — with the codes
     # `checkResponse()` actually emits. The poke codes alone are NOT evidence:
     # inference votes on FLUID_x / WATER_POKE_ERROR_x, because those are the
@@ -571,25 +582,23 @@ async def test_a_warm_cache_cannot_answer_with_an_older_payload_shape(
 
     A cached row is served verbatim, so a payload written before a field existed
     goes on being returned after it does — silently, because nothing about a
-    cache hit looks wrong. `CODEC_VERSION` is the only thing standing between
-    that and a panel drawing the wrong conclusion, which is why adding a FIELD
-    counts as a codec change even when the arithmetic never moved.
+    cache hit looks wrong. The key's version is the only thing standing between
+    that and a panel drawing the wrong conclusion (`scoring.score_version`), and
+    v8 is the version this exact row was left at: the one before `answerSide`.
     """
-    from ephymeris_sidecar.analytics import derive
-
-    rig.service._sketch_lookup = lambda name: None
+    rig.library.clear()
     rig.add_legacy_run("remy1", ([101, 249] + [103, 248]) * 12)
     await rig.service.rescan(rig.cohort.id)
     first = await rig.service.summary(rig.cohort.id)
 
-    # Forge exactly the stale row: the cache as an older codec left it, its
-    # payload shaped before `answerSide` existed.
+    # Forge exactly the stale row: the cache as v8 left it, its payload shaped
+    # before `answerSide` existed.
     cached = rig.repo.load_cached([r["runId"] for r in first["runs"]])
     assert cached, "the summary cached the run"
     rig.repo.store([
         replace(
             entry,
-            key=replace(entry.key, codec_version=derive.CODEC_VERSION - 1),
+            key=replace(entry.key, codec_version=8),
             summary={
                 **entry.summary,
                 "metrics": [
@@ -603,7 +612,7 @@ async def test_a_warm_cache_cannot_answer_with_an_older_payload_shape(
 
     run = (await rig.service.summary(rig.cohort.id))["runs"][0]
     assert all(m["answerSide"] for m in run["metrics"]), (
-        "a row from an older codec must be recomputed, not served"
+        "a row from an older version must be recomputed, not served"
     )
 
 
@@ -611,7 +620,7 @@ async def test_a_damaged_snapshot_falls_through_rather_than_failing(
     rig: LegacyRig,
 ) -> None:
     """A file with a broken snapshot is still a file full of real strobes."""
-    rig.service._sketch_lookup = lambda name: None
+    rig.library.clear()
     path = rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
     document = json.loads(path.read_text(encoding="utf-8"))
     document["task_profile"] = {"taskName": "GRGL", "liveMetrics": "not a list"}
@@ -719,7 +728,7 @@ async def test_a_sketch_is_resolved_at_read_time_not_frozen_at_adoption(
     second-hand — the recorded path is a cache of a lookup, not a fact about
     the run. With the inference rung the run *scores* meanwhile (same stream,
     same maths), so what upgrades on the next summary is the SOURCE."""
-    rig.service._sketch_lookup = lambda name: None  # directory unavailable
+    rig.library.clear()  # directory unavailable
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
     await rig.service.rescan(rig.cohort.id)
 
@@ -730,9 +739,7 @@ async def test_a_sketch_is_resolved_at_read_time_not_frozen_at_adoption(
 
     # The directory comes back. No re-adoption, just another summary — and the
     # declared profile takes over from the inference.
-    rig.service._sketch_lookup = lambda name: (
-        str(rig.sketch) if name == "GRGL_2-Odor" else None
-    )
+    rig.library["GRGL_2-Odor"] = str(rig.sketch)
     payload = await rig.service.summary(rig.cohort.id)
     assert payload["runs"][0]["status"] == "ok"
     assert payload["runs"][0]["profileSource"] == "sketch-current"
@@ -1294,7 +1301,7 @@ async def test_an_unresolvable_sketch_with_nothing_to_infer_says_why(
 
 
 async def test_a_declared_legacy_name_makes_an_old_run_scorable(
-    rig: LegacyRig, tmp_path: Path
+    db: Database, tmp_path: Path
 ) -> None:
     """`legacyNames` is the declared bridge from an old human label to the
     sketch that can decode it (`TASKS.md#legacy-names`) — the lab's shaping
@@ -1310,7 +1317,7 @@ async def test_a_declared_legacy_name_makes_an_old_run_scorable(
     def lookup(name: str) -> str | None:
         from ephymeris_sidecar.tasks.profile import load_profile
 
-        for candidate in (rig.sketch, shaping):
+        for candidate in (tmp_path / "sketches" / "GRGL_2-Odor", shaping):
             if candidate.name == name:
                 return str(candidate)
             profile = load_profile(candidate)
@@ -1318,7 +1325,7 @@ async def test_a_declared_legacy_name_makes_an_old_run_scorable(
                 return str(candidate)
         return None
 
-    rig.service._sketch_lookup = lookup
+    rig = LegacyRig(db, tmp_path, sketch_lookup=lookup)
     rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5, sketch="Shape - L")
 
     await rig.service.rescan(rig.cohort.id)

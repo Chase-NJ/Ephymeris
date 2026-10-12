@@ -22,37 +22,9 @@ from typing import Any, Iterable, Iterator
 from ..tasks.metrics import MetricAccumulator, compute_series
 from ..tasks.profile import LiveMetric, TaskProfile
 
-#: Bumped whenever the maths below changes. Cached summaries carry the version
-#: they were computed under and are recomputed when it moves — without this, a
-#: fixed bug would keep serving numbers from the old definition forever, with
-#: no symptom anywhere (`DATA.md#caching`).
-#: v3 added the trial-outcome tally (`DATA.md#rewarded-and-response-accuracy`).
-#: v4 split that tally per declared condition (`DATA.md#per-condition-tally`),
-#: so "how many go-right
-#: trials were administered, and how many of those paid out" is answerable
-#: without re-reading the file.
-#: v5 fixed the pooled figure's trial counts: `triggered`/`excluded` now span
-#: every declared condition rather than only the ones that scored, so a
-#: condition the animal never answered stops vanishing from the denominator it
-#: was excluded from.
-#: v6 added the engagement ladder (`DATA.md#engagement-ladder`), delimited on
-#: the trial light rather
-#: than on odor onset — the layer above every other count here, and the one
-#: that says how many trials the box offered at all.
-#: v7 added the inference rung (`infer.py`,
-#: `DATA.md#which-profile-decodes-a-run`): a run that resolves no
-#: profile is scored from the stream itself. The maths here didn't move, but
-#: every cached "no-metrics" row predates the rung and must be re-read — which
-#: is exactly what this constant exists to force.
-#: v8 added `hits` and `answerSide` to every metric summary, for the strategy
-#: plane's fold onto two sides (`DATA.md#strategy-plane`). **The maths did not
-#: move here either,
-#: and that is the trap**: a cached row is served verbatim, so every run indexed
-#: before this shipped kept answering with a payload that had no `answerSide` at
-#: all — and a panel reading "no condition says which well it rewards" concluded
-#: the profile was silent when the CACHE was. Adding a field to the payload is a
-#: codec change; only the numbers being unchanged is not a reason to skip it.
-CODEC_VERSION = 8
+# Cached summaries are versioned by `scoring.current_version`, which moves by
+# itself when anything here changes what a summary holds — the maths or the
+# payload's shape (`DATA.md#caching`). There is nothing to bump in this file.
 
 #: z for a 95% interval. Wilson rather than the normal approximation because
 #: this data lives at small n *and* at p near 1 — a trained animal sits around
@@ -902,6 +874,29 @@ def summarize(
         excluded_by_default=profile.kind == "utility",
         **base,
     )
+
+
+def with_threshold(payload: dict[str, Any], min_counted: int) -> dict[str, Any]:
+    """A summary payload judged against `min_counted`, as a copy.
+
+    `lowConfidence` is the only part of a summary the threshold touches, and it
+    is `counted < min_counted` for each metric and the pooled figure. The
+    threshold is a per-request argument (`analytics.summary`'s
+    `minCountedTrials`) while the payload is cached, so the flag is re-judged on
+    every row served rather than kept from whichever request computed it
+    (`DATA.md#caching`).
+    """
+    def judged(metric: Any) -> Any:
+        if not isinstance(metric, dict) or not isinstance(metric.get("counted"), int):
+            return metric
+        return {**metric, "lowConfidence": metric["counted"] < min_counted}
+
+    out = dict(payload)
+    if isinstance(out.get("metrics"), list):
+        out["metrics"] = [judged(metric) for metric in out["metrics"]]
+    if out.get("overall") is not None:
+        out["overall"] = judged(out["overall"])
+    return out
 
 
 #: The id reserved for the pooled figure, so the frontend can offer it in the

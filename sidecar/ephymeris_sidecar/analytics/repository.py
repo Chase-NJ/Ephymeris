@@ -175,18 +175,27 @@ class AnalyticsRepository:
 
     # --- the derived cache -------------------------------------------------
 
-    def load_cached(self, run_ids: list[str]) -> dict[str, CachedRun]:
+    def load_cached(
+        self, run_ids: list[str], *, version: int | None = None
+    ) -> dict[str, CachedRun]:
+        """Cached rows by run id. `version` keeps only rows keyed under it
+        (`scoring.current_version`): what a reader that opens no file wants,
+        since a row of any other version is one the next summary recomputes
+        (`DATA.md#caching`). The scorer itself reads every version — it needs a
+        vanished file's last good row whatever version wrote it."""
         if not run_ids:
             return {}
         out: dict[str, CachedRun] = {}
+        same_version = "" if version is None else " AND codec_version = ?"
+        tail = () if version is None else (version,)
         # Chunked so a cohort with thousands of runs can't blow SQLite's
         # variable limit (999 by default on older builds).
         for chunk in _chunks(run_ids, 400):
             marks = ",".join("?" * len(chunk))
             with self._db.lock:
                 rows = self._db.conn.execute(
-                    f"SELECT * FROM run_metrics_cache WHERE run_id IN ({marks})",
-                    tuple(chunk),
+                    f"SELECT * FROM run_metrics_cache WHERE run_id IN ({marks}){same_version}",
+                    (*chunk, *tail),
                 ).fetchall()
             for row in rows:
                 try:
@@ -376,8 +385,10 @@ class AnalyticsRepository:
             ).fetchone()
         return _hydrate_adopted(row) if row is not None else None
 
-    def store(self, entries: list[CachedRun]) -> None:
-        """Write cache rows in **one transaction**.
+    def store(self, entries: list[CachedRun], *, tx: Tx | None = None) -> None:
+        """Write cache rows in **one transaction**, or in `tx`'s unit of work
+        when given one (`DATA.md#transactions`): the indexing pass writes its
+        rows with the profiles it scored them under.
 
         Every commit marks the whole database dirty for backup
         (`DATA.md#the-database-copy`), so committing per row would trigger repeated
@@ -386,8 +397,8 @@ class AnalyticsRepository:
         """
         if not entries:
             return
-        with self._db.lock:
-            self._db.conn.executemany(
+        with self._db.write(tx) as unit:
+            unit.executemany(
                 "INSERT OR REPLACE INTO run_metrics_cache"
                 " (run_id, file_path, file_mtime_ns, file_size, profile_hash,"
                 "  scored_profile_hash, profile_source, params_hash, config_json,"
@@ -413,7 +424,6 @@ class AnalyticsRepository:
                     for entry in entries
                 ],
             )
-            self._db.conn.commit()
 
 
 @dataclass(frozen=True)

@@ -36,6 +36,7 @@ from ..sessions.models import Session, SessionAnimalRun
 from ..sessions.tidy import session_key
 from . import false_starts, reader
 from .repository import AdoptedRun, AnalyticsRepository
+from .scoring import current_version
 
 log = logging.getLogger(__name__)
 
@@ -202,7 +203,8 @@ class CohortArchive:
         `include_aborted` adds aborted records to `recorded`. An aborted record
         never owns recovered files whichever way it is set (it wrote none).
         Recovered sessions' clocks close from the metrics cache: a file the
-        index has not read yet leaves its session open.
+        index has not read yet, or has not read since the cache's version
+        moved (`DATA.md#caching`), leaves its session open.
 
         A recovered run whose file a run record also names is left out: the
         record wins (`DATA.md#database-first`). A rescan walking while a box
@@ -218,7 +220,9 @@ class CohortArchive:
             if _path_key(entry.file_path) not in claimed
         ]
         owners = _adoption_owners(adopted, recorded)
-        cached = self._repo.load_cached([entry.id for entry in adopted])
+        cached = self._repo.load_cached(
+            [entry.id for entry in adopted], version=current_version()
+        )
         summaries: dict[str, dict[str, Any] | None] = {
             run_id: entry.summary for run_id, entry in cached.items()
         }
@@ -250,7 +254,9 @@ class CohortArchive:
         count, and the rule leaves it counted.
         """
         if summaries is None:
-            cached = self._repo.load_cached([run.id for run in runs])
+            cached = self._repo.load_cached(
+                [run.id for run in runs], version=current_version()
+            )
             summaries = {run_id: entry.summary for run_id, entry in cached.items()}
         return false_starts.classify(
             (
@@ -489,7 +495,7 @@ def _adopted_to_run(
     )
     # The name the document asked for, kept alongside rather than added to the
     # model: `SessionAnimalRun` is a persisted row shape and an adopted run is
-    # not persisted as one. `_resolve_profile` reads it to explain an
+    # not persisted as one. `RunScorer` reads it to explain an
     # unresolvable sketch instead of silently scoring nothing.
     run.sketch_name = entry.sketch_name  # type: ignore[attr-defined]
     return run

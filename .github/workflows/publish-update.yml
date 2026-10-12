@@ -6,6 +6,7 @@
 #
 # Runs when YOU publish a draft. A release created already-published by a workflow's own
 # token would not trigger it, which is one more reason release.yml only ever drafts.
+# ship-main.yml publishes its own release, so it calls this workflow directly instead.
 
 name: Publish update
 
@@ -18,6 +19,11 @@ on:
     inputs:
       tag:
         description: "Release tag to point the feed at, e.g. v1.1.2-alpha"
+        required: true
+  workflow_call:
+    inputs:
+      tag:
+        type: string
         required: true
 
 permissions:

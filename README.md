@@ -219,13 +219,15 @@ shared library without `-fpermissive`, which makes them the strictest type check
 
 ## Continuous integration
 
-Three GitHub Actions workflows live in `.github/workflows/`:
+Five GitHub Actions workflows live in `.github/workflows/`:
 
 | Workflow | Runs on | What it does |
 |---|---|---|
 | `check.yml` | every push to `main`, every pull request | `npm run check`; the sidecar suite on Windows and Linux; the firmware host tests; `cargo test` on Windows |
-| `release.yml` | a pushed tag `v*` | builds and signs the installer on a clean Windows runner and attaches it and its `.sig` to a **draft** pre-release |
-| `publish-update.yml` | publishing a release | points the update feed, `latest.json` on the `updates` branch, at that release ([Updates](docs/ARCHITECTURE.md#updates)) |
+| `release.yml` | a pushed tag `v*` | builds and signs the installer and attaches it and its `.sig` to a **draft** pre-release |
+| `ship-main.yml` | run by hand | builds and signs `main` as `<package.json version>.<commit count>`, publishes it as a pre-release, and points the update feed at it |
+| `installer.yml` | called by the two above | builds the signed installer on a clean Windows runner; the one copy of the build steps |
+| `publish-update.yml` | publishing a release; called by `ship-main.yml` | points the update feed, `latest.json` on the `updates` branch, at that release ([Updates](docs/ARCHITECTURE.md#updates)) |
 
 Tests that need hardware, `arduino-cli`, RHX or the lab's probe maps skip themselves on a runner, so a
 green check says nothing about them.
@@ -240,6 +242,16 @@ git tag v1.1.1-alpha && git push origin main --tags
 The workflow refuses a tag that disagrees with either file. When the draft appears on the Releases
 page, write its notes and publish it. **Publishing is shipping**: within a few minutes every installed
 copy that checks finds it. Nothing reaches the lab before that.
+
+To ship `main` between releases, run **Ship main** instead (Actions tab, or the command below). It needs
+no version bump or tag: the build calls itself `package.json`'s version with the commit count appended
+(`1.1.3-alpha` becomes `1.1.3-alpha.214`), which sorts above the release it follows and below the next
+one. Running it is shipping, just as publishing a draft is. It refuses to run from any other branch, and
+refuses a version the feed already holds or has passed.
+
+```bash
+gh workflow run ship-main.yml --ref main
+```
 
 Signing needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; their public half is `plugins.updater.pubkey` in

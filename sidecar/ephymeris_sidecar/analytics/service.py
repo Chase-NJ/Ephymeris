@@ -426,10 +426,10 @@ class AnalyticsService:
             # since (`DATA.md#carrying-adoptions-forward`). One thread hop and
             # one stat per file, against a walk that would otherwise open and
             # parse every one of them again.
-            carried = (
+            carried, held = (
                 await asyncio.to_thread(self._carry_over, found, known, cohort_id)
                 if adopt_orphans
-                else {}
+                else ({}, {})
             )
 
             orphans: list[dict[str, Any]] = []
@@ -457,7 +457,7 @@ class AnalyticsService:
                     best[identity] = settled
                     continue
                 entry, adoption = await asyncio.to_thread(
-                    self._describe_orphan, path, cohort, cohort_id
+                    self._describe_orphan, path, cohort, cohort_id, held.get(identity)
                 )
                 if adoption is None:
                     orphans.append(entry)
@@ -678,8 +678,10 @@ class AnalyticsService:
 
     def _carry_over(
         self, found: list[Path], known: set[str], cohort_id: str
-    ) -> dict[str, AdoptedRun]:
-        """The adoptions this walk does not need to redo, by run identity.
+    ) -> tuple[dict[str, AdoptedRun], dict[str, str]]:
+        """The adoptions this walk does not need to redo, by run identity —
+        and the id of every adoption this cohort holds, by run identity, which
+        a file the walk does read is stored under again (`_orphan_run_id`).
 
         Adoption used to be repeated in full on every rescan: each of an
         archive's files was opened, parsed and written back, so a cohort with a
@@ -726,10 +728,10 @@ class AnalyticsService:
                 and stat.size == entry.file_size
             ):
                 out[identity] = entry
-        return out
+        return out, {identity: entry.id for identity, entry in index.items()}
 
     def _describe_orphan(
-        self, path: Path, cohort: Any, cohort_id: str
+        self, path: Path, cohort: Any, cohort_id: str, held_id: str | None = None
     ) -> tuple[dict[str, Any], AdoptedRun | None]:
         """Match a stray file to an animal by name, and never guess
         (`DATA.md#orphan-adoption`).
@@ -792,7 +794,9 @@ class AnalyticsService:
             sketch_path = self._sketch_lookup(sketch_name)
 
         return entry, AdoptedRun(
-            id=_orphan_run_id(path),
+            # The id this cohort already holds the run under, if any, so a
+            # re-read never re-keys a row (`DATA.md#orphan-adoption`).
+            id=held_id or _orphan_run_id(cohort_id, path),
             cohort_id=cohort_id,
             animal_id=match,
             file_path=str(path),
@@ -1522,17 +1526,21 @@ def _animal_from_filename(
     return next((a.id for a in animals if a.name.casefold() == folded), None)
 
 
-def _orphan_run_id(path: Path) -> str:
-    """Deterministic synthetic run id, so re-running the rescan is idempotent.
+def _orphan_run_id(cohort_id: str, path: Path) -> str:
+    """The id a new adoption is stored under (`DATA.md#orphan-adoption`).
 
-    Keyed on the **run identity** (the file stem), not the path. A duplicated
-    run has two paths, and which copy `_prefer` picks can legitimately change
-    between scans — when a sketch reappears in the library, say, and one copy
-    suddenly resolves a profile. A path-keyed id would then mint a *second*
-    row for a run that already had one, leaving both in place: precisely the
-    double-counting the deduplication exists to prevent. Keyed on identity,
-    the same run always lands on the same row and `INSERT OR REPLACE` updates
-    it in place.
+    Keyed on the **cohort and the run identity** (the file stem), never the
+    path. A duplicated run has two paths, and which copy `_prefer` picks can
+    legitimately change between scans — when a sketch reappears in the
+    library, say, and one copy suddenly resolves a profile. A path-keyed id
+    would then mint a *second* row for a run that already had one, leaving
+    both in place: precisely the double-counting the deduplication exists to
+    prevent. And two cohorts whose folders overlap find the *same* path, so
+    only the cohort in the key keeps their rows apart.
+
+    Only for a run the cohort does not hold yet. A held row keeps the id it
+    was stored under, whatever this returns for it now: a person's ruling
+    (`run_flags`) and the cached scores are keyed by that id.
     """
-    digest = hashlib.sha1(reader.run_identity(path).encode("utf-8")).hexdigest()
-    return f"adopted:{digest[:16]}"
+    key = f"{cohort_id}\0{reader.run_identity(path)}"
+    return f"adopted:{hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]}"

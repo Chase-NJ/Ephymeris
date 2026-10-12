@@ -737,7 +737,7 @@ async def test_a_sketch_is_resolved_at_read_time_not_frozen_at_adoption(
 
 
 async def test_rescan_is_idempotent(rig: LegacyRig) -> None:
-    """The synthetic id is derived from the path, so a second walk refreshes
+    """The synthetic id is kept per cohort and run, so a second walk refreshes
     rather than duplicating — a user may click Rescan twice."""
     rig.add_legacy_run("remy1", HIT_1 * 5)
     await rig.service.rescan(rig.cohort.id)
@@ -764,10 +764,9 @@ def _second_cohort(rig: LegacyRig, folder: Path) -> str:
 async def test_two_cohorts_over_one_archive_keep_their_own_adoptions(
     rig: LegacyRig, nested: bool
 ) -> None:
-    """B15. The adopted id was keyed on the file stem alone and stored with
-    `INSERT OR REPLACE`, so a second cohort whose folder covers the same file
-    took the first cohort's row on its rescan, and the first took it back on
-    its own. The run left one cohort's history at every rescan of the other."""
+    """B15. Two cohorts whose folders hold the same file each keep their own
+    adoption of it, under their own animal, however their rescans interleave:
+    the id names the cohort (`DATA.md#orphan-adoption`)."""
     path = rig.add_legacy_run("remy1", HIT_1 * 15 + MISS_1 * 5)
     # Nested: the second cohort is attached to the prefix folder inside the first's.
     other = _second_cohort(rig, path.parents[2] if nested else rig.root)
@@ -789,10 +788,10 @@ async def test_two_cohorts_over_one_archive_keep_their_own_adoptions(
 
 
 def test_storing_an_adoption_never_takes_another_cohorts_row(rig: LegacyRig) -> None:
-    """B15's other half. `INSERT OR REPLACE` on the id let one cohort's write
-    move a row another cohort holds. Taking a run from one cohort to another is
-    a move's job (`DATA.md#moving-animals-between-cohorts`), never a rescan's:
-    the write that would do it is left out, and the rest of its batch lands."""
+    """B15. Storing an adoption never takes a row another cohort holds. Taking
+    a run from one cohort to another is a move's job
+    (`DATA.md#moving-animals-between-cohorts`), never a rescan's: the write
+    that would do it is left out, and the rest of its batch lands."""
     path = rig.add_legacy_run("remy1", HIT_1 * 5)
     spare = rig.add_legacy_run("remy2", HIT_1 * 5)
     other = _second_cohort(rig, rig.root)

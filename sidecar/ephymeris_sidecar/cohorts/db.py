@@ -284,7 +284,7 @@ CREATE TABLE IF NOT EXISTS strobe_scan_cache (
 -- A person's word on one run, overriding the false-start rule
 -- (DATA.md#false-starts): 1 = set it aside, 0 = count it whatever the rule
 -- says. No row means the rule decides. Keyed by run id, which for an adopted
--- run is the identity-keyed synthetic id, so the decision survives a rescan.
+-- run is the id its cohort holds it under, so the decision survives a rescan.
 -- No FK, like run_metrics_cache: an adopted run has no run record.
 CREATE TABLE IF NOT EXISTS run_flags (
     run_id      TEXT PRIMARY KEY,
@@ -296,8 +296,8 @@ CREATE TABLE IF NOT EXISTS run_flags (
 -- session_animal_runs row points at, matched to an animal by the document's
 -- `rat` name. Deliberately NOT a sessions or session_animal_runs row: a
 -- fabricated session row would corrupt session-number suggestion and the
--- same-day reuse warning. The id is deterministic from the file path, so
--- re-running the rescan is idempotent. No foreign key on animal_id, same as
+-- same-day reuse warning. The id is minted from the cohort and the run
+-- identity and kept once stored, so re-running the rescan is idempotent. No foreign key on animal_id, same as
 -- session_animal_runs — the roster is deleted and re-inserted wholesale on
 -- every edit, and adoption storing the *id* is what makes an adopted run
 -- survive the animal being renamed afterward.

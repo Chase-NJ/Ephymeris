@@ -795,7 +795,7 @@ Mirroring failures surface as `state: "failed"` on `backup.status` with the unde
 
 Run records carry a file path, and that is the primary path: the record also carries `animal_id` (immune to renames), the box, timings and stop reason, none of which a filename gives. But it is not complete — files exist that no record points at: crashes between the file write and the commit, files restored from the mirror, sessions copied from the other lab machine, and every pre-Ephymeris archive.
 
-So a **walk exists, but only on an explicit user action** — `analytics.rescan` (the Rescan button). Adopted runs get a deterministic synthetic id so rescanning is idempotent, and they **never** get fabricated `sessions` rows, which would corrupt session-number suggestion and the same-day warning. In summaries they are grouped under synthetic `adopted:<prefix>_<number>_<date>` sessions.
+So a **walk exists, but only on an explicit user action** — `analytics.rescan` (the Rescan button). An adopted run keeps one id per cohort across rescans ([Orphan adoption](#orphan-adoption)) so rescanning is idempotent, and they **never** get fabricated `sessions` rows, which would corrupt session-number suggestion and the same-day warning. In summaries they are grouped under synthetic `adopted:<prefix>_<number>_<date>` sessions.
 
 ### The cohort archive
 
@@ -855,7 +855,9 @@ This is the **only** path by which a pre-Ephymeris archive reaches Analytics, an
 **Duplicate copies are one run.** Identity is the case-folded **file stem** (`reader.run_identity`): animal + session + start time. In one real archive 290 of 296 runs exist twice; adopting both would double every animal. The surviving copy is chosen **by content, not walk order** (`_prefer`): a copy whose document names its `sketch` can be decoded and one that doesn't cannot, with the path breaking ties. In that archive 30 runs carry `sketch` only in the consolidated copy.
 
 > [!WARNING]
-> **The synthetic run id is keyed on run identity, not on the path** (`_orphan_run_id`). Which copy wins can change between scans, so a path-keyed id would mint a second row for the same run and reintroduce the double-counting deduplication prevents.
+> **The synthetic run id is keyed on the cohort and the run identity, never on the path** (`_orphan_run_id`). Which copy wins can change between scans, so a path-keyed id would mint a second row for the same run and reintroduce the double-counting deduplication prevents. Two cohorts whose folders overlap find the same file at the same path, so without the cohort in the key one cohort's rescan would take the other's row, and the run would leave one cohort's history at every rescan of the other.
+
+**An adopted run keeps the id it was stored under.** A rescan that reads a run its cohort already holds stores it under that row's id, whatever `_orphan_run_id` now gives, because a person's [false-start](#false-starts) ruling and the [cache](#caching) are keyed by it. `store_adopted` never writes over a row another cohort holds: moving a run between cohorts is a [move](#moving-animals-between-cohorts)'s job.
 
 **A missing data folder is reported, not treated as empty.** `analytics.rescan` returns `folderMissing`, and `analytics.summary` emits a `data-folder-missing` warning — otherwise an unplugged drive reads as "this cohort has no data". **An unreadable directory** costs a warning and its own contents, never the cohort.
 
@@ -1063,7 +1065,7 @@ A box is started, something is wrong, it is stopped within a minute and started 
 
 A run nobody restarted is never a false start, however short; an animal that quit after four trials is data. A run whose trials are unknown, because no profile could score it or the index has not read it yet, is never set aside by the rule: "couldn't tell" fails toward counting.
 
-**A person can overrule it either way.** `analytics.setFalseStart` writes `run_flags`: `true` sets a run aside, `false` counts it whatever the rule says ("restored"), `null` hands it back to the rule. Overrides are keyed by run id, which for an adopted run is the identity-keyed synthetic id, so a decision survives a rescan.
+**A person can overrule it either way.** `analytics.setFalseStart` writes `run_flags`: `true` sets a run aside, `false` counts it whatever the rule says ("restored"), `null` hands it back to the rule. Overrides are keyed by run id, which for an adopted run is the id its cohort holds it under ([Orphan adoption](#orphan-adoption)), so a decision survives a rescan.
 
 | Where | What a false start does there |
 |---|---|

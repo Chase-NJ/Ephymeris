@@ -362,12 +362,30 @@ def test_the_canary_sees_every_input(monkeypatch: pytest.MonkeyPatch, change) ->
     assert scoring.canary_fingerprint() != before
 
 
+def _retired(document: dict, name: str) -> dict:
+    """`document` with the live code `name` moved to `retired`, as the
+    Strobes page retires one (`TASKS.md#strobe-vocabulary`)."""
+    out = copy.deepcopy(document)
+    entry = out["codes"].pop(name)
+    out["retired"][name] = {"code": entry["code"], "rationale": "retired for the test"}
+    return out
+
+
 def test_the_version_moves_with_the_vocabulary() -> None:
     document = registry.default_vocabulary_document()
     seed = Vocabulary(document)
-    document["codes"]["ODOR_99_ON"] = {**document["codes"]["ODOR_1_ON"], "code": _free_code(document)}
-    grown = Vocabulary(document)
+    grown_doc = copy.deepcopy(document)
+    grown_doc["codes"]["ODOR_99_ON"] = {**document["codes"]["ODOR_1_ON"], "code": _free_code(document)}
+    grown = Vocabulary(grown_doc)
     assert scoring.score_version(CANARY, seed) != scoring.score_version(CANARY, grown)
+
+    # Retiring a code keeps its number and name in the map a profile is
+    # filled from, but takes it out of what inference reads as live: the same
+    # stream infers one condition fewer. Reinstating it is the way back.
+    retired = Vocabulary(_retired(document, "ODOR_3_ON"))
+    assert scoring.score_version(CANARY, seed) != scoring.score_version(CANARY, retired), (
+        "retiring an onset changes inference, so it must move the version"
+    )
 
 
 def test_the_canary_is_the_same_in_every_process() -> None:
@@ -471,3 +489,28 @@ async def test_a_vocabulary_edit_reaches_a_warm_row(
 
     run = (await rig.service.summary(rig.cohort.id))["runs"][0]
     assert len(run["metrics"]) == 3, "a warm row answered for the old vocabulary"
+
+
+async def test_retiring_and_reinstating_a_code_reaches_a_warm_row(
+    rig: Rig, machine_vocabulary: dict
+) -> None:
+    """Inference reads LIVE codes only (`infer.py`), while a retired code keeps
+    its name in the map profiles are filled from. Retiring an onset therefore
+    drops a condition from every inferred run, and reinstating it brings the
+    condition back; a warm row must follow both ways."""
+    (rig.sketch / "task.json").unlink()
+    session = rig.add_session("1", "2026-07-22")
+    rig.add_run(session, "a1", (HIT_1 + HIT_3) * 12, snapshot=False)
+
+    warm = (await rig.service.summary(rig.cohort.id))["runs"][0]
+    assert warm["profileSource"] == "inferred"
+    assert len(warm["metrics"]) == 2
+
+    retired = _retired(machine_vocabulary, "ODOR_3_ON")
+    registry.set_vocabulary_source(lambda: copy.deepcopy(retired))
+    run = (await rig.service.summary(rig.cohort.id))["runs"][0]
+    assert len(run["metrics"]) == 1, "a warm row answered for the code before it retired"
+
+    registry.set_vocabulary_source(lambda: copy.deepcopy(machine_vocabulary))
+    run = (await rig.service.summary(rig.cohort.id))["runs"][0]
+    assert len(run["metrics"]) == 2, "a warm row answered for the code while it was retired"

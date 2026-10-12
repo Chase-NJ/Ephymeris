@@ -397,6 +397,25 @@ async def test_a_due_database_backup_never_waits_on_a_write_left_open(
 
 
 @pytest.mark.asyncio
+async def test_a_sync_now_that_meets_an_open_write_says_the_database_was_not_copied(
+    db: Database, tmp_path: Path
+) -> None:
+    """"Sync now" is how an operator proves the target works
+    (`DATA.md#no-automatic-backfill`); it must not report a database copy it
+    deferred as done (`DATA.md#the-database-copy`)."""
+    manager = make_manager(db, [], db_debounce=3600.0)
+    await manager.configure(str(tmp_path / "mirror"))
+    AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Pending"}))
+
+    result = await asyncio.wait_for(manager.sync_now(), timeout=3.0)
+
+    assert result["failed"] == 1
+    assert DB_MIRROR_NAME in result["errors"][0]
+    assert manager.status()["state"] == "failed"
+    db.conn.rollback()
+
+
+@pytest.mark.asyncio
 async def test_a_dated_snapshot_is_kept_alongside_the_live_mirror(
     db: Database, tmp_path: Path
 ) -> None:

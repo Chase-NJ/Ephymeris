@@ -388,8 +388,12 @@ class BackupManager:
             try:
                 await asyncio.to_thread(self._write_db_backup, target)
             except WriteInProgress:
-                # The mark set above stays; the next pass copies it.
-                log.info("backup sync: database copy deferred to the next pass")
+                # The mark set above stays and a later pass copies it, but this
+                # sync did not: say so rather than report it done.
+                result["failed"] += 1
+                result["errors"].append(
+                    f"{DB_MIRROR_NAME}: a write was still open; the next pass copies it"
+                )
             except OSError as exc:
                 result["failed"] += 1
                 result["errors"].append(f"{DB_MIRROR_NAME}: {exc}")

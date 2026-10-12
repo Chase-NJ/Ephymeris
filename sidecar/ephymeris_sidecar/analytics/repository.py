@@ -207,7 +207,12 @@ class AnalyticsRepository:
 
     # --- adopted orphans (DATA.md#orphan-adoption) ----------------------
 
-    def store_adopted(self, entries: list["AdoptedRun"]) -> int:
+    def store_adopted(
+        self,
+        entries: list["AdoptedRun"],
+        *,
+        earlier_ids: dict[str, str] | None = None,
+    ) -> int:
         """Record adoptions in one transaction — same commit discipline as
         `store` — and return how many were written.
 
@@ -217,6 +222,10 @@ class AnalyticsRepository:
         and a replace would silently drop the run from that cohort's history
         (`DATA.md#orphan-adoption`). Such an entry is left out and logged; the
         rest of the batch is written.
+
+        `earlier_ids` maps an entry's id to an id the same run may have been
+        stored under before; a ruling on that id moves to the entry when no
+        row holds it any more (`DATA.md#false-starts`).
         """
         if not entries:
             return 0
@@ -267,6 +276,21 @@ class AnalyticsRepository:
                     for entry in entries
                 ],
             )
+            # A ruling left on an id no row holds any more — a run stored
+            # under its stem-only id, pruned, and adopted again under a new
+            # one — follows the run (`DATA.md#false-starts`). Never one a row
+            # still holds, and never over a ruling the new id already has.
+            for entry in entries:
+                earlier = (earlier_ids or {}).get(entry.id)
+                if earlier is None or earlier == entry.id:
+                    continue
+                if self._db.conn.execute(
+                    "SELECT 1 FROM adopted_runs WHERE id = ?", (earlier,)
+                ).fetchone() is None:
+                    self._db.conn.execute(
+                        "UPDATE OR IGNORE run_flags SET run_id = ? WHERE run_id = ?",
+                        (entry.id, earlier),
+                    )
             self._db.conn.commit()
         return len(entries)
 

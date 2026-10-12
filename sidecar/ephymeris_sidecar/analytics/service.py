@@ -490,7 +490,15 @@ class AnalyticsService:
                 # changed since adoption refreshes its row in place rather than
                 # duplicating it. Counted as written: a row another cohort
                 # holds is never taken.
-                adopted = await asyncio.to_thread(self._repo.store_adopted, adoptable)
+                adopted = await asyncio.to_thread(
+                    lambda: self._repo.store_adopted(
+                        adoptable,
+                        earlier_ids={
+                            entry.id: _stem_only_run_id(Path(entry.file_path))
+                            for entry in adoptable
+                        },
+                    )
+                )
             if carried:
                 log.info(
                     "analytics: rescan of cohort %s reused %d already-adopted"
@@ -1544,3 +1552,16 @@ def _orphan_run_id(cohort_id: str, path: Path) -> str:
     """
     key = f"{cohort_id}\0{reader.run_identity(path)}"
     return f"adopted:{hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _stem_only_run_id(path: Path) -> str:
+    """The id an adoption of this run was stored under before ids named their
+    cohort: the run identity alone.
+
+    Rows stored that way keep it (`_orphan_run_id`), so it is still the key of
+    any ruling a person made on such a run. A row that is pruned and adopted
+    again gets a new id, and the ruling is moved to it by `store_adopted`
+    (`DATA.md#false-starts`).
+    """
+    digest = hashlib.sha1(reader.run_identity(path).encode("utf-8")).hexdigest()
+    return f"adopted:{digest[:16]}"

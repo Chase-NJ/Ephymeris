@@ -882,6 +882,24 @@ async def test_a_ruling_follows_a_stem_keyed_run_re_adopted_from_a_new_place(
     assert payload["runs"] == []
 
 
+async def test_a_ruling_stays_with_the_cohort_whose_row_holds_it(rig: LegacyRig) -> None:
+    """A ruling moves only off an id no row holds. While one cohort still holds
+    the run under its stem-only id, another cohort adopting the same file does
+    not take that cohort's ruling (`DATA.md#false-starts`)."""
+    path = rig.add_legacy_run("remy1", HIT_1 * 5)
+    held = _stored_adoption(rig, path, with_stat=True)
+    rig.repo.set_false_start(held.id, True)
+    other = _second_cohort(rig, rig.root)
+
+    await rig.service.rescan(other)
+    await rig.service.rescan(rig.cohort.id)
+
+    [theirs] = rig.repo.adopted_for_cohort(other)
+    assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == [held.id]
+    assert rig.repo.false_start_overrides() == {held.id: True}
+    assert theirs.id != held.id
+
+
 async def test_a_second_rescan_does_not_read_the_files_again(rig: LegacyRig) -> None:
     """`DATA.md#carrying-adoptions-forward`. Adoption used to be redone in full on every click — every file
     opened, parsed and written back — to recompute the first scan's answer from

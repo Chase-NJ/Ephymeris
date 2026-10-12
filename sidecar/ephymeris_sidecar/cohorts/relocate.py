@@ -46,7 +46,7 @@ from stat import S_ISDIR
 from typing import Callable
 
 from . import folders, freshness, transfer
-from .db import Database
+from .db import Database, Query
 from .folders import DataFolderError, relative_below, resolved
 from .models import CohortNotFound
 
@@ -75,7 +75,7 @@ def _now() -> str:
 
 
 def rewrite_paths(
-    conn: sqlite3.Connection,
+    conn: sqlite3.Connection | Query,
     cohort_id: str,
     old_root: str | Path,
     new_root: str | Path,
@@ -627,10 +627,12 @@ def rehome(db: Database, cohort_id: str) -> int:
     if not votes:
         return 0
     old_root = votes.most_common(1)[0][0]
-    with db.lock:
-        changed = rewrite_paths(db.conn, cohort_id, old_root, folder, only_existing=True)
-        if changed:
-            db.conn.commit()
+    # One unit of work, which always ends: `changed` does not count the
+    # strobe-scan cache rows `rewrite_paths` also re-points, so committing
+    # only when it was non-zero could leave those writes open -- for another
+    # writer's rollback to discard, and a due backup to refuse (#55).
+    with db.write() as tx:
+        changed = rewrite_paths(tx, cohort_id, old_root, folder, only_existing=True)
     if changed:
         log.info("rescan: re-pointed %d record(s) of cohort %s from %s", changed, cohort_id, old_root)
     return changed

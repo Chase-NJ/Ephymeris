@@ -54,7 +54,7 @@ OPERATOR_ORIGIN = "operator"
 class StrobeRefused(Exception):
     """An edit the rules do not allow, or allow only with `confirm`.
 
-    `reason` is one of the `ErrCode`s `app.py` maps it to, lower-cased:
+    `reason` is one of the `ErrCode`s `wire_errors.py` maps it to, lower-cased:
     `invalid`, `required`, `in_recorded_session`, `would_break_tasks`,
     `import_conflict`, `unreadable`.
     """

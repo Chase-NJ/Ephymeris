@@ -215,7 +215,10 @@ export function normalizeSettings(raw: unknown): EphymerisSettings {
     // the box utility began being generated from the rig
     // (`TASKS.md#the-box-utility`): the sidecar finds it, so there is nothing
     // to choose. A stored value is dropped here, like `arduinoDirectory`.
-    defaultBaud: typeof baud === "number" && baud > 0 ? baud : DEFAULT_BAUD,
+    // Whole, like every number the sidecar declares an int: it refuses a push
+    // that carries a fraction (`ARCHITECTURE.md#dispatch`).
+    defaultBaud:
+      typeof baud === "number" && Number.isInteger(baud) && baud > 0 ? baud : DEFAULT_BAUD,
     boxes: normalizeBoxes(value["boxes"]),
     intan: normalizeIntan(value["intan"]),
     recordingDefaults: normalizeRecordingDefaults(value["recordingDefaults"]),

@@ -105,6 +105,9 @@ const CALL_TIMEOUT_OVERRIDES: Readonly<Record<string, number>> = {
   // A behavior-only session still answers in well under a second.
   [CMD.SESSIONS_END]: 90_000,
   [CMD.SESSIONS_END_GROUP]: 90_000,
+  // Abandoning a session whose recording Start All began stops RHX first:
+  // up to ~16 s of reads and the stop itself, against a 15 s default.
+  [CMD.SESSIONS_ABANDON]: 30_000,
   // Starting a recording waits for RHX to enter Record, for samples to be
   // arriving, and out a pre-roll, all before the first box is started.
   [CMD.SESSIONS_START_ALL]: 45_000,

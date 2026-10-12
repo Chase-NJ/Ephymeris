@@ -15,8 +15,6 @@ import threading
 import pytest
 
 from ephymeris_sidecar.hardware import store
-from ephymeris_sidecar.protocol import ErrCode
-from ephymeris_sidecar.server import CommandError
 from ephymeris_sidecar.rig import definition, registry
 from ephymeris_sidecar.strobes import store as strobe_store
 
@@ -497,36 +495,35 @@ async def test_a_session_set_up_while_a_write_waited_refuses_it(rigdef):
     release.set()
     await confirm_mapping
 
-    with pytest.raises(CommandError) as refused:
+    with pytest.raises(definition.RigInUse):
         await write
-    assert refused.value.code == ErrCode.RIG_IN_USE
     assert not rigdef.hardware.exists()
     assert rigdef.order == []
 
 
 @pytest.mark.parametrize(
-    "write, code",
+    "write, refusal",
     [
-        (lambda d: d.save_wiring(rig(pins={"left_well": {"index": 12}}), confirm=True), "RIG_IN_USE"),
-        (lambda d: d.reset_wiring(), "RIG_IN_USE"),
-        (lambda d: d.edit_vocabulary(lambda doc: doc), "STROBE_SESSION_RUNNING"),
+        (lambda d: d.save_wiring(rig(pins={"left_well": {"index": 12}}), confirm=True), definition.RigInUse),
+        (lambda d: d.reset_wiring(), definition.RigInUse),
+        (lambda d: d.edit_vocabulary(lambda doc: doc), definition.VocabularyInUse),
     ],
     ids=["save wiring", "reset wiring", "edit vocabulary"],
 )
-async def test_every_write_is_refused_while_the_rig_is_in_use(rigdef, write, code):
+async def test_every_write_is_refused_while_the_rig_is_in_use(rigdef, write, refusal):
     rigdef.in_use = True
-    with pytest.raises(CommandError) as refused:
+    with pytest.raises(definition.RigInUse) as refused:
         await write(rigdef.definition)
-    assert refused.value.code == code
+    assert type(refused.value) is refusal
     assert rigdef.order == [] and rigdef.events == []
 
 
 async def test_a_task_write_is_refused_while_the_rig_is_in_use(rigdef):
     rigdef.in_use = True
-    with pytest.raises(CommandError) as refused:
+    with pytest.raises(definition.RigInUse) as refused:
         async with rigdef.definition.writing():
             pytest.fail("entered a task write while the rig was in use")
-    assert refused.value.code == ErrCode.RIG_IN_USE
+    assert type(refused.value) is definition.RigInUse
 
 
 async def test_a_wiring_that_would_break_a_task_needs_confirm_and_writes_nothing(tmp_path):
@@ -539,10 +536,9 @@ async def test_a_wiring_that_would_break_a_task_needs_confirm_and_writes_nothing
     doc["channels"].pop("left_well")
     doc["pins"].pop("left_well")
 
-    with pytest.raises(CommandError) as refused:
+    with pytest.raises(definition.WiringWouldBreakTasks) as refused:
         await rigdef.definition.save_wiring(doc, confirm=False)
-    assert refused.value.code == ErrCode.RIG_WOULD_BREAK_TASKS
-    assert [b["specId"] for b in refused.value.detail["breaks"]] == ["grgl"]
+    assert [b["specId"] for b in refused.value.breaks] == ["grgl"]
     assert not rigdef.hardware.exists()
 
     payload = await rigdef.definition.save_wiring(doc, confirm=True)

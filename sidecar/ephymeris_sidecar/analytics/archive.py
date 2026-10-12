@@ -8,24 +8,28 @@ than assembling that merge themselves, so they cannot disagree about which
 session a recovered file belongs to, when its clock ended, or which runs are
 false starts.
 
-Also owns the archive lock. Everything that rewrites the records or the
-folders a walk reads (a relocate, a move, a tidy, a rescan) holds it end to
-end, and a summary reads and indexes under it.
+Also the one way to write the archive (`write`). Everything that rewrites the
+records or the files and folders a walk reads (a relocate, a move, a tidy, a
+rescan, a recover) holds the archive lock end to end, asks the rig whether it
+may run once it holds it, and is announced through `on_changed` once it has.
+A summary reads and indexes under the lock.
 
-Database only: nothing here opens a run file, so `sessions.list` and the
-session log can read the archive while a summary is still reading files.
+The reads are database only: none opens a run file, so `sessions.list` and
+the session log can read the archive while a summary is still reading files.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 from collections import Counter
-from collections.abc import AsyncIterator, Iterable, Mapping
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Protocol
 
 from ..cohorts import relocate
 from ..sessions.models import Session, SessionAnimalRun
@@ -33,9 +37,93 @@ from ..sessions.tidy import session_key
 from . import false_starts, reader
 from .repository import AdoptedRun, AnalyticsRepository
 
+log = logging.getLogger(__name__)
+
+RELOCATE_IN_USE = "A session is set up or running. Finish it, then move the data folder."
+MOVE_IN_USE = "A session is set up or running. Finish it, then move the animals."
+RECOVER_WHILE_WRITING = (
+    "A box is running: its live .tsv would look like an orphan. "
+    "Recover once every box has finished."
+)
+RESCAN_WHILE_WRITING = (
+    "A box is running: a run that finishes during the walk would be found "
+    "twice. Rescan once every box has finished."
+)
+
 
 class ArchiveBusy(Exception):
-    """A scan, tidy, relocate or move already holds the archive."""
+    """A scan, tidy, relocate, move or recover already holds the archive."""
+
+
+class RigInUse(Exception):
+    """An archive write refused because a session holds the rig or a box is
+    running. The message says what to do instead."""
+
+
+class RigQuestions(Protocol):
+    """What the archive asks the session lifecycle, under its lock."""
+
+    @property
+    def held(self) -> str | None: ...
+
+    @property
+    def in_use(self) -> bool: ...
+
+    @property
+    def writing(self) -> bool: ...
+
+
+@dataclass(frozen=True)
+class ArchiveChange:
+    """What one archive write changed, for whoever follows a write up."""
+
+    #: Cohorts whose records or folders changed.
+    cohort_ids: frozenset[str] = frozenset()
+    #: Sessions whose `notes.md` must re-render beyond the cohorts' annotated
+    #: ones: a move's source session whose every note moved away.
+    session_ids: frozenset[str] = frozenset()
+    #: Files written, to queue for backup.
+    files_to_back_up: tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        return bool(self.cohort_ids or self.session_ids or self.files_to_back_up)
+
+
+class ArchiveWrite:
+    """The body of one `CohortArchive.write`: the rig as it stands under the
+    lock, and what the write changed."""
+
+    def __init__(self, rig: RigQuestions) -> None:
+        self._rig = rig
+        self._cohorts: set[str] = set()
+        self._sessions: set[str] = set()
+        self._files: list[str] = []
+
+    @property
+    def held(self) -> str | None:
+        """The session holding the rig, asked now."""
+        return self._rig.held
+
+    @property
+    def in_use(self) -> bool:
+        """A session held or a box running, asked now."""
+        return self._rig.in_use
+
+    def changed(
+        self,
+        *,
+        cohort_ids: Iterable[str] = (),
+        session_ids: Iterable[str] = (),
+        files: Iterable[str | Path] = (),
+    ) -> None:
+        self._cohorts.update(cohort_ids)
+        self._sessions.update(session_ids)
+        self._files.extend(str(f) for f in files)
+
+    def change(self) -> ArchiveChange:
+        return ArchiveChange(
+            frozenset(self._cohorts), frozenset(self._sessions), tuple(self._files)
+        )
 
 
 @dataclass
@@ -87,12 +175,24 @@ class ArchiveView:
 
 
 class CohortArchive:
-    def __init__(self, *, db: Any, cohorts: Any, sessions: Any) -> None:
+    def __init__(
+        self,
+        *,
+        db: Any,
+        cohorts: Any,
+        sessions: Any,
+        rig: RigQuestions,
+        on_changed: Callable[[ArchiveChange], Awaitable[None]],
+    ) -> None:
         self._db = db
         self._cohorts = cohorts
         self._sessions = sessions
         self._repo = AnalyticsRepository(db)
         self._lock = asyncio.Lock()
+        #: Asked under the lock by every write (`write`).
+        self._rig = rig
+        #: Hears every write that changed something, once it is done.
+        self._on_changed = on_changed
 
     # --- reads ------------------------------------------------------------
 
@@ -103,10 +203,20 @@ class CohortArchive:
         never owns recovered files whichever way it is set (it wrote none).
         Recovered sessions' clocks close from the metrics cache: a file the
         index has not read yet leaves its session open.
+
+        A recovered run whose file a run record also names is left out: the
+        record wins (`DATA.md#database-first`). A rescan walking while a box
+        finalized adopts the file its record then claims, and the next
+        rescan's prune is what deletes the adoption.
         """
         recorded = self._sessions.list_sessions(cohort_id, include_aborted=include_aborted)
         recorded_runs = self._sessions.runs_for_cohort(cohort_id)
-        adopted = self._repo.adopted_for_cohort(cohort_id)
+        claimed = {_path_key(run.file_path) for run in recorded_runs if run.file_path}
+        adopted = [
+            entry
+            for entry in self._repo.adopted_for_cohort(cohort_id)
+            if _path_key(entry.file_path) not in claimed
+        ]
         owners = _adoption_owners(adopted, recorded)
         cached = self._repo.load_cached([entry.id for entry in adopted])
         summaries: dict[str, dict[str, Any] | None] = {
@@ -193,47 +303,131 @@ class CohortArchive:
 
         Only a summary waits (`wait=True`). Everything else is refused with
         `ArchiveBusy` while the archive is held, so a double-click cannot queue
-        a second walk or a second move behind the first.
+        a second walk or a second move behind the first. A writer takes it
+        through `write`.
         """
         if not wait and self._lock.locked():
             raise ArchiveBusy(
-                "a scan, tidy or move of this archive is running — try again when it finishes"
+                "a scan, tidy, recover or move of this archive is running — "
+                "try again when it finishes"
             )
         async with self._lock:
             yield
 
-    # --- writes that only need the lock -----------------------------------
+    # --- writes ------------------------------------------------------------
+
+    @asynccontextmanager
+    async def write(
+        self,
+        *,
+        refuse_while: Literal["in_use", "writing"] | None = None,
+        because: str = "",
+    ) -> AsyncIterator[ArchiveWrite]:
+        """Hold the archive for one write (`DATA.md#the-cohort-archive`).
+
+        `ArchiveBusy` while anything holds it. Once held, `RigInUse(because)`
+        while the rig is `refuse_while`: `in_use` (a session held or a box
+        running) or `writing` (a box running). Asked under the lock, so a
+        session that starts while a caller decides cannot slip past it.
+
+        The body says what it changed through the `ArchiveWrite` it is handed;
+        `on_changed` hears it once the lock is released, even when the body
+        then failed, since what it changed stays changed. A failing
+        `on_changed` is logged, never raised: the write itself is done.
+        """
+        write = ArchiveWrite(self._rig)
+        try:
+            async with self.exclusive():
+                if refuse_while is not None and getattr(self._rig, refuse_while):
+                    raise RigInUse(because)
+                yield write
+        finally:
+            change = write.change()
+            if change:
+                try:
+                    await self._on_changed(change)
+                except Exception:  # noqa: BLE001 - the write is done; its follow-up is not it
+                    log.exception("couldn't announce an archive write: %s", change)
 
     async def relocate(self, cohort_id: str, destination: str, move_existing: bool) -> Path:
         """Change a cohort's data folder, its records' paths following its
         files (`DATA.md#data-folder`). Under the lock, or a rescan reading the
-        records mid-move would prune every run whose file had just left."""
-        async with self.exclusive():
-            return await asyncio.to_thread(
+        records mid-move would prune every run whose file had just left.
+        Moving the contents is refused while the rig is in use: a session
+        writing into the folder would be writing into one that moves."""
+        async with self.write(
+            refuse_while="in_use" if move_existing else None, because=RELOCATE_IN_USE
+        ) as write:
+            final = await asyncio.to_thread(
                 relocate.relocate_cohort, self._db, cohort_id, destination, move_existing
             )
+            write.changed(cohort_ids=[cohort_id])
+        return final
 
-    async def move_animals(
-        self, request: Any, *, apply: bool, busy: str | None
-    ) -> tuple[dict[str, Any], list[str]]:
-        """Preview or carry out a move (`DATA.md#moving-animals-between-cohorts`).
-        Under the lock, since a move rewrites the records and the folders a
-        walk reads.
+    async def move_animals(self, request: Any, *, apply: bool) -> dict[str, Any]:
+        """Preview or carry out a move (`DATA.md#moving-animals-between-cohorts`),
+        as the plan's wire shape. Under the lock, since a move rewrites the
+        records and the folders a walk reads.
 
-        Returns the plan's wire shape and, after an apply, the destination
-        files to queue for backup.
+        A rig in use is one of the plan's refusals, asked under the lock: a
+        preview lists it beside the others, and an apply raises `MoveRefused`
+        with the plan.
         """
         from ..cohorts import move_apply  # cohorts.move imports analytics.reader
 
-        async with self.exclusive():
+        async with self.write() as write:
+            busy = MOVE_IN_USE if write.in_use else None
             if not apply:
                 plan = await asyncio.to_thread(move_apply.preview, self._db, request, busy=busy)
-                return plan.to_json(applied=False), []
+                return plan.to_json(applied=False)
             plan = await asyncio.to_thread(move_apply.apply, self._db, request, busy=busy)
-        return plan.to_json(applied=True), [f.dst for f in plan.files]
+            result = plan.to_json(applied=True)
+            write.changed(
+                cohort_ids=[request.source_id, request.dest_id],
+                session_ids=[s["sessionId"] for s in result["sessions"]],
+                files=[f.dst for f in plan.files],
+            )
+        return result
+
+    async def recover(self, cohort_id: str) -> dict[str, Any]:
+        """Rebuild `.json`/`.mat` from a cohort's orphaned `.tsv` files
+        (`DATA.md#crash-recovery`), as the `RecoverResult` wire shape.
+
+        Under the lock, since it writes into folders a relocate or a move
+        could be carrying off. Refused while a box runs: a live run's `.tsv`
+        has no `.json` yet and is not an orphan. One session runs at a time
+        app-wide, so any running box means hands off every archive.
+        """
+        from ..sessions import recovery  # recovery imports analytics.reader
+
+        async with self.write(refuse_while="writing", because=RECOVER_WHILE_WRITING) as write:
+            cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
+            result = await asyncio.to_thread(recovery.recover_cohort, cohort.data_folder)
+            write.changed(files=await asyncio.to_thread(_recovered_files, result["entries"]))
+        return {**result, "cohortId": cohort_id}
+
+
+def _recovered_files(entries: list[dict[str, Any]]) -> list[Path]:
+    """The files a recovery wrote: each recovered entry's `.json`, and its
+    `.mat` when that best-effort write landed."""
+    files: list[Path] = []
+    for entry in entries:
+        if entry["status"] != "recovered":
+            continue
+        files.append(Path(entry["jsonPath"]))
+        mat = reader.sibling_mat(Path(entry["tsvPath"]))
+        if mat.is_file():
+            files.append(mat)
+    return files
 
 
 # --- recovered sessions (DATA.md#orphan-adoption) ------------------------------
+
+
+def _path_key(path: str) -> str:
+    """A stored path in the one spelling two records of one file share. From
+    the string alone: the view reads the database, never the disk."""
+    return os.path.normcase(os.path.normpath(os.path.expanduser(path))).casefold()
 
 
 def _synthetic_session_id(entry: AdoptedRun) -> str:

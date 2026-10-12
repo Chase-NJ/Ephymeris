@@ -282,6 +282,47 @@ def test_the_labs_split_is_repaired_from_its_files(lab: Lab) -> None:
     assert {a for a, _ in lab.runs(lab.b.id).values()} == {"b-slow"}
 
 
+def test_a_moved_adoption_joins_the_run_the_destination_already_holds(lab: Lab) -> None:
+    """#63. One run copied into both cohorts, at different places, is adopted
+    by each. Moving the animal must leave the destination holding it once --
+    under its own row, which its scores are keyed by -- with the ruling made
+    in the source carried across, not two rows counting the run twice
+    (`DATA.md#moving-animals-between-cohorts`)."""
+    from ephymeris_sidecar.analytics.repository import AdoptedRun
+
+    give_b(lab, "slow1", "b-slow")
+    stem = "slow1_2O-Bdisc_9_2026-07-24_100003"
+
+    def copy_of_the_run(root: Path, under: str) -> Path:
+        folder = root / under / "2O-Bdisc_9_2026-07-24" / "behavior.json"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{stem}.json"
+        path.write_text(
+            json.dumps({"rat": "slow1", "sketch": "GRGL", "ts_data": [[101, 0], [249, 10]]}),
+            encoding="utf-8",
+        )
+        return path
+
+    def adoption(row_id: str, cohort_id: str, animal_id: str, path: Path) -> AdoptedRun:
+        return AdoptedRun(
+            id=row_id, cohort_id=cohort_id, animal_id=animal_id, file_path=str(path),
+            prefix_name="2O-Bdisc", session_number="9", date="2026-07-24",
+            started_at="2026-07-24T10:00:03", sketch_name="GRGL", sketch_path=None,
+        )
+
+    repo = AnalyticsRepository(lab.db)
+    repo.store_adopted([adoption("adopted:a", lab.a.id, "slow1", copy_of_the_run(lab.a_root, "2O-Bdisc"))])
+    repo.store_adopted([adoption("adopted:b", lab.b.id, "b-slow", copy_of_the_run(lab.b_root, "copies"))])
+    repo.set_false_start("adopted:a", True)
+
+    lab.apply("slow1")
+
+    held = [e.id for e in repo.adopted_for_cohort(lab.b.id) if e.file_path.endswith(f"{stem}.json")]
+    assert held == ["adopted:b"], "one row for the run, the destination's own"
+    assert repo.adopted_for_cohort(lab.a.id) == []
+    assert repo.false_start_overrides() == {"adopted:b": True}, "the ruling came with it"
+
+
 def test_a_former_member_moves_as_a_former_member(lab: Lab) -> None:
     roster = [a.to_json() for a in lab.cohorts.get(lab.a.id).animals if a.id != "slow1"]
     lab.cohorts.update(lab.a.id, {"animals": roster})

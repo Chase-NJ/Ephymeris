@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -853,6 +854,32 @@ async def test_a_rescan_keeps_the_id_a_held_adoption_was_stored_under(
 
     assert result["adopted"] == 1, "read again and rewritten"
     assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == [held.id]
+
+
+async def test_a_ruling_follows_a_stem_keyed_run_re_adopted_from_a_new_place(
+    rig: LegacyRig,
+) -> None:
+    """A person's false-start ruling on a run stored under its stem-only id
+    (`DATA.md#false-starts`) survives the run's file moving within the archive.
+    The prune drops the row, since its file is gone; the walk finds the file at
+    its new place and adopts it under a new id; and the ruling goes with it
+    rather than staying behind on an id no row holds."""
+    old = rig.add_legacy_run("remy1", HIT_1 * 5, group="01_2O-Bdisc")
+    held = _stored_adoption(rig, old, with_stat=True)
+    rig.repo.set_false_start(held.id, True)
+
+    # The operator refiles the session folder under another grouping by hand.
+    session = old.parents[1]
+    (rig.root / "ALL").mkdir()
+    shutil.move(session, rig.root / "ALL" / session.name)
+    await rig.service.rescan(rig.cohort.id)
+
+    [row] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    assert row.file_path != str(old), "re-adopted from its new place"
+    assert rig.repo.false_start_overrides() == {row.id: True}
+    payload = await rig.service.summary(rig.cohort.id)
+    assert [r["runId"] for r in payload["falseStarts"]] == [row.id]
+    assert payload["runs"] == []
 
 
 async def test_a_second_rescan_does_not_read_the_files_again(rig: LegacyRig) -> None:

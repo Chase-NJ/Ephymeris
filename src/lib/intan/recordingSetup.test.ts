@@ -61,9 +61,23 @@ describe("reconcileRows", () => {
     ]);
   });
 
-  it("keeps what was typed for a box that is still mapped", () => {
-    const typed = [row(3, "Rat-07", { port: "C", firstChannel: 8, lastChannel: 23 })];
-    expect(reconcileRows([mapped(3, "Rat-07")], remembered, typed)).toEqual(typed);
+  it("keeps what was typed, probe map included, for the same animal on the same box", () => {
+    const typed = [
+      row(3, "Rat-07", {
+        port: "C",
+        firstChannel: 8,
+        lastChannel: 23,
+        probeMapPath: "/maps/rat07.xml",
+        probeMap: { name: "rat07", pages: [], siteCount: 16 },
+      }),
+    ];
+    expect(reconcileRows([mapped(3, "Rat-07")], remembered, typed)).toBe(typed);
+  });
+
+  it("keeps the row of an animal renamed meanwhile, under its new name", () => {
+    const typed = [row(3, "Rat-07", { port: "C", probeMapPath: "/maps/rat07.xml" })];
+    const rows = reconcileRows([{ box: 3, animalId: "id-Rat-07", animalName: "Rat-07b" }], remembered, typed);
+    expect(rows).toEqual([{ ...typed[0]!, animalName: "Rat-07b" }]);
   });
 
   // B5: Back to Boxes, move the animal from box 3 to box 5, return to Record.
@@ -94,10 +108,35 @@ describe("reconcileRows", () => {
     ]);
   });
 
-  it("names the animal mapped now on a box kept from the draft (B5)", () => {
-    const draft = [row(3, "Rat-07", { port: "A" })];
+  // Decision on #38: a box whose animal changed since the draft was saved
+  // resets its row. Port and range are the box's wiring, so they come from the
+  // box's memory; the probe map is the animal's implant, and box memory may
+  // hold the previous animal's, so it is left for the operator to choose.
+  it("resets a box whose animal changed since the draft: box wiring from memory, no probe map", () => {
+    const draft = [
+      row(3, "Rat-07", {
+        port: "C",
+        firstChannel: 8,
+        lastChannel: 23,
+        probeMapPath: "/maps/rat07.xml",
+        probeMap: { name: "rat07", pages: [], siteCount: 16 },
+      }),
+    ];
     const rows = reconcileRows([mapped(3, "Rat-09")], remembered, draft);
-    expect(rows).toEqual([row(3, "Rat-09", { port: "A" })]);
+    expect(rows).toEqual([row(3, "Rat-09", { port: "A", lastChannel: 31 })]);
+  });
+
+  it("resets both rows when two animals swap boxes, and neither carries the other's probe map", () => {
+    const draft = [
+      row(3, "Rat-07", { port: "A", lastChannel: 31, probeMapPath: "/maps/rat07.xml" }),
+      row(5, "Rat-09", { port: "C", lastChannel: 15, probeMapPath: "/maps/rat09.xml" }),
+    ];
+    const rows = reconcileRows([mapped(3, "Rat-09"), mapped(5, "Rat-07")], remembered, draft);
+    expect(rows).toEqual([
+      row(3, "Rat-09", { port: "A", lastChannel: 31 }),
+      row(5, "Rat-07", { record: false, port: "B", firstChannel: 4, lastChannel: 15 }),
+    ]);
+    expect(rows.map((r) => r.probeMapPath)).toEqual([null, null]);
   });
 
   it("returns the same rows when the mapping hasn't changed", () => {

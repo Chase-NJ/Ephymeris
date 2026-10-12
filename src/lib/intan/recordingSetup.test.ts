@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_RECORDING_DEFAULTS, normalizeRecordingDefaults, type RecordingDefaults } from "./defaults";
 import {
+  applyParsedProbeMap,
   assignPorts,
   configurePayload,
   presentPorts,
@@ -341,6 +342,23 @@ describe("configurePayload", () => {
     expect(next.map((r) => [r.box, r.animalName, r.port, r.probeMapPath])).toEqual([
       [5, "Rat-07", "", "/maps/rat07.xml"],
       [3, "Rat-02", "A", null],
+    ]);
+  });
+});
+
+describe("applyParsedProbeMap", () => {
+  it("shows a parsed map on the row that asked for it, and leaves the others", () => {
+    const rows = [row(3, "Rat-07", { probeMapPath: "/maps/rat07.xml" }), row(5, "Rat-09")];
+    expect(applyParsedProbeMap(rows, 3, "/maps/rat07.xml", { probeMap: MAP_07 })).toEqual([
+      row(3, "Rat-07", { probeMapPath: "/maps/rat07.xml", probeMap: MAP_07 }),
+      row(5, "Rat-09"),
+    ]);
+  });
+
+  it("records why a map didn't parse on the row that asked for it", () => {
+    const rows = [row(3, "Rat-07", { probeMapPath: "/maps/broken.xml" })];
+    expect(applyParsedProbeMap(rows, 3, "/maps/broken.xml", { error: "not a probe map" })).toEqual([
+      row(3, "Rat-07", { probeMapPath: "/maps/broken.xml", probeError: "not a probe map" }),
     ]);
   });
 });

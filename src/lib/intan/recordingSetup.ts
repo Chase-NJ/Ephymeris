@@ -90,6 +90,18 @@ export function reconcileRows(
   return unchanged ? draftRows : next;
 }
 
+/** What `intan.parseProbeMap` answered for one path. */
+export type ProbeMapParse = { probeMap: ProbeMap } | { error: string };
+
+/** The rows with a probe-map parse applied to the row on `box`. */
+export function applyParsedProbeMap(rows: BoxRow[], box: number, path: string, parsed: ProbeMapParse): BoxRow[] {
+  const patch =
+    "probeMap" in parsed
+      ? { probeMapPath: path, probeMap: parsed.probeMap, probeError: null }
+      : { probeMapPath: path, probeMap: null, probeError: parsed.error };
+  return rows.map((r) => (r.box === box ? { ...r, ...patch } : r));
+}
+
 // --- ports ------------------------------------------------------------------
 
 /** The headstage ports RHX reports channels on, in letter order. */

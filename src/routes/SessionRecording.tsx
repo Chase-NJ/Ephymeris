@@ -26,6 +26,7 @@ import { errorMessage } from "@/lib/cohorts/commands";
 import { useIntanStatus } from "@/lib/intan/context";
 import { summarizeRecordingConfig, type RecordingConfigDefaults } from "@/lib/intan/defaults";
 import {
+  applyParsedProbeMap,
   assignPorts,
   configurePayload,
   presentPorts,
@@ -34,6 +35,7 @@ import {
   rememberedDefaults,
   saveDirectory,
   type BoxRow,
+  type ProbeMapParse,
 } from "@/lib/intan/recordingSetup";
 import { channelRange } from "@/lib/intan/scopeMath";
 import { FILE_FORMATS, type ProbeMap } from "@/lib/intan/types";
@@ -148,12 +150,14 @@ export function SessionRecording() {
   }
 
   async function loadProbeMap(box: number, path: string) {
+    let parsed: ProbeMapParse;
     try {
       const reply = await client.call(CMD.INTAN_PARSE_PROBE_MAP, { path });
-      patchRow(box, { probeMapPath: path, probeMap: reply.probeMap as ProbeMap, probeError: null });
+      parsed = { probeMap: reply.probeMap as ProbeMap };
     } catch (err) {
-      patchRow(box, { probeMapPath: path, probeMap: null, probeError: errorMessage(err) });
+      parsed = { error: errorMessage(err) };
     }
+    setRows((current) => applyParsedProbeMap(current, box, path, parsed));
   }
 
   async function chooseProbeMap(box: number) {

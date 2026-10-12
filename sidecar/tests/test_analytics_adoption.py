@@ -25,7 +25,9 @@ import pytest
 
 from ephymeris_sidecar.analytics import AnalyticsService, CohortArchive, reader
 from ephymeris_sidecar.analytics.repository import AdoptedRun, AnalyticsRepository
+from ephymeris_sidecar.cohorts import move_apply
 from ephymeris_sidecar.cohorts.db import Database
+from ephymeris_sidecar.cohorts.move import MoveRequest
 from ephymeris_sidecar.cohorts.repository import CohortRepository
 from ephymeris_sidecar.protocol import validate_command_result
 from ephymeris_sidecar.sessions.paths import parse_name_time, parse_session_folder
@@ -898,6 +900,65 @@ async def test_a_ruling_stays_with_the_cohort_whose_row_holds_it(rig: LegacyRig)
     assert [e.id for e in rig.repo.adopted_for_cohort(rig.cohort.id)] == [held.id]
     assert rig.repo.false_start_overrides() == {held.id: True}
     assert theirs.id != held.id
+
+
+async def test_a_ruling_follows_a_moved_run_re_adopted_in_its_new_cohort(
+    rig: LegacyRig, tmp_path: Path
+) -> None:
+    """A moved run keeps the id its first cohort stored it under
+    (`DATA.md#moving-animals-between-cohorts`). When the destination's operator
+    refiles its session folder, the prune drops that row and the walk adopts the
+    run again under the destination's own id; a person's ruling goes with it
+    (`DATA.md#false-starts`)."""
+    rig.add_legacy_run("remy1", HIT_1 * 5)
+    await rig.service.rescan(rig.cohort.id)
+    [adopted] = rig.repo.adopted_for_cohort(rig.cohort.id)
+    rig.repo.set_false_start(adopted.id, True)
+
+    dest_folder = tmp_path / "data" / "Slow learners"
+    dest_folder.mkdir(parents=True)
+    dest = rig.cohorts.create("Slow learners", str(dest_folder))
+    move_apply.apply(rig.db, MoveRequest(rig.cohort.id, ["a1"], dest.id))
+    [moved] = rig.repo.adopted_for_cohort(dest.id)
+    assert moved.id == adopted.id, "a move keeps the row's id"
+
+    session = Path(moved.file_path).parents[1]
+    (dest_folder / "ALL").mkdir()
+    shutil.move(session, dest_folder / "ALL" / session.name)
+    await rig.service.rescan(dest.id)
+
+    [row] = rig.repo.adopted_for_cohort(dest.id)
+    assert row.id != adopted.id, "adopted again under the destination's id"
+    assert rig.repo.false_start_overrides() == {row.id: True}
+
+
+async def test_a_re_read_takes_no_ruling_off_another_cohorts_pruned_row(
+    rig: LegacyRig, tmp_path: Path
+) -> None:
+    """A ruling follows a run only into a row adopted afresh. A cohort reading
+    a run it already holds keeps that row's own standing, and never takes the
+    ruling another cohort's pruned row left (`DATA.md#false-starts`)."""
+    ours = rig.add_legacy_run("remy1", HIT_1 * 5)
+    held = _stored_adoption(rig, ours, with_stat=True)
+    rig.repo.set_false_start(held.id, True)
+    elsewhere = tmp_path / "elsewhere"
+    copy = elsewhere / ours.relative_to(rig.root)
+    copy.parent.mkdir(parents=True)
+    shutil.copy2(ours, copy)
+    other = _second_cohort(rig, elsewhere)
+    await rig.service.rescan(other)
+    [theirs] = rig.repo.adopted_for_cohort(other)
+
+    ours.unlink()
+    await rig.service.rescan(rig.cohort.id)
+    assert rig.repo.adopted_for_cohort(rig.cohort.id) == [], "pruned"
+
+    later = theirs.file_mtime_ns + 10**9
+    os.utime(copy, ns=(later, later))
+    result = await rig.service.rescan(other)
+
+    assert result["adopted"] == 1, "read again under the id it holds"
+    assert rig.repo.false_start_overrides() == {held.id: True}
 
 
 async def test_a_second_rescan_does_not_read_the_files_again(rig: LegacyRig) -> None:

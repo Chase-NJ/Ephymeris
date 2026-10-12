@@ -904,6 +904,29 @@ def summarize(
     )
 
 
+def with_threshold(payload: dict[str, Any], min_counted: int) -> dict[str, Any]:
+    """A summary payload judged against `min_counted`, as a copy.
+
+    `lowConfidence` is the only part of a summary the threshold touches, and it
+    is `counted < min_counted` for each metric and the pooled figure. The
+    threshold is a per-request argument (`analytics.summary`'s
+    `minCountedTrials`) while the payload is cached, so the flag is re-judged on
+    every row served rather than kept from whichever request computed it
+    (`DATA.md#caching`).
+    """
+    def judged(metric: Any) -> Any:
+        if not isinstance(metric, dict) or not isinstance(metric.get("counted"), int):
+            return metric
+        return {**metric, "lowConfidence": metric["counted"] < min_counted}
+
+    out = dict(payload)
+    if isinstance(out.get("metrics"), list):
+        out["metrics"] = [judged(metric) for metric in out["metrics"]]
+    if out.get("overall") is not None:
+        out["overall"] = judged(out["overall"])
+    return out
+
+
 #: The id reserved for the pooled figure, so the frontend can offer it in the
 #: same selector as the real metrics without colliding with one.
 OVERALL_ID = "__overall__"

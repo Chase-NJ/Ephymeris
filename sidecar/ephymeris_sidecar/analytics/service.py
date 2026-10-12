@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -849,9 +849,13 @@ class AnalyticsService:
                 self._index_chunk, chunk, cached, threshold, memo
             )
             for run, entry in zip(chunk, entries):
-                out.append(entry)
                 if cached.get(run.id) is not entry:
                     fresh.append(entry)
+                # Judged against THIS request's threshold, hit or miss: the
+                # cache holds no threshold (`DATA.md#caching`).
+                out.append(
+                    replace(entry, summary=derive.with_threshold(entry.summary, threshold))
+                )
             done = start + len(chunk)
             if done - emitted >= PROGRESS_EVERY:
                 emitted = done

@@ -707,6 +707,13 @@ class WriteInProgress(RuntimeError):
     `DATA.md#transactions`)."""
 
 
+class TransactionAborted(RuntimeError):
+    """SQLite rolled this unit's transaction back itself -- a full disk, an
+    I/O error, an interrupt -- so nothing more runs in it: a statement after
+    that would commit on its own, half a unit. The unit raises this and
+    commits nothing (`DATA.md#transactions`)."""
+
+
 class Query:
     """Statements under the database lock. No commit and no rollback: the
     unit of work that opened it decides those."""
@@ -742,6 +749,12 @@ class Tx(Query):
         released, so it may use the database. Dropped if the unit rolls back."""
         self._open()
         self._after.append(callback)
+
+    def _open(self) -> sqlite3.Connection:
+        conn = super()._open()
+        if not conn.in_transaction:
+            raise TransactionAborted("SQLite rolled this unit of work back")
+        return conn
 
 
 def _undo(conn: sqlite3.Connection) -> None:
@@ -810,6 +823,8 @@ class Database:
                     self._tx = None
                     unit._close()
                 changed = conn.total_changes != before
+                if not conn.in_transaction:
+                    raise TransactionAborted("SQLite rolled this unit of work back")
                 conn.execute("COMMIT")
             except BaseException:
                 _undo(conn)
@@ -885,10 +900,10 @@ class Database:
         # `CREATE INDEX` cannot name a column that doesn't exist yet.
         conn.executescript(INDEXES)
 
-        # One commit for the whole of startup. Each `commit()` marks the
-        # database dirty for backup (`DATA.md#the-database-copy`), so a migration
-        # committing per step would trigger repeated whole-file copies to a
-        # possibly-networked target before the app has even finished starting.
+        # One commit for the whole of startup, announced once like a unit of
+        # work's (`DATA.md#the-database-copy`): a migration committing per step
+        # would trigger repeated whole-file copies to a possibly-networked
+        # target before the app has even finished starting.
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
         if self._on_commit is not None:

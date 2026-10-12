@@ -44,6 +44,7 @@ from typing import Any
 from ..analytics import reader
 from ..tasks.profile import SNAPSHOT_KEY
 from . import matwriter
+from .writer import write_atomic
 
 log = logging.getLogger(__name__)
 
@@ -222,7 +223,8 @@ def recover_file(tsv_path: Path) -> dict[str, Any]:
     json_path = reader.sibling_json(tsv_path)
     try:
         json_path.parent.mkdir(parents=True, exist_ok=True)
-        json_path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+        # Over a torn `.json`, if that is what the walk offered this for.
+        write_atomic(json_path, json.dumps(document, indent=2))
     except OSError as exc:
         entry["reason"] = f"couldn't write {json_path.name}: {exc}"
         return entry
@@ -230,7 +232,7 @@ def recover_file(tsv_path: Path) -> dict[str, Any]:
     mat_path = reader.sibling_mat(tsv_path)
     try:
         mat_path.parent.mkdir(parents=True, exist_ok=True)
-        matwriter.savemat(str(mat_path), document)
+        write_atomic(mat_path, lambda part: matwriter.savemat(str(part), document))
     except Exception as exc:  # noqa: BLE001 - scipy missing or a value it can't write
         log.error("couldn't write %s: %s", mat_path, exc)
 
@@ -254,7 +256,7 @@ def recover_cohort(data_folder: str) -> dict[str, Any]:
     different answers.
     """
     folder_exists = Path(data_folder).expanduser().is_dir()
-    orphans = reader.walk_orphaned_tsvs(data_folder) if folder_exists else []
+    orphans = reader.walk_orphaned_tsvs(data_folder, parse_json=True) if folder_exists else []
     entries = [recover_file(path) for path in orphans]
     recovered = sum(1 for e in entries if e["status"] == "recovered")
     return {

@@ -28,7 +28,7 @@ from ..sessions.paths import parse_name_date, parse_name_time, parse_session_fol
 from ..tasks import profile as task_profile
 from ..tasks.profile import TaskProfile
 from . import derive, false_starts, infer, reader
-from .archive import CohortArchive
+from .archive import RESCAN_WHILE_WRITING, CohortArchive
 from .repository import AdoptedRun, AnalyticsRepository, CachedRun, CacheKey
 
 log = logging.getLogger(__name__)
@@ -387,8 +387,14 @@ class AnalyticsService:
         correct for an unplugged drive, wrong for a session the operator threw
         away. Rescan is where that gets resolved because it is the one moment
         the operator has explicitly said *the disk is the truth now*.
+
+        Refused (`RigInUse`) while a box runs: a run finalizing mid-walk has
+        its file adopted as well as its record committed
+        (`DATA.md#the-cohort-archive`).
         """
-        async with self._archive.exclusive():
+        async with self._archive.write(
+            refuse_while="writing", because=RESCAN_WHILE_WRITING
+        ) as write:
             cohort = await asyncio.to_thread(self._cohorts.get, cohort_id)
             folder_exists = await asyncio.to_thread(
                 lambda: Path(cohort.data_folder).expanduser().is_dir()
@@ -495,6 +501,8 @@ class AnalyticsService:
                 )
 
             await self._progress(cohort_id, "walking", len(found), len(found))
+            if adopted or rehomed or any(pruned.values()):
+                write.changed(cohort_ids=[cohort_id])
 
         return {
             "scanned": len(found),
@@ -592,21 +600,24 @@ class AnalyticsService:
 
     # --- tidying records (DATA.md#tidy-records) ----------------------------
 
-    async def tidy(
-        self, cohort_id: str, *, apply: bool, protect: set[str], today: str
-    ) -> dict[str, Any]:
+    async def tidy(self, cohort_id: str, *, apply: bool, today: str) -> dict[str, Any]:
         """Merge a day's split records and drop empty ones — or say what would.
 
         `apply=False` is the preview the operator confirms; `apply=True`
         re-plans from scratch rather than trusting a plan the client holds,
         because the whole point of the lock is that nothing moved in between.
         Refused while anything holds the archive, like a second rescan: both
-        move run records between the rows a summary reads.
+        move run records between the rows a summary reads. The session holding
+        the rig, asked once the archive is held, is never touched.
         """
-        async with self._archive.exclusive():
-            return await asyncio.to_thread(
-                self._tidy, cohort_id, apply, protect, today
+        async with self._archive.write() as write:
+            held = write.held
+            result = await asyncio.to_thread(
+                self._tidy, cohort_id, apply, {held} if held else set(), today
             )
+            if result["applied"]:
+                write.changed(cohort_ids=[cohort_id])
+        return result
 
     def _tidy(
         self, cohort_id: str, apply: bool, protect: set[str], today: str

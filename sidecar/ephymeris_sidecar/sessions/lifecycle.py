@@ -21,9 +21,8 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, AsyncContextManager, Awaitable, Callable, Iterable
 
-from ..intan.service import IntanNotReady
 from ..ports.flashing import FlashJob, FlashQueue
 from ..ports.manager import CarriedSketch, sketch_fingerprint
 from ..protocol import Evt, event
@@ -62,6 +61,24 @@ class SketchNotCarried(SessionRefused):
         self.boxes = boxes
 
 
+class BoxesNotMapped(SessionRefused):
+    """A recording was set up for boxes the held mapping doesn't have
+    (`SessionLifecycle.mapped_boxes`). Nothing reached RHX."""
+
+    def __init__(self, boxes: list[int], *, this_group: bool) -> None:
+        if not this_group:
+            message = "Confirm this group's mapping before setting up its recording."
+        else:
+            names = ", ".join(str(b) for b in boxes)
+            message = (
+                f"{'Box' if len(boxes) == 1 else 'Boxes'} {names} "
+                f"{'is' if len(boxes) == 1 else 'are'} not in this group's confirmed "
+                "mapping, so RHX was not set up."
+            )
+        super().__init__(message)
+        self.boxes = boxes
+
+
 class MappingRefused(Exception):
     """One box's mapping can't be run as declared."""
 
@@ -71,10 +88,22 @@ class MappingRefused(Exception):
 
 
 class BoxRefused(Exception):
-    """Starting one box failed; the runner's or port's error is `__cause__`."""
+    """The runner or port refused to start one box. The runner's or port's
+    error is `__cause__`, and says why."""
 
     def __init__(self, box: int) -> None:
-        super().__init__(f"box {box} could not start")
+        super().__init__(f"box {box} was refused")
+        self.box = box
+
+
+class StopRefused(Exception):
+    """A running box's port did not take `STOP`: it left the session, or the
+    write failed. The box is not stopping."""
+
+    def __init__(self, box: int) -> None:
+        super().__init__(
+            f"box {box} did not take STOP: its port has left the session, or the write failed"
+        )
         self.box = box
 
 
@@ -184,8 +213,15 @@ class SessionLifecycle:
 
     @property
     def writing(self) -> bool:
-        """Any box running, so a live `.tsv` with no `.json` yet exists."""
-        return bool(self._runner.running_boxes())
+        """Any box running, or finishing until its run is recorded: a live
+        `.tsv` with no `.json` yet, or a `.json` no record claims yet."""
+        return bool(self._runner.writing_boxes())
+
+    @property
+    def confirmations(self) -> int:
+        """Mappings confirmed since this process started. A recording set up
+        for one confirmation starts for that one only (`RECORDING.md#record-step`)."""
+        return self._confirmations
 
     # --- reads --------------------------------------------------------------
 
@@ -203,6 +239,25 @@ class SessionLifecycle:
             "groupId": (self._runner.group_id or None) if held else None,
             "boxes": self._runner.snapshot() if held else [],
         }
+
+    def mapped_boxes(
+        self, session_id: str, group_id: str, boxes: Iterable[int]
+    ) -> dict[int, BoxConfig]:
+        """The held mapping's row for each of these boxes, as a recording's
+        setup names them (`RECORDING.md#record-step`).
+
+        Raises `BoxesNotMapped` naming every box the mapping lacks: all of them
+        unless the held session is this one and its mapping is this group's,
+        because the runner carries one group's mapping and its box 1 is not
+        another group's box 1.
+        """
+        wanted = list(dict.fromkeys(boxes))
+        this_group = self._held == session_id and self._runner.group_id == group_id
+        configs = {c.box: c for c in self._runner.box_configs()} if this_group else {}
+        missing = [box for box in wanted if box not in configs]
+        if missing:
+            raise BoxesNotMapped(missing, this_group=this_group)
+        return {box: configs[box] for box in wanted}
 
     async def active(self) -> dict[str, Any]:
         unfinished = await asyncio.to_thread(self._sessions.list_unfinished)
@@ -384,11 +439,17 @@ class SessionLifecycle:
 
     def stop_box(self, box: int) -> None:
         """Ask one box to stop at its next trial boundary (`port.stopSession`).
-        Not a transition: the run ends when the board says so."""
-        try:
-            self._runner.stop_box(box)
-        except Exception as exc:
-            raise BoxRefused(box) from exc
+        Not a transition: the run ends when the board says so.
+
+        A box not running has nothing to stop: its run already ended, or never
+        began. A running box whose port did not take `STOP` -- it left the
+        session, or the write failed -- is refused by box, so the operator is
+        not told it is stopping when it is not.
+        """
+        if box not in self._runner.running_boxes():
+            return
+        if not self._runner.stop_box(box):
+            raise StopRefused(box)
 
     async def end_group(self, session_id: str) -> Session:
         """End the group on the rig and wait BETWEEN GROUPS
@@ -492,11 +553,15 @@ class SessionLifecycle:
                 self._flashes.cancel(origins=("session",), clear=True)
                 self._runner.clear()
                 self._held = None
-            if self._intan is not None:
-                # A recording that was set up and never started. One that IS
-                # running is left alone -- `release` refuses nothing and stops
-                # nothing.
-                self._intan.release()
+            intan = self._intan
+            if intan is not None and intan.run_open_for(session_id):
+                # Start All began the recording and then no box started: nothing
+                # ran, but RHX is recording. Stop it, and keep the run on the
+                # record, since its files exist.
+                await self._stop_recording(session_id)
+            elif intan is not None:
+                # A recording that was set up and never started.
+                intan.release()
             session = await asyncio.to_thread(self._sessions.set_status, session_id, "aborted")
             await self._release_baseline()
             await self.announce()
@@ -630,11 +695,11 @@ class SessionLifecycle:
         """
         if self._intan is None or not await self._is_recording_session(session_id):
             return
-        if not self._intan.configured_for(session_id, self._runner.group_id):
-            raise IntanNotReady(
-                "This is a recording session, but no recording is set up for this "
-                "group. Finish the Recording step first."
-            )
+        # Raises the refusal that names what is wrong: nothing set up, or RHX
+        # out of reach (`RECORDING.md#when-rhx-goes-away`).
+        self._intan.refuse_unless_ready(
+            session_id, self._runner.group_id, self._confirmations
+        )
         await self._intan.start_recording()
 
     async def _end_all_boxes(self, session_id: str) -> None:
@@ -643,21 +708,36 @@ class SessionLifecycle:
 
         Order is the whole point: STOP the boxes, WAIT for each to close its
         trial, and only then stop RHX -- so the last event of every animal is
-        inside the recording, with a post-roll after it.
+        inside the recording, with a post-roll after it. A recording counts
+        from its start to its stop, not by the link
+        (`RECORDING.md#start-and-end`): with RHX unreachable the boxes still
+        get the grace period and the run is still recorded.
         """
         intan = self._intan
-        if intan is None or not intan.is_recording:
+        if intan is None or not intan.run_open_for(session_id):
             await self._runner.end_all("operator stop")
             if intan is not None:
                 intan.release()
             return
-        await self._runner.end_all(
-            "operator stop",
-            graceful_timeout_s=RECORDING_GRACE_S,
-            force=intan.force_stop,
-            on_waiting=intan.note_waiting,
-        )
-        run = await intan.stop_recording()
+        if intan.may_still_record_for(session_id):
+            await self._runner.end_all(
+                "operator stop",
+                graceful_timeout_s=RECORDING_GRACE_S,
+                force=intan.force_stop,
+                on_waiting=intan.note_waiting,
+            )
+        else:
+            # RHX was seen not writing this run (Stop pressed in RHX): the
+            # grace period would keep nothing inside the recording, so the
+            # boxes end as behavior-only ones do.
+            await self._runner.end_all("operator stop")
+        await self._stop_recording(session_id)
+
+    async def _stop_recording(self, session_id: str) -> None:
+        """Stop RHX and append the run to the session. Bounded, and never
+        raises (`IntanService.stop_recording`)."""
+        assert self._intan is not None
+        run = await self._intan.stop_recording()
         if run is not None:
             await asyncio.to_thread(self._record_recording_run, session_id, run)
 

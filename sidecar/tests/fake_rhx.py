@@ -123,6 +123,28 @@ class FakeRhx:
         """RHX crashing mid-recording: every socket drops at once."""
         await self.stop()
 
+    async def stop_listening(self) -> None:
+        """Disconnect pressed in RHX's Remote TCP Control dialog, as the real
+        thing does it: the command socket closes and nothing listens on its
+        port until Connect is pressed again (`listen_again`). RHX itself goes
+        on -- a recording keeps recording."""
+        await self.hang_up()
+        server = self._servers[0]
+        server.close()
+        close_clients = getattr(server, "close_clients", None)
+        if close_clients is not None:
+            close_clients()
+        try:
+            await asyncio.wait_for(server.wait_closed(), 1.0)
+        except asyncio.TimeoutError:
+            pass
+
+    async def listen_again(self) -> None:
+        """Connect pressed in RHX's dialog: the command port listens again."""
+        self._servers[0] = await asyncio.start_server(
+            self._on_command, "127.0.0.1", self.command_port
+        )
+
     # --- data sockets -----------------------------------------------------
 
     async def _on_waveform(self, _reader, writer) -> None:

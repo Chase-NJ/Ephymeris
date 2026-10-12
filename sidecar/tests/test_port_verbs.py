@@ -19,11 +19,11 @@ import asyncio
 
 import pytest
 
-from ephymeris_sidecar.app import Application
 from ephymeris_sidecar.boards.tool import FlashFailed
 from ephymeris_sidecar.ports.states import PortState
 from ephymeris_sidecar.protocol import ErrCode
-from ephymeris_sidecar.server import CommandError
+from tests.live_sidecar import Refused
+from tests.wire import dispatch
 
 from .test_debug_flash import flash, make_app
 from .test_flash_queue import Rig, rig  # noqa: F401 - rig is a fixture
@@ -41,7 +41,7 @@ from .test_utility import (  # noqa: F401 - fake_serial is an autouse fixture
 
 async def close_console(app) -> None:  # noqa: ANN001
     """`port.passthrough.close` for box 1, as the frontend sends it."""
-    await Application._passthrough_close(app, None, None, {"box": 1}, None)
+    await dispatch(app, "port.passthrough.close", box=1)
 
 
 async def until(condition, what: str) -> None:  # noqa: ANN001
@@ -66,13 +66,11 @@ async def test_a_console_close_is_refused_mid_flash(rig_definition) -> None:
 
     app.tool.upload = held_upload
     app.ports.open_passthrough(1)
-    await Application._flash_enqueue(
-        app, None, None, {"boxes": [1], "sketchPath": TASK_PATH}, None
-    )
+    await dispatch(app, "flash.enqueue", boxes=[1], sketchPath=TASK_PATH)
     await until(lambda: app.ports.handler(1).state is PortState.FLASHING, "the flash take the port")
 
     # The console the UI last saw open, closed while the upload holds the port.
-    with pytest.raises(CommandError) as refused:
+    with pytest.raises(Refused) as refused:
         await close_console(app)
 
     assert refused.value.code == ErrCode.ILLEGAL_TRANSITION
@@ -91,7 +89,7 @@ async def test_a_console_close_cannot_clear_an_error(rig_definition) -> None:
     assert app.ports.handler(1).state is PortState.ERROR
     app.tool.fail = None
 
-    with pytest.raises(CommandError) as refused:
+    with pytest.raises(Refused) as refused:
         await close_console(app)
     await asyncio.sleep(0)  # the idle hook, had the port fallen idle
     await settle(app.utility)
@@ -102,7 +100,7 @@ async def test_a_console_close_cannot_clear_an_error(rig_definition) -> None:
     assert app.tool.uploads == []
 
     # The acknowledgement is the way out, and it is what frees the box for one.
-    await Application._port_error_ack(app, None, None, {"box": 1}, None)
+    await dispatch(app, "port.error.ack", box=1)
     await asyncio.sleep(0)
     await settle(app.utility)
     assert app.tool.uploads == [UTILITY_PATH]

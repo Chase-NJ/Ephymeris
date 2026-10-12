@@ -65,15 +65,11 @@ def group_run(group_id: str, at: str) -> GroupRun:
 
 
 async def preview(rig: Rig, **kw) -> dict:
-    return await rig.service.tidy(
-        rig.cohort.id, apply=False, protect=kw.get("protect", set()), today=kw.get("today", TODAY)
-    )
+    return await rig.service.tidy(rig.cohort.id, apply=False, today=kw.get("today", TODAY))
 
 
 async def apply(rig: Rig, **kw) -> dict:
-    return await rig.service.tidy(
-        rig.cohort.id, apply=True, protect=kw.get("protect", set()), today=kw.get("today", TODAY)
-    )
+    return await rig.service.tidy(rig.cohort.id, apply=True, today=kw.get("today", TODAY))
 
 
 # --- merging a split day -----------------------------------------------------
@@ -204,7 +200,8 @@ async def test_the_held_session_and_its_folder_mates_are_left_whole(rig: Rig) ->
     earlier = started(rig, "2026-07-22T08:55:00")
     held = started(rig, "2026-07-22T12:55:00")
     rig.add_run(earlier, "a1", HIT_1)
-    plan = await preview(rig, protect={held})
+    rig.lifecycle.held = held
+    plan = await preview(rig)
     assert plan["merges"] == [] and plan["empty"] == []
     assert {s["session"]["sessionId"] for s in plan["skipped"]} == {held, earlier}
 

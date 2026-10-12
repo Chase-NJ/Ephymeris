@@ -12,34 +12,34 @@ Status: `open` (not started) · `in progress` · `fixed` · `not reproduced` · 
 | B2 | fixed | P1 | #32 | `test_session_lifecycle.py::test_start_all_failing_part_way_records_the_boxes_it_started`, `::test_start_all_refused_at_its_first_box_can_be_abandoned` | c0f8daf (#49) | `start_all` records the group run and `running` as soon as any box holds a claim, then re-raises; End works after a partial start |
 | B3 | fixed | F1 | #35 | `test_task_profiles.py::test_a_line_the_firmware_buffer_cannot_hold_whole_is_refused[640]` | 14dd391 (#48) | The host refuses a START line of 640+ characters (the firmware keeps 639); firmware unchanged, so no reflash needed |
 | B4 | open | A1 | #41 | | | A torn .json blocks Recover for good |
-| B5 | open | U1 + U1b | #38 #40 | | | Record step reuses its saved form after the mapping changes |
-| B6 | open | P2 | #33 | | | Console close accepted mid-flash and from ERROR |
+| B5 | fixed | U1 + U1b | #38 #40 | `recordingSetup.test.ts` › `reconcileRows › follows an animal moved from box 3 to box 5…(B5)`; `test_intan_configure.py::test_a_box_the_held_mapping_does_not_have_is_refused`, `::test_a_recording_set_up_for_an_earlier_mapping_does_not_start` | 3c8de46 (#54), 8760083 (#59), aa21247 (#58) | Record rows key to the boxes mapped now; configure refuses an unmapped box; a recording set up before the last confirmation won't start; probe maps follow the animal (Chase) |
+| B6 | fixed | P2 | #33 | `test_port_verbs.py::test_a_console_close_is_refused_mid_flash`, `::test_a_console_close_cannot_clear_an_error`, `::test_a_baseline_flash_never_takes_a_console` | 0c65a06 (#51) | Each port verb names the states it may leave; only acknowledge_error leaves ERROR; a baseline takes IDLE only (TakeRefused) |
 | B7 | open | A1 | #41 | | | Rescan during a session can count a run twice |
 | B8 | open | C5 | #43 | | | Cache version doesn't cover every input |
 | B9 | open | C5 | #43 | | | analytics.series scores on the event loop |
-| B10 | open | D1 | #39 | | | Busy archive / box-start OSError reach the UI as INTERNAL |
+| B10 | fixed | D1 | #39 | `test_dispatch.py::test_a_busy_archive_is_refused_as_busy`, `::test_a_box_start_the_port_refuses_is_a_port_open_failure` | d855e29 (#57) | One ERRORS table: ArchiveBusy → ARCHIVE_BUSY, a box's OSError → PORT_OPEN_FAILED |
 | B11 | open | A1 | #41 | | | sessions.recover writes without the archive lock |
-| B12 | open | D1 | #39 | | | Hand-started Debug run not replayed on connect |
+| B12 | fixed | D1 | #39 | `test_dispatch.py::test_a_client_connecting_after_a_debug_run_started_sees_it_running` | d855e29 (#57) | Replay is built from snapshot providers, including port.telemetry for running Debug runs |
 | B13 | fixed (reproduced) | U2 | #37 | `store.test.ts`: `keeps the last Debug run through a refused START, and clears it on the sidecar's arm (B13)` and 8 more; `test_session_lifecycle.py::test_confirming_the_same_mapping_again_is_a_new_confirmation_on_the_wire` | 6f30ca6 (#50) | The store clears on sidecar events only: IN_SESSION, Debug's arm, and a new `confirmations` count (Chase's decision); Debug START waits for the profile so task defaults aren't dropped |
 | B14 | open (reviewer finding: reproduce first) | DB | #44 | | | Another writer's rollback discards a pending task-profile row |
 | B15 | open (reviewer finding: reproduce first) | A2 | #42 | | | Adopted-run ids hash only the file stem |
-| B16 | open (reviewer finding: reproduce first) | P3 | #34 | | | Per-box Start after RHX drop gets the wrong message |
+| B16 | fixed (reproduced) | P3 | #34 | `test_session_lifecycle.py::test_a_box_start_after_rhx_drops_names_the_lost_link` | e715fc3 (#52) | A per-box Start after RHX drops says the link is lost (INTAN_UNAVAILABLE) |
 | B17 | fixed (reproduced) | P1 | #32 | `test_session_runner.py::test_a_board_lost_while_its_run_finalizes_stays_in_error` | c0f8daf (#49) | `release` moves IN_SESSION → IDLE only while the claim is current, so a drop during finalize stays ERROR |
 | B18 | fixed (reproduced) | S1 | #36 | `test_relocate.py::test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry`, `test_cohort_move.py::` (same name), `test_relocate.py::test_a_relocate_that_loses_the_old_folder_after_its_copy_leaves_the_journal_to_retry` | 8983716 (#47) | A resume or live delete that can't reach the source leaves the journal `committed`; `moving()` holds sessions only while this process is still deleting |
 | B19 | fixed (structural test) | S1 | #36 | `test_strobes.py::test_every_write_is_flushed_to_disk_before_it_replaces_the_document` | 8983716 (#47) | The vocabulary is written to `.part`, fsynced, then replaced |
-| B20 | open | P3 | #34 | | | Session ending while RHX unreachable never stops or records its recording |
+| B20 | fixed | P3 | #34 | `test_session_lifecycle.py::test_an_end_with_rhx_unreachable_still_waits_stops_and_records_the_run`, `::test_a_reconnect_stops_the_recording_an_unreachable_end_left_running`, `::test_an_end_waits_while_rhx_may_still_be_writing_the_run` | e715fc3 (#52) | End keeps the grace while RHX may record, attempts a bounded stop, records the run; an owed stop goes only to the run's own file |
 
 ## Candidates
 
 | Candidate | Node | Ticket | PR | Status |
 |---|---|---|---|---|
 | 1 · A box start that cannot half-happen | P1 | #32 | #49 | done |
-| 2 · Port verbs that name the states they leave | P2 | #33 | | open |
-| 3 · One dispatch seam | D1 | #39 | | open |
+| 2 · Port verbs that name the states they leave | P2 | #33 | #51 | done |
+| 3 · One dispatch seam | D1 | #39 | #57 | done |
 | 4 · Every archive write goes through the archive | A1 | #41 | | open |
 | 5 · One version for the analytics cache | C5 | #43 | | open |
 | 6 · A database unit of work | DB | #44 | | open |
-| 7 · Pure builders for the two setup commands | U1 + U1b | #38 #40 | | open |
+| 7 · Pure builders for the two setup commands | U1 + U1b | #38 #40 | #54 #59 #58 | done |
 | 8 · SessionStore notices a new run itself | U2 | #37 | #50 | done |
 
 ## Nodes
@@ -48,18 +48,18 @@ Status: `open` (not started) · `in progress` · `fixed` · `not reproduced` · 
 |---|---|---|---|---|
 | A0 | #31 | merged f9ccec2 | #46 | Baseline green; all 20 bugs still present at a407126; 15 tickets filed |
 | P1 | #32 | merged c0f8daf | #49 | SessionClaim; FakePorts retired; hot path verified equivalent |
-| P2 | #33 | in review | #51 |  |
-| P3 | #34 | in review | #52 |  |
+| P2 | #33 | merged 0c65a06 | #51 | 1 verifier round; TakeRefused |
+| P3 | #34 | merged e715fc3 | #52 | 3 verifier rounds; owed RHX stop gated on the run's file stamp; follow-up #56 |
 | F1 | #35 | merged 14dd391 | #48 | Host-side fix; verifier PASS |
 | S1 | #36 | merged 8983716 | #47 | 3 verifier rounds; `moving()` uses an in-process registry (DB must keep it) |
 | U2 | #37 | merged 6f30ca6 | #50 | Stop-and-ask fired; Chase chose a sidecar confirmation counter (#37 comment) |
-| U1 | #38 | in progress |  |  |
-| D1 | #39 | open | | |
-| U1b | #40 | open | | |
-| A1 | #41 | open | | |
-| A2 | #42 | open | | |
-| C5 | #43 | open | | |
-| DB | #44 | open | | |
+| U1 | #38 | merged 3c8de46 + aa21247 | #54 #58 | Chase: reset a row whose animal changed; probe maps per animal |
+| D1 | #39 | merged d855e29 | #57 | Stop-and-ask checked by an independent frontend audit: not fired |
+| U1b | #40 | merged 8760083 | #59 | Also refuses a recording set up before the last confirmation |
+| A1 | #41 | in review | #60 |  |
+| A2 | #42 | prepped (red tests on review-ii/a2) |  |  |
+| C5 | #43 | prepped (red tests on review-ii/c5) |  |  |
+| DB | #44 | prepped (red tests on review-ii/db) |  | Also closes #55 |
 | Z | #45 | open | | |
 
 ## Flags
@@ -69,6 +69,9 @@ Status: `open` (not started) · `in progress` · `fixed` · `not reproduced` · 
 - SKIPPED: `qa` is not in mattpocock/skills any more. Node Z files leftovers with `triage`'s conventions instead.
 - SKIPPED: `grill-me` ran unattended: the questions and adopted answers are written into the A0 ticket.
 - SETUP-GAP: none found. Hook constraint: a stale node branch is brought up to date by merging `review-ii/integration` into it, because rebasing would need a force push, which the hook blocks.
+
+- NEW BUG #55 (found in DB prep): a due backup while a write is open freezes every database call; DB's unit of work closes it.
+- DECISIONS by Chase during the run: U2 confirmation counter (#37); Record rows reset on a changed animal and probe maps follow the animal (#38).
 
 ## A0 baseline
 

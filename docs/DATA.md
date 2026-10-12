@@ -343,7 +343,7 @@ One row in `sessions` per session-flow invocation (`sessions/models.py`'s `Sessi
 | `folderPath` | The session folder |
 | `groupRuns` | JSON list of `{groupId, order, startedAt, endedAt}` — one per group run, `order` its position in this session's sequence. A group may appear more than once |
 | `durationMinutes` | Optional per-box time limit; null = none |
-| `recording` | Null for behavior only; otherwise one entry per group run ([RECORDING.md](RECORDING.md#what-is-written)) |
+| `recording` | Null for behavior only; otherwise one entry per group run, or on an `aborted` session the run its abandon stopped ([RECORDING.md](RECORDING.md#what-is-written)) |
 
 Every session listing is ordered by `(date, startedAt)` and carries an `ordinal` from that order — never from `sessionNumber`, which would sort `10` before `9`.
 
@@ -547,6 +547,8 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 
 `.json` and `.mat` are not append-friendly and don't need to be; they are built once in `AnimalWriter.finalize`. Finalization is **idempotent** (the first `stop_reason` wins, so a board-drop racing an operator stop cannot rewrite history), and the two structured writes are **best-effort**: an `OSError` is logged, not raised. The `.tsv` is already closed and durable by then, so failing to produce a convenience format must never look like failing to save data.
 
+Each is written **whole or not at all** (`write_atomic`): into a `.part` beside it named for the writing process and thread, fsync'd, then renamed over the real name, as a [verified transfer](#verified-transfer) copies. Two writers of one file each land whole, and the last rename wins. A power cut while finalizing leaves at most a `.part`, which no walk reads, so the run is a `.tsv` with no `.json` that [Recover](#crash-recovery) rebuilds, never a torn document under the name every reader opens. Recovery writes the same way.
+
 ### What is guaranteed
 
 - **Guaranteed:** if the PC loses power mid-session, every strobe through the last completed line is on disk in the `.tsv`, human-readable, with at most the in-flight line at risk.
@@ -555,7 +557,7 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 
 ## Crash recovery
 
-`sessions/recovery.py` (`sessions.recover`, the **Recover** button in Analytics) finds a cohort's orphaned `.tsv` files — logs with no `.json` sibling — and rebuilds `.json` and `.mat` from them. It is a pure file transformation, the inverse of `AnimalWriter`: **not** session resumption, and it never talks to a board.
+`sessions/recovery.py` (`sessions.recover`, the **Recover** button in Analytics) finds a cohort's orphaned `.tsv` files — logs with no `.json` sibling, or one that does not parse — and rebuilds `.json` and `.mat` from them. A `.json` that does not parse, torn by a power cut or by a copy someone made by hand, counts as missing, so the run is offered until a whole document replaces it. A sibling that can't be read at all counts as present: recovery fails toward writing nothing. It is a pure file transformation, the inverse of `AnimalWriter`: **not** session resumption, and it never talks to a board.
 
 - **It shares the archive walker** (`analytics/reader.py`'s `walk_orphaned_tsvs`, over `_walk_format_dirs`), so every legacy layout [adoption](#orphan-adoption) reads, recovery reads too, and it backfills in the same layout (a `recovery_tsv/` orphan gets `behavior_json/` and `behavior_mat/`).
 - **A footer wins.** A `.tsv` with a footer finalized cleanly and only its best-effort `.json` write failed (the disk-full case); it keeps its recorded `stop_reason`. Only a footer-less log gets `stop_reason: "recovered after crash"` (`RECOVERED_STOP_REASON`).
@@ -564,7 +566,7 @@ Every parsed strobe is appended to the `.tsv` **the instant it arrives**, with `
 - Strobe lines must match the live parser's strict `^\d{1,3}\t\d+$`, so a torn final line costs only itself.
 - **The lab's pre-Ephymeris logs are a second dialect**, recognised by their first line, `event_code\tevent_ms\tevent_name` (`LEGACY_HEADER`). After it come `# key\tvalue` comments (the run's parameters, read in flat and coerced as above), strobe lines with a third column naming the code (`code\tms\tBF_NAME` — the name is dropped; the [strobe vocabulary](TASKS.md#strobe-vocabulary) decodes the number) and CRLF line endings. The third column is admitted **only** in such a file; this app's own logs keep the strict rule.
 - **A legacy log never had a footer**, so its absence says nothing about how the run ended: a recovered legacy run records `stop_reason: "recovered from a legacy log"` (`RECOVERED_LEGACY_STOP_REASON`), never "after crash". It names no animal or sketch either, and recovery adds neither — adoption reads the animal from the filename ([below](#orphan-adoption)) and Analytics infers the conditions from the strobes. A legacy log that is only its header line — the old software opened one for every run, started or not — is refused rather than recovered as an empty run.
-- **Rejected while any box is running:** a live run's `.tsv` legitimately has no `.json` yet.
+- **Rejected while any box is running:** a live run's `.tsv` legitimately has no `.json` yet. It is an [archive write](#the-cohort-archive), so it also waits for no other, and the files it writes are queued for backup.
 
 The Recover button chains an `analytics.rescan`, so recovered files are adopted in the same click. It is a `sessions.*` command because it **writes** session files; analytics never writes the archive.
 
@@ -800,12 +802,27 @@ So a **walk exists, but only on an explicit user action** — `analytics.rescan`
 `analytics/archive.py`'s `CohortArchive` is the one read of a cohort's sessions and runs: the ones this database recorded and the ones a rescan recovered from files. Every reader takes its `view`: `analytics.summary`, `sessions.list`, the session log's [what changed](#what-changed), [tidy](#tidy-records) and the Dashboard's recent sessions. So no two of them can file a recovered run under different sessions, close its session's clock differently, or disagree about which runs are false starts.
 
 - A recovered run counts under the recorded session that owns its folder ([Tidy records](#tidy-records)), else under its synthetic session, and a session's run count includes the recovered runs filed under it.
+- A recovered run whose file a run record also names is left out: [the record wins](#database-first). A box finalizing while a rescan walks leaves exactly that pair, and the next rescan's [prune](#pruning) deletes the adoption. The comparison is of the stored path strings, so the view still opens nothing.
 - A recovered session's clock closes from the metrics cache ([The session clock](#the-session-clock)), and a summary closes it again from what it has just read. A run the summary did not select keeps its cached end, so a summary narrowed to some animals never moves a session's end.
 - [False starts](#false-starts) are judged from the summaries a pass has just scored, or from the cache for a reader that opens no file.
 
 The view reads the database only, so `sessions.list` and the log never wait on a file or on the lock.
 
-**The archive lock.** A rescan, a tidy, a [data-folder relocate](#data-folder) and a [move of animals](#moving-animals-between-cohorts) each hold it end to end, and each is refused (`ArchiveBusy`) while anything else holds it. A summary waits for it, then reads its records and indexes them under it. Records read before the wait could be ones that a relocate, a move or a tidy had just rewritten.
+**Every write goes through the archive** (`CohortArchive.write`): a rescan, a tidy, a [recover](#crash-recovery), a [data-folder relocate](#data-folder) and a [move of animals](#moving-animals-between-cohorts). Each holds the archive lock end to end and is refused (`ArchiveBusy`) while anything else holds it. A summary waits for the lock, then reads its records and indexes them under it. Records read before the wait could be ones that a relocate, a move or a tidy had just rewritten.
+
+**The rig is asked once the lock is held**, never before, so a session set up or a box started while a caller decided cannot slip past:
+
+| Write | While a session is set up or a box runs | While a box runs |
+|---|---|---|
+| Relocate, moving the contents | Refused, `RIG_IN_USE` | Refused, `RIG_IN_USE` |
+| Move of animals | A refusal in its plan (`busy`) | A refusal in its plan (`busy`) |
+| Tidy | Leaves the held session alone | Leaves the held session alone |
+| Rescan | Runs | Refused, `RIG_IN_USE`: a run finishing during the walk would be adopted as well as recorded |
+| Recover | Runs | Refused, `RIG_IN_USE`: a live run's `.tsv` has no `.json` yet |
+
+A box counts as running until its run is recorded: its `.json` written and its run record committed (`SessionLifecycle.writing`).
+
+**One place hears a write.** Once a write is done and the lock released, `on_changed` is told what it changed (`ArchiveChange`), and that is the only follow-up: the app queues the files it wrote for [backup](#backup-mirroring), publishes `cohorts.updated` and `session.lifecycle`, and refreshes the [session log](#the-session-log) of each cohort it touched. A preview, or a rescan that found nothing new, changed nothing and tells no one.
 
 > [!CAUTION]
 > **The walk finds format folders by name, at any depth — don't reintroduce an assumption about a prefix level.** One real archive nests session folders under a prefix, another puts them straight under the cohort, and nothing stops a per-year level appearing next. A fixed two-level glob found **zero** of the second archive's 444 files. `session_folder_of` stays correct because it is defined relative to the *format* folder, not the cohort root.
@@ -1030,7 +1047,7 @@ Every probability carries `counted` and a **95% Wilson score interval** (`wilson
 | **Zero counted trials** | `null`, **never `0.0`**. Zero percent and "no trials" are opposite claims. No strategy point is placed |
 | **Profile-less sketch** | `no-metrics`, no metrics invented. **The run is still listed** — it has a real duration, event count and stop reason |
 | **Utility-kind profile** | Scored if it declares metrics, but `excludedByDefault` from cohort aggregates |
-| **Board disconnected mid-run** | Finalized with `stop_reason: "board disconnected"`. **Include it**, show the reason; a drop at trial 180 of 200 is good data. Distinct from an `aborted` session, which wrote nothing |
+| **Board disconnected mid-run** | Finalized with `stop_reason: "board disconnected"`. **Include it**, show the reason; a drop at trial 180 of 200 is good data. Distinct from an `aborted` session, which ran no box and wrote no behavior data |
 | **No file path recorded** | The writer never opened (handshake failed, or the exclusive open collided): `missing` |
 | **Path recorded, file absent** | `missing` — and if the sibling `.tsv` exists, say so: that is the disk-full case [recovery](#crash-recovery) fixes |
 | **Two runs for one (animal, session)** | Real (a restart after a board drop, a same-day prefix+number reuse). Both are runs and both are listed; no view may silently keep whichever came last. A short first run is a [false start](#false-starts): still listed, but counted nowhere |

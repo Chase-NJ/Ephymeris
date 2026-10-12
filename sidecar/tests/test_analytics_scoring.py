@@ -2,10 +2,11 @@
 `DATA.md#caching`, `DATA.md#never-at-the-expense-of-a-session`.
 
 `test_analytics_service.py` covers the ladder and the cache from the
-summary's side. This file holds what Architecture Review II candidate 5 found
-missing there: a warm row must answer to *every* input that produced it, not
-just to `derive`'s maths (B8); `analytics.series` scores off the event loop
-(B9); and a read-only `series` leaves nothing behind in the database.
+summary's side. This file holds the cache's version: a warm row answers to
+*every* input that produced it, not just to `derive`'s maths. And the
+scorer's other promises: `analytics.series` scores off the event loop, a
+read-only `series` leaves nothing behind in the database, and a pass writes
+once.
 """
 
 from __future__ import annotations
@@ -45,6 +46,14 @@ def rig(db: Database, tmp_path: Path) -> Rig:
     r = Rig(db, tmp_path)
     r.write_sketch()
     return r
+
+
+@pytest.fixture(autouse=True)
+def _a_canary_per_test():
+    """Tests here change scoring code; none may leave its canary to the next."""
+    scoring.forget_canary()
+    yield
+    scoring.forget_canary()
 
 
 def _profile_rows(db: Database) -> int:
@@ -96,14 +105,13 @@ async def test_a_pass_commits_its_profiles_and_rows_once(rig: Rig) -> None:
     assert not rig.db.conn.in_transaction
 
 
-# --- B9: series off the event loop ------------------------------------------
+# --- series off the event loop ----------------------------------------------
 
 
 async def test_series_scores_off_the_event_loop(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """STRUCTURAL (the ground rules' allowed exception for B9): asserts where
-    the work runs, not how long it takes.
+    """STRUCTURAL: asserts where the work runs, not how long it takes.
 
     `analytics.series` decodes and scores up to `MAX_SERIES_RUNS` runs, and
     none of it may run on the event loop that flushes six boxes' `port.output`
@@ -164,7 +172,7 @@ async def test_a_cached_summary_answers_to_the_requested_threshold(rig: Rig) -> 
     assert strict["runs"][0]["overall"]["lowConfidence"] is True
 
 
-# --- B8: every input a cached row depends on --------------------------------
+# --- every input a cached row depends on ------------------------------------
 #
 # A cached row is served verbatim (`DATA.md#caching`), so a row must stop
 # answering when anything that produced it changes — not only `derive`'s
@@ -182,7 +190,9 @@ TUNED = {
 
 
 def _relaunched(rig: Rig) -> AnalyticsService:
-    """The same database under a new process — what an upgrade looks like."""
+    """The same database under a new process — what an upgrade looks like.
+    Nothing a process memoises survives one, the canary included."""
+    scoring.forget_canary()
 
     async def broadcast(message: dict) -> None:
         pass
@@ -239,8 +249,8 @@ async def test_a_relaunch_with_nothing_changed_keeps_every_warm_row(rig: Rig) ->
 async def test_a_change_to_inference_reaches_a_warm_row(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B8. `infer.py`'s window shapes every inferred run's payload, and the
-    key held only `derive.CODEC_VERSION` (v7 was bumped for inference alone)."""
+    """`infer.py`'s window shapes every inferred run's payload, and an
+    inferred run's key carries no profile hash to move with it."""
     (rig.sketch / "task.json").unlink()  # nothing declared: the run is inferred
     session = rig.add_session("1", "2026-07-22")
     rig.add_run(session, "a1", (HIT_1 + HIT_3) * 12, snapshot=False)
@@ -260,7 +270,7 @@ async def test_a_change_to_inference_reaches_a_warm_row(
 async def test_a_change_to_embedded_profile_parsing_reaches_a_warm_row(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B8. Which profile a file carries is decided by parsing it
+    """Which profile a file carries is decided by parsing it
     (`tasks/profile.py` `embedded_profile`), and the key's `profile_hash` is
     the *resolution* digest: NULL for a run scored from its own snapshot."""
     (rig.sketch / "task.json").unlink()
@@ -281,7 +291,7 @@ async def test_a_change_to_embedded_profile_parsing_reaches_a_warm_row(
 async def test_a_change_to_the_recorded_config_reaches_a_warm_row(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B8. A run's file-recorded parameters (`recorded_config`, hashed to
+    """A run's file-recorded parameters (`recorded_config`, hashed to
     `paramsHash`) are cached beside its summary and feed the comparability
     pair and the session log's what-changed (`DATA.md#what-changed`)."""
     (rig.sketch / "task.json").unlink()
@@ -354,8 +364,8 @@ def _set(owner: object, name: str, value: object):
     ],
 )
 def test_the_canary_sees_every_input(monkeypatch: pytest.MonkeyPatch, change) -> None:
-    """Why the pin is worth anything: each input B8 named, changed, moves the
-    canary. A change the canary can't see would leave the version where it
+    """Why the pin is worth anything: each input a cached row depends on,
+    changed, moves the canary. A change the canary can't see would leave the version where it
     was, which is the bug this replaces."""
     before = scoring.canary_fingerprint()
     change(monkeypatch)
@@ -463,7 +473,7 @@ def _free_code(document: dict) -> int:
 async def test_a_vocabulary_edit_reaches_a_warm_row(
     rig: Rig, machine_vocabulary: dict
 ) -> None:
-    """B8. Inference reads this machine's strobe vocabulary
+    """Inference reads this machine's strobe vocabulary
     (`analytics/infer.py`), which is edited on the Strobes page and is in no
     part of the key. A file copied from another rig can carry a code this
     machine only learns later; once it does, the run's conditions change."""

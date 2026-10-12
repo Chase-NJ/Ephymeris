@@ -6,12 +6,13 @@ service asks it to score a pass of runs (`score`) or to decode one run for a
 chart (`decode`), and holds no part of either.
 
 **The key's version covers every input a cached row depends on**
-(`score_version`): `SCORE_VERSION`, a fingerprint of what this code answers
+(`current_version`): `SCORE_VERSION`, a fingerprint of what this code answers
 for a fixed set of canary runs, and this machine's strobe vocabulary. A
 change to the maths, the payload's shape, inference, the recorded config or
 the parsing of an embedded profile moves the canary's answers, so the
 version, so every warm row is recomputed — without anyone remembering to bump
-anything (`DATA.md#caching`).
+anything. What the canary cannot reach is listed at `SCORE_VERSION`
+(`DATA.md#caching`).
 
 > **No analytics operation may slow, stall, or fail a session**
 > (`DATA.md#never-at-the-expense-of-a-session`). Reads are sequential in one
@@ -24,6 +25,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
 from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 
@@ -48,25 +50,24 @@ PROGRESS_EVERY = 10
 INDEX_CHUNK = 32
 
 #: The part of the cache version a person sets (`DATA.md#caching`). The rest
-#: of it is computed (`score_version`): the canary's answers move by themselves
-#: whenever scoring does, for every input the canary reaches. Bump this for a
-#: change the canary cannot see — and prefer adding a canary case that shows
-#: it, which keeps the next such change honest too.
+#: of it is computed (`current_version`): the canary's answers move by
+#: themselves whenever scoring does, for every input the canary reaches.
 #:
-#: Until v8 this was `derive.CODEC_VERSION`, and covered derive's maths alone:
-#: v3 added the trial-outcome tally (`DATA.md#rewarded-and-response-accuracy`);
-#: v4 split it per declared condition (`DATA.md#per-condition-tally`); v5 fixed
-#: the pooled figure's trial counts to span every declared condition; v6 added
-#: the engagement ladder (`DATA.md#engagement-ladder`); v7 added the inference
-#: rung (`infer.py`) — the maths didn't move, but every cached "no-metrics" row
-#: predated the rung; v8 added `hits` and `answerSide` to every metric summary.
-#: **v8's maths did not move either, and that was the trap**: a cached row is
-#: served verbatim, so every run indexed before it answered without
-#: `answerSide`, and the strategy plane concluded the profile was silent when
-#: the CACHE was.
-#: v9 (Review II, B8): the version covers inference, the recorded config,
-#: embedded-profile parsing and the vocabulary as well, by construction. Every
-#: row cached under v8 is recomputed once.
+#: **Bump this for a change the canary cannot see.** It scores documents
+#: already in memory against resolutions it builds itself, so it never reaches:
+#:
+#: * reading a file — `reader.stat_run` / `reader.parse_run`, which decide
+#:   what a file reads as, and which files are cached as `missing` or
+#:   `unreadable` (with their `detail`) under their stat key;
+#: * the `missing` and `unreadable` rows `RunScorer._score_one` builds;
+#: * resolution's `reason` texts (`RunScorer._resolve_profile_uncached`).
+#:
+#: For anything else, prefer adding a canary case that shows the change
+#: (`_canary_runs`): it keeps the next such change honest too.
+#:
+#: **"The numbers didn't move" is not an exemption.** A cached row is served
+#: verbatim, so a field added to the payload without a version change goes
+#: missing from every warm row.
 SCORE_VERSION = 9
 
 
@@ -586,14 +587,39 @@ def current_version(vocabulary: Vocabulary | None = None) -> int:
     """The version a cached row must carry to be served now
     (`DATA.md#caching`), under `vocabulary` or the one in force.
 
-    Computed afresh on every call — the canary is about two milliseconds of
-    scoring — so nothing can hold a version that no longer describes the code.
-    Blocking; call it from a worker thread.
+    The canary is scored once per process (`_process_canary`): code cannot
+    change under a running sidecar. The vocabulary can — it is edited on the
+    Strobes page — so its half is hashed on every call. Blocking the first
+    time; call it from a worker thread.
     """
     return score_version(
-        canary_fingerprint(),
+        _process_canary(),
         vocabulary if vocabulary is not None else registry.vocabulary(),
     )
+
+
+_canary_lock = threading.Lock()
+_canary: str | None = None
+
+
+def _process_canary() -> str:
+    """`canary_fingerprint()`, scored on first use and kept for the process."""
+    global _canary
+    with _canary_lock:
+        if _canary is None:
+            _canary = canary_fingerprint()
+        return _canary
+
+
+def forget_canary() -> None:
+    """Drop the process's canary, so the next version scores it again.
+
+    For tests that change scoring code and then stand for a relaunch: a new
+    process is exactly what this models. Nothing in the app calls it.
+    """
+    global _canary
+    with _canary_lock:
+        _canary = None
 
 
 def score_version(canary: str, vocabulary: Vocabulary) -> int:
@@ -637,11 +663,19 @@ def canary_fingerprint() -> str:
     The codes come from the **shipped seed** vocabulary, by name, so this
     measures the code and not this machine's vocabulary, which `score_version`
     hashes separately. A case that raises is answered by its exception's
-    name: the version stays deterministic and analytics stays up.
+    name, and a canary that cannot even be built answers as one case: either
+    way the version stays deterministic and analytics stays up.
     """
-    seed = Vocabulary(registry.default_vocabulary_document())
-    answers: dict[str, Any] = {}
-    for name, resolved, document in _canary_runs(seed):
+    seed = _seed_vocabulary()
+    try:
+        runs = _canary_runs(seed)
+    except Exception as exc:  # noqa: BLE001 - the version must not take analytics down
+        log.warning("analytics: the score canary could not be built: %r", exc)
+        runs = []
+        answers: dict[str, Any] = {"canary": {"error": type(exc).__name__}}
+    else:
+        answers = {}
+    for name, resolved, document in runs:
         try:
             entry = _scored(
                 name,
@@ -665,6 +699,19 @@ def canary_fingerprint() -> str:
             answers[name] = {"error": type(exc).__name__}
     canon = json.dumps(answers, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+_seed_lock = threading.Lock()
+_seed: Vocabulary | None = None
+
+
+def _seed_vocabulary() -> Vocabulary:
+    """The shipped seed vocabulary, read once: it is package data."""
+    global _seed
+    with _seed_lock:
+        if _seed is None:
+            _seed = Vocabulary(registry.default_vocabulary_document())
+        return _seed
 
 
 def _canary_runs(seed: Vocabulary) -> list[tuple[str, _Resolved, dict[str, Any]]]:

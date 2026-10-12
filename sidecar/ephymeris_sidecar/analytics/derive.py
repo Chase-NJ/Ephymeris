@@ -22,7 +22,7 @@ from typing import Any, Iterable, Iterator
 from ..tasks.metrics import MetricAccumulator, compute_series
 from ..tasks.profile import LiveMetric, TaskProfile
 
-# Cached summaries are versioned by `scoring.score_version`, which moves by
+# Cached summaries are versioned by `scoring.current_version`, which moves by
 # itself when anything here changes what a summary holds — the maths or the
 # payload's shape (`DATA.md#caching`). There is nothing to bump in this file.
 

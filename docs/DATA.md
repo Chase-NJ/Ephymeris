@@ -51,6 +51,7 @@ Read with [TASKS.md](TASKS.md) (the profile that decodes a run) and [ARCHITECTUR
 - [SQLite database](#sqlite-database)
   - [Tables](#tables)
   - [Indexes](#indexes)
+  - [Transactions](#transactions)
   - [Changing the schema](#changing-the-schema)
 - [Backup mirroring](#backup-mirroring)
   - [Mirror layout](#mirror-layout)
@@ -698,6 +699,25 @@ Plus plain lookup indexes on each table's parent id.
 > [!CAUTION]
 > **An index on `animal_id`, never a foreign key.** `cohorts.update` deletes and re-inserts the cohort's entire animal set on every roster edit. With `ON DELETE CASCADE`, a single rename would destroy every historical run in the cohort. **The missing foreign key is load-bearing.** The same holds for `adopted_runs.animal_id` and `session_notes.animal_id`; storing the *id* is what lets an adopted run survive a rename — and what lets history outlive the animal's place on the roster as a [former member](#former-members).
 
+### Transactions
+
+Every caller shares the one connection, so an uncommitted write is everyone's: another writer's `rollback()` discards it, and another writer's `commit()` makes it durable. Writes that must land together therefore go in **one unit of work**, `Database.write()`:
+
+```python
+with db.write() as tx:                 # the lock, then BEGIN IMMEDIATE
+    digest = profiles.remember_profile(profile, tx=tx)
+    sessions.record_animal_run(run, tx=tx)
+# COMMIT here; ROLLBACK instead if the block raised
+```
+
+- **Join or own.** A repository method given `tx=` runs inside that unit and commits nothing; given none, it is its own unit. Only the unit's opener commits.
+- **No nesting.** Opening a second unit on the thread that holds one raises `NestedWrite`, as does joining a unit from another thread or after it ended. Pass the open unit instead.
+- **A rollback undoes only its own work.** A unit opened while some caller has left a write open runs as a savepoint inside it, so its rollback leaves that write alone. Its commit makes that write durable too, as any commit on the one connection does, and so always announces.
+- **`db.read()`** holds the lock for reading; inside the thread's own unit it is that unit, so a read sees the unit's own rows.
+- **What a commit announces.** The database hook ([backup](#the-database-copy)) fires once per committed unit that changed a row, under the lock right after `COMMIT`. A unit that rolled back, or changed nothing, announces nothing. `tx.on_commit(fn)` runs `fn` once after the commit, with the lock free.
+
+A finalization snapshots the run's [profile](#which-profile-decodes-a-run) and records the run in one unit. Apart, a rollback by any other writer between the two would leave the run naming a profile hash with no `task_profiles` row. The analytics indexing pass remembers profiles without a unit and commits them with its cache rows at the end of the job ([one transaction per job](#never-at-the-expense-of-a-session)), so its write stays open for the whole pass.
+
 ### Changing the schema
 
 > [!CAUTION]
@@ -773,7 +793,9 @@ Two relocated cohort folders sharing a basename both get a short path-derived su
 `ephymeris.db` is mirrored on **every commit**, debounced by `DB_DEBOUNCE_S` (5 s) because a roster edit commits many times in quick succession.
 
 > [!NOTE]
-> **The trigger hangs off SQLite `commit` itself** (`_TrackedConnection`), not a call in each repository method: no write path can forget to announce itself, and the trigger is truly "the database changed" — `session_animal_runs` is written during unattended overnight runs.
+> **The trigger hangs off the commit itself** (`_TrackedConnection`, and each [unit of work](#transactions)'s `COMMIT`), not a call in each repository method: no write path can forget to announce itself, and the trigger is truly "the database changed" — `session_animal_runs` is written during unattended overnight runs.
+
+**The snapshot never runs with a write open.** SQLite's online backup answers busy to an open write on its source, and Python retries busy forever — here holding the lock that every way out of the write needs, which would stall every database call in the app. So `snapshot_to` raises `WriteInProgress` instead, the pass leaves the database marked dirty, and a later pass copies it once the write has ended. A copy still deferred after `DB_DEFER_WARN_S` (60 s) is logged as a warning, once per stretch: writes end in seconds, so one open that long was left by something that died. A "Sync now" that meets one reports the database copy as not done.
 
 **The copy is two-step.** `Database.snapshot_to` uses SQLite's online backup API (a plain copy of a live database can capture a torn page), but that holds the lock, so it writes to a **local** temp file first and the slow copy to the mirror happens with nothing locked. Pointing it straight at a network share would let the share's latency block every database read.
 

@@ -408,6 +408,7 @@ class Application:
         self.runner.on_box_started = self.intan.box_started
         self.runner.on_strobe_tap = self.intan.on_strobe
         self.lifecycle = SessionLifecycle(
+            db=self.db,
             sessions=self.sessions,
             cohorts=self.cohorts,
             runner=self.runner,

@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable
 
+from ..cohorts.db import WriteInProgress
 from .paths import MirrorLayout
 
 log = logging.getLogger(__name__)
@@ -54,6 +55,11 @@ MIRROR_INTERVAL_S = 10.0
 #: roster commits many times in quick succession; without this every keystroke's
 #: save would copy the whole file to a network share.
 DB_DEBOUNCE_S = 5.0
+
+#: How long the database copy may keep being deferred behind an open write
+#: (`DATA.md#the-database-copy`) before it is logged as a warning. Writes
+#: end in seconds; one open this long was left open by something that died.
+DB_DEFER_WARN_S = 60.0
 
 DB_MIRROR_NAME = "ephymeris.db"
 DB_SNAPSHOT_DIR = "db-snapshots"
@@ -84,6 +90,7 @@ class BackupManager:
         *,
         interval: float = MIRROR_INTERVAL_S,
         db_debounce: float = DB_DEBOUNCE_S,
+        db_defer_warn: float = DB_DEFER_WARN_S,
     ) -> None:
         self._loop = loop
         self._db = db
@@ -91,6 +98,7 @@ class BackupManager:
         self._broadcast = broadcast
         self._interval = interval
         self._db_debounce = db_debounce
+        self._db_defer_warn = db_defer_warn
 
         # Cross-thread state. `track` and `enqueue` are called from session
         # threads; the worker reads them from the loop.
@@ -108,6 +116,10 @@ class BackupManager:
         self._last_success_at: str | None = None
         self._mirrored = 0
         self._syncing = False
+        #: When the database copy was first deferred behind an open write, in
+        #: this stretch of deferrals; and whether that has been warned about.
+        self._db_deferred_since: float | None = None
+        self._db_deferral_warned = False
 
     # --- lifecycle --------------------------------------------------------
 
@@ -302,12 +314,33 @@ class BackupManager:
             return
         with self._lock:
             marked = self._db_dirty_at
-        await asyncio.to_thread(self._write_db_backup, target)
+        try:
+            await asyncio.to_thread(self._write_db_backup, target)
+        except WriteInProgress:
+            # Not a failure of the target: the mark stays, and the next pass
+            # snapshots once the write has ended.
+            self._note_deferred()
+            return
+        self._db_deferred_since, self._db_deferral_warned = None, False
         with self._lock:
             # A commit landing during the copy re-dirties it; only clear the
             # mark we actually acted on, so that write isn't silently lost.
             if self._db_dirty_at == marked:
                 self._db_dirty_at = None
+
+    def _note_deferred(self) -> None:
+        now = time.monotonic()
+        if self._db_deferred_since is None:
+            self._db_deferred_since = now
+        waited = now - self._db_deferred_since
+        if waited >= self._db_defer_warn and not self._db_deferral_warned:
+            self._db_deferral_warned = True
+            log.warning(
+                "database backup deferred for %.0f s: a write is still open on the database",
+                waited,
+            )
+        else:
+            log.debug("database backup deferred: a write is still open")
 
     def _write_db_backup(self, target: Path) -> None:
         """Snapshot locally, then copy out. Runs in a worker thread.
@@ -380,6 +413,13 @@ class BackupManager:
             self.mark_db_dirty()
             try:
                 await asyncio.to_thread(self._write_db_backup, target)
+            except WriteInProgress:
+                # The mark set above stays and a later pass copies it, but this
+                # sync did not: say so rather than report it done.
+                result["failed"] += 1
+                result["errors"].append(
+                    f"{DB_MIRROR_NAME}: a write was still open; the next pass copies it"
+                )
             except OSError as exc:
                 result["failed"] += 1
                 result["errors"].append(f"{DB_MIRROR_NAME}: {exc}")

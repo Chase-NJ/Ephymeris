@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from ..cohorts.db import Database
+from ..cohorts.db import Database, Tx
 from ..tasks.profile import TaskProfile, TaskProfileError, parse_profile, profile_hash
 
 log = logging.getLogger(__name__)
@@ -75,27 +75,38 @@ class AnalyticsRepository:
 
     # --- profile snapshots -------------------------------------------------
 
-    def remember_profile(self, profile: TaskProfile) -> str:
+    def remember_profile(self, profile: TaskProfile, *, tx: Tx | None = None) -> str:
         """Store a profile if unseen, and return its hash.
 
         Content-addressed, so the hundredth run of the same task adds nothing.
-        Does **not** commit — the caller batches
-        (`DATA.md#never-at-the-expense-of-a-session`).
+        Given a unit of work (`tx`), the row lands with it
+        (`DATA.md#transactions`): a finalization records its run in the same
+        unit, so the run never names a snapshot that isn't there.
+
+        Without one it does **not** commit — the indexing pass batches
+        (`DATA.md#never-at-the-expense-of-a-session`) and commits with its
+        `store`, or `flush`, leaving its write open in between
+        (`DATA.md#transactions`).
         """
         digest = profile_hash(profile)
+        row = (
+            digest,
+            profile.task_name,
+            profile.kind,
+            json.dumps(profile.to_json(), sort_keys=True),
+            _now(),
+        )
+        sql = (
+            "INSERT OR IGNORE INTO task_profiles"
+            " (hash, task_name, kind, profile_json, first_seen_at)"
+            " VALUES (?, ?, ?, ?, ?)"
+        )
+        if tx is not None:
+            with self._db.write(tx) as unit:
+                unit.execute(sql, row)
+            return digest
         with self._db.lock:
-            self._db.conn.execute(
-                "INSERT OR IGNORE INTO task_profiles"
-                " (hash, task_name, kind, profile_json, first_seen_at)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (
-                    digest,
-                    profile.task_name,
-                    profile.kind,
-                    json.dumps(profile.to_json(), sort_keys=True),
-                    _now(),
-                ),
-            )
+            self._db.conn.execute(sql, row)
         return digest
 
     # --- false-start overrides (DATA.md#false-starts) -----------------------

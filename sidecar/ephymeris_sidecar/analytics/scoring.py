@@ -605,9 +605,13 @@ def score_version(canary: str, vocabulary: Vocabulary) -> int:
     a version from before v9 (those were single digits), so every such row is
     recomputed once.
     """
+    # Live and retired apart, not `code_map()`'s merge of the two: inference
+    # reads live codes only, so retiring or reinstating one changes what a
+    # stream infers while leaving the merged map exactly as it was.
     canon = json.dumps(
         {
-            "codes": {str(code): name for code, name in vocabulary.code_map().items()},
+            "live": {str(entry.code): entry.name for entry in vocabulary},
+            "retired": {str(code): name for code, name in vocabulary.retired.items()},
             "slots": {str(slot): fields for slot, fields in vocabulary.port_slots.items()},
         },
         sort_keys=True,

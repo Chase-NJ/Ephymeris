@@ -42,12 +42,12 @@ log = logging.getLogger(__name__)
 RELOCATE_IN_USE = "A session is set up or running. Finish it, then move the data folder."
 MOVE_IN_USE = "A session is set up or running. Finish it, then move the animals."
 RECOVER_WHILE_WRITING = (
-    "A session is running: its live .tsv files would look like orphans. "
-    "End the session, then recover."
+    "A box is running: its live .tsv would look like an orphan. "
+    "Recover once every box has finished."
 )
 RESCAN_WHILE_WRITING = (
-    "A session is running: a run that finishes during the walk would be found "
-    "twice. End the session, then rescan."
+    "A box is running: a run that finishes during the walk would be found "
+    "twice. Rescan once every box has finished."
 )
 
 

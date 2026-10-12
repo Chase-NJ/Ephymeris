@@ -905,7 +905,10 @@ session is in progress asks it, and it answers three different questions:
 |---|---|---|
 | `held` | A session holds the rig, from its mapping's confirmation or a resume until it ends or is abandoned | `sessions.tidy`, which never touches it |
 | `in_use` | A session is held, or any box is running | every rig definition write, the data-folder relocate, moving animals |
-| `writing` | Any box is running, so a live `.tsv` has no `.json` yet | `sessions.recover` |
+| `writing` | Any box is running, or finishing until its run is recorded: a `.tsv` has no `.json` yet, or a `.json` has no record claiming it yet | `sessions.recover`, `analytics.rescan` |
+
+Every archive write asks through `CohortArchive.write`, once it holds the archive lock, never before
+([DATA.md](DATA.md#the-cohort-archive)).
 
 A finished run records against the session it was started under (`ActiveRun.session_id`), not against
 whichever session is held when it lands.
@@ -1583,7 +1586,7 @@ own chunk, costs nothing until the first export, and a failure to load it loses 
 | `rig/` | The rig definition: `registry.py` (channel and strobe registries, context-local hypotheticals), `definition.py` (impact check, writes, the read/write lock), `schema/` (including the default vocabulary seed), `hardware/` pinouts, `paths.py` | [TASKS.md](TASKS.md#the-rig-definition) |
 | `strobes/` | The machine's strobe vocabulary: `store.py` (`<data_dir>/strobes/vocabulary.json`, seeding, every edit, import merge), `usage.py` (firmware references, the cached archive scan) | [TASKS.md](TASKS.md#strobe-vocabulary) |
 | `hardware/` | The operator's `rig.json`: `store.py` (load, validate, save), `service.py` (located problems) | [TASKS.md](TASKS.md#rig-wiring) |
-| `analytics/` | `archive.py` (the cohort archive: recorded and recovered sessions in one read, and the archive lock), `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `false_starts.py` (which runs are set aside), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#the-cohort-archive), [DATA.md](DATA.md#derived-metrics), [DATA.md](DATA.md#false-starts) |
+| `analytics/` | `archive.py` (the cohort archive: recorded and recovered sessions in one read, and the one way to write it: the archive lock, the rig asked under it, `on_changed`), `derive.py` (pure metric definitions), `infer.py` (profile inferred from a stream), `false_starts.py` (which runs are set aside), `reader.py`, `repository.py`, `service.py` | [DATA.md](DATA.md#the-cohort-archive), [DATA.md](DATA.md#derived-metrics), [DATA.md](DATA.md#false-starts) |
 | `backup/` | `manager.py` (the mirror), `paths.py` (cohort-anchored paths) | [DATA.md](DATA.md#backup-mirroring) |
 | `logbook/` | The session log: `models.py`, `repository.py`, `service.py`, `diff.py` (what changed), `mirror.py` (`notes.md`) | [DATA.md](DATA.md#the-session-log) |
 | `intan/` | `client.py`, `streams.py`, `analysis.py`, `probemap.py`, `service.py` | [RECORDING.md](RECORDING.md) |

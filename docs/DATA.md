@@ -820,6 +820,8 @@ The view reads the database only, so `sessions.list` and the log never wait on a
 | Rescan | Runs | Refused, `RIG_IN_USE`: a run finishing during the walk would be adopted as well as recorded |
 | Recover | Runs | Refused, `RIG_IN_USE`: a live run's `.tsv` has no `.json` yet |
 
+A box counts as running until its run is recorded: its `.json` written and its run record committed (`SessionLifecycle.writing`).
+
 **One place hears a write.** Once a write is done and the lock released, `on_changed` is told what it changed (`ArchiveChange`), and that is the only follow-up: the app queues the files it wrote for [backup](#backup-mirroring), publishes `cohorts.updated` and `session.lifecycle`, and refreshes the [session log](#the-session-log) of each cohort it touched. A preview, or a rescan that found nothing new, changed nothing and tells no one.
 
 > [!CAUTION]

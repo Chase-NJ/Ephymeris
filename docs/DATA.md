@@ -802,6 +802,7 @@ So a **walk exists, but only on an explicit user action** — `analytics.rescan`
 `analytics/archive.py`'s `CohortArchive` is the one read of a cohort's sessions and runs: the ones this database recorded and the ones a rescan recovered from files. Every reader takes its `view`: `analytics.summary`, `sessions.list`, the session log's [what changed](#what-changed), [tidy](#tidy-records) and the Dashboard's recent sessions. So no two of them can file a recovered run under different sessions, close its session's clock differently, or disagree about which runs are false starts.
 
 - A recovered run counts under the recorded session that owns its folder ([Tidy records](#tidy-records)), else under its synthetic session, and a session's run count includes the recovered runs filed under it.
+- A recovered run whose file a run record also names is left out: [the record wins](#database-first). A box finalizing while a rescan walks leaves exactly that pair, and the next rescan's [prune](#pruning) deletes the adoption. The comparison is of the stored path strings, so the view still opens nothing.
 - A recovered session's clock closes from the metrics cache ([The session clock](#the-session-clock)), and a summary closes it again from what it has just read. A run the summary did not select keeps its cached end, so a summary narrowed to some animals never moves a session's end.
 - [False starts](#false-starts) are judged from the summaries a pass has just scored, or from the cache for a reader that opens no file.
 

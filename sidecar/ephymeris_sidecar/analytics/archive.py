@@ -19,6 +19,7 @@ session log can read the archive while a summary is still reading files.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections import Counter
 from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
@@ -103,10 +104,20 @@ class CohortArchive:
         never owns recovered files whichever way it is set (it wrote none).
         Recovered sessions' clocks close from the metrics cache: a file the
         index has not read yet leaves its session open.
+
+        A recovered run whose file a run record also names is left out: the
+        record wins (`DATA.md#database-first`). A rescan walking while a box
+        finalized adopts the file its record then claims, and the next
+        rescan's prune is what deletes the adoption.
         """
         recorded = self._sessions.list_sessions(cohort_id, include_aborted=include_aborted)
         recorded_runs = self._sessions.runs_for_cohort(cohort_id)
-        adopted = self._repo.adopted_for_cohort(cohort_id)
+        claimed = {_path_key(run.file_path) for run in recorded_runs if run.file_path}
+        adopted = [
+            entry
+            for entry in self._repo.adopted_for_cohort(cohort_id)
+            if _path_key(entry.file_path) not in claimed
+        ]
         owners = _adoption_owners(adopted, recorded)
         cached = self._repo.load_cached([entry.id for entry in adopted])
         summaries: dict[str, dict[str, Any] | None] = {
@@ -234,6 +245,12 @@ class CohortArchive:
 
 
 # --- recovered sessions (DATA.md#orphan-adoption) ------------------------------
+
+
+def _path_key(path: str) -> str:
+    """A stored path in the one spelling two records of one file share. From
+    the string alone: the view reads the database, never the disk."""
+    return os.path.normcase(os.path.normpath(os.path.expanduser(path))).casefold()
 
 
 def _synthetic_session_id(entry: AdoptedRun) -> str:

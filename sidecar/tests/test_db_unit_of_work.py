@@ -74,30 +74,32 @@ def test_a_unit_that_raises_leaves_nothing_behind(db: Database) -> None:
 
 
 def test_a_rollback_undoes_only_its_own_work(db: Database) -> None:
-    """B14's guarantee. A profile the indexing pass remembered and has not
-    committed yet (`AnalyticsRepository.remember_profile` without a unit,
-    until that pass gets one) survives another writer's failed unit."""
-    profiles = AnalyticsRepository(db)
-    digest = profiles.remember_profile(parse_profile({"taskName": "Pending"}))
+    """B14's guarantee: a writer's failed unit leaves another's committed
+    unit alone."""
+    digest = AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Kept"}))
 
     with pytest.raises(sqlite3.IntegrityError):
         with db.write() as tx:
             add_prefix(tx, "a")
             add_prefix(tx, "a")  # the name is unique
 
-    profiles.flush()
     assert prefixes(db) == []
     assert committed(db, "SELECT hash FROM task_profiles") == [(digest,)]
 
 
+def leave_a_write_open(db: Database) -> None:
+    """A write begun outside any unit of work, as only a bug could now."""
+    db._conn.execute("BEGIN")
+    db._conn.execute("INSERT INTO prefixes (id, name) VALUES ('open', 'open')")
+
+
 def test_a_unit_that_commits_over_a_write_left_open_makes_both_durable(db: Database) -> None:
     """As any commit on the one connection does, and it says so."""
-    digest = AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Pending"}))
+    leave_a_write_open(db)
     seen = commits_of(db)
     with db.write() as tx:
         add_prefix(tx, "a")
-    assert prefixes(db) == ["a"]
-    assert committed(db, "SELECT hash FROM task_profiles") == [(digest,)]
+    assert prefixes(db) == ["a", "open"]
     assert seen == [1]
     assert not db.conn.in_transaction
 
@@ -236,7 +238,7 @@ def test_a_snapshot_refuses_a_write_left_open_rather_than_waiting_on_it(
 ) -> None:
     """`Connection.backup` retries a busy source forever, and here it would
     do so holding the lock that every way out of the write needs (#55)."""
-    AnalyticsRepository(db).remember_profile(parse_profile({"taskName": "Pending"}))
+    leave_a_write_open(db)
     done = threading.Event()
     raised: list[BaseException] = []
 

@@ -11,18 +11,18 @@ Status: `open` (not started) · `in progress` · `fixed` · `not reproduced` · 
 | B1 | fixed | P1 | #32 | `test_session_runner.py::test_a_box_whose_port_refuses_is_never_a_run`, `test_session_lifecycle.py::test_a_box_start_the_port_refuses_records_nothing_and_ends`, `::test_switch_group_after_a_refused_box_start` | c0f8daf (#49) | The runner records a run only once `ports.claim_session` hands back a `SessionClaim`; STOP goes through `claim.request_stop()`, which never raises |
 | B2 | fixed | P1 | #32 | `test_session_lifecycle.py::test_start_all_failing_part_way_records_the_boxes_it_started`, `::test_start_all_refused_at_its_first_box_can_be_abandoned` | c0f8daf (#49) | `start_all` records the group run and `running` as soon as any box holds a claim, then re-raises; End works after a partial start |
 | B3 | fixed | F1 | #35 | `test_task_profiles.py::test_a_line_the_firmware_buffer_cannot_hold_whole_is_refused[640]` | 14dd391 (#48) | The host refuses a START line of 640+ characters (the firmware keeps 639); firmware unchanged, so no reflash needed |
-| B4 | open | A1 | #41 | | | A torn .json blocks Recover for good |
+| B4 | fixed | A1 | #41 | `test_recovery.py::test_a_torn_json_is_offered_for_recovery_and_rebuilt`, `::test_a_power_cut_while_finalizing_leaves_nothing_torn`, `test_writer.py::test_two_writes_of_one_file_at_once_each_land_whole` | dc3fa0a (#60) | `.json`/`.mat` written via `write_atomic` (unique `.part`, fsync, rename); Recover treats an unparseable `.json` as missing |
 | B5 | fixed | U1 + U1b | #38 #40 | `recordingSetup.test.ts` › `reconcileRows › follows an animal moved from box 3 to box 5…(B5)`; `test_intan_configure.py::test_a_box_the_held_mapping_does_not_have_is_refused`, `::test_a_recording_set_up_for_an_earlier_mapping_does_not_start` | 3c8de46 (#54), 8760083 (#59), aa21247 (#58) | Record rows key to the boxes mapped now; configure refuses an unmapped box; a recording set up before the last confirmation won't start; probe maps follow the animal (Chase) |
 | B6 | fixed | P2 | #33 | `test_port_verbs.py::test_a_console_close_is_refused_mid_flash`, `::test_a_console_close_cannot_clear_an_error`, `::test_a_baseline_flash_never_takes_a_console` | 0c65a06 (#51) | Each port verb names the states it may leave; only acknowledge_error leaves ERROR; a baseline takes IDLE only (TakeRefused) |
-| B7 | open | A1 | #41 | | | Rescan during a session can count a run twice |
-| B8 | open | C5 | #43 | | | Cache version doesn't cover every input |
-| B9 | open | C5 | #43 | | | analytics.series scores on the event loop |
+| B7 | fixed | A1 | #41 | `test_cohort_archive.py::test_a_run_recorded_while_a_rescan_walks_counts_once`, `test_session_lifecycle.py::test_a_box_writes_until_its_run_is_recorded` | dc3fa0a (#60) | Rescan goes through `CohortArchive.write` and is refused while a box writes (until its run is recorded); `archive.view` de-duplicates |
+| B8 | fixed | C5 | #43 | `test_analytics_scoring.py::test_a_change_to_inference_reaches_a_warm_row` (+ embedded, recorded config, vocabulary, retire/reinstate, threshold) | fb1b756 (#65) | Cache version = `SCORE_VERSION` + a canary fingerprint of the scorer and this machine's vocabulary; `CODEC_VERSION` deleted |
+| B9 | fixed (structural test) | C5 | #43 | `test_analytics_scoring.py::test_series_scores_off_the_event_loop` | fb1b756 (#65) | `series` decodes and scores each run in `asyncio.to_thread` |
 | B10 | fixed | D1 | #39 | `test_dispatch.py::test_a_busy_archive_is_refused_as_busy`, `::test_a_box_start_the_port_refuses_is_a_port_open_failure` | d855e29 (#57) | One ERRORS table: ArchiveBusy → ARCHIVE_BUSY, a box's OSError → PORT_OPEN_FAILED |
-| B11 | open | A1 | #41 | | | sessions.recover writes without the archive lock |
+| B11 | fixed | A1 | #41 | `test_dispatch.py::test_a_busy_archive_is_refused_as_busy[sessions.recover]` | dc3fa0a (#60) | Recover is `CohortArchive.recover`, under the archive lock |
 | B12 | fixed | D1 | #39 | `test_dispatch.py::test_a_client_connecting_after_a_debug_run_started_sees_it_running` | d855e29 (#57) | Replay is built from snapshot providers, including port.telemetry for running Debug runs |
 | B13 | fixed (reproduced) | U2 | #37 | `store.test.ts`: `keeps the last Debug run through a refused START, and clears it on the sidecar's arm (B13)` and 8 more; `test_session_lifecycle.py::test_confirming_the_same_mapping_again_is_a_new_confirmation_on_the_wire` | 6f30ca6 (#50) | The store clears on sidecar events only: IN_SESSION, Debug's arm, and a new `confirmations` count (Chase's decision); Debug START waits for the profile so task defaults aren't dropped |
-| B14 | open (reviewer finding: reproduce first) | DB | #44 | | | Another writer's rollback discards a pending task-profile row |
-| B15 | open (reviewer finding: reproduce first) | A2 | #42 | | | Adopted-run ids hash only the file stem |
+| B14 | fixed (reproduced) | DB | #44 | `test_session_lifecycle.py::test_a_run_never_names_a_profile_another_writers_rollback_threw_away`, `test_db_unit_of_work.py::test_no_path_leaves_a_transaction_open_when_the_lock_is_free` | 9361092 (#64), 1c78df1 (#77) | Database unit of work: finalization's profile + run in one unit; every repository joins or owns its unit; no in-repository rollbacks |
+| B15 | fixed (reproduced) | A2 | #42 | `test_analytics_adoption.py::test_two_cohorts_over_one_archive_keep_their_own_adoptions`, `::test_storing_an_adoption_never_takes_another_cohorts_row` | ec173ac (#62) | Adopted ids per cohort + run identity; existing ids kept; rulings carried over |
 | B16 | fixed (reproduced) | P3 | #34 | `test_session_lifecycle.py::test_a_box_start_after_rhx_drops_names_the_lost_link` | e715fc3 (#52) | A per-box Start after RHX drops says the link is lost (INTAN_UNAVAILABLE) |
 | B17 | fixed (reproduced) | P1 | #32 | `test_session_runner.py::test_a_board_lost_while_its_run_finalizes_stays_in_error` | c0f8daf (#49) | `release` moves IN_SESSION → IDLE only while the claim is current, so a drop during finalize stays ERROR |
 | B18 | fixed (reproduced) | S1 | #36 | `test_relocate.py::test_a_resume_that_cannot_reach_the_originals_leaves_the_journal_to_retry`, `test_cohort_move.py::` (same name), `test_relocate.py::test_a_relocate_that_loses_the_old_folder_after_its_copy_leaves_the_journal_to_retry` | 8983716 (#47) | A resume or live delete that can't reach the source leaves the journal `committed`; `moving()` holds sessions only while this process is still deleting |
@@ -36,9 +36,9 @@ Status: `open` (not started) · `in progress` · `fixed` · `not reproduced` · 
 | 1 · A box start that cannot half-happen | P1 | #32 | #49 | done |
 | 2 · Port verbs that name the states they leave | P2 | #33 | #51 | done |
 | 3 · One dispatch seam | D1 | #39 | #57 | done |
-| 4 · Every archive write goes through the archive | A1 | #41 | | open |
-| 5 · One version for the analytics cache | C5 | #43 | | open |
-| 6 · A database unit of work | DB | #44 | | open |
+| 4 · Every archive write goes through the archive | A1 | #41 | #60 | done |
+| 5 · One version for the analytics cache | C5 | #43 | #65 | done |
+| 6 · A database unit of work | DB | #44 | #64 #77 | done |
 | 7 · Pure builders for the two setup commands | U1 + U1b | #38 #40 | #54 #59 #58 | done |
 | 8 · SessionStore notices a new run itself | U2 | #37 | #50 | done |
 
@@ -56,11 +56,11 @@ Status: `open` (not started) · `in progress` · `fixed` · `not reproduced` · 
 | U1 | #38 | merged 3c8de46 + aa21247 | #54 #58 | Chase: reset a row whose animal changed; probe maps per animal |
 | D1 | #39 | merged d855e29 | #57 | Stop-and-ask checked by an independent frontend audit: not fired |
 | U1b | #40 | merged 8760083 | #59 | Also refuses a recording set up before the last confirmation |
-| A1 | #41 | in review | #60 |  |
-| A2 | #42 | prepped (red tests on review-ii/a2) |  |  |
-| C5 | #43 | prepped (red tests on review-ii/c5) |  |  |
-| DB | #44 | prepped (red tests on review-ii/db) |  | Also closes #55 |
-| Z | #45 | open | | |
+| A1 | #41 | merged dc3fa0a | #60 | 2 verifier rounds; ANIMAL_MOVE_REFUSED kept (frontend branches on it) |
+| A2 | #42 | merged ec173ac | #62 | Ids per cohort + run identity (deviation from 'per path'); no migration, nothing orphaned |
+| C5 | #43 | merged fb1b756 | #65 | Canary-fingerprinted cache version; one unit per pass |
+| DB | #44 | merged 9361092 + 1c78df1 | #64 #77 | Also closed #55 (backup freeze) and #63 |
+| Z | #45 | done | (this PR) | OVERNIGHT.md; leftovers filed #66–#76 |
 
 ## Flags
 
@@ -68,7 +68,7 @@ Status: `open` (not started) · `in progress` · `fixed` · `not reproduced` · 
 - SKIPPED: `resolving-merge-conflicts` is not in mattpocock/skills any more. Conflicts are resolved by hand, keeping both intents.
 - SKIPPED: `qa` is not in mattpocock/skills any more. Node Z files leftovers with `triage`'s conventions instead.
 - SKIPPED: `grill-me` ran unattended: the questions and adopted answers are written into the A0 ticket.
-- SETUP-GAP: none found. Hook constraint: a stale node branch is brought up to date by merging `review-ii/integration` into it, because rebasing would need a force push, which the hook blocks.
+- SETUP-GAP: the run can't open the PR `review-ii/integration` → `main`, because the Part 1 hook blocks every PR to main. OVERNIGHT.md gives Chase the command. Otherwise none. Hook constraint: a stale node branch is brought up to date by merging `review-ii/integration` into it, because rebasing would need a force push, which the hook blocks.
 
 - NEW BUG #55 (found in DB prep): a due backup while a write is open freezes every database call; DB's unit of work closes it.
 - DECISIONS by Chase during the run: U2 confirmation counter (#37); Record rows reset on a changed animal and probe maps follow the animal (#38).
